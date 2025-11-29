@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand Gradient Colors (matching logo) -->
+    <color name="gradient_red">#EF4444</color>
+    <color name="gradient_pink">#EC4899</color>
+    <color name="gradient_purple">#8B5CF6</color>
+    <color name="gradient_blue">#3B82F6</color>
+
+    <!-- Primary Colors -->
+    <color name="primary">#3B82F6</color>
+    <color name="primary_variant">#2563EB</color>
+    <color name="primary_light">#60A5FA</color>
+    <color name="on_primary">#FFFFFF</color>
+
+    <!-- Secondary Colors -->
+    <color name="secondary">#EF4444</color>
+    <color name="secondary_variant">#DC2626</color>
+    <color name="on_secondary">#FFFFFF</color>
+
+    <!-- Accent -->
+    <color name="accent">#8B5CF6</color>
+
+    <!-- Background Colors (Dark theme matching logo) -->
+    <color name="background">#0F172A</color>
+    <color name="surface">#1E293B</color>
+    <color name="on_background">#F8FAFC</color>
+    <color name="on_surface">#F8FAFC</color>
+    <color name="surface_variant">#334155</color>
+
+    <!-- Status Colors -->
+    <color name="error">#EF4444</color>
+    <color name="on_error">#FFFFFF</color>
+    <color name="success">#22C55E</color>
+    <color name="warning">#F59E0B</color>
+
+    <!-- Recording States -->
+    <color name="recording_idle">#3B82F6</color>
+    <color name="recording_active">#EF4444</color>
+    <color name="recording_processing">#8B5CF6</color>
+
+    <!-- Bubble Colors -->
+    <color name="bubble_background">#000000</color>
+    <color name="bubble_recording">#000000</color>
+    <color name="bubble_processing">#000000</color>
+    <color name="mic_red">#EF4444</color>
+
+    <!-- Text Colors -->
+    <color name="text_primary">#F8FAFC</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_tertiary">#64748B</color>
+
+    <!-- Card Colors -->
+    <color name="card_background">#1E293B</color>
+    <color name="card_border">#334155</color>
+</resources>

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Whisper Everywhere</string>
+
+    <!-- Accessibility Service -->
+    <string name="accessibility_service_label">Whisper Everywhere Voice Input</string>
+    <string name="accessibility_service_description">Allows Whisper Everywhere to insert transcribed text into any text field. This service detects when you\'re typing and injects your voice-to-text transcriptions at the cursor position.</string>
+
+    <!-- Notification Listener Service -->
+    <string name="notification_listener_label">Whisper Everywhere Media Detection</string>
+
+    <!-- Permissions -->
+    <string name="permission_microphone_title">Microphone Permission Required</string>
+    <string name="permission_microphone_description">Whisper Everywhere needs microphone access to record your voice for transcription.</string>
+    <string name="permission_overlay_title">Overlay Permission Required</string>
+    <string name="permission_overlay_description">Whisper Everywhere needs overlay permission to show the floating bubble over other apps.</string>
+    <string name="permission_accessibility_title">Accessibility Service Required</string>
+    <string name="permission_accessibility_description">Enable Whisper Everywhere in Accessibility Settings to allow text injection into any app.</string>
+
+    <!-- Home Screen -->
+    <string name="home_title">Whisper Everywhere</string>
+    <string name="home_subtitle">Voice-to-text for any app</string>
+    <string name="home_enable_bubble">Enable Floating Bubble</string>
+    <string name="home_disable_bubble">Disable Floating Bubble</string>
+    <string name="home_usage_today">Usage Today</string>
+    <string name="home_usage_remaining">Remaining</string>
+    <string name="home_free_limit">Free Limit: 2 minutes/day</string>
+    <string name="home_unlimited">Unlimited (Premium)</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_api_key">OpenAI API Key</string>
+    <string name="settings_api_key_hint">Enter your OpenAI API key</string>
+    <string name="settings_api_key_saved">API key saved securely</string>
+    <string name="settings_vibration">Vibration Feedback</string>
+    <string name="settings_vibration_description">Vibrate when recording starts and stops</string>
+    <string name="settings_bubble_position">Bubble Position</string>
+    <string name="settings_permissions">Permissions</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version</string>
+
+    <!-- Premium -->
+    <string name="premium_title">Go Premium</string>
+    <string name="premium_subtitle">Unlimited voice transcription</string>
+    <string name="premium_price">$5/month</string>
+    <string name="premium_feature_1">Unlimited transcription time</string>
+    <string name="premium_feature_2">Priority processing</string>
+    <string name="premium_feature_3">No daily limits</string>
+    <string name="premium_subscribe_google">Subscribe via Google Play</string>
+    <string name="premium_subscribe_stripe">Subscribe via Card</string>
+    <string name="premium_restore">Restore Purchase</string>
+    <string name="premium_active">Premium Active</string>
+    <string name="premium_expires">Expires: %1$s</string>
+
+    <!-- Recording States -->
+    <string name="recording_start">Tap to start recording</string>
+    <string name="recording_listening">Listening…</string>
+    <string name="recording_processing">Processing…</string>
+    <string name="recording_done">Done!</string>
+    <string name="recording_error">Error occurred</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_name">Whisper Everywhere Service</string>
+    <string name="notification_channel_description">Shows when the floating bubble is active</string>
+    <string name="notification_title">Whisper Everywhere Active</string>
+    <string name="notification_text">Tap the bubble to start voice input</string>
+
+    <!-- Errors -->
+    <string name="error_no_api_key">Please set your OpenAI API key in Settings</string>
+    <string name="error_no_network">No internet connection</string>
+    <string name="error_api_failed">Transcription failed. Please try again.</string>
+    <string name="error_limit_reached">Daily free limit reached. Upgrade to Premium for unlimited access.</string>
+    <string name="error_no_accessibility">Please enable Accessibility Service to use text injection</string>
+    <string name="error_no_overlay">Please grant overlay permission</string>
+    <string name="error_recording_failed">Recording failed. Please check microphone permission.</string>
+
+    <!-- Buttons -->
+    <string name="btn_grant_permission">Grant Permission</string>
+    <string name="btn_open_settings">Open Settings</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_upgrade">Upgrade to Premium</string>
+    <string name="btn_try_again">Try Again</string>
+</resources>

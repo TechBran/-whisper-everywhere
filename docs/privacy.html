@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - Whisper Everywhere</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fafafa;
+        }
+        h1 {
+            color: #1a73e8;
+            border-bottom: 2px solid #1a73e8;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #202124;
+            margin-top: 30px;
+        }
+        h3 {
+            color: #5f6368;
+        }
+        p, li {
+            color: #5f6368;
+        }
+        .highlight {
+            background-color: #e8f0fe;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .last-updated {
+            color: #9aa0a6;
+            font-size: 0.9em;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Privacy Policy</h1>
+    <p class="last-updated">Last Updated: November 28, 2024</p>
+
+    <div class="highlight">
+        <strong>Summary:</strong> Whisper Everywhere is designed with privacy as a core principle. Your audio recordings are processed directly through OpenAI's servers using YOUR personal API key. We do not collect, store, or have access to your recordings or transcriptions.
+    </div>
+
+    <h2>1. Introduction</h2>
+    <p>Welcome to Whisper Everywhere ("we," "our," or "us"). This Privacy Policy explains how our mobile application ("App") handles your information. We are committed to protecting your privacy and being transparent about our practices.</p>
+
+    <h2>2. Information We Do NOT Collect</h2>
+    <p>Unlike many apps, Whisper Everywhere is built on a "Bring Your Own Key" (BYOK) model, which means:</p>
+    <ul>
+        <li><strong>We do not collect your audio recordings.</strong> All voice data is sent directly from your device to OpenAI's servers.</li>
+        <li><strong>We do not collect your transcriptions.</strong> The transcribed text goes directly from OpenAI to your device.</li>
+        <li><strong>We do not collect your OpenAI API key.</strong> Your API key is stored securely on your device using Android's EncryptedSharedPreferences and never transmitted to us.</li>
+        <li><strong>We do not collect personal information.</strong> We don't require account creation, email addresses, or any personal identifiers.</li>
+        <li><strong>We do not use analytics or tracking.</strong> There are no third-party analytics SDKs in our app.</li>
+    </ul>
+
+    <h2>3. Information Stored on Your Device</h2>
+    <p>The following data is stored locally on your device only:</p>
+    <ul>
+        <li><strong>OpenAI API Key:</strong> Stored using Android's EncryptedSharedPreferences for secure, encrypted storage.</li>
+        <li><strong>App Preferences:</strong> Settings like vibration feedback preferences and bubble position.</li>
+        <li><strong>Usage Statistics:</strong> Basic usage counts (transcription count, total time) stored locally for your reference only.</li>
+        <li><strong>Temporary Audio Files:</strong> Audio recordings are temporarily stored during processing and immediately deleted after transcription is complete.</li>
+    </ul>
+
+    <h2>4. How Your Data Flows</h2>
+    <p>When you use Whisper Everywhere:</p>
+    <ol>
+        <li>You record audio using your device's microphone.</li>
+        <li>The audio file is sent directly from your device to OpenAI's Whisper API using YOUR API key.</li>
+        <li>OpenAI processes the audio and returns the transcription directly to your device.</li>
+        <li>The transcription is either inserted into your current text field or copied to your clipboard.</li>
+        <li>The temporary audio file is immediately deleted from your device.</li>
+    </ol>
+    <p><strong>At no point does your audio or transcription data pass through our servers.</strong></p>
+
+    <h2>5. Third-Party Services</h2>
+    <h3>OpenAI</h3>
+    <p>Whisper Everywhere uses OpenAI's Whisper API for speech-to-text transcription. When you use the app, your audio is sent to OpenAI for processing. OpenAI's handling of this data is governed by their privacy policy and API terms of service.</p>
+    <p>We encourage you to review OpenAI's privacy practices at: <a href="https://openai.com/privacy">https://openai.com/privacy</a></p>
+    <p>Key points about OpenAI's API data handling:</p>
+    <ul>
+        <li>OpenAI states that data submitted through the API is not used to train their models by default.</li>
+        <li>API data is retained for up to 30 days for abuse monitoring, then deleted.</li>
+        <li>You maintain ownership of your input and output data.</li>
+    </ul>
+
+    <h2>6. Permissions We Request</h2>
+    <p>The App requests the following permissions, used only for the stated purposes:</p>
+    <ul>
+        <li><strong>Microphone (RECORD_AUDIO):</strong> To record your voice for transcription. Audio is never stored permanently or sent anywhere except to OpenAI for processing.</li>
+        <li><strong>Display Over Other Apps (SYSTEM_ALERT_WINDOW):</strong> To show the floating bubble overlay that allows voice input from any app.</li>
+        <li><strong>Accessibility Service:</strong> To detect text fields and inject transcribed text into apps. This service only monitors for text field focus events and performs text injection when requested.</li>
+        <li><strong>Notification Access (Optional):</strong> To detect media playback for the media transcription feature. This permission is optional and only used to detect when audio/video is playing.</li>
+        <li><strong>Internet:</strong> To communicate with OpenAI's Whisper API for transcription.</li>
+        <li><strong>Vibration:</strong> To provide haptic feedback during recording (optional, can be disabled).</li>
+    </ul>
+
+    <h2>7. Data Security</h2>
+    <p>We take the security of your data seriously:</p>
+    <ul>
+        <li>Your API key is stored using Android's EncryptedSharedPreferences, which provides strong encryption.</li>
+        <li>All communication with OpenAI's servers uses HTTPS encryption.</li>
+        <li>Temporary audio files are deleted immediately after processing.</li>
+        <li>No data is stored on external servers or cloud services controlled by us.</li>
+    </ul>
+
+    <h2>8. Children's Privacy</h2>
+    <p>Whisper Everywhere is not directed at children under the age of 13. We do not knowingly collect personal information from children. Since we don't collect personal information from any users, this naturally extends to children as well.</p>
+
+    <h2>9. Changes to This Privacy Policy</h2>
+    <p>We may update this Privacy Policy from time to time. We will notify you of any changes by updating the "Last Updated" date at the top of this policy. We encourage you to review this Privacy Policy periodically.</p>
+
+    <h2>10. Your Rights</h2>
+    <p>Since we don't collect or store your personal data on our servers, traditional data rights (access, deletion, portability) don't apply in the conventional sense. However:</p>
+    <ul>
+        <li>You can delete your API key from the app at any time by clearing app data.</li>
+        <li>You can revoke your OpenAI API key through your OpenAI account.</li>
+        <li>You can uninstall the app to remove all locally stored data.</li>
+    </ul>
+
+    <h2>11. Contact Us</h2>
+    <p>If you have any questions about this Privacy Policy or our privacy practices, please contact us at:</p>
+    <p>Email: privacy@whispereverywhere.com</p>
+
+    <h2>12. Consent</h2>
+    <p>By using Whisper Everywhere, you consent to this Privacy Policy and agree to its terms.</p>
+
+</body>
+</html>

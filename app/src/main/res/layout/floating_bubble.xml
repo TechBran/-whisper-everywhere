@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bubble_root"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:padding="8dp">
+
+    <!-- Processing ring (rotating animation when processing) -->
+    <ImageView
+        android:id="@+id/processing_ring"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:layout_gravity="center"
+        android:src="@drawable/ic_processing_ring"
+        android:visibility="gone" />
+
+    <!-- Main bubble container -->
+    <FrameLayout
+        android:id="@+id/bubble_container"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bubble_background_idle"
+        android:elevation="8dp">
+
+        <!-- Bubble icon (shown when not recording) -->
+        <ImageView
+            android:id="@+id/bubble_icon"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_mic" />
+
+        <!-- Waveform visualizer (shown when recording) -->
+        <com.whispereverywhere.ui.components.WaveformView
+            android:id="@+id/waveform_view"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+
+        <!-- Processing time text (shown during processing) -->
+        <TextView
+            android:id="@+id/processing_time_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+</FrameLayout>

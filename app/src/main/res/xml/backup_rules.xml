@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include domain="sharedpref" path="." />
+    <exclude domain="sharedpref" path="encrypted_api_key.xml" />
+    <exclude domain="no_backup" path="." />
+    <include domain="database" path="." />
+</full-backup-content>
