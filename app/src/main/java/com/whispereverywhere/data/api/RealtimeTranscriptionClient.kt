@@ -36,9 +36,10 @@ class RealtimeTranscriptionClient(
     fun connect(language: String?, listener: Listener) {
         this.listener = listener
         val request = Request.Builder()
+            // GA realtime transcription interface. The old beta header
+            // (OpenAI-Beta: realtime=v1) is no longer supported and is rejected.
             .url("wss://api.openai.com/v1/realtime?intent=transcription")
             .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("OpenAI-Beta", "realtime=v1")
             .build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
