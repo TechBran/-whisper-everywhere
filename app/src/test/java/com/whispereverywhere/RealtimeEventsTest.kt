@@ -18,8 +18,16 @@ class RealtimeEventsTest {
         assertTrue(json.contains("\"type\":\"session.update\""))
         assertTrue(json.contains("\"transcription\""))
         assertTrue(json.contains("gpt-realtime-whisper"))
-        assertTrue(json.contains("\"server_vad\""))
         assertTrue(json.contains("\"en\""))
+        // gpt-realtime-whisper uses manual commits, not server VAD.
+        assertTrue(!json.contains("turn_detection"))
+        assertTrue(json.contains("\"delay\""))
+    }
+
+    @Test
+    fun sessionUpdate_uses_given_delay() {
+        val json = RealtimeEventFactory.sessionUpdate("gpt-realtime-whisper", "en", delay = "minimal")
+        assertTrue(json.contains("\"delay\":\"minimal\""))
     }
 
     @Test

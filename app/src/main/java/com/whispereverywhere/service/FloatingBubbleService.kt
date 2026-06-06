@@ -36,6 +36,7 @@ import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.data.api.RealtimeTranscriptionClient
 import com.whispereverywhere.ui.components.BarWaveformView
+import com.whispereverywhere.util.SpeechSegmenter
 import com.whispereverywhere.util.StreamingAudioRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,7 @@ class FloatingBubbleService : Service(),
 
     private lateinit var audioRecorder: StreamingAudioRecorder
     private var realtimeClient: RealtimeTranscriptionClient? = null
+    private val speechSegmenter = SpeechSegmenter()
     private lateinit var mediaDetector: MediaSessionDetector
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -572,10 +574,17 @@ class FloatingBubbleService : Service(),
                         teardownRealtime(); updateBubbleState(BubbleState.ERROR)
                         return@launch
                     }
+                    speechSegmenter.reset()
                     updateBubbleState(BubbleState.RECORDING)
                     amplitudeJob = serviceScope.launch {
                         audioRecorder.amplitude.collectLatest { amp ->
-                            if (currentState == BubbleState.RECORDING) waveformView.updateAmplitude(amp)
+                            if (currentState != BubbleState.RECORDING) return@collectLatest
+                            waveformView.updateAmplitude(amp)
+                            // gpt-realtime-whisper has no server VAD: commit on a natural
+                            // pause (or max segment) so each chunk is transcribed and injected.
+                            if (speechSegmenter.onAmplitude(amp, System.currentTimeMillis())) {
+                                realtimeClient?.commit()
+                            }
                         }
                     }
                 }
@@ -603,7 +612,11 @@ class FloatingBubbleService : Service(),
         audioRecorder.stop()
 
         updateBubbleState(BubbleState.FINALIZING)
-        realtimeClient?.commit()
+        // Flush any speech captured since the last pause-commit.
+        if (speechSegmenter.hasPendingSpeech()) {
+            realtimeClient?.commit()
+        }
+        speechSegmenter.reset()
 
         // Give the server a moment to emit the final completed event, then close.
         serviceScope.launch {

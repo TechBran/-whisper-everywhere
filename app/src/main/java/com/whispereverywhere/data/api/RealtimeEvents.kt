@@ -17,12 +17,16 @@ sealed class ServerEvent {
 }
 
 /**
- * Builds client → server JSON for OpenAI realtime transcription (GA shape).
- * If the live API confirms the beta shape, change only the string literals here.
+ * Builds client → server JSON for OpenAI realtime transcription (GA interface).
+ *
+ * gpt-realtime-whisper does NOT support server-side turn detection, so we omit
+ * `turn_detection` entirely and drive transcription with manual
+ * `input_audio_buffer.commit` calls (see [commit]). `delay` is the model's
+ * latency/accuracy dial: minimal | low | medium | high | xhigh.
  */
 object RealtimeEventFactory {
 
-    fun sessionUpdate(model: String, language: String?): String =
+    fun sessionUpdate(model: String, language: String?, delay: String = "low"): String =
         buildJsonObject {
             put("type", "session.update")
             putJsonObject("session") {
@@ -36,10 +40,9 @@ object RealtimeEventFactory {
                         putJsonObject("transcription") {
                             put("model", model)
                             if (language != null) put("language", language)
+                            put("delay", delay)
                         }
-                        putJsonObject("turn_detection") {
-                            put("type", "server_vad")
-                        }
+                        // No turn_detection: gpt-realtime-whisper requires manual commits.
                     }
                 }
             }
