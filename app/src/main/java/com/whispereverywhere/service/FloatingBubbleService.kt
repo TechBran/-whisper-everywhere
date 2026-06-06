@@ -8,6 +8,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
@@ -28,14 +29,14 @@ import android.view.animation.RotateAnimation
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.whispereverywhere.MainActivity
 import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
-import com.whispereverywhere.data.api.TranscriptionResult
-import com.whispereverywhere.data.api.WhisperApiService
-import com.whispereverywhere.ui.components.WaveformView
-import com.whispereverywhere.util.AudioRecorder
+import com.whispereverywhere.data.api.RealtimeTranscriptionClient
+import com.whispereverywhere.ui.components.BarWaveformView
+import com.whispereverywhere.util.StreamingAudioRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,11 +56,11 @@ class FloatingBubbleService : Service(),
     private lateinit var bubbleContainer: FrameLayout
     private lateinit var bubbleIcon: ImageView
     private lateinit var processingRing: ImageView
-    private lateinit var waveformView: WaveformView
+    private lateinit var waveformView: BarWaveformView
     private lateinit var processingTimeText: android.widget.TextView
 
-    private lateinit var audioRecorder: AudioRecorder
-    private lateinit var whisperApi: WhisperApiService
+    private lateinit var audioRecorder: StreamingAudioRecorder
+    private var realtimeClient: RealtimeTranscriptionClient? = null
     private lateinit var mediaDetector: MediaSessionDetector
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -104,12 +105,19 @@ class FloatingBubbleService : Service(),
         super.onCreate()
 
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        audioRecorder = AudioRecorder(this)
-        whisperApi = WhisperApiService(app.preferencesManager.apiKey)
+        audioRecorder = StreamingAudioRecorder(this)
         mediaDetector = MediaSessionDetector(this)
 
         createBubbleView()
-        startForeground(WhisperEverywhereApp.NOTIFICATION_ID, createNotification())
+        
+        // Start foreground service with correct type for Android 14
+        val notification = createNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(this, WhisperEverywhereApp.NOTIFICATION_ID, notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(WhisperEverywhereApp.NOTIFICATION_ID, notification)
+        }
 
         // Register for text field focus events
         registerFocusListener()
@@ -161,7 +169,8 @@ class FloatingBubbleService : Service(),
         pulseAnimator?.cancel()
         showAnimator?.cancel()
         hideAnimator?.cancel()
-        audioRecorder.cleanup()
+        audioRecorder.stop()
+        teardownRealtime()
         try {
             windowManager.removeView(bubbleView)
         } catch (e: Exception) {
@@ -496,6 +505,21 @@ class FloatingBubbleService : Service(),
         return false
     }
 
+    private fun setBubbleWidth(dp: Int) {
+        val target = (dp * resources.displayMetrics.density).toInt()
+        val lp = bubbleContainer.layoutParams
+        if (lp.width == target) return
+        ValueAnimator.ofInt(lp.width, target).apply {
+            duration = 180
+            interpolator = AccelerateDecelerateInterpolator()
+            addUpdateListener {
+                lp.width = it.animatedValue as Int
+                bubbleContainer.layoutParams = lp
+            }
+            start()
+        }
+    }
+
     private fun snapToEdge() {
         val displayMetrics = resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
@@ -519,99 +543,82 @@ class FloatingBubbleService : Service(),
         when (currentState) {
             BubbleState.IDLE -> startRecording()
             BubbleState.RECORDING -> stopRecording()
-            BubbleState.PROCESSING -> { /* Ignore */ }
+            BubbleState.CONNECTING, BubbleState.FINALIZING, BubbleState.PROCESSING -> { /* ignore */ }
             BubbleState.ERROR -> updateBubbleState(BubbleState.IDLE)
         }
     }
 
     private fun startRecording() {
         if (!app.preferencesManager.hasApiKey()) {
-            vibrateError()
-            showToast("Please set your OpenAI API key in Settings")
-            return
+            vibrateError(); showToast("Please set your OpenAI API key in Settings"); return
         }
-
         if (!audioRecorder.hasPermission()) {
-            vibrateError()
-            showToast("Microphone permission required")
-            return
+            vibrateError(); showToast("Microphone permission required"); return
         }
 
-        updateBubbleState(BubbleState.RECORDING)
+        updateBubbleState(BubbleState.CONNECTING)
         vibrateStart()
 
-        recordingJob = serviceScope.launch {
-            val result = audioRecorder.startRecording()
-            if (result.isFailure) {
-                updateBubbleState(BubbleState.ERROR)
-                showToast("Recording failed: ${result.exceptionOrNull()?.message}")
-            }
-        }
+        val client = RealtimeTranscriptionClient(app.preferencesManager.apiKey)
+        realtimeClient = client
 
-        amplitudeJob = serviceScope.launch {
-            audioRecorder.amplitude.collectLatest { amplitude ->
-                if (currentState == BubbleState.RECORDING) {
-                    waveformView.updateAmplitude(amplitude)
+        client.connect(app.preferencesManager.getLanguageForApi(), object : RealtimeTranscriptionClient.Listener {
+            override fun onOpen() {
+                serviceScope.launch(Dispatchers.Main) {
+                    if (currentState != BubbleState.CONNECTING) return@launch
+                    val started = audioRecorder.start { chunk -> client.sendAudio(chunk) }
+                    if (started.isFailure) {
+                        showToast("Recording failed: ${started.exceptionOrNull()?.message}")
+                        teardownRealtime(); updateBubbleState(BubbleState.ERROR)
+                        return@launch
+                    }
+                    updateBubbleState(BubbleState.RECORDING)
+                    amplitudeJob = serviceScope.launch {
+                        audioRecorder.amplitude.collectLatest { amp ->
+                            if (currentState == BubbleState.RECORDING) waveformView.updateAmplitude(amp)
+                        }
+                    }
                 }
             }
-        }
+            override fun onDelta(text: String) { /* live cue only; not injected */ }
+            override fun onCompleted(text: String) {
+                val trimmed = text.trim()
+                if (trimmed.isNotEmpty()) {
+                    serviceScope.launch(Dispatchers.Main) { handleTranscriptionResult(trimmed) }
+                }
+            }
+            override fun onError(message: String) {
+                serviceScope.launch(Dispatchers.Main) {
+                    showToast(message); teardownRealtime(); updateBubbleState(BubbleState.ERROR)
+                }
+            }
+            override fun onClosed() { /* expected on manual stop */ }
+        })
     }
 
     private fun stopRecording() {
         vibrateStop()
+        amplitudeJob?.cancel(); amplitudeJob = null
+        waveformView.stop()
+        audioRecorder.stop()
 
-        amplitudeJob?.cancel()
-        amplitudeJob = null
-        waveformView.stopAnimation()
+        updateBubbleState(BubbleState.FINALIZING)
+        realtimeClient?.commit()
 
-        val durationMs = audioRecorder.stopRecording()
-        val durationSeconds = (durationMs / 1000).toInt()
-
-        if (durationSeconds < 1) {
-            updateBubbleState(BubbleState.IDLE)
-            showToast("Recording too short")
-            return
-        }
-
-        app.usageTracker.addUsage(durationSeconds)
-        app.usageTracker.addToTotalUsage(durationSeconds)
-        app.usageTracker.incrementTranscriptionCount()
-
-        updateBubbleState(BubbleState.PROCESSING)
-
+        // Give the server a moment to emit the final completed event, then close.
         serviceScope.launch {
-            val audioFile = audioRecorder.getRecordingFile()
-            if (audioFile == null || !audioFile.exists()) {
-                updateBubbleState(BubbleState.ERROR)
-                showToast("Audio file not found")
-                return@launch
+            delay(1500)
+            teardownRealtime()
+            if (currentState == BubbleState.FINALIZING) {
+                vibrateSuccess()
+                updateBubbleState(BubbleState.IDLE)
             }
-
-            whisperApi.updateApiKey(app.preferencesManager.apiKey)
-
-            // Get the selected language (null means auto-detect)
-            val language = app.preferencesManager.getLanguageForApi()
-
-            when (val result = whisperApi.transcribe(audioFile, language)) {
-                is TranscriptionResult.Success -> {
-                    val text = result.text.trim()
-                    if (text.isNotEmpty()) {
-                        handleTranscriptionResult(text)
-                        updateBubbleState(BubbleState.IDLE)
-                        vibrateSuccess()
-                    } else {
-                        updateBubbleState(BubbleState.ERROR)
-                        showToast("No speech detected")
-                    }
-                }
-                is TranscriptionResult.Error -> {
-                    updateBubbleState(BubbleState.ERROR)
-                    showToast(result.message)
-                }
-            }
-
-            audioFile.delete()
         }
+    }
+
+    private fun teardownRealtime() {
+        realtimeClient?.close()
+        realtimeClient = null
     }
 
     /**
@@ -620,12 +627,21 @@ class FloatingBubbleService : Service(),
     private fun handleTranscriptionResult(text: String) {
         when (currentContext) {
             BubbleContext.TEXT_FIELD -> {
-                // Inject text into the focused field
-                val injected = WhisperAccessibilityService.injectText(text)
-                if (!injected) {
-                    // Fallback to clipboard if injection failed
-                    copyToClipboard(text)
-                    showToast("Text copied to clipboard")
+                // Use the new injection method with detailed result
+                val result = WhisperAccessibilityService.injectTextWithResult(text)
+                when (result) {
+                    WhisperAccessibilityService.InjectionResult.SUCCESS -> {
+                        // Text was successfully injected - no toast needed
+                    }
+                    WhisperAccessibilityService.InjectionResult.CLIPBOARD_ONLY -> {
+                        // Text is in clipboard but couldn't be pasted automatically
+                        showToast("Text copied - long press to paste")
+                    }
+                    WhisperAccessibilityService.InjectionResult.FAILED -> {
+                        // Complete failure - try one more time to copy
+                        copyToClipboard(text)
+                        showToast("Text copied to clipboard")
+                    }
                 }
             }
             BubbleContext.MEDIA_PLAYBACK, BubbleContext.NONE -> {
@@ -659,37 +675,52 @@ class FloatingBubbleService : Service(),
                     bubbleIcon.visibility = View.VISIBLE
                     bubbleIcon.setImageResource(R.drawable.ic_mic)
                     waveformView.visibility = View.GONE
-                    waveformView.stopAnimation()
+                    waveformView.stop()
+                    setBubbleWidth(56)
                     bubbleContainer.setBackgroundResource(R.drawable.bubble_background_idle)
                     processingRing.visibility = View.GONE
                     processingRing.clearAnimation()
                     processingTimeText.visibility = View.GONE
                     stopProcessingTimer()
-
                     if (shouldHideOnIdle) {
                         shouldHideOnIdle = false
-                        // Check if media is still playing
                         if (mediaDetector.isCurrentlyPlaying()) {
-                            currentContext = BubbleContext.MEDIA_PLAYBACK
-                            showBubbleForMedia()
+                            currentContext = BubbleContext.MEDIA_PLAYBACK; showBubbleForMedia()
                         } else {
-                            currentContext = BubbleContext.NONE
-                            hideBubble()
+                            currentContext = BubbleContext.NONE; hideBubble()
                         }
                     }
                 }
+                BubbleState.CONNECTING -> {
+                    bubbleIcon.visibility = View.GONE
+                    waveformView.visibility = View.GONE
+                    processingRing.visibility = View.VISIBLE
+                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_processing)
+                    startRotationAnimation()
+                }
                 BubbleState.RECORDING -> {
                     bubbleIcon.visibility = View.GONE
-                    waveformView.visibility = View.VISIBLE
-                    waveformView.startAnimation()
-                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_recording)
                     processingRing.visibility = View.GONE
+                    processingRing.clearAnimation()
+                    setBubbleWidth(160)
+                    waveformView.visibility = View.VISIBLE
+                    waveformView.start()
+                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_recording)
                     startPulseAnimation()
+                }
+                BubbleState.FINALIZING -> {
+                    pulseAnimator?.cancel()
+                    waveformView.stop()
+                    waveformView.visibility = View.GONE
+                    setBubbleWidth(56)
+                    processingRing.visibility = View.VISIBLE
+                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_processing)
+                    startRotationAnimation()
                 }
                 BubbleState.PROCESSING -> {
                     bubbleIcon.visibility = View.GONE
                     waveformView.visibility = View.GONE
-                    waveformView.stopAnimation()
+                    waveformView.stop()
                     bubbleContainer.setBackgroundResource(R.drawable.bubble_background_processing)
                     processingRing.visibility = View.VISIBLE
                     processingTimeText.visibility = View.VISIBLE
@@ -700,7 +731,7 @@ class FloatingBubbleService : Service(),
                     bubbleIcon.visibility = View.VISIBLE
                     bubbleIcon.setImageResource(R.drawable.ic_error)
                     waveformView.visibility = View.GONE
-                    waveformView.stopAnimation()
+                    waveformView.stop()
                     bubbleContainer.setBackgroundResource(R.drawable.bubble_background_error)
                     processingRing.visibility = View.GONE
                     processingRing.clearAnimation()
@@ -832,7 +863,7 @@ class FloatingBubbleService : Service(),
     }
 
     enum class BubbleState {
-        IDLE, RECORDING, PROCESSING, ERROR
+        IDLE, CONNECTING, RECORDING, FINALIZING, PROCESSING, ERROR
     }
 
     enum class BubbleContext {
