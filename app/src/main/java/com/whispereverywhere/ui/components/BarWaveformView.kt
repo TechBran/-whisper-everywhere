@@ -10,105 +10,135 @@ import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import android.view.animation.LinearInterpolator
-import kotlin.math.abs
-import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
- * Reactive EQ waveform: ~15 bars with spring-style settling, red→purple→blue
- * gradient, idle shimmer when quiet and sharp jumps on amplitude peaks.
+ * Modern scrolling waveform (voice-memo / pro-recorder style).
+ *
+ * The live mic level enters as a new bar on the RIGHT and the whole trace
+ * scrolls LEFT at a steady cadence, leaving a short visible history of what was
+ * just said. Bars are mirrored around the vertical center and tinted with the
+ * app's red→purple→blue gradient. Unlike the old version there is no idle
+ * "shimmer" overriding the signal — what you see is your actual voice.
+ *
  * Drive it with [updateAmplitude] (0..32767); call [start]/[stop] around use.
+ * Feel is controlled entirely by the constants in the companion object.
  */
 class BarWaveformView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
 ) : View(context, attrs, defStyle) {
 
-    private val barCount = 15
-    private val heights = FloatArray(barCount) { 0.1f }
-    private val targets = FloatArray(barCount) { 0.1f }
-
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-
     private val gradientColors = intArrayOf(
         Color.parseColor("#EF4444"), Color.parseColor("#EC4899"),
         Color.parseColor("#8B5CF6"), Color.parseColor("#3B82F6")
     )
 
-    private var barWidth = 0f
-    private var gap = 0f
-    private var maxH = 0f
-    private var minH = 0f
-    private var radius = 0f
+    private var barWidthPx = 0f
+    private var gapPx = 0f
+    private var slotPx = 0f
+    private var radiusPx = 0f
 
-    private var phase = 0f
-    private var animating = false
+    /** Normalized levels (0..1); index 0 = oldest (left edge), last = newest (right edge). */
+    private var levels = FloatArray(0)
+
+    /** Latest smoothed mic level; pushed into the trace each scroll frame. */
+    private var currentLevel = BASELINE
+
+    private var running = false
     private var ticker: ValueAnimator? = null
-    private val spring = 0.4f
+    private var lastPushMs = 0L
+
+    private val density get() = resources.displayMetrics.density
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
-        gap = (w * 0.18f) / (barCount + 1)
-        barWidth = (w - gap * (barCount + 1)) / barCount
-        maxH = h * 0.9f
-        minH = h * 0.1f
-        radius = barWidth / 2
+        barWidthPx = BAR_WIDTH_DP * density
+        gapPx = GAP_DP * density
+        slotPx = barWidthPx + gapPx
+        radiusPx = barWidthPx / 2f
+        val count = (w / slotPx).toInt().coerceAtLeast(1)
+        levels = FloatArray(count) { BASELINE }
         paint.shader = LinearGradient(0f, 0f, w.toFloat(), 0f, gradientColors, null, Shader.TileMode.CLAMP)
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val cy = height / 2f
-        for (i in 0 until barCount) {
-            heights[i] += (targets[i] - heights[i]) * spring
-            val bh = minH + (maxH - minH) * heights[i]
-            val left = gap + i * (barWidth + gap)
-            canvas.drawRoundRect(left, cy - bh / 2, left + barWidth, cy + bh / 2, radius, radius, paint)
+        val maxH = height * 0.92f
+        for (i in levels.indices) {
+            val barH = (maxH * levels[i]).coerceAtLeast(barWidthPx) // never thinner than a dot
+            val left = i * slotPx
+            canvas.drawRoundRect(left, cy - barH / 2f, left + barWidthPx, cy + barH / 2f, radiusPx, radiusPx, paint)
         }
-        if (animating) invalidate()
     }
 
+    /** Feed a live amplitude (0..32767). Updates the newest level; scrolling is time-driven. */
     fun updateAmplitude(amplitude: Int) {
-        val norm = ((amplitude / 32767f) * 1.6f).coerceIn(0f, 1f)
-        for (i in 0 until barCount) {
-            val center = 1f - (abs(i - barCount / 2f) / (barCount / 2f)) * 0.35f
-            val wiggle = sin((phase + i * 0.5f).toDouble()).toFloat() * 0.12f
-            targets[i] = (norm * center + wiggle).coerceIn(0.06f, 1f)
-        }
-        phase += 0.25f
+        val gated = if (amplitude < NOISE_FLOOR) 0 else amplitude
+        val raw = (gated / 32767f).coerceIn(0f, 1f)
+        val level = sqrt(raw * GAIN).coerceIn(0f, 1f)
+        currentLevel += (level - currentLevel) * SMOOTHING
+    }
+
+    private fun pushLevel(level: Float) {
+        if (levels.isEmpty()) return
+        System.arraycopy(levels, 1, levels, 0, levels.size - 1)
+        levels[levels.size - 1] = level.coerceAtLeast(BASELINE)
         invalidate()
     }
 
     fun start() {
-        animating = true
+        running = true
+        lastPushMs = 0L
         ticker?.cancel()
-        ticker = ValueAnimator.ofFloat(0f, (Math.PI * 2).toFloat()).apply {
-            duration = 1600
+        // Repeats at vsync; we throttle pushes to PUSH_INTERVAL_MS for a controlled scroll speed.
+        ticker = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1000
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener {
-                phase = it.animatedValue as Float
-                for (i in 0 until barCount) {
-                    if (targets[i] < 0.14f) {
-                        val center = 1f - (abs(i - barCount / 2f) / (barCount / 2f)) * 0.4f
-                        targets[i] = (0.1f + 0.07f * center *
-                            sin((phase + i * 0.6f).toDouble()).toFloat()).coerceAtLeast(0.06f)
-                    }
+                if (!running) return@addUpdateListener
+                val now = System.currentTimeMillis()
+                if (now - lastPushMs >= PUSH_INTERVAL_MS) {
+                    lastPushMs = now
+                    pushLevel(currentLevel)
                 }
-                invalidate()
             }
             start()
         }
     }
 
     fun stop() {
-        animating = false
+        running = false
         ticker?.cancel()
         ticker = null
-        for (i in 0 until barCount) targets[i] = 0.06f
+        currentLevel = BASELINE
+        if (levels.isNotEmpty()) levels.fill(BASELINE)
         invalidate()
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         stop()
+    }
+
+    companion object {
+        /** Bar geometry. */
+        private const val BAR_WIDTH_DP = 3f
+        private const val GAP_DP = 2f
+
+        /** Resting height of a bar when silent (fraction of view height). */
+        private const val BASELINE = 0.05f
+
+        /** Loudness mapping: noise gate, gain, and perceptual curve (sqrt). Tune these for feel. */
+        private const val NOISE_FLOOR = 350      // amplitudes below this read as silence
+        private const val GAIN = 4f              // higher = bars react to quieter speech
+
+        /** Response smoothing toward the newest level (0..1; higher = snappier). */
+        private const val SMOOTHING = 0.5f
+
+        /** Scroll speed: one new bar every this many ms (~22 bars/sec). */
+        private const val PUSH_INTERVAL_MS = 45L
     }
 }
