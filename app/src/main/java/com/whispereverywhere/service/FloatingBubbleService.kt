@@ -92,11 +92,11 @@ class FloatingBubbleService : Service(),
     private var currentContext: BubbleContext = BubbleContext.NONE
     private var mediaTitle: String? = null
 
-    // Accumulates transcription for the entire recording session when not using accessibility text injection
-    private val sessionTranscription = java.lang.StringBuilder()
-
     // Bounded-memory sink for non-text-field sessions (Task 7)
     private var transcriptSink: com.whispereverywhere.transcription.TranscriptSink? = null
+
+    // Tracks the preview-collector coroutine so a second recording doesn't leave two collectors running (Fix I1)
+    private var previewJob: kotlinx.coroutines.Job? = null
 
     private lateinit var params: WindowManager.LayoutParams
 
@@ -590,7 +590,6 @@ class FloatingBubbleService : Service(),
                         return@launch
                     }
                     speechSegmenter.reset()
-                    sessionTranscription.clear()
 
                     // Show preview text bubble if we are not injecting into a text field
                     if (currentContext != BubbleContext.TEXT_FIELD) {
@@ -603,7 +602,8 @@ class FloatingBubbleService : Service(),
                         val sessionFile = java.io.File(filesDir, "transcript_session.txt").apply { if (exists()) delete() }
                         val sink = com.whispereverywhere.transcription.TranscriptSink(sessionFile)
                         transcriptSink = sink
-                        serviceScope.launch(Dispatchers.Main) {
+                        previewJob?.cancel()
+                        previewJob = serviceScope.launch(Dispatchers.Main) {
                             sink.preview.collectLatest { text ->
                                 transcriptionEditText.setText(text)
                                 transcriptionEditText.setSelection(text.length)
@@ -697,6 +697,7 @@ class FloatingBubbleService : Service(),
                 // If we were transcribing without injecting, read the full text from the sink's
                 // session file (bounded memory; Task 7) and copy it to the clipboard.
                 if (currentContext != BubbleContext.TEXT_FIELD) {
+                    previewJob?.cancel(); previewJob = null
                     transcriptSink?.let { sink ->
                         sink.close()
                         val full = sink.fullTextFile().readText().trim()
@@ -707,7 +708,6 @@ class FloatingBubbleService : Service(),
                         }
                     }
                     transcriptSink = null
-                    sessionTranscription.clear()
                 }
 
                 vibrateSuccess()
@@ -717,6 +717,8 @@ class FloatingBubbleService : Service(),
     }
 
     private fun teardownRealtime() {
+        previewJob?.cancel(); previewJob = null
+        transcriptSink?.close(); transcriptSink = null
         (transcriptionEngine as? LocalWhisperEngine)?.releaseContext()
         transcriptionEngine?.close()
         transcriptionEngine = null
@@ -753,12 +755,8 @@ class FloatingBubbleService : Service(),
                 }
             }
             BubbleContext.MEDIA_PLAYBACK, BubbleContext.NONE -> {
-                // We no longer strictly need sessionTranscription for UI since transcriptionEditText is the source of truth,
-                // but we keep it here to build the full text out of sight just in case, though for final copy we will grab from the edit box.
-                if (sessionTranscription.isNotEmpty() && sessionTranscription.last() != ' ') {
-                    sessionTranscription.append(" ")
-                }
-                sessionTranscription.append(text)
+                // Finalized segments flow exclusively through transcriptSink?.append() in onCompleted;
+                // no unbounded accumulation here.
             }
         }
     }
