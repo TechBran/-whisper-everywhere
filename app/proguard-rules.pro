@@ -32,11 +32,17 @@
 # Keep notification listener
 -keep class com.whispereverywhere.service.MediaNotificationListener { *; }
 
-# Suppress warnings for errorprone annotations (used by OkHttp/Guava)
+# Suppress warnings for errorprone annotations (used by Tink/Guava)
 -dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue
 -dontwarn com.google.errorprone.annotations.CheckReturnValue
 -dontwarn com.google.errorprone.annotations.Immutable
 -dontwarn com.google.errorprone.annotations.RestrictedApi
+
+# Tink / androidx.security EncryptedSharedPreferences references these compile-only
+# annotations, which are absent from the Android classpath. They are not needed at
+# runtime, so suppress the R8 missing-class errors (per R8's own missing_rules.txt).
+-dontwarn javax.annotation.Nullable
+-dontwarn javax.annotation.concurrent.GuardedBy
 
 # --- Native whisper.cpp JNI bridge (Task 1) ---
 -keepclasseswithmembernames class * { native <methods>; }

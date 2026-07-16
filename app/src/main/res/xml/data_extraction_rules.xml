@@ -3,7 +3,6 @@
     <cloud-backup>
         <include domain="sharedpref" path="." />
         <exclude domain="sharedpref" path="encrypted_api_key.xml" />
-        <exclude domain="no_backup" path="." />
     </cloud-backup>
     <device-transfer>
         <include domain="sharedpref" path="." />
