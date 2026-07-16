@@ -118,8 +118,38 @@ fun SettingsScreen(
 
             // Permissions Section
             SettingsSection(title = "Permissions") {
+                val hasMicrophone = androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, android.Manifest.permission.RECORD_AUDIO
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
                 val hasOverlay = Settings.canDrawOverlays(context)
                 val hasAccessibility = WhisperAccessibilityService.isEnabled()
+                val hasNotificationListener = com.whispereverywhere.service.MediaNotificationListener.isEnabled()
+
+                SettingsItem(
+                    icon = Icons.Filled.Mic,
+                    title = "Microphone Permission",
+                    subtitle = if (hasMicrophone) "Granted" else "Required to record audio",
+                    trailing = {
+                        if (hasMicrophone) {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = Success,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        } else {
+                            TextButton(onClick = {
+                                val intent = Intent(
+                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                                context.startActivity(intent)
+                            }) {
+                                Text("Grant")
+                            }
+                        }
+                    }
+                )
 
                 SettingsItem(
                     icon = Icons.Filled.Layers,
@@ -165,6 +195,29 @@ fun SettingsScreen(
                                 context.startActivity(intent)
                             }) {
                                 Text("Enable")
+                            }
+                        }
+                    }
+                )
+
+                SettingsItem(
+                    icon = Icons.Filled.MusicNote,
+                    title = "Notification Access",
+                    subtitle = if (hasNotificationListener) "Granted" else "Optional: For media transcription",
+                    trailing = {
+                        if (hasNotificationListener) {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = Success,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        } else {
+                            TextButton(onClick = {
+                                val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                                context.startActivity(intent)
+                            }) {
+                                Text("Grant")
                             }
                         }
                     }

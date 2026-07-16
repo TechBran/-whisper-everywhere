@@ -1,0 +1,9 @@
+v1.0.9 Release Notes:
+
+✨ What's New & Improved ✨
+• Beautiful New Waveform: Upgraded the recording visualization to smooth, overlapping Siri-style waves.
+• Perfected Voice Segmentation: Re-tuned speech-to-text timeouts so your sentences don't get cut off when you take a breath.
+• Smart Spacing: Text is now injected seamlessly with automatic space formatting—no more mashed words!
+• Live Text Preview: Dictating outside a text field? A sleek new scrollable bubble now shows your words in real-time as you speak.
+• Clipboard Perfection: Copied text now safely accumulates into a single complete block when you finish recording, rather than overwriting itself.
+• Setup UI Polish: Improved the Settings and Home Screen to clearly show Microphone permissions.

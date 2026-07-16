@@ -103,3 +103,8 @@ Desktop.ini
 secrets.properties
 api_keys.properties
 stripe_keys.properties
+
+# secrets / junk (added for on-device build)
+/nul
+/ChatGPT Image*.png
+whispereverywhere-release.jks

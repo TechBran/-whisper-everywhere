@@ -50,6 +50,13 @@ fun HomeScreen(
     val usedSecondsToday by app.usageTracker.usedSecondsToday.collectAsState()
 
     // Permission states - will be updated on lifecycle events
+    var hasMicrophonePermission by remember { 
+        mutableStateOf(
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) 
+    }
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasAccessibilityEnabled by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
     var hasApiKey by remember { mutableStateOf(app.preferencesManager.hasApiKey()) }
@@ -61,6 +68,9 @@ fun HomeScreen(
 
     // Function to refresh all permission states
     fun refreshPermissions() {
+        hasMicrophonePermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasOverlayPermission = Settings.canDrawOverlays(context)
         hasAccessibilityEnabled = WhisperAccessibilityService.isEnabled()
         hasApiKey = app.preferencesManager.hasApiKey()
@@ -88,8 +98,14 @@ fun HomeScreen(
             val newAccessibility = WhisperAccessibilityService.isEnabled()
             val newOverlay = Settings.canDrawOverlays(context)
             val newApiKey = app.preferencesManager.hasApiKey()
+            val newMicrophone = androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
             // Only update if changed (to avoid unnecessary recompositions)
+            if (newMicrophone != hasMicrophonePermission) {
+                hasMicrophonePermission = newMicrophone
+            }
             if (newAccessibility != hasAccessibilityEnabled) {
                 hasAccessibilityEnabled = newAccessibility
             }
@@ -141,7 +157,7 @@ fun HomeScreen(
             // Main Control Button
             MainControlButton(
                 isEnabled = bubbleEnabled,
-                canEnable = hasOverlayPermission && hasAccessibilityEnabled && hasApiKey,
+                canEnable = hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled && hasApiKey,
                 onToggle = {
                     if (bubbleEnabled) {
                         FloatingBubbleService.stop(context)
@@ -172,10 +188,18 @@ fun HomeScreen(
             // Setup Checklist
             SetupChecklist(
                 hasApiKey = hasApiKey,
+                hasMicrophonePermission = hasMicrophonePermission,
                 hasOverlayPermission = hasOverlayPermission,
                 hasAccessibilityEnabled = hasAccessibilityEnabled,
                 hasNotificationListener = hasNotificationListener,
                 onSetApiKey = onNavigateToSettings,
+                onRequestMicrophone = {
+                    val intent = Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:${context.packageName}")
+                    )
+                    context.startActivity(intent)
+                },
                 onRequestOverlay = {
                     val intent = Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -660,16 +684,18 @@ fun LanguageSelectionCard() {
 @Composable
 fun SetupChecklist(
     hasApiKey: Boolean,
+    hasMicrophonePermission: Boolean,
     hasOverlayPermission: Boolean,
     hasAccessibilityEnabled: Boolean,
     hasNotificationListener: Boolean = false,
     onSetApiKey: () -> Unit,
+    onRequestMicrophone: () -> Unit,
     onRequestOverlay: () -> Unit,
     onRequestAccessibility: () -> Unit,
     onRequestNotificationListener: () -> Unit = {}
 ) {
     // Core requirements for basic functionality
-    val coreComplete = hasApiKey && hasOverlayPermission && hasAccessibilityEnabled
+    val coreComplete = hasApiKey && hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled
     val allComplete = coreComplete && hasNotificationListener
 
     // Show success message when core setup is complete
@@ -800,6 +826,13 @@ fun SetupChecklist(
                 description = if (!hasApiKey) "Required to transcribe audio" else null,
                 isComplete = hasApiKey,
                 onClick = onSetApiKey
+            )
+
+            SetupItem(
+                title = "Microphone Permission",
+                description = if (!hasMicrophonePermission) "Required to record audio" else null,
+                isComplete = hasMicrophonePermission,
+                onClick = onRequestMicrophone
             )
 
             SetupItem(

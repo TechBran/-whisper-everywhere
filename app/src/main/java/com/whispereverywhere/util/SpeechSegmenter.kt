@@ -16,8 +16,8 @@ package com.whispereverywhere.util
 class SpeechSegmenter(
     private val voiceThreshold: Int = 1200,
     private val silenceThreshold: Int = 600,
-    private val pauseMs: Long = 700,
-    private val maxSegmentMs: Long = 8000,
+    private val pauseMs: Long = 1200,
+    private val maxSegmentMs: Long = 15000,
 ) {
     private var hasSpoken = false
     private var lastVoiceMs = 0L

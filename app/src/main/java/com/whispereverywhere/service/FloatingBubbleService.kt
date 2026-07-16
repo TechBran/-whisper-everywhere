@@ -59,6 +59,9 @@ class FloatingBubbleService : Service(),
     private lateinit var processingRing: ImageView
     private lateinit var waveformView: BarWaveformView
     private lateinit var processingTimeText: android.widget.TextView
+    private lateinit var transcriptionPreviewContainer: View
+    private lateinit var transcriptionEditText: android.widget.TextView
+    private lateinit var transcriptionDeltaText: android.widget.TextView
 
     private lateinit var audioRecorder: StreamingAudioRecorder
     private var realtimeClient: RealtimeTranscriptionClient? = null
@@ -87,6 +90,9 @@ class FloatingBubbleService : Service(),
     // Track the context for bubble display
     private var currentContext: BubbleContext = BubbleContext.NONE
     private var mediaTitle: String? = null
+
+    // Accumulates transcription for the entire recording session when not using accessibility text injection
+    private val sessionTranscription = java.lang.StringBuilder()
 
     private lateinit var params: WindowManager.LayoutParams
 
@@ -433,6 +439,9 @@ class FloatingBubbleService : Service(),
         processingRing = bubbleView.findViewById(R.id.processing_ring)
         waveformView = bubbleView.findViewById(R.id.waveform_view)
         processingTimeText = bubbleView.findViewById(R.id.processing_time_text)
+        transcriptionPreviewContainer = bubbleView.findViewById(R.id.transcription_preview_container)
+        transcriptionEditText = bubbleView.findViewById(R.id.transcription_edit_text)
+        transcriptionDeltaText = bubbleView.findViewById(R.id.transcription_delta_text)
 
         val layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 
@@ -454,6 +463,8 @@ class FloatingBubbleService : Service(),
         bubbleView.setOnTouchListener { _, event ->
             handleTouch(event)
         }
+
+        transcriptionEditText.movementMethod = android.text.method.ScrollingMovementMethod()
 
         windowManager.addView(bubbleView, params)
 
@@ -575,6 +586,18 @@ class FloatingBubbleService : Service(),
                         return@launch
                     }
                     speechSegmenter.reset()
+                    sessionTranscription.clear()
+                    
+                    // Show preview text bubble if we are not injecting into a text field
+                    if (currentContext != BubbleContext.TEXT_FIELD) {
+                        transcriptionEditText.text = ""
+                        transcriptionDeltaText.text = ""
+                        transcriptionDeltaText.visibility = View.GONE
+                        transcriptionPreviewContainer.visibility = View.VISIBLE
+                    } else {
+                        transcriptionPreviewContainer.visibility = View.GONE
+                    }
+
                     updateBubbleState(BubbleState.RECORDING)
                     amplitudeJob = serviceScope.launch {
                         audioRecorder.amplitude.collectLatest { amp ->
@@ -589,11 +612,41 @@ class FloatingBubbleService : Service(),
                     }
                 }
             }
-            override fun onDelta(text: String) { /* live cue only; not injected */ }
+            override fun onDelta(text: String) {
+                if (currentContext != BubbleContext.TEXT_FIELD) {
+                    serviceScope.launch(Dispatchers.Main) {
+                        if (text.isNotBlank()) {
+                            transcriptionDeltaText.visibility = View.VISIBLE
+                            transcriptionDeltaText.text = text
+                        } else {
+                            transcriptionDeltaText.visibility = View.GONE
+                        }
+                    }
+                }
+            }
             override fun onCompleted(text: String) {
                 val trimmed = text.trim()
                 if (trimmed.isNotEmpty()) {
-                    serviceScope.launch(Dispatchers.Main) { handleTranscriptionResult(trimmed) }
+                    serviceScope.launch(Dispatchers.Main) { 
+                        if (currentContext != BubbleContext.TEXT_FIELD) {
+                            transcriptionDeltaText.visibility = View.GONE
+                            val currentText = transcriptionEditText.text.toString()
+                            if (currentText.isNotEmpty() && !currentText.last().isWhitespace() && !trimmed.first().isWhitespace()) {
+                                transcriptionEditText.append(" $trimmed")
+                            } else {
+                                transcriptionEditText.append(trimmed)
+                            }
+                            
+                            // Auto-scroll to bottom using standard TextView logic
+                            val scrollAmount = transcriptionEditText.layout.getLineTop(transcriptionEditText.lineCount) - transcriptionEditText.height
+                            if (scrollAmount > 0) {
+                                transcriptionEditText.scrollTo(0, scrollAmount)
+                            } else {
+                                transcriptionEditText.scrollTo(0, 0)
+                            }
+                        }
+                        handleTranscriptionResult(trimmed) 
+                    }
                 }
             }
             override fun onError(message: String) {
@@ -612,6 +665,12 @@ class FloatingBubbleService : Service(),
         audioRecorder.stop()
 
         updateBubbleState(BubbleState.FINALIZING)
+        
+        // Hide the preview bubble immediately so it doesn't linger during the finalizing delay
+        if (currentContext != BubbleContext.TEXT_FIELD) {
+            transcriptionPreviewContainer.visibility = View.GONE
+        }
+        
         // Flush any speech captured since the last pause-commit.
         if (speechSegmenter.hasPendingSpeech()) {
             realtimeClient?.commit()
@@ -623,6 +682,17 @@ class FloatingBubbleService : Service(),
             delay(1500)
             teardownRealtime()
             if (currentState == BubbleState.FINALIZING) {
+                // If we were transcribing without injecting, copy the final accumulated string now.
+                // We use transcriptionEditText as the final source of truth because the user might have edited it.
+                if (currentContext != BubbleContext.TEXT_FIELD) {
+                    val finalText = transcriptionEditText.text.toString()
+                    if (finalText.isNotEmpty()) {
+                        copyToClipboard(finalText)
+                        showToast("Transcription copied to clipboard")
+                    }
+                    sessionTranscription.clear()
+                }
+
                 vibrateSuccess()
                 updateBubbleState(BubbleState.IDLE)
             }
@@ -658,9 +728,12 @@ class FloatingBubbleService : Service(),
                 }
             }
             BubbleContext.MEDIA_PLAYBACK, BubbleContext.NONE -> {
-                // Copy to clipboard for media transcription
-                copyToClipboard(text)
-                showToast("Transcription copied to clipboard")
+                // We no longer strictly need sessionTranscription for UI since transcriptionEditText is the source of truth,
+                // but we keep it here to build the full text out of sight just in case, though for final copy we will grab from the edit box.
+                if (sessionTranscription.isNotEmpty() && sessionTranscription.last() != ' ') {
+                    sessionTranscription.append(" ")
+                }
+                sessionTranscription.append(text)
             }
         }
     }

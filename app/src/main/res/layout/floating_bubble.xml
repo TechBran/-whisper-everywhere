@@ -1,52 +1,101 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/bubble_root"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
     android:padding="8dp">
 
-    <ImageView
-        android:id="@+id/processing_ring"
-        android:layout_width="72dp"
-        android:layout_height="72dp"
-        android:layout_gravity="center"
-        android:src="@drawable/ic_processing_ring"
-        android:visibility="gone" />
+    <!-- Transcription Preview Container -->
+    <LinearLayout
+        android:id="@+id/transcription_preview_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/preview_bubble_background"
+        android:elevation="8dp"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp"
+        android:visibility="gone">
 
+        <!-- Read-only text for finalized transcription chunks -->
+        <TextView
+            android:id="@+id/transcription_edit_text"
+            android:layout_width="280dp"
+            android:layout_height="wrap_content"
+            android:maxHeight="120dp"
+            android:scrollbars="vertical"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:minHeight="20dp"
+            android:hint="Listening..."
+            android:textColorHint="#99FFFFFF"
+            android:gravity="top|start" />
+
+        <!-- Live delta text -->
+        <TextView
+            android:id="@+id/transcription_delta_text"
+            android:layout_width="280dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="#B3FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="italic"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- Mic Bubble Stack -->
     <FrameLayout
-        android:id="@+id/bubble_container"
-        android:layout_width="56dp"
-        android:layout_height="56dp"
-        android:layout_gravity="center"
-        android:background="@drawable/bubble_background_idle"
-        android:elevation="8dp">
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content">
 
         <ImageView
-            android:id="@+id/bubble_icon"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:id="@+id/processing_ring"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
             android:layout_gravity="center"
-            android:src="@drawable/ic_mic" />
-
-        <com.whispereverywhere.ui.components.BarWaveformView
-            android:id="@+id/waveform_view"
-            android:layout_width="match_parent"
-            android:layout_height="32dp"
-            android:layout_gravity="center"
-            android:layout_marginStart="10dp"
-            android:layout_marginEnd="10dp"
+            android:src="@drawable/ic_processing_ring"
             android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/processing_time_text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+        <FrameLayout
+            android:id="@+id/bubble_container"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
             android:layout_gravity="center"
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:background="@drawable/bubble_background_idle"
+            android:elevation="8dp">
 
+            <ImageView
+                android:id="@+id/bubble_icon"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_mic" />
+
+            <com.whispereverywhere.ui.components.BarWaveformView
+                android:id="@+id/waveform_view"
+                android:layout_width="match_parent"
+                android:layout_height="32dp"
+                android:layout_gravity="center"
+                android:layout_marginStart="10dp"
+                android:layout_marginEnd="10dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/processing_time_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+        </FrameLayout>
     </FrameLayout>
-
-</FrameLayout>
+</LinearLayout>

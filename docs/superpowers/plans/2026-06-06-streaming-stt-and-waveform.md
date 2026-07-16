@@ -854,7 +854,6 @@ import com.whispereverywhere.util.AudioRecorder
 to:
 ```kotlin
 import com.whispereverywhere.data.api.RealtimeTranscriptionClient
-import com.whispereverywhere.data.api.ServerEvent
 import com.whispereverywhere.ui.components.BarWaveformView
 import com.whispereverywhere.util.StreamingAudioRecorder
 ```

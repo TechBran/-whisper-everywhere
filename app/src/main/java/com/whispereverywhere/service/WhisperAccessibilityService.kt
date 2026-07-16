@@ -2,14 +2,19 @@ package com.whispereverywhere.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inputmethod.InputConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +30,55 @@ class WhisperAccessibilityService : AccessibilityService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var lastFocusedEditText: AccessibilityNodeInfo? = null
     private var lastFieldRect: Rect? = null
+    private var lastFocusTime: Long = 0L
+    private var currentPackage: String? = null
+
+    // Apps that use custom editors where we should be more persistent
+    private val documentApps = setOf(
+        "com.samsung.android.app.notes",      // Samsung Notes
+        "com.samsung.android.quickedit",      // Samsung Quick Edit
+        "com.microsoft.office.word",          // MS Word
+        "com.microsoft.office.onenote",       // OneNote
+        "com.google.android.apps.docs.editors.docs", // Google Docs
+        "com.google.android.apps.docs.editors.sheets", // Google Sheets
+        "com.google.android.keep",            // Google Keep
+        "com.evernote",                       // Evernote
+        "notion.id",                          // Notion
+        "md.obsidian",                        // Obsidian
+        "com.automattic.simplenote",          // Simplenote
+        "com.colornote.notepad",              // ColorNote
+        "ru.alexandermalikov.quickedit",      // QuickEdit
+        "com.rhmsoft.edit",                   // QuickEdit Pro
+        "com.aor.droidedit",                  // DroidEdit
+        "com.alorma.github.editor"            // Various code editors
+    )
+
+    // Social media apps that use @mentions - must use paste to preserve mention formatting
+    private val socialMediaApps = setOf(
+        "com.facebook.katana",                // Facebook
+        "com.facebook.lite",                  // Facebook Lite
+        "com.facebook.orca",                  // Messenger
+        "com.facebook.mlite",                 // Messenger Lite
+        "com.instagram.android",              // Instagram
+        "com.twitter.android",                // Twitter/X
+        "com.twitter.android.lite",           // Twitter Lite
+        "com.zhiliaoapp.musically",           // TikTok
+        "com.ss.android.ugc.trill",           // TikTok (alternate)
+        "com.linkedin.android",               // LinkedIn
+        "com.snapchat.android",               // Snapchat
+        "com.pinterest",                      // Pinterest
+        "com.reddit.frontpage",               // Reddit
+        "com.tumblr",                         // Tumblr
+        "com.discord",                        // Discord
+        "org.telegram.messenger",             // Telegram
+        "com.whatsapp",                       // WhatsApp
+        "com.viber.voip",                     // Viber
+        "jp.naver.line.android",              // LINE
+        "com.google.android.youtube",         // YouTube
+        "com.vkontakte.android",              // VK
+        "com.Slack",                          // Slack
+        "com.microsoft.teams"                 // Microsoft Teams
+    )
 
     interface OnTextFieldFocusListener {
         fun onTextFieldFocused(rect: Rect)
@@ -56,6 +110,12 @@ class WhisperAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
 
+        // Track current package
+        val eventPackage = event.packageName?.toString()
+        if (eventPackage != null && eventPackage != "com.whispereverywhere") {
+            currentPackage = eventPackage
+        }
+
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
                 handleFocusOrClick(event.source)
@@ -67,13 +127,18 @@ class WhisperAccessibilityService : AccessibilityService() {
                     // First check if clicked view is editable
                     if (isEditableTextField(source)) {
                         lastFocusedEditText = source
+                        lastFocusTime = System.currentTimeMillis()
                         notifyTextFieldFocused(source)
                     } else {
                         // Maybe clicked on a container - search children for editable field
                         val editableChild = findEditableChild(source)
                         if (editableChild != null) {
                             lastFocusedEditText = editableChild
+                            lastFocusTime = System.currentTimeMillis()
                             notifyTextFieldFocused(editableChild)
+                        } else if (isDocumentApp()) {
+                            // For document apps, clicking anywhere in the editor area should show bubble
+                            handleDocumentAppClick(source)
                         }
                     }
                 }
@@ -82,28 +147,136 @@ class WhisperAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED -> {
                 // Text activity - this confirms we have an active input
                 val source = event.source
-                if (source != null && isEditableTextField(source)) {
-                    if (lastFocusedEditText == null || !isSameNode(lastFocusedEditText, source)) {
+                if (source != null) {
+                    if (isEditableTextField(source)) {
+                        if (lastFocusedEditText == null || !isSameNode(lastFocusedEditText, source)) {
+                            lastFocusedEditText = source
+                            lastFocusTime = System.currentTimeMillis()
+                            notifyTextFieldFocused(source)
+                        } else {
+                            // Same field but refresh the time to keep bubble alive
+                            lastFocusTime = System.currentTimeMillis()
+                        }
+                    } else if (isDocumentApp()) {
+                        // Document app text changed - treat source as editable
                         lastFocusedEditText = source
+                        lastFocusTime = System.currentTimeMillis()
                         notifyTextFieldFocused(source)
                     }
                 }
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                // Window changed - check if we lost focus
-                serviceScope.launch {
-                    delay(200)
-                    val current = lastFocusedEditText
-                    if (current != null) {
-                        try {
-                            if (!current.refresh() || !current.isFocused) {
+                // Window changed - be more careful about unfocusing
+                val pkg = event.packageName?.toString()
+
+                // If switched to a different app entirely, unfocus
+                if (pkg != null && pkg != currentPackage && pkg != "com.whispereverywhere") {
+                    notifyTextFieldUnfocused()
+                    return
+                }
+
+                // For document apps, be much more lenient - don't unfocus on internal window changes
+                if (isDocumentApp()) {
+                    // Only unfocus if significant time has passed with no activity
+                    serviceScope.launch {
+                        delay(2000) // 2 second grace period for document apps
+                        val timeSinceFocus = System.currentTimeMillis() - lastFocusTime
+                        if (timeSinceFocus > 2000 && lastFocusedEditText != null) {
+                            try {
+                                val current = lastFocusedEditText
+                                if (current == null || !current.refresh()) {
+                                    // Double-check we're not still in a document app actively
+                                    if (!isDocumentApp()) {
+                                        notifyTextFieldUnfocused()
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                // Keep bubble for document apps even on error
+                            }
+                        }
+                    }
+                } else {
+                    // Standard apps - check if we lost focus after short delay
+                    serviceScope.launch {
+                        delay(300)
+                        val current = lastFocusedEditText
+                        if (current != null) {
+                            try {
+                                if (!current.refresh() || !current.isFocused) {
+                                    notifyTextFieldUnfocused()
+                                }
+                            } catch (e: Exception) {
                                 notifyTextFieldUnfocused()
                             }
-                        } catch (e: Exception) {
-                            notifyTextFieldUnfocused()
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private fun isDocumentApp(): Boolean {
+        return currentPackage in documentApps ||
+               currentPackage?.contains("note", ignoreCase = true) == true ||
+               currentPackage?.contains("edit", ignoreCase = true) == true ||
+               currentPackage?.contains("doc", ignoreCase = true) == true ||
+               currentPackage?.contains("office", ignoreCase = true) == true
+    }
+
+    /**
+     * Check if current app is a social media app that uses @mentions.
+     * These apps need special handling to preserve mention formatting.
+     */
+    private fun isSocialMediaApp(): Boolean {
+        // Get package from active window for most accurate detection
+        val pkg = rootInActiveWindow?.packageName?.toString() ?: currentPackage ?: return false
+        return pkg in socialMediaApps ||
+               pkg.contains("facebook", ignoreCase = true) ||
+               pkg.contains("instagram", ignoreCase = true) ||
+               pkg.contains("twitter", ignoreCase = true) ||
+               pkg.contains("tiktok", ignoreCase = true) ||
+               pkg.contains("snapchat", ignoreCase = true) ||
+               pkg.contains("messenger", ignoreCase = true) ||
+               pkg.contains("whatsapp", ignoreCase = true) ||
+               pkg.contains("telegram", ignoreCase = true) ||
+               pkg.contains("discord", ignoreCase = true) ||
+               pkg.contains("slack", ignoreCase = true) ||
+               pkg.contains("reddit", ignoreCase = true) ||
+               pkg.contains("linkedin", ignoreCase = true)
+    }
+
+    /**
+     * Check if the text field currently has a mention (starts with @)
+     */
+    private fun fieldHasMention(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val text = node.text?.toString() ?: return false
+        // Check if text starts with @ or contains @ followed by text (mention pattern)
+        return text.trimStart().startsWith("@")
+    }
+
+    private fun handleDocumentAppClick(source: AccessibilityNodeInfo) {
+        // For document apps, we treat large scrollable/clickable areas as potential text areas
+        val rect = Rect()
+        source.getBoundsInScreen(rect)
+
+        // If it's a reasonable sized area that's scrollable or takes up significant screen space
+        if (rect.width() > 200 && rect.height() > 100) {
+            val className = source.className?.toString()?.lowercase() ?: ""
+
+            // Look for editor-like views
+            if (className.contains("view") ||
+                className.contains("editor") ||
+                className.contains("canvas") ||
+                className.contains("scroll") ||
+                className.contains("frame") ||
+                source.isScrollable ||
+                source.isClickable) {
+
+                lastFocusedEditText = source
+                lastFocusTime = System.currentTimeMillis()
+                lastFieldRect = rect
+                focusListener?.onTextFieldFocused(rect)
             }
         }
     }
@@ -113,11 +286,15 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         if (isEditableTextField(source)) {
             lastFocusedEditText = source
+            lastFocusTime = System.currentTimeMillis()
             notifyTextFieldFocused(source)
+        } else if (isDocumentApp()) {
+            // For document apps, be more aggressive about detecting editable areas
+            handleDocumentAppClick(source)
         } else {
             // Check if focus moved away from our tracked field
             serviceScope.launch {
-                delay(100)
+                delay(150)
                 val current = lastFocusedEditText
                 if (current != null) {
                     try {
@@ -279,9 +456,28 @@ class WhisperAccessibilityService : AccessibilityService() {
      * Inject text into the currently focused text field
      */
     fun injectTextToFocusedField(text: String): Boolean {
+        // For document apps, always use clipboard + paste approach
+        if (isDocumentApp()) {
+            return injectViaClipboardForDocumentApp(text)
+        }
+
+        // For social media apps, use paste to preserve @mentions and other formatted content
+        if (isSocialMediaApp()) {
+            return injectViaClipboardPreservingContent(text)
+        }
+
         val targetNode = findFocusedEditText() ?: lastFocusedEditText
 
         if (targetNode == null || !targetNode.refresh()) {
+            return injectViaClipboard(text)
+        }
+
+        // Check if node supports SET_TEXT
+        val supportsSetText = targetNode.actionList.any {
+            it.id == AccessibilityNodeInfo.ACTION_SET_TEXT
+        }
+
+        if (!supportsSetText) {
             return injectViaClipboard(text)
         }
 
@@ -300,6 +496,8 @@ class WhisperAccessibilityService : AccessibilityService() {
                 currentText.length
             }
 
+            val textToInject = formatTextForInjection(text, currentText, cursorPosition)
+
             val newText = StringBuilder(currentText).apply {
                 val selStart = targetNode.textSelectionStart
                 val selEnd = targetNode.textSelectionEnd
@@ -307,10 +505,10 @@ class WhisperAccessibilityService : AccessibilityService() {
                 when {
                     !isHintText && selStart >= 0 && selEnd > selStart -> {
                         delete(selStart, selEnd)
-                        insert(selStart, text)
+                        insert(selStart, textToInject)
                     }
-                    cursorPosition in 0..length -> insert(cursorPosition, text)
-                    else -> append(text)
+                    cursorPosition in 0..length -> insert(cursorPosition, textToInject)
+                    else -> append(textToInject)
                 }
             }.toString()
 
@@ -326,22 +524,430 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Inject text for social media apps, preserving existing @mentions.
+     * For Facebook with mentions, taps at end of field before pasting.
+     */
+    private fun injectViaClipboardPreservingContent(text: String): Boolean {
+        val targetNode = findFocusedEditText() ?: lastFocusedEditText
+
+        // Always copy to clipboard first
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+        } catch (e: Exception) {
+            return false
+        }
+
+        if (targetNode?.refresh() != true) {
+            return true // Text in clipboard, no target to paste to
+        }
+
+        // Check if field has existing content (might be a mention)
+        val existingText = targetNode.text?.toString() ?: ""
+
+        if (existingText.isNotEmpty() && isFacebookApp()) {
+            // Facebook with existing content - use gesture to tap at end of field, then paste
+            val rect = Rect()
+            targetNode.getBoundsInScreen(rect)
+
+            // Tap near the right side of the field to position cursor at end
+            val tapX = rect.right - 20f
+            val tapY = rect.centerY().toFloat()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val path = Path()
+                path.moveTo(tapX, tapY)
+
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
+                    .build()
+
+                dispatchGesture(gesture, object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        // After tap completes, paste
+                        serviceScope.launch {
+                            delay(100) // Small delay to let cursor position update
+                            targetNode.refresh()
+                            targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                        }
+                    }
+                }, null)
+
+                return true
+            }
+        }
+
+        // No mention or not Facebook - safe to paste directly
+        if (targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+            return true
+        }
+
+        // Paste failed but text is in clipboard
+        return true
+    }
+
+    /**
+     * Check if current app is specifically Facebook (not just any social media)
+     */
+    private fun isFacebookApp(): Boolean {
+        val pkg = rootInActiveWindow?.packageName?.toString() ?: currentPackage ?: return false
+        return pkg.contains("facebook", ignoreCase = true) ||
+               pkg == "com.facebook.katana" ||
+               pkg == "com.facebook.lite" ||
+               pkg == "com.facebook.orca" ||
+               pkg == "com.facebook.mlite"
+    }
+
+    /**
+     * Inject text for social media apps with detailed result.
+     * For Facebook with mentions, taps at end of field before pasting.
+     */
+    private fun injectForSocialMediaWithResult(text: String): InjectionResult {
+        val targetNode = findFocusedEditText() ?: lastFocusedEditText
+
+        // Always copy to clipboard first
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+        } catch (e: Exception) {
+            return InjectionResult.FAILED
+        }
+
+        if (targetNode?.refresh() != true) {
+            return InjectionResult.CLIPBOARD_ONLY
+        }
+
+        // Check if field has existing content (might be a mention)
+        val existingText = targetNode.text?.toString() ?: ""
+
+        if (existingText.isNotEmpty() && isFacebookApp()) {
+            // Facebook with existing content - use gesture to tap at end of field, then paste
+            val rect = Rect()
+            targetNode.getBoundsInScreen(rect)
+
+            // Tap near the right side of the field to position cursor at end
+            val tapX = rect.right - 20f
+            val tapY = rect.centerY().toFloat()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val path = Path()
+                path.moveTo(tapX, tapY)
+
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
+                    .build()
+
+                dispatchGesture(gesture, object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        // After tap completes, paste
+                        serviceScope.launch {
+                            delay(100) // Small delay to let cursor position update
+                            targetNode.refresh()
+                            targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                        }
+                    }
+                }, null)
+
+                // Return SUCCESS since we initiated the gesture+paste sequence
+                return InjectionResult.SUCCESS
+            }
+
+            // Fallback for older Android - just try paste
+            return if (targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+                InjectionResult.SUCCESS
+            } else {
+                InjectionResult.CLIPBOARD_ONLY
+            }
+        }
+
+        // No mention or not Facebook - safe to paste directly
+        if (targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+            return InjectionResult.SUCCESS
+        }
+
+        // Paste failed but text is in clipboard
+        return InjectionResult.CLIPBOARD_ONLY
+    }
+
+    /**
+     * Special injection for document apps - uses clipboard and gesture-based paste
+     */
+    private fun injectViaClipboardForDocumentApp(text: String): Boolean {
+        return try {
+            // Step 1: Copy text to clipboard
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+
+            // Step 2: Try multiple paste methods
+            var success = false
+
+            // Method 1: Try ACTION_PASTE on the target node
+            val targetNode = lastFocusedEditText
+            if (targetNode?.refresh() == true) {
+                success = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            }
+
+            // Method 2: Try ACTION_PASTE on focused input
+            if (!success) {
+                val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                if (focusedNode != null) {
+                    success = focusedNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                }
+            }
+
+            // Method 3: Try ACTION_PASTE on accessibility focused node
+            if (!success) {
+                val accessibilityFocused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+                if (accessibilityFocused != null) {
+                    success = accessibilityFocused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                }
+            }
+
+            // Method 4: Search for any node that supports paste and try it
+            if (!success) {
+                success = tryPasteOnAnyNode(rootInActiveWindow)
+            }
+
+            // If all paste attempts failed, at least the text is in clipboard
+            // Return true so user knows to manually paste
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // Even on error, try to at least get it to clipboard
+            try {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+                true
+            } catch (e2: Exception) {
+                false
+            }
+        }
+    }
+
+    /**
+     * Recursively search for a node that supports paste and try to paste
+     */
+    private fun tryPasteOnAnyNode(node: AccessibilityNodeInfo?): Boolean {
+        node ?: return false
+
+        // Check if this node supports paste
+        val supportsPaste = node.actionList.any {
+            it.id == AccessibilityNodeInfo.ACTION_PASTE
+        }
+
+        if (supportsPaste) {
+            if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+                return true
+            }
+        }
+
+        // Try children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (tryPasteOnAnyNode(child)) {
+                return true
+            }
+        }
+
+        return false
+    }
+
     private fun injectViaClipboard(text: String): Boolean {
         return try {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
 
+            var success = false
+
+            // Try paste on target node
             val targetNode = lastFocusedEditText
             if (targetNode?.refresh() == true) {
-                targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-            } else {
-                rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    ?.performAction(AccessibilityNodeInfo.ACTION_PASTE) ?: false
+                success = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             }
+
+            // Try paste on focused input
+            if (!success) {
+                val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                if (focusedNode != null) {
+                    success = focusedNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                }
+            }
+
+            // For standard apps, return actual success status
+            success
         } catch (e: Exception) {
             e.printStackTrace()
             false
         }
+    }
+
+    /**
+     * Helper to prepare text for injection, adding spaces as needed
+     */
+    private fun formatTextForInjection(textToInject: String, existingText: String, cursorPosition: Int): String {
+        if (existingText.isEmpty() || textToInject.isEmpty()) {
+            return textToInject
+        }
+        
+        // If cursor is at the end or valid position
+        val actualPos = if (cursorPosition in 0..existingText.length) cursorPosition else existingText.length
+        
+        if (actualPos == 0) return textToInject
+        
+        val prevChar = existingText[actualPos - 1]
+        
+        // If the previous character is not whitespace and the new text doesn't start with whitespace
+        if (!prevChar.isWhitespace() && !textToInject.first().isWhitespace()) {
+            return " $textToInject"
+        }
+        
+        return textToInject
+    }
+
+    /**
+     * Inject text with detailed result for better user feedback
+     */
+    fun injectTextWithResultInternal(text: String): InjectionResult {
+        // For document apps, use clipboard approach
+        if (isDocumentApp()) {
+            return try {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+
+                // Try paste methods
+                var pasteWorked = false
+
+                val targetNode = lastFocusedEditText
+                if (targetNode?.refresh() == true) {
+                    pasteWorked = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                }
+
+                if (!pasteWorked) {
+                    val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    if (focusedNode != null) {
+                        pasteWorked = focusedNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                    }
+                }
+
+                if (!pasteWorked) {
+                    pasteWorked = tryPasteOnAnyNode(rootInActiveWindow)
+                }
+
+                // For document apps, paste rarely works - return CLIPBOARD_ONLY
+                if (pasteWorked) InjectionResult.SUCCESS else InjectionResult.CLIPBOARD_ONLY
+            } catch (e: Exception) {
+                e.printStackTrace()
+                // At minimum, try to get it to clipboard
+                try {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+                    InjectionResult.CLIPBOARD_ONLY
+                } catch (e2: Exception) {
+                    InjectionResult.FAILED
+                }
+            }
+        }
+
+        // For social media apps, use paste to preserve @mentions
+        if (isSocialMediaApp()) {
+            return injectForSocialMediaWithResult(text)
+        }
+
+        // Standard apps - try direct injection
+        val targetNode = findFocusedEditText() ?: lastFocusedEditText
+
+        if (targetNode == null || !targetNode.refresh()) {
+            // No target - try clipboard
+            return if (injectViaClipboard(text)) InjectionResult.SUCCESS else {
+                // Clipboard fallback
+                try {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+                    InjectionResult.CLIPBOARD_ONLY
+                } catch (e: Exception) {
+                    InjectionResult.FAILED
+                }
+            }
+        }
+
+        // Check if node supports SET_TEXT
+        val supportsSetText = targetNode.actionList.any {
+            it.id == AccessibilityNodeInfo.ACTION_SET_TEXT
+        }
+
+        if (!supportsSetText) {
+            return if (injectViaClipboard(text)) InjectionResult.SUCCESS else {
+                try {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+                    InjectionResult.CLIPBOARD_ONLY
+                } catch (e: Exception) {
+                    InjectionResult.FAILED
+                }
+            }
+        }
+
+        return try {
+            val rawText = targetNode.text?.toString() ?: ""
+            val hintText = targetNode.hintText?.toString() ?: ""
+
+            val isHintText = rawText.isNotEmpty() && (
+                rawText == hintText || rawText.equals(hintText, ignoreCase = true)
+            )
+
+            val currentText = if (isHintText) "" else rawText
+            val cursorPosition = if (targetNode.textSelectionStart >= 0 && !isHintText) {
+                targetNode.textSelectionStart
+            } else {
+                currentText.length
+            }
+
+            val textToInject = formatTextForInjection(text, currentText, cursorPosition)
+
+            val newText = StringBuilder(currentText).apply {
+                val selStart = targetNode.textSelectionStart
+                val selEnd = targetNode.textSelectionEnd
+
+                when {
+                    !isHintText && selStart >= 0 && selEnd > selStart -> {
+                        delete(selStart, selEnd)
+                        insert(selStart, textToInject)
+                    }
+                    cursorPosition in 0..length -> insert(cursorPosition, textToInject)
+                    else -> append(textToInject)
+                }
+            }.toString()
+
+            val arguments = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
+            }
+
+            val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+            if (success) {
+                InjectionResult.SUCCESS
+            } else {
+                if (injectViaClipboard(text)) InjectionResult.SUCCESS else InjectionResult.CLIPBOARD_ONLY
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            try {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+                InjectionResult.CLIPBOARD_ONLY
+            } catch (e2: Exception) {
+                InjectionResult.FAILED
+            }
+        }
+    }
+
+    /**
+     * Result of text injection attempt
+     */
+    enum class InjectionResult {
+        SUCCESS,           // Text was directly injected into field
+        CLIPBOARD_ONLY,    // Text is in clipboard, needs manual paste
+        FAILED             // Complete failure
     }
 
     companion object {
@@ -368,6 +974,20 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         fun injectText(text: String): Boolean {
             return instance?.injectTextToFocusedField(text) ?: false
+        }
+
+        /**
+         * Inject text with detailed result
+         */
+        fun injectTextWithResult(text: String): InjectionResult {
+            return instance?.injectTextWithResultInternal(text) ?: InjectionResult.FAILED
+        }
+
+        /**
+         * Check if current app is a document app that may need manual paste
+         */
+        fun isCurrentAppDocumentApp(): Boolean {
+            return instance?.isDocumentApp() ?: false
         }
     }
 }
