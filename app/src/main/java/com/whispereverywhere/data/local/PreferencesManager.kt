@@ -128,6 +128,13 @@ class PreferencesManager(private val context: Context) {
             prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, value).apply()
         }
 
+    // Selected on-device whisper model tier id (see WhisperCatalog); null = none chosen yet
+    var selectedModelId: String?
+        get() = prefs.getString(KEY_SELECTED_MODEL_ID, null)
+        set(value) {
+            prefs.edit().putString(KEY_SELECTED_MODEL_ID, value).apply()
+        }
+
     companion object {
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
@@ -135,6 +142,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_BUBBLE_X = "bubble_x"
         private const val KEY_BUBBLE_Y = "bubble_y"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
+        private const val KEY_SELECTED_MODEL_ID = "selected_model_id"
         private const val KEY_SELECTED_LANGUAGE = "selected_language"
 
         // Whisper API supported languages with display names
