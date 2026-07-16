@@ -7,7 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,30 +18,44 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.whispereverywhere.BuildConfig
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.ui.theme.*
+import com.whispereverywhere.util.formatBytes
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToPrivacyPolicy: () -> Unit = {},
-    onNavigateToTerms: () -> Unit = {}
+    onNavigateToTerms: () -> Unit = {},
+    onNavigateToModelOnboarding: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = WhisperEverywhereApp.getInstance()
+    val modelManager = app.whisperModelManager
 
     val vibrationEnabled by app.preferencesManager.vibrationEnabled.collectAsState()
 
-    var apiKey by remember { mutableStateOf(app.preferencesManager.apiKey) }
-    var showApiKey by remember { mutableStateOf(false) }
-    var showApiKeyDialog by remember { mutableStateOf(false) }
+    // Bump to force a re-read of installed-model / disk-usage after a delete or when
+    // returning from the model-onboarding flow.
+    var modelRefreshKey by remember { mutableStateOf(0) }
+    var showDeleteModelDialog by remember { mutableStateOf(false) }
+
+    val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
+
+    // Compute models-dir total disk usage off the main thread.
+    val modelsDirUsageBytes by produceState(initialValue = 0L, key1 = modelRefreshKey) {
+        value = withContext(Dispatchers.IO) {
+            modelManager.modelsDir().walkTopDown().filter { it.isFile }.map { it.length() }.sum()
+        }
+    }
 
     val scrollState = rememberScrollState()
 
@@ -69,25 +82,37 @@ fun SettingsScreen(
                 .padding(paddingValues)
                 .verticalScroll(scrollState)
         ) {
-            // API Key Section - Enhanced for better onboarding
-            SettingsSection(title = "API Configuration") {
-                SettingsItem(
-                    icon = Icons.Filled.Key,
-                    title = "OpenAI API Key",
-                    subtitle = if (app.preferencesManager.hasApiKey())
-                        "Key configured - tap to update"
-                    else
-                        "Required - tap to set up",
-                    onClick = { showApiKeyDialog = true },
-                    trailing = {
-                        if (app.preferencesManager.hasApiKey()) {
+            // Speech model (on-device whisper) — replaces the old cloud API-key section.
+            SettingsSection(title = "Speech model") {
+                if (installedModel != null) {
+                    val onDiskBytes = remember(modelRefreshKey, installedModel.id) {
+                        val f = File(modelManager.modelsDir(), installedModel.fileName)
+                        if (f.exists()) f.length() else installedModel.approxBytes
+                    }
+                    val scopeLabel = when (installedModel.scope) {
+                        ModelScope.ENGLISH -> "English"
+                        ModelScope.MULTILINGUAL -> "Multilingual"
+                    }
+                    SettingsItem(
+                        icon = Icons.Filled.GraphicEq,
+                        title = installedModel.displayName,
+                        subtitle = "$scopeLabel · ${formatBytes(onDiskBytes)} on disk",
+                        trailing = {
                             Icon(
                                 Icons.Filled.CheckCircle,
                                 contentDescription = null,
                                 tint = Success,
                                 modifier = Modifier.size(20.dp)
                             )
-                        } else {
+                        }
+                    )
+                } else {
+                    SettingsItem(
+                        icon = Icons.Filled.GraphicEq,
+                        title = "Speech model",
+                        subtitle = "None installed — tap to download",
+                        onClick = onNavigateToModelOnboarding,
+                        trailing = {
                             Surface(
                                 color = Warning.copy(alpha = 0.1f),
                                 shape = RoundedCornerShape(4.dp)
@@ -101,8 +126,41 @@ fun SettingsScreen(
                                 )
                             }
                         }
-                    }
+                    )
+                }
+
+                SettingsItem(
+                    icon = Icons.Filled.Storage,
+                    title = "Model storage",
+                    subtitle = "${formatBytes(modelsDirUsageBytes)} used on this device"
                 )
+
+                SettingsItem(
+                    icon = Icons.Filled.CloudDownload,
+                    title = if (installedModel != null) "Change or add a model" else "Download a model",
+                    subtitle = "Pick a speech-model tier (Eco / Pro / Extreme / Multilingual / Ultra)",
+                    onClick = onNavigateToModelOnboarding
+                )
+
+                if (installedModel != null) {
+                    SettingsItem(
+                        icon = Icons.Filled.Delete,
+                        title = "Delete current model",
+                        subtitle = "Frees ${formatBytes(
+                            File(modelManager.modelsDir(), installedModel.fileName)
+                                .let { if (it.exists()) it.length() else installedModel.approxBytes }
+                        )} — you'll need to re-download to transcribe",
+                        onClick = { showDeleteModelDialog = true },
+                        trailing = {
+                            Icon(
+                                Icons.Filled.DeleteOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    )
+                }
             }
 
             // Preferences Section
@@ -258,186 +316,40 @@ fun SettingsScreen(
         }
     }
 
-    // Enhanced API Key Dialog with step-by-step instructions
-    if (showApiKeyDialog) {
+    // Delete-model confirmation dialog
+    if (showDeleteModelDialog && installedModel != null) {
         AlertDialog(
-            onDismissRequest = { showApiKeyDialog = false },
-            title = {
-                Text(
-                    "OpenAI API Key Setup",
-                    fontWeight = FontWeight.Bold
-                )
-            },
+            onDismissRequest = { showDeleteModelDialog = false },
+            icon = { Icon(Icons.Filled.DeleteOutline, contentDescription = null) },
+            title = { Text("Delete ${installedModel.displayName}?", fontWeight = FontWeight.Bold) },
             text = {
-                Column {
-                    // Instructions
-                    Text(
-                        "Follow these steps to get your API key:",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Step 1
-                    ApiKeySetupStep(
-                        number = 1,
-                        text = "Go to platform.openai.com and sign up or log in"
-                    )
-
-                    // Step 2
-                    ApiKeySetupStep(
-                        number = 2,
-                        text = "Navigate to API Keys section"
-                    )
-
-                    // Step 3
-                    ApiKeySetupStep(
-                        number = 3,
-                        text = "Click \"Create new secret key\""
-                    )
-
-                    // Step 4
-                    ApiKeySetupStep(
-                        number = 4,
-                        text = "Copy the key and paste it below"
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Quick link button
-                    OutlinedButton(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://platform.openai.com/api-keys"))
-                            context.startActivity(intent)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            Icons.Filled.OpenInNew,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Open OpenAI API Keys Page")
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Input field
-                    OutlinedTextField(
-                        value = apiKey,
-                        onValueChange = { apiKey = it },
-                        label = { Text("API Key") },
-                        placeholder = { Text("sk-proj-...") },
-                        singleLine = true,
-                        visualTransformation = if (showApiKey)
-                            VisualTransformation.None
-                        else
-                            PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        trailingIcon = {
-                            IconButton(onClick = { showApiKey = !showApiKey }) {
-                                Icon(
-                                    imageVector = if (showApiKey)
-                                        Icons.Filled.VisibilityOff
-                                    else
-                                        Icons.Filled.Visibility,
-                                    contentDescription = if (showApiKey) "Hide" else "Show"
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        isError = apiKey.isNotBlank() && !apiKey.trim().startsWith("sk-")
-                    )
-
-                    if (apiKey.isNotBlank() && !apiKey.trim().startsWith("sk-")) {
-                        Text(
-                            text = "API key should start with 'sk-'",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Security note
-                    Surface(
-                        color = Primary.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Icon(
-                                Icons.Filled.Security,
-                                contentDescription = null,
-                                tint = Primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Your API key is stored securely on your device using encrypted storage. It never leaves your device except to authenticate with OpenAI.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Pricing note
-                    Text(
-                        text = "Whisper API costs ~\$0.006/minute. A typical message costs less than a penny!",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    "This removes the model file from your device. On-device transcription " +
+                        "will stop working until you download a model again.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        app.preferencesManager.apiKey = apiKey.trim()
-                        showApiKeyDialog = false
+                        modelManager.delete(installedModel)
+                        app.preferencesManager.selectedModelId = null
+                        modelRefreshKey++
+                        showDeleteModelDialog = false
                     },
-                    enabled = apiKey.trim().startsWith("sk-")
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
                 ) {
-                    Text("Save")
+                    Text("Delete")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showApiKeyDialog = false }) {
+                TextButton(onClick = { showDeleteModelDialog = false }) {
                     Text("Cancel")
                 }
             }
-        )
-    }
-}
-
-@Composable
-fun ApiKeySetupStep(number: Int, text: String) {
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(
-            color = Primary.copy(alpha = 0.1f),
-            shape = RoundedCornerShape(50)
-        ) {
-            Text(
-                text = number.toString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = Primary,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodySmall
         )
     }
 }

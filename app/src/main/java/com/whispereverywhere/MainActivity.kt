@@ -129,6 +129,9 @@ fun WhisperEverywhereNavigation() {
                 },
                 onNavigateToTerms = {
                     navController.navigate("terms_of_service")
+                },
+                onNavigateToModelOnboarding = {
+                    navController.navigate("onboarding_model")
                 }
             )
         }
