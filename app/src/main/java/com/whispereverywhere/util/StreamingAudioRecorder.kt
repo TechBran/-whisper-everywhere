@@ -12,14 +12,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Streams 24 kHz mono PCM16 from the mic. For each buffer read it invokes
+ * Streams 16 kHz mono PCM16 from the mic. For each buffer read it invokes
  * [onChunk] (off the main thread) and updates [amplitude] for the waveform.
- * No file is written — audio goes straight to the realtime client.
+ * No file is written — audio goes straight to the transcription engine.
  */
 class StreamingAudioRecorder(private val context: Context) {
 
     companion object {
-        const val SAMPLE_RATE = 24000
+        const val SAMPLE_RATE = 16000
         private const val CHANNEL = AudioFormat.CHANNEL_IN_MONO
         private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
     }
