@@ -48,6 +48,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
@@ -94,6 +95,11 @@ class FloatingBubbleService : Service(),
     // Long-press detection for pin toggle (500 ms threshold)
     private var longPressJob: kotlinx.coroutines.Job? = null
     private val LONG_PRESS_MS = 500L
+
+    // Max time finalize waits for the last utterance's transcribe to finish before force-ending the
+    // session. Generous so a slow large-model segment (<=15s of audio) always completes and its text
+    // is delivered; bounded so a pathological transcribe can't hang the bubble in FINALIZING forever.
+    private val FINALIZE_TIMEOUT_MS = 120_000L
 
     // Pin icon view reference (lateinit; populated in createBubbleView)
     private lateinit var pinIcon: ImageView
@@ -302,9 +308,15 @@ class FloatingBubbleService : Service(),
         val bubbleSize = (56 * displayMetrics.density).toInt()
         val padding = (16 * displayMetrics.density).toInt()
 
-        // Position bubble at bottom-right corner for media
-        val targetX = screenWidth - bubbleSize - padding
-        val targetY = screenHeight - bubbleSize - padding - getNavigationBarHeight()
+        // Position bubble at bottom-right corner for media — unless pinned, in which case honor the
+        // user's pinned spot so it does not jump to the default on re-show.
+        var targetX = screenWidth - bubbleSize - padding
+        var targetY = screenHeight - bubbleSize - padding - getNavigationBarHeight()
+        if (isOverlayPinned) {
+            val pinned = savedPinnedPosition(bubbleSize)
+            targetX = pinned.first
+            targetY = pinned.second
+        }
 
         if (!isBubbleVisible) {
             params.x = targetX
@@ -356,13 +368,20 @@ class FloatingBubbleService : Service(),
         val padding = (16 * displayMetrics.density).toInt()
         val statusBarHeight = getStatusBarHeight()
 
-        val targetX = if (rect.right + bubbleSize + padding < screenWidth) {
+        var targetX = if (rect.right + bubbleSize + padding < screenWidth) {
             rect.right + padding
         } else {
             rect.left - bubbleSize - padding
         }
 
-        val targetY = (rect.top - statusBarHeight).coerceIn(padding, screenHeight - bubbleSize - padding)
+        var targetY = (rect.top - statusBarHeight).coerceIn(padding, screenHeight - bubbleSize - padding)
+
+        // When pinned, honor the user's pinned spot instead of jumping to the text field.
+        if (isOverlayPinned) {
+            val pinned = savedPinnedPosition(bubbleSize)
+            targetX = pinned.first
+            targetY = pinned.second
+        }
 
         if (!isBubbleVisible) {
             params.x = targetX
@@ -525,6 +544,12 @@ class FloatingBubbleService : Service(),
     private fun togglePin() {
         isOverlayPinned = !isOverlayPinned
         app.preferencesManager.overlayPinned = isOverlayPinned
+        if (isOverlayPinned) {
+            // Persist the current spot so the pinned position survives hide/show and app restarts.
+            val dm = resources.displayMetrics
+            if (dm.widthPixels > 0) app.preferencesManager.bubblePositionX = params.x.toFloat() / dm.widthPixels
+            if (dm.heightPixels > 0) app.preferencesManager.bubblePositionY = params.y.toFloat() / dm.heightPixels
+        }
         applyPinIndicator()
         showToast(if (isOverlayPinned) "Bubble pinned" else "Bubble unpinned")
     }
@@ -546,6 +571,14 @@ class FloatingBubbleService : Service(),
         val maxX = (dm.widthPixels - viewW).coerceAtLeast(0)
         val maxY = (dm.heightPixels - viewH).coerceAtLeast(0)
         return Pair(x.coerceIn(0, maxX), y.coerceIn(0, maxY))
+    }
+
+    /** The user's pinned bubble position from prefs (stored as screen fractions), in px, clamped. */
+    private fun savedPinnedPosition(size: Int): Pair<Int, Int> {
+        val dm = resources.displayMetrics
+        val x = (app.preferencesManager.bubblePositionX * dm.widthPixels).toInt()
+        val y = (app.preferencesManager.bubblePositionY * dm.heightPixels).toInt()
+        return clampToBounds(x, y, size, size)
     }
 
     /** Re-clamp and persist after a configuration change (rotation / fold). */
@@ -806,30 +839,39 @@ class FloatingBubbleService : Service(),
         }
         
         // Flush any speech captured since the last pause-commit.
-        if (speechSegmenter.hasPendingSpeech()) {
+        val hadPendingSpeech = speechSegmenter.hasPendingSpeech()
+        if (hadPendingSpeech) {
             transcriptionEngine?.commit()
         }
         speechSegmenter.reset()
 
-        // Give the on-device engine a moment to emit the final completed event, then close.
-        serviceScope.launch {
-            delay(1500)
+        // Wait for the queued final transcribe to actually finish before detaching the listener, so
+        // the last utterance is delivered (large models take many seconds; a fixed delay would drop
+        // it via the identity guard). Bounded by FINALIZE_TIMEOUT_MS so the bubble can't hang in
+        // FINALIZING forever. The blocking await runs on IO; all UI work stays on Main.
+        serviceScope.launch(Dispatchers.Main) {
+            if (hadPendingSpeech) {
+                withContext(Dispatchers.IO) {
+                    (transcriptionEngine as? LocalWhisperEngine)?.awaitIdle(FINALIZE_TIMEOUT_MS)
+                }
+            }
+            // Capture the sink before teardown nulls it, so the full transcript can still be read.
+            val finalizingSink = transcriptSink
             teardownRealtime()
             if (currentState == BubbleState.FINALIZING) {
                 // If we were transcribing without injecting, read the full text from the sink's
                 // session file (bounded memory; Task 7) and copy it to the clipboard.
                 if (currentContext != BubbleContext.TEXT_FIELD) {
                     previewJob?.cancel(); previewJob = null
-                    transcriptSink?.let { sink ->
-                        sink.close()
-                        val full = sink.fullTextFile().readText().trim()
+                    finalizingSink?.let { sink ->
+                        // teardownRealtime already closed the sink; just read its flushed file.
+                        val full = withContext(Dispatchers.IO) { sink.fullTextFile().readText().trim() }
                         if (full.isNotEmpty()) {
                             val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                             clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
                             showToast("Transcription copied to clipboard")
                         }
                     }
-                    transcriptSink = null
                 }
 
                 vibrateSuccess()

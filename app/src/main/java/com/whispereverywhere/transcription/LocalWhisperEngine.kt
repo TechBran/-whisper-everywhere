@@ -41,6 +41,14 @@ class LocalWhisperEngine(
     private val bufferLock = Any()
     private val buffer = ByteArrayOutputStream()
 
+    /**
+     * Lightweight control executor used ONLY to deliver connect() readiness callbacks
+     * (onOpen/onError). It NEVER touches the native context. Keeping these off the native
+     * [executor] means CONNECTING is not blocked behind a slow in-flight transcribe when the
+     * engine is reused across sessions (a large-model transcribe can take many seconds).
+     */
+    private val controlExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
     @Volatile private var listener: TranscriptionEngine.Listener? = null
     @Volatile private var language: String? = null
 
@@ -53,28 +61,42 @@ class LocalWhisperEngine(
 
         val modelPath = modelPathProvider.installedModelPath()
         if (modelPath == null) {
-            // Route through the executor for thread consistency (all callbacks on executor thread).
-            val captured = listener
+            // No native work involved; route through the native executor (keeps callback ordering
+            // consistent and deterministic for tests using a same-thread executor).
             executor.execute {
-                if (this.listener === captured) captured.onError("No speech model installed")
+                if (this.listener === listener) listener.onError("No speech model installed")
             }
             return
         }
 
+        // Fast path: the native context is already loaded (reused engine). Signal readiness on the
+        // lightweight control executor so onOpen() is NOT queued behind a slow in-flight transcribe
+        // on the native executor — otherwise a prior session's large-model transcribe would keep the
+        // next session stuck in CONNECTING.
+        if (ctxPtr != 0L) {
+            controlExecutor.execute {
+                if (this.listener === listener) listener.onOpen()
+            }
+            return
+        }
+
+        // First load: must run on the native executor (serializes all native context access). On a
+        // freshly built engine there is no prior transcribe to block it, so CONNECTING legitimately
+        // covers the one-time model load.
         executor.execute {
             try {
                 if (ctxPtr == 0L) {
                     // Retry a transient load failure once before giving up.
                     val loaded = runBlocking { loadRetry.retry { backend.load(modelPath) } }
                     if (loaded == 0L) {
-                        listener.onError("Failed to load speech model (may be corrupt - re-download)")
+                        if (this.listener === listener) listener.onError("Failed to load speech model (may be corrupt - re-download)")
                         return@execute
                     }
                     ctxPtr = loaded
                 }
-                listener.onOpen()
+                if (this.listener === listener) listener.onOpen()
             } catch (t: Throwable) {
-                listener.onError(t.message ?: "Model load failed")
+                if (this.listener === listener) listener.onError(t.message ?: "Model load failed")
             }
         }
     }
@@ -161,6 +183,27 @@ class LocalWhisperEngine(
      * the already-queued release task finish before the thread terminates. After this call the
      * engine must not be reused.
      */
+    /**
+     * Blocks the CALLING thread until all work already queued on the native [executor] (notably a
+     * final commit()'s transcribe) has finished, or [timeoutMs] elapses. The caller uses this to
+     * ensure the final segment's onCompleted has been delivered — while the listener is still
+     * attached — BEFORE close() detaches it. MUST be called off the main thread. Submitting an
+     * empty fence task preserves the single-thread native-access contract (it never touches ctxPtr).
+     */
+    fun awaitIdle(timeoutMs: Long) {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        try {
+            executor.execute { latch.countDown() }
+        } catch (t: java.util.concurrent.RejectedExecutionException) {
+            return  // executor already shut down — nothing is in flight
+        }
+        try {
+            latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (t: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
     fun shutdown() {
         executor.execute {
             val ctx = ctxPtr
@@ -174,5 +217,6 @@ class LocalWhisperEngine(
             }
         }
         executor.shutdown()
+        controlExecutor.shutdown()
     }
 }
