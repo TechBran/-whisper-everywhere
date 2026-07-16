@@ -40,7 +40,8 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToOnboardingModel: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -59,8 +60,8 @@ fun HomeScreen(
     }
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasAccessibilityEnabled by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
-    var hasApiKey by remember { mutableStateOf(app.preferencesManager.hasApiKey()) }
     var hasNotificationListener by remember { mutableStateOf(MediaNotificationListener.isEnabled()) }
+    var hasSpeechModel by remember { mutableStateOf(app.whisperModelManager.installedModel() != null) }
 
     // Dialog states
     var showAccessibilityDialog by remember { mutableStateOf(false) }
@@ -73,8 +74,8 @@ fun HomeScreen(
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasOverlayPermission = Settings.canDrawOverlays(context)
         hasAccessibilityEnabled = WhisperAccessibilityService.isEnabled()
-        hasApiKey = app.preferencesManager.hasApiKey()
         hasNotificationListener = MediaNotificationListener.isEnabled()
+        hasSpeechModel = app.whisperModelManager.installedModel() != null
     }
 
     // Listen to lifecycle events - refresh when app resumes
@@ -97,7 +98,6 @@ fun HomeScreen(
             delay(1000) // Check every second
             val newAccessibility = WhisperAccessibilityService.isEnabled()
             val newOverlay = Settings.canDrawOverlays(context)
-            val newApiKey = app.preferencesManager.hasApiKey()
             val newMicrophone = androidx.core.content.ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.RECORD_AUDIO
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -112,12 +112,13 @@ fun HomeScreen(
             if (newOverlay != hasOverlayPermission) {
                 hasOverlayPermission = newOverlay
             }
-            if (newApiKey != hasApiKey) {
-                hasApiKey = newApiKey
-            }
             val newNotificationListener = MediaNotificationListener.isEnabled()
             if (newNotificationListener != hasNotificationListener) {
                 hasNotificationListener = newNotificationListener
+            }
+            val newSpeechModel = app.whisperModelManager.installedModel() != null
+            if (newSpeechModel != hasSpeechModel) {
+                hasSpeechModel = newSpeechModel
             }
         }
     }
@@ -157,7 +158,7 @@ fun HomeScreen(
             // Main Control Button
             MainControlButton(
                 isEnabled = bubbleEnabled,
-                canEnable = hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled && hasApiKey,
+                canEnable = hasSpeechModel && hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled,
                 onToggle = {
                     if (bubbleEnabled) {
                         FloatingBubbleService.stop(context)
@@ -187,12 +188,11 @@ fun HomeScreen(
 
             // Setup Checklist
             SetupChecklist(
-                hasApiKey = hasApiKey,
                 hasMicrophonePermission = hasMicrophonePermission,
                 hasOverlayPermission = hasOverlayPermission,
                 hasAccessibilityEnabled = hasAccessibilityEnabled,
                 hasNotificationListener = hasNotificationListener,
-                onSetApiKey = onNavigateToSettings,
+                hasSpeechModel = hasSpeechModel,
                 onRequestMicrophone = {
                     val intent = Intent(
                         Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -212,7 +212,8 @@ fun HomeScreen(
                 },
                 onRequestNotificationListener = {
                     showNotificationListenerDialog = true
-                }
+                },
+                onRequestSpeechModel = onNavigateToOnboardingModel
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -554,7 +555,7 @@ fun UsageStatsCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "No usage limits - you pay OpenAI directly for API usage",
+                text = "No usage limits - transcription runs entirely on-device",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -683,19 +684,19 @@ fun LanguageSelectionCard() {
 
 @Composable
 fun SetupChecklist(
-    hasApiKey: Boolean,
     hasMicrophonePermission: Boolean,
     hasOverlayPermission: Boolean,
     hasAccessibilityEnabled: Boolean,
     hasNotificationListener: Boolean = false,
-    onSetApiKey: () -> Unit,
+    hasSpeechModel: Boolean = false,
     onRequestMicrophone: () -> Unit,
     onRequestOverlay: () -> Unit,
     onRequestAccessibility: () -> Unit,
-    onRequestNotificationListener: () -> Unit = {}
+    onRequestNotificationListener: () -> Unit = {},
+    onRequestSpeechModel: () -> Unit = {}
 ) {
     // Core requirements for basic functionality
-    val coreComplete = hasApiKey && hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled
+    val coreComplete = hasSpeechModel && hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled
     val allComplete = coreComplete && hasNotificationListener
 
     // Show success message when core setup is complete
@@ -822,10 +823,10 @@ fun SetupChecklist(
             Spacer(modifier = Modifier.height(12.dp))
 
             SetupItem(
-                title = "OpenAI API Key",
-                description = if (!hasApiKey) "Required to transcribe audio" else null,
-                isComplete = hasApiKey,
-                onClick = onSetApiKey
+                title = "Speech Model",
+                description = if (!hasSpeechModel) "Required to transcribe on-device" else null,
+                isComplete = hasSpeechModel,
+                onClick = onRequestSpeechModel
             )
 
             SetupItem(
@@ -978,8 +979,6 @@ fun HowToStep(number: Int, text: String) {
 
 @Composable
 fun BYOKInfoCard() {
-    val context = LocalContext.current
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -993,13 +992,13 @@ fun BYOKInfoCard() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    Icons.Filled.Key,
+                    Icons.Filled.PhoneAndroid,
                     contentDescription = null,
                     tint = Primary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Bring Your Own Key",
+                    text = "100% On-Device",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -1008,36 +1007,10 @@ fun BYOKInfoCard() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "This app uses your personal OpenAI API key for transcription. You're billed directly by OpenAI based on your usage - no middleman fees!",
+                text = "Transcription runs entirely on your device. No API key or internet connection required — your audio never leaves your phone.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Whisper API costs approximately $0.006 per minute of audio.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedButton(
-                onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://platform.openai.com/api-keys"))
-                    context.startActivity(intent)
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    Icons.Filled.OpenInNew,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Get Your API Key")
-            }
         }
     }
 }

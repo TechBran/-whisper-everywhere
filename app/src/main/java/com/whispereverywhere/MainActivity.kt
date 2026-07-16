@@ -16,8 +16,10 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.ui.screens.HomeScreen
 import com.whispereverywhere.ui.screens.LegalDocumentScreen
+import com.whispereverywhere.ui.screens.OnboardingModelScreen
 import com.whispereverywhere.ui.screens.SettingsScreen
 import com.whispereverywhere.ui.theme.WhisperEverywhereTheme
 
@@ -81,14 +83,38 @@ class MainActivity : ComponentActivity() {
 fun WhisperEverywhereNavigation() {
     val navController = rememberNavController()
 
+    // Compute the start destination once, at launch: if there is no installed
+    // speech model, gate the app behind the model-download onboarding wizard.
+    val startDestination = remember {
+        val app = WhisperEverywhereApp.getInstance()
+        if (app.whisperModelManager.installedModel() == null) {
+            "onboarding_model"
+        } else {
+            "home"
+        }
+    }
+
     NavHost(
         navController = navController,
-        startDestination = "home"
+        startDestination = startDestination
     ) {
+        composable("onboarding_model") {
+            OnboardingModelScreen(
+                onModelReady = {
+                    navController.navigate("home") {
+                        popUpTo("onboarding_model") { inclusive = true }
+                    }
+                }
+            )
+        }
+
         composable("home") {
             HomeScreen(
                 onNavigateToSettings = {
                     navController.navigate("settings")
+                },
+                onNavigateToOnboardingModel = {
+                    navController.navigate("onboarding_model")
                 }
             )
         }
