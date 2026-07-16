@@ -56,10 +56,10 @@
 </head>
 <body>
     <h1>Terms of Service</h1>
-    <p class="last-updated">Last Updated: November 28, 2024</p>
+    <p class="last-updated">Last Updated: July 16, 2026</p>
 
     <div class="highlight">
-        <strong>Summary:</strong> Whisper Everywhere is a voice-to-text tool that uses YOUR OpenAI API key. You are responsible for your API usage and costs. We provide the tool; you provide the API access.
+        <strong>Summary:</strong> Whisper Everywhere is a voice-to-text tool that transcribes your speech entirely on your device. There are no accounts and no per-use fees. You download an open-source speech model once, and transcription then runs offline on your phone.
     </div>
 
     <h2>1. Acceptance of Terms</h2>
@@ -69,31 +69,26 @@
     <p>Whisper Everywhere is a voice-to-text application that:</p>
     <ul>
         <li>Provides a floating overlay interface for voice recording</li>
-        <li>Sends audio to OpenAI's Whisper API for transcription using your personal API key</li>
+        <li>Transcribes audio to text entirely on your device using the open-source whisper.cpp engine</li>
         <li>Injects transcribed text into text fields or copies it to your clipboard</li>
-        <li>Detects media playback for transcription purposes</li>
+        <li>Detects media playback for optional transcription purposes</li>
     </ul>
 
-    <h2>3. Bring Your Own Key (BYOK) Model</h2>
-    <p>This App operates on a "Bring Your Own Key" model:</p>
+    <h2>3. On-Device Processing and Model Downloads</h2>
+    <p>The App performs all speech recognition locally on your device:</p>
     <ul>
-        <li><strong>You must provide your own OpenAI API key</strong> to use the transcription features.</li>
-        <li><strong>You are responsible for all charges</strong> incurred on your OpenAI account from using this App.</li>
-        <li><strong>You are responsible for keeping your API key secure.</strong> Do not share your device with untrusted parties while your API key is configured.</li>
-        <li><strong>We have no access to your API key</strong> and cannot be held responsible for unauthorized usage if your device is compromised.</li>
+        <li><strong>Your audio never leaves your device.</strong> Transcription is performed on your phone; no audio or transcribed text is transmitted to us or any third party.</li>
+        <li><strong>You download a speech model once.</strong> The first time you choose a model, a model file is downloaded over HTTPS from the public Hugging Face repository so the App can work offline afterward.</li>
+        <li><strong>No account or subscription is required</strong> and there are no per-minute usage fees for transcription.</li>
+        <li><strong>Model files require device storage.</strong> Larger, higher-accuracy models require more storage and more device memory (RAM) to run well; you are responsible for choosing a model appropriate for your device.</li>
     </ul>
-
-    <div class="warning">
-        <strong>Important:</strong> OpenAI charges for API usage. As of 2024, Whisper API costs approximately $0.006 per minute of audio. You are solely responsible for monitoring and paying for your API usage. We recommend setting usage limits in your OpenAI account.
-    </div>
 
     <h2>4. User Requirements</h2>
     <p>To use Whisper Everywhere, you must:</p>
     <ul>
         <li>Be at least 13 years of age (or the minimum age required in your jurisdiction)</li>
-        <li>Have a valid OpenAI account with API access</li>
-        <li>Have a valid payment method on file with OpenAI for API charges</li>
         <li>Have an Android device running a compatible version of Android</li>
+        <li>Have sufficient storage and memory for the speech model you choose</li>
         <li>Grant the necessary permissions for the App to function</li>
     </ul>
 
@@ -104,7 +99,6 @@
         <li>Transcribe content that infringes on intellectual property rights</li>
         <li>Process content that is illegal, harmful, threatening, abusive, or otherwise objectionable</li>
         <li>Violate any applicable laws or regulations</li>
-        <li>Violate OpenAI's usage policies or terms of service</li>
         <li>Attempt to reverse engineer, decompile, or disassemble the App</li>
         <li>Circumvent any security measures or access controls</li>
     </ul>
@@ -112,22 +106,16 @@
     <h2>6. Privacy and Data Handling</h2>
     <p>Your use of the App is also governed by our Privacy Policy, which is incorporated into these Terms by reference. Key points:</p>
     <ul>
-        <li>Audio recordings are sent directly to OpenAI and are not stored by us</li>
-        <li>Your API key is stored encrypted on your device only</li>
+        <li>Audio is processed on your device and is not sent to us or any third-party transcription service</li>
         <li>We do not collect personal information or usage analytics</li>
+        <li>The only network activity is downloading a speech model file from Hugging Face</li>
     </ul>
 
-    <h2>7. Third-Party Services</h2>
-    <p>The App relies on OpenAI's services for transcription. By using this App, you also agree to comply with:</p>
-    <ul>
-        <li><a href="https://openai.com/policies/terms-of-use">OpenAI's Terms of Use</a></li>
-        <li><a href="https://openai.com/policies/usage-policies">OpenAI's Usage Policies</a></li>
-        <li><a href="https://openai.com/privacy">OpenAI's Privacy Policy</a></li>
-    </ul>
-    <p>We are not responsible for any changes to OpenAI's services, pricing, or policies.</p>
+    <h2>7. Third-Party and Open-Source Components</h2>
+    <p>The App is built on open-source software, including the whisper.cpp inference engine and speech models derived from OpenAI's Whisper (all under the MIT License). Model files are hosted on and downloaded from Hugging Face. See the "Open-Source Licenses" screen in the App for attributions. We are not responsible for the availability of third-party download hosts, though the App continues to work offline once a model is installed.</p>
 
     <h2>8. Intellectual Property</h2>
-    <p>The App, including its design, features, and code, is owned by us and protected by intellectual property laws. You are granted a limited, non-exclusive, non-transferable license to use the App for personal, non-commercial purposes.</p>
+    <p>The App, including its design, features, and code, is owned by us and protected by intellectual property laws, except for the open-source components identified in the App's Open-Source Licenses screen, which remain governed by their respective licenses. You are granted a limited, non-exclusive, non-transferable license to use the App for personal, non-commercial purposes.</p>
     <p>You retain all rights to:</p>
     <ul>
         <li>Your audio recordings</li>
@@ -142,19 +130,16 @@
         <li>Accuracy or reliability of transcriptions</li>
         <li>Uninterrupted or error-free operation</li>
         <li>Compatibility with all devices or Android versions</li>
-        <li>Availability of OpenAI's services</li>
     </ul>
-    <p>Transcription accuracy depends on audio quality, language, accent, and OpenAI's Whisper model. We do not guarantee perfect transcriptions.</p>
+    <p>Transcription accuracy depends on audio quality, language, accent, device performance, and the on-device Whisper model you select. We do not guarantee perfect transcriptions.</p>
 
     <h2>10. Limitation of Liability</h2>
     <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, WE SHALL NOT BE LIABLE FOR:</p>
     <ul>
         <li>Any indirect, incidental, special, consequential, or punitive damages</li>
         <li>Any loss of profits, data, use, or goodwill</li>
-        <li>Any damages resulting from API charges on your OpenAI account</li>
-        <li>Any damages resulting from unauthorized access to your device or API key</li>
         <li>Any damages resulting from inaccurate transcriptions</li>
-        <li>Any interruption or cessation of OpenAI's services</li>
+        <li>Any damages resulting from unauthorized access to your device</li>
     </ul>
     <p>Our total liability for any claim arising from your use of the App shall not exceed the amount you paid for the App (if any).</p>
 

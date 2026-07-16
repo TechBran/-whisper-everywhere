@@ -35,7 +35,8 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToPrivacyPolicy: () -> Unit = {},
     onNavigateToTerms: () -> Unit = {},
-    onNavigateToModelOnboarding: () -> Unit = {}
+    onNavigateToModelOnboarding: () -> Unit = {},
+    onNavigateToLicenses: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = WhisperEverywhereApp.getInstance()
@@ -300,6 +301,12 @@ fun SettingsScreen(
                     icon = Icons.Filled.Description,
                     title = "Terms of Service",
                     onClick = onNavigateToTerms
+                )
+
+                SettingsItem(
+                    icon = Icons.Filled.Description,
+                    title = "Open-Source Licenses",
+                    onClick = onNavigateToLicenses
                 )
 
                 SettingsItem(

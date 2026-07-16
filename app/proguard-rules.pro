@@ -21,11 +21,7 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
-# OkHttp
--dontwarn okhttp3.**
--dontwarn okio.**
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
+# (OkHttp removed in v2.0.0 - on-device only, no networking library on the classpath)
 
 # Keep accessibility service
 -keep class com.whispereverywhere.service.WhisperAccessibilityService { *; }

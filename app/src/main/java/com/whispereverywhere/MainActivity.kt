@@ -132,6 +132,9 @@ fun WhisperEverywhereNavigation() {
                 },
                 onNavigateToModelOnboarding = {
                     navController.navigate("onboarding_model")
+                },
+                onNavigateToLicenses = {
+                    navController.navigate("open_source_licenses")
                 }
             )
         }
@@ -150,6 +153,16 @@ fun WhisperEverywhereNavigation() {
             LegalDocumentScreen(
                 title = "Terms of Service",
                 assetFileName = "terms_of_service.html",
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable("open_source_licenses") {
+            LegalDocumentScreen(
+                title = "Open-Source Licenses",
+                assetFileName = "oss_licenses.html",
                 onNavigateBack = {
                     navController.popBackStack()
                 }
