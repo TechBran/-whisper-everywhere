@@ -36,6 +36,9 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribe(
     if (ctx == nullptr) {
         return env->NewStringUTF("");
     }
+    if (samples == nullptr) {
+        return env->NewStringUTF("");
+    }
 
     const jsize n = env->GetArrayLength(samples);
     std::vector<float> pcm(static_cast<size_t>(n));

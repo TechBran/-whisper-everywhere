@@ -26,6 +26,5 @@ target_link_libraries(whisper_jni
     whisper
     android
     log)
-
-# 16 KB page alignment for Android 15+ / Play Store (NDK r27+).
-target_link_options(whisper_jni PRIVATE "-Wl,-z,max-page-size=16384")
+# Note: 16 KB page alignment is applied globally above via CMAKE_SHARED_LINKER_FLAGS,
+# covering libggml/libwhisper/libwhisper_jni - no per-target link option needed.
