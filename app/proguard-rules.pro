@@ -41,3 +41,7 @@
 -dontwarn com.google.errorprone.annotations.CheckReturnValue
 -dontwarn com.google.errorprone.annotations.Immutable
 -dontwarn com.google.errorprone.annotations.RestrictedApi
+
+# --- Native whisper.cpp JNI bridge (Task 1) ---
+-keepclasseswithmembernames class * { native <methods>; }
+-keep class com.whispereverywhere.whisper.WhisperNative { *; }

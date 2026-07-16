@@ -7,6 +7,14 @@ plugins {
 android {
     namespace = "com.whispereverywhere"
     compileSdk = 35
+    ndkVersion = "27.0.12077973"
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     defaultConfig {
         applicationId = "com.whispereverywhere"
@@ -18,6 +26,19 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+
+        externalNativeBuild {
+            cmake {
+                // Ensure the 16 KB page-size flag reaches every native target (incl. ggml/whisper),
+                // not just whisper_jni — required for Play Store Android 15+ compliance.
+                arguments += "-DANDROID_STL=c++_shared"
+                cppFlags += "-std=c++17"
+            }
         }
     }
 
