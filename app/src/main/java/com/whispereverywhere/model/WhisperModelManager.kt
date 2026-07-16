@@ -75,6 +75,15 @@ class WhisperModelManager(
         val dest = fileFor(model)
         if (dest.exists()) dest.delete()
 
+        // Clear any leftover state from a prior attempt at this model BEFORE enqueue. Otherwise a
+        // stale DownloadManager row or a leftover file at the EXTERNAL download destination makes
+        // DownloadManager stall at 0 bytes / fail with ERROR_FILE_ALREADY_EXISTS — the "downloads
+        // fine the first time but sticks at 0 MB after a delete + retry" bug. (The old guard above
+        // only cleared the INTERNAL destination, never the external one DownloadManager writes to.)
+        removeStaleDownloads(dm, model)
+        val downloadDest = externalDownloadDest(model)
+        if (downloadDest.exists()) downloadDest.delete()
+
         val request = DownloadManager.Request(model.url.toUri())
             .setTitle(model.displayName)
             .setDescription("Downloading speech model")
@@ -182,10 +191,39 @@ class WhisperModelManager(
         }
     }
 
-    /** Remove the installed file for [model] (no-op if absent). */
+    /** The path DownloadManager writes to (external app files dir); the file is later moved internal. */
+    private fun externalDownloadDest(model: WhisperModel): File =
+        File(File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "models"), model.fileName)
+
+    /**
+     * Remove any DownloadManager rows (and their files) for this model's URL left by a prior,
+     * possibly process-killed, attempt, so a fresh enqueue starts from a clean destination.
+     */
+    private fun removeStaleDownloads(dm: DownloadManager, model: WhisperModel) {
+        try {
+            dm.query(DownloadManager.Query()).use { c ->
+                val idIdx = c.getColumnIndex(DownloadManager.COLUMN_ID)
+                val uriIdx = c.getColumnIndex(DownloadManager.COLUMN_URI)
+                if (idIdx < 0 || uriIdx < 0) return
+                while (c.moveToNext()) {
+                    if (c.getString(uriIdx) == model.url) dm.remove(c.getLong(idIdx))
+                }
+            }
+        } catch (t: Throwable) {
+            android.util.Log.w("WEModelDL", "removeStaleDownloads failed", t)
+        }
+    }
+
+    /** Remove the installed file for [model], plus any external download leftovers / stale rows. */
     fun delete(model: WhisperModel) {
         val f = fileFor(model)
         if (f.exists()) f.delete()
+        // Also clear the external download destination + stale DownloadManager rows, so a later
+        // re-download can't stall at 0 bytes on a leftover-file collision.
+        val ext = externalDownloadDest(model)
+        if (ext.exists()) ext.delete()
+        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        removeStaleDownloads(dm, model)
     }
 
     class ModelDownloadException(message: String) : Exception(message)

@@ -14,9 +14,9 @@ package com.whispereverywhere.util
  * @param maxSegmentMs hard cap on a segment's length before forcing a commit
  */
 class SpeechSegmenter(
-    private val voiceThreshold: Int = 1200,
-    private val silenceThreshold: Int = 600,
-    private val pauseMs: Long = 1200,
+    private val voiceThreshold: Int = 500,
+    private val silenceThreshold: Int = 250,
+    private val pauseMs: Long = 800,
     private val maxSegmentMs: Long = 15000,
 ) {
     private var hasSpoken = false

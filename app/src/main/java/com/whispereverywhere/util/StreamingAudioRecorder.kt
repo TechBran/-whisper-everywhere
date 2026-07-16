@@ -38,8 +38,13 @@ class StreamingAudioRecorder(private val context: Context) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
-    /** @param onChunk receives a freshly read PCM16 chunk (a copy of exactly [size] bytes). */
-    fun start(onChunk: (ByteArray) -> Unit): Result<Unit> {
+    /**
+     * @param onChunk receives, per buffer read, a freshly read PCM16 chunk (a copy of exactly the
+     * bytes read) and its RMS amplitude (0..32767). Amplitude is delivered per chunk — not via the
+     * conflated [amplitude] StateFlow — so callers can run voice-activity detection on every chunk,
+     * including during steady silence (a StateFlow would stop emitting once the value settles).
+     */
+    fun start(onChunk: (ByteArray, Int) -> Unit): Result<Unit> {
         if (!hasPermission()) return Result.failure(SecurityException("Microphone permission not granted"))
         if (recording) return Result.failure(IllegalStateException("Already recording"))
 
@@ -59,8 +64,9 @@ class StreamingAudioRecorder(private val context: Context) {
             while (recording) {
                 val read = record.read(buffer, 0, buffer.size)
                 if (read > 0) {
-                    _amplitude.value = AudioMath.amplitude(buffer, read)
-                    onChunk(buffer.copyOf(read))
+                    val amp = AudioMath.amplitude(buffer, read)
+                    _amplitude.value = amp
+                    onChunk(buffer.copyOf(read), amp)
                 }
             }
         }.also { it.start() }

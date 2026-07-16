@@ -101,6 +101,10 @@ class FloatingBubbleService : Service(),
     // is delivered; bounded so a pathological transcribe can't hang the bubble in FINALIZING forever.
     private val FINALIZE_TIMEOUT_MS = 120_000L
 
+    // Set true when any transcription text is produced during a recording session; drives the
+    // "No speech detected" feedback on stop so the user is not left with silent nothing.
+    @Volatile private var sessionProducedText = false
+
     // Pin icon view reference (lateinit; populated in createBubbleView)
     private lateinit var pinIcon: ImageView
 
@@ -716,6 +720,7 @@ class FloatingBubbleService : Service(),
 
         updateBubbleState(BubbleState.CONNECTING)
         vibrateStart()
+        sessionProducedText = false
 
         // On-device engine. connect() resolves the installed model and loads the
         // native context off-thread; CONNECTING covers that model-load wait and
@@ -730,13 +735,21 @@ class FloatingBubbleService : Service(),
             override fun onOpen() {
                 serviceScope.launch(Dispatchers.Main) {
                     if (currentState != BubbleState.CONNECTING) return@launch
-                    val started = audioRecorder.start { chunk -> engine.sendAudio(chunk) }
+                    speechSegmenter.reset()
+                    val started = audioRecorder.start { chunk, amp ->
+                        engine.sendAudio(chunk)
+                        // Client VAD per audio chunk (NOT the conflated amplitude StateFlow, which
+                        // stops emitting during a steady pause). Commit on a natural pause or the
+                        // max-segment cap so each utterance is transcribed on-device.
+                        if (speechSegmenter.onAmplitude(amp, System.currentTimeMillis())) {
+                            engine.commit()
+                        }
+                    }
                     if (started.isFailure) {
                         showToast("Recording failed: ${started.exceptionOrNull()?.message}")
                         teardownRealtime(); updateBubbleState(BubbleState.ERROR)
                         return@launch
                     }
-                    speechSegmenter.reset()
 
                     // Show preview text bubble if we are not injecting into a text field
                     if (currentContext != BubbleContext.TEXT_FIELD) {
@@ -772,12 +785,8 @@ class FloatingBubbleService : Service(),
                     amplitudeJob = serviceScope.launch {
                         audioRecorder.amplitude.collectLatest { amp ->
                             if (currentState != BubbleState.RECORDING) return@collectLatest
+                            // Waveform only; the VAD/commit runs per-chunk in the recorder callback.
                             waveformView.updateAmplitude(amp)
-                            // Client VAD: commit on a natural pause (or max segment) so each
-                            // utterance is transcribed on-device and injected per segment.
-                            if (speechSegmenter.onAmplitude(amp, System.currentTimeMillis())) {
-                                transcriptionEngine?.commit()
-                            }
                         }
                     }
                 }
@@ -798,6 +807,7 @@ class FloatingBubbleService : Service(),
             override fun onCompleted(text: String) {
                 val trimmed = text.trim()
                 if (trimmed.isNotEmpty()) {
+                    sessionProducedText = true
                     serviceScope.launch(Dispatchers.Main) {
                         if (currentContext != BubbleContext.TEXT_FIELD) {
                             transcriptionDeltaText.visibility = View.GONE
@@ -838,11 +848,10 @@ class FloatingBubbleService : Service(),
             transcriptionPreviewContainer.visibility = View.GONE
         }
         
-        // Flush any speech captured since the last pause-commit.
-        val hadPendingSpeech = speechSegmenter.hasPendingSpeech()
-        if (hadPendingSpeech) {
-            transcriptionEngine?.commit()
-        }
+        // Always flush the final take on stop (commit is a no-op if the buffer is empty). Combined
+        // with the per-chunk VAD, this guarantees the last utterance transcribes even if quiet
+        // speech never tripped the VAD threshold mid-recording.
+        transcriptionEngine?.commit()
         speechSegmenter.reset()
 
         // Wait for the queued final transcribe to actually finish before detaching the listener, so
@@ -850,10 +859,8 @@ class FloatingBubbleService : Service(),
         // it via the identity guard). Bounded by FINALIZE_TIMEOUT_MS so the bubble can't hang in
         // FINALIZING forever. The blocking await runs on IO; all UI work stays on Main.
         serviceScope.launch(Dispatchers.Main) {
-            if (hadPendingSpeech) {
-                withContext(Dispatchers.IO) {
-                    (transcriptionEngine as? LocalWhisperEngine)?.awaitIdle(FINALIZE_TIMEOUT_MS)
-                }
+            withContext(Dispatchers.IO) {
+                (transcriptionEngine as? LocalWhisperEngine)?.awaitIdle(FINALIZE_TIMEOUT_MS)
             }
             // Capture the sink before teardown nulls it, so the full transcript can still be read.
             val finalizingSink = transcriptSink
@@ -874,6 +881,9 @@ class FloatingBubbleService : Service(),
                     }
                 }
 
+                if (!sessionProducedText) {
+                    showToast("No speech detected — try again a bit louder or closer to the mic.")
+                }
                 vibrateSuccess()
                 updateBubbleState(BubbleState.IDLE)
             }
