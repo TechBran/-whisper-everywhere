@@ -20,8 +20,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "2.0.5-diag"
+        versionCode = 17
+        versionName = "2.0.6-diag"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -37,6 +37,12 @@ android {
                 // Ensure the 16 KB page-size flag reaches every native target (incl. ggml/whisper),
                 // not just whisper_jni — required for Play Store Android 15+ compliance.
                 arguments += "-DANDROID_STL=c++_shared"
+                // Compile ggml's fast quantized kernels (ARM dot-product + int8 matmul). These are
+                // runtime-dispatched via getauxval, so ONE .so is fast on capable CPUs (2-4x for
+                // quantized whisper) and falls back safely on older ones. Baseline stays armv8-a
+                // (crash-safe across the minSdk-26 range); +fp16 is intentionally omitted (it is
+                // NOT runtime-gated and would SIGILL on the oldest armv8.0 cores).
+                arguments += "-DGGML_CPU_ARM_ARCH=armv8-a+dotprod+i8mm"
                 cppFlags += "-std=c++17"
             }
         }

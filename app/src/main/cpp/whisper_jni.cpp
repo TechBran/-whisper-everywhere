@@ -59,7 +59,9 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribe(
     if (cores <= 0) {
         cores = 4;
     }
-    params.n_threads = cores;
+    // On mobile big.LITTLE, spreading whisper across every core (incl. the slow efficiency cores)
+    // hurts throughput and invites thermal throttling. Cap to roughly the performance-core count.
+    params.n_threads = (cores > 4) ? (cores - 2) : cores;
 
     // Language handling: null / "auto" / "" -> auto-detect; otherwise force the code.
     std::string langStr;
