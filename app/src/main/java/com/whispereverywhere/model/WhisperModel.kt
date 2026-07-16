@@ -1,6 +1,7 @@
 package com.whispereverywhere.model
 
 import java.security.MessageDigest
+import kotlin.math.abs
 
 /** Language coverage of a whisper model. */
 enum class ModelScope { ENGLISH, MULTILINGUAL }
@@ -112,7 +113,7 @@ object WhisperCatalog {
      * Inclusive at both +/-5% edges. Runs before the sha256 compare in verify().
      */
     fun sizeWithinTolerance(actualBytes: Long, approxBytes: Long): Boolean {
-        val delta = Math.abs(actualBytes - approxBytes).toDouble()
+        val delta = abs(actualBytes - approxBytes).toDouble()
         val allowed = approxBytes.toDouble() * SIZE_TOLERANCE
         return delta <= allowed
     }
@@ -120,6 +121,30 @@ object WhisperCatalog {
     /** Lowercased hex SHA-256 of [bytes]. */
     fun sha256Hex(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            val v = b.toInt() and 0xFF
+            sb.append("0123456789abcdef"[v ushr 4])
+            sb.append("0123456789abcdef"[v and 0x0F])
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Streaming SHA-256 of [file], reading in 64 KB chunks so large model files
+     * (e.g. ~574 MB) are never loaded fully into memory.
+     * Returns a lowercase 64-char hex string.
+     */
+    fun sha256HexFile(file: java.io.File): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val buf = ByteArray(64 * 1024)
+        file.inputStream().use { stream ->
+            var read: Int
+            while (stream.read(buf).also { read = it } != -1) {
+                md.update(buf, 0, read)
+            }
+        }
+        val digest = md.digest()
         val sb = StringBuilder(digest.size * 2)
         for (b in digest) {
             val v = b.toInt() and 0xFF

@@ -134,24 +134,51 @@ class WhisperModelManager(
             dm.remove(id)
         }
 
-        // Verify on disk: size gate THEN sha256. Delete + fail on mismatch.
-        val actualLen = dest.length()
-        val bytes = dest.readBytes()
-        val ok = WhisperCatalog.verify(actualLen, model.approxBytes, bytes, model.sha256)
-        if (!ok) {
-            dest.delete()
-            throw ModelDownloadException("Verification failed for ${model.fileName}")
+        // Verify on disk: size gate THEN sha256 (streaming — never loads the whole file).
+        // Any exception (expected or unexpected) deletes the partial/corrupt file before rethrowing.
+        try {
+            val actualLen = dest.length()
+
+            // (1) Size gate — always applied.
+            if (!WhisperCatalog.sizeWithinTolerance(actualLen, model.approxBytes)) {
+                dest.delete()
+                throw ModelDownloadException(
+                    "Size verification failed for ${model.fileName}: " +
+                        "got $actualLen bytes, expected ~${model.approxBytes}"
+                )
+            }
+
+            // (2) SHA-256 gate — only when the digest is a real 64-char hex value (not "PENDING").
+            val expected = model.sha256.trim().lowercase()
+            val isRealDigest = expected.length == 64 && expected.all { it in "0123456789abcdef" }
+            if (isRealDigest) {
+                val actual = WhisperCatalog.sha256HexFile(dest)
+                if (!actual.equals(expected, ignoreCase = true)) {
+                    dest.delete()
+                    throw ModelDownloadException(
+                        "SHA-256 verification failed for ${model.fileName}"
+                    )
+                }
+            }
+        } catch (e: ModelDownloadException) {
+            throw e                  // already deleted dest above; just rethrow
+        } catch (e: Exception) {
+            dest.delete()            // unexpected IO or other error — clean up partial file
+            throw e
         }
     }
 
     private fun moveToModelsDir(localUri: String?, dest: File) {
         val src = localUri?.let { File(Uri.parse(it).path ?: return@let null) }
-        if (src != null && src.exists()) {
-            if (dest.exists()) dest.delete()
-            if (!src.renameTo(dest)) {
-                src.copyTo(dest, overwrite = true)
-                src.delete()
-            }
+        if (src == null) {
+            throw ModelDownloadException(
+                "Cannot resolve local download path from URI: $localUri"
+            )
+        }
+        if (dest.exists()) dest.delete()
+        if (!src.renameTo(dest)) {
+            src.copyTo(dest, overwrite = true)
+            src.delete()
         }
     }
 
