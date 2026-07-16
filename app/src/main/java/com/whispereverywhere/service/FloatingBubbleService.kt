@@ -96,10 +96,10 @@ class FloatingBubbleService : Service(),
     private var longPressJob: kotlinx.coroutines.Job? = null
     private val LONG_PRESS_MS = 500L
 
-    // Max time finalize waits for the last utterance's transcribe to finish before force-ending the
-    // session. Generous so a slow large-model segment (<=15s of audio) always completes and its text
-    // is delivered; bounded so a pathological transcribe can't hang the bubble in FINALIZING forever.
-    private val FINALIZE_TIMEOUT_MS = 120_000L
+    // Max time finalize waits for the transcription backlog to drain before force-ending the
+    // session. Generous because a slow model (e.g. the large tier) can lag several segments behind
+    // real time; bounded so a pathological run can't hang the bubble in FINALIZING forever.
+    private val FINALIZE_TIMEOUT_MS = 300_000L
 
     // Set true when any transcription text is produced during a recording session; drives the
     // "No speech detected" feedback on stop so the user is not left with silent nothing.
@@ -867,24 +867,23 @@ class FloatingBubbleService : Service(),
         }
         
         // Flush the final segment only if there is uncommitted speech since the last pause-commit.
-        // Avoids transcribing pure trailing silence on release (no wasted FINALIZING spin, no stray
-        // [BLANK_AUDIO] output). The per-chunk VAD already commits completed utterances on pauses;
-        // this catches speech spoken right up to the moment of release.
-        val hadPendingSpeech = speechSegmenter.hasPendingSpeech()
-        if (hadPendingSpeech) {
+        // Avoids transcribing pure trailing silence on release (no stray [BLANK_AUDIO] output). The
+        // per-chunk VAD already commits completed utterances on pauses; this catches speech spoken
+        // right up to the moment of release.
+        if (speechSegmenter.hasPendingSpeech()) {
             transcriptionEngine?.commit()
         }
         speechSegmenter.reset()
 
-        // Wait for the queued final transcribe to actually finish before detaching the listener, so
-        // the last utterance is delivered (a fixed delay would drop it via the identity guard).
-        // Bounded by FINALIZE_TIMEOUT_MS so the bubble can't hang in FINALIZING forever. The
-        // blocking await runs on IO; all UI work stays on Main.
+        // Drain the ENTIRE transcription backlog before detaching the listener. A slow model (e.g.
+        // the large tier) lags several segments behind real time; those queued transcribes finish
+        // after the last utterance, and without waiting they'd complete post-teardown and be dropped
+        // by the stale-listener guard (the user saw "No speech detected" despite valid audio). Each
+        // result injects live as it finishes, so the earlier chunks keep appearing during the
+        // finalize wait. Bounded by FINALIZE_TIMEOUT_MS. The blocking await runs on IO; UI on Main.
         serviceScope.launch(Dispatchers.Main) {
-            if (hadPendingSpeech) {
-                withContext(Dispatchers.IO) {
-                    (transcriptionEngine as? LocalWhisperEngine)?.awaitIdle(FINALIZE_TIMEOUT_MS)
-                }
+            withContext(Dispatchers.IO) {
+                (transcriptionEngine as? LocalWhisperEngine)?.awaitIdle(FINALIZE_TIMEOUT_MS)
             }
             // Capture the sink before teardown nulls it, so the full transcript can still be read.
             val finalizingSink = transcriptSink
