@@ -95,6 +95,9 @@ class FloatingBubbleService : Service(),
     // Accumulates transcription for the entire recording session when not using accessibility text injection
     private val sessionTranscription = java.lang.StringBuilder()
 
+    // Bounded-memory sink for non-text-field sessions (Task 7)
+    private var transcriptSink: com.whispereverywhere.transcription.TranscriptSink? = null
+
     private lateinit var params: WindowManager.LayoutParams
 
     private val app by lazy { WhisperEverywhereApp.getInstance() }
@@ -595,6 +598,17 @@ class FloatingBubbleService : Service(),
                         transcriptionDeltaText.text = ""
                         transcriptionDeltaText.visibility = View.GONE
                         transcriptionPreviewContainer.visibility = View.VISIBLE
+
+                        // Create a bounded-memory sink for this session (Task 7)
+                        val sessionFile = java.io.File(filesDir, "transcript_session.txt").apply { if (exists()) delete() }
+                        val sink = com.whispereverywhere.transcription.TranscriptSink(sessionFile)
+                        transcriptSink = sink
+                        serviceScope.launch(Dispatchers.Main) {
+                            sink.preview.collectLatest { text ->
+                                transcriptionEditText.setText(text)
+                                transcriptionEditText.setSelection(text.length)
+                            }
+                        }
                     } else {
                         transcriptionPreviewContainer.visibility = View.GONE
                     }
@@ -632,37 +646,24 @@ class FloatingBubbleService : Service(),
                     serviceScope.launch(Dispatchers.Main) {
                         if (currentContext != BubbleContext.TEXT_FIELD) {
                             transcriptionDeltaText.visibility = View.GONE
-                            val currentText = transcriptionEditText.text.toString()
-                            if (currentText.isNotEmpty() && !currentText.last().isWhitespace() && !trimmed.first().isWhitespace()) {
-                                transcriptionEditText.append(" $trimmed")
-                            } else {
-                                transcriptionEditText.append(trimmed)
-                            }
-
-                            // Auto-scroll to bottom using standard TextView logic
-                            val scrollAmount = transcriptionEditText.layout.getLineTop(transcriptionEditText.lineCount) - transcriptionEditText.height
-                            if (scrollAmount > 0) {
-                                transcriptionEditText.scrollTo(0, scrollAmount)
-                            } else {
-                                transcriptionEditText.scrollTo(0, 0)
-                            }
+                            // Route through the bounded-memory sink; the preview StateFlow
+                            // drives transcriptionEditText via collectLatest above (Task 7).
+                            transcriptSink?.append(trimmed)
                         }
                         handleTranscriptionResult(trimmed)
                     }
                 }
             }
             override fun onError(message: String) {
+                if (currentState == BubbleState.RECORDING) {
+                    // mid-session segment failure -> log and keep recording; do NOT tear down
+                    android.util.Log.w("FloatingBubble", "Transcription segment failed (continuing): $message")
+                    return
+                }
+                // connect-time / fatal (e.g. no model installed)
                 serviceScope.launch(Dispatchers.Main) {
-                    // "No speech model installed" surfaces here when no model is present;
-                    // point the user at onboarding to download one.
-                    val userMessage = if (message.contains("model", ignoreCase = true)) {
-                        "No speech model installed — open the app to download one"
-                    } else {
-                        message
-                    }
-                    showToast(userMessage)
-                    teardownRealtime()
                     updateBubbleState(BubbleState.ERROR)
+                    teardownRealtime()
                 }
             }
             override fun onClosed() { /* expected on manual stop */ }
@@ -688,19 +689,24 @@ class FloatingBubbleService : Service(),
         }
         speechSegmenter.reset()
 
-        // Give the server a moment to emit the final completed event, then close.
+        // Give the on-device engine a moment to emit the final completed event, then close.
         serviceScope.launch {
             delay(1500)
             teardownRealtime()
             if (currentState == BubbleState.FINALIZING) {
-                // If we were transcribing without injecting, copy the final accumulated string now.
-                // We use transcriptionEditText as the final source of truth because the user might have edited it.
+                // If we were transcribing without injecting, read the full text from the sink's
+                // session file (bounded memory; Task 7) and copy it to the clipboard.
                 if (currentContext != BubbleContext.TEXT_FIELD) {
-                    val finalText = transcriptionEditText.text.toString()
-                    if (finalText.isNotEmpty()) {
-                        copyToClipboard(finalText)
-                        showToast("Transcription copied to clipboard")
+                    transcriptSink?.let { sink ->
+                        sink.close()
+                        val full = sink.fullTextFile().readText().trim()
+                        if (full.isNotEmpty()) {
+                            val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                            showToast("Transcription copied to clipboard")
+                        }
                     }
+                    transcriptSink = null
                     sessionTranscription.clear()
                 }
 
@@ -718,7 +724,7 @@ class FloatingBubbleService : Service(),
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_RUNNING_LOW && currentState != BubbleState.RECORDING) {
+        if (level >= TRIM_MEMORY_RUNNING_LOW && currentState != BubbleState.RECORDING && currentState != BubbleState.FINALIZING) {
             (transcriptionEngine as? LocalWhisperEngine)?.releaseContext()
         }
     }
