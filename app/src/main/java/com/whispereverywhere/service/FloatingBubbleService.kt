@@ -193,6 +193,10 @@ class FloatingBubbleService : Service(),
         hideAnimator?.cancel()
         audioRecorder.stop()
         teardownRealtime()
+        // Fully release the reused engine on service end: free the native context and stop its
+        // worker thread (teardownRealtime only detaches the session listener, for reuse).
+        (transcriptionEngine as? LocalWhisperEngine)?.shutdown()
+        transcriptionEngine = null
         try {
             windowManager.removeView(bubbleView)
         } catch (e: Exception) {
@@ -683,8 +687,11 @@ class FloatingBubbleService : Service(),
         // On-device engine. connect() resolves the installed model and loads the
         // native context off-thread; CONNECTING covers that model-load wait and
         // onOpen() fires only once the context is ready.
-        val engine: TranscriptionEngine = LocalWhisperEngine(app.whisperModelManager)
-        transcriptionEngine = engine
+        // Reuse a single engine across sessions so the native model context is loaded once and
+        // reused (spec: "loaded once and reused"); it is released only on memory pressure
+        // (onTrimMemory) or on service destroy (onDestroy), not at the end of each recording.
+        val engine: TranscriptionEngine = transcriptionEngine
+            ?: LocalWhisperEngine(app.whisperModelManager).also { transcriptionEngine = it }
 
         engine.connect(app.preferencesManager.getLanguageForApi(), object : TranscriptionEngine.Listener {
             override fun onOpen() {
@@ -834,9 +841,11 @@ class FloatingBubbleService : Service(),
     private fun teardownRealtime() {
         previewJob?.cancel(); previewJob = null
         transcriptSink?.close(); transcriptSink = null
-        (transcriptionEngine as? LocalWhisperEngine)?.releaseContext()
+        // Detach the session listener but KEEP the engine + its loaded native context so the next
+        // recording reuses it (no multi-hundred-MB reload per session). Full release (context +
+        // worker thread) happens in onDestroy; the context is also freed under memory pressure
+        // in onTrimMemory, reloading lazily on the next connect().
         transcriptionEngine?.close()
-        transcriptionEngine = null
     }
 
     override fun onTrimMemory(level: Int) {

@@ -153,4 +153,26 @@ class LocalWhisperEngine(
             }
         }
     }
+
+    /**
+     * Full teardown for service/process end. Frees the native context (submitted on the executor,
+     * so it never races in-flight work) and THEN shuts the executor down so its single worker
+     * thread does not leak for the lifetime of a long-running foreground service. shutdown() lets
+     * the already-queued release task finish before the thread terminates. After this call the
+     * engine must not be reused.
+     */
+    fun shutdown() {
+        executor.execute {
+            val ctx = ctxPtr
+            if (ctx != 0L) {
+                try {
+                    backend.release(ctx)
+                } catch (t: Throwable) {
+                    Log.w("LocalWhisperEngine", "shutdown release failed", t)
+                }
+                ctxPtr = 0L
+            }
+        }
+        executor.shutdown()
+    }
 }

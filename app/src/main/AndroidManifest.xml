@@ -9,7 +9,8 @@
     <!-- Overlay permission for floating bubble -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Internet for Whisper API -->
+    <!-- Internet: used only to download the on-device speech model from Hugging Face (one-time).
+         No audio or transcription is ever sent over the network. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 

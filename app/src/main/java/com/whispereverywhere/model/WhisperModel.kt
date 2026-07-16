@@ -36,13 +36,15 @@ object WhisperCatalog {
     /** Allowed deviation of the actual downloaded size from approxBytes before sha256 verify. */
     const val SIZE_TOLERANCE = 0.05
 
-    // sha256 of each file, lowercased hex. Fill via: curl -sL <url> | sha256sum
-    // (See the plan "Fill the sha256 constants" step.) "PENDING" until fetched.
-    private const val SHA256_ECO = "PENDING"
-    private const val SHA256_PRO = "PENDING"
-    private const val SHA256_EXTREME = "PENDING"
-    private const val SHA256_MULTI = "PENDING"
-    private const val SHA256_ULTRA = "PENDING"
+    // sha256 of each file, lowercased hex, pinned from the Hugging Face git-LFS pointers
+    // (huggingface.co/ggerganov/whisper.cpp -> raw/main/<file> -> the "oid sha256:" line, which
+    // is the sha256 of the LFS content). Now that these are valid 64-char hex, download
+    // verification enforces them (streaming sha256) on top of the approxBytes size gate.
+    private const val SHA256_ECO = "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f"
+    private const val SHA256_PRO = "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30"
+    private const val SHA256_EXTREME = "76733e26ad8fe1c7a5bf7531a9d41917b2adc0f20f2e4f5531688a8c6cd88eb0"
+    private const val SHA256_MULTI = "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
+    private const val SHA256_ULTRA = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
 
     private fun urlFor(fileName: String): String = BASE_URL + fileName
 

@@ -57,8 +57,11 @@ class BootReceiver : BroadcastReceiver() {
                 return
             }
 
-            if (!preferencesManager.hasApiKey()) {
-                Log.w(TAG, "API key not set, cannot restart bubble")
+            // On-device: restart only makes sense if a speech model is installed. (The old
+            // hasApiKey() gate is dead post-cloud-removal — there is no API-key UI, so it would
+            // always be false and silently disable auto-restart for every user.)
+            if (app?.whisperModelManager?.installedModel() == null) {
+                Log.w(TAG, "No speech model installed, cannot restart bubble")
                 return
             }
 
