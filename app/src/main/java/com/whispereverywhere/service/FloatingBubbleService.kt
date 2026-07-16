@@ -866,19 +866,25 @@ class FloatingBubbleService : Service(),
             transcriptionPreviewContainer.visibility = View.GONE
         }
         
-        // Always flush the final take on stop (commit is a no-op if the buffer is empty). Combined
-        // with the per-chunk VAD, this guarantees the last utterance transcribes even if quiet
-        // speech never tripped the VAD threshold mid-recording.
-        transcriptionEngine?.commit()
+        // Flush the final segment only if there is uncommitted speech since the last pause-commit.
+        // Avoids transcribing pure trailing silence on release (no wasted FINALIZING spin, no stray
+        // [BLANK_AUDIO] output). The per-chunk VAD already commits completed utterances on pauses;
+        // this catches speech spoken right up to the moment of release.
+        val hadPendingSpeech = speechSegmenter.hasPendingSpeech()
+        if (hadPendingSpeech) {
+            transcriptionEngine?.commit()
+        }
         speechSegmenter.reset()
 
         // Wait for the queued final transcribe to actually finish before detaching the listener, so
-        // the last utterance is delivered (large models take many seconds; a fixed delay would drop
-        // it via the identity guard). Bounded by FINALIZE_TIMEOUT_MS so the bubble can't hang in
-        // FINALIZING forever. The blocking await runs on IO; all UI work stays on Main.
+        // the last utterance is delivered (a fixed delay would drop it via the identity guard).
+        // Bounded by FINALIZE_TIMEOUT_MS so the bubble can't hang in FINALIZING forever. The
+        // blocking await runs on IO; all UI work stays on Main.
         serviceScope.launch(Dispatchers.Main) {
-            withContext(Dispatchers.IO) {
-                (transcriptionEngine as? LocalWhisperEngine)?.awaitIdle(FINALIZE_TIMEOUT_MS)
+            if (hadPendingSpeech) {
+                withContext(Dispatchers.IO) {
+                    (transcriptionEngine as? LocalWhisperEngine)?.awaitIdle(FINALIZE_TIMEOUT_MS)
+                }
             }
             // Capture the sink before teardown nulls it, so the full transcript can still be read.
             val finalizingSink = transcriptSink

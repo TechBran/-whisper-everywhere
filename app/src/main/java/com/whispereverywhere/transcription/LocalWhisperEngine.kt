@@ -142,13 +142,15 @@ class LocalWhisperEngine(
                 val text = runBlocking {
                     retry.retry { backend.transcribe(ctx, samples, lang) }
                 }
-                android.util.Log.i("WE-DIAG", "transcribe DONE len=${text.length} text=[${text.take(60)}]")
-                val trimmed = text.trim()
-                if (trimmed.isNotBlank()) {
+                // Strip whisper's non-speech markers ([BLANK_AUDIO], [ Silence ], (music), …) so
+                // they are never typed into the user's field.
+                val cleaned = TranscriptText.clean(text)
+                android.util.Log.i("WE-DIAG", "transcribe DONE rawLen=${text.length} cleanLen=${cleaned.length} text=[${cleaned.take(60)}]")
+                if (cleaned.isNotBlank()) {
                     // Guard: only fire if the listener hasn't been replaced/nulled since commit().
-                    if (listener === myListener) myListener.onCompleted(trimmed)
+                    if (listener === myListener) myListener.onCompleted(cleaned)
                 } else {
-                    android.util.Log.i("WE-DIAG", "transcribe result blank/whitespace -> dropped")
+                    android.util.Log.i("WE-DIAG", "transcribe result blank/non-speech -> dropped")
                 }
             } catch (t: Throwable) {
                 android.util.Log.w("WE-DIAG", "transcribe THREW", t)
