@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.Build
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.data.local.UsageTracker
+import com.whispereverywhere.model.WhisperModelManager
 
 class WhisperEverywhereApp : Application() {
 
@@ -15,6 +16,14 @@ class WhisperEverywhereApp : Application() {
 
     lateinit var usageTracker: UsageTracker
         private set
+
+    /**
+     * Process-lifetime model manager. Lazy so it is created on first use
+     * (first recording / onboarding) after [preferencesManager] is initialized.
+     */
+    val whisperModelManager: WhisperModelManager by lazy {
+        WhisperModelManager(this, preferencesManager)
+    }
 
     override fun onCreate() {
         super.onCreate()

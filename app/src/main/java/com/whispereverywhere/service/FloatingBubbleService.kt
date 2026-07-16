@@ -34,7 +34,8 @@ import androidx.core.content.ContextCompat
 import com.whispereverywhere.MainActivity
 import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
-import com.whispereverywhere.data.api.RealtimeTranscriptionClient
+import com.whispereverywhere.transcription.LocalWhisperEngine
+import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.ui.components.BarWaveformView
 import com.whispereverywhere.util.SpeechSegmenter
 import com.whispereverywhere.util.StreamingAudioRecorder
@@ -64,7 +65,7 @@ class FloatingBubbleService : Service(),
     private lateinit var transcriptionDeltaText: android.widget.TextView
 
     private lateinit var audioRecorder: StreamingAudioRecorder
-    private var realtimeClient: RealtimeTranscriptionClient? = null
+    private var transcriptionEngine: TranscriptionEngine? = null
     private val speechSegmenter = SpeechSegmenter()
     private lateinit var mediaDetector: MediaSessionDetector
 
@@ -562,9 +563,6 @@ class FloatingBubbleService : Service(),
     }
 
     private fun startRecording() {
-        if (!app.preferencesManager.hasApiKey()) {
-            vibrateError(); showToast("Please set your OpenAI API key in Settings"); return
-        }
         if (!audioRecorder.hasPermission()) {
             vibrateError(); showToast("Microphone permission required"); return
         }
@@ -572,14 +570,17 @@ class FloatingBubbleService : Service(),
         updateBubbleState(BubbleState.CONNECTING)
         vibrateStart()
 
-        val client = RealtimeTranscriptionClient(app.preferencesManager.apiKey)
-        realtimeClient = client
+        // On-device engine. connect() resolves the installed model and loads the
+        // native context off-thread; CONNECTING covers that model-load wait and
+        // onOpen() fires only once the context is ready.
+        val engine: TranscriptionEngine = LocalWhisperEngine(app.whisperModelManager)
+        transcriptionEngine = engine
 
-        client.connect(app.preferencesManager.getLanguageForApi(), object : RealtimeTranscriptionClient.Listener {
+        engine.connect(app.preferencesManager.getLanguageForApi(), object : TranscriptionEngine.Listener {
             override fun onOpen() {
                 serviceScope.launch(Dispatchers.Main) {
                     if (currentState != BubbleState.CONNECTING) return@launch
-                    val started = audioRecorder.start { chunk -> client.sendAudio(chunk) }
+                    val started = audioRecorder.start { chunk -> engine.sendAudio(chunk) }
                     if (started.isFailure) {
                         showToast("Recording failed: ${started.exceptionOrNull()?.message}")
                         teardownRealtime(); updateBubbleState(BubbleState.ERROR)
@@ -587,7 +588,7 @@ class FloatingBubbleService : Service(),
                     }
                     speechSegmenter.reset()
                     sessionTranscription.clear()
-                    
+
                     // Show preview text bubble if we are not injecting into a text field
                     if (currentContext != BubbleContext.TEXT_FIELD) {
                         transcriptionEditText.text = ""
@@ -603,16 +604,17 @@ class FloatingBubbleService : Service(),
                         audioRecorder.amplitude.collectLatest { amp ->
                             if (currentState != BubbleState.RECORDING) return@collectLatest
                             waveformView.updateAmplitude(amp)
-                            // gpt-realtime-whisper has no server VAD: commit on a natural
-                            // pause (or max segment) so each chunk is transcribed and injected.
+                            // Client VAD: commit on a natural pause (or max segment) so each
+                            // utterance is transcribed on-device and injected per segment.
                             if (speechSegmenter.onAmplitude(amp, System.currentTimeMillis())) {
-                                realtimeClient?.commit()
+                                transcriptionEngine?.commit()
                             }
                         }
                     }
                 }
             }
             override fun onDelta(text: String) {
+                // On-device engine emits no intra-segment deltas; kept for interface parity.
                 if (currentContext != BubbleContext.TEXT_FIELD) {
                     serviceScope.launch(Dispatchers.Main) {
                         if (text.isNotBlank()) {
@@ -627,7 +629,7 @@ class FloatingBubbleService : Service(),
             override fun onCompleted(text: String) {
                 val trimmed = text.trim()
                 if (trimmed.isNotEmpty()) {
-                    serviceScope.launch(Dispatchers.Main) { 
+                    serviceScope.launch(Dispatchers.Main) {
                         if (currentContext != BubbleContext.TEXT_FIELD) {
                             transcriptionDeltaText.visibility = View.GONE
                             val currentText = transcriptionEditText.text.toString()
@@ -636,7 +638,7 @@ class FloatingBubbleService : Service(),
                             } else {
                                 transcriptionEditText.append(trimmed)
                             }
-                            
+
                             // Auto-scroll to bottom using standard TextView logic
                             val scrollAmount = transcriptionEditText.layout.getLineTop(transcriptionEditText.lineCount) - transcriptionEditText.height
                             if (scrollAmount > 0) {
@@ -645,13 +647,22 @@ class FloatingBubbleService : Service(),
                                 transcriptionEditText.scrollTo(0, 0)
                             }
                         }
-                        handleTranscriptionResult(trimmed) 
+                        handleTranscriptionResult(trimmed)
                     }
                 }
             }
             override fun onError(message: String) {
                 serviceScope.launch(Dispatchers.Main) {
-                    showToast(message); teardownRealtime(); updateBubbleState(BubbleState.ERROR)
+                    // "No speech model installed" surfaces here when no model is present;
+                    // point the user at onboarding to download one.
+                    val userMessage = if (message.contains("model", ignoreCase = true)) {
+                        "No speech model installed — open the app to download one"
+                    } else {
+                        message
+                    }
+                    showToast(userMessage)
+                    teardownRealtime()
+                    updateBubbleState(BubbleState.ERROR)
                 }
             }
             override fun onClosed() { /* expected on manual stop */ }
@@ -673,7 +684,7 @@ class FloatingBubbleService : Service(),
         
         // Flush any speech captured since the last pause-commit.
         if (speechSegmenter.hasPendingSpeech()) {
-            realtimeClient?.commit()
+            transcriptionEngine?.commit()
         }
         speechSegmenter.reset()
 
@@ -700,8 +711,16 @@ class FloatingBubbleService : Service(),
     }
 
     private fun teardownRealtime() {
-        realtimeClient?.close()
-        realtimeClient = null
+        (transcriptionEngine as? LocalWhisperEngine)?.releaseContext()
+        transcriptionEngine?.close()
+        transcriptionEngine = null
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_RUNNING_LOW && currentState != BubbleState.RECORDING) {
+            (transcriptionEngine as? LocalWhisperEngine)?.releaseContext()
+        }
     }
 
     /**
