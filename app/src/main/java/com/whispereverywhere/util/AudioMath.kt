@@ -26,4 +26,23 @@ object AudioMath {
         val rms = sqrt(sumSquares / count)
         return rms.toInt().coerceIn(0, 32767)
     }
+
+    /**
+     * Converts little-endian 16-bit PCM [pcm] to float32 samples in [-1, 1]
+     * (each sample / 32768f, clamped). A trailing odd byte (incomplete sample)
+     * is ignored. This is the exact format whisper.cpp's `whisper_full()` expects.
+     */
+    fun pcm16ToFloat(pcm: ByteArray): FloatArray {
+        val sampleCount = pcm.size / 2
+        val out = FloatArray(sampleCount)
+        var i = 0
+        while (i < sampleCount) {
+            val lo = pcm[i * 2].toInt() and 0xFF
+            val hi = pcm[i * 2 + 1].toInt() // sign-extended for the high byte
+            val sample = (hi shl 8) or lo   // signed 16-bit, little-endian
+            out[i] = (sample / 32768f).coerceIn(-1f, 1f)
+            i++
+        }
+        return out
+    }
 }

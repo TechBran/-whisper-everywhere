@@ -3,6 +3,7 @@ package com.whispereverywhere
 import com.whispereverywhere.util.AudioMath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertArrayEquals
 import org.junit.Test
 
 class AudioMathTest {
@@ -29,5 +30,64 @@ class AudioMathTest {
         // length = 2 means only that one sample counts
         val amp = AudioMath.amplitude(buf, 2)
         assertTrue("expected near max, got $amp", amp in 32000..32767)
+    }
+
+    @Test
+    fun pcm16ToFloat_zero_is_zero() {
+        val floats = AudioMath.pcm16ToFloat(byteArrayOf(0x00, 0x00))
+        assertArrayEquals(floatArrayOf(0f), floats, 0f)
+    }
+
+    @Test
+    fun pcm16ToFloat_positive_fullscale() {
+        // +32767 (0x7FFF) little-endian -> 32767/32768 = 0.99997
+        val floats = AudioMath.pcm16ToFloat(byteArrayOf(0xFF.toByte(), 0x7F))
+        assertEquals(1, floats.size)
+        assertEquals(0.99996948f, floats[0], 1e-6f)
+    }
+
+    @Test
+    fun pcm16ToFloat_negative_fullscale_is_minus_one() {
+        // -32768 (0x8000) little-endian -> -32768/32768 = -1.0 exactly
+        val floats = AudioMath.pcm16ToFloat(byteArrayOf(0x00, 0x80.toByte()))
+        assertArrayEquals(floatArrayOf(-1f), floats, 0f)
+    }
+
+    @Test
+    fun pcm16ToFloat_negative_sample() {
+        // -1 (0xFFFF) little-endian -> -1/32768 = -0.000030517578
+        val floats = AudioMath.pcm16ToFloat(byteArrayOf(0xFF.toByte(), 0xFF.toByte()))
+        assertEquals(1, floats.size)
+        assertEquals(-3.0517578e-5f, floats[0], 1e-9f)
+    }
+
+    @Test
+    fun pcm16ToFloat_multiple_known_samples() {
+        // Samples: 0 (0x0000), +16384 (0x4000), -16384 (0xC000)
+        val bytes = byteArrayOf(
+            0x00, 0x00,          // 0
+            0x00, 0x40,          // +16384 -> 0.5
+            0x00, 0xC0.toByte(), // -16384 -> -0.5
+        )
+        val floats = AudioMath.pcm16ToFloat(bytes)
+        assertArrayEquals(floatArrayOf(0f, 0.5f, -0.5f), floats, 0f)
+    }
+
+    @Test
+    fun pcm16ToFloat_odd_length_drops_trailing_byte() {
+        // 3 bytes -> one full sample (+16384 = 0.5) + one dangling byte ignored
+        val floats = AudioMath.pcm16ToFloat(byteArrayOf(0x00, 0x40, 0x11))
+        assertArrayEquals(floatArrayOf(0.5f), floats, 0f)
+    }
+
+    @Test
+    fun pcm16ToFloat_empty_is_empty() {
+        assertEquals(0, AudioMath.pcm16ToFloat(ByteArray(0)).size)
+    }
+
+    @Test
+    fun pcm16ToFloat_single_byte_is_empty() {
+        // odd-length guard: a lone byte is not a full sample
+        assertEquals(0, AudioMath.pcm16ToFloat(byteArrayOf(0x42)).size)
     }
 }
