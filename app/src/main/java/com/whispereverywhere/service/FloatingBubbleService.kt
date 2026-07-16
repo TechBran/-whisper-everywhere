@@ -605,8 +605,16 @@ class FloatingBubbleService : Service(),
                         previewJob?.cancel()
                         previewJob = serviceScope.launch(Dispatchers.Main) {
                             sink.preview.collectLatest { text ->
-                                transcriptionEditText.setText(text)
-                                transcriptionEditText.setSelection(text.length)
+                                transcriptionEditText.text = text
+                                // TextView has no setSelection; scroll to reveal the newest text.
+                                transcriptionEditText.post {
+                                    val lc = transcriptionEditText.lineCount
+                                    val layout = transcriptionEditText.layout
+                                    if (lc > 0 && layout != null) {
+                                        val dy = layout.getLineBottom(lc - 1) - transcriptionEditText.height
+                                        transcriptionEditText.scrollTo(0, dy.coerceAtLeast(0))
+                                    }
+                                }
                             }
                         }
                     } else {
