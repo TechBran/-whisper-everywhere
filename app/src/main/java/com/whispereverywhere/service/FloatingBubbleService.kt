@@ -88,6 +88,16 @@ class FloatingBubbleService : Service(),
     private var showAnimator: ValueAnimator? = null
     private var hideAnimator: ValueAnimator? = null
 
+    // Pin/lock state — kept in sync with PreferencesManager.overlayPinned
+    private var isOverlayPinned = false
+
+    // Long-press detection for pin toggle (500 ms threshold)
+    private var longPressJob: kotlinx.coroutines.Job? = null
+    private val LONG_PRESS_MS = 500L
+
+    // Pin icon view reference (lateinit; populated in createBubbleView)
+    private lateinit var pinIcon: ImageView
+
     // Track the context for bubble display
     private var currentContext: BubbleContext = BubbleContext.NONE
     private var mediaTitle: String? = null
@@ -189,6 +199,15 @@ class FloatingBubbleService : Service(),
             e.printStackTrace()
         }
         app.preferencesManager.setBubbleEnabled(false)
+    }
+
+    // ========== Configuration changes (rotation / fold — drift hardening) ==========
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Re-clamp bubble position to the updated screen bounds after a rotation or fold event.
+        // Post to the next layout pass so displayMetrics already reflects the new orientation.
+        bubbleView.post { reclampAfterConfigChange() }
     }
 
     // ========== Text Field Focus Listener ==========
@@ -446,6 +465,7 @@ class FloatingBubbleService : Service(),
         transcriptionPreviewContainer = bubbleView.findViewById(R.id.transcription_preview_container)
         transcriptionEditText = bubbleView.findViewById(R.id.transcription_edit_text)
         transcriptionDeltaText = bubbleView.findViewById(R.id.transcription_delta_text)
+        pinIcon = bubbleView.findViewById(R.id.pin_icon)
 
         val layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 
@@ -460,9 +480,25 @@ class FloatingBubbleService : Service(),
 
         params.gravity = Gravity.TOP or Gravity.START
 
+        // Restore position and clamp to current screen bounds (drift hardening)
         val displayMetrics = resources.displayMetrics
-        params.x = (app.preferencesManager.bubblePositionX * displayMetrics.widthPixels).toInt()
-        params.y = (app.preferencesManager.bubblePositionY * displayMetrics.heightPixels).toInt()
+        val rawX = (app.preferencesManager.bubblePositionX * displayMetrics.widthPixels).toInt()
+        val rawY = (app.preferencesManager.bubblePositionY * displayMetrics.heightPixels).toInt()
+        // Use a reasonable bubble size estimate for clamping before the view is measured.
+        // The actual measured size is used in onConfigurationChanged after layout.
+        val estimatedSize = (64 * displayMetrics.density).toInt()
+        val clamped = clampToBounds(rawX, rawY, estimatedSize, estimatedSize)
+        params.x = clamped.first
+        params.y = clamped.second
+
+        // Restore pinned state
+        isOverlayPinned = app.preferencesManager.overlayPinned
+        applyPinIndicator()
+
+        // Wire up the pin icon tap — toggles pin state without triggering the bubble click
+        pinIcon.setOnClickListener {
+            togglePin()
+        }
 
         bubbleView.setOnTouchListener { _, event ->
             handleTouch(event)
@@ -479,6 +515,56 @@ class FloatingBubbleService : Service(),
         updateBubbleState(BubbleState.IDLE)
     }
 
+    // ========== Pin / Lock ==========
+
+    /** Toggle pinned state, persist, show feedback. */
+    private fun togglePin() {
+        isOverlayPinned = !isOverlayPinned
+        app.preferencesManager.overlayPinned = isOverlayPinned
+        applyPinIndicator()
+        showToast(if (isOverlayPinned) "Bubble pinned" else "Bubble unpinned")
+    }
+
+    /** Update the pin icon alpha to reflect current pinned state. */
+    private fun applyPinIndicator() {
+        // Full opacity when pinned, subtle hint when unpinned
+        pinIcon.alpha = if (isOverlayPinned) 1.0f else 0.35f
+    }
+
+    // ========== Drift hardening helpers ==========
+
+    /**
+     * Clamp (x, y) so the bubble view (viewW x viewH) stays fully on screen.
+     * Falls back gracefully when screen size is not yet determined.
+     */
+    private fun clampToBounds(x: Int, y: Int, viewW: Int, viewH: Int): Pair<Int, Int> {
+        val dm = resources.displayMetrics
+        val maxX = (dm.widthPixels - viewW).coerceAtLeast(0)
+        val maxY = (dm.heightPixels - viewH).coerceAtLeast(0)
+        return Pair(x.coerceIn(0, maxX), y.coerceIn(0, maxY))
+    }
+
+    /** Re-clamp and persist after a configuration change (rotation / fold). */
+    private fun reclampAfterConfigChange() {
+        val viewW = if (bubbleView.width > 0) bubbleView.width else (64 * resources.displayMetrics.density).toInt()
+        val viewH = if (bubbleView.height > 0) bubbleView.height else viewW
+        val clamped = clampToBounds(params.x, params.y, viewW, viewH)
+        params.x = clamped.first
+        params.y = clamped.second
+        try {
+            windowManager.updateViewLayout(bubbleView, params)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        val dm = resources.displayMetrics
+        if (dm.widthPixels > 0) {
+            app.preferencesManager.bubblePositionX = params.x.toFloat() / dm.widthPixels
+        }
+        if (dm.heightPixels > 0) {
+            app.preferencesManager.bubblePositionY = params.y.toFloat() / dm.heightPixels
+        }
+    }
+
     private fun handleTouch(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
@@ -488,6 +574,17 @@ class FloatingBubbleService : Service(),
                 initialTouchY = event.rawY
                 lastAction = event.action
                 isDragging = false
+
+                // Long-press fires after LONG_PRESS_MS to toggle pin, but only if we haven't
+                // started dragging in the meantime (cancelled in ACTION_MOVE / ACTION_UP).
+                longPressJob?.cancel()
+                longPressJob = serviceScope.launch {
+                    delay(LONG_PRESS_MS)
+                    // Only fire if still holding down and not dragging
+                    if (!isDragging) {
+                        togglePin()
+                    }
+                }
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -496,9 +593,11 @@ class FloatingBubbleService : Service(),
 
                 if (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10) {
                     isDragging = true
+                    longPressJob?.cancel()   // Real drag — cancel long-press
                 }
 
-                if (isDragging) {
+                // When pinned, suppress all drag movement; only taps (and long-press) register
+                if (!isOverlayPinned && isDragging) {
                     params.x = (initialX + dx).toInt()
                     params.y = (initialY + dy).toInt()
                     windowManager.updateViewLayout(bubbleView, params)
@@ -507,14 +606,22 @@ class FloatingBubbleService : Service(),
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                longPressJob?.cancel()
+                longPressJob = null
                 if (!isDragging) {
                     handleBubbleClick()
-                } else {
+                } else if (!isOverlayPinned) {
                     val displayMetrics = resources.displayMetrics
                     app.preferencesManager.bubblePositionX = params.x.toFloat() / displayMetrics.widthPixels
                     app.preferencesManager.bubblePositionY = params.y.toFloat() / displayMetrics.heightPixels
                     snapToEdge()
                 }
+                lastAction = event.action
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                longPressJob?.cancel()
+                longPressJob = null
                 lastAction = event.action
                 return true
             }

@@ -128,6 +128,13 @@ class PreferencesManager(private val context: Context) {
             prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, value).apply()
         }
 
+    // Overlay pin/lock: when true the bubble cannot be accidentally dragged
+    var overlayPinned: Boolean
+        get() = prefs.getBoolean(KEY_OVERLAY_PINNED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_OVERLAY_PINNED, value).apply()
+        }
+
     // Selected on-device whisper model tier id (see WhisperCatalog); null = none chosen yet
     var selectedModelId: String?
         get() = prefs.getString(KEY_SELECTED_MODEL_ID, null)
@@ -144,6 +151,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
         private const val KEY_SELECTED_MODEL_ID = "selected_model_id"
         private const val KEY_SELECTED_LANGUAGE = "selected_language"
+        private const val KEY_OVERLAY_PINNED = "overlay_pinned"
 
         // Whisper API supported languages with display names
         // See: https://platform.openai.com/docs/guides/speech-to-text/supported-languages
