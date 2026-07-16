@@ -52,23 +52,37 @@ class StreamingAudioRecorder(private val context: Context) {
             MediaRecorder.AudioSource.MIC, SAMPLE_RATE, CHANNEL, ENCODING, bufferSize
         )
         if (record.state != AudioRecord.STATE_INITIALIZED) {
+            android.util.Log.w("WE-DIAG", "AudioRecord init FAILED state=${record.state}")
             record.release()
             return Result.failure(IllegalStateException("Failed to initialize AudioRecord"))
         }
         audioRecord = record
         recording = true
         record.startRecording()
+        android.util.Log.i("WE-DIAG", "AudioRecord recording bufferSize=$bufferSize rate=$SAMPLE_RATE")
 
         thread = Thread {
             val buffer = ByteArray(bufferSize)
+            var lastRmsLogMs = 0L
+            var peakRms = 0
+            var chunks = 0
             while (recording) {
                 val read = record.read(buffer, 0, buffer.size)
                 if (read > 0) {
                     val amp = AudioMath.amplitude(buffer, read)
                     _amplitude.value = amp
+                    chunks++
+                    if (amp > peakRms) peakRms = amp
+                    val now = System.currentTimeMillis()
+                    if (now - lastRmsLogMs >= 1000) {
+                        android.util.Log.i("WE-DIAG", "audio: chunks=$chunks read=$read peakRms=$peakRms (voiceThr=500)")
+                        lastRmsLogMs = now
+                        peakRms = 0
+                    }
                     onChunk(buffer.copyOf(read), amp)
                 }
             }
+            android.util.Log.i("WE-DIAG", "audio thread stopped totalChunks=$chunks")
         }.also { it.start() }
 
         return Result.success(Unit)

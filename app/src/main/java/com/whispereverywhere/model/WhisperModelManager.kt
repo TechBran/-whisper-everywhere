@@ -82,6 +82,7 @@ class WhisperModelManager(
         // only cleared the INTERNAL destination, never the external one DownloadManager writes to.)
         removeStaleDownloads(dm, model)
         val downloadDest = externalDownloadDest(model)
+        android.util.Log.i("WE-DIAG", "download prep: extDest=${downloadDest.absolutePath} existed=${downloadDest.exists()}")
         if (downloadDest.exists()) downloadDest.delete()
 
         val request = DownloadManager.Request(model.url.toUri())
@@ -99,8 +100,11 @@ class WhisperModelManager(
             .setAllowedOverRoaming(true)
 
         val id = dm.enqueue(request)
+        android.util.Log.i("WE-DIAG", "download enqueued id=$id url=${model.url}")
         try {
             var done = false
+            var lastLoggedStatus = -1
+            var lastLoggedMs = 0L
             while (!done) {
                 val query = DownloadManager.Query().setFilterById(id)
                 val cursor: Cursor = dm.query(query)
@@ -114,6 +118,11 @@ class WhisperModelManager(
                             c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES),
                         )
                         onProgress(soFar, if (total > 0) total else model.approxBytes)
+                        val nowMs = System.currentTimeMillis()
+                        if (status != lastLoggedStatus || nowMs - lastLoggedMs >= 2000) {
+                            android.util.Log.i("WE-DIAG", "download poll: status=$status soFar=$soFar total=$total")
+                            lastLoggedStatus = status; lastLoggedMs = nowMs
+                        }
 
                         when (status) {
                             DownloadManager.STATUS_SUCCESSFUL -> {
@@ -127,6 +136,7 @@ class WhisperModelManager(
                                 val reason = c.getInt(
                                     c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON),
                                 )
+                                android.util.Log.w("WE-DIAG", "download FAILED reason=$reason")
                                 throw ModelDownloadException("Download failed (reason=$reason)")
                             }
                             else -> Unit // PENDING / RUNNING / PAUSED -> keep polling

@@ -20,8 +20,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "2.0.2"
+        versionCode = 14
+        versionName = "2.0.3-diag"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -88,6 +88,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+
+    testOptions {
+        // Diagnostic logging uses android.util.Log, which is not available in plain JVM unit
+        // tests; return default (no-op) values instead of throwing "Method not mocked".
+        unitTests.isReturnDefaultValues = true
     }
 }
 

@@ -721,6 +721,7 @@ class FloatingBubbleService : Service(),
         updateBubbleState(BubbleState.CONNECTING)
         vibrateStart()
         sessionProducedText = false
+        android.util.Log.i("WE-DIAG", "startRecording: context=$currentContext")
 
         // On-device engine. connect() resolves the installed model and loads the
         // native context off-thread; CONNECTING covers that model-load wait and
@@ -733,6 +734,7 @@ class FloatingBubbleService : Service(),
 
         engine.connect(app.preferencesManager.getLanguageForApi(), object : TranscriptionEngine.Listener {
             override fun onOpen() {
+                android.util.Log.i("WE-DIAG", "onOpen handler: state=$currentState")
                 serviceScope.launch(Dispatchers.Main) {
                     if (currentState != BubbleState.CONNECTING) return@launch
                     speechSegmenter.reset()
@@ -742,9 +744,11 @@ class FloatingBubbleService : Service(),
                         // stops emitting during a steady pause). Commit on a natural pause or the
                         // max-segment cap so each utterance is transcribed on-device.
                         if (speechSegmenter.onAmplitude(amp, System.currentTimeMillis())) {
+                            android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
                             engine.commit()
                         }
                     }
+                    android.util.Log.i("WE-DIAG", "recorder start success=${started.isSuccess}")
                     if (started.isFailure) {
                         showToast("Recording failed: ${started.exceptionOrNull()?.message}")
                         teardownRealtime(); updateBubbleState(BubbleState.ERROR)
@@ -805,6 +809,7 @@ class FloatingBubbleService : Service(),
                 }
             }
             override fun onCompleted(text: String) {
+                android.util.Log.i("WE-DIAG", "onCompleted: len=${text.length}")
                 val trimmed = text.trim()
                 if (trimmed.isNotEmpty()) {
                     sessionProducedText = true
@@ -820,6 +825,7 @@ class FloatingBubbleService : Service(),
                 }
             }
             override fun onError(message: String) {
+                android.util.Log.w("WE-DIAG", "onError: state=$currentState msg=$message")
                 if (currentState == BubbleState.RECORDING) {
                     // mid-session segment failure -> log and keep recording; do NOT tear down
                     android.util.Log.w("FloatingBubble", "Transcription segment failed (continuing): $message")
@@ -836,6 +842,7 @@ class FloatingBubbleService : Service(),
     }
 
     private fun stopRecording() {
+        android.util.Log.i("WE-DIAG", "stopRecording: state=$currentState")
         vibrateStop()
         amplitudeJob?.cancel(); amplitudeJob = null
         waveformView.stop()
@@ -865,6 +872,7 @@ class FloatingBubbleService : Service(),
             // Capture the sink before teardown nulls it, so the full transcript can still be read.
             val finalizingSink = transcriptSink
             teardownRealtime()
+            android.util.Log.i("WE-DIAG", "finalize: state=$currentState producedText=$sessionProducedText")
             if (currentState == BubbleState.FINALIZING) {
                 // If we were transcribing without injecting, read the full text from the sink's
                 // session file (bounded memory; Task 7) and copy it to the clipboard.
@@ -911,10 +919,12 @@ class FloatingBubbleService : Service(),
      * Handle the transcription result based on current context
      */
     private fun handleTranscriptionResult(text: String) {
+        android.util.Log.i("WE-DIAG", "handleResult: context=$currentContext len=${text.length}")
         when (currentContext) {
             BubbleContext.TEXT_FIELD -> {
                 // Use the new injection method with detailed result
                 val result = WhisperAccessibilityService.injectTextWithResult(text)
+                android.util.Log.i("WE-DIAG", "inject result=$result")
                 when (result) {
                     WhisperAccessibilityService.InjectionResult.SUCCESS -> {
                         // Text was successfully injected - no toast needed

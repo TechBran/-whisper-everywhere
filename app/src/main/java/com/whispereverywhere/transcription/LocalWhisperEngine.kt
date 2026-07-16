@@ -60,6 +60,7 @@ class LocalWhisperEngine(
         this.language = language
 
         val modelPath = modelPathProvider.installedModelPath()
+        android.util.Log.i("WE-DIAG", "connect: modelPath=$modelPath ctxPtr=$ctxPtr")
         if (modelPath == null) {
             // No native work involved; route through the native executor (keeps callback ordering
             // consistent and deterministic for tests using a same-thread executor).
@@ -75,6 +76,7 @@ class LocalWhisperEngine(
         // next session stuck in CONNECTING.
         if (ctxPtr != 0L) {
             controlExecutor.execute {
+                android.util.Log.i("WE-DIAG", "onOpen (ctx already loaded)")
                 if (this.listener === listener) listener.onOpen()
             }
             return
@@ -87,15 +89,19 @@ class LocalWhisperEngine(
             try {
                 if (ctxPtr == 0L) {
                     // Retry a transient load failure once before giving up.
+                    android.util.Log.i("WE-DIAG", "loading model from $modelPath")
                     val loaded = runBlocking { loadRetry.retry { backend.load(modelPath) } }
+                    android.util.Log.i("WE-DIAG", "model load returned ctx=$loaded")
                     if (loaded == 0L) {
                         if (this.listener === listener) listener.onError("Failed to load speech model (may be corrupt - re-download)")
                         return@execute
                     }
                     ctxPtr = loaded
                 }
+                android.util.Log.i("WE-DIAG", "onOpen (ctx loaded)")
                 if (this.listener === listener) listener.onOpen()
             } catch (t: Throwable) {
+                android.util.Log.w("WE-DIAG", "model load threw", t)
                 if (this.listener === listener) listener.onError(t.message ?: "Model load failed")
             }
         }
@@ -106,7 +112,11 @@ class LocalWhisperEngine(
     }
 
     override fun commit() {
-        val myListener = this.listener ?: return
+        val myListener = this.listener
+        if (myListener == null) {
+            android.util.Log.i("WE-DIAG", "commit: no listener (session ended), skipped")
+            return
+        }
         val lang = this.language
 
         // Atomically snapshot + clear the buffer.
@@ -115,26 +125,33 @@ class LocalWhisperEngine(
             buffer.reset()
             snapshot
         }
+        android.util.Log.i("WE-DIAG", "commit: pcmBytes=${pcm.size} samples=${pcm.size / 2}")
         if (pcm.isEmpty()) return
 
         executor.execute {
             try {
                 val ctx = ctxPtr
                 if (ctx == 0L) {
+                    android.util.Log.w("WE-DIAG", "commit: ctx==0 (model not loaded)")
                     // Guard: only fire if the listener hasn't been replaced/nulled since commit().
                     if (listener === myListener) myListener.onError("Speech model not loaded")
                     return@execute
                 }
                 val samples = AudioMath.pcm16ToFloat(pcm)
+                android.util.Log.i("WE-DIAG", "transcribe START samples=${samples.size} lang=$lang")
                 val text = runBlocking {
                     retry.retry { backend.transcribe(ctx, samples, lang) }
                 }
+                android.util.Log.i("WE-DIAG", "transcribe DONE len=${text.length} text=[${text.take(60)}]")
                 val trimmed = text.trim()
                 if (trimmed.isNotBlank()) {
                     // Guard: only fire if the listener hasn't been replaced/nulled since commit().
                     if (listener === myListener) myListener.onCompleted(trimmed)
+                } else {
+                    android.util.Log.i("WE-DIAG", "transcribe result blank/whitespace -> dropped")
                 }
             } catch (t: Throwable) {
+                android.util.Log.w("WE-DIAG", "transcribe THREW", t)
                 // Guard: only fire if the listener hasn't been replaced/nulled since commit().
                 if (listener === myListener) myListener.onError(t.message ?: "Transcription failed")
             }
