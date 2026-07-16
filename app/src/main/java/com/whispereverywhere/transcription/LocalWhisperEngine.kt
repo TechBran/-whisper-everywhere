@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription
 
+import android.util.Log
 import com.whispereverywhere.util.AudioMath
 import com.whispereverywhere.util.RetryPolicy
 import kotlinx.coroutines.runBlocking
@@ -11,11 +12,21 @@ import java.util.concurrent.Executors
  * On-device whisper.cpp engine. Buffers PCM16 audio, and on commit runs one batch
  * transcription of the buffered segment on a single-thread executor (segments serialize).
  * No intra-segment deltas are emitted — one onCompleted per committed segment.
+ *
+ * IMPORTANT: [executor] MUST be single-threaded. All native whisper context ([ctxPtr]) reads,
+ * writes, loads, and frees happen exclusively on that thread, which is what serializes them
+ * safely. The default [Executors.newSingleThreadExecutor] satisfies this contract — callers
+ * must NOT pass a multi-threaded executor.
  */
 class LocalWhisperEngine(
     private val modelPathProvider: ModelPathProvider,
     private val retry: RetryPolicy = RetryPolicy(maxAttempts = 3),
     private val backend: WhisperBackend = WhisperNativeBackend,
+    /**
+     * MUST be single-threaded. All native whisper context ([ctxPtr]) reads, writes, loads,
+     * and frees are serialized by executing exclusively on this thread. Passing a
+     * multi-threaded executor will cause data races on the native context pointer.
+     */
     private val executor: ExecutorService = Executors.newSingleThreadExecutor(),
 ) : TranscriptionEngine {
 
@@ -42,7 +53,11 @@ class LocalWhisperEngine(
 
         val modelPath = modelPathProvider.installedModelPath()
         if (modelPath == null) {
-            listener.onError("No speech model installed")
+            // Route through the executor for thread consistency (all callbacks on executor thread).
+            val captured = listener
+            executor.execute {
+                if (this.listener === captured) captured.onError("No speech model installed")
+            }
             return
         }
 
@@ -69,7 +84,7 @@ class LocalWhisperEngine(
     }
 
     override fun commit() {
-        val listener = this.listener ?: return
+        val myListener = this.listener ?: return
         val lang = this.language
 
         // Atomically snapshot + clear the buffer.
@@ -84,7 +99,8 @@ class LocalWhisperEngine(
             try {
                 val ctx = ctxPtr
                 if (ctx == 0L) {
-                    listener.onError("Speech model not loaded")
+                    // Guard: only fire if the listener hasn't been replaced/nulled since commit().
+                    if (listener === myListener) myListener.onError("Speech model not loaded")
                     return@execute
                 }
                 val samples = AudioMath.pcm16ToFloat(pcm)
@@ -93,16 +109,26 @@ class LocalWhisperEngine(
                 }
                 val trimmed = text.trim()
                 if (trimmed.isNotBlank()) {
-                    listener.onCompleted(trimmed)
+                    // Guard: only fire if the listener hasn't been replaced/nulled since commit().
+                    if (listener === myListener) myListener.onCompleted(trimmed)
                 }
             } catch (t: Throwable) {
-                listener.onError(t.message ?: "Transcription failed")
+                // Guard: only fire if the listener hasn't been replaced/nulled since commit().
+                if (listener === myListener) myListener.onError(t.message ?: "Transcription failed")
             }
         }
     }
 
+    /**
+     * Ends the current session. Detaches the listener (any already-queued transcriptions become
+     * no-ops via the identity guard) and clears the audio buffer. Delivers [Listener.onClosed]
+     * synchronously to the caller before returning.
+     *
+     * NOTE: this does NOT forcibly cancel native work that is already executing on the executor
+     * thread; it only prevents stale callbacks from being delivered once that work eventually
+     * completes.
+     */
     override fun close() {
-        // Cancel pending work but keep the cached context for the next session.
         val listener = this.listener
         synchronized(bufferLock) { buffer.reset() }
         this.listener = null
@@ -120,7 +146,8 @@ class LocalWhisperEngine(
             if (ctx != 0L) {
                 try {
                     backend.release(ctx)
-                } catch (_: Throwable) {
+                } catch (t: Throwable) {
+                    Log.w("LocalWhisperEngine", "releaseContext failed", t)
                 }
                 ctxPtr = 0L
             }

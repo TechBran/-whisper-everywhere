@@ -19,6 +19,14 @@ interface TranscriptionEngine {
     /** Release the session (cancel pending work). */
     fun close()
 
+    /**
+     * Receives engine lifecycle and transcription result events.
+     *
+     * **Threading:** all callbacks are invoked on the engine's background executor thread,
+     * NOT on the main/UI thread. Consumers are responsible for marshalling to the UI thread
+     * themselves (e.g. via `Handler(Looper.getMainLooper()).post { … }` or
+     * `Activity.runOnUiThread { … }`).
+     */
     interface Listener {
         fun onOpen()
         fun onDelta(text: String)     // unused on-device; kept for interface compatibility
