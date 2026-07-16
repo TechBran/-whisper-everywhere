@@ -732,7 +732,18 @@ class FloatingBubbleService : Service(),
         val engine: TranscriptionEngine = transcriptionEngine
             ?: LocalWhisperEngine(app.whisperModelManager).also { transcriptionEngine = it }
 
-        engine.connect(app.preferencesManager.getLanguageForApi(), object : TranscriptionEngine.Listener {
+        // Resolve the transcription language. English-only (.en) models must NOT use auto-detect:
+        // whisper's language auto-detect is unreliable on non-multilingual models. Force "en" for
+        // ENGLISH-scope tiers; honor the user's setting (auto / specific) only for multilingual.
+        val installedModel = app.whisperModelManager.installedModel()
+        val lang = if (installedModel?.scope == com.whispereverywhere.model.ModelScope.ENGLISH) {
+            "en"
+        } else {
+            app.preferencesManager.getLanguageForApi()
+        }
+        android.util.Log.i("WE-DIAG", "connect lang resolved=$lang (modelScope=${installedModel?.scope})")
+
+        engine.connect(lang, object : TranscriptionEngine.Listener {
             override fun onOpen() {
                 android.util.Log.i("WE-DIAG", "onOpen handler: state=$currentState")
                 serviceScope.launch(Dispatchers.Main) {

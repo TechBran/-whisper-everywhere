@@ -73,7 +73,11 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribe(
     }
     if (langStr.empty() || langStr == "auto") {
         params.language     = "auto";
-        params.detect_language = true;
+        // IMPORTANT: do NOT set detect_language = true. In whisper.cpp, detect_language makes
+        // whisper_full() run language detection and RETURN immediately, WITHOUT transcribing
+        // (0 segments -> empty text). With language="auto" and detect_language=false, whisper_full
+        // auto-detects the language AND then transcribes.
+        params.detect_language = false;
     } else {
         langC = langStr.c_str();
         params.language     = langC;
