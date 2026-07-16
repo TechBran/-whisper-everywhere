@@ -228,7 +228,7 @@ private fun ModelTierCard(
                 downloading != null -> {
                     Spacer(modifier = Modifier.height(12.dp))
                     LinearProgressIndicator(
-                        progress = { downloading.pct / 100f },
+                        progress = downloading.pct / 100f,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(4.dp)),
