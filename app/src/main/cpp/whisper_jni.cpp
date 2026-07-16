@@ -86,6 +86,18 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribe(
         params.detect_language = false;
     }
 
+    // Encoder audio context. Default (0 -> full 1500 frames = 30s) makes whisper pay the full 30s
+    // encoder cost even for a 2s clip — the dominant per-segment latency. Compute only the frames
+    // this audio actually needs (~1 frame per 20 ms of 16 kHz audio => samples/320) plus headroom,
+    // capped at the model max (1500). All real audio stays within context so quality is preserved;
+    // we simply skip encoding the empty tail padding. Big latency cut for short dictation segments.
+    {
+        int neededFrames = static_cast<int>(pcm.size() / 320) + 64;
+        if (neededFrames < 256)  neededFrames = 256;
+        if (neededFrames > 1500) neededFrames = 1500;
+        params.audio_ctx = neededFrames;
+    }
+
     if (whisper_full(ctx, params, pcm.data(), static_cast<int>(pcm.size())) != 0) {
         LOGE("whisper_full failed");
         return env->NewStringUTF("");
