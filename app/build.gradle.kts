@@ -20,8 +20,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "2.0.7-diag"
+        versionCode = 19
+        versionName = "2.0.8-diag"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

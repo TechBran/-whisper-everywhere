@@ -55,12 +55,16 @@ class LocalWhisperEngine(
     // Process-lifetime cached native context (0 = not loaded).
     @Volatile private var ctxPtr: Long = 0L
 
+    // Absolute path of the model currently loaded into [ctxPtr]; used to detect a model switch so
+    // the reused engine reloads the newly-selected model instead of silently reusing the old one.
+    @Volatile private var loadedModelPath: String? = null
+
     override fun connect(language: String?, listener: TranscriptionEngine.Listener) {
         this.listener = listener
         this.language = language
 
         val modelPath = modelPathProvider.installedModelPath()
-        android.util.Log.i("WE-DIAG", "connect: modelPath=$modelPath ctxPtr=$ctxPtr")
+        android.util.Log.i("WE-DIAG", "connect: modelPath=$modelPath ctxPtr=$ctxPtr loaded=$loadedModelPath")
         if (modelPath == null) {
             // No native work involved; route through the native executor (keeps callback ordering
             // consistent and deterministic for tests using a same-thread executor).
@@ -70,11 +74,10 @@ class LocalWhisperEngine(
             return
         }
 
-        // Fast path: the native context is already loaded (reused engine). Signal readiness on the
+        // Fast path: the SAME model is already loaded (reused engine). Signal readiness on the
         // lightweight control executor so onOpen() is NOT queued behind a slow in-flight transcribe
-        // on the native executor — otherwise a prior session's large-model transcribe would keep the
-        // next session stuck in CONNECTING.
-        if (ctxPtr != 0L) {
+        // on the native executor — otherwise a prior session's transcribe would stall CONNECTING.
+        if (ctxPtr != 0L && modelPath == loadedModelPath) {
             controlExecutor.execute {
                 android.util.Log.i("WE-DIAG", "onOpen (ctx already loaded)")
                 if (this.listener === listener) listener.onOpen()
@@ -82,11 +85,21 @@ class LocalWhisperEngine(
             return
         }
 
-        // First load: must run on the native executor (serializes all native context access). On a
-        // freshly built engine there is no prior transcribe to block it, so CONNECTING legitimately
-        // covers the one-time model load.
+        // Nothing loaded yet, OR the installed model CHANGED since we loaded (user switched models).
+        // (Re)load on the native executor. If a stale context for a DIFFERENT model is present, free
+        // it first so we never transcribe with the wrong (or a heavier-than-selected) model.
         executor.execute {
             try {
+                if (ctxPtr != 0L && modelPath != loadedModelPath) {
+                    android.util.Log.i("WE-DIAG", "model changed ($loadedModelPath -> $modelPath); releasing old ctx")
+                    try {
+                        backend.release(ctxPtr)
+                    } catch (t: Throwable) {
+                        Log.w("LocalWhisperEngine", "release on model switch failed", t)
+                    }
+                    ctxPtr = 0L
+                    loadedModelPath = null
+                }
                 if (ctxPtr == 0L) {
                     // Retry a transient load failure once before giving up.
                     android.util.Log.i("WE-DIAG", "loading model from $modelPath")
@@ -97,6 +110,7 @@ class LocalWhisperEngine(
                         return@execute
                     }
                     ctxPtr = loaded
+                    loadedModelPath = modelPath
                 }
                 android.util.Log.i("WE-DIAG", "onOpen (ctx loaded)")
                 if (this.listener === listener) listener.onOpen()
@@ -191,6 +205,7 @@ class LocalWhisperEngine(
                     Log.w("LocalWhisperEngine", "releaseContext failed", t)
                 }
                 ctxPtr = 0L
+                loadedModelPath = null
             }
         }
     }
@@ -233,6 +248,7 @@ class LocalWhisperEngine(
                     Log.w("LocalWhisperEngine", "shutdown release failed", t)
                 }
                 ctxPtr = 0L
+                loadedModelPath = null
             }
         }
         executor.shutdown()
