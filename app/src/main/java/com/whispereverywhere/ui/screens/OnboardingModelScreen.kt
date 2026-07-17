@@ -121,9 +121,10 @@ private fun ModelTierCard(
     onRetry: () -> Unit
 ) {
     val downloading = state as? DownloadState.Downloading
+    val verifying = state is DownloadState.Verifying
     val error = state as? DownloadState.Error
     val done = state is DownloadState.Done
-    val isBusy = downloading != null
+    val isBusy = downloading != null || verifying
 
     val ramGated = model.minRamBytes > 0L
 
@@ -238,6 +239,22 @@ private fun ModelTierCard(
                     Text(
                         text = "Downloading… ${downloading.pct}%  " +
                             "(${formatBytes(downloading.soFar)} / ${formatBytes(downloading.total)})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                verifying -> {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = Primary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Verifying download…",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

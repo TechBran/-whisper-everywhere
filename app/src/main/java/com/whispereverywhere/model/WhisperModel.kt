@@ -30,8 +30,12 @@ data class WhisperModel(
  */
 object WhisperCatalog {
 
+    // Pinned to an immutable revision (repo sha as of 2026-07-17; content unchanged since
+    // 2024-10-29). resolve/main is a MUTABLE ref — any upstream file replacement would make
+    // every APK-pinned sha256 fail and brick downloads until an app update. A commit sha can
+    // never change out from under us.
     private const val BASE_URL =
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/"
 
     /** Allowed deviation of the actual downloaded size from approxBytes before sha256 verify. */
     const val SIZE_TOLERANCE = 0.05
@@ -54,7 +58,9 @@ object WhisperCatalog {
             displayName = "Eco (base.en)",
             fileName = "ggml-base.en-q5_1.bin",
             url = urlFor("ggml-base.en-q5_1.bin"),
-            approxBytes = 57_000_000L,
+            // Exact LFS byte sizes (from the HF LFS pointers) — the old rounded values put a
+            // correct download only ~129 KB inside the ±5% gate on this tier.
+            approxBytes = 59_721_011L,
             sha256 = SHA256_ECO,
             scope = ModelScope.ENGLISH,
             minRamBytes = 0L,
@@ -64,7 +70,7 @@ object WhisperCatalog {
             displayName = "Pro (small.en)",
             fileName = "ggml-small.en-q5_1.bin",
             url = urlFor("ggml-small.en-q5_1.bin"),
-            approxBytes = 190_000_000L,
+            approxBytes = 190_098_681L,
             sha256 = SHA256_PRO,
             scope = ModelScope.ENGLISH,
             minRamBytes = 0L,
@@ -74,17 +80,19 @@ object WhisperCatalog {
             displayName = "Extreme (medium.en)",
             fileName = "ggml-medium.en-q5_0.bin",
             url = urlFor("ggml-medium.en-q5_0.bin"),
-            approxBytes = 539_000_000L,
+            approxBytes = 539_225_533L,
             sha256 = SHA256_EXTREME,
             scope = ModelScope.ENGLISH,
-            minRamBytes = 6_000_000_000L,
+            // ActivityManager.totalMem under-reports physical RAM (kernel/carveouts) — a 6 GB
+            // gate mislabels genuine 6 GB devices. 5.5e9 keeps the intent (6 GB-class hardware).
+            minRamBytes = 5_500_000_000L,
         ),
         WhisperModel(
             id = "multi",
             displayName = "Multilingual (small)",
             fileName = "ggml-small-q5_1.bin",
             url = urlFor("ggml-small-q5_1.bin"),
-            approxBytes = 190_000_000L,
+            approxBytes = 190_085_487L,
             sha256 = SHA256_MULTI,
             scope = ModelScope.MULTILINGUAL,
             minRamBytes = 0L,
@@ -94,10 +102,11 @@ object WhisperCatalog {
             displayName = "Ultra (large-v3-turbo)",
             fileName = "ggml-large-v3-turbo-q5_0.bin",
             url = urlFor("ggml-large-v3-turbo-q5_0.bin"),
-            approxBytes = 574_000_000L,
+            approxBytes = 574_041_195L,
             sha256 = SHA256_ULTRA,
             scope = ModelScope.MULTILINGUAL,
-            minRamBytes = 8_000_000_000L,
+            // See extreme tier note: 7.0e9 = genuine 8 GB-class hardware after totalMem slack.
+            minRamBytes = 7_000_000_000L,
         ),
     )
 

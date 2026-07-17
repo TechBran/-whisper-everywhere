@@ -6,10 +6,13 @@ import android.content.Context
 import android.database.Cursor
 import android.net.Uri
 import android.os.Environment
+import android.os.StatFs
 import androidx.core.net.toUri
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.transcription.ModelPathProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -67,13 +70,52 @@ class WhisperModelManager(
 
     /**
      * Download [model] via Android DownloadManager into modelsDir, reporting (soFar, total)
-     * as it progresses. On completion, size-gate + sha256 verify; delete + throw on mismatch.
-     * Suspends until the download terminates. (Instrumented test only — needs DownloadManager.)
+     * as it progresses; [onVerifying] fires once when the network part is done and the
+     * move + sha256 verification begins. Main-safe: the entire body runs on Dispatchers.IO
+     * (the move + streaming hash of up to ~574 MB used to freeze the UI for 10-20 s when a
+     * caller invoked this from the main dispatcher).
+     * On completion, size-gate + sha256 verify; delete + throw on mismatch.
      */
-    suspend fun download(model: WhisperModel, onProgress: (soFar: Long, total: Long) -> Unit) {
+    suspend fun download(
+        model: WhisperModel,
+        onProgress: (soFar: Long, total: Long) -> Unit,
+        onVerifying: () -> Unit = {},
+    ): Unit = withContext(Dispatchers.IO) {
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val dest = fileFor(model)
         if (dest.exists()) dest.delete()
+
+        val downloadDest = externalDownloadDest(model)
+
+        // Fast path: a prior attempt fully downloaded the file but the process died before the
+        // move+verify (or the user backed out). Don't burn another 60-570 MB of network — verify
+        // what's already on disk; the sha256 gate below rejects it if it's actually bad.
+        if (downloadDest.exists() &&
+            WhisperCatalog.sizeWithinTolerance(downloadDest.length(), model.approxBytes)
+        ) {
+            android.util.Log.i("WE-DIAG", "download: reusing completed file at ${downloadDest.absolutePath}")
+            onProgress(downloadDest.length(), downloadDest.length())
+            onVerifying()
+            moveVerified(downloadDest, dest, model)
+            return@withContext
+        }
+
+        // Free-space gate BEFORE burning network: the flow transiently needs the model at the
+        // external destination AND the internal move target. Checked per-filesystem with a
+        // small safety margin; a mid-download disk-full otherwise surfaces as opaque "reason=1006".
+        val required = (model.approxBytes * 1.1).toLong()
+        val extFree = runCatching {
+            StatFs(downloadDest.parentFile!!.apply { mkdirs() }.absolutePath).availableBytes
+        }.getOrDefault(Long.MAX_VALUE)
+        val intFree = runCatching { StatFs(modelsDir().absolutePath).availableBytes }
+            .getOrDefault(Long.MAX_VALUE)
+        if (extFree < required || intFree < required) {
+            val needMb = required / 1_000_000
+            throw ModelDownloadException(
+                "Not enough free storage: this model needs about ${needMb} MB free. " +
+                    "Clear some space and try again."
+            )
+        }
 
         // Clear any leftover state from a prior attempt at this model BEFORE enqueue. Otherwise a
         // stale DownloadManager row or a leftover file at the EXTERNAL download destination makes
@@ -81,7 +123,6 @@ class WhisperModelManager(
         // fine the first time but sticks at 0 MB after a delete + retry" bug. (The old guard above
         // only cleared the INTERNAL destination, never the external one DownloadManager writes to.)
         removeStaleDownloads(dm, model)
-        val downloadDest = externalDownloadDest(model)
         android.util.Log.i("WE-DIAG", "download prep: extDest=${downloadDest.absolutePath} existed=${downloadDest.exists()}")
         if (downloadDest.exists()) downloadDest.delete()
 
@@ -129,6 +170,7 @@ class WhisperModelManager(
                                 val localUri = c.getString(
                                     c.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_URI),
                                 )
+                                onVerifying()
                                 moveToModelsDir(localUri, dest)
                                 done = true
                             }
@@ -153,8 +195,24 @@ class WhisperModelManager(
             dm.remove(id)
         }
 
-        // Verify on disk: size gate THEN sha256 (streaming — never loads the whole file).
-        // Any exception (expected or unexpected) deletes the partial/corrupt file before rethrowing.
+        verifyDest(dest, model)
+    }
+
+    /** Move [src] into place at [dest] and run the full verification gates. */
+    private fun moveVerified(src: File, dest: File, model: WhisperModel) {
+        if (dest.exists()) dest.delete()
+        if (!src.renameTo(dest)) {
+            src.copyTo(dest, overwrite = true)
+            src.delete()
+        }
+        verifyDest(dest, model)
+    }
+
+    /**
+     * Verify [dest] on disk: size gate THEN sha256 (streaming — never loads the whole file).
+     * Any exception (expected or unexpected) deletes the partial/corrupt file before rethrowing.
+     */
+    private fun verifyDest(dest: File, model: WhisperModel) {
         try {
             val actualLen = dest.length()
 
