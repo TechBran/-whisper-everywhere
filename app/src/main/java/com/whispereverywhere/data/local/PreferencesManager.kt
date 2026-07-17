@@ -94,6 +94,18 @@ class PreferencesManager(private val context: Context) {
 
     fun isBubbleEnabled(): Boolean = _bubbleEnabled.value
 
+    // Bubble display mode: true = always on screen at the user's chosen spot (default);
+    // false = auto pop-up near focused text fields / during media, hidden otherwise.
+    private val _bubbleAlwaysOn = MutableStateFlow(prefs.getBoolean(KEY_BUBBLE_ALWAYS_ON, true))
+    val bubbleAlwaysOn: StateFlow<Boolean> = _bubbleAlwaysOn.asStateFlow()
+
+    fun setBubbleAlwaysOn(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_BUBBLE_ALWAYS_ON, enabled).apply()
+        _bubbleAlwaysOn.value = enabled
+    }
+
+    fun isBubbleAlwaysOn(): Boolean = _bubbleAlwaysOn.value
+
     // Language selection for transcription
     fun setSelectedLanguage(languageCode: String) {
         prefs.edit().putString(KEY_SELECTED_LANGUAGE, languageCode).apply()
@@ -146,6 +158,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_BUBBLE_ENABLED = "bubble_enabled"
+        private const val KEY_BUBBLE_ALWAYS_ON = "bubble_always_on"
         private const val KEY_BUBBLE_X = "bubble_x"
         private const val KEY_BUBBLE_Y = "bubble_y"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"

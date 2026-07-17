@@ -60,6 +60,7 @@ class FloatingBubbleService : Service(),
     private lateinit var bubbleIcon: ImageView
     private lateinit var processingRing: ImageView
     private lateinit var waveformView: BarWaveformView
+    private lateinit var blobView: com.whispereverywhere.ui.components.BlobView
     private lateinit var processingTimeText: android.widget.TextView
     private lateinit var transcriptionPreviewContainer: View
     private lateinit var transcriptionEditText: android.widget.TextView
@@ -101,6 +102,12 @@ class FloatingBubbleService : Service(),
     // real time; bounded so a pathological run can't hang the bubble in FINALIZING forever.
     private val FINALIZE_TIMEOUT_MS = 300_000L
 
+    // Wall-clock cap per uncommitted stretch. Continuous loud audio (media playback, music) never
+    // dips below the segmenter's silence floor, so its pause-based commit never fires — without
+    // this cap the engine buffer grows unbounded and produces one giant end-of-session segment.
+    private val MAX_SEGMENT_WALL_MS = 15_000L
+    private var lastCommitWallMs = 0L
+
     // Set true when any transcription text is produced during a recording session; drives the
     // "No speech detected" feedback on stop so the user is not left with silent nothing.
     @Volatile private var sessionProducedText = false
@@ -140,15 +147,38 @@ class FloatingBubbleService : Service(),
         audioRecorder = StreamingAudioRecorder(this)
         mediaDetector = MediaSessionDetector(this)
 
-        createBubbleView()
-        
-        // Start foreground service with correct type for Android 14
+        // Foreground FIRST (satisfies the startForegroundService contract), and guarded: on
+        // Android 12+/14+ this throws when the start context is disallowed or RECORD_AUDIO was
+        // revoked (mic-type FGS). Without the guard a START_STICKY service crash-loops forever
+        // after a permission revocation. Fail soft: log + stop, never crash.
         val notification = createNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(this, WhisperEverywhereApp.NOTIFICATION_ID, notification, 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(WhisperEverywhereApp.NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(this, WhisperEverywhereApp.NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            } else {
+                startForeground(WhisperEverywhereApp.NOTIFICATION_ID, notification)
+            }
+        } catch (t: Throwable) {
+            android.util.Log.w("WE-DIAG",
+                "startForeground rejected (${t.javaClass.simpleName}: ${t.message}) — stopping instead of crash-looping")
+            stopSelf()
+            return
+        }
+
+        // Overlay permission can be revoked while the service is not running; addView without it
+        // throws. Same fail-soft treatment.
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            android.util.Log.w("WE-DIAG", "overlay permission missing — stopping bubble service")
+            stopSelf()
+            return
+        }
+        createBubbleView()
+
+        // Always-on mode: the bubble appears immediately at the user's spot and lives there.
+        // (Auto mode leaves it hidden until a text field / media event summons it.)
+        if (alwaysOnMode()) {
+            bubbleView.post { showBubbleAtRest() }
         }
 
         // Register for text field focus events
@@ -184,6 +214,9 @@ class FloatingBubbleService : Service(),
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                // Explicit user stop (notification action): record the intent here — onDestroy
+                // must NOT do it, or programmatic restarts (mode toggle) clobber the preference.
+                app.preferencesManager.setBubbleEnabled(false)
                 stopSelf()
             }
         }
@@ -212,7 +245,9 @@ class FloatingBubbleService : Service(),
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        app.preferencesManager.setBubbleEnabled(false)
+        // NOTE: deliberately NOT setBubbleEnabled(false) here. onDestroy also runs for
+        // programmatic restarts (bubble-mode toggle) and system kills — only explicit user
+        // stops (HomeScreen toggle, notification Stop action) record disabled intent.
     }
 
     // ========== Configuration changes (rotation / fold — drift hardening) ==========
@@ -224,13 +259,24 @@ class FloatingBubbleService : Service(),
         bubbleView.post { reclampAfterConfigChange() }
     }
 
+    // ========== Bubble display mode ==========
+
+    /**
+     * True = "always on screen": the bubble lives wherever the user placed/pinned it and NEVER
+     * auto-moves or auto-hides; focus/media events only change what a tap dictates into.
+     * False = "auto pop-up": classic behavior (appear near focused fields / during media, hide
+     * when idle). User-facing toggle in Settings -> Preferences.
+     */
+    private fun alwaysOnMode(): Boolean = app.preferencesManager.isBubbleAlwaysOn()
+
     // ========== Text Field Focus Listener ==========
 
     override fun onTextFieldFocused(rect: Rect) {
         serviceScope.launch(Dispatchers.Main) {
             currentContext = BubbleContext.TEXT_FIELD
             shouldHideOnIdle = false
-            showBubbleNearTextField(rect)
+            // Always-on: the bubble is already where the user wants it — do not reposition.
+            if (!alwaysOnMode()) showBubbleNearTextField(rect)
         }
     }
 
@@ -243,7 +289,7 @@ class FloatingBubbleService : Service(),
                         // Check if media is playing - if so, switch to media context
                         if (mediaDetector.isCurrentlyPlaying()) {
                             currentContext = BubbleContext.MEDIA_PLAYBACK
-                            showBubbleForMedia()
+                            if (!alwaysOnMode()) showBubbleForMedia()
                         } else {
                             currentContext = BubbleContext.NONE
                             hideBubble()
@@ -265,7 +311,7 @@ class FloatingBubbleService : Service(),
             // Only show for media if no text field is focused
             if (currentContext != BubbleContext.TEXT_FIELD) {
                 currentContext = BubbleContext.MEDIA_PLAYBACK
-                showBubbleForMedia()
+                if (!alwaysOnMode()) showBubbleForMedia()
             }
         }
     }
@@ -419,6 +465,45 @@ class FloatingBubbleService : Service(),
         }
     }
 
+    /**
+     * Show the bubble at its resting spot: the saved/pinned position (prefs-persisted; defaults
+     * to bottom-right for fresh installs). Used by always-on mode, where the bubble never moves
+     * itself — this is the only placement it ever gets.
+     */
+    private fun showBubbleAtRest() {
+        if (isBubbleVisible) return
+        hideAnimator?.cancel()
+
+        val bubbleSize = (56 * resources.displayMetrics.density).toInt()
+        val pos = savedPinnedPosition(bubbleSize)
+        params.x = pos.first
+        params.y = pos.second
+        bubbleView.alpha = 0f
+        bubbleView.scaleX = 0.5f
+        bubbleView.scaleY = 0.5f
+        bubbleView.visibility = View.VISIBLE
+
+        try {
+            windowManager.updateViewLayout(bubbleView, params)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        showAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 200
+            interpolator = OvershootInterpolator(1.2f)
+            addUpdateListener { animation ->
+                val value = animation.animatedValue as Float
+                bubbleView.alpha = value
+                bubbleView.scaleX = 0.5f + (0.5f * value)
+                bubbleView.scaleY = 0.5f + (0.5f * value)
+            }
+            start()
+        }
+
+        isBubbleVisible = true
+    }
+
     private fun animateBubbleTo(targetX: Int, targetY: Int) {
         val startX = params.x
         val startY = params.y
@@ -441,6 +526,8 @@ class FloatingBubbleService : Service(),
     }
 
     private fun hideBubble() {
+        // Always-on mode: the bubble never auto-hides. (Service stop removes the window itself.)
+        if (alwaysOnMode()) return
         if (!isBubbleVisible) return
 
         showAnimator?.cancel()
@@ -488,6 +575,8 @@ class FloatingBubbleService : Service(),
         bubbleIcon = bubbleView.findViewById(R.id.bubble_icon)
         processingRing = bubbleView.findViewById(R.id.processing_ring)
         waveformView = bubbleView.findViewById(R.id.waveform_view)
+        blobView = bubbleView.findViewById(R.id.blob_view)
+        blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_background)
         processingTimeText = bubbleView.findViewById(R.id.processing_time_text)
         transcriptionPreviewContainer = bubbleView.findViewById(R.id.transcription_preview_container)
         transcriptionEditText = bubbleView.findViewById(R.id.transcription_edit_text)
@@ -652,10 +741,13 @@ class FloatingBubbleService : Service(),
                 if (!isDragging) {
                     handleBubbleClick()
                 } else if (!isOverlayPinned) {
+                    // Always-on mode: FREE placement — the bubble stays exactly where the user
+                    // drops it (middle of the screen included). Classic auto mode keeps the
+                    // chat-head edge snap.
+                    if (!alwaysOnMode()) snapToEdge()
                     val displayMetrics = resources.displayMetrics
                     app.preferencesManager.bubblePositionX = params.x.toFloat() / displayMetrics.widthPixels
                     app.preferencesManager.bubblePositionY = params.y.toFloat() / displayMetrics.heightPixels
-                    snapToEdge()
                 }
                 lastAction = event.action
                 return true
@@ -674,12 +766,17 @@ class FloatingBubbleService : Service(),
         val target = (dp * resources.displayMetrics.density).toInt()
         val lp = bubbleContainer.layoutParams
         if (lp.width == target) return
+        // The blob body tracks the container with its 16dp ripple headroom (8dp per side).
+        val blobLp = blobView.layoutParams
+        val blobExtra = (16 * resources.displayMetrics.density).toInt()
         ValueAnimator.ofInt(lp.width, target).apply {
             duration = 180
             interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener {
                 lp.width = it.animatedValue as Int
                 bubbleContainer.layoutParams = lp
+                blobLp.width = lp.width + blobExtra
+                blobView.layoutParams = blobLp
             }
             start()
         }
@@ -749,14 +846,24 @@ class FloatingBubbleService : Service(),
                 serviceScope.launch(Dispatchers.Main) {
                     if (currentState != BubbleState.CONNECTING) return@launch
                     speechSegmenter.reset()
+                    lastCommitWallMs = System.currentTimeMillis()
                     val started = audioRecorder.start { chunk, amp ->
                         engine.sendAudio(chunk)
                         // Client VAD per audio chunk (NOT the conflated amplitude StateFlow, which
-                        // stops emitting during a steady pause). Commit on a natural pause or the
-                        // max-segment cap so each utterance is transcribed on-device.
-                        if (speechSegmenter.onAmplitude(amp, System.currentTimeMillis())) {
+                        // stops emitting during a steady pause). Commit on a natural pause, or on
+                        // the wall-clock cap when the amplitude never dips (continuous media).
+                        val now = System.currentTimeMillis()
+                        if (speechSegmenter.onAmplitude(amp, now)) {
                             android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
+                            lastCommitWallMs = now
                             engine.commit()
+                        } else if (now - lastCommitWallMs >= MAX_SEGMENT_WALL_MS) {
+                            android.util.Log.i("WE-DIAG", "wall-clock cap -> commit")
+                            lastCommitWallMs = now
+                            engine.commit()
+                            // Re-arm the segmenter so its pause detection starts fresh for the
+                            // next stretch (the native Silero VAD keeps the cut clean).
+                            speechSegmenter.reset()
                         }
                     }
                     android.util.Log.i("WE-DIAG", "recorder start success=${started.isSuccess}")
@@ -802,6 +909,7 @@ class FloatingBubbleService : Service(),
                             if (currentState != BubbleState.RECORDING) return@collectLatest
                             // Waveform only; the VAD/commit runs per-chunk in the recorder callback.
                             waveformView.updateAmplitude(amp)
+                            blobView.updateAmplitude(amp)
                         }
                     }
                 }
@@ -866,13 +974,12 @@ class FloatingBubbleService : Service(),
             transcriptionPreviewContainer.visibility = View.GONE
         }
         
-        // Flush the final segment only if there is uncommitted speech since the last pause-commit.
-        // Avoids transcribing pure trailing silence on release (no stray [BLANK_AUDIO] output). The
-        // per-chunk VAD already commits completed utterances on pauses; this catches speech spoken
-        // right up to the moment of release.
-        if (speechSegmenter.hasPendingSpeech()) {
-            transcriptionEngine?.commit()
-        }
+        // Flush whatever is buffered, UNCONDITIONALLY. The amplitude segmenter misses quiet
+        // speech below its fixed thresholds — gating this flush on hasPendingSpeech() silently
+        // discarded whole sessions for soft talkers ("No speech detected" despite real speech).
+        // The native Silero VAD inside whisper_full now makes the unconditional flush safe: a
+        // silence-only tail is trimmed to nothing and returns empty, fast, with no junk tokens.
+        transcriptionEngine?.commit()
         speechSegmenter.reset()
 
         // Drain the ENTIRE transcription backlog before detaching the listener. A slow model (e.g.
@@ -988,7 +1095,8 @@ class FloatingBubbleService : Service(),
                     waveformView.visibility = View.GONE
                     waveformView.stop()
                     setBubbleWidth(56)
-                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_idle)
+                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_background)
+                    blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.IDLE)
                     processingRing.visibility = View.GONE
                     processingRing.clearAnimation()
                     processingTimeText.visibility = View.GONE
@@ -1006,7 +1114,8 @@ class FloatingBubbleService : Service(),
                     bubbleIcon.visibility = View.GONE
                     waveformView.visibility = View.GONE
                     processingRing.visibility = View.VISIBLE
-                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_processing)
+                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_processing)
+                    blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.PROCESSING)
                     startRotationAnimation()
                 }
                 BubbleState.RECORDING -> {
@@ -1016,8 +1125,14 @@ class FloatingBubbleService : Service(),
                     setBubbleWidth(160)
                     waveformView.visibility = View.VISIBLE
                     waveformView.start()
-                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_recording)
-                    startPulseAnimation()
+                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_recording)
+                    blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.RECORDING)
+                    // NO container pulse: the old x1.15 scale loop inflated the ribbon past the
+                    // blob's rim (the "ribbon won't stay inside" bug). The blob's voice-driven
+                    // swell IS the recording pulse now. Reset any leftover scale defensively.
+                    pulseAnimator?.cancel(); pulseAnimator = null
+                    bubbleContainer.scaleX = 1f
+                    bubbleContainer.scaleY = 1f
                 }
                 BubbleState.FINALIZING -> {
                     pulseAnimator?.cancel()
@@ -1025,14 +1140,16 @@ class FloatingBubbleService : Service(),
                     waveformView.visibility = View.GONE
                     setBubbleWidth(56)
                     processingRing.visibility = View.VISIBLE
-                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_processing)
+                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_processing)
+                    blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.PROCESSING)
                     startRotationAnimation()
                 }
                 BubbleState.PROCESSING -> {
                     bubbleIcon.visibility = View.GONE
                     waveformView.visibility = View.GONE
                     waveformView.stop()
-                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_processing)
+                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_processing)
+                    blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.PROCESSING)
                     processingRing.visibility = View.VISIBLE
                     processingTimeText.visibility = View.VISIBLE
                     startRotationAnimation()
@@ -1043,7 +1160,8 @@ class FloatingBubbleService : Service(),
                     bubbleIcon.setImageResource(R.drawable.ic_error)
                     waveformView.visibility = View.GONE
                     waveformView.stop()
-                    bubbleContainer.setBackgroundResource(R.drawable.bubble_background_error)
+                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.error)
+                    blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.ERROR)
                     processingRing.visibility = View.GONE
                     processingRing.clearAnimation()
                     processingTimeText.visibility = View.GONE

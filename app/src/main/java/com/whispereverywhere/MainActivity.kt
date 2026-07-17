@@ -42,6 +42,17 @@ class MainActivity : ComponentActivity() {
         // Request permissions
         requestPermissions()
 
+        // Boot-notification tap: BootReceiver cannot start a microphone FGS from BOOT_COMPLETED
+        // (Android 15 ban; silenced mic on 12-14), so its notification routes here — with this
+        // activity foreground the start is unrestricted and the mic fully usable.
+        if (intent?.getBooleanExtra(
+                com.whispereverywhere.receiver.BootReceiver.EXTRA_START_BUBBLE, false
+            ) == true &&
+            android.provider.Settings.canDrawOverlays(this)
+        ) {
+            com.whispereverywhere.service.FloatingBubbleService.start(this)
+        }
+
         setContent {
             WhisperEverywhereTheme {
                 Surface(

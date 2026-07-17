@@ -1,21 +1,41 @@
 package com.whispereverywhere.receiver
 
+import android.Manifest
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.provider.Settings
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import com.whispereverywhere.MainActivity
+import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.service.FloatingBubbleService
 
 /**
- * Receives boot completed and app update broadcasts to automatically
- * restart the floating bubble service if it was previously enabled.
+ * Restores the floating bubble after reboots and app updates.
+ *
+ * BOOT_COMPLETED: Android 15 (targetSdk 35) forbids launching a microphone-type foreground
+ * service from a boot receiver, and on Android 12-14 a boot-started mic FGS records SILENCE
+ * until the app is next foregrounded. So on boot we post a tap-to-restart notification instead;
+ * the tap opens MainActivity, which starts the service from the foreground — fully allowed,
+ * microphone usable.
+ *
+ * MY_PACKAGE_REPLACED: an allowed background-start exemption, so the service is restarted
+ * directly (synchronously — a Handler.postDelayed lambda in a manifest receiver can be killed
+ * with the receiver's process before it ever runs). If the start is rejected anyway, we degrade
+ * to the same notification.
  */
 class BootReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "BootReceiver"
+        const val EXTRA_START_BUBBLE = "com.whispereverywhere.START_BUBBLE"
+        private const val RESTART_NOTIFICATION_ID = 1002
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -24,63 +44,78 @@ class BootReceiver : BroadcastReceiver() {
 
         when (action) {
             Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_MY_PACKAGE_REPLACED,
-            "android.intent.action.QUICKBOOT_POWERON", // For HTC devices
+            "android.intent.action.QUICKBOOT_POWERON", // HTC devices
             "com.htc.intent.action.QUICKBOOT_POWERON" -> {
-                restartBubbleIfEnabled(context)
+                if (eligible(context)) postRestartNotification(context)
+            }
+
+            Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                if (eligible(context)) {
+                    try {
+                        FloatingBubbleService.start(context)
+                        Log.d(TAG, "Bubble restarted after app update")
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "Service start after update rejected; posting notification", t)
+                        postRestartNotification(context)
+                    }
+                }
             }
         }
     }
 
-    private fun restartBubbleIfEnabled(context: Context) {
-        try {
-            // Get preferences to check if bubble was enabled
-            val app = context.applicationContext as? WhisperEverywhereApp
-            val preferencesManager = app?.preferencesManager
-
-            if (preferencesManager == null) {
-                Log.w(TAG, "PreferencesManager not available")
-                return
-            }
-
-            val wasBubbleEnabled = preferencesManager.isBubbleEnabled()
-            Log.d(TAG, "Bubble was enabled: $wasBubbleEnabled")
-
-            if (!wasBubbleEnabled) {
+    /** The bubble should come back only if it was on AND everything it needs is still granted. */
+    private fun eligible(context: Context): Boolean {
+        return try {
+            val app = context.applicationContext as? WhisperEverywhereApp ?: return false
+            if (!app.preferencesManager.isBubbleEnabled()) {
                 Log.d(TAG, "Bubble was not enabled, skipping restart")
-                return
+                return false
             }
-
-            // Check if we have the required permissions
             if (!Settings.canDrawOverlays(context)) {
-                Log.w(TAG, "Overlay permission not granted, cannot restart bubble")
-                return
+                Log.w(TAG, "Overlay permission not granted, cannot restore bubble")
+                return false
             }
-
-            // On-device: restart only makes sense if a speech model is installed. (The old
-            // hasApiKey() gate is dead post-cloud-removal — there is no API-key UI, so it would
-            // always be false and silently disable auto-restart for every user.)
-            if (app?.whisperModelManager?.installedModel() == null) {
-                Log.w(TAG, "No speech model installed, cannot restart bubble")
-                return
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w(TAG, "RECORD_AUDIO revoked, cannot restore bubble")
+                return false
             }
+            if (app.whisperModelManager.installedModel() == null) {
+                Log.w(TAG, "No speech model installed, cannot restore bubble")
+                return false
+            }
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "Eligibility check failed", t)
+            false
+        }
+    }
 
-            // Small delay to let the system settle after boot
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                Log.d(TAG, "Restarting FloatingBubbleService...")
-
-                // Stop first (in case it's in a bad state)
-                FloatingBubbleService.stop(context)
-
-                // Small delay then restart
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    FloatingBubbleService.start(context)
-                    Log.d(TAG, "FloatingBubbleService restart initiated")
-                }, 500)
-            }, 3000) // Wait 3 seconds after boot for system to stabilize
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error restarting bubble service", e)
+    private fun postRestartNotification(context: Context) {
+        try {
+            val tap = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(EXTRA_START_BUBBLE, true)
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context, 0, tap,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification =
+                NotificationCompat.Builder(context, WhisperEverywhereApp.NOTIFICATION_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentTitle("Restart your dictation bubble")
+                    .setContentText("Tap to bring back Whisper Everywhere after the restart.")
+                    .setContentIntent(pendingIntent)
+                    .setAutoCancel(true)
+                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                    .build()
+            NotificationManagerCompat.from(context)
+                .notify(RESTART_NOTIFICATION_ID, notification)
+        } catch (t: Throwable) {
+            // Includes SecurityException when POST_NOTIFICATIONS is denied — nothing else to do.
+            Log.w(TAG, "Could not post restart notification", t)
         }
     }
 }

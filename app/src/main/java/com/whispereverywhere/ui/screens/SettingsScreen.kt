@@ -43,6 +43,7 @@ fun SettingsScreen(
     val modelManager = app.whisperModelManager
 
     val vibrationEnabled by app.preferencesManager.vibrationEnabled.collectAsState()
+    val bubbleAlwaysOn by app.preferencesManager.bubbleAlwaysOn.collectAsState()
 
     // Bump to force a re-read of installed-model / disk-usage after a delete or when
     // returning from the model-onboarding flow.
@@ -166,6 +167,22 @@ fun SettingsScreen(
 
             // Preferences Section
             SettingsSection(title = "Preferences") {
+                SettingsSwitchItem(
+                    icon = Icons.Filled.PushPin,
+                    title = "Keep bubble always on screen",
+                    subtitle = "Bubble stays where you place it. Off: pops up only near " +
+                        "text fields and playing media, hides when idle",
+                    checked = bubbleAlwaysOn,
+                    onCheckedChange = { enabled ->
+                        app.preferencesManager.setBubbleAlwaysOn(enabled)
+                        // Apply immediately: restart the running service in the new mode.
+                        // (onDestroy no longer clobbers bubbleEnabled, so this is a clean cycle.)
+                        if (app.preferencesManager.isBubbleEnabled()) {
+                            com.whispereverywhere.service.FloatingBubbleService.stop(context)
+                            com.whispereverywhere.service.FloatingBubbleService.start(context)
+                        }
+                    }
+                )
                 SettingsSwitchItem(
                     icon = Icons.Filled.Vibration,
                     title = "Vibration Feedback",

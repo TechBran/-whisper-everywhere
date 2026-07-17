@@ -54,6 +54,13 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content">
 
+        <!-- Living blob body: audio-reactive shape replacing the static circle background. -->
+        <com.whispereverywhere.ui.components.BlobView
+            android:id="@+id/blob_view"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_gravity="center" />
+
         <ImageView
             android:id="@+id/processing_ring"
             android:layout_width="72dp"
@@ -67,8 +74,7 @@
             android:layout_width="56dp"
             android:layout_height="56dp"
             android:layout_gravity="center"
-            android:background="@drawable/bubble_background_idle"
-            android:elevation="8dp">
+            android:background="@null">
 
             <ImageView
                 android:id="@+id/bubble_icon"
@@ -77,13 +83,13 @@
                 android:layout_gravity="center"
                 android:src="@drawable/ic_mic" />
 
+            <!-- Spans the FULL pill: the wave's envelope is computed from the pill's own cap
+                 geometry, so the ribbon tips terminate exactly on the bubble edge. -->
             <com.whispereverywhere.ui.components.BarWaveformView
                 android:id="@+id/waveform_view"
                 android:layout_width="match_parent"
-                android:layout_height="32dp"
+                android:layout_height="match_parent"
                 android:layout_gravity="center"
-                android:layout_marginStart="10dp"
-                android:layout_marginEnd="10dp"
                 android:visibility="gone" />
 
             <TextView
