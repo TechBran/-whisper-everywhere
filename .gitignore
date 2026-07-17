@@ -108,3 +108,8 @@ stripe_keys.properties
 /nul
 /ChatGPT Image*.png
 whispereverywhere-release.jks
+
+# Signing secrets (never commit)
+keystore.properties
+*.jks
+*.keystore

@@ -47,3 +47,13 @@
 # --- Native whisper.cpp JNI bridge (Task 1) ---
 -keepclasseswithmembernames class * { native <methods>; }
 -keep class com.whispereverywhere.whisper.WhisperNative { *; }
+
+# --- Release log hygiene ---
+# Strip verbose/debug logging from release builds entirely. Info/warn/error (incl. the WE-DIAG
+# operational logs) are KEPT for now because on-device release-build diagnosis is active during
+# development; before Play submission, extend this list with i/w/e for fully silent releases.
+# (Transcript CONTENT is never logged at any level — removed at the call sites.)
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+}
