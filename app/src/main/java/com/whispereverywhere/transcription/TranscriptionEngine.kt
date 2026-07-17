@@ -43,11 +43,46 @@ interface WhisperBackend {
     fun release(ctx: Long)
 }
 
-/** Production backend: delegates to [WhisperNative] with translate = false. */
+/**
+ * Production backend: delegates to [WhisperNative] with translate = false.
+ *
+ * GPU usage is decided per load by [GpuPolicy] (Adreno allowlist + crash sentinels). The first
+ * GPU load and the first GPU transcribe of each app version run inside sentinel windows so a
+ * native GPU crash permanently falls this version back to CPU instead of crash-looping.
+ */
 object WhisperNativeBackend : WhisperBackend {
-    override fun load(modelPath: String): Long = WhisperNative.init(modelPath)
-    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String =
-        WhisperNative.transcribe(ctx, samples, lang, translate = false)
+    override fun load(modelPath: String): Long {
+        val useGpu = GpuPolicy.decideUseGpuForLoad(modelPath)
+        if (!useGpu) return WhisperNative.init(modelPath, false)
+        // finally (not sequential code): a survivable Java exception between arm and disarm must
+        // still disarm — only true process death may leave the sentinel behind.
+        try {
+            return WhisperNative.init(modelPath, true)
+        } finally {
+            GpuPolicy.onGpuLoadReturned()
+        }
+    }
+
+    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+        val validating = GpuPolicy.needsComputeValidation()
+        if (!validating) {
+            return WhisperNative.transcribe(
+                ctx, samples, lang, translate = false, vadModelPath = VadModel.path()
+            )
+        }
+        GpuPolicy.onGpuComputeStarting()
+        var ok = false
+        try {
+            val text = WhisperNative.transcribe(
+                ctx, samples, lang, translate = false, vadModelPath = VadModel.path()
+            )
+            ok = true
+            return text
+        } finally {
+            GpuPolicy.onGpuComputeFinished(ok)
+        }
+    }
+
     override fun release(ctx: Long) = WhisperNative.free(ctx)
 }
 

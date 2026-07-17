@@ -41,6 +41,11 @@ class LocalWhisperEngine(
     private val bufferLock = Any()
     private val buffer = ByteArrayOutputStream()
 
+    private companion object {
+        /** 30 s of PCM16 @ 16 kHz — hard ceiling on audio buffered between commits. */
+        const val MAX_BUFFER_BYTES = 30 * 16000 * 2
+    }
+
     /**
      * Lightweight control executor used ONLY to deliver connect() readiness callbacks
      * (onOpen/onError). It NEVER touches the native context. Keeping these off the native
@@ -122,7 +127,16 @@ class LocalWhisperEngine(
     }
 
     override fun sendAudio(pcm: ByteArray) {
-        synchronized(bufferLock) { buffer.write(pcm) }
+        val overflow = synchronized(bufferLock) {
+            buffer.write(pcm)
+            buffer.size() >= MAX_BUFFER_BYTES
+        }
+        if (overflow) {
+            // Backstop against unbounded growth if no caller-side commit fires (~32 KB/s of
+            // PCM16@16kHz). Self-commit keeps memory bounded and results incremental.
+            android.util.Log.i("WE-DIAG", "sendAudio: buffer cap reached -> forced commit")
+            commit()
+        }
     }
 
     override fun commit() {
@@ -159,7 +173,9 @@ class LocalWhisperEngine(
                 // Strip whisper's non-speech markers ([BLANK_AUDIO], [ Silence ], (music), …) so
                 // they are never typed into the user's field.
                 val cleaned = TranscriptText.clean(text)
-                android.util.Log.i("WE-DIAG", "transcribe DONE rawLen=${text.length} cleanLen=${cleaned.length} text=[${cleaned.take(60)}]")
+                // Never log transcript content — logcat is readable by adb/other tooling and the
+                // product promise is that transcriptions stay on-device. Lengths only.
+                android.util.Log.i("WE-DIAG", "transcribe DONE rawLen=${text.length} cleanLen=${cleaned.length}")
                 if (cleaned.isNotBlank()) {
                     // Guard: only fire if the listener hasn't been replaced/nulled since commit().
                     if (listener === myListener) myListener.onCompleted(cleaned)
