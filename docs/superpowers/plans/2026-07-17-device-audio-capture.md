@@ -35,6 +35,11 @@
 | `app/src/main/AndroidManifest.xml` (modify) | Projection permission, service type, trampoline activity |
 | `app/src/test/java/com/whispereverywhere/audio/AudioSourcePolicyTest.kt` (new) | JVM tests |
 | `app/src/test/java/com/whispereverywhere/audio/Pcm48kTo16kDecimatorTest.kt` (new) | JVM tests |
+| `app/src/main/java/com/whispereverywhere/transcription/TranscriptStore.kt` (new) | Text-only session history with rolling age/size retention |
+| `app/src/test/java/com/whispereverywhere/transcription/TranscriptStoreTest.kt` (new) | JVM tests |
+| `app/src/main/java/com/whispereverywhere/ui/screens/TranscriptsScreen.kt` (new) | History list/detail UI (copy/share/delete) |
+| `app/src/main/java/com/whispereverywhere/ui/screens/HomeScreen.kt` (modify) | "Transcriptions" entry card |
+| `app/src/main/java/com/whispereverywhere/MainActivity.kt` (modify) | `"transcripts"` nav route |
 
 ---
 
@@ -895,7 +900,467 @@ git commit -m "settings: 'Capture device audio for media' toggle (default ON)"
 
 ---
 
-### Task 7: Version bump + on-device validation (Fold 6)
+### Task 8: TranscriptStore (history storage + rolling retention)
+
+**User decisions (2026-07-17):** transcriptions are SAVED to phone storage (text only — audio
+retention explicitly declined); retention is a rolling buffer — evict OLDEST first when entries
+exceed the age limit or the total-size cap ("a short period of time, not forever").
+
+**Files:**
+- Create: `app/src/main/java/com/whispereverywhere/transcription/TranscriptStore.kt`
+- Test: `app/src/test/java/com/whispereverywhere/transcription/TranscriptStoreTest.kt`
+
+**Interfaces:**
+- Consumes: a `File` directory + injectable clock (pure-JVM testable).
+- Produces (used by Tasks 9-10):
+  - `class TranscriptStore(dir: File, clock: () -> Long = System::currentTimeMillis)`
+  - `data class Entry(val file: File, val startedAtMs: Long, val preview: String, val sizeBytes: Long)`
+  - `fun save(startedAtMs: Long, text: String): File`
+  - `fun list(): List<Entry>` (newest first)
+  - `fun read(entry: Entry): String`
+  - `fun delete(entry: Entry)`
+  - `fun sweep()` — applies `MAX_AGE_MS` (14 days) and `MAX_TOTAL_BYTES` (10 MB), oldest-first eviction
+
+- [ ] **Step 1: Write the failing tests**
+
+```kotlin
+// app/src/test/java/com/whispereverywhere/transcription/TranscriptStoreTest.kt
+package com.whispereverywhere.transcription
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+class TranscriptStoreTest {
+
+    @get:Rule val tmp = TemporaryFolder()
+
+    @Test fun `save then list returns newest first with preview`() {
+        var now = 1_000_000L
+        val store = TranscriptStore(tmp.root) { now }
+        store.save(1_000_000L, "first session text")
+        now = 2_000_000L
+        store.save(2_000_000L, "second session text")
+        val entries = store.list()
+        assertEquals(2, entries.size)
+        assertEquals(2_000_000L, entries[0].startedAtMs)
+        assertTrue(entries[0].preview.startsWith("second session"))
+    }
+
+    @Test fun `read round-trips the saved text`() {
+        val store = TranscriptStore(tmp.root) { 5L }
+        store.save(5L, "hello transcription world")
+        assertEquals("hello transcription world", store.read(store.list()[0]))
+    }
+
+    @Test fun `sweep evicts entries older than max age`() {
+        var now = 0L
+        val store = TranscriptStore(tmp.root) { now }
+        store.save(0L, "ancient")
+        now = TranscriptStore.MAX_AGE_MS + 1
+        store.save(now, "fresh")
+        store.sweep()
+        val entries = store.list()
+        assertEquals(1, entries.size)
+        assertEquals("fresh", store.read(entries[0]))
+    }
+
+    @Test fun `sweep evicts oldest first when over the size cap`() {
+        var now = 0L
+        val store = TranscriptStore(tmp.root) { now }
+        val big = "x".repeat(600)
+        for (i in 0 until 5) {
+            now = i * 1000L
+            store.save(now, big)
+        }
+        store.sweep(maxTotalBytes = 2000L)   // fits 3 of the ~600-byte entries
+        val entries = store.list()
+        assertTrue(entries.size <= 3)
+        // Newest survived; the evicted ones were the oldest.
+        assertEquals(4000L, entries[0].startedAtMs)
+    }
+
+    @Test fun `delete removes exactly one entry`() {
+        var now = 0L
+        val store = TranscriptStore(tmp.root) { now }
+        store.save(0L, "keep")
+        now = 1000L
+        store.save(1000L, "remove")
+        store.delete(store.list()[0]) // newest = "remove"
+        val entries = store.list()
+        assertEquals(1, entries.size)
+        assertEquals("keep", store.read(entries[0]))
+    }
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `.\gradlew.bat testReleaseUnitTest --no-daemon --tests "com.whispereverywhere.transcription.TranscriptStoreTest"`
+Expected: FAIL — unresolved reference `TranscriptStore`.
+
+- [ ] **Step 3: Write the implementation**
+
+```kotlin
+// app/src/main/java/com/whispereverywhere/transcription/TranscriptStore.kt
+package com.whispereverywhere.transcription
+
+import java.io.File
+
+/**
+ * On-device transcription history (TEXT ONLY — audio is deliberately never retained).
+ *
+ * One UTF-8 file per session in [dir], named "<startedAtMs>.txt". Retention is a rolling
+ * buffer applied by [sweep]: entries older than [MAX_AGE_MS] are removed, then oldest-first
+ * eviction until the total size fits [MAX_TOTAL_BYTES]. Long transcriptions therefore stay
+ * recoverable "for a while, not forever" (user decision 2026-07-17).
+ */
+class TranscriptStore(
+    private val dir: File,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+
+    data class Entry(
+        val file: File,
+        val startedAtMs: Long,
+        val preview: String,
+        val sizeBytes: Long,
+    )
+
+    init { dir.mkdirs() }
+
+    fun save(startedAtMs: Long, text: String): File {
+        val f = File(dir, "$startedAtMs.txt")
+        f.writeText(text)
+        return f
+    }
+
+    /** Newest first. Ignores non-conforming files. */
+    fun list(): List<Entry> =
+        (dir.listFiles() ?: emptyArray())
+            .mapNotNull { f ->
+                val ts = f.name.removeSuffix(".txt").toLongOrNull() ?: return@mapNotNull null
+                Entry(
+                    file = f,
+                    startedAtMs = ts,
+                    preview = runCatching {
+                        f.bufferedReader().use { it.readText().take(120) }
+                    }.getOrDefault(""),
+                    sizeBytes = f.length(),
+                )
+            }
+            .sortedByDescending { it.startedAtMs }
+
+    fun read(entry: Entry): String = entry.file.readText()
+
+    fun delete(entry: Entry) {
+        entry.file.delete()
+    }
+
+    fun sweep(maxAgeMs: Long = MAX_AGE_MS, maxTotalBytes: Long = MAX_TOTAL_BYTES) {
+        val now = clock()
+        val entries = list().toMutableList()   // newest first
+        // Age limit.
+        entries.removeAll { e ->
+            if (now - e.startedAtMs > maxAgeMs) { e.file.delete(); true } else false
+        }
+        // Size cap: evict oldest-first until we fit.
+        var total = entries.sumOf { it.sizeBytes }
+        while (total > maxTotalBytes && entries.isNotEmpty()) {
+            val oldest = entries.removeAt(entries.lastIndex)
+            total -= oldest.sizeBytes
+            oldest.file.delete()
+        }
+    }
+
+    companion object {
+        /** "A short period, not forever": two weeks. */
+        const val MAX_AGE_MS: Long = 14L * 24 * 60 * 60 * 1000
+        /** Text is tiny — 10 MB holds months of heavy use. */
+        const val MAX_TOTAL_BYTES: Long = 10L * 1024 * 1024
+    }
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `.\gradlew.bat testReleaseUnitTest --no-daemon --tests "com.whispereverywhere.transcription.TranscriptStoreTest"`
+Expected: 5 tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add app/src/main/java/com/whispereverywhere/transcription/TranscriptStore.kt app/src/test/java/com/whispereverywhere/transcription/TranscriptStoreTest.kt
+git commit -m "history: TranscriptStore — rolling text-only transcription retention"
+```
+
+---
+
+### Task 9: Session capture — every session's text lands in history
+
+**Files:**
+- Modify: `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt`
+
+**Interfaces:**
+- Consumes: `TranscriptStore` (Task 8).
+- Produces: nothing new; wiring only.
+
+- [ ] **Step 1: Session accumulator + store field**
+
+Add fields near the other session state:
+
+```kotlin
+    private val transcriptStore by lazy {
+        com.whispereverywhere.transcription.TranscriptStore(java.io.File(filesDir, "transcripts"))
+    }
+    private val sessionTranscript = StringBuilder()
+    private var sessionStartMs = 0L
+```
+
+- [ ] **Step 2: Reset at recording start**
+
+In `startRecording()` (where the session begins — next to `sessionProducedText = false`):
+
+```kotlin
+        sessionTranscript.setLength(0)
+        sessionStartMs = System.currentTimeMillis()
+```
+
+- [ ] **Step 3: Accumulate every completed segment**
+
+In `handleResult(...)` (the single place completed text flows through, for BOTH injection and
+preview contexts), append at the top:
+
+```kotlin
+        if (text.isNotBlank()) {
+            if (sessionTranscript.isNotEmpty()) sessionTranscript.append(' ')
+            sessionTranscript.append(text.trim())
+        }
+```
+
+- [ ] **Step 4: Persist at finalize**
+
+In the finalize block of `stopRecording()` (inside the coroutine, right after
+`teardownRealtime()`):
+
+```kotlin
+            // History: persist the session (text only) + apply rolling retention.
+            if (sessionTranscript.isNotBlank()) {
+                withContext(Dispatchers.IO) {
+                    transcriptStore.save(sessionStartMs, sessionTranscript.toString())
+                    transcriptStore.sweep()
+                }
+            }
+```
+
+- [ ] **Step 5: Build + commit**
+
+Run: `.\gradlew.bat assembleRelease --no-daemon` — BUILD SUCCESSFUL, then:
+
+```bash
+git add app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt
+git commit -m "history: every session's transcript persists via TranscriptStore"
+```
+
+---
+
+### Task 10: Transcriptions UI — home-screen entry + list/detail screen
+
+**Files:**
+- Create: `app/src/main/java/com/whispereverywhere/ui/screens/TranscriptsScreen.kt`
+- Modify: `app/src/main/java/com/whispereverywhere/MainActivity.kt` (navigation route)
+- Modify: `app/src/main/java/com/whispereverywhere/ui/screens/HomeScreen.kt` (entry card)
+
+**Interfaces:**
+- Consumes: `TranscriptStore` (Task 8) via `TranscriptStore(File(context.filesDir, "transcripts"))`.
+- Produces: composable `TranscriptsScreen(onNavigateBack: () -> Unit)`; nav route `"transcripts"`.
+
+- [ ] **Step 1: TranscriptsScreen**
+
+```kotlin
+// app/src/main/java/com/whispereverywhere/ui/screens/TranscriptsScreen.kt
+package com.whispereverywhere.ui.screens
+
+import android.content.Intent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
+import com.whispereverywhere.transcription.TranscriptStore
+import java.io.File
+import java.text.DateFormat
+import java.util.Date
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TranscriptsScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val store = remember { TranscriptStore(File(context.filesDir, "transcripts")) }
+    var refresh by remember { mutableStateOf(0) }
+    val entries = remember(refresh) { store.list() }
+    var selected by remember { mutableStateOf<TranscriptStore.Entry?>(null) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Transcriptions") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        if (entries.isEmpty()) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                Text(
+                    "No transcriptions yet.\nSessions are kept for 14 days.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(entries, key = { it.startedAtMs }) { entry ->
+                    Card(Modifier.fillMaxWidth().clickable { selected = entry }) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(
+                                DateFormat.getDateTimeInstance().format(Date(entry.startedAtMs)),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                entry.preview.ifBlank { "(empty)" },
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    selected?.let { entry ->
+        val fullText = remember(entry) { runCatching { store.read(entry) }.getOrDefault("") }
+        AlertDialog(
+            onDismissRequest = { selected = null },
+            title = { Text(DateFormat.getDateTimeInstance().format(Date(entry.startedAtMs))) },
+            text = {
+                Column(Modifier.heightIn(max = 380.dp)) {
+                    Text(fullText, style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.verticalScroll(rememberScrollState()))
+                }
+            },
+            confirmButton = {
+                Row {
+                    IconButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy")
+                    }
+                    IconButton(onClick = {
+                        context.startActivity(Intent.createChooser(
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, fullText)
+                            }, "Share transcription"))
+                    }) {
+                        Icon(Icons.Filled.Share, contentDescription = "Share")
+                    }
+                    IconButton(onClick = {
+                        store.delete(entry); selected = null; refresh++
+                    }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selected = null }) { Text("Close") }
+            },
+        )
+    }
+}
+```
+
+(Implementer note: add the two missing imports this uses —
+`androidx.compose.foundation.rememberScrollState`, `androidx.compose.foundation.verticalScroll`.)
+
+- [ ] **Step 2: Navigation route**
+
+In `MainActivity.kt`'s `WhisperEverywhereNavigation` NavHost, next to the existing
+`composable("settings") { ... }` registration, add (mirror the exact pattern used there):
+
+```kotlin
+        composable("transcripts") {
+            TranscriptsScreen(onNavigateBack = { navController.popBackStack() })
+        }
+```
+
+- [ ] **Step 3: Home-screen entry**
+
+In `HomeScreen.kt`, below the "Your Stats" card, add a full-width tappable card (mirror the
+stats card's styling idiom used in that file):
+
+```kotlin
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onNavigateToTranscripts() },
+        ) {
+            Row(
+                Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Transcriptions", style = MaterialTheme.typography.titleMedium)
+                    Text("Your saved sessions — kept 14 days",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+            }
+        }
+```
+
+`HomeScreen` gains a parameter `onNavigateToTranscripts: () -> Unit = {}` and the NavHost's
+home registration passes `onNavigateToTranscripts = { navController.navigate("transcripts") }`
+(mirror how `onNavigateToSettings` is already threaded — same file, same pattern).
+
+- [ ] **Step 4: Build + commit**
+
+Run: `.\gradlew.bat assembleRelease --no-daemon` — BUILD SUCCESSFUL, then:
+
+```bash
+git add app/src/main/java/com/whispereverywhere/ui/screens/TranscriptsScreen.kt app/src/main/java/com/whispereverywhere/ui/screens/HomeScreen.kt app/src/main/java/com/whispereverywhere/MainActivity.kt
+git commit -m "history: Transcriptions screen + home entry (14-day rolling history)"
+```
+
+---
+
+### Task 11: Version bump + on-device validation (Fold 6)
 
 **Files:**
 - Modify: `app/build.gradle.kts` (versionCode 47, versionName "2.8.0")
@@ -930,6 +1395,11 @@ Expected: `Success`; `dumpsys package com.whispereverywhere` shows `versionName=
 6. **Visuals:** aurora + blob react to the CAPTURED stream during media transcription.
 7. **Regression:** plain dictation (no media) is unchanged; Settings toggle OFF restores
    pure-mic behavior everywhere.
+8. **History:** after flows 1-3, HomeScreen → Transcriptions lists the sessions with correct
+   timestamps/previews; detail view shows full text; copy, share, and delete all work; a
+   deleted entry stays gone after reopening.
+9. **Retention smoke:** confirm `filesDir/transcripts/` holds one `<timestamp>.txt` per
+   session (via `adb shell run-as` not possible on release — verify via the UI count instead).
 
 - [ ] **Step 4: Commit + push**
 
