@@ -22,6 +22,9 @@
     <!-- Required for foregroundServiceType="microphone" on Android 14+ -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
+    <!-- Device-audio capture for media transcription (AudioPlaybackCapture, Android 10+). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <!-- Post notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -71,11 +74,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Transparent trampoline for the MediaProjection consent dialog (device-audio capture).
+             Launched from the bubble service; finishes immediately after the system dialog. -->
+        <activity
+            android:name=".audio.ProjectionConsentActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Floating Bubble Overlay Service -->
         <service
             android:name=".service.FloatingBubbleService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|mediaProjection" />
 
         <!-- Accessibility Service for Text Injection -->
         <service
