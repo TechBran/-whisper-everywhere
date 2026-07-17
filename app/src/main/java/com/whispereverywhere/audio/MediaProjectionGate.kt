@@ -48,8 +48,15 @@ object MediaProjectionGate {
     /** Called only by ProjectionConsentActivity. */
     internal fun deliverResult(resultCode: Int, data: Intent?) {
         val l = listener
-        if (resultCode == android.app.Activity.RESULT_OK && data != null && l != null) {
-            l.onConsentGranted(resultCode, data)
+        if (resultCode == android.app.Activity.RESULT_OK && data != null) {
+            if (l != null) {
+                l.onConsentGranted(resultCode, data)
+            } else {
+                // Service died between launching the trampoline and the user tapping Allow.
+                // The grant is unusable without a listener — log it so field reports are
+                // diagnosable instead of "consent silently did nothing".
+                Log.w("WE-DIAG", "MediaProjectionGate: grant arrived but listener is null — dropping")
+            }
         } else {
             Log.i("WE-DIAG", "MediaProjectionGate: consent denied/cancelled (code=$resultCode)")
             l?.onConsentDenied()

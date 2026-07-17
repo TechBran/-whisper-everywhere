@@ -26,6 +26,7 @@ import com.whispereverywhere.util.AudioMath
 @RequiresApi(Build.VERSION_CODES.Q)
 class PlaybackAudioCapturer(
     private val projection: MediaProjection,
+    /** NOTE: invoked from the CAPTURE thread — post to the main thread before touching UI/service state. */
     private val onSilentStream: () -> Unit,
 ) {
 
@@ -35,6 +36,7 @@ class PlaybackAudioCapturer(
     private var decimator: Pcm48kTo16kDecimator? = null
 
     fun start(onChunk: (ByteArray, Int) -> Unit): Result<Unit> {
+        check(!recording) { "start() called while already capturing" }
         val config = AudioPlaybackCaptureConfiguration.Builder(projection)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
@@ -87,12 +89,13 @@ class PlaybackAudioCapturer(
 
     fun stop() {
         recording = false
+        // Stop the AudioRecord BEFORE joining: read() blocks until a buffer fills, and
+        // halting the record is what unblocks it immediately (join alone can wait a full
+        // read period).
+        record?.let { runCatching { it.stop() } }
         thread?.join(2000)
         thread = null
-        record?.let { r ->
-            runCatching { r.stop() }
-            runCatching { r.release() }
-        }
+        record?.let { runCatching { it.release() } }
         record = null
         decimator = null
     }
