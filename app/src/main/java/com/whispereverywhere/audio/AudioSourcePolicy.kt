@@ -1,6 +1,7 @@
 package com.whispereverywhere.audio
 
-/** Which physical audio source a recording session is using right now. */
+/** Which physical audio source a recording session is using right now. (Consumed by the
+ *  FloatingBubbleService source state machine — Task 5 of the device-audio-capture plan.) */
 enum class ActiveSource { MIC, PLAYBACK }
 
 /** What the session SHOULD do, given the current world. Pure — JVM-unit-testable. */
