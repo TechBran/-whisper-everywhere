@@ -900,7 +900,7 @@ git commit -m "settings: 'Capture device audio for media' toggle (default ON)"
 
 ---
 
-### Task 8: TranscriptStore (history storage + rolling retention)
+### Task 7: TranscriptStore (history storage + rolling retention)
 
 **User decisions (2026-07-17):** transcriptions are SAVED to phone storage (text only — audio
 retention explicitly declined); retention is a rolling buffer — evict OLDEST first when entries
@@ -1098,7 +1098,7 @@ git commit -m "history: TranscriptStore — rolling text-only transcription rete
 
 ---
 
-### Task 9: Session capture — every session's text lands in history
+### Task 8: Session capture — every session's text lands in history
 
 **Files:**
 - Modify: `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt`
@@ -1166,7 +1166,7 @@ git commit -m "history: every session's transcript persists via TranscriptStore"
 
 ---
 
-### Task 10: Transcriptions UI — home-screen entry + list/detail screen
+### Task 9: Transcriptions UI — home-screen entry + list/detail screen
 
 **Files:**
 - Create: `app/src/main/java/com/whispereverywhere/ui/screens/TranscriptsScreen.kt`
@@ -1360,7 +1360,7 @@ git commit -m "history: Transcriptions screen + home entry (14-day rolling histo
 
 ---
 
-### Task 11: Version bump + on-device validation (Fold 6)
+### Task 10: Version bump + on-device validation (Fold 6)
 
 **Files:**
 - Modify: `app/build.gradle.kts` (versionCode 47, versionName "2.8.0")
