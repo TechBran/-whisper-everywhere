@@ -1,24 +1,54 @@
 #include <jni.h>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 #include <android/log.h>
 #include "whisper.h"
+#include "ggml.h"
 
 #define LOG_TAG "whisper_jni"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+// Forward ggml + whisper internal logging (normally stderr, which Android discards) to logcat.
+// This is how the OpenCL/CPU backends narrate their init (platform/device selection, kernel
+// compilation, fallbacks) — essential for diagnosing backend behavior on-device.
+static void we_native_log(enum ggml_log_level level, const char *text, void * /*user*/) {
+    int prio = ANDROID_LOG_INFO;
+    if (level == GGML_LOG_LEVEL_WARN)  prio = ANDROID_LOG_WARN;
+    if (level == GGML_LOG_LEVEL_ERROR) prio = ANDROID_LOG_ERROR;
+    __android_log_write(prio, "ggml", text);
+}
+
+static void we_install_native_logging() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    ggml_log_set(we_native_log, nullptr);
+    whisper_log_set(we_native_log, nullptr);
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_init(
-        JNIEnv *env, jobject /* this */, jstring modelPath) {
+        JNIEnv *env, jobject /* this */, jstring modelPath, jboolean useGpu) {
+    we_install_native_logging();
     const char *path = env->GetStringUTFChars(modelPath, nullptr);
     if (path == nullptr) {
         return 0;
     }
     whisper_context_params cparams = whisper_context_default_params();
-    // CPU path for v1 (no GPU/OpenCL); mmap the model from filesDir.
-    cparams.use_gpu = false;
+    // GPU = the Qualcomm-maintained ggml OpenCL backend (whisper.cpp v1.9.1). The Kotlin side
+    // (GpuPolicy) allowlists Adreno 7xx/8xx/X and arms crash sentinels; ggml additionally falls
+    // back to CPU if OpenCL init fails. Vulkan remains CLOSED on Adreno (driver-compiler aborts
+    // + vk::DeviceLostError on every graph dispatch — proven on-device; see git history).
+    cparams.use_gpu = (useGpu == JNI_TRUE);
+    // Flash attention produces garbage + ~10x slowdown on Adreno OpenCL -- keep OFF explicitly.
+    cparams.flash_attn = false;
+    LOGI("init: use_gpu=%d flash_attn=0", cparams.use_gpu ? 1 : 0);
     whisper_context *ctx = whisper_init_from_file_with_params(path, cparams);
     env->ReleaseStringUTFChars(modelPath, path);
     if (ctx == nullptr) {
@@ -28,22 +58,127 @@ Java_com_whispereverywhere_whisper_WhisperNative_init(
     return reinterpret_cast<jlong>(ctx);
 }
 
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_whispereverywhere_whisper_WhisperNative_transcribe(
+// ---------------------------------------------------------------------------------------------
+// Manual Silero VAD (review-driven rework). Running VAD ourselves — instead of whisper_full's
+// params.vad — fixes four confirmed defects at once:
+//   1. audio_ctx is now computed from the FILTERED audio, so the encoder is no longer billed
+//      for the buffered silence the VAD exists to remove.
+//   2. The VAD context is created ONCE and cached (params.vad reloaded the ~0.9 MB model from
+//      disk on every whisper_full call).
+//   3. The sub-1.1s zero-pad is applied AFTER filtering, so short utterances survive.
+//   4. A VAD failure (bad model file, init error) degrades gracefully to no-VAD transcription
+//      instead of erroring out 100% of output.
+// ---------------------------------------------------------------------------------------------
+
+static std::mutex             g_vad_mutex;
+static whisper_vad_context  * g_vad_ctx = nullptr;
+static std::string            g_vad_path;
+
+// Filters [pcm] down to speech-only (with 100 ms inter-segment gaps, mirroring whisper_full's
+// own VAD assembly). Returns false when VAD is unavailable (caller proceeds unfiltered). On
+// success pcm holds the filtered audio — possibly EMPTY when no speech at all was detected.
+static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
+    std::lock_guard<std::mutex> lock(g_vad_mutex);
+    if (g_vad_ctx == nullptr || g_vad_path != vadPath) {
+        if (g_vad_ctx != nullptr) {
+            whisper_vad_free(g_vad_ctx);
+            g_vad_ctx = nullptr;
+        }
+        whisper_vad_context_params vcp = whisper_vad_default_context_params();
+        g_vad_ctx = whisper_vad_init_from_file_with_params(vadPath.c_str(), vcp);
+        g_vad_path = vadPath;
+        if (g_vad_ctx == nullptr) {
+            LOGE("VAD init failed for %s — transcribing without VAD", vadPath.c_str());
+            return false;
+        }
+        LOGI("VAD context loaded (%s)", vadPath.c_str());
+    }
+
+    whisper_vad_params vp = whisper_vad_default_params();
+    // Onset tuning (user-reported start clipping with defaults): more pre-speech pad + a more
+    // permissive threshold keep the first word's attack intact; suppress_nst absorbs noise risk.
+    vp.threshold     = 0.40f;
+    vp.speech_pad_ms = 150;
+
+    whisper_vad_segments *segs =
+        whisper_vad_segments_from_samples(g_vad_ctx, vp, pcm.data(), static_cast<int>(pcm.size()));
+    if (segs == nullptr) {
+        LOGE("VAD segmentation failed — transcribing without VAD");
+        return false;
+    }
+
+    const int nseg = whisper_vad_segments_n_segments(segs);
+    constexpr int kGapSamples = 1600; // 100 ms of silence between stitched segments
+    std::vector<float> filtered;
+    filtered.reserve(pcm.size());
+    for (int i = 0; i < nseg; ++i) {
+        // t0/t1 are centiseconds -> samples at 16 kHz = cs * 160.
+        auto s0 = static_cast<int64_t>(whisper_vad_segments_get_segment_t0(segs, i)) * 160;
+        auto s1 = static_cast<int64_t>(whisper_vad_segments_get_segment_t1(segs, i)) * 160;
+        if (s0 < 0) s0 = 0;
+        if (s1 > static_cast<int64_t>(pcm.size())) s1 = static_cast<int64_t>(pcm.size());
+        if (s1 <= s0) continue;
+        filtered.insert(filtered.end(), pcm.begin() + s0, pcm.begin() + s1);
+        if (i + 1 < nseg) filtered.insert(filtered.end(), kGapSamples, 0.0f);
+    }
+    whisper_vad_free_segments(segs);
+
+    LOGI("VAD: %zu -> %zu samples (%d segments)", pcm.size(), filtered.size(), nseg);
+    pcm.swap(filtered);
+    return true;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
         JNIEnv *env, jobject /* this */,
-        jlong ctxPtr, jfloatArray samples, jstring lang, jboolean translate) {
+        jlong ctxPtr, jfloatArray samples, jstring lang, jboolean translate,
+        jstring vadModelPath) {
+    auto emptyResult = [env]() { return env->NewByteArray(0); };
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
     if (ctx == nullptr) {
-        return env->NewStringUTF("");
+        return emptyResult();
     }
     if (samples == nullptr) {
-        return env->NewStringUTF("");
+        return emptyResult();
     }
 
     const jsize n = env->GetArrayLength(samples);
     std::vector<float> pcm(static_cast<size_t>(n));
     if (n > 0) {
         env->GetFloatArrayRegion(samples, 0, n, pcm.data());
+    }
+
+    std::string vadPathStr;
+    if (vadModelPath != nullptr) {
+        const char *rawVad = env->GetStringUTFChars(vadModelPath, nullptr);
+        if (rawVad != nullptr) {
+            vadPathStr = rawVad;
+            env->ReleaseStringUTFChars(vadModelPath, rawVad);
+        }
+    }
+
+    const bool vadApplied = !vadPathStr.empty() && we_vad_filter(vadPathStr, pcm);
+    if (vadApplied && pcm.empty()) {
+        // VAD found zero speech — nothing to transcribe, and skipping whisper entirely makes
+        // silence-only commits (unconditional stop-flush, wall-clock cap) essentially free.
+        return emptyResult();
+    }
+    if (!vadApplied) {
+        // No VAD available: cheap energy gate so pure-silence commits don't reach whisper,
+        // where they'd risk hallucinated text (the unconditional flush assumes SOME gate).
+        float peak = 0.0f;
+        for (float v : pcm) peak = std::max(peak, std::fabs(v));
+        if (peak < 0.005f) {
+            return emptyResult();
+        }
+    }
+
+    // whisper_full silently produces 0 segments for audio under ~1s. Short commits (quick "yes",
+    // final flush fragments) are real user speech — pad with trailing silence to 1.1s instead of
+    // dropping the words. Applied AFTER VAD so the filter cannot strip the pad.
+    constexpr size_t kMinSamples = 17600; // 1.1 s @ 16 kHz
+    if (!pcm.empty() && pcm.size() < kMinSamples) {
+        pcm.resize(kMinSamples, 0.0f);
     }
 
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -54,14 +189,22 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribe(
     params.translate        = (translate == JNI_TRUE);
     params.single_segment   = false;
     params.no_context       = true;
+    // Latency tunings (FUTO-style): the default temperature fallback re-decodes noisy segments up
+    // to 3-6x — a dictation app wants the greedy first pass, fast and deterministic. suppress_nst
+    // stops non-speech tokens ([BLANK_AUDIO], music notes) at the source instead of post-filtering.
+    params.temperature_inc = 0.0f;
+    params.suppress_nst    = true;
 
     int cores = static_cast<int>(std::thread::hardware_concurrency());
     if (cores <= 0) {
         cores = 4;
     }
-    // On mobile big.LITTLE, spreading whisper across every core (incl. the slow efficiency cores)
-    // hurts throughput and invites thermal throttling. Cap to roughly the performance-core count.
-    params.n_threads = (cores > 4) ? (cores - 2) : cores;
+    // On mobile big.LITTLE, ggml's per-op barriers make extra efficiency-core threads a NET LOSS:
+    // 4 threads (the performance-core count on typical flagships) beats 6-8. Cap at 4.
+    params.n_threads = (cores < 4) ? cores : 4;
+
+    // NOTE: VAD already ran manually above (we_vad_filter) — params.vad stays false; pcm here
+    // is the speech-only filtered audio.
 
     // Language handling: null / "auto" / "" -> auto-detect; otherwise force the code.
     std::string langStr;
@@ -93,14 +236,18 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribe(
     // we simply skip encoding the empty tail padding. Big latency cut for short dictation segments.
     {
         int neededFrames = static_cast<int>(pcm.size() / 320) + 64;
-        if (neededFrames < 256)  neededFrames = 256;
+        // Floor raised 256 -> 768: STOCK whisper models lose accuracy under aggressive audio_ctx
+        // reduction (positional-embedding mismatch; FUTO's ACFT models are fine-tuned to tolerate
+        // it, ours are not) — user-visible as garbled short phrases. 768 halves the encoder cost
+        // vs full context while keeping a wide safety margin; the GPU makes the rest cheap.
+        if (neededFrames < 768)  neededFrames = 768;
         if (neededFrames > 1500) neededFrames = 1500;
         params.audio_ctx = neededFrames;
     }
 
     if (whisper_full(ctx, params, pcm.data(), static_cast<int>(pcm.size())) != 0) {
         LOGE("whisper_full failed");
-        return env->NewStringUTF("");
+        return emptyResult();
     }
 
     std::string result;
@@ -111,7 +258,18 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribe(
             result += seg;
         }
     }
-    return env->NewStringUTF(result.c_str());
+    // Return raw UTF-8 bytes, decoded to String on the Kotlin side. NewStringUTF expects
+    // Modified UTF-8 and ABORTS the process (CheckJNI) on 4-byte sequences — emoji and rare
+    // CJK from the multilingual models are valid UTF-8 that would crash it.
+    const jsize outLen = static_cast<jsize>(result.size());
+    jbyteArray out = env->NewByteArray(outLen);
+    if (out == nullptr) {
+        return emptyResult();
+    }
+    if (outLen > 0) {
+        env->SetByteArrayRegion(out, 0, outLen, reinterpret_cast<const jbyte *>(result.data()));
+    }
+    return out;
 }
 
 extern "C" JNIEXPORT void JNICALL

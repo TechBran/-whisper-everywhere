@@ -63,10 +63,11 @@ class WhisperNativeSmokeTest {
         val samples = wavToFloat(wavBytes)
         assertTrue("decoded samples should be non-empty", samples.isNotEmpty())
 
-        val ctxPtr = WhisperNative.init(modelFile.absolutePath)
+        // CPU path: the smoke test validates the JNI/whisper contract, not the GPU backend.
+        val ctxPtr = WhisperNative.init(modelFile.absolutePath, false)
         assertNotEquals("init() returned 0 (model failed to load)", 0L, ctxPtr)
         try {
-            val text = WhisperNative.transcribe(ctxPtr, samples, "en", false)
+            val text = WhisperNative.transcribe(ctxPtr, samples, "en", false, null)
             assertTrue("transcription should be non-empty", text.trim().isNotEmpty())
             // jfk.wav says "...ask not what your country can do for you...".
             assertTrue(
