@@ -26,27 +26,33 @@ class WhisperCatalogHelpersTest {
         assertEquals(0L, m("pro").minRamBytes)
 
         assertEquals(ModelScope.ENGLISH, m("extreme").scope)
-        assertEquals(6_000_000_000L, m("extreme").minRamBytes)
+        // 5.5e9, not 6e9: ActivityManager.totalMem under-reports physical RAM; the gate
+        // targets genuine 6 GB-class hardware (2026-07-17 hardening).
+        assertEquals(5_500_000_000L, m("extreme").minRamBytes)
 
         assertEquals(ModelScope.MULTILINGUAL, m("multi").scope)
         assertEquals(0L, m("multi").minRamBytes)
 
         assertEquals(ModelScope.MULTILINGUAL, m("ultra").scope)
-        assertEquals(8_000_000_000L, m("ultra").minRamBytes)
+        // 7.0e9 = genuine 8 GB-class hardware after totalMem slack.
+        assertEquals(7_000_000_000L, m("ultra").minRamBytes)
     }
 
     @Test
     fun catalog_urlsAndApproxBytes_matchContract() {
-        val base = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+        // Pinned to an immutable revision: /resolve/main is a mutable ref that could brick
+        // every APK-pinned sha256 if upstream replaced a file (2026-07-17 hardening).
+        val base = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/"
         val eco = WhisperCatalog.byId("eco")!!
         assertEquals("ggml-base.en-q5_1.bin", eco.fileName)
         assertEquals(base + "ggml-base.en-q5_1.bin", eco.url)
-        assertEquals(57_000_000L, eco.approxBytes)
+        // Exact HF LFS byte sizes (the old rounded values sat needlessly close to the ±5% gate).
+        assertEquals(59_721_011L, eco.approxBytes)
 
-        assertEquals(190_000_000L, WhisperCatalog.byId("pro")!!.approxBytes)
-        assertEquals(539_000_000L, WhisperCatalog.byId("extreme")!!.approxBytes)
-        assertEquals(190_000_000L, WhisperCatalog.byId("multi")!!.approxBytes)
-        assertEquals(574_000_000L, WhisperCatalog.byId("ultra")!!.approxBytes)
+        assertEquals(190_098_681L, WhisperCatalog.byId("pro")!!.approxBytes)
+        assertEquals(539_225_533L, WhisperCatalog.byId("extreme")!!.approxBytes)
+        assertEquals(190_085_487L, WhisperCatalog.byId("multi")!!.approxBytes)
+        assertEquals(574_041_195L, WhisperCatalog.byId("ultra")!!.approxBytes)
     }
 
     @Test
@@ -56,12 +62,12 @@ class WhisperCatalogHelpersTest {
 
     @Test
     fun isRecommended_boundary_atMinRam() {
-        val ultra = WhisperCatalog.byId("ultra")!! // minRam 8_000_000_000
+        val ultra = WhisperCatalog.byId("ultra")!! // minRam 7_000_000_000
 
         // just below -> not recommended
-        assertFalse(WhisperCatalog.isRecommendedForDevice(ultra, 7_999_999_999L))
+        assertFalse(WhisperCatalog.isRecommendedForDevice(ultra, 6_999_999_999L))
         // exactly at threshold -> recommended (>=)
-        assertTrue(WhisperCatalog.isRecommendedForDevice(ultra, 8_000_000_000L))
+        assertTrue(WhisperCatalog.isRecommendedForDevice(ultra, 7_000_000_000L))
         // above -> recommended
         assertTrue(WhisperCatalog.isRecommendedForDevice(ultra, 12_000_000_000L))
     }

@@ -69,6 +69,10 @@ class FloatingBubbleService : Service(),
     private lateinit var transcriptionDeltaText: android.widget.TextView
 
     private lateinit var audioRecorder: StreamingAudioRecorder
+
+    // Device-audio (playback) capture source — active INSTEAD of the mic during media sessions.
+    private var playbackCapturer: com.whispereverywhere.audio.PlaybackAudioCapturer? = null
+    @Volatile private var activeSource = com.whispereverywhere.audio.ActiveSource.MIC
     private var transcriptionEngine: TranscriptionEngine? = null
     private val speechSegmenter = SpeechSegmenter()
     private lateinit var mediaDetector: MediaSessionDetector
@@ -237,6 +241,9 @@ class FloatingBubbleService : Service(),
         showAnimator?.cancel()
         hideAnimator?.cancel()
         audioRecorder.stop()
+        playbackCapturer?.stop(); playbackCapturer = null
+        com.whispereverywhere.audio.MediaProjectionGate.listener = null
+        com.whispereverywhere.audio.MediaProjectionGate.clear()
         teardownRealtime()
         // Fully release the reused engine on service end: free the native context and stop its
         // worker thread (teardownRealtime only detaches the session listener, for reuse).
@@ -315,6 +322,26 @@ class FloatingBubbleService : Service(),
                 currentContext = BubbleContext.MEDIA_PLAYBACK
                 if (!alwaysOnMode()) showBubbleForMedia()
             }
+
+            // User decision: media transcription cuts the mic. If a mic recording is live when
+            // playback begins (mic-button-first flow), hand over to the device stream.
+            if (currentState == BubbleState.RECORDING &&
+                activeSource == com.whispereverywhere.audio.ActiveSource.MIC &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                app.preferencesManager.isPreferDeviceAudio()
+            ) {
+                if (com.whispereverywhere.audio.MediaProjectionGate.hasProjection()) {
+                    switchSource(to = com.whispereverywhere.audio.ActiveSource.PLAYBACK)
+                } else {
+                    // Flush + stop the mic NOW (never mix room audio into a media session),
+                    // then ask; capture starts when consent lands.
+                    transcriptionEngine?.commit()
+                    audioRecorder.stop()
+                    com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
+                    com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this@FloatingBubbleService)
+                    showToast("Allow screen capture to transcribe device audio")
+                }
+            }
         }
     }
 
@@ -331,6 +358,13 @@ class FloatingBubbleService : Service(),
                     // Recording in progress - will hide when done
                     shouldHideOnIdle = true
                 }
+            }
+
+            // Media ended while capturing the stream: hand back to the microphone seamlessly.
+            if (currentState == BubbleState.RECORDING &&
+                activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK
+            ) {
+                switchSource(to = com.whispereverywhere.audio.ActiveSource.MIC)
             }
         }
     }
@@ -813,6 +847,159 @@ class FloatingBubbleService : Service(),
         }
     }
 
+    // ========== Audio source state machine (mic <-> device-audio playback capture) ==========
+
+    /** Shared downstream for BOTH audio sources (mic and playback capture). */
+    private fun onAudioChunk(chunk: ByteArray, amp: Int) {
+        val engine = transcriptionEngine ?: return
+        engine.sendAudio(chunk)
+        // 4-band spectral drive for the visuals (microseconds per 32ms frame): each aurora
+        // sheet + rim region follows its own slice of the audio. Silence gate: below the noise
+        // floor send explicit zeros so the AGC never normalizes room noise into fake motion.
+        val bands = if (amp > 350) {
+            com.whispereverywhere.util.AudioBands.analyze(chunk, chunk.size)
+        } else {
+            com.whispereverywhere.util.AudioBands.ZERO
+        }
+        waveformView.updateBands(bands)
+        blobView.updateBands(bands)
+        waveformView.updateAmplitude(amp)
+        blobView.updateAmplitude(amp)
+        // Client VAD per audio chunk. Commit on a natural pause, or on the wall-clock cap when
+        // the amplitude never dips (continuous media).
+        val now = System.currentTimeMillis()
+        if (speechSegmenter.onAmplitude(amp, now)) {
+            android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
+            lastCommitWallMs = now
+            engine.commit()
+        } else if (now - lastCommitWallMs >= MAX_SEGMENT_WALL_MS) {
+            android.util.Log.i("WE-DIAG", "wall-clock cap -> commit")
+            lastCommitWallMs = now
+            engine.commit()
+            speechSegmenter.reset()
+        }
+    }
+
+    /** Start the correct source for the current world (mic vs device-audio). */
+    private fun startAudioInput(): Result<Unit> {
+        val decision = com.whispereverywhere.audio.AudioSourcePolicy.decide(
+            mediaPlaying = mediaDetector.isCurrentlyPlaying(),
+            hasProjection = com.whispereverywhere.audio.MediaProjectionGate.hasProjection(),
+            sdkInt = Build.VERSION.SDK_INT,
+            preferDeviceAudio = app.preferencesManager.isPreferDeviceAudio(),
+        )
+        android.util.Log.i("WE-DIAG", "startAudioInput: decision=$decision")
+        return when (decision) {
+            com.whispereverywhere.audio.SourceDecision.UseMic -> startMicSource()
+            com.whispereverywhere.audio.SourceDecision.UsePlayback ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startPlaybackSource() else startMicSource()
+            com.whispereverywhere.audio.SourceDecision.RequestConsent -> {
+                // Ask once; capture begins when consent arrives (projectionListener). The mic
+                // is NOT opened meanwhile — media capture must never mix room audio.
+                com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
+                com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this)
+                showToast("Allow screen capture to transcribe device audio")
+                Result.success(Unit)
+            }
+        }
+    }
+
+    private fun startMicSource(): Result<Unit> {
+        activeSource = com.whispereverywhere.audio.ActiveSource.MIC
+        return audioRecorder.start(::onAudioChunk)
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    private fun startPlaybackSource(): Result<Unit> {
+        val projection = com.whispereverywhere.audio.MediaProjectionGate.projectionOrNull()
+            ?: return startMicSource()
+        val capturer = com.whispereverywhere.audio.PlaybackAudioCapturer(projection) {
+            // DRM opt-out / silent stream: fall back to the microphone, on the main thread.
+            serviceScope.launch(Dispatchers.Main) {
+                if (activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK &&
+                    currentState == BubbleState.RECORDING
+                ) {
+                    showToast("This app blocks audio capture — using microphone")
+                    switchSource(to = com.whispereverywhere.audio.ActiveSource.MIC)
+                }
+            }
+        }
+        val started = capturer.start(::onAudioChunk)
+        return if (started.isSuccess) {
+            playbackCapturer = capturer
+            activeSource = com.whispereverywhere.audio.ActiveSource.PLAYBACK
+            showToast("Capturing device audio")
+            started
+        } else {
+            android.util.Log.w("WE-DIAG", "playback capture failed to start -> mic fallback")
+            startMicSource()
+        }
+    }
+
+    /** Commit the pending segment, stop the current source, start the other. Main thread only. */
+    private fun switchSource(to: com.whispereverywhere.audio.ActiveSource) {
+        if (activeSource == to || currentState != BubbleState.RECORDING) return
+        android.util.Log.i("WE-DIAG", "switchSource: $activeSource -> $to")
+        transcriptionEngine?.commit()
+        speechSegmenter.reset()
+        lastCommitWallMs = System.currentTimeMillis()
+        when (activeSource) {
+            com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()
+            com.whispereverywhere.audio.ActiveSource.PLAYBACK -> {
+                playbackCapturer?.stop(); playbackCapturer = null
+            }
+        }
+        when (to) {
+            com.whispereverywhere.audio.ActiveSource.MIC -> startMicSource()
+            com.whispereverywhere.audio.ActiveSource.PLAYBACK ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startPlaybackSource() else startMicSource()
+        }
+    }
+
+    private val projectionListener = object : com.whispereverywhere.audio.MediaProjectionGate.Listener {
+        override fun onConsentGranted(resultCode: Int, data: Intent) {
+            serviceScope.launch(Dispatchers.Main) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@launch
+                // ANDROID 14+ ORDERING: foreground with mediaProjection type BEFORE
+                // getMediaProjection.
+                ServiceCompat.startForeground(
+                    this@FloatingBubbleService,
+                    WhisperEverywhereApp.NOTIFICATION_ID,
+                    createNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                )
+                val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+                val projection = runCatching { mpm.getMediaProjection(resultCode, data) }.getOrNull()
+                if (projection == null) {
+                    android.util.Log.w("WE-DIAG", "getMediaProjection returned null -> mic")
+                    if (currentState == BubbleState.RECORDING) startMicSource()
+                    return@launch
+                }
+                projection.registerCallback(object : android.media.projection.MediaProjection.Callback() {
+                    override fun onStop() {
+                        com.whispereverywhere.audio.MediaProjectionGate.clear()
+                    }
+                }, null)
+                com.whispereverywhere.audio.MediaProjectionGate.storeProjection(projection)
+                if (currentState == BubbleState.RECORDING &&
+                    activeSource != com.whispereverywhere.audio.ActiveSource.PLAYBACK
+                ) {
+                    startPlaybackSource()
+                }
+            }
+        }
+
+        override fun onConsentDenied() {
+            serviceScope.launch(Dispatchers.Main) {
+                if (currentState == BubbleState.RECORDING) {
+                    showToast("Using microphone (capture permission declined)")
+                    startMicSource()
+                }
+            }
+        }
+    }
+
     private fun startRecording() {
         if (!audioRecorder.hasPermission()) {
             vibrateError(); showToast("Microphone permission required"); return
@@ -850,36 +1037,7 @@ class FloatingBubbleService : Service(),
                     if (currentState != BubbleState.CONNECTING) return@launch
                     speechSegmenter.reset()
                     lastCommitWallMs = System.currentTimeMillis()
-                    val started = audioRecorder.start { chunk, amp ->
-                        engine.sendAudio(chunk)
-                        // 4-band spectral drive for the visuals (microseconds per 32ms frame):
-                        // each aurora sheet + rim region follows its own slice of the voice.
-                        // Silence gate: below the noise floor send explicit zeros so the AGC
-                        // never normalizes room noise into fake motion.
-                        val bands = if (amp > 350) {
-                            com.whispereverywhere.util.AudioBands.analyze(chunk, chunk.size)
-                        } else {
-                            com.whispereverywhere.util.AudioBands.ZERO
-                        }
-                        waveformView.updateBands(bands)
-                        blobView.updateBands(bands)
-                        // Client VAD per audio chunk (NOT the conflated amplitude StateFlow, which
-                        // stops emitting during a steady pause). Commit on a natural pause, or on
-                        // the wall-clock cap when the amplitude never dips (continuous media).
-                        val now = System.currentTimeMillis()
-                        if (speechSegmenter.onAmplitude(amp, now)) {
-                            android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
-                            lastCommitWallMs = now
-                            engine.commit()
-                        } else if (now - lastCommitWallMs >= MAX_SEGMENT_WALL_MS) {
-                            android.util.Log.i("WE-DIAG", "wall-clock cap -> commit")
-                            lastCommitWallMs = now
-                            engine.commit()
-                            // Re-arm the segmenter so its pause detection starts fresh for the
-                            // next stretch (the native Silero VAD keeps the cut clean).
-                            speechSegmenter.reset()
-                        }
-                    }
+                    val started = startAudioInput()
                     android.util.Log.i("WE-DIAG", "recorder start success=${started.isSuccess}")
                     if (started.isFailure) {
                         showToast("Recording failed: ${started.exceptionOrNull()?.message}")
@@ -981,8 +1139,11 @@ class FloatingBubbleService : Service(),
         waveformView.stop()
         audioRecorder.stop()
 
+        playbackCapturer?.stop(); playbackCapturer = null
+        activeSource = com.whispereverywhere.audio.ActiveSource.MIC
+
         updateBubbleState(BubbleState.FINALIZING)
-        
+
         // Hide the preview bubble immediately so it doesn't linger during the finalizing delay
         if (currentContext != BubbleContext.TEXT_FIELD) {
             transcriptionPreviewContainer.visibility = View.GONE

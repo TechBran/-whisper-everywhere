@@ -106,6 +106,18 @@ class PreferencesManager(private val context: Context) {
 
     fun isBubbleAlwaysOn(): Boolean = _bubbleAlwaysOn.value
 
+    // Media transcription source: true (default) = capture the DEVICE's audio stream while
+    // media is playing (mic fully off — no room noise / feedback); false = always microphone.
+    private val _preferDeviceAudio = MutableStateFlow(prefs.getBoolean(KEY_PREFER_DEVICE_AUDIO, true))
+    val preferDeviceAudio: StateFlow<Boolean> = _preferDeviceAudio.asStateFlow()
+
+    fun setPreferDeviceAudio(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_PREFER_DEVICE_AUDIO, enabled).apply()
+        _preferDeviceAudio.value = enabled
+    }
+
+    fun isPreferDeviceAudio(): Boolean = _preferDeviceAudio.value
+
     // Language selection for transcription
     fun setSelectedLanguage(languageCode: String) {
         prefs.edit().putString(KEY_SELECTED_LANGUAGE, languageCode).apply()
@@ -159,6 +171,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_BUBBLE_ENABLED = "bubble_enabled"
         private const val KEY_BUBBLE_ALWAYS_ON = "bubble_always_on"
+        private const val KEY_PREFER_DEVICE_AUDIO = "prefer_device_audio"
         private const val KEY_BUBBLE_X = "bubble_x"
         private const val KEY_BUBBLE_Y = "bubble_y"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
