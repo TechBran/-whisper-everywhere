@@ -43,11 +43,14 @@ class BlobView @JvmOverloads constructor(
     private companion object {
         const val POINTS = 18
         /** Ripple headroom in dp: the body inset from the view edge that waves may occupy. */
-        const val HEADROOM_DP = 8f
+        const val HEADROOM_DP = 12f
         /** RMS (0..32767) that maps to a full-strength ripple. */
         const val RMS_FULL_SCALE = 3500f
         /** Envelope decay time constant (per second). Fast attack happens in updateAmplitude. */
         const val DECAY_PER_SEC = 3.2f
+
+        /** Per-band decay (per second): bass lingers, sibilance snaps away. */
+        val BAND_DECAYS = floatArrayOf(2.6f, 3.4f, 4.4f, 6.0f)
     }
 
     // Per-point animation diversity so the ripple looks organic rather than mechanical.
@@ -58,9 +61,24 @@ class BlobView @JvmOverloads constructor(
     private val py = FloatArray(POINTS)
 
     @Volatile private var envelope = 0f  // smoothed audio energy 0..1
+    private var envSmooth = 0f           // frame-lerped envelope (drives swirl/amp without jumps)
     private var mode = Mode.IDLE
     private var t = 0f
     private var lastFrameNs = 0L
+
+    // Integrated flow phases. NEVER compute phase as t * speed(t): when speed follows the voice,
+    // the product jumps discontinuously each frame (phase teleport = violent shaking). Integrating
+    // phase += speed * dt makes speed changes BEND the flow smoothly instead.
+    private var flowPhase1 = 0f
+    private var flowPhase2 = 0f
+    private var flowPhase3 = 0f
+
+    // Per-band drive mapped SPATIALLY along the rim: left cap = low band, middle = the voice
+    // (mid bands, "the top axis"), right cap = sibilance — matching the aurora's gradient, so
+    // different parts of the bubble respond to different parts of the spectrum.
+    private val bandTargets = FloatArray(4)
+    private val bandLevels = FloatArray(4)
+    @Volatile private var bandsActive = false
 
     var fillColor: Int
         get() = paint.color
@@ -83,6 +101,24 @@ class BlobView @JvmOverloads constructor(
         if (target > envelope) envelope = target
     }
 
+    /** Feed per-frame band energies [low, mid-low, mid-high, high] (0..1). Max-hold attack. */
+    fun updateBands(bands: FloatArray) {
+        if (bands.size < 4) return
+        bandsActive = true
+        for (j in 0 until 4) {
+            val v = kotlin.math.sqrt(bands[j].coerceIn(0f, 1f))
+            if (v > bandTargets[j]) bandTargets[j] = v
+        }
+    }
+
+    /** Piecewise-linear sample of the 4 band levels along the rim's horizontal axis (0..1). */
+    private fun bandValueAt(hx: Float): Float {
+        val pos = (hx.coerceIn(0f, 1f)) * 3f
+        val i = pos.toInt().coerceAtMost(2)
+        val frac = pos - i
+        return bandLevels[i] + (bandLevels[i + 1] - bandLevels[i]) * frac
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
@@ -92,6 +128,11 @@ class BlobView @JvmOverloads constructor(
         lastFrameNs = now
         t += dt
         envelope *= exp(-dt * DECAY_PER_SEC)
+        // Per-band decay of the max-hold targets: bass lingers (body), sibilance snaps away.
+        // (bandLevels lerp toward these each frame — see the flow block below.)
+        for (j in 0 until 4) {
+            bandTargets[j] *= exp(-dt * BAND_DECAYS[j])
+        }
 
         val density = resources.displayMetrics.density
         val headroom = HEADROOM_DP * density
@@ -111,10 +152,13 @@ class BlobView @JvmOverloads constructor(
         // and relaxes back to it, never dipping inside — the waveform ribbon is bounded by the
         // resting interior, so the body always contains it (fixes ribbon poking past the rim).
         // A small constant swell keeps the recording bubble slightly plump even between words.
-        val baseSwell = if (mode == Mode.RECORDING) headroom * 0.25f else 0f
+        val baseSwell = if (mode == Mode.RECORDING) headroom * 0.16f else 0f
         val rippleAmp = when (mode) {
-            Mode.RECORDING -> headroom * 0.75f * (0.25f + 0.75f * envelope)
+            Mode.RECORDING -> headroom * 0.84f * (0.35f + 0.65f * envSmooth)
             Mode.PROCESSING -> headroom * 0.30f
+            // Idle is alive too: a slow, quiet version of the same liquid flow (the breathing
+            // rides on top). Only the ribbon rests when there's no audio.
+            Mode.IDLE -> headroom * 0.22f
             else -> 0f
         }
         val spin = if (mode == Mode.PROCESSING) t * 2.4f else 0f
@@ -126,8 +170,26 @@ class BlobView @JvmOverloads constructor(
         val rightCapX = cx + straight / 2f
         val leftCapX = cx - straight / 2f
 
+        // Xbox-orb flow: the deformation is a set of lobes TRAVELING around the perimeter in
+        // opposite directions (2-lobe one way, 3-lobe the other, 5-lobe accent) — they merge and
+        // split as they pass through each other, the classic liquid-orb feel. Voice accelerates
+        // the swirl — via the SMOOTHED envelope and integrated phases (no teleporting).
+        envSmooth += (envelope - envSmooth) * (if (envelope > envSmooth) 0.35f else 0.12f)
+        val swirl = 1f + envSmooth * 1.2f
+        // Idle flows at a dreamy fraction of the recording tempo.
+        val tempo = if (mode == Mode.IDLE) 0.45f else 1f
+        flowPhase1 += dt * 1.9f * swirl * tempo
+        flowPhase2 += dt * 3.0f * swirl * tempo
+        flowPhase3 += dt * 4.4f * swirl * tempo
+        // Band levels get liquid inertia: lerp toward the (decaying max-hold) targets instead of
+        // snapping to each 32ms value — the rim reads as heavy fluid, not jitter.
+        for (j in 0 until 4) {
+            bandLevels[j] += (bandTargets[j] - bandLevels[j]) * (if (bandTargets[j] > bandLevels[j]) 0.45f else 0.25f)
+        }
+
         for (i in 0 until POINTS) {
             val d = total * i / POINTS
+            val theta = (d / total) * (2f * PI.toFloat())
             // Walk the perimeter: right cap -> bottom edge -> left cap -> top edge.
             val bx: Float; val by: Float; val nx: Float; val ny: Float
             when {
@@ -158,13 +220,25 @@ class BlobView @JvmOverloads constructor(
             val horiz = 1f - kotlin.math.abs(bx - cx) / (bodyW / 2f).coerceAtLeast(1f)
             val weight = 0.35f + 0.65f * horiz
 
+            // Band-by-position drive with a healthy FLOOR: multiplying weight x drive x osc
+            // multiplied the motion to death (sub-dp). Floors keep the flow alive everywhere;
+            // the bands add emphasis on top (left=bass ... right=sibilance).
+            val hx = ((bx - (cx - bodyW / 2f)) / bodyW).coerceIn(0f, 1f)
+            val band = if (mode == Mode.RECORDING && bandsActive) bandValueAt(hx) else 0.6f
+            val mix = (0.45f + 0.55f * weight) * (0.45f + 0.55f * band)
+
             // 0..1 oscillation (never negative) so ripple displacement stays outward.
-            val osc = 0.5f + 0.5f * sin(t * speeds[i] + phases[i] + spin)
-            val wobble = baseSwell + rippleAmp * weight * osc + idleBreath
+            // Counter-rotating traveling waves along the rim, amplified toward the full range
+            // (raw interference of three sines rarely nears +/-1 without the boost).
+            val flow = (0.45f * sin(2f * theta + flowPhase1 + spin) +
+                0.33f * sin(3f * theta - flowPhase2 + 1.3f) +
+                0.22f * sin(5f * theta + flowPhase3 + 2.1f)) * 1.55f
+            val osc = 0.5f + 0.5f * flow.coerceIn(-1f, 1f)
+            val wobble = baseSwell + rippleAmp * mix * osc + idleBreath
 
             // Direction variety: the push wanders off the pure normal by up to ~20 deg on a slow
             // cycle — the middle heaves straight north-south sometimes, diagonally other times.
-            val tilt = if (mode == Mode.RECORDING) 0.35f * sin(t * 0.7f + i * 1.1f) * weight else 0f
+            val tilt = if (mode == Mode.RECORDING) 0.55f * sin(t * 0.8f + i * 1.1f) * weight else 0f
             val cosT = cos(tilt)
             val sinT = sin(tilt)
             px[i] = bx + (nx * cosT - ny * sinT) * wobble

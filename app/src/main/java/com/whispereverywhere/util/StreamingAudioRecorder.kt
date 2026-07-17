@@ -62,7 +62,12 @@ class StreamingAudioRecorder(private val context: Context) {
         android.util.Log.i("WE-DIAG", "AudioRecord recording bufferSize=$bufferSize rate=$SAMPLE_RATE")
 
         thread = Thread {
-            val buffer = ByteArray(bufferSize)
+            // Read in 32ms slices (512 samples @16kHz = 1024 bytes), NOT the full buffer:
+            // syllables arrive at 4-8/sec and plosives last 5-40ms — a 128ms read cadence
+            // gives ~8 amplitude updates/sec, which visibly undersamples speech (the bubble
+            // "can't track the voice"). 32ms delivers 30+ updates/sec so the visuals and the
+            // VAD see every syllable. The engine just accumulates the same bytes as before.
+            val buffer = ByteArray(1024)
             var lastRmsLogMs = 0L
             var peakRms = 0
             var chunks = 0

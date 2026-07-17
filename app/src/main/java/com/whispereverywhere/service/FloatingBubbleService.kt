@@ -61,6 +61,8 @@ class FloatingBubbleService : Service(),
     private lateinit var processingRing: ImageView
     private lateinit var waveformView: BarWaveformView
     private lateinit var blobView: com.whispereverywhere.ui.components.BlobView
+    private lateinit var recordingTimerText: android.widget.TextView
+    private var recordingTimerJob: Job? = null
     private lateinit var processingTimeText: android.widget.TextView
     private lateinit var transcriptionPreviewContainer: View
     private lateinit var transcriptionEditText: android.widget.TextView
@@ -576,6 +578,7 @@ class FloatingBubbleService : Service(),
         processingRing = bubbleView.findViewById(R.id.processing_ring)
         waveformView = bubbleView.findViewById(R.id.waveform_view)
         blobView = bubbleView.findViewById(R.id.blob_view)
+        recordingTimerText = bubbleView.findViewById(R.id.recording_timer_text)
         blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_background)
         processingTimeText = bubbleView.findViewById(R.id.processing_time_text)
         transcriptionPreviewContainer = bubbleView.findViewById(R.id.transcription_preview_container)
@@ -766,9 +769,9 @@ class FloatingBubbleService : Service(),
         val target = (dp * resources.displayMetrics.density).toInt()
         val lp = bubbleContainer.layoutParams
         if (lp.width == target) return
-        // The blob body tracks the container with its 16dp ripple headroom (8dp per side).
+        // The blob body tracks the container with its 24dp ripple headroom (12dp per side).
         val blobLp = blobView.layoutParams
-        val blobExtra = (16 * resources.displayMetrics.density).toInt()
+        val blobExtra = (24 * resources.displayMetrics.density).toInt()
         ValueAnimator.ofInt(lp.width, target).apply {
             duration = 180
             interpolator = AccelerateDecelerateInterpolator()
@@ -849,6 +852,17 @@ class FloatingBubbleService : Service(),
                     lastCommitWallMs = System.currentTimeMillis()
                     val started = audioRecorder.start { chunk, amp ->
                         engine.sendAudio(chunk)
+                        // 4-band spectral drive for the visuals (microseconds per 32ms frame):
+                        // each aurora sheet + rim region follows its own slice of the voice.
+                        // Silence gate: below the noise floor send explicit zeros so the AGC
+                        // never normalizes room noise into fake motion.
+                        val bands = if (amp > 350) {
+                            com.whispereverywhere.util.AudioBands.analyze(chunk, chunk.size)
+                        } else {
+                            com.whispereverywhere.util.AudioBands.ZERO
+                        }
+                        waveformView.updateBands(bands)
+                        blobView.updateBands(bands)
                         // Client VAD per audio chunk (NOT the conflated amplitude StateFlow, which
                         // stops emitting during a steady pause). Commit on a natural pause, or on
                         // the wall-clock cap when the amplitude never dips (continuous media).
@@ -1088,6 +1102,10 @@ class FloatingBubbleService : Service(),
             bubbleContainer.scaleX = 1f
             bubbleContainer.scaleY = 1f
 
+            // Recording timer defaults off; the RECORDING branch turns it back on.
+            recordingTimerJob?.cancel(); recordingTimerJob = null
+            recordingTimerText.visibility = View.GONE
+
             when (newState) {
                 BubbleState.IDLE -> {
                     bubbleIcon.visibility = View.VISIBLE
@@ -1125,8 +1143,27 @@ class FloatingBubbleService : Service(),
                     setBubbleWidth(160)
                     waveformView.visibility = View.VISIBLE
                     waveformView.start()
-                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_recording)
+                    // Deep black pill per the design reference — the aurora waves carry all the
+                    // color; the red recording accent lives in the timer dot.
+                    blobView.fillColor = android.graphics.Color.parseColor("#000000")
                     blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.RECORDING)
+                    // Live recording timer: red dot + mm:ss, bottom-left in the pill.
+                    recordingTimerText.visibility = View.VISIBLE
+                    recordingTimerJob = serviceScope.launch(Dispatchers.Main) {
+                        val startMs = System.currentTimeMillis()
+                        while (true) {
+                            val s = ((System.currentTimeMillis() - startMs) / 1000).toInt()
+                            val label = android.text.SpannableString(
+                                String.format("● %02d:%02d", s / 60, s % 60)
+                            )
+                            label.setSpan(
+                                android.text.style.ForegroundColorSpan(0xFFFF3B30.toInt()),
+                                0, 1, 0
+                            )
+                            recordingTimerText.text = label
+                            delay(1000)
+                        }
+                    }
                     // NO container pulse: the old x1.15 scale loop inflated the ribbon past the
                     // blob's rim (the "ribbon won't stay inside" bug). The blob's voice-driven
                     // swell IS the recording pulse now. Reset any leftover scale defensively.

@@ -35,8 +35,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
-        versionName = "2.6.5"  // blob: center-dominant morph, wandering ripple direction, gentle bob
+        versionCode = 46
+        versionName = "2.7.8"  // aurora palette: red-weighted left, navy right
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

@@ -54,11 +54,12 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content">
 
-        <!-- Living blob body: audio-reactive shape replacing the static circle background. -->
+        <!-- Living blob body: audio-reactive shape replacing the static circle background.
+             56dp body + 12dp ripple headroom per side. -->
         <com.whispereverywhere.ui.components.BlobView
             android:id="@+id/blob_view"
-            android:layout_width="72dp"
-            android:layout_height="72dp"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
             android:layout_gravity="center" />
 
         <ImageView
@@ -90,6 +91,19 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:layout_gravity="center"
+                android:visibility="gone" />
+
+            <!-- Live recording timer (design ref: red dot + mm:ss, bottom-left in the pill). -->
+            <TextView
+                android:id="@+id/recording_timer_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|start"
+                android:layout_marginStart="18dp"
+                android:layout_marginBottom="5dp"
+                android:fontFamily="monospace"
+                android:textColor="#E6FFFFFF"
+                android:textSize="10sp"
                 android:visibility="gone" />
 
             <TextView
