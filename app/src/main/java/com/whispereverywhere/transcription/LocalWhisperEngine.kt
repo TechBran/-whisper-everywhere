@@ -207,6 +207,30 @@ class LocalWhisperEngine(
     }
 
     /**
+     * Loads the native context ahead of the first session so the first recording doesn't pay
+     * the model load + GPU kernel compile (~7 s on Adreno OpenCL) inside CONNECTING. Silent on
+     * failure: connect() retries the load with full error reporting. A model switch between
+     * prewarm and connect is also connect()'s job — this only fills an EMPTY context slot.
+     */
+    fun prewarm() {
+        val modelPath = modelPathProvider.installedModelPath() ?: return
+        if (ctxPtr != 0L) return
+        executor.execute {
+            if (ctxPtr != 0L) return@execute
+            try {
+                val loaded = runBlocking { loadRetry.retry { backend.load(modelPath) } }
+                if (loaded != 0L) {
+                    ctxPtr = loaded
+                    loadedModelPath = modelPath
+                    android.util.Log.i("WE-DIAG", "prewarm: ctx loaded")
+                }
+            } catch (t: Throwable) {
+                Log.w("LocalWhisperEngine", "prewarm load failed (connect() will retry)", t)
+            }
+        }
+    }
+
+    /**
      * Frees the cached native context (e.g. from onTrimMemory under memory pressure).
      * The context reloads lazily on the next connect(). Runs on the executor so it never
      * races an in-flight transcription.

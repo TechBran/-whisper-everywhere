@@ -49,10 +49,10 @@ class WhisperModelManagerInstrumentedTest {
     @Test
     fun download_eco_thenInstalledAndPathResolves() = runBlocking {
         val eco = manager.modelById("eco")!!
-        manager.download(eco) { soFar, total ->
+        manager.download(eco, onProgress = { soFar, total ->
             assertTrue(total > 0)
             assertTrue(soFar in 0..total)
-        }
+        })
         prefs.selectedModelId = "eco"
 
         assertTrue(manager.isInstalled(eco))

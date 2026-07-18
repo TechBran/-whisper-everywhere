@@ -204,6 +204,17 @@ class FloatingBubbleService : Service(),
 
         // Start monitoring accessibility service connection
         startConnectionMonitor()
+
+        // Pre-warm the whisper context (model mmap + Adreno OpenCL kernel compile, ~7 s on the
+        // GPU path) so the FIRST recording connects instantly instead of paying it inside
+        // CONNECTING. Slightly delayed to keep service startup/view inflation snappy; queued on
+        // the engine's own single-thread executor, so it never races a session.
+        serviceScope.launch {
+            delay(1500)
+            val engine = transcriptionEngine
+                ?: LocalWhisperEngine(app.whisperModelManager).also { transcriptionEngine = it }
+            (engine as? LocalWhisperEngine)?.prewarm()
+        }
     }
 
     /**

@@ -36,8 +36,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 48
-        versionName = "2.8.1"  // dynamic ggml backends: one APK for all devices (Track B)
+        versionCode = 49
+        versionName = "2.9.0"  // Track C: injection session binding, log strip, edge-to-edge, K2 toolchain
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
@@ -112,6 +112,12 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            // Dev machine only (props present): sign debug with the release key so debug/test
+            // APKs install straight over the release build without uninstalling (which would
+            // wipe the downloaded model). CI/fresh checkouts keep the default debug keystore.
+            if (keystoreProps.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

@@ -65,8 +65,11 @@ class WhisperNativeSmokeTest {
 
         // Dynamic backends (GGML_BACKEND_DL): register before the first native call.
         WhisperNative.loadBackends(inst.targetContext.applicationInfo.nativeLibraryDir)
-        // CPU path: the smoke test validates the JNI/whisper contract, not the GPU backend.
-        val ctxPtr = WhisperNative.init(modelFile.absolutePath, false)
+        // Default CPU (validates the JNI/whisper contract). Pass -e useGpu true to exercise the
+        // OpenCL backend instead — used for the multilingual-vocab-on-Adreno retest (upstream
+        // #3708: 51865%4!=0 matmul assert risk on the Adreno-optimized kernels).
+        val useGpu = args.getString("useGpu")?.toBoolean() ?: false
+        val ctxPtr = WhisperNative.init(modelFile.absolutePath, useGpu)
         assertNotEquals("init() returned 0 (model failed to load)", 0L, ctxPtr)
         try {
             val text = WhisperNative.transcribe(ctxPtr, samples, "en", false, null)
