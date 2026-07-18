@@ -317,12 +317,17 @@ class FloatingBubbleService : Service(),
 
     override fun onDestroy() {
         super.onDestroy()
+        // Order matters (final-review fix C3): kill the 5-second re-register monitor BEFORE
+        // nulling the listeners, or it can re-install this dying service as the listener.
+        connectionMonitorJob?.cancel()
         WhisperAccessibilityService.setFocusListener(null)
         WhisperAccessibilityService.setSelectionListener(null)
+        // Detach the arbiter's capture side — its lambdas close over this dying instance.
+        com.whispereverywhere.audio.AudioArbiter.isCapturing = { false }
+        com.whispereverywhere.audio.AudioArbiter.stopCaptureGracefully = {}
         com.whispereverywhere.tts.TtsController.stop()
         mediaDetector.setListener(null)
         mediaDetector.stopMonitoring()
-        connectionMonitorJob?.cancel()
         serviceScope.cancel()
         pulseAnimator?.cancel()
         showAnimator?.cancel()
@@ -1137,8 +1142,11 @@ class FloatingBubbleService : Service(),
 
         updateBubbleState(BubbleState.CONNECTING)
         vibrateStart()
-        // Capture wins instantly over read-aloud (Track F exclusivity rule).
+        // Capture wins instantly over read-aloud (Track F exclusivity rule); any selection
+        // made before dictation is stale by definition once a session starts (review fix I2).
         com.whispereverywhere.audio.AudioArbiter.requestCapture()
+        speakModeText = null
+        isSpeakingNow = false
         sessionProducedText = false
         sessionTranscript.setLength(0)
         sessionStartMs = System.currentTimeMillis()

@@ -91,6 +91,10 @@ class TtsModelManager(private val context: Context) {
             .setAllowedOverRoaming(true)
 
         val id = dm.enqueue(request)
+        // Coroutine cancellation (user leaves Settings) must NOT abort the network transfer:
+        // DownloadManager keeps going, and the next download() call reuses the completed file
+        // (review fix I4). The row is removed only on completion or terminal failure.
+        var keepRow = false
         try {
             var done = false
             while (!done) {
@@ -127,8 +131,11 @@ class TtsModelManager(private val context: Context) {
                 }
                 if (!done) delay(POLL_INTERVAL_MS)
             }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            keepRow = true
+            throw ce
         } finally {
-            dm.remove(id)
+            if (!keepRow) dm.remove(id)
         }
     }
 

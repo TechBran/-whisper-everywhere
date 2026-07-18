@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 55
-        versionName = "2.9.6"  // finalize UX: preview streams the drain live instead of a bare spinner
+        versionCode = 56
+        versionName = "3.0.0"  // the generational release: on-device STT (whisper) + TTS (Kokoro read-aloud)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
