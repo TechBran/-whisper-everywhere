@@ -12,6 +12,7 @@
 | C | Production leftovers (injection binding, Play declarations, full log strip, toolchain, CI) | **SHIPPED 2026-07-17** |
 | D | GPU polish (multilingual model on OpenCL retest; kernel-cache the first-load pause) | **SHIPPED 2026-07-17** (multilingual→CPU gate; prewarm kills the first-load pause) |
 | E | Housekeeping (fork whisper.cpp under TechBran for a cloneable submodule; optional upstream PR of the ggml-opencl lazy-init fix) | **DONE 2026-07-17** (fork live; upstream PR awaits user go-ahead) |
+| F | Read-aloud TTS (Kokoro-82M on-device via sherpa-onnx; highlight → speaker bubble) | researched 2026-07-18 — awaiting go/spec |
 
 ## Shipped (2026-07-17, branch `feature/on-device-whisper`)
 
@@ -140,6 +141,59 @@ surgery), so instead `LocalWhisperEngine.prewarm()` loads the context at bubble-
 
 Also: debug builds sign with the release key when `keystore.properties` exists, so dev-machine
 debug/test APKs install over the release app without wiping the downloaded model.
+
+## Track F — Read-aloud TTS (RESEARCHED 2026-07-18; awaiting go/spec)
+
+**Vision (user):** highlight text anywhere → the bubble morphs into a speaker → tap → the text
+is spoken aloud, fast, fully on-device. TTS and STT are mutually exclusive activities.
+
+**Engine — the same one as the home box:** Speaches on the server runs
+`speaches-ai/Kokoro-82M-v1.0-ONNX`; the on-device path for that exact model is **sherpa-onnx**
+(k2-fsa, Apache-2.0, v1.13.4): first-class Kotlin `OfflineTts` API, per-sentence callback
+streaming into AudioTrack (return 0 = instant cancel), prebuilt AAR (~11-13 MB APK delta,
+arm64-only), production Android apps exist. No Maven coords — vendor the AAR.
+
+**Compute — CPU, deliberately (research verdict, 3-lens sweep wf_cc384795):**
+- Kokoro-82M is non-autoregressive (StyleTTS2-derived) and already beats real time on phone
+  CPUs: est. RTF 0.6-0.9 on the 8 Gen 3 (NimbleEdge measured ~0.8 on "recent smartphones").
+- Every Android GPU/NPU path is a dead end for this graph today: NNAPI deprecated at our
+  targetSdk 35; QNN-HTP needs static shapes + has no LSTM; QNN-GPU is a Windows preview;
+  ORT WebGPU/Vulkan experimental — and Vulkan-on-Adreno is already proven dead here. GPU would
+  buy ~1-2 s at a cost of weeks. XNNPACK EP flag = one free afternoon A/B.
+- **fp32, NOT int8**: int8 Kokoro is ~2x SLOWER than fp32 on ARM (iPhone 15 + Galaxy S10 +
+  sherpa bench all agree) — the quantization intuition is inverted. fp32 ≈ 330-430 MB download
+  (prunable; community fp16 169 MB worth testing); ~0.8 GB RAM while speaking → preload when
+  the bubble arms, idle-unload, never co-resident with a whisper session (already exclusive).
+- Latency budget: preload hides the 1-3 s model load; sentence-chunked synthesis → first
+  sentence plays (~1-2.5 s after tap) while the rest synthesizes.
+
+**Trigger UX — three layers (coverage is the hard part):**
+1. `ACTION_PROCESS_TEXT` "Speak" entry in the system selection toolbar — universal, zero
+   permissions, works in Chrome/WebView/Gmail/WhatsApp-select-text; `Theme.NoDisplay`
+   trampoline must finish() inside onCreate().
+2. Bubble-morph via a11y `TYPE_VIEW_TEXT_SELECTION_CHANGED` (we already subscribe): debounce
+   ~400 ms, read textSelectionStart/End. Opportunistic ONLY — Chromium never exposes static
+   web-text selection, old-Compose and PDF viewers emit nothing (Google's own Select to Speak
+   gave up on selection detection). When events don't arrive, the toolbar entry still works.
+3. Optional later: tap-bubble-then-tap-text mode for the dead zone.
+
+**Audio:** one AudioTrack (MODE_STREAM, 24 kHz mono, CONTENT_TYPE_SPEECH, low-latency),
+AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK (music ducks, podcasts pause), pause()+flush() for instant
+stop, abandon focus at end. One arbiter owns {IDLE, CAPTURING, SPEAKING} — speaker tap stops
+capture first, mic tap stops speech first.
+
+**Landmine:** current sherpa-onnx statically links espeak-ng (**GPLv3**) into the JNI .so —
+fine sideloaded, NOT fine for a closed-source Play release. sherpa-onnx 2.0.0 removes it
+(announced 2026-07-08, no date; lexicon-based G2P replaces it — lexicons already ship for
+Kokoro). Options: wait for 2.0.0 / source-build lexicon-only today / open-source the app.
+Decide before store distribution, not before prototyping.
+
+**Play posture:** update the a11y declaration + in-app disclosure to name read-aloud
+("reads text you select aloud, entirely on-device"); Jan 28 2026 a11y policy bans autonomous
+actions — user-tapped read-aloud is passive, allowed; keep isAccessibilityTool=false.
+
+**Next step:** brainstorm → spec → plan cycle; week-1 task is the on-device RTF benchmark
+(fp32 vs fp16 vs int8 on the Fold 6) before any UX latency promises.
 
 ## Track E — Housekeeping (DONE 2026-07-17)
 
