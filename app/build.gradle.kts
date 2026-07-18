@@ -155,6 +155,11 @@ android {
 }
 
 dependencies {
+    // On-device TTS (Track F): sherpa-onnx runs Kokoro-82M on CPU. Vendored AAR — no official
+    // Maven coordinates exist (verified 2026-07-18). arm64 native payload only reaches the APK
+    // because of the abiFilters above.
+    implementation(files("libs/sherpa-onnx-1.13.4.aar"))
+
     // Core Android
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
