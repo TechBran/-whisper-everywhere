@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 59
-        versionName = "3.0.3"  // speaking pill: live waveform, pause/stop controls, clipboard chip, morph auto-revert
+        versionCode = 60
+        versionName = "3.0.4"  // in-app read-aloud guide, honest copy, bigger clipboard chip, pin -> lock
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

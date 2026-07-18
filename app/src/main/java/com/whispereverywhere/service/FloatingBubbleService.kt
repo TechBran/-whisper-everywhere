@@ -874,13 +874,15 @@ class FloatingBubbleService : Service(),
             if (dm.heightPixels > 0) app.preferencesManager.bubblePositionY = params.y.toFloat() / dm.heightPixels
         }
         applyPinIndicator()
-        showToast(if (isOverlayPinned) "Bubble pinned" else "Bubble unpinned")
+        showToast(if (isOverlayPinned) "Bubble locked in place" else "Bubble unlocked")
     }
 
-    /** Update the pin icon alpha to reflect current pinned state. */
+    /** Lock metaphor (user decision 2026-07-18): closed lock = position locked, open = free. */
     private fun applyPinIndicator() {
-        // Full opacity when pinned, subtle hint when unpinned
-        pinIcon.alpha = if (isOverlayPinned) 1.0f else 0.35f
+        pinIcon.setImageResource(
+            if (isOverlayPinned) R.drawable.ic_lock_closed else R.drawable.ic_lock_open,
+        )
+        pinIcon.alpha = if (isOverlayPinned) 1.0f else 0.45f
     }
 
     // ========== Drift hardening helpers ==========

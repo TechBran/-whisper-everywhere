@@ -117,15 +117,17 @@
                 android:visibility="gone" />
 
             <!-- Read-clipboard chip: idle-only; tap = speak whatever was last copied. The
-                 universal whole-page path (Chrome: Select all -> Copy -> tap). -->
+                 universal whole-page path (Chrome: Select all -> Copy -> tap). Padding keeps
+                 the tap target comfortable while the glyph stays chip-sized. -->
             <ImageView
                 android:id="@+id/speak_clip_icon"
-                android:layout_width="16dp"
-                android:layout_height="16dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:padding="3dp"
                 android:layout_gravity="bottom|start"
-                android:layout_margin="3dp"
+                android:layout_margin="1dp"
                 android:src="@drawable/ic_speaker"
-                android:alpha="0.55"
+                android:alpha="0.85"
                 android:visibility="gone"
                 android:contentDescription="Read clipboard aloud" />
 
@@ -140,17 +142,17 @@
                 android:visibility="gone"
                 android:contentDescription="Stop reading" />
 
-            <!-- Pin indicator: small pin icon in top-right corner of the bubble.
-                 Tapping it toggles pinned state; alpha reflects pinned/unpinned. -->
+            <!-- Lock indicator: closed lock = position locked, open = free placement.
+                 Tap (or long-press the bubble) toggles it. -->
             <ImageView
                 android:id="@+id/pin_icon"
                 android:layout_width="16dp"
                 android:layout_height="16dp"
                 android:layout_gravity="top|end"
                 android:layout_margin="3dp"
-                android:src="@drawable/ic_pin"
+                android:src="@drawable/ic_lock_open"
                 android:alpha="0.0"
-                android:contentDescription="Pin bubble" />
+                android:contentDescription="Lock bubble position" />
 
         </FrameLayout>
     </FrameLayout>

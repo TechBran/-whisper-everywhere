@@ -62,6 +62,7 @@ fun SettingsScreen(
     var ttsVoiceIdState by remember { mutableStateOf(app.preferencesManager.ttsVoiceId) }
     var showDeleteVoiceDialog by remember { mutableStateOf(false) }
     var showVoicePickerDialog by remember { mutableStateOf(false) }
+    var showReadAloudGuide by remember { mutableStateOf(false) }
 
     val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
 
@@ -189,8 +190,15 @@ fun SettingsScreen(
                         SettingsItem(
                             icon = Icons.Filled.GraphicEq,
                             title = "Kokoro voice — installed",
-                            subtitle = "Highlight text anywhere, then tap the speaker bubble " +
-                                "or use \"Speak\" in the text-selection menu. Fully on-device.",
+                            subtitle = "Speaks highlighted or copied text aloud, fully " +
+                                "on-device. Tap for the full how-to.",
+                            onClick = { showReadAloudGuide = true },
+                        )
+                        SettingsItem(
+                            icon = Icons.Outlined.Info,
+                            title = "How to use read-aloud",
+                            subtitle = "The three ways to speak text, and the playback controls",
+                            onClick = { showReadAloudGuide = true },
                         )
                         SettingsItem(
                             icon = Icons.Filled.RecordVoiceOver,
@@ -478,6 +486,82 @@ fun SettingsScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    // Read-aloud how-to guide (user request 2026-07-18: people need to know exactly how).
+    if (showReadAloudGuide) {
+        AlertDialog(
+            onDismissRequest = { showReadAloudGuide = false },
+            icon = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
+            title = { Text("How read-aloud works", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    Modifier
+                        .heightIn(max = 440.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        "Three ways to have text spoken aloud:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "1.  Highlight it.  Select text in a note, message, or text box — " +
+                            "the bubble's microphone turns into a speaker. Tap it to listen. " +
+                            "If you don't tap, it quietly turns back into the mic after about " +
+                            "20 seconds.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "2.  Copy it.  Some apps — like web pages in Chrome and PDFs — don't " +
+                            "let the bubble see what you highlight. There, copy the text " +
+                            "instead (for a whole page: Select all, then Copy) and tap the " +
+                            "small speaker chip on the bubble's lower-left corner. Whatever " +
+                            "is on your clipboard is read aloud.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "3.  Use the Speak menu.  After selecting text in most apps, the " +
+                            "popup toolbar has a \"Speak\" entry (sometimes behind ⋮). " +
+                            "Tapping it reads the selection immediately.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "While it's speaking:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "The bubble becomes a pill with a live waveform of the voice. " +
+                            "Tap the pill to pause and resume. Tap the small square to stop. " +
+                            "Starting a recording also stops speech instantly — the two never " +
+                            "run at once. Long text is spoken sentence by sentence, so even a " +
+                            "whole article streams smoothly.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Everything is generated on your phone — nothing you read or hear " +
+                            "ever leaves the device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showReadAloudGuide = false }) { Text("Got it") }
+            },
         )
     }
 
