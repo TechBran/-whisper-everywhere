@@ -30,18 +30,25 @@ class TtsScrubberView @JvmOverloads constructor(
     private var dragging = false
     private var dragFrac = 0f
 
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x4DFFFFFF // faint white track
+    // Palette (user direction 2026-07-18): played = red; audio ahead that's READY = gray;
+    // the frontier still being generated = white; position = a red vertical line + white dot.
+    private val readyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x889E9E9E.toInt() // gray: synthesized, waiting ahead
         strokeWidth = dp(2f)
         strokeCap = Paint.Cap.ROUND
     }
     private val growPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x33FFFFFF // even fainter: synthesis still extending the audio
+        color = 0xCCFFFFFF.toInt() // white: being generated right now
         strokeWidth = dp(2f)
         strokeCap = Paint.Cap.ROUND
     }
     private val playedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF4FC3F7.toInt() // matches the speaker lobe accent
+        color = 0xFFFF3B30.toInt() // red: what you've heard
+        strokeWidth = dp(2f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val positionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFF3B30.toInt() // the red vertical you-are-here line
         strokeWidth = dp(2f)
         strokeCap = Paint.Cap.ROUND
     }
@@ -61,14 +68,18 @@ class TtsScrubberView @JvmOverloads constructor(
         val left = pad
         val right = width - pad
         if (right <= left) return
-        // Full track: solid where audio exists; a short faint tail hints "still growing".
-        canvas.drawLine(left, y, right, y, trackPaint)
+        val frac = if (dragging) dragFrac else playedFrac
+        val x = left + (right - left) * frac.coerceIn(0f, 1f)
+        // Ahead of you: gray where audio is ready; a white tail while synthesis still grows it.
+        canvas.drawLine(x, y, right, y, readyPaint)
         if (!synthesisDone) {
             canvas.drawLine(right - dp(10f), y, right, y, growPaint)
         }
-        val frac = if (dragging) dragFrac else playedFrac
-        val x = left + (right - left) * frac.coerceIn(0f, 1f)
-        canvas.drawLine(left, y, x, y, playedPaint)
+        // Behind you: red.
+        if (x > left) canvas.drawLine(left, y, x, y, playedPaint)
+        // You are here: red vertical line with the white dot riding it.
+        val tick = dp(if (dragging) 7f else 5f)
+        canvas.drawLine(x, y - tick, x, y + tick, positionPaint)
         canvas.drawCircle(x, y, dp(if (dragging) 5f else 3.5f), thumbPaint)
     }
 

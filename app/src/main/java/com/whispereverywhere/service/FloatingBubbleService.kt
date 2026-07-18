@@ -53,6 +53,7 @@ import kotlinx.coroutines.withContext
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnTextSelectionListener,
+    WhisperAccessibilityService.OnClipboardChangedListener,
     MediaSessionDetector.MediaPlaybackListener {
 
     // Read-aloud (Track F): the text captured by the live selection watcher. Non-null = the
@@ -261,6 +262,57 @@ class FloatingBubbleService : Service(),
     private fun registerFocusListener() {
         WhisperAccessibilityService.setFocusListener(this)
         WhisperAccessibilityService.setSelectionListener(this)
+        WhisperAccessibilityService.setClipboardListener(this)
+    }
+
+    // Attention pulse on the speaker lobe when something lands on the clipboard (user design
+    // 2026-07-18): alternating red/blue with a breathing scale — "tap me to hear this".
+    private var clipPulseAnimator: android.animation.ValueAnimator? = null
+
+    override fun onClipboardChanged() {
+        serviceScope.launch(Dispatchers.Main) {
+            if (currentState != BubbleState.IDLE || isSpeakingNow) return@launch
+            if (!com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)) return@launch
+            pulseSpeakerLobe()
+        }
+    }
+
+    private fun pulseSpeakerLobe() {
+        clipPulseAnimator?.cancel()
+        speakerLobe.visibility = View.VISIBLE
+        var flip = false
+        clipPulseAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 450
+            repeatCount = 15 // ~7 s of attention, then settle
+            addUpdateListener { a ->
+                val v = a.animatedValue as Float
+                val scale = 1f + 0.18f * kotlin.math.sin(v * Math.PI.toFloat())
+                speakerLobe.scaleX = scale
+                speakerLobe.scaleY = scale
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationRepeat(animation: android.animation.Animator) {
+                    flip = !flip
+                    speakClipIcon.setColorFilter(
+                        if (flip) 0xFFFF3B30.toInt() else 0xFF4FC3F7.toInt(),
+                    )
+                }
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    speakerLobe.scaleX = 1f
+                    speakerLobe.scaleY = 1f
+                    speakClipIcon.setColorFilter(0xFF4FC3F7.toInt())
+                }
+            })
+            start()
+        }
+    }
+
+    private fun stopClipPulse() {
+        clipPulseAnimator?.cancel()
+        clipPulseAnimator = null
+        speakerLobe.scaleX = 1f
+        speakerLobe.scaleY = 1f
+        speakClipIcon.setColorFilter(0xFF4FC3F7.toInt())
     }
 
     // ========== Read-aloud (Track F): selection -> speaker morph -> speak/stop ==========
@@ -314,6 +366,7 @@ class FloatingBubbleService : Service(),
      */
     private fun readClipboardAndSpeak() {
         if (isSpeakingNow || currentState != BubbleState.IDLE) return
+        stopClipPulse()
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         runCatching { windowManager.updateViewLayout(bubbleView, params) }
         bubbleView.postDelayed({
@@ -432,6 +485,7 @@ class FloatingBubbleService : Service(),
         connectionMonitorJob?.cancel()
         WhisperAccessibilityService.setFocusListener(null)
         WhisperAccessibilityService.setSelectionListener(null)
+        WhisperAccessibilityService.setClipboardListener(null)
         // Detach the arbiter's capture side — its lambdas close over this dying instance.
         com.whispereverywhere.audio.AudioArbiter.isCapturing = { false }
         com.whispereverywhere.audio.AudioArbiter.stopCaptureGracefully = {}
@@ -1581,6 +1635,7 @@ class FloatingBubbleService : Service(),
             recordingTimerJob?.cancel(); recordingTimerJob = null
             recordingTimerText.visibility = View.GONE
             // Satellite lobes are idle-only; the IDLE branch turns them back on.
+            stopClipPulse()
             lockLobe.visibility = View.GONE
             speakerLobe.visibility = View.GONE
 

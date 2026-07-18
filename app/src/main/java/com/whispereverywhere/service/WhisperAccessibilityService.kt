@@ -97,6 +97,19 @@ class WhisperAccessibilityService : AccessibilityService() {
         fun onSelectionCleared()
     }
 
+    /** Fires when ANY app puts something on the clipboard (best-effort; OEM-dependent). */
+    interface OnClipboardChangedListener {
+        fun onClipboardChanged()
+    }
+
+    // Registered from the a11y service context — the privileged holder that keeps clipboard
+    // change events flowing in the background on most OEMs (plain apps lost this in API 29).
+    private val clipChangedListener =
+        android.content.ClipboardManager.OnPrimaryClipChangedListener {
+            android.util.Log.i("WE-TTS", "clipboard changed event")
+            clipboardListener?.onClipboardChanged()
+        }
+
     private var selectionDebounceJob: kotlinx.coroutines.Job? = null
 
     /**
@@ -153,6 +166,10 @@ class WhisperAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        runCatching {
+            (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                .addPrimaryClipChangedListener(clipChangedListener)
+        }
 
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
@@ -485,6 +502,10 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        runCatching {
+            (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                .removePrimaryClipChangedListener(clipChangedListener)
+        }
         serviceScope.cancel()
         endInjectionSessionInternal()
         instance = null
@@ -1100,6 +1121,12 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         fun setSelectionListener(listener: OnTextSelectionListener?) {
             selectionListener = listener
+        }
+
+        @Volatile private var clipboardListener: OnClipboardChangedListener? = null
+
+        fun setClipboardListener(listener: OnClipboardChangedListener?) {
+            clipboardListener = listener
         }
 
         fun isEnabled(): Boolean = instance != null

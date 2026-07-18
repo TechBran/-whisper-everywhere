@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 63
-        versionName = "3.0.7"  // TTS scrubber: thin drag-to-seek line in the pill, retained-PCM cursor pipeline
+        versionCode = 64
+        versionName = "3.0.8"  // red-position scrubber palette; clipboard-copy attention pulse on the speaker lobe
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
