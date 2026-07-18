@@ -48,6 +48,15 @@
 -keepclasseswithmembernames class * { native <methods>; }
 -keep class com.whispereverywhere.whisper.WhisperNative { *; }
 
+# --- sherpa-onnx (Track F read-aloud) ---
+# The native side reflectively reads the config classes' fields and calls the specialized
+# Function1 bridge on callbacks. R8 renaming them aborts OfflineTts.newFromFile (SIGABRT
+# proven on-device, release-only, 2026-07-18). Keep the whole API surface.
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keepclassmembers class * implements kotlin.jvm.functions.Function1 {
+    public java.lang.Integer invoke(float[]);
+}
+
 # --- Release log hygiene ---
 # Strip ALL android.util.Log calls from release builds (incl. the WE-DIAG operational logs) —
 # production posture for Play. Diagnosis happens on debug builds, where nothing is stripped.

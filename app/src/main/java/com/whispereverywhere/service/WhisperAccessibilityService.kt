@@ -139,7 +139,14 @@ class WhisperAccessibilityService : AccessibilityService() {
                 selectionListener?.onTextSelected(selected)
             }
         } else {
-            selectionListener?.onSelectionCleared()
+            // Debounce the CLEAR too: fields fire start==end selection events for cursor
+            // blinks/IME updates while text is still visually selected — an instant clear made
+            // the speaker icon flicker away (user-reported). A valid selection arriving within
+            // the grace window cancels the pending clear above.
+            selectionDebounceJob = serviceScope.launch {
+                delay(CLEAR_DEBOUNCE_MS)
+                selectionListener?.onSelectionCleared()
+            }
         }
     }
 
@@ -1086,7 +1093,10 @@ class WhisperAccessibilityService : AccessibilityService() {
         @Volatile private var selectionListener: OnTextSelectionListener? = null
 
         private const val SELECTION_DEBOUNCE_MS = 400L
-        private const val MAX_SELECTION_CHARS = 5_000
+        private const val CLEAR_DEBOUNCE_MS = 800L
+        // Whole-page reads are chunked sentence-by-sentence inside the engine, so a large cap
+        // streams instead of overloading anything (user decision 2026-07-18).
+        private const val MAX_SELECTION_CHARS = 100_000
 
         fun setSelectionListener(listener: OnTextSelectionListener?) {
             selectionListener = listener

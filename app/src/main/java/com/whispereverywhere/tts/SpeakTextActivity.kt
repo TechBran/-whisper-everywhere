@@ -26,6 +26,8 @@ class SpeakTextActivity : Activity() {
     }
 
     private companion object {
-        const val MAX_CHARS = 5_000
+        // Whole-page reads ("Select all" -> Speak in Chrome) arrive here; the engine chunks
+        // synthesis per sentence, so large text streams — the cap only guards pathology.
+        const val MAX_CHARS = 100_000
     }
 }

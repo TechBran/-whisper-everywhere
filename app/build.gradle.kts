@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 57
-        versionName = "3.0.1"  // selection morph fixed (event indices), v1_0 voice roster + picker
+        versionCode = 58
+        versionName = "3.0.2"  // R8 keep rules fix release-only TTS crash; clear-debounce; 100k whole-page reads
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
