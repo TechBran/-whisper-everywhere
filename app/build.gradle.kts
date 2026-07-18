@@ -36,8 +36,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 52
-        versionName = "2.9.3"  // media capture auto-finishes when a text field gains focus (sessions fully separate)
+        versionCode = 53
+        versionName = "2.9.4"  // complete-test corrections: lint clean (8 errors), notification/permission hardening
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

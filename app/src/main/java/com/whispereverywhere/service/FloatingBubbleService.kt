@@ -270,7 +270,7 @@ class FloatingBubbleService : Service(),
         showAnimator?.cancel()
         hideAnimator?.cancel()
         audioRecorder.stop()
-        playbackCapturer?.stop(); playbackCapturer = null
+        stopPlaybackCapturer()
         com.whispereverywhere.audio.MediaProjectionGate.listener = null
         com.whispereverywhere.audio.MediaProjectionGate.clear()
         teardownRealtime()
@@ -923,6 +923,16 @@ class FloatingBubbleService : Service(),
         }
     }
 
+    /**
+     * Stop and drop the playback capturer. The capturer class is @RequiresApi(Q); instances
+     * only ever exist on Q+ (startPlaybackSource is version-gated), so the check here is for
+     * the linter's benefit — it can't prove the field is null below Q.
+     */
+    private fun stopPlaybackCapturer() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) playbackCapturer?.stop()
+        playbackCapturer = null
+    }
+
     /** Start the correct source for the current world (mic vs device-audio). */
     private fun startAudioInput(): Result<Unit> {
         val decision = com.whispereverywhere.audio.AudioSourcePolicy.decide(
@@ -992,9 +1002,7 @@ class FloatingBubbleService : Service(),
         lastCommitWallMs = System.currentTimeMillis()
         when (activeSource) {
             com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()
-            com.whispereverywhere.audio.ActiveSource.PLAYBACK -> {
-                playbackCapturer?.stop(); playbackCapturer = null
-            }
+            com.whispereverywhere.audio.ActiveSource.PLAYBACK -> stopPlaybackCapturer()
         }
         val started = when (to) {
             com.whispereverywhere.audio.ActiveSource.MIC -> startMicSource()
@@ -1206,7 +1214,7 @@ class FloatingBubbleService : Service(),
         waveformView.stop()
         audioRecorder.stop()
 
-        playbackCapturer?.stop(); playbackCapturer = null
+        stopPlaybackCapturer()
         activeSource = com.whispereverywhere.audio.ActiveSource.MIC
 
         updateBubbleState(BubbleState.FINALIZING)

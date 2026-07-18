@@ -54,10 +54,14 @@ fun SettingsScreen(
     val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
 
     // Compute models-dir total disk usage off the main thread.
+    // Suppression: the producer DOES assign `value` (directly below); the compose-runtime
+    // checker just can't see assignments that follow a suspend call in this lint version.
+    @Suppress("ProduceStateDoesNotAssignValue")
     val modelsDirUsageBytes by produceState(initialValue = 0L, key1 = modelRefreshKey) {
-        value = withContext(Dispatchers.IO) {
+        val computed = withContext(Dispatchers.IO) {
             modelManager.modelsDir().walkTopDown().filter { it.isFile }.map { it.length() }.sum()
         }
+        value = computed
     }
 
     val scrollState = rememberScrollState()

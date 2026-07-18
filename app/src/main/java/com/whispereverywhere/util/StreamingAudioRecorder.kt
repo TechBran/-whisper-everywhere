@@ -48,9 +48,15 @@ class StreamingAudioRecorder(private val context: Context) {
         if (!hasPermission()) return Result.failure(SecurityException("Microphone permission not granted"))
         if (recording) return Result.failure(IllegalStateException("Already recording"))
 
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.MIC, SAMPLE_RATE, CHANNEL, ENCODING, bufferSize
-        )
+        // hasPermission() gates above, but the grant can be revoked between check and use —
+        // handle the SecurityException explicitly instead of crashing the service.
+        val record = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC, SAMPLE_RATE, CHANNEL, ENCODING, bufferSize
+            )
+        } catch (e: SecurityException) {
+            return Result.failure(e)
+        }
         if (record.state != AudioRecord.STATE_INITIALIZED) {
             android.util.Log.w("WE-DIAG", "AudioRecord init FAILED state=${record.state}")
             record.release()

@@ -100,10 +100,14 @@ fun TranscriptsScreen(onNavigateBack: () -> Unit) {
     selected?.let { entry ->
         // Read off the main thread: a long media-transcription session can hold a LOT of text,
         // and a synchronous file read here would jank the dialog-open animation.
+        // Suppression: the producer DOES assign `value`; the compose-runtime checker can't see
+        // assignments that follow a suspend call in this lint version.
+        @Suppress("ProduceStateDoesNotAssignValue")
         val fullText by produceState(initialValue = "", key1 = entry) {
-            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching { store.read(entry) }.getOrDefault("")
             }
+            value = text
         }
         AlertDialog(
             onDismissRequest = { selected = null },

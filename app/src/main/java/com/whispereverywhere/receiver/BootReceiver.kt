@@ -111,10 +111,17 @@ class BootReceiver : BroadcastReceiver() {
                     .setAutoCancel(true)
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .build()
-            NotificationManagerCompat.from(context)
-                .notify(RESTART_NOTIFICATION_ID, notification)
+            val canPost = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED
+            if (canPost) {
+                NotificationManagerCompat.from(context)
+                    .notify(RESTART_NOTIFICATION_ID, notification)
+            } else {
+                Log.w(TAG, "POST_NOTIFICATIONS not granted; boot-restart notification skipped")
+            }
         } catch (t: Throwable) {
-            // Includes SecurityException when POST_NOTIFICATIONS is denied — nothing else to do.
+            // Belt-and-braces for revocation races — nothing else to do.
             Log.w(TAG, "Could not post restart notification", t)
         }
     }
