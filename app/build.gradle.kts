@@ -1,3 +1,4 @@
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -154,10 +155,34 @@ android {
     }
 }
 
+// sherpa-onnx AAR (on-device TTS, Track F): no official Maven coordinates exist (verified
+// 2026-07-18) and *.aar is gitignored, so the pinned upstream release asset is fetched on
+// demand and sha256-verified — self-healing for CI and fresh clones alike.
+val sherpaAar = file("libs/sherpa-onnx-1.13.4.aar")
+val sherpaAarSha256 = "03f9c4df965f21c71269365a7951a7f23b5696fddd093fa318c80d65550ab780"
+val fetchSherpaAar = tasks.register("fetchSherpaAar") {
+    outputs.file(sherpaAar)
+    doLast {
+        if (!sherpaAar.exists()) {
+            sherpaAar.parentFile.mkdirs()
+            uri("https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-1.13.4.aar")
+                .toURL().openStream().use { input ->
+                    sherpaAar.outputStream().use { input.copyTo(it) }
+                }
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(sherpaAar.readBytes())
+            .joinToString("") { b -> "%02x".format(b) }
+        check(digest == sherpaAarSha256) {
+            "sherpa-onnx AAR sha256 mismatch ($digest) — delete app/libs and re-run"
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn(fetchSherpaAar) }
+
 dependencies {
-    // On-device TTS (Track F): sherpa-onnx runs Kokoro-82M on CPU. Vendored AAR — no official
-    // Maven coordinates exist (verified 2026-07-18). arm64 native payload only reaches the APK
-    // because of the abiFilters above.
+    // On-device TTS (Track F): sherpa-onnx runs Kokoro-82M on CPU (fetched above). arm64
+    // native payload only reaches the APK because of the abiFilters above.
     implementation(files("libs/sherpa-onnx-1.13.4.aar"))
 
     // Core Android
