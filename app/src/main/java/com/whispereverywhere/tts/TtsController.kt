@@ -55,7 +55,11 @@ object TtsController {
             ).show()
             return
         }
-        engine(app).speak(text, onDone)
+        val e = engine(app)
+        runCatching {
+            e.speed = (app as com.whispereverywhere.WhisperEverywhereApp).preferencesManager.ttsSpeed
+        }
+        e.speak(text, onDone)
     }
 
     fun stop() {

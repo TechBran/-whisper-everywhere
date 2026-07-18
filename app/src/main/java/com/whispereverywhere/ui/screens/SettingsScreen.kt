@@ -27,6 +27,7 @@ import com.whispereverywhere.ui.theme.*
 import com.whispereverywhere.util.formatBytes
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -50,6 +51,15 @@ fun SettingsScreen(
     // returning from the model-onboarding flow.
     var modelRefreshKey by remember { mutableStateOf(0) }
     var showDeleteModelDialog by remember { mutableStateOf(false) }
+
+    // Read aloud (Track F)
+    val ttsScope = rememberCoroutineScope()
+    var ttsRefreshKey by remember { mutableStateOf(0) }
+    val ttsManager = remember { com.whispereverywhere.tts.TtsModelManager(context) }
+    val ttsInstalled = remember(ttsRefreshKey) { ttsManager.isInstalled() }
+    var ttsDownloadStatus by remember { mutableStateOf<String?>(null) }
+    var ttsSpeedState by remember { mutableStateOf(app.preferencesManager.ttsSpeed) }
+    var showDeleteVoiceDialog by remember { mutableStateOf(false) }
 
     val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
 
@@ -167,6 +177,77 @@ fun SettingsScreen(
                             )
                         }
                     )
+                }
+            }
+
+            // Read aloud (Track F): on-device Kokoro TTS
+            SettingsSection(title = "Read aloud") {
+                when {
+                    ttsInstalled -> {
+                        SettingsItem(
+                            icon = Icons.Filled.RecordVoiceOver,
+                            title = "Kokoro voice — installed",
+                            subtitle = "Highlight text anywhere, then tap the speaker bubble " +
+                                "or use \"Speak\" in the text-selection menu. Fully on-device.",
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Speed,
+                            title = "Speech rate",
+                            subtitle = "${ttsSpeedState}x — tap to change",
+                            onClick = {
+                                val speeds = listOf(0.8f, 1.0f, 1.25f, 1.5f)
+                                val next = speeds[(speeds.indexOf(ttsSpeedState) + 1)
+                                    .mod(speeds.size)]
+                                ttsSpeedState = next
+                                app.preferencesManager.ttsSpeed = next
+                            },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Delete,
+                            title = "Delete the voice",
+                            subtitle = "Frees ~410 MB — re-download any time",
+                            onClick = { showDeleteVoiceDialog = true },
+                        )
+                    }
+                    ttsDownloadStatus != null -> {
+                        SettingsItem(
+                            icon = Icons.Filled.CloudDownload,
+                            title = "Downloading voice…",
+                            subtitle = ttsDownloadStatus ?: "",
+                        )
+                    }
+                    else -> {
+                        SettingsItem(
+                            icon = Icons.Filled.CloudDownload,
+                            title = "Download the read-aloud voice",
+                            subtitle = "Kokoro (365 MB download): speaks highlighted text " +
+                                "aloud, entirely on-device",
+                            onClick = {
+                                ttsDownloadStatus = "Starting…"
+                                ttsScope.launch {
+                                    runCatching {
+                                        ttsManager.download(
+                                            onProgress = { soFar, total ->
+                                                ttsDownloadStatus =
+                                                    "${soFar / 1_000_000} / ${total / 1_000_000} MB"
+                                            },
+                                            onExtracting = {
+                                                ttsDownloadStatus = "Verifying and unpacking…"
+                                            },
+                                        )
+                                    }.onFailure {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            it.message ?: "Voice download failed",
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                    ttsDownloadStatus = null
+                                    ttsRefreshKey++
+                                }
+                            },
+                        )
+                    }
                 }
             }
 
@@ -385,6 +466,35 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteModelDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Delete-voice confirmation dialog (Track F)
+    if (showDeleteVoiceDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteVoiceDialog = false },
+            icon = { Icon(Icons.Filled.DeleteOutline, contentDescription = null) },
+            title = { Text("Delete the read-aloud voice?", fontWeight = FontWeight.Bold) },
+            text = { Text("Frees ~410 MB. Highlighted text can't be spoken until you download it again.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        ttsManager.delete()
+                        ttsRefreshKey++
+                        showDeleteVoiceDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteVoiceDialog = false }) {
                     Text("Cancel")
                 }
             }

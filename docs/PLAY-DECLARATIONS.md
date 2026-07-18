@@ -16,13 +16,16 @@ must be kept true.
 
   > Whisper Everywhere transcribes the user's speech entirely on-device and types the result
   > into the text field the user is dictating into. The AccessibilityService API is used for
-  > exactly two things: (1) detecting that an editable text field is focused so the floating
-  > microphone bubble can appear, and (2) inserting the transcribed text into that field
-  > (ACTION_SET_TEXT / clipboard paste). The service reads only the focused input node's
-  > text/selection state to place the cursor correctly. No screen content is collected,
-  > logged, stored, or transmitted; the app has no analytics and no server — audio and text
-  > never leave the device. A prominent disclosure with explicit consent is shown in-app
-  > before the user is directed to enable the service.
+  > exactly three things: (1) detecting that an editable text field is focused so the floating
+  > microphone bubble can appear, (2) inserting the transcribed text into that field
+  > (ACTION_SET_TEXT / clipboard paste), and (3) reading the text the user has highlighted so
+  > that, ONLY when the user taps the speaker bubble, it can be spoken aloud by the on-device
+  > voice (user-initiated read-aloud; the app never acts autonomously). The service reads only
+  > the focused input node's text/selection state. No screen content is collected, logged,
+  > stored, or transmitted; the app has no analytics and no server — audio and text never
+  > leave the device. A prominent disclosure with explicit consent is shown in-app before the
+  > user is directed to enable the service. (A permissionless ACTION_PROCESS_TEXT "Speak"
+  > toolbar entry provides the same read-aloud without accessibility involvement.)
 
 - Core functionality justification: text injection IS the product (system-wide voice typing);
   no narrower API can insert text into other apps' fields without replacing the user's IME.

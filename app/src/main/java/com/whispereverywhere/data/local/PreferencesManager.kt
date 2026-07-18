@@ -166,6 +166,13 @@ class PreferencesManager(private val context: Context) {
             prefs.edit().putString(KEY_SELECTED_MODEL_ID, value).apply()
         }
 
+    // Read-aloud speech rate (Track F); 1.0 = the voice's natural pace.
+    var ttsSpeed: Float
+        get() = prefs.getFloat(KEY_TTS_SPEED, 1.0f)
+        set(value) {
+            prefs.edit().putFloat(KEY_TTS_SPEED, value).apply()
+        }
+
     companion object {
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
@@ -178,6 +185,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_SELECTED_MODEL_ID = "selected_model_id"
         private const val KEY_SELECTED_LANGUAGE = "selected_language"
         private const val KEY_OVERLAY_PINNED = "overlay_pinned"
+        private const val KEY_TTS_SPEED = "tts_speed"
 
         // Whisper API supported languages with display names
         // See: https://platform.openai.com/docs/guides/speech-to-text/supported-languages

@@ -295,9 +295,11 @@ fun HomeScreen(
                 Column {
                     Text(
                         "Whisper Everywhere uses Android's Accessibility Service to insert your " +
-                            "transcribed speech into the text field you are typing in. It reads only " +
-                            "the focused input field so it can place text there — it does not collect, " +
-                            "store, or share the contents of your screen, and no data ever leaves your device.",
+                            "transcribed speech into the text field you are typing in, and to read " +
+                            "text you highlight aloud when you tap the speaker bubble. It reads only " +
+                            "the focused input field and your highlighted selection — it does not " +
+                            "collect, store, or share the contents of your screen, and no data ever " +
+                            "leaves your device.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
