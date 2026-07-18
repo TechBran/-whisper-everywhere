@@ -12,7 +12,7 @@
 | C | Production leftovers (injection binding, Play declarations, full log strip, toolchain, CI) | **SHIPPED 2026-07-17** |
 | D | GPU polish (multilingual model on OpenCL retest; kernel-cache the first-load pause) | **SHIPPED 2026-07-17** (multilingual→CPU gate; prewarm kills the first-load pause) |
 | E | Housekeeping (fork whisper.cpp under TechBran for a cloneable submodule; optional upstream PR of the ggml-opencl lazy-init fix) | **DONE 2026-07-17** (fork live; upstream PR awaits user go-ahead) |
-| F | Read-aloud TTS (Kokoro-82M on-device via sherpa-onnx; highlight → speaker bubble) | researched 2026-07-18 — awaiting go/spec |
+| F | Read-aloud TTS (Kokoro-82M on-device via sherpa-onnx; highlight → speaker bubble) | **BUILT 2026-07-18** (3.0.0; all 7 plan tasks done, Opus final review fixed-first; awaiting user validation) |
 
 ## Shipped (2026-07-17, branch `feature/on-device-whisper`)
 
