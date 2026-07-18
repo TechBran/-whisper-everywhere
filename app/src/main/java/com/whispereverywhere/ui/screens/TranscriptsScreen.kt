@@ -98,7 +98,13 @@ fun TranscriptsScreen(onNavigateBack: () -> Unit) {
     }
 
     selected?.let { entry ->
-        val fullText = remember(entry) { runCatching { store.read(entry) }.getOrDefault("") }
+        // Read off the main thread: a long media-transcription session can hold a LOT of text,
+        // and a synchronous file read here would jank the dialog-open animation.
+        val fullText by produceState(initialValue = "", key1 = entry) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { store.read(entry) }.getOrDefault("")
+            }
+        }
         AlertDialog(
             onDismissRequest = { selected = null },
             title = { Text(DateFormat.getDateTimeInstance().format(Date(entry.startedAtMs))) },
