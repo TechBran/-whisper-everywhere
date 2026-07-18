@@ -264,9 +264,14 @@ class WhisperAccessibilityService : AccessibilityService() {
      * segment's transcription completes.
      */
     private fun beginInjectionSessionInternal() {
+        // Main-thread only (all begin/resolve/end callers run on the service main thread).
         val target = findFocusedEditText() ?: lastFocusedEditText
         sessionTargetEditText = target
-        sessionTargetPackage = target?.packageName?.toString() ?: currentPackage
+        // Package pinned only WITH a node: no field at record start means no session — delivery
+        // classifies by the foreground app, exactly as before this feature existed.
+        sessionTargetPackage = if (target != null) {
+            target.packageName?.toString() ?: currentPackage
+        } else null
     }
 
     private fun endInjectionSessionInternal() {
@@ -284,7 +289,10 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (session != null) {
             val alive = try { session.refresh() } catch (e: Exception) { false }
             if (alive) return session
+            // Node died: drop the WHOLE session (node AND package) so strategy classification
+            // follows the fallback target's app, not the dead session's.
             sessionTargetEditText = null
+            sessionTargetPackage = null
         }
         return findFocusedEditText() ?: lastFocusedEditText
     }
@@ -512,6 +520,10 @@ class WhisperAccessibilityService : AccessibilityService() {
      * Inject text into the currently focused text field
      */
     fun injectTextToFocusedField(text: String): Boolean {
+        // Resolve FIRST: a dead session node clears the session (node AND package) so the
+        // strategy checks below classify by the live target, not the dead session's app.
+        val resolvedTarget = resolveInjectionTarget()
+
         // For document apps, always use clipboard + paste approach
         if (injectionTargetIsDocumentApp()) {
             return injectViaClipboardForDocumentApp(text)
@@ -522,7 +534,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             return injectViaClipboardPreservingContent(text)
         }
 
-        val targetNode = resolveInjectionTarget()
+        val targetNode = resolvedTarget
 
         if (targetNode == null || !targetNode.refresh()) {
             return injectViaClipboard(text)
@@ -647,7 +659,9 @@ class WhisperAccessibilityService : AccessibilityService() {
      * Check if current app is specifically Facebook (not just any social media)
      */
     private fun isFacebookApp(): Boolean {
-        val pkg = rootInActiveWindow?.packageName?.toString() ?: currentPackage ?: return false
+        // Session package first: the gesture-tap path must key off the app being injected INTO.
+        val pkg = sessionTargetPackage
+            ?: rootInActiveWindow?.packageName?.toString() ?: currentPackage ?: return false
         return pkg.contains("facebook", ignoreCase = true) ||
                pkg == "com.facebook.katana" ||
                pkg == "com.facebook.lite" ||
@@ -865,6 +879,10 @@ class WhisperAccessibilityService : AccessibilityService() {
      * Inject text with detailed result for better user feedback
      */
     fun injectTextWithResultInternal(text: String): InjectionResult {
+        // Resolve FIRST: a dead session node clears the session (node AND package) so the
+        // strategy checks below classify by the live target, not the dead session's app.
+        val resolvedTarget = resolveInjectionTarget()
+
         // For document apps, use clipboard approach
         if (injectionTargetIsDocumentApp()) {
             return try {
@@ -911,7 +929,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         // Standard apps - try direct injection
-        val targetNode = resolveInjectionTarget()
+        val targetNode = resolvedTarget
 
         if (targetNode == null || !targetNode.refresh()) {
             // No target - try clipboard
