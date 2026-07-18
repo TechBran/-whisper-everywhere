@@ -49,11 +49,14 @@
 -keep class com.whispereverywhere.whisper.WhisperNative { *; }
 
 # --- Release log hygiene ---
-# Strip verbose/debug logging from release builds entirely. Info/warn/error (incl. the WE-DIAG
-# operational logs) are KEPT for now because on-device release-build diagnosis is active during
-# development; before Play submission, extend this list with i/w/e for fully silent releases.
+# Strip ALL android.util.Log calls from release builds (incl. the WE-DIAG operational logs) —
+# production posture for Play. Diagnosis happens on debug builds, where nothing is stripped.
+# Native (__android_log_print) logging in whisper_jni is unaffected by R8 and stays available.
 # (Transcript CONTENT is never logged at any level — removed at the call sites.)
 -assumenosideeffects class android.util.Log {
     public static int v(...);
     public static int d(...);
+    public static int i(...);
+    public static int w(...);
+    public static int e(...);
 }

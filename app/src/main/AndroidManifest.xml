@@ -52,7 +52,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.WhisperEverywhere"
-        tools:targetApi="34">
+        tools:targetApi="35">
 
         <!-- Grant access to the DEVICE's vendor OpenCL loader (Adreno GPU path). The library is
              deliberately NOT bundled in the APK: the vendor copy lives in the vendor linker
