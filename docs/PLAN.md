@@ -40,6 +40,14 @@ speech, zero mic/speaker feedback. Mic remains the source for normal dictation.
 2. **Graceful mid-session switch is required**: a natural flow is mic-button FIRST, then
    pressing play on the video. Recording must hand over from mic → stream seamlessly.
 
+**User decisions (2026-07-18, from the complete test):**
+3. **A session's routing is frozen at the tap** (`sessionContext` + injection session): the
+   whole transcript goes where the session was aimed when it started; mid-session clicks can
+   never split it across destinations (2.9.2).
+4. **Media capture and field dictation are separate sessions**: focusing a text field while
+   the PLAYBACK source records auto-FINISHES the media session (one body → clipboard +
+   history); dictation into the field starts fresh on the next bubble tap (2.9.3).
+
 **Mechanism (research: workflow wf_8025d094):**
 - `AudioPlaybackCapture` (Android 10+): `AudioRecord` built from
   `AudioPlaybackCaptureConfiguration.Builder(mediaProjection).addMatchingUsage(USAGE_MEDIA)`.
