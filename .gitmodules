@@ -1,3 +1,4 @@
 [submodule "app/src/main/cpp/whisper.cpp"]
 	path = app/src/main/cpp/whisper.cpp
-	url = https://github.com/ggerganov/whisper.cpp
+	url = https://github.com/TechBran/whisper.cpp
+	branch = we/v1.9.1-android
