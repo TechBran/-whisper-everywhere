@@ -44,6 +44,7 @@ fun SettingsScreen(
 
     val vibrationEnabled by app.preferencesManager.vibrationEnabled.collectAsState()
     val bubbleAlwaysOn by app.preferencesManager.bubbleAlwaysOn.collectAsState()
+    val preferDeviceAudio by app.preferencesManager.preferDeviceAudio.collectAsState()
 
     // Bump to force a re-read of installed-model / disk-usage after a delete or when
     // returning from the model-onboarding flow.
@@ -182,6 +183,15 @@ fun SettingsScreen(
                             com.whispereverywhere.service.FloatingBubbleService.start(context)
                         }
                     }
+                )
+                SettingsSwitchItem(
+                    icon = Icons.Filled.MusicNote,
+                    title = "Capture device audio for media",
+                    subtitle = "While a video or podcast plays, transcribe its audio stream " +
+                        "directly (mic off — no room noise). Asks for screen-capture " +
+                        "permission the first time",
+                    checked = preferDeviceAudio,
+                    onCheckedChange = { app.preferencesManager.setPreferDeviceAudio(it) }
                 )
                 SettingsSwitchItem(
                     icon = Icons.Filled.Vibration,

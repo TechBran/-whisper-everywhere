@@ -849,7 +849,9 @@ class FloatingBubbleService : Service(),
 
     // ========== Audio source state machine (mic <-> device-audio playback capture) ==========
 
-    /** Shared downstream for BOTH audio sources (mic and playback capture). */
+    /** Shared downstream for BOTH audio sources (mic and playback capture).
+     *  Runs on the capture/recorder THREAD: the View calls below are thread-safe field writes
+     *  only (redraw is ticker-driven on main) — do not add invalidate() here. */
     private fun onAudioChunk(chunk: ByteArray, amp: Int) {
         val engine = transcriptionEngine ?: return
         engine.sendAudio(chunk)
@@ -896,6 +898,10 @@ class FloatingBubbleService : Service(),
             com.whispereverywhere.audio.SourceDecision.RequestConsent -> {
                 // Ask once; capture begins when consent arrives (projectionListener). The mic
                 // is NOT opened meanwhile — media capture must never mix room audio.
+                // KNOWN GAP (accepted): until the user answers (typically 1-3s), the session
+                // shows RECORDING with no live source; grant starts capture, deny/back falls
+                // back to mic. NOTE: MediaProjectionGate.listener is a single process-global
+                // slot — safe because only one FloatingBubbleService instance is ever live.
                 com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
                 com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this)
                 showToast("Allow screen capture to transcribe device audio")
