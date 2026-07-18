@@ -10,8 +10,8 @@
 | A | **Device-audio capture** (media transcription without the mic) + transcript history | **SHIPPED 2026-07-17** (user-validated on device: clean YouTube/voice separation) |
 | B | Runs-on-every-phone (dynamic GGML backends; non-OpenCL devices) | **SHIPPED 2026-07-17** (2.8.1; DT_NEEDED chain verified clean; SONAME module loading; user-confirmed) |
 | C | Production leftovers (injection binding, Play declarations, full log strip, toolchain, CI) | **SHIPPED 2026-07-17** |
-| D | GPU polish (multilingual model on OpenCL retest; kernel-cache the first-load pause) | queued |
-| E | Housekeeping (fork whisper.cpp under TechBran for a cloneable submodule; optional upstream PR of the ggml-opencl lazy-init fix) | queued |
+| D | GPU polish (multilingual model on OpenCL retest; kernel-cache the first-load pause) | **SHIPPED 2026-07-17** (multilingual→CPU gate; prewarm kills the first-load pause) |
+| E | Housekeeping (fork whisper.cpp under TechBran for a cloneable submodule; optional upstream PR of the ggml-opencl lazy-init fix) | **DONE 2026-07-17** (fork live; upstream PR awaits user go-ahead) |
 
 ## Shipped (2026-07-17, branch `feature/on-device-whisper`)
 
@@ -115,15 +115,27 @@ only (dlopen-failure path); a Pixel/Mali test device would fully close it.
   deferred until the Track E fork makes the submodule cloneable); build-dir relocation made
   dev-machine-conditional; gradlew exec bit set.
 
-## Track D — GPU polish (queued)
+## Track D — GPU polish (SHIPPED 2026-07-17)
 
-Multilingual model (odd 51865 vocab) on Adreno OpenCL — upstream #3708 M%4 assert risk:
-test, then keep GPU or gate that model to CPU. Kernel-binary caching to cut the ~7 s
-first-load compile. Optional: whisper-bench numbers per model tier for the README.
+**Multilingual retest (instrumented A/B on the Fold 6, smoke test + `-e useGpu`):** the #3708
+risk is REAL but silent — no assert fires. `ggml-small-q5_1` (vocab 51865) decodes to garbage
+tokens on GPU; `ggml-large-v3-turbo-q5_0` (vocab 51866) returns empty; CPU controls transcribe
+the same jfk.wav correctly. Multilingual tiny passes on GPU (dims under the Adreno-kernel
+threshold) but no catalog tier is that small. **Fix: GpuPolicy allows GPU only for `.en`
+models** (vocab 51864, %4==0) — a static gate, because crash sentinels cannot catch silent
+corruption. Both multilingual tiers now take the dotprod/i8mm CPU path.
 
-## Track E — Housekeeping (queued)
+**First-load pause:** v1.9.1's ggml-opencl has no kernel-binary cache (would be heavy vendored
+surgery), so instead `LocalWhisperEngine.prewarm()` loads the context at bubble-service start
+(+1.5 s, on the engine's own executor) — the first recording no longer pays the model load +
+~7-16 s kernel compile inside CONNECTING. Revisit real binary caching only if upstream grows it.
 
-Fork ggerganov/whisper.cpp → TechBran/whisper.cpp, push `we/v1.9.1-android` (makes the
-public branch cloneable; currently the submodule pointer references a local-only commit).
-Optional upstream PR: ggml-opencl lazy-init fix (needs user go-ahead; public act).
-OneDrive: consider moving the repo out of the synced folder entirely.
+Also: debug builds sign with the release key when `keystore.properties` exists, so dev-machine
+debug/test APKs install over the release app without wiping the downloaded model.
+
+## Track E — Housekeeping (DONE 2026-07-17)
+
+Fork live: **TechBran/whisper.cpp**, branch `we/v1.9.1-android` (v1.9.1 + ggml-opencl
+lazy-init fix) pushed; `.gitmodules` points at the fork (+ branch), so the repo is cloneable
+end-to-end. CI's first run is green. Remaining (user decisions): upstream PR of the lazy-init
+fix (public act — needs go-ahead); moving the repo out of OneDrive.

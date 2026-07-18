@@ -50,6 +50,20 @@ object GpuPolicy {
     /** Adreno 7xx / 8xx / X-series (X1E, X2 …) — the officially supported set. */
     private val ALLOWED_RENDERERS = Regex("""Adreno \(TM\) (7\d\d|8\d\d|X\d)""")
 
+    /**
+     * GPU is allowed ONLY for English (.en) models. Multilingual models are EMPIRICALLY broken
+     * on the Adreno OpenCL backend WITHOUT crashing — proven on the Fold 6 (2026-07-17) via
+     * instrumented A/B against CPU controls on identical audio:
+     *  - ggml-small-q5_1 (vocab 51865, %4==1): GPU decodes to garbage tokens
+     *  - ggml-large-v3-turbo-q5_0 (vocab 51866, %4==2): GPU returns empty transcriptions
+     * CPU transcribes both correctly. The .en vocab (51864) is %4==0, dodging the upstream
+     * whisper.cpp #3708 N%4 Adreno-matmul family; .en tiers have extensive on-device
+     * validation. (Multilingual tiny passes on GPU — its dims stay under the Adreno-optimized
+     * kernel threshold — but no catalog tier is that small, so the gate keys on scope.)
+     * Crash sentinels can never catch silent corruption, hence this static gate.
+     */
+    private fun isGpuSafeModel(modelKey: String): Boolean = modelKey.contains(".en")
+
     /** True once load() ran with GPU enabled in this process (compute validation still pending). */
     @Volatile private var gpuActiveInProcess = false
 
@@ -66,6 +80,10 @@ object GpuPolicy {
         val vc = BuildConfig.VERSION_CODE
         val m = modelKey(modelPath)
 
+        if (!isGpuSafeModel(m)) {
+            Log.i(TAG, "GpuPolicy: $m is multilingual — silent GPU corruption on Adreno -> CPU")
+            return false
+        }
         if (p.getBoolean(keyBlocked(vc, m), false)) {
             Log.i(TAG, "GpuPolicy: blocked for v$vc/$m (previous GPU crash) -> CPU")
             return false
