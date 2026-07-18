@@ -203,6 +203,9 @@ dependencies {
     // JSON Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
+    // tar.bz2 extraction for the TTS voice archive (Track F)
+    implementation("org.apache.commons:commons-compress:1.27.1")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
