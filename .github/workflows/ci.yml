@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [feature/on-device-whisper, main, master]
+  pull_request:
+
+jobs:
+  jvm:
+    name: Kotlin compile + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      # Submodules deliberately NOT checked out: the vendored whisper.cpp pins a commit on
+      # we/v1.9.1-android, which is not published upstream (Track E forks it under TechBran).
+      # The JVM side neither compiles nor tests native code, so CI stays green without it.
+      # After Track E lands, a second job can assemble the APK (needs the submodule plus the
+      # OpenCL headers/lib that currently live only on the dev machine).
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile Kotlin + run unit tests
+        run: ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --console=plain
+
+      - name: Publish unit-test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/

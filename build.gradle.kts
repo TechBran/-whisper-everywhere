@@ -10,10 +10,13 @@ plugins {
 // OneDrive grabs files under app/build mid-build and causes "Unable to delete
 // directory ... zip-cache" / file-lock failures. Keeping build artifacts local
 // (and out of sync) fixes that; source is versioned via git/GitHub instead.
-allprojects {
-    layout.buildDirectory.set(
-        file("C:/Users/bastr/.androidbuild/WhisperEverywhere/${project.name}")
-    )
+// Applied only where that local root exists (the OneDrive dev machine) — CI and
+// other checkouts use Gradle's default build/ dirs.
+val localBuildRoot = File("C:/Users/bastr/.androidbuild/WhisperEverywhere")
+if (localBuildRoot.isDirectory) {
+    allprojects {
+        layout.buildDirectory.set(File(localBuildRoot, project.name))
+    }
 }
 
 tasks.register("clean", Delete::class) {
