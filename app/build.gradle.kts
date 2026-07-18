@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 65
-        versionName = "3.0.9"  // ribbon-lockstep blob: the aurora silhouette dictates the rim's spikes and mountains
+        versionCode = 66
+        versionName = "3.1.0"  // blob truly morphs (36 pts, direct headroom); fieldless sessions -> preview; one clipboard save
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

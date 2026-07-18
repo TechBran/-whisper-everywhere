@@ -41,7 +41,9 @@ class BlobView @JvmOverloads constructor(
     private val path = Path()
 
     private companion object {
-        const val POINTS = 18
+        // 36 points ≈ 11 along each straight edge: enough resolution for the ribbon's
+        // mountains to survive the midpoint smoothing (18 flattened them into a pill).
+        const val POINTS = 36
         /** Ripple headroom in dp: the body inset from the view edge that waves may occupy. */
         const val HEADROOM_DP = 12f
         /** RMS (0..32767) that maps to a full-strength ripple. */
@@ -238,15 +240,20 @@ class BlobView @JvmOverloads constructor(
             // Ribbon lockstep (user design 2026-07-18): while the aurora is live, its published
             // silhouette DICTATES the skin — this point samples the crest/trough profile at its
             // own horizontal station, blended by which way it faces (top edge follows crests,
-            // bottom follows troughs, caps take both). The traveling lobes stay underneath at
-            // 30% so the body keeps its liquid feel between syllables.
-            val shaped = if (mode == Mode.RECORDING && RibbonProfile.fresh()) {
+            // bottom follows troughs, caps take both). The mapping is DIRECT onto the full
+            // ripple headroom — no envelope/band damping (the silhouette already carries the
+            // loudness) — because the damped version left the pill visibly rigid while the
+            // ribbons spiked (user photo 2026-07-18). A thin traveling-lobe underlayer keeps
+            // the skin liquid between syllables; the budget sums to exactly the headroom.
+            val ribbonLive = mode == Mode.RECORDING && RibbonProfile.fresh()
+            val wobble = if (ribbonLive) {
                 val vertMix = ny * 0.5f + 0.5f // -1 (top) -> 0 ... +1 (bottom) -> 1
                 val rib = RibbonProfile.sample(RibbonProfile.top, hx) * (1f - vertMix) +
                     RibbonProfile.sample(RibbonProfile.bottom, hx) * vertMix
-                0.30f * osc + 0.70f * rib
-            } else osc
-            val wobble = baseSwell + rippleAmp * mix * shaped + idleBreath
+                baseSwell + headroom * 0.84f * (0.82f * rib + 0.18f * osc) + idleBreath
+            } else {
+                baseSwell + rippleAmp * mix * osc + idleBreath
+            }
 
             // Direction variety: the push wanders off the pure normal by up to ~20 deg on a slow
             // cycle — the middle heaves straight north-south sometimes, diagonally other times.

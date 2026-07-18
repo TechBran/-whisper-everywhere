@@ -160,6 +160,10 @@ class FloatingBubbleService : Service(),
     // where the user aimed it; history accumulates via sessionTranscript in both modes.
     private var sessionContext: BubbleContext = BubbleContext.NONE
 
+    // TEXT_FIELD session whose delivery degraded to clipboard (document apps, dead targets):
+    // per-segment toasts are suppressed and the FULL transcript is copied once at finalize.
+    @Volatile private var sessionClipboardFallback = false
+
     // Bounded-memory sink for non-text-field sessions (Task 7)
     private var transcriptSink: com.whispereverywhere.transcription.TranscriptSink? = null
 
@@ -1343,6 +1347,16 @@ class FloatingBubbleService : Service(),
         // seconds later and the user may click anywhere in between; the session must not follow.
         // Both released/re-captured per session (injection session in teardownRealtime).
         sessionContext = currentContext
+        // A TEXT_FIELD session must have a LIVE field at the tap (user feedback 2026-07-18:
+        // stale field context sent every utterance to the clipboard separately). No live
+        // field -> this is a preview session: window + ONE clipboard save at the end.
+        if (sessionContext == BubbleContext.TEXT_FIELD &&
+            !WhisperAccessibilityService.hasActiveFocusedField()
+        ) {
+            android.util.Log.i("WE-DIAG", "no live field at tap -> preview session")
+            sessionContext = BubbleContext.NONE
+        }
+        sessionClipboardFallback = false
         WhisperAccessibilityService.beginInjectionSession()
         android.util.Log.i("WE-DIAG", "startRecording: sessionContext=$sessionContext")
 
@@ -1542,6 +1556,14 @@ class FloatingBubbleService : Service(),
                             showToast("Transcription copied to clipboard")
                         }
                     }
+                } else if (sessionClipboardFallback && sessionTranscript.isNotBlank()) {
+                    // Field session that degraded to clipboard delivery: replace the per-segment
+                    // scraps with ONE copy of the whole transcript (user decision 2026-07-18).
+                    val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clip.setPrimaryClip(
+                        android.content.ClipData.newPlainText("Transcript", sessionTranscript.toString()),
+                    )
+                    showToast("Full transcription copied to clipboard")
                 }
 
                 if (!sessionProducedText) {
@@ -1596,13 +1618,19 @@ class FloatingBubbleService : Service(),
                         // Text was successfully injected - no toast needed
                     }
                     WhisperAccessibilityService.InjectionResult.CLIPBOARD_ONLY -> {
-                        // Text is in clipboard but couldn't be pasted automatically
-                        showToast("Text copied - long press to paste")
+                        // Delivery degraded to clipboard: suppress the per-utterance toast
+                        // spam — finalize copies the WHOLE transcript once (user feedback
+                        // 2026-07-18). The first occurrence gets one heads-up toast.
+                        if (!sessionClipboardFallback) {
+                            sessionClipboardFallback = true
+                            showToast("Can't type here — full transcript will be copied when you stop")
+                        }
                     }
                     WhisperAccessibilityService.InjectionResult.FAILED -> {
-                        // Complete failure - try one more time to copy
-                        copyToClipboard(text)
-                        showToast("Text copied to clipboard")
+                        if (!sessionClipboardFallback) {
+                            sessionClipboardFallback = true
+                            showToast("Can't type here — full transcript will be copied when you stop")
+                        }
                     }
                 }
             }
