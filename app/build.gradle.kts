@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 58
-        versionName = "3.0.2"  // R8 keep rules fix release-only TTS crash; clear-debounce; 100k whole-page reads
+        versionCode = 59
+        versionName = "3.0.3"  // speaking pill: live waveform, pause/stop controls, clipboard chip, morph auto-revert
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

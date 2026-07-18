@@ -116,6 +116,30 @@
                 android:textStyle="bold"
                 android:visibility="gone" />
 
+            <!-- Read-clipboard chip: idle-only; tap = speak whatever was last copied. The
+                 universal whole-page path (Chrome: Select all -> Copy -> tap). -->
+            <ImageView
+                android:id="@+id/speak_clip_icon"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_gravity="bottom|start"
+                android:layout_margin="3dp"
+                android:src="@drawable/ic_speaker"
+                android:alpha="0.55"
+                android:visibility="gone"
+                android:contentDescription="Read clipboard aloud" />
+
+            <!-- Read-aloud stop control: visible only while speech plays (Track F). -->
+            <ImageView
+                android:id="@+id/speech_stop_icon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="4dp"
+                android:src="@drawable/ic_stop_speech"
+                android:visibility="gone"
+                android:contentDescription="Stop reading" />
+
             <!-- Pin indicator: small pin icon in top-right corner of the bubble.
                  Tapping it toggles pinned state; alpha reflects pinned/unpinned. -->
             <ImageView

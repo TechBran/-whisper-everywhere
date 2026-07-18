@@ -52,10 +52,27 @@ class TtsEngine(
     @Volatile private var focusRequest: AudioFocusRequest? = null
     private var unloadRunnable: Runnable? = null
 
-    /** Kokoro speaker id (multi-lang v1_1 has 103; 0 is a solid US-English default). */
+    /** Kokoro speaker id (multi-lang v1_0, see TtsVoices; default af_heart is set by callers). */
     @Volatile var speakerId: Int = 0
 
     @Volatile var speed: Float = 1.0f
+
+    /**
+     * Per-slice visual tap: (pcm16 bytes, rms amplitude 0..32767) for every ~100 ms slice as
+     * it is written to the AudioTrack — drives the bubble's waveform/aurora exactly like mic
+     * chunks do. Called on the synthesis thread; keep it to thread-safe field writes.
+     */
+    @Volatile var onPcmChunk: ((ByteArray, Int) -> Unit)? = null
+
+    /** True while playback is paused mid-utterance (synthesis holds between slices). */
+    @Volatile var paused: Boolean = false
+        private set
+
+    /** Toggle pause/resume; returns the NEW paused state. No-op when not speaking. */
+    fun togglePause(): Boolean {
+        paused = !paused && speaking
+        return paused
+    }
 
     fun isReady(): Boolean = tts != null
 
@@ -85,6 +102,7 @@ class TtsEngine(
         // a shared flag, so an old task can never be "un-cancelled" by a new request.
         val myGen = generation.incrementAndGet()
         cancelIdleUnload()
+        paused = false
         speaking = true
         fun cancelled() = generation.get() != myGen
         executor.execute {
@@ -121,7 +139,30 @@ class TtsEngine(
                         var off = 0
                         while (off < pcm.size) {
                             if (cancelled()) return 0
-                            val n = localTrack.write(pcm, off, minOf(slice, pcm.size - off))
+                            // Pause: hold between slices ON THIS THREAD (track stays owned
+                            // here); synthesis of later sentences waits with us.
+                            if (paused) {
+                                runCatching { localTrack.pause() }
+                                while (paused && !cancelled()) {
+                                    try { Thread.sleep(50) } catch (_: InterruptedException) {}
+                                }
+                                if (cancelled()) return 0
+                                runCatching { localTrack.play() }
+                            }
+                            val len = minOf(slice, pcm.size - off)
+                            onPcmChunk?.let { tap ->
+                                var sum = 0.0
+                                val bytes = ByteArray(len * 2)
+                                for (i in 0 until len) {
+                                    val s = pcm[off + i]
+                                    sum += (s.toInt() * s.toInt()).toDouble()
+                                    bytes[i * 2] = (s.toInt() and 0xFF).toByte()
+                                    bytes[i * 2 + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
+                                }
+                                val rms = kotlin.math.sqrt(sum / len).toInt().coerceIn(0, 32767)
+                                tap(bytes, rms)
+                            }
+                            val n = localTrack.write(pcm, off, len)
                             if (n < 0) return 0
                             off += n
                         }
@@ -161,6 +202,7 @@ class TtsEngine(
     fun stop() {
         generation.incrementAndGet()
         speaking = false
+        paused = false // a paused task must wake to observe the cancellation
         // The superseded task won't schedule the unload (it lost ownership) — do it here so a
         // stopped engine still frees its ~0.8 GB context after the idle window.
         scheduleIdleUnload()
