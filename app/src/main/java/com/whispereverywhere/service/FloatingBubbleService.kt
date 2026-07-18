@@ -259,8 +259,13 @@ class FloatingBubbleService : Service(),
     override fun onTextSelected(text: String) {
         serviceScope.launch(Dispatchers.Main) {
             // Never morph mid-session; selection during capture follows the session rules.
+            val installed = com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)
+            android.util.Log.i(
+                "WE-TTS",
+                "morph check: state=$currentState speaking=$isSpeakingNow installed=$installed",
+            )
             if (currentState != BubbleState.IDLE || isSpeakingNow) return@launch
-            if (!com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)) return@launch
+            if (!installed) return@launch
             speakModeText = text
             bubbleIcon.setImageResource(R.drawable.ic_speaker)
             // Hide the ~2 s model load inside the user's think-time between select and tap.

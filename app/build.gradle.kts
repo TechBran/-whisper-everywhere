@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 56
-        versionName = "3.0.0"  // the generational release: on-device STT (whisper) + TTS (Kokoro read-aloud)
+        versionCode = 57
+        versionName = "3.0.1"  // selection morph fixed (event indices), v1_0 voice roster + picker
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

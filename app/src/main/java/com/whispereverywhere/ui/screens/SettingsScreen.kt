@@ -59,7 +59,9 @@ fun SettingsScreen(
     val ttsInstalled = remember(ttsRefreshKey) { ttsManager.isInstalled() }
     var ttsDownloadStatus by remember { mutableStateOf<String?>(null) }
     var ttsSpeedState by remember { mutableStateOf(app.preferencesManager.ttsSpeed) }
+    var ttsVoiceIdState by remember { mutableStateOf(app.preferencesManager.ttsVoiceId) }
     var showDeleteVoiceDialog by remember { mutableStateOf(false) }
+    var showVoicePickerDialog by remember { mutableStateOf(false) }
 
     val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
 
@@ -185,10 +187,17 @@ fun SettingsScreen(
                 when {
                     ttsInstalled -> {
                         SettingsItem(
-                            icon = Icons.Filled.RecordVoiceOver,
+                            icon = Icons.Filled.GraphicEq,
                             title = "Kokoro voice — installed",
                             subtitle = "Highlight text anywhere, then tap the speaker bubble " +
                                 "or use \"Speak\" in the text-selection menu. Fully on-device.",
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.RecordVoiceOver,
+                            title = "Voice",
+                            subtitle = com.whispereverywhere.tts.TtsVoices
+                                .byId(ttsVoiceIdState).displayName + " — tap to change",
+                            onClick = { showVoicePickerDialog = true },
                         )
                         SettingsItem(
                             icon = Icons.Filled.Speed,
@@ -469,6 +478,51 @@ fun SettingsScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    // Voice picker (Track F): tap a voice to select it AND hear a short sample in it.
+    if (showVoicePickerDialog) {
+        AlertDialog(
+            onDismissRequest = { showVoicePickerDialog = false },
+            icon = { Icon(Icons.Filled.RecordVoiceOver, contentDescription = null) },
+            title = { Text("Read-aloud voice", fontWeight = FontWeight.Bold) },
+            text = {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.heightIn(max = 420.dp)
+                ) {
+                    items(com.whispereverywhere.tts.TtsVoices.ALL.size) { i ->
+                        val voice = com.whispereverywhere.tts.TtsVoices.ALL[i]
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    ttsVoiceIdState = voice.id
+                                    app.preferencesManager.ttsVoiceId = voice.id
+                                    com.whispereverywhere.tts.TtsController.speakFromTrigger(
+                                        context, "Hi, I'm ${voice.displayName.substringBefore(" —")}. " +
+                                            "This is how I read your text."
+                                    )
+                                }
+                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                        ) {
+                            RadioButton(
+                                selected = voice.id == ttsVoiceIdState,
+                                onClick = null,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(voice.displayName, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    com.whispereverywhere.tts.TtsController.stop()
+                    showVoicePickerDialog = false
+                }) { Text("Done") }
+            },
         )
     }
 

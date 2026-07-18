@@ -196,14 +196,18 @@ class TtsModelManager(private val context: Context) {
     class TtsDownloadException(message: String) : Exception(message)
 
     companion object {
-        const val DIR_NAME = "kokoro-v1_1"
+        // v1_0, deliberately NOT v1_1: v1_1 is the Chinese-focused v1.1-zh export with only
+        // THREE English voices (af_maple/af_sol/bf_vale); v1_0 carries the full classic Kokoro
+        // roster (af_heart, af_bella, am_michael, …53 voices) matching the user's server. The
+        // TtsVoices catalog indexes THIS model's voices.bin order.
+        const val DIR_NAME = "kokoro-v1_0"
         const val MODEL_FILE = "model.onnx"
-        private const val TAR_NAME = "kokoro-multi-lang-v1_1.tar.bz2"
+        private const val TAR_NAME = "kokoro-multi-lang-v1_0.tar.bz2"
         private const val TAR_URL =
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$TAR_NAME"
         private const val TAR_SHA256 =
-            "a3f4c73d043860e3fd2e5b06f36795eb81de0fc8e8de6df703245edddd87dbad"
-        const val TAR_BYTES = 364_816_464L
+            "c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046"
+        const val TAR_BYTES = 349_418_188L
         private const val POLL_INTERVAL_MS = 300L
 
         /** ±5% band, same policy as the whisper downloads. */

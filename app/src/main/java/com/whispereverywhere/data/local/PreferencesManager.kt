@@ -173,6 +173,13 @@ class PreferencesManager(private val context: Context) {
             prefs.edit().putFloat(KEY_TTS_SPEED, value).apply()
         }
 
+    // Read-aloud voice (Track F): kokoro-multi-lang-v1_0 speaker id (see TtsVoices).
+    var ttsVoiceId: Int
+        get() = prefs.getInt(KEY_TTS_VOICE_ID, com.whispereverywhere.tts.TtsVoices.DEFAULT_VOICE_ID)
+        set(value) {
+            prefs.edit().putInt(KEY_TTS_VOICE_ID, value).apply()
+        }
+
     companion object {
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
@@ -186,6 +193,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_SELECTED_LANGUAGE = "selected_language"
         private const val KEY_OVERLAY_PINNED = "overlay_pinned"
         private const val KEY_TTS_SPEED = "tts_speed"
+        private const val KEY_TTS_VOICE_ID = "tts_voice_id"
 
         // Whisper API supported languages with display names
         // See: https://platform.openai.com/docs/guides/speech-to-text/supported-languages
