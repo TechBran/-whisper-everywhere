@@ -346,6 +346,8 @@ class FloatingBubbleService : Service(),
 
     private fun exitSpeakingVisuals() {
         speechStopIcon.visibility = View.GONE
+        processingRing.visibility = View.GONE
+        processingRing.clearAnimation()
         waveformView.stop()
         // The IDLE branch restores icon/width/blob for the current morph state.
         if (currentState == BubbleState.IDLE) updateBubbleState(BubbleState.IDLE)
@@ -368,11 +370,22 @@ class FloatingBubbleService : Service(),
             waveformView.updateAmplitude(amp)
             blobView.updateAmplitude(amp)
         }
+        // "Not frozen, still working": when synthesis ever falls behind playback, the pill
+        // shows the processing ring until audio flows again (user feedback 2026-07-18).
+        engine.onBuffering = { buffering ->
+            serviceScope.launch(Dispatchers.Main) {
+                if (isSpeakingNow) {
+                    processingRing.visibility = if (buffering) View.VISIBLE else View.GONE
+                    if (buffering) startRotationAnimation() else processingRing.clearAnimation()
+                }
+            }
+        }
         enterSpeakingVisuals()
         com.whispereverywhere.tts.TtsController.speakFromTrigger(this, text) {
             // onDone (main thread): tear down the pill; selection may still be live.
             isSpeakingNow = false
             engine.onPcmChunk = null
+            engine.onBuffering = null
             exitSpeakingVisuals()
             if (speakModeText != null) scheduleMorphRevert()
         }
@@ -880,12 +893,21 @@ class FloatingBubbleService : Service(),
         showToast(if (isOverlayPinned) "Bubble locked in place" else "Bubble unlocked")
     }
 
-    /** Lock metaphor (user decision 2026-07-18): closed lock = position locked, open = free. */
+    /**
+     * Lock metaphor (user decisions 2026-07-18): closed RED lock = position locked,
+     * open white/gray lock = free placement.
+     */
     private fun applyPinIndicator() {
         pinIcon.setImageResource(
             if (isOverlayPinned) R.drawable.ic_lock_closed else R.drawable.ic_lock_open,
         )
-        pinIcon.alpha = if (isOverlayPinned) 1.0f else 0.45f
+        if (isOverlayPinned) {
+            pinIcon.setColorFilter(0xFFFF3B30.toInt())
+            pinIcon.alpha = 1.0f
+        } else {
+            pinIcon.clearColorFilter()
+            pinIcon.alpha = 0.6f
+        }
     }
 
     // ========== Drift hardening helpers ==========

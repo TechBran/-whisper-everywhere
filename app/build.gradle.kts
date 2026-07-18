@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 61
-        versionName = "3.0.5"  // satellite lobes: lock extends right, speaker bottom-left, fused with the blob
+        versionCode = 62
+        versionName = "3.0.6"  // gapless TTS (producer/consumer pipeline), buffering ring, red lock, contrast fixes
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

@@ -116,14 +116,17 @@
                 android:textStyle="bold"
                 android:visibility="gone" />
 
-            <!-- Read-aloud stop control: visible only while speech plays (Track F). -->
+            <!-- Read-aloud stop control: visible only while speech plays. Generous padded tap
+                 target (user feedback: the old 20dp corner button was hard to hit). -->
             <ImageView
                 android:id="@+id/speech_stop_icon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_gravity="bottom|end"
-                android:layout_margin="4dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:padding="7dp"
+                android:layout_gravity="end|center_vertical"
+                android:layout_marginEnd="2dp"
                 android:src="@drawable/ic_stop_speech"
+                android:tint="#FF6B62"
                 android:visibility="gone"
                 android:contentDescription="Stop reading" />
 
@@ -166,6 +169,7 @@
                 android:layout_height="16dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_speaker"
+                android:tint="#4FC3F7"
                 android:contentDescription="Read clipboard aloud" />
         </FrameLayout>
     </FrameLayout>

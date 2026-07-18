@@ -60,9 +60,16 @@ class TtsEngine(
     /**
      * Per-slice visual tap: (pcm16 bytes, rms amplitude 0..32767) for every ~100 ms slice as
      * it is written to the AudioTrack — drives the bubble's waveform/aurora exactly like mic
-     * chunks do. Called on the synthesis thread; keep it to thread-safe field writes.
+     * chunks do. Called on the playback thread; keep it to thread-safe field writes.
      */
     @Volatile var onPcmChunk: ((ByteArray, Int) -> Unit)? = null
+
+    /**
+     * Fires true when playback is STALLED waiting for synthesis (mid-utterance buffer
+     * underrun), false when audio flows again — the bubble shows "still working, not frozen"
+     * (user feedback 2026-07-18). Called from the playback thread.
+     */
+    @Volatile var onBuffering: ((Boolean) -> Unit)? = null
 
     /** True while playback is paused mid-utterance (synthesis holds between slices). */
     @Volatile var paused: Boolean = false
@@ -107,7 +114,7 @@ class TtsEngine(
         fun cancelled() = generation.get() != myGen
         executor.execute {
             var myFocus: AudioFocusRequest? = null
-            var at: AudioTrack? = null
+            var playbackThread: Thread? = null
             try {
                 val engine = tts ?: modelManager.installedDir()?.let { d ->
                     buildTts(d).also { tts = it }
@@ -115,9 +122,82 @@ class TtsEngine(
                 if (cancelled()) return@execute
 
                 myFocus = requestFocus()
-                val localTrack = newTrack(engine.sampleRate())
-                at = localTrack
-                var started = false
+
+                // Producer/consumer split (user-reported sentence gaps 2026-07-18): synthesis
+                // used to block on each sentence's PLAYBACK before generating the next, costing
+                // a synthesis-length pause at every boundary. Now sentences queue as fast as the
+                // model produces them (RTF ~0.58 = ahead of real time after sentence one) while
+                // a dedicated playback thread drains continuously — gapless. The bounded queue
+                // gives backpressure (~8 sentences ≈ a few MB), and the playback thread is the
+                // AudioTrack's SOLE owner (C2 preserved).
+                val queue = java.util.concurrent.LinkedBlockingQueue<ShortArray>(8)
+                val sentinel = ShortArray(0)
+
+                playbackThread = Thread({
+                    val localTrack = newTrack(engine.sampleRate())
+                    var started = false
+                    var stalled = false
+                    try {
+                        loop@ while (!cancelled()) {
+                            val pcm = queue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            if (pcm == null) {
+                                // Mid-utterance underrun = synthesis fell behind: surface it.
+                                if (started && !stalled) {
+                                    stalled = true
+                                    onBuffering?.invoke(true)
+                                }
+                                continue@loop
+                            }
+                            if (pcm === sentinel) break@loop
+                            if (stalled) {
+                                stalled = false
+                                onBuffering?.invoke(false)
+                            }
+                            if (!started) {
+                                localTrack.play()
+                                started = true
+                            }
+                            // ~100 ms slices with cancel/pause checks between them.
+                            val slice = localTrack.sampleRate / 10
+                            var off = 0
+                            while (off < pcm.size) {
+                                if (cancelled()) break@loop
+                                if (paused) {
+                                    runCatching { localTrack.pause() }
+                                    while (paused && !cancelled()) {
+                                        try { Thread.sleep(50) } catch (_: InterruptedException) {}
+                                    }
+                                    if (cancelled()) break@loop
+                                    runCatching { localTrack.play() }
+                                }
+                                val len = minOf(slice, pcm.size - off)
+                                onPcmChunk?.let { tap ->
+                                    var sum = 0.0
+                                    val bytes = ByteArray(len * 2)
+                                    for (i in 0 until len) {
+                                        val s = pcm[off + i]
+                                        sum += (s.toInt() * s.toInt()).toDouble()
+                                        bytes[i * 2] = (s.toInt() and 0xFF).toByte()
+                                        bytes[i * 2 + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
+                                    }
+                                    val rms = kotlin.math.sqrt(sum / len).toInt().coerceIn(0, 32767)
+                                    tap(bytes, rms)
+                                }
+                                val n = localTrack.write(pcm, off, len)
+                                if (n < 0) break@loop
+                                off += n
+                            }
+                        }
+                        if (!cancelled() && started) {
+                            try { Thread.sleep(150) } catch (_: InterruptedException) {}
+                            runCatching { localTrack.stop() }
+                        }
+                    } finally {
+                        if (stalled) onBuffering?.invoke(false)
+                        runCatching { localTrack.release() }
+                    }
+                }, "tts-playback")
+                playbackThread.start()
 
                 // MUST be an explicit Function1 object, NOT a lambda: sherpa's JNI reflectively
                 // calls the specialized invoke([F)Ljava/lang/Integer; bridge, which Kotlin 2.0's
@@ -128,59 +208,27 @@ class TtsEngine(
                         val pcm = ShortArray(samples.size) { i ->
                             (samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
                         }
-                        if (!started) {
-                            localTrack.play()
-                            started = true
-                        }
-                        // ~100 ms slices with a cancellation check between them (C2): stop()
-                        // never touches the track from another thread, yet cancel latency
-                        // stays ~one slice.
-                        val slice = localTrack.sampleRate / 10
-                        var off = 0
-                        while (off < pcm.size) {
-                            if (cancelled()) return 0
-                            // Pause: hold between slices ON THIS THREAD (track stays owned
-                            // here); synthesis of later sentences waits with us.
-                            if (paused) {
-                                runCatching { localTrack.pause() }
-                                while (paused && !cancelled()) {
-                                    try { Thread.sleep(50) } catch (_: InterruptedException) {}
-                                }
-                                if (cancelled()) return 0
-                                runCatching { localTrack.play() }
+                        // Bounded put with cancel checks (backpressure without deadlock).
+                        while (!cancelled()) {
+                            if (queue.offer(pcm, 100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                                return 1
                             }
-                            val len = minOf(slice, pcm.size - off)
-                            onPcmChunk?.let { tap ->
-                                var sum = 0.0
-                                val bytes = ByteArray(len * 2)
-                                for (i in 0 until len) {
-                                    val s = pcm[off + i]
-                                    sum += (s.toInt() * s.toInt()).toDouble()
-                                    bytes[i * 2] = (s.toInt() and 0xFF).toByte()
-                                    bytes[i * 2 + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
-                                }
-                                val rms = kotlin.math.sqrt(sum / len).toInt().coerceIn(0, 32767)
-                                tap(bytes, rms)
-                            }
-                            val n = localTrack.write(pcm, off, len)
-                            if (n < 0) return 0
-                            off += n
                         }
-                        return if (cancelled()) 0 else 1
+                        return 0
                     }
                 }
                 engine.generateWithCallback(
                     text = clean, sid = speakerId, speed = speed, callback = callback,
                 )
-                // Let the tail drain unless cancelled (the track buffer holds ~the last slices).
-                if (!cancelled() && started) {
-                    try { Thread.sleep(150) } catch (_: InterruptedException) {}
-                    runCatching { localTrack.stop() }
-                }
+                // Signal end-of-synthesis; the playback thread drains what's queued, then exits.
+                while (!cancelled() && !queue.offer(sentinel, 100, java.util.concurrent.TimeUnit.MILLISECONDS)) { /* retry */ }
+                playbackThread.join(120_000)
             } catch (t: Throwable) {
                 android.util.Log.w("WE-TTS", "speak failed", t)
             } finally {
-                at?.let { runCatching { it.release() } }
+                playbackThread?.let { pt ->
+                    if (pt.isAlive) runCatching { pt.join(2_000) }
+                }
                 // Abandon focus only if OUR request is still the active one — a newer task may
                 // already hold its own (review fix I3).
                 if (myFocus != null && focusRequest === myFocus) abandonFocus()
