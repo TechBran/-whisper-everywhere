@@ -1037,6 +1037,10 @@ class FloatingBubbleService : Service(),
         sessionProducedText = false
         sessionTranscript.setLength(0)
         sessionStartMs = System.currentTimeMillis()
+        // Bind injection to the field focused NOW: segments finish seconds later, and the user
+        // may have switched apps/fields by then. Released in teardownRealtime, which runs after
+        // the final segment delivers on every exit path.
+        WhisperAccessibilityService.beginInjectionSession()
         android.util.Log.i("WE-DIAG", "startRecording: context=$currentContext")
 
         // On-device engine. connect() resolves the installed model and loads the
@@ -1240,6 +1244,7 @@ class FloatingBubbleService : Service(),
     private fun teardownRealtime() {
         previewJob?.cancel(); previewJob = null
         transcriptSink?.close(); transcriptSink = null
+        WhisperAccessibilityService.endInjectionSession()
         // Detach the session listener but KEEP the engine + its loaded native context so the next
         // recording reuses it (no multi-hundred-MB reload per session). Full release (context +
         // worker thread) happens in onDestroy; the context is also freed under memory pressure

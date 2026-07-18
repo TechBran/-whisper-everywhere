@@ -33,6 +33,12 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var lastFocusTime: Long = 0L
     private var currentPackage: String? = null
 
+    // Injection session: the field the user STARTED dictating into, captured at record start.
+    // Delivery happens seconds later (per committed segment) — without this, a mid-transcription
+    // app/field switch reroutes the text to whatever happens to be focused at delivery time.
+    private var sessionTargetEditText: AccessibilityNodeInfo? = null
+    private var sessionTargetPackage: String? = null
+
     // Apps that use custom editors where we should be more persistent
     private val documentApps = setOf(
         "com.samsung.android.app.notes",      // Samsung Notes
@@ -215,21 +221,19 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isDocumentApp(): Boolean {
-        return currentPackage in documentApps ||
-               currentPackage?.contains("note", ignoreCase = true) == true ||
-               currentPackage?.contains("edit", ignoreCase = true) == true ||
-               currentPackage?.contains("doc", ignoreCase = true) == true ||
-               currentPackage?.contains("office", ignoreCase = true) == true
+    private fun isDocumentPackage(pkg: String?): Boolean {
+        pkg ?: return false
+        return pkg in documentApps ||
+               pkg.contains("note", ignoreCase = true) ||
+               pkg.contains("edit", ignoreCase = true) ||
+               pkg.contains("doc", ignoreCase = true) ||
+               pkg.contains("office", ignoreCase = true)
     }
 
-    /**
-     * Check if current app is a social media app that uses @mentions.
-     * These apps need special handling to preserve mention formatting.
-     */
-    private fun isSocialMediaApp(): Boolean {
-        // Get package from active window for most accurate detection
-        val pkg = rootInActiveWindow?.packageName?.toString() ?: currentPackage ?: return false
+    private fun isDocumentApp(): Boolean = isDocumentPackage(currentPackage)
+
+    private fun isSocialMediaPackage(pkg: String?): Boolean {
+        pkg ?: return false
         return pkg in socialMediaApps ||
                pkg.contains("facebook", ignoreCase = true) ||
                pkg.contains("instagram", ignoreCase = true) ||
@@ -244,6 +248,57 @@ class WhisperAccessibilityService : AccessibilityService() {
                pkg.contains("reddit", ignoreCase = true) ||
                pkg.contains("linkedin", ignoreCase = true)
     }
+
+    /**
+     * Check if current app is a social media app that uses @mentions.
+     * These apps need special handling to preserve mention formatting.
+     */
+    private fun isSocialMediaApp(): Boolean {
+        // Get package from active window for most accurate detection
+        return isSocialMediaPackage(rootInActiveWindow?.packageName?.toString() ?: currentPackage)
+    }
+
+    /**
+     * Capture the field the user is dictating into. Called when a recording session starts;
+     * every segment of that session then targets THIS field, not whatever is focused when the
+     * segment's transcription completes.
+     */
+    private fun beginInjectionSessionInternal() {
+        val target = findFocusedEditText() ?: lastFocusedEditText
+        sessionTargetEditText = target
+        sessionTargetPackage = target?.packageName?.toString() ?: currentPackage
+    }
+
+    private fun endInjectionSessionInternal() {
+        sessionTargetEditText = null
+        sessionTargetPackage = null
+    }
+
+    /**
+     * The node to inject into: the record-start capture while it's still alive, else the field
+     * focused right now (pre-session behavior). A dead session node stops being preferred so
+     * later segments of the same session don't retry a stale target.
+     */
+    private fun resolveInjectionTarget(): AccessibilityNodeInfo? {
+        val session = sessionTargetEditText
+        if (session != null) {
+            val alive = try { session.refresh() } catch (e: Exception) { false }
+            if (alive) return session
+            sessionTargetEditText = null
+        }
+        return findFocusedEditText() ?: lastFocusedEditText
+    }
+
+    /**
+     * App classification for choosing the injection strategy. While a session target is held,
+     * classify by ITS app — the strategy must match where the text lands, not the app that
+     * happens to be foreground at delivery.
+     */
+    private fun injectionTargetIsDocumentApp(): Boolean =
+        if (sessionTargetPackage != null) isDocumentPackage(sessionTargetPackage) else isDocumentApp()
+
+    private fun injectionTargetIsSocialMediaApp(): Boolean =
+        if (sessionTargetPackage != null) isSocialMediaPackage(sessionTargetPackage) else isSocialMediaApp()
 
     /**
      * Check if the text field currently has a mention (starts with @)
@@ -360,6 +415,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
+        endInjectionSessionInternal()
         instance = null
     }
 
@@ -457,16 +513,16 @@ class WhisperAccessibilityService : AccessibilityService() {
      */
     fun injectTextToFocusedField(text: String): Boolean {
         // For document apps, always use clipboard + paste approach
-        if (isDocumentApp()) {
+        if (injectionTargetIsDocumentApp()) {
             return injectViaClipboardForDocumentApp(text)
         }
 
         // For social media apps, use paste to preserve @mentions and other formatted content
-        if (isSocialMediaApp()) {
+        if (injectionTargetIsSocialMediaApp()) {
             return injectViaClipboardPreservingContent(text)
         }
 
-        val targetNode = findFocusedEditText() ?: lastFocusedEditText
+        val targetNode = resolveInjectionTarget()
 
         if (targetNode == null || !targetNode.refresh()) {
             return injectViaClipboard(text)
@@ -529,7 +585,7 @@ class WhisperAccessibilityService : AccessibilityService() {
      * For Facebook with mentions, taps at end of field before pasting.
      */
     private fun injectViaClipboardPreservingContent(text: String): Boolean {
-        val targetNode = findFocusedEditText() ?: lastFocusedEditText
+        val targetNode = resolveInjectionTarget()
 
         // Always copy to clipboard first
         try {
@@ -604,7 +660,7 @@ class WhisperAccessibilityService : AccessibilityService() {
      * For Facebook with mentions, taps at end of field before pasting.
      */
     private fun injectForSocialMediaWithResult(text: String): InjectionResult {
-        val targetNode = findFocusedEditText() ?: lastFocusedEditText
+        val targetNode = resolveInjectionTarget()
 
         // Always copy to clipboard first
         try {
@@ -683,7 +739,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             var success = false
 
             // Method 1: Try ACTION_PASTE on the target node
-            val targetNode = lastFocusedEditText
+            val targetNode = resolveInjectionTarget()
             if (targetNode?.refresh() == true) {
                 success = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             }
@@ -761,7 +817,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             var success = false
 
             // Try paste on target node
-            val targetNode = lastFocusedEditText
+            val targetNode = resolveInjectionTarget()
             if (targetNode?.refresh() == true) {
                 success = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             }
@@ -810,7 +866,7 @@ class WhisperAccessibilityService : AccessibilityService() {
      */
     fun injectTextWithResultInternal(text: String): InjectionResult {
         // For document apps, use clipboard approach
-        if (isDocumentApp()) {
+        if (injectionTargetIsDocumentApp()) {
             return try {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
@@ -818,7 +874,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 // Try paste methods
                 var pasteWorked = false
 
-                val targetNode = lastFocusedEditText
+                val targetNode = resolveInjectionTarget()
                 if (targetNode?.refresh() == true) {
                     pasteWorked = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
                 }
@@ -850,12 +906,12 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         // For social media apps, use paste to preserve @mentions
-        if (isSocialMediaApp()) {
+        if (injectionTargetIsSocialMediaApp()) {
             return injectForSocialMediaWithResult(text)
         }
 
         // Standard apps - try direct injection
-        val targetNode = findFocusedEditText() ?: lastFocusedEditText
+        val targetNode = resolveInjectionTarget()
 
         if (targetNode == null || !targetNode.refresh()) {
             // No target - try clipboard
@@ -974,6 +1030,20 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         fun injectText(text: String): Boolean {
             return instance?.injectTextToFocusedField(text) ?: false
+        }
+
+        /**
+         * Bind this dictation session to the field focused RIGHT NOW. Call at record start;
+         * all segments delivered until [endInjectionSession] target that field even if focus
+         * moves (app switch, field switch) before transcription completes.
+         */
+        fun beginInjectionSession() {
+            instance?.beginInjectionSessionInternal()
+        }
+
+        /** Release the record-start binding; delivery reverts to the currently focused field. */
+        fun endInjectionSession() {
+            instance?.endInjectionSessionInternal()
         }
 
         /**
