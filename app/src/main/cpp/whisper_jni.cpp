@@ -9,6 +9,7 @@
 #include <android/log.h>
 #include "whisper.h"
 #include "ggml.h"
+#include "ggml-backend.h"
 
 #define LOG_TAG "whisper_jni"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
@@ -30,6 +31,33 @@ static void we_install_native_logging() {
     done = true;
     ggml_log_set(we_native_log, nullptr);
     whisper_log_set(we_native_log, nullptr);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_loadBackends(
+        JNIEnv *env, jobject /* this */, jstring nativeLibDir) {
+    we_install_native_logging();
+    const char *dir = env->GetStringUTFChars(nativeLibDir, nullptr);
+    if (dir == nullptr) {
+        return;
+    }
+    // GGML_BACKEND_DL mode: backends are standalone modules. Load them by BARE SONAME, which
+    // resolves through the app's linker namespace — the only mechanism that works when native
+    // libs are NOT extracted to disk (modern APKs: android:extractNativeLibs=false keeps the
+    // .so inside base.apk, so a directory scan of nativeLibraryDir finds nothing and
+    // whisper_init aborts with zero registered backends — the 2.8.1 crash loop).
+    // CPU must load; OpenCL is best-effort (absent/failing on non-OpenCL devices -> skipped,
+    // which is the whole point: no hard DT_NEEDED chain killing the app on those phones).
+    (void) dir; // kept for logging/back-compat; bare-SONAME loading needs no path
+    ggml_backend_reg_t cpu = ggml_backend_load("libggml-cpu.so");
+    ggml_backend_reg_t ocl = ggml_backend_load("libggml-opencl.so");
+    const size_t count = ggml_backend_reg_count();
+    LOGI("ggml backends loaded: cpu=%s opencl=%s total_regs=%zu",
+         cpu ? "ok" : "FAILED", ocl ? "ok" : "absent", count);
+    if (cpu == nullptr) {
+        LOGE("CPU backend failed to load — transcription cannot work");
+    }
+    env->ReleaseStringUTFChars(nativeLibDir, dir);
 }
 
 extern "C" JNIEXPORT jlong JNICALL

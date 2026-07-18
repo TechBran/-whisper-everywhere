@@ -17,6 +17,14 @@ object WhisperNative {
     }
 
     /**
+     * Scans [nativeLibDir] (the APK's native library directory) and registers every ggml
+     * backend module that can load on this device — CPU always; OpenCL only where the vendor
+     * ships libOpenCL.so. MUST be called once before [init]; failed backends are skipped
+     * silently (that is the mechanism that lets one APK run on non-OpenCL devices).
+     */
+    external fun loadBackends(nativeLibDir: String)
+
+    /**
      * Loads a ggml model file into a native whisper_context. Returns 0L on failure.
      * @param useGpu attempt the ggml OpenCL (Adreno) backend. The caller (GpuPolicy via
      *        WhisperNativeBackend) is responsible for device allowlisting — pass false for

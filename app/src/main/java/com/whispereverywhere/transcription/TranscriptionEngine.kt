@@ -51,7 +51,25 @@ interface WhisperBackend {
  * native GPU crash permanently falls this version back to CPU instead of crash-looping.
  */
 object WhisperNativeBackend : WhisperBackend {
+    @Volatile private var backendsLoaded = false
+
+    /** One-time dynamic backend registration (GGML_BACKEND_DL) before the first model load. */
+    private fun ensureBackendsLoaded() {
+        if (backendsLoaded) return
+        synchronized(this) {
+            if (backendsLoaded) return
+            runCatching {
+                WhisperNative.loadBackends(
+                    com.whispereverywhere.WhisperEverywhereApp.getInstance()
+                        .applicationInfo.nativeLibraryDir
+                )
+            }
+            backendsLoaded = true
+        }
+    }
+
     override fun load(modelPath: String): Long {
+        ensureBackendsLoaded()
         val useGpu = GpuPolicy.decideUseGpuForLoad(modelPath)
         if (!useGpu) return WhisperNative.init(modelPath, false)
         // finally (not sequential code): a survivable Java exception between arm and disarm must

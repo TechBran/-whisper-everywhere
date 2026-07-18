@@ -67,6 +67,12 @@ android {
                 // embedded via Python; Adreno-optimized matmuls ON — safe for .en models whose
                 // vocab 51864 is %4==0; the multilingual model needs re-test re upstream #3708).
                 // Headers: Khronos OpenCL-Headers; lib: libOpenCL.so pulled from the Fold 6.
+                // Backends as dlopen-able MODULES (Track B): libggml no longer hard-links the
+                // OpenCL backend, so ONE apk runs everywhere — the JNI scans the native-lib dir
+                // at startup and loads every backend that CAN load (CPU always; OpenCL only on
+                // devices whose vendor ships libOpenCL.so). Without this, System.loadLibrary
+                // died on Tensor/Mali devices before CPU transcription could even exist.
+                arguments += "-DGGML_BACKEND_DL=ON"
                 arguments += "-DGGML_OPENCL=ON"
                 arguments += "-DOpenCL_INCLUDE_DIR=D:/gemma-inference/tools/opencl/include"
                 arguments += "-DOpenCL_LIBRARY=D:/gemma-inference/tools/opencl/lib/libOpenCL.so"

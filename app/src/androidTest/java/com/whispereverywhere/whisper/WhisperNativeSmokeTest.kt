@@ -63,6 +63,8 @@ class WhisperNativeSmokeTest {
         val samples = wavToFloat(wavBytes)
         assertTrue("decoded samples should be non-empty", samples.isNotEmpty())
 
+        // Dynamic backends (GGML_BACKEND_DL): register before the first native call.
+        WhisperNative.loadBackends(inst.targetContext.applicationInfo.nativeLibraryDir)
         // CPU path: the smoke test validates the JNI/whisper contract, not the GPU backend.
         val ctxPtr = WhisperNative.init(modelFile.absolutePath, false)
         assertNotEquals("init() returned 0 (model failed to load)", 0L, ctxPtr)
