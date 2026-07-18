@@ -963,10 +963,14 @@ class FloatingBubbleService : Service(),
                 playbackCapturer?.stop(); playbackCapturer = null
             }
         }
-        when (to) {
+        val started = when (to) {
             com.whispereverywhere.audio.ActiveSource.MIC -> startMicSource()
             com.whispereverywhere.audio.ActiveSource.PLAYBACK ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startPlaybackSource() else startMicSource()
+        }
+        if (started.isFailure) {
+            android.util.Log.w("WE-DIAG",
+                "switchSource: $to failed to start (${started.exceptionOrNull()?.message})")
         }
     }
 
@@ -975,14 +979,23 @@ class FloatingBubbleService : Service(),
             serviceScope.launch(Dispatchers.Main) {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@launch
                 // ANDROID 14+ ORDERING: foreground with mediaProjection type BEFORE
-                // getMediaProjection.
-                ServiceCompat.startForeground(
-                    this@FloatingBubbleService,
-                    WhisperEverywhereApp.NOTIFICATION_ID,
-                    createNotification(),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
-                )
+                // getMediaProjection. Guarded like onCreate's startForeground — this call can
+                // throw on 14+ (restricted start / revoked permission) and an uncaught throw
+                // would crash-loop the START_STICKY service. On failure: mic fallback.
+                try {
+                    ServiceCompat.startForeground(
+                        this@FloatingBubbleService,
+                        WhisperEverywhereApp.NOTIFICATION_ID,
+                        createNotification(),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                    )
+                } catch (t: Throwable) {
+                    android.util.Log.w("WE-DIAG",
+                        "projection foreground upgrade rejected (${t.javaClass.simpleName}) -> mic")
+                    if (currentState == BubbleState.RECORDING) startMicSource()
+                    return@launch
+                }
                 val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
                 val projection = runCatching { mpm.getMediaProjection(resultCode, data) }.getOrNull()
                 if (projection == null) {
@@ -1189,6 +1202,10 @@ class FloatingBubbleService : Service(),
             android.util.Log.i("WE-DIAG", "finalize: state=$currentState producedText=$sessionProducedText")
 
             // History: persist the session (text only) + apply rolling retention.
+            // NOTE: history inherits the FINALIZE_TIMEOUT_MS bound above — a segment still
+            // transcribing when the 300s drain times out is dropped from injection AND history
+            // (pre-existing late-result semantics; the awaitIdle fence guarantees everything
+            // that completes in time IS in sessionTranscript before this persist).
             if (sessionTranscript.isNotBlank()) {
                 withContext(Dispatchers.IO) {
                     transcriptStore.save(sessionStartMs, sessionTranscript.toString())
