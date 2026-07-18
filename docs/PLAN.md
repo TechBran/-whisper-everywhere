@@ -64,18 +64,23 @@ DICTATION (mic)  ──media starts (MediaSessionDetector)──▶  MEDIA_CAPTU
 - Fallbacks: Android 8/9 → mic path unchanged. Silent capture (DRM opt-out) detected after
   ~3 s of zero energy → toast + fall back to mic.
 
-**Task checklist:**
-- [ ] Manifest: `FOREGROUND_SERVICE_MEDIA_PROJECTION` permission + service type; consent
+**Task checklist (implementation complete 2026-07-17, commits aaba31d..11f8d71; subagent-driven
+with per-task reviews, all Important findings fixed; final whole-branch review in flight):**
+- [x] Manifest: `FOREGROUND_SERVICE_MEDIA_PROJECTION` permission + service type; consent
       trampoline activity (transparent, exported=false)
-- [ ] `MediaProjectionGate`: holds the projection token; lazy consent request + result plumbing
-- [ ] `PlaybackAudioCapturer`: AudioRecord w/ playback-capture config, 16 kHz path + fallback
+- [x] `MediaProjectionGate`: holds the projection token; lazy consent request + result plumbing
+- [x] `PlaybackAudioCapturer`: AudioRecord w/ playback-capture config, 16 kHz path + fallback
       decimator, same `(chunk, amp)` callback contract as `StreamingAudioRecorder`
-- [ ] `FloatingBubbleService`: source state machine (mic↔stream) wired to
+- [x] `FloatingBubbleService`: source state machine (mic↔stream) wired to
       `MediaSessionDetector` events mid-session; segment commit at every source switch
-- [ ] Visuals: aurora/blob driven identically from stream audio (AudioBands is source-agnostic)
-- [ ] DRM/silent-capture detection + graceful mic fallback
-- [ ] On-device validation: YouTube video A/B vs mic-in-room; mid-session switch both directions
-- [ ] Settings: "Prefer device audio for media" toggle (default ON)
+- [x] Visuals: aurora/blob driven identically from stream audio (AudioBands is source-agnostic)
+- [x] DRM/silent-capture detection + graceful mic fallback (3s watchdog)
+- [ ] On-device validation: YouTube video A/B vs mic-in-room; mid-session switch both
+      directions — **AWAITING USER (2.8.0 installed on the Fold 6)**
+- [x] Settings: "Capture device audio for media" toggle (default ON)
+- [x] BONUS (user request mid-plan): transcription history — `TranscriptStore` (text-only,
+      14-day/10MB rolling, oldest-first eviction, 5/5 unit tests), session capture funnel,
+      home-screen Transcriptions card + list/detail screen (copy/share/delete)
 
 ## Track B — Runs-on-every-phone (queued)
 
