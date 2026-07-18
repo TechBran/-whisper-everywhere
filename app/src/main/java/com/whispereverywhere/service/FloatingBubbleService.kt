@@ -133,6 +133,16 @@ class FloatingBubbleService : Service(),
     private var currentContext: BubbleContext = BubbleContext.NONE
     private var mediaTitle: String? = null
 
+    // The session's ROUTING mode (inject into a field vs preview+clipboard+history), frozen at
+    // the moment recording starts. currentContext keeps tracking focus/media live for the idle
+    // bubble, but mid-session clicks (e.g. tapping a prompt field while a YouTube transcription
+    // runs) must NOT reroute later segments — that split one transcript across two destinations.
+    // Every routing decision between startRecording and finalize reads THIS, never currentContext.
+    // Corollary (intended): a session STARTED on a focused field keeps typing into that field
+    // even if media begins mid-session and the source hands over mic→stream — the session types
+    // where the user aimed it; history accumulates via sessionTranscript in both modes.
+    private var sessionContext: BubbleContext = BubbleContext.NONE
+
     // Bounded-memory sink for non-text-field sessions (Task 7)
     private var transcriptSink: com.whispereverywhere.transcription.TranscriptSink? = null
 
@@ -1048,11 +1058,12 @@ class FloatingBubbleService : Service(),
         sessionProducedText = false
         sessionTranscript.setLength(0)
         sessionStartMs = System.currentTimeMillis()
-        // Bind injection to the field focused NOW: segments finish seconds later, and the user
-        // may have switched apps/fields by then. Released in teardownRealtime, which runs after
-        // the final segment delivers on every exit path.
+        // Freeze this session's routing mode and injection target at the tap. Segments finish
+        // seconds later and the user may click anywhere in between; the session must not follow.
+        // Both released/re-captured per session (injection session in teardownRealtime).
+        sessionContext = currentContext
         WhisperAccessibilityService.beginInjectionSession()
-        android.util.Log.i("WE-DIAG", "startRecording: context=$currentContext")
+        android.util.Log.i("WE-DIAG", "startRecording: sessionContext=$sessionContext")
 
         // On-device engine. connect() resolves the installed model and loads the
         // native context off-thread; CONNECTING covers that model-load wait and
@@ -1090,7 +1101,7 @@ class FloatingBubbleService : Service(),
                     }
 
                     // Show preview text bubble if we are not injecting into a text field
-                    if (currentContext != BubbleContext.TEXT_FIELD) {
+                    if (sessionContext != BubbleContext.TEXT_FIELD) {
                         transcriptionEditText.text = ""
                         transcriptionDeltaText.text = ""
                         transcriptionDeltaText.visibility = View.GONE
@@ -1132,7 +1143,7 @@ class FloatingBubbleService : Service(),
             }
             override fun onDelta(text: String) {
                 // On-device engine emits no intra-segment deltas; kept for interface parity.
-                if (currentContext != BubbleContext.TEXT_FIELD) {
+                if (sessionContext != BubbleContext.TEXT_FIELD) {
                     serviceScope.launch(Dispatchers.Main) {
                         if (text.isNotBlank()) {
                             transcriptionDeltaText.visibility = View.VISIBLE
@@ -1149,7 +1160,7 @@ class FloatingBubbleService : Service(),
                 if (trimmed.isNotEmpty()) {
                     sessionProducedText = true
                     serviceScope.launch(Dispatchers.Main) {
-                        if (currentContext != BubbleContext.TEXT_FIELD) {
+                        if (sessionContext != BubbleContext.TEXT_FIELD) {
                             transcriptionDeltaText.visibility = View.GONE
                             // Route through the bounded-memory sink; the preview StateFlow
                             // drives transcriptionEditText via collectLatest above (Task 7).
@@ -1189,7 +1200,7 @@ class FloatingBubbleService : Service(),
         updateBubbleState(BubbleState.FINALIZING)
 
         // Hide the preview bubble immediately so it doesn't linger during the finalizing delay
-        if (currentContext != BubbleContext.TEXT_FIELD) {
+        if (sessionContext != BubbleContext.TEXT_FIELD) {
             transcriptionPreviewContainer.visibility = View.GONE
         }
         
@@ -1230,7 +1241,7 @@ class FloatingBubbleService : Service(),
             if (currentState == BubbleState.FINALIZING) {
                 // If we were transcribing without injecting, read the full text from the sink's
                 // session file (bounded memory; Task 7) and copy it to the clipboard.
-                if (currentContext != BubbleContext.TEXT_FIELD) {
+                if (sessionContext != BubbleContext.TEXT_FIELD) {
                     previewJob?.cancel(); previewJob = null
                     finalizingSink?.let { sink ->
                         // teardownRealtime already closed the sink; just read its flushed file.
@@ -1274,14 +1285,14 @@ class FloatingBubbleService : Service(),
      * Handle the transcription result based on current context
      */
     private fun handleTranscriptionResult(text: String) {
-        android.util.Log.i("WE-DIAG", "handleResult: context=$currentContext len=${text.length}")
+        android.util.Log.i("WE-DIAG", "handleResult: session=$sessionContext live=$currentContext len=${text.length}")
         // History: accumulate every completed segment (both injection and preview contexts);
         // the session persists to TranscriptStore at finalize.
         if (text.isNotBlank()) {
             if (sessionTranscript.isNotEmpty()) sessionTranscript.append(' ')
             sessionTranscript.append(text.trim())
         }
-        when (currentContext) {
+        when (sessionContext) {
             BubbleContext.TEXT_FIELD -> {
                 // Use the new injection method with detailed result
                 val result = WhisperAccessibilityService.injectTextWithResult(text)

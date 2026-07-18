@@ -36,8 +36,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 50
-        versionName = "2.9.1"  // Track D: multilingual→CPU gate (silent GPU corruption), engine prewarm
+        versionCode = 51
+        versionName = "2.9.2"  // session-context freeze: mid-session clicks can't split/reroute the transcript
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
