@@ -83,6 +83,24 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- Read-aloud (Track F): "Speak" entry in the system text-selection toolbar. The
+             universal trigger — works in apps where accessibility selection events never
+             arrive (Chrome page text, PDFs). Theme.NoDisplay: finishes inside onCreate. -->
+        <activity
+            android:name=".tts.SpeakTextActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:label="@string/speak_action_label"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
         <!-- Floating Bubble Overlay Service -->
         <service
             android:name=".service.FloatingBubbleService"

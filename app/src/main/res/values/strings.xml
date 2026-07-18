@@ -2,6 +2,9 @@
 <resources>
     <string name="app_name">Whisper Everywhere</string>
 
+    <!-- Read-aloud (Track F): label shown in the system text-selection toolbar -->
+    <string name="speak_action_label">Speak</string>
+
     <!-- Accessibility Service -->
     <string name="accessibility_service_label">Whisper Everywhere Voice Input</string>
     <string name="accessibility_service_description">Allows Whisper Everywhere to insert transcribed text into any text field. This service detects when you\'re typing and injects your voice-to-text transcriptions at the cursor position.</string>

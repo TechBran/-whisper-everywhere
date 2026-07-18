@@ -215,6 +215,18 @@ class FloatingBubbleService : Service(),
         // Start monitoring accessibility service connection
         startConnectionMonitor()
 
+        // Read-aloud exclusivity (Track F): the arbiter queries live session state and can ask
+        // a capture session to finish gracefully (same path as a stop tap). The speech side is
+        // registered by TtsController when its engine is first created.
+        com.whispereverywhere.audio.AudioArbiter.isCapturing = {
+            currentState == BubbleState.RECORDING || currentState == BubbleState.FINALIZING
+        }
+        com.whispereverywhere.audio.AudioArbiter.stopCaptureGracefully = {
+            serviceScope.launch(Dispatchers.Main) {
+                if (currentState == BubbleState.RECORDING) stopRecording()
+            }
+        }
+
         // Pre-warm the whisper context (model mmap + Adreno OpenCL kernel compile, ~7 s on the
         // GPU path) so the FIRST recording connects instantly instead of paying it inside
         // CONNECTING. Slightly delayed to keep service startup/view inflation snappy; queued on
@@ -1075,6 +1087,8 @@ class FloatingBubbleService : Service(),
 
         updateBubbleState(BubbleState.CONNECTING)
         vibrateStart()
+        // Capture wins instantly over read-aloud (Track F exclusivity rule).
+        com.whispereverywhere.audio.AudioArbiter.requestCapture()
         sessionProducedText = false
         sessionTranscript.setLength(0)
         sessionStartMs = System.currentTimeMillis()
