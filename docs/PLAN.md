@@ -7,7 +7,7 @@
 
 | # | Track | Status |
 |---|-------|--------|
-| A | **Device-audio capture** (media transcription without the mic) | **IN PROGRESS — active** |
+| A | **Device-audio capture** (media transcription without the mic) + transcript history | **SHIPPED 2026-07-17** (user-validated on device: clean YouTube/voice separation) |
 | B | Runs-on-every-phone (dynamic GGML backends; non-OpenCL devices) | queued — ship-blocker for wide distribution |
 | C | Production leftovers (injection binding, Play declarations, full log strip, toolchain, CI) | queued |
 | D | GPU polish (multilingual model on OpenCL retest; kernel-cache the first-load pause) | queued |
@@ -75,8 +75,8 @@ with per-task reviews, all Important findings fixed; final whole-branch review i
       `MediaSessionDetector` events mid-session; segment commit at every source switch
 - [x] Visuals: aurora/blob driven identically from stream audio (AudioBands is source-agnostic)
 - [x] DRM/silent-capture detection + graceful mic fallback (3s watchdog)
-- [ ] On-device validation: YouTube video A/B vs mic-in-room; mid-session switch both
-      directions — **AWAITING USER (2.8.0 installed on the Fold 6)**
+- [x] On-device validation: USER CONFIRMED 2026-07-17 — "works well, clearly and cleanly
+      separates the YouTube video from my audio"; consent modal + grant flow as designed
 - [x] Settings: "Capture device audio for media" toggle (default ON)
 - [x] BONUS (user request mid-plan): transcription history — `TranscriptStore` (text-only,
       14-day/10MB rolling, oldest-first eviction, 5/5 unit tests), session capture funnel,
