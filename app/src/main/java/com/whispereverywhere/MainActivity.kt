@@ -126,7 +126,16 @@ fun WhisperEverywhereNavigation() {
                 },
                 onNavigateToOnboardingModel = {
                     navController.navigate("onboarding_model")
+                },
+                onNavigateToTranscripts = {
+                    navController.navigate("transcripts")
                 }
+            )
+        }
+
+        composable("transcripts") {
+            com.whispereverywhere.ui.screens.TranscriptsScreen(
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 

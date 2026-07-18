@@ -118,6 +118,14 @@ class FloatingBubbleService : Service(),
     // "No speech detected" feedback on stop so the user is not left with silent nothing.
     @Volatile private var sessionProducedText = false
 
+    // Transcription history (text only — user decision 2026-07-17): per-session accumulator,
+    // persisted via TranscriptStore at finalize with rolling 14-day/10MB retention.
+    private val transcriptStore by lazy {
+        com.whispereverywhere.transcription.TranscriptStore(java.io.File(filesDir, "transcripts"))
+    }
+    private val sessionTranscript = StringBuilder()
+    private var sessionStartMs = 0L
+
     // Pin icon view reference (lateinit; populated in createBubbleView)
     private lateinit var pinIcon: ImageView
 
@@ -1014,6 +1022,8 @@ class FloatingBubbleService : Service(),
         updateBubbleState(BubbleState.CONNECTING)
         vibrateStart()
         sessionProducedText = false
+        sessionTranscript.setLength(0)
+        sessionStartMs = System.currentTimeMillis()
         android.util.Log.i("WE-DIAG", "startRecording: context=$currentContext")
 
         // On-device engine. connect() resolves the installed model and loads the
@@ -1177,6 +1187,14 @@ class FloatingBubbleService : Service(),
             val finalizingSink = transcriptSink
             teardownRealtime()
             android.util.Log.i("WE-DIAG", "finalize: state=$currentState producedText=$sessionProducedText")
+
+            // History: persist the session (text only) + apply rolling retention.
+            if (sessionTranscript.isNotBlank()) {
+                withContext(Dispatchers.IO) {
+                    transcriptStore.save(sessionStartMs, sessionTranscript.toString())
+                    transcriptStore.sweep()
+                }
+            }
             if (currentState == BubbleState.FINALIZING) {
                 // If we were transcribing without injecting, read the full text from the sink's
                 // session file (bounded memory; Task 7) and copy it to the clipboard.
@@ -1224,6 +1242,12 @@ class FloatingBubbleService : Service(),
      */
     private fun handleTranscriptionResult(text: String) {
         android.util.Log.i("WE-DIAG", "handleResult: context=$currentContext len=${text.length}")
+        // History: accumulate every completed segment (both injection and preview contexts);
+        // the session persists to TranscriptStore at finalize.
+        if (text.isNotBlank()) {
+            if (sessionTranscript.isNotEmpty()) sessionTranscript.append(' ')
+            sessionTranscript.append(text.trim())
+        }
         when (currentContext) {
             BubbleContext.TEXT_FIELD -> {
                 // Use the new injection method with detailed result
