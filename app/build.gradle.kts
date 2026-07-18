@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 60
-        versionName = "3.0.4"  // in-app read-aloud guide, honest copy, bigger clipboard chip, pin -> lock
+        versionCode = 61
+        versionName = "3.0.5"  // satellite lobes: lock extends right, speaker bottom-left, fused with the blob
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

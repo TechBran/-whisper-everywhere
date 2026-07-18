@@ -116,21 +116,6 @@
                 android:textStyle="bold"
                 android:visibility="gone" />
 
-            <!-- Read-clipboard chip: idle-only; tap = speak whatever was last copied. The
-                 universal whole-page path (Chrome: Select all -> Copy -> tap). Padding keeps
-                 the tap target comfortable while the glyph stays chip-sized. -->
-            <ImageView
-                android:id="@+id/speak_clip_icon"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:padding="3dp"
-                android:layout_gravity="bottom|start"
-                android:layout_margin="1dp"
-                android:src="@drawable/ic_speaker"
-                android:alpha="0.85"
-                android:visibility="gone"
-                android:contentDescription="Read clipboard aloud" />
-
             <!-- Read-aloud stop control: visible only while speech plays (Track F). -->
             <ImageView
                 android:id="@+id/speech_stop_icon"
@@ -142,18 +127,46 @@
                 android:visibility="gone"
                 android:contentDescription="Stop reading" />
 
-            <!-- Lock indicator: closed lock = position locked, open = free placement.
-                 Tap (or long-press the bubble) toggles it. -->
+        </FrameLayout>
+
+        <!-- Satellite lobes (user design 2026-07-18): the lock and speaker are their OWN
+             portions of the blob — same fill color, overlapping the body inside its ripple
+             headroom so they fuse into one organism. Lock extends right, speaker bottom-left.
+             Both are idle-only; the pill hides them. Drawn last = on top of the body. -->
+        <FrameLayout
+            android:id="@+id/lock_lobe"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="end|center_vertical"
+            android:background="@drawable/lobe_circle"
+            android:elevation="2dp"
+            android:visibility="gone">
+
             <ImageView
                 android:id="@+id/pin_icon"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_lock_open"
+                android:contentDescription="Lock bubble position" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/speaker_lobe"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_gravity="start|bottom"
+            android:background="@drawable/lobe_circle"
+            android:elevation="2dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/speak_clip_icon"
                 android:layout_width="16dp"
                 android:layout_height="16dp"
-                android:layout_gravity="top|end"
-                android:layout_margin="3dp"
-                android:src="@drawable/ic_lock_open"
-                android:alpha="0.0"
-                android:contentDescription="Lock bubble position" />
-
+                android:layout_gravity="center"
+                android:src="@drawable/ic_speaker"
+                android:contentDescription="Read clipboard aloud" />
         </FrameLayout>
     </FrameLayout>
 </LinearLayout>

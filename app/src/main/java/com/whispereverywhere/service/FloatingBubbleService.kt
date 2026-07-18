@@ -63,6 +63,8 @@ class FloatingBubbleService : Service(),
     private var morphRevertJob: Job? = null
     private lateinit var speechStopIcon: ImageView
     private lateinit var speakClipIcon: ImageView
+    private lateinit var lockLobe: View
+    private lateinit var speakerLobe: View
 
     private lateinit var windowManager: WindowManager
     private lateinit var bubbleView: View
@@ -332,7 +334,8 @@ class FloatingBubbleService : Service(),
     private fun enterSpeakingVisuals() {
         bubbleIcon.visibility = View.GONE
         processingRing.visibility = View.GONE
-        speakClipIcon.visibility = View.GONE
+        lockLobe.visibility = View.GONE
+        speakerLobe.visibility = View.GONE
         setBubbleWidth(160)
         waveformView.visibility = View.VISIBLE
         waveformView.start()
@@ -811,7 +814,10 @@ class FloatingBubbleService : Service(),
         speechStopIcon = bubbleView.findViewById(R.id.speech_stop_icon)
         speechStopIcon.setOnClickListener { com.whispereverywhere.tts.TtsController.stop() }
         speakClipIcon = bubbleView.findViewById(R.id.speak_clip_icon)
-        speakClipIcon.setOnClickListener { readClipboardAndSpeak() }
+        lockLobe = bubbleView.findViewById(R.id.lock_lobe)
+        speakerLobe = bubbleView.findViewById(R.id.speaker_lobe)
+        lockLobe.setOnClickListener { togglePin() }
+        speakerLobe.setOnClickListener { readClipboardAndSpeak() }
 
         val layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 
@@ -842,9 +848,6 @@ class FloatingBubbleService : Service(),
         applyPinIndicator()
 
         // Wire up the pin icon tap — toggles pin state without triggering the bubble click
-        pinIcon.setOnClickListener {
-            togglePin()
-        }
 
         bubbleView.setOnTouchListener { _, event ->
             handleTouch(event)
@@ -1542,8 +1545,9 @@ class FloatingBubbleService : Service(),
             // Recording timer defaults off; the RECORDING branch turns it back on.
             recordingTimerJob?.cancel(); recordingTimerJob = null
             recordingTimerText.visibility = View.GONE
-            // Clipboard chip is idle-only; the IDLE branch turns it back on.
-            speakClipIcon.visibility = View.GONE
+            // Satellite lobes are idle-only; the IDLE branch turns them back on.
+            lockLobe.visibility = View.GONE
+            speakerLobe.visibility = View.GONE
 
             when (newState) {
                 BubbleState.IDLE -> {
@@ -1555,7 +1559,8 @@ class FloatingBubbleService : Service(),
                             else -> R.drawable.ic_mic
                         },
                     )
-                    speakClipIcon.visibility = if (!isSpeakingNow &&
+                    lockLobe.visibility = View.VISIBLE
+                    speakerLobe.visibility = if (!isSpeakingNow &&
                         com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)
                     ) View.VISIBLE else View.GONE
                     waveformView.visibility = View.GONE
