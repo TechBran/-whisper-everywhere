@@ -35,8 +35,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 46
-        versionName = "2.7.8"  // aurora palette: red-weighted left, navy right
+        versionCode = 47
+        versionName = "2.8.0"  // device-audio capture for media transcription + transcript history
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
