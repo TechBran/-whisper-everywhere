@@ -116,6 +116,18 @@
                 android:textStyle="bold"
                 android:visibility="gone" />
 
+            <!-- Drag-to-seek line for TTS playback: thin, lives inside the pill under the
+                 waveform (user design 2026-07-18). Touch height is generous; the drawn line
+                 stays hairline. -->
+            <com.whispereverywhere.ui.components.TtsScrubberView
+                android:id="@+id/tts_scrubber"
+                android:layout_width="match_parent"
+                android:layout_height="18dp"
+                android:layout_gravity="bottom"
+                android:layout_marginStart="10dp"
+                android:layout_marginEnd="40dp"
+                android:visibility="gone" />
+
             <!-- Read-aloud stop control: visible only while speech plays. Generous padded tap
                  target (user feedback: the old 20dp corner button was hard to hit). -->
             <ImageView

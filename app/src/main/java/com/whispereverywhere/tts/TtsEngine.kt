@@ -71,6 +71,25 @@ class TtsEngine(
      */
     @Volatile var onBuffering: ((Boolean) -> Unit)? = null
 
+    /**
+     * Scrubber feed (~10 Hz from the playback thread): samples played, samples synthesized so
+     * far, and whether synthesis has finished (= the bar's right edge is final).
+     */
+    @Volatile var onProgress: ((played: Long, available: Long, done: Boolean) -> Unit)? = null
+
+    // Seek request in absolute samples; -1 = none. The playback thread consumes it between
+    // slices (it is the AudioTrack's sole owner, so the flush happens there too).
+    private val seekRequest = java.util.concurrent.atomic.AtomicLong(-1)
+    @Volatile private var playedSamples = 0L
+    @Volatile private var availableSamples = 0L
+
+    /** Scrub to [fraction] of the SYNTHESIZED audio (0..1). Forward is clamped to it. */
+    fun seekToFraction(fraction: Float) {
+        val target = (availableSamples * fraction.coerceIn(0f, 1f)).toLong()
+        seekRequest.set(target)
+        paused = false // dragging the line while paused implies "play from here"
+    }
+
     /** True while playback is paused mid-utterance (synthesis holds between slices). */
     @Volatile var paused: Boolean = false
         private set
@@ -123,32 +142,74 @@ class TtsEngine(
 
                 myFocus = requestFocus()
 
-                // Producer/consumer split (user-reported sentence gaps 2026-07-18): synthesis
-                // used to block on each sentence's PLAYBACK before generating the next, costing
-                // a synthesis-length pause at every boundary. Now sentences queue as fast as the
-                // model produces them (RTF ~0.58 = ahead of real time after sentence one) while
-                // a dedicated playback thread drains continuously — gapless. The bounded queue
-                // gives backpressure (~8 sentences ≈ a few MB), and the playback thread is the
-                // AudioTrack's SOLE owner (C2 preserved).
-                val queue = java.util.concurrent.LinkedBlockingQueue<ShortArray>(8)
-                val sentinel = ShortArray(0)
+                // Retained-store pipeline (scrubber, user design 2026-07-18): synthesis appends
+                // sentences to an in-memory PCM store as fast as the model produces them (RTF
+                // ~0.58 keeps it ahead of real time), while the playback thread — the
+                // AudioTrack's SOLE owner (C2) — walks a CURSOR through the store. Keeping the
+                // audio behind the cursor is what makes scrub-BACK possible; scrub-forward
+                // clamps to the synthesized frontier. Backpressure: synthesis holds when more
+                // than AHEAD_CAP is buffered ahead of playback (~14 MB); total retention capped
+                // at RETAIN_CAP (~30 min, ~86 MB) — beyond that synthesis stops with a log.
+                val store = ArrayList<ShortArray>() // guarded by synchronized(store)
+                var storeTotal = 0L                 // written under the same lock
+                playedSamples = 0L
+                availableSamples = 0L
+                seekRequest.set(-1)
+                val doneFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+
+                fun readAt(cursor: Long, maxLen: Int): ShortArray? {
+                    synchronized(store) {
+                        if (cursor >= storeTotal) return null
+                        var base = 0L
+                        for (chunk in store) {
+                            if (cursor < base + chunk.size) {
+                                val off = (cursor - base).toInt()
+                                val len = minOf(maxLen, chunk.size - off)
+                                return chunk.copyOfRange(off, off + len)
+                            }
+                            base += chunk.size
+                        }
+                        return null
+                    }
+                }
 
                 playbackThread = Thread({
                     val localTrack = newTrack(engine.sampleRate())
+                    val slice = localTrack.sampleRate / 10
+                    var cursor = 0L
                     var started = false
                     var stalled = false
+                    var lastProgressMs = 0L
                     try {
                         loop@ while (!cancelled()) {
-                            val pcm = queue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            // Consume a pending seek between slices; flush queued audio HERE
+                            // (sole track owner) so the jump is instant.
+                            val seek = seekRequest.getAndSet(-1)
+                            if (seek >= 0) {
+                                cursor = seek.coerceIn(0L, availableSamples)
+                                if (started) {
+                                    runCatching { localTrack.pause(); localTrack.flush(); localTrack.play() }
+                                }
+                            }
+                            if (paused) {
+                                if (started) runCatching { localTrack.pause() }
+                                while (paused && !cancelled() && seekRequest.get() < 0) {
+                                    try { Thread.sleep(50) } catch (_: InterruptedException) {}
+                                }
+                                if (cancelled()) break@loop
+                                if (started) runCatching { localTrack.play() }
+                                continue@loop
+                            }
+                            val pcm = readAt(cursor, slice)
                             if (pcm == null) {
-                                // Mid-utterance underrun = synthesis fell behind: surface it.
+                                if (doneFlag.get()) break@loop
                                 if (started && !stalled) {
                                     stalled = true
                                     onBuffering?.invoke(true)
                                 }
+                                try { Thread.sleep(50) } catch (_: InterruptedException) {}
                                 continue@loop
                             }
-                            if (pcm === sentinel) break@loop
                             if (stalled) {
                                 stalled = false
                                 onBuffering?.invoke(false)
@@ -157,40 +218,37 @@ class TtsEngine(
                                 localTrack.play()
                                 started = true
                             }
-                            // ~100 ms slices with cancel/pause checks between them.
-                            val slice = localTrack.sampleRate / 10
+                            onPcmChunk?.let { tap ->
+                                var sum = 0.0
+                                val bytes = ByteArray(pcm.size * 2)
+                                for (i in pcm.indices) {
+                                    val s = pcm[i]
+                                    sum += (s.toInt() * s.toInt()).toDouble()
+                                    bytes[i * 2] = (s.toInt() and 0xFF).toByte()
+                                    bytes[i * 2 + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
+                                }
+                                val rms = kotlin.math.sqrt(sum / pcm.size).toInt().coerceIn(0, 32767)
+                                tap(bytes, rms)
+                            }
                             var off = 0
                             while (off < pcm.size) {
-                                if (cancelled()) break@loop
-                                if (paused) {
-                                    runCatching { localTrack.pause() }
-                                    while (paused && !cancelled()) {
-                                        try { Thread.sleep(50) } catch (_: InterruptedException) {}
-                                    }
-                                    if (cancelled()) break@loop
-                                    runCatching { localTrack.play() }
-                                }
-                                val len = minOf(slice, pcm.size - off)
-                                onPcmChunk?.let { tap ->
-                                    var sum = 0.0
-                                    val bytes = ByteArray(len * 2)
-                                    for (i in 0 until len) {
-                                        val s = pcm[off + i]
-                                        sum += (s.toInt() * s.toInt()).toDouble()
-                                        bytes[i * 2] = (s.toInt() and 0xFF).toByte()
-                                        bytes[i * 2 + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
-                                    }
-                                    val rms = kotlin.math.sqrt(sum / len).toInt().coerceIn(0, 32767)
-                                    tap(bytes, rms)
-                                }
-                                val n = localTrack.write(pcm, off, len)
+                                if (cancelled() || seekRequest.get() >= 0) break
+                                val n = localTrack.write(pcm, off, pcm.size - off)
                                 if (n < 0) break@loop
                                 off += n
                             }
+                            cursor += off
+                            playedSamples = cursor
+                            val now = System.currentTimeMillis()
+                            if (now - lastProgressMs >= 100) {
+                                lastProgressMs = now
+                                onProgress?.invoke(cursor, availableSamples, doneFlag.get())
+                            }
                         }
-                        if (!cancelled() && started) {
+                        if (!cancelled() && !stalled) {
                             try { Thread.sleep(150) } catch (_: InterruptedException) {}
-                            runCatching { localTrack.stop() }
+                            if (started) runCatching { localTrack.stop() }
+                            onProgress?.invoke(playedSamples, availableSamples, true)
                         }
                     } finally {
                         if (stalled) onBuffering?.invoke(false)
@@ -208,21 +266,32 @@ class TtsEngine(
                         val pcm = ShortArray(samples.size) { i ->
                             (samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
                         }
-                        // Bounded put with cancel checks (backpressure without deadlock).
-                        while (!cancelled()) {
-                            if (queue.offer(pcm, 100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                                return 1
-                            }
+                        // Backpressure: hold while far ahead of playback (seek-forward drains it).
+                        while (!cancelled() &&
+                            availableSamples - playedSamples > AHEAD_CAP_SAMPLES
+                        ) {
+                            try { Thread.sleep(100) } catch (_: InterruptedException) {}
                         }
-                        return 0
+                        if (cancelled()) return 0
+                        if (availableSamples + pcm.size > RETAIN_CAP_SAMPLES) {
+                            android.util.Log.w("WE-TTS", "retention cap hit — truncating synthesis")
+                            return 0
+                        }
+                        synchronized(store) {
+                            store.add(pcm)
+                            storeTotal += pcm.size
+                            availableSamples = storeTotal
+                        }
+                        return 1
                     }
                 }
                 engine.generateWithCallback(
                     text = clean, sid = speakerId, speed = speed, callback = callback,
                 )
-                // Signal end-of-synthesis; the playback thread drains what's queued, then exits.
-                while (!cancelled() && !queue.offer(sentinel, 100, java.util.concurrent.TimeUnit.MILLISECONDS)) { /* retry */ }
-                playbackThread.join(120_000)
+                doneFlag.set(true)
+                // Playback outlives synthesis by up to the whole retained read; a newer speak()
+                // or stop() bumps the generation and this join returns within a slice.
+                playbackThread.join(RETAIN_CAP_JOIN_MS)
             } catch (t: Throwable) {
                 android.util.Log.w("WE-TTS", "speak failed", t)
             } finally {
@@ -364,5 +433,12 @@ class TtsEngine(
 
     companion object {
         private const val IDLE_UNLOAD_MS = 5 * 60_000L
+
+        // Scrubber pipeline (24 kHz mono): synthesis holds when > 5 min is buffered ahead of
+        // playback (~14 MB); total retention caps at 30 min (~86 MB) — enough for any real
+        // read-aloud while bounding worst-case memory.
+        private const val AHEAD_CAP_SAMPLES = 5L * 60 * 24_000
+        private const val RETAIN_CAP_SAMPLES = 30L * 60 * 24_000
+        private const val RETAIN_CAP_JOIN_MS = 35L * 60_000
     }
 }

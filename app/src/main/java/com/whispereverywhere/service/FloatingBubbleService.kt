@@ -65,6 +65,7 @@ class FloatingBubbleService : Service(),
     private lateinit var speakClipIcon: ImageView
     private lateinit var lockLobe: View
     private lateinit var speakerLobe: View
+    private lateinit var ttsScrubber: com.whispereverywhere.ui.components.TtsScrubberView
 
     private lateinit var windowManager: WindowManager
     private lateinit var bubbleView: View
@@ -342,10 +343,13 @@ class FloatingBubbleService : Service(),
         blobView.fillColor = android.graphics.Color.parseColor("#000000")
         blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.RECORDING)
         speechStopIcon.visibility = View.VISIBLE
+        ttsScrubber.setProgress(0, 0, false)
+        ttsScrubber.visibility = View.VISIBLE
     }
 
     private fun exitSpeakingVisuals() {
         speechStopIcon.visibility = View.GONE
+        ttsScrubber.visibility = View.GONE
         processingRing.visibility = View.GONE
         processingRing.clearAnimation()
         waveformView.stop()
@@ -380,12 +384,17 @@ class FloatingBubbleService : Service(),
                 }
             }
         }
+        // Scrubber feed: played/available/done at ~10 Hz from the playback thread.
+        engine.onProgress = { played, available, done ->
+            ttsScrubber.setProgress(played, available, done)
+        }
         enterSpeakingVisuals()
         com.whispereverywhere.tts.TtsController.speakFromTrigger(this, text) {
             // onDone (main thread): tear down the pill; selection may still be live.
             isSpeakingNow = false
             engine.onPcmChunk = null
             engine.onBuffering = null
+            engine.onProgress = null
             exitSpeakingVisuals()
             if (speakModeText != null) scheduleMorphRevert()
         }
@@ -831,6 +840,10 @@ class FloatingBubbleService : Service(),
         speakerLobe = bubbleView.findViewById(R.id.speaker_lobe)
         lockLobe.setOnClickListener { togglePin() }
         speakerLobe.setOnClickListener { readClipboardAndSpeak() }
+        ttsScrubber = bubbleView.findViewById(R.id.tts_scrubber)
+        ttsScrubber.onSeek = { fraction ->
+            com.whispereverywhere.tts.TtsController.engine(this).seekToFraction(fraction)
+        }
 
         val layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 

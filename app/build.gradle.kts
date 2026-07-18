@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 62
-        versionName = "3.0.6"  // gapless TTS (producer/consumer pipeline), buffering ring, red lock, contrast fixes
+        versionCode = 63
+        versionName = "3.0.7"  // TTS scrubber: thin drag-to-seek line in the pill, retained-PCM cursor pipeline
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
