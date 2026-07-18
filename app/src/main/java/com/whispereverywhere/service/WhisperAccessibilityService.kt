@@ -1037,6 +1037,10 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         fun getLastFieldRect(): Rect? = instance?.lastFieldRect
 
+        /** Package owning the field that most recently gained focus (null if none). */
+        fun lastFocusedFieldPackage(): String? =
+            instance?.lastFocusedEditText?.packageName?.toString()
+
         fun hasActiveFocusedField(): Boolean {
             val node = instance?.lastFocusedEditText ?: return false
             return try {

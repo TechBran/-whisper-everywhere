@@ -36,8 +36,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 51
-        versionName = "2.9.2"  // session-context freeze: mid-session clicks can't split/reroute the transcript
+        versionCode = 52
+        versionName = "2.9.3"  // media capture auto-finishes when a text field gains focus (sessions fully separate)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

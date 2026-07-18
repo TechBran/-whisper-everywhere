@@ -311,6 +311,18 @@ class FloatingBubbleService : Service(),
 
     override fun onTextFieldFocused(rect: Rect) {
         serviceScope.launch(Dispatchers.Main) {
+            // Device-audio capture is its own activity (user decision 2026-07-18): focusing a
+            // text field while capturing media FINISHES that session gracefully (full single
+            // transcript -> clipboard + history). Dictation into the field then starts fresh on
+            // the next bubble tap. Mic sessions are untouched — only the playback source
+            // auto-stops — and focus events from our own app/overlay never trigger it.
+            if (currentState == BubbleState.RECORDING &&
+                activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK &&
+                WhisperAccessibilityService.lastFocusedFieldPackage() != packageName
+            ) {
+                android.util.Log.i("WE-DIAG", "field focused during media capture -> finishing session")
+                stopRecording()
+            }
             currentContext = BubbleContext.TEXT_FIELD
             shouldHideOnIdle = false
             // Always-on: the bubble is already where the user wants it — do not reposition.
