@@ -217,10 +217,14 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
     params.translate        = (translate == JNI_TRUE);
     params.single_segment   = false;
     params.no_context       = true;
-    // Latency tunings (FUTO-style): the default temperature fallback re-decodes noisy segments up
-    // to 3-6x — a dictation app wants the greedy first pass, fast and deterministic. suppress_nst
+    // Decode quality/latency balance. temperature fallback ON (default 0.2 steps): it re-decodes
+    // a chunk ONLY when whisper's own quality gates trip (compression ratio > 2.4 / avg logprob
+    // < -1.0), so clean dictation pays zero — but it is the sole defense against degenerate
+    // repetition loops ("word word word x50"), which a 10-minute YouTube capture hit on-device
+    // (2026-07-18) with the fallback disabled. The old FUTO-style temperature_inc=0 latency
+    // tuning traded that safety away; never re-disable it for long-form audio. suppress_nst
     // stops non-speech tokens ([BLANK_AUDIO], music notes) at the source instead of post-filtering.
-    params.temperature_inc = 0.0f;
+    params.temperature_inc = 0.2f;
     params.suppress_nst    = true;
 
     int cores = static_cast<int>(std::thread::hardware_concurrency());

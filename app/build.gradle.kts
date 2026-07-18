@@ -36,8 +36,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 53
-        versionName = "2.9.4"  // complete-test corrections: lint clean (8 errors), notification/permission hardening
+        versionCode = 54
+        versionName = "2.9.5"  // temperature fallback restored: kills repetition loops in long media transcriptions
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
