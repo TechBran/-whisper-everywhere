@@ -52,7 +52,14 @@ import kotlinx.coroutines.withContext
 
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
+    WhisperAccessibilityService.OnTextSelectionListener,
     MediaSessionDetector.MediaPlaybackListener {
+
+    // Read-aloud (Track F): the text captured by the live selection watcher. Non-null = the
+    // idle bubble shows a speaker and a tap SPEAKS instead of recording. Cleared when the
+    // selection collapses; never set while a session is active.
+    @Volatile private var speakModeText: String? = null
+    @Volatile private var isSpeakingNow = false
 
     private lateinit var windowManager: WindowManager
     private lateinit var bubbleView: View
@@ -244,6 +251,43 @@ class FloatingBubbleService : Service(),
      */
     private fun registerFocusListener() {
         WhisperAccessibilityService.setFocusListener(this)
+        WhisperAccessibilityService.setSelectionListener(this)
+    }
+
+    // ========== Read-aloud (Track F): selection -> speaker morph -> speak/stop ==========
+
+    override fun onTextSelected(text: String) {
+        serviceScope.launch(Dispatchers.Main) {
+            // Never morph mid-session; selection during capture follows the session rules.
+            if (currentState != BubbleState.IDLE || isSpeakingNow) return@launch
+            if (!com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)) return@launch
+            speakModeText = text
+            bubbleIcon.setImageResource(R.drawable.ic_speaker)
+            // Hide the ~2 s model load inside the user's think-time between select and tap.
+            com.whispereverywhere.tts.TtsController.preload(this@FloatingBubbleService)
+        }
+    }
+
+    override fun onSelectionCleared() {
+        serviceScope.launch(Dispatchers.Main) {
+            if (isSpeakingNow) return@launch // keep the stop affordance while speaking
+            speakModeText = null
+            if (currentState == BubbleState.IDLE) bubbleIcon.setImageResource(R.drawable.ic_mic)
+        }
+    }
+
+    private fun startSpeaking(text: String) {
+        isSpeakingNow = true
+        bubbleIcon.setImageResource(R.drawable.ic_stop_speech)
+        com.whispereverywhere.tts.TtsController.speakFromTrigger(this, text) {
+            // onDone (main thread): revert to speaker (selection may still be live) or mic.
+            isSpeakingNow = false
+            if (currentState == BubbleState.IDLE) {
+                bubbleIcon.setImageResource(
+                    if (speakModeText != null) R.drawable.ic_speaker else R.drawable.ic_mic,
+                )
+            }
+        }
     }
 
     /**
@@ -274,6 +318,8 @@ class FloatingBubbleService : Service(),
     override fun onDestroy() {
         super.onDestroy()
         WhisperAccessibilityService.setFocusListener(null)
+        WhisperAccessibilityService.setSelectionListener(null)
+        com.whispereverywhere.tts.TtsController.stop()
         mediaDetector.setListener(null)
         mediaDetector.stopMonitoring()
         connectionMonitorJob?.cancel()
@@ -893,7 +939,11 @@ class FloatingBubbleService : Service(),
 
     private fun handleBubbleClick() {
         when (currentState) {
-            BubbleState.IDLE -> startRecording()
+            BubbleState.IDLE -> when {
+                isSpeakingNow -> com.whispereverywhere.tts.TtsController.stop()
+                speakModeText != null -> startSpeaking(speakModeText!!)
+                else -> startRecording()
+            }
             BubbleState.RECORDING -> stopRecording()
             BubbleState.CONNECTING, BubbleState.FINALIZING, BubbleState.PROCESSING -> { /* ignore */ }
             BubbleState.ERROR -> updateBubbleState(BubbleState.IDLE)
@@ -1391,7 +1441,13 @@ class FloatingBubbleService : Service(),
             when (newState) {
                 BubbleState.IDLE -> {
                     bubbleIcon.visibility = View.VISIBLE
-                    bubbleIcon.setImageResource(R.drawable.ic_mic)
+                    bubbleIcon.setImageResource(
+                        when {
+                            isSpeakingNow -> R.drawable.ic_stop_speech
+                            speakModeText != null -> R.drawable.ic_speaker
+                            else -> R.drawable.ic_mic
+                        },
+                    )
                     waveformView.visibility = View.GONE
                     waveformView.stop()
                     setBubbleWidth(56)

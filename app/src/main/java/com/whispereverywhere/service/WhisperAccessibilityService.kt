@@ -91,6 +91,40 @@ class WhisperAccessibilityService : AccessibilityService() {
         fun onTextFieldUnfocused()
     }
 
+    /** Read-aloud (Track F): cross-app text-selection events for the speaker-bubble morph. */
+    interface OnTextSelectionListener {
+        fun onTextSelected(text: String)
+        fun onSelectionCleared()
+    }
+
+    private var selectionDebounceJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Selection watching is OPPORTUNISTIC (Chromium page text, old-Compose apps and PDF viewers
+     * never emit these events — the PROCESS_TEXT toolbar entry covers those). Debounced 400 ms
+     * because events fire on every selection-handle drag.
+     */
+    private fun handleSelectionChanged(source: AccessibilityNodeInfo?) {
+        source ?: return
+        // Never react to our own overlay/app windows.
+        if (source.packageName?.toString() == packageName) return
+        val text = source.text?.toString()
+        val start = source.textSelectionStart
+        val end = source.textSelectionEnd
+        val valid = text != null && start in 0 until end && end <= text.length
+        selectionDebounceJob?.cancel()
+        if (valid) {
+            val selected = text!!.substring(start, end).take(MAX_SELECTION_CHARS)
+            if (selected.isBlank()) return
+            selectionDebounceJob = serviceScope.launch {
+                delay(SELECTION_DEBOUNCE_MS)
+                selectionListener?.onTextSelected(selected)
+            }
+        } else {
+            selectionListener?.onSelectionCleared()
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -151,6 +185,10 @@ class WhisperAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED -> {
+                // Read-aloud: selection watching rides the same event (Track F).
+                if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) {
+                    handleSelectionChanged(event.source)
+                }
                 // Text activity - this confirms we have an active input
                 val source = event.source
                 if (source != null) {
@@ -1027,6 +1065,14 @@ class WhisperAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile private var instance: WhisperAccessibilityService? = null
         @Volatile private var focusListener: OnTextFieldFocusListener? = null
+        @Volatile private var selectionListener: OnTextSelectionListener? = null
+
+        private const val SELECTION_DEBOUNCE_MS = 400L
+        private const val MAX_SELECTION_CHARS = 5_000
+
+        fun setSelectionListener(listener: OnTextSelectionListener?) {
+            selectionListener = listener
+        }
 
         fun isEnabled(): Boolean = instance != null
         fun getInstance(): WhisperAccessibilityService? = instance
