@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 64
-        versionName = "3.0.8"  // red-position scrubber palette; clipboard-copy attention pulse on the speaker lobe
+        versionCode = 65
+        versionName = "3.0.9"  // ribbon-lockstep blob: the aurora silhouette dictates the rim's spikes and mountains
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

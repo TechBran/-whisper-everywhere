@@ -67,6 +67,11 @@ class BarWaveformView @JvmOverloads constructor(
     private var ticker: ValueAnimator? = null
     private var phase = 0f
 
+    // Scratch buffers for the per-frame ribbon silhouette published to RibbonProfile (the
+    // blob's rim follows it — mountains inside become mountains outside).
+    private val profileTop = FloatArray(RibbonProfile.N)
+    private val profileBottom = FloatArray(RibbonProfile.N)
+
     private val density get() = resources.displayMetrics.density
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
@@ -100,6 +105,9 @@ class BarWaveformView @JvmOverloads constructor(
         val capR = height / 2f
         val inset = 3f * density
 
+        java.util.Arrays.fill(profileTop, 0f)
+        java.util.Arrays.fill(profileBottom, 0f)
+
         for (layer in 0 until SHEETS) {
             val frequency = 1.15f + layer * 0.55f
             val phaseOffset = phase * (0.8f + layer * 0.35f)
@@ -128,6 +136,14 @@ class BarWaveformView @JvmOverloads constructor(
                 val boundTop = (halfH - inset).coerceAtLeast(0f)
                 val yTop = (cy + drift + sin((progress * Math.PI * frequency) + phaseOffset).toFloat() * ampX)
                     .coerceIn(cy - boundTop, cy + boundTop)
+                // Silhouette: how far this sheet's crest reaches ABOVE center, 0..1 of the
+                // local bound — the max across sheets is the mountain the blob's top follows.
+                if (boundTop > 1f && yTop < cy) {
+                    val station = (progress * (RibbonProfile.N - 1)).toInt()
+                        .coerceIn(0, RibbonProfile.N - 1)
+                    val up = ((cy - yTop) / boundTop).coerceIn(0f, 1f)
+                    if (up > profileTop[station]) profileTop[station] = up
+                }
                 if (!started) {
                     sheetPath.moveTo(xf, yTop); crestPath.moveTo(xf, yTop); started = true
                 } else {
@@ -145,6 +161,12 @@ class BarWaveformView @JvmOverloads constructor(
                 val yBot = (cy + drift + height * 0.055f +
                     sin((progress * Math.PI * (frequency + 0.4f)) + phaseOffset + 1.9f).toFloat() * ampX)
                     .coerceIn(cy - boundBot, cy + boundBot)
+                if (boundBot > 1f && yBot > cy) {
+                    val station = (progress * (RibbonProfile.N - 1)).toInt()
+                        .coerceIn(0, RibbonProfile.N - 1)
+                    val down = ((yBot - cy) / boundBot).coerceIn(0f, 1f)
+                    if (down > profileBottom[station]) profileBottom[station] = down
+                }
                 sheetPath.lineTo(xf, yBot)
             }
             sheetPath.close()
@@ -157,6 +179,9 @@ class BarWaveformView @JvmOverloads constructor(
             crestPaint.alpha = (200 * (1f - layer * 0.2f)).toInt()
             canvas.drawPath(crestPath, crestPaint)
         }
+
+        // Hand the frame's silhouette to the blob (only while live — stale frames go unused).
+        if (running) RibbonProfile.publish(profileTop, profileBottom)
     }
 
     private fun stadiumHalfHeight(x: Float, w: Float, capR: Float): Float = when {

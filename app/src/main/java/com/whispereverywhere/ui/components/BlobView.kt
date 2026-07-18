@@ -234,7 +234,19 @@ class BlobView @JvmOverloads constructor(
                 0.33f * sin(3f * theta - flowPhase2 + 1.3f) +
                 0.22f * sin(5f * theta + flowPhase3 + 2.1f)) * 1.55f
             val osc = 0.5f + 0.5f * flow.coerceIn(-1f, 1f)
-            val wobble = baseSwell + rippleAmp * mix * osc + idleBreath
+
+            // Ribbon lockstep (user design 2026-07-18): while the aurora is live, its published
+            // silhouette DICTATES the skin — this point samples the crest/trough profile at its
+            // own horizontal station, blended by which way it faces (top edge follows crests,
+            // bottom follows troughs, caps take both). The traveling lobes stay underneath at
+            // 30% so the body keeps its liquid feel between syllables.
+            val shaped = if (mode == Mode.RECORDING && RibbonProfile.fresh()) {
+                val vertMix = ny * 0.5f + 0.5f // -1 (top) -> 0 ... +1 (bottom) -> 1
+                val rib = RibbonProfile.sample(RibbonProfile.top, hx) * (1f - vertMix) +
+                    RibbonProfile.sample(RibbonProfile.bottom, hx) * vertMix
+                0.30f * osc + 0.70f * rib
+            } else osc
+            val wobble = baseSwell + rippleAmp * mix * shaped + idleBreath
 
             // Direction variety: the push wanders off the pure normal by up to ~20 deg on a slow
             // cycle — the middle heaves straight north-south sometimes, diagonally other times.
