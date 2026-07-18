@@ -9,7 +9,7 @@
 |---|-------|--------|
 | A | **Device-audio capture** (media transcription without the mic) + transcript history | **SHIPPED 2026-07-17** (user-validated on device: clean YouTube/voice separation) |
 | B | Runs-on-every-phone (dynamic GGML backends; non-OpenCL devices) | **SHIPPED 2026-07-17** (2.8.1; DT_NEEDED chain verified clean; SONAME module loading; user-confirmed) |
-| C | Production leftovers (injection binding, Play declarations, full log strip, toolchain, CI) | queued |
+| C | Production leftovers (injection binding, Play declarations, full log strip, toolchain, CI) | **SHIPPED 2026-07-17** |
 | D | GPU polish (multilingual model on OpenCL retest; kernel-cache the first-load pause) | queued |
 | E | Housekeeping (fork whisper.cpp under TechBran for a cloneable submodule; optional upstream PR of the ggml-opencl lazy-init fix) | queued |
 
@@ -94,13 +94,26 @@ no real files — `ggml_backend_load_all_from_path()` scans find NOTHING; always
 on Android. Remaining (final-test item): behavior on an actual non-OpenCL device is simulated
 only (dlopen-failure path); a Pixel/Mali test device would fully close it.
 
-## Track C — Production leftovers (queued)
+## Track C — Production leftovers (SHIPPED 2026-07-17)
 
-Text-injection binds to the field captured at record start (not whatever is focused at
-delivery); Play Console declarations (accessibility `isAccessibilityTool` + disclosure,
-FGS-mic video, data safety); full release Log strip (extend proguard v/d → i/w/e);
-edge-to-edge targetSdk 35; AGP/Kotlin/Compose toolchain bump; CI (build + unit tests);
-notification-listener necessity review.
+- Injection binding: recording start now captures the focused node as the session target
+  (`beginInjectionSession`); every segment injects THERE while the node is alive, with
+  strategy classification (document/social clipboard paths) following the target's app.
+  Dead node → whole session cleared (node + package) → pre-session fallback behavior.
+- Play declarations: `docs/PLAY-DECLARATIONS.md` (a11y `isAccessibilityTool="false"` +
+  existing prominent-disclosure dialog verified compliant; FGS mic/mediaProjection texts;
+  data-safety: nothing collected; notification-listener justification).
+- Notification-listener review: KEEP — `MediaSessionManager.getActiveSessions()` legally
+  requires an enabled listener component; ours reads no notification content.
+- Full release log strip: R8 `-assumenosideeffects` now covers v/d/i/w/e (diagnosis moves
+  to debug builds; native `__android_log_print` unaffected).
+- Edge-to-edge: `enableEdgeToEdge()` in MainActivity (screens already Scaffold-inset).
+- Toolchain: AGP 8.2.0→8.7.3, Kotlin 1.9.20→2.0.21 (+ compose-compiler plugin replaces
+  composeOptions), Compose BOM 2024.10.01, navigation 2.8.4, accompanist 0.36.0,
+  kotlinx-serialization 1.7.3.
+- CI: `.github/workflows/ci.yml` — Kotlin compile + unit tests per push/PR (native assemble
+  deferred until the Track E fork makes the submodule cloneable); build-dir relocation made
+  dev-machine-conditional; gradlew exec bit set.
 
 ## Track D — GPU polish (queued)
 
