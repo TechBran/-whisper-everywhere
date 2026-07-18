@@ -36,8 +36,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 54
-        versionName = "2.9.5"  // temperature fallback restored: kills repetition loops in long media transcriptions
+        versionCode = 55
+        versionName = "2.9.6"  // finalize UX: preview streams the drain live instead of a bare spinner
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

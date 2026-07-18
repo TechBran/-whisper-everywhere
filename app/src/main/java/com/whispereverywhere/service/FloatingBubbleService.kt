@@ -1181,7 +1181,11 @@ class FloatingBubbleService : Service(),
                     sessionProducedText = true
                     serviceScope.launch(Dispatchers.Main) {
                         if (sessionContext != BubbleContext.TEXT_FIELD) {
-                            transcriptionDeltaText.visibility = View.GONE
+                            // During FINALIZING the delta line carries the "finishing…" status —
+                            // keep it up between drain segments instead of blanking it.
+                            if (currentState != BubbleState.FINALIZING) {
+                                transcriptionDeltaText.visibility = View.GONE
+                            }
                             // Route through the bounded-memory sink; the preview StateFlow
                             // drives transcriptionEditText via collectLatest above (Task 7).
                             transcriptSink?.append(trimmed)
@@ -1219,9 +1223,14 @@ class FloatingBubbleService : Service(),
 
         updateBubbleState(BubbleState.FINALIZING)
 
-        // Hide the preview bubble immediately so it doesn't linger during the finalizing delay
+        // Keep the preview VISIBLE through the drain: the backlog of committed segments keeps
+        // streaming into it, which is the honest "still working" signal. Hiding it here left
+        // only the spinner, and after a long capture users read that as a hang (user feedback
+        // 2026-07-18, 25-min video). The status line below names what's happening; the preview
+        // and the line come down together when the drain completes.
         if (sessionContext != BubbleContext.TEXT_FIELD) {
-            transcriptionPreviewContainer.visibility = View.GONE
+            transcriptionDeltaText.text = "Finishing transcript — last segments coming in…"
+            transcriptionDeltaText.visibility = View.VISIBLE
         }
         
         // Flush whatever is buffered, UNCONDITIONALLY. The amplitude segmenter misses quiet
@@ -1285,6 +1294,10 @@ class FloatingBubbleService : Service(),
 
     private fun teardownRealtime() {
         previewJob?.cancel(); previewJob = null
+        // The preview stays up through FINALIZING (live "still working" signal); EVERY teardown
+        // path — normal drain end, error, start-failure, destroy — brings it down here.
+        transcriptionDeltaText.visibility = View.GONE
+        transcriptionPreviewContainer.visibility = View.GONE
         transcriptSink?.close(); transcriptSink = null
         WhisperAccessibilityService.endInjectionSession()
         // Detach the session listener but KEEP the engine + its loaded native context so the next
