@@ -8,7 +8,7 @@
 | # | Track | Status |
 |---|-------|--------|
 | A | **Device-audio capture** (media transcription without the mic) + transcript history | **SHIPPED 2026-07-17** (user-validated on device: clean YouTube/voice separation) |
-| B | Runs-on-every-phone (dynamic GGML backends; non-OpenCL devices) | queued — ship-blocker for wide distribution |
+| B | Runs-on-every-phone (dynamic GGML backends; non-OpenCL devices) | **SHIPPED 2026-07-17** (2.8.1; DT_NEEDED chain verified clean; SONAME module loading; user-confirmed) |
 | C | Production leftovers (injection binding, Play declarations, full log strip, toolchain, CI) | queued |
 | D | GPU polish (multilingual model on OpenCL retest; kernel-cache the first-load pause) | queued |
 | E | Housekeeping (fork whisper.cpp under TechBran for a cloneable submodule; optional upstream PR of the ggml-opencl lazy-init fix) | queued |
@@ -82,12 +82,17 @@ with per-task reviews, all Important findings fixed; final whole-branch review i
       14-day/10MB rolling, oldest-first eviction, 5/5 unit tests), session capture funnel,
       home-screen Transcriptions card + list/detail screen (copy/share/delete)
 
-## Track B — Runs-on-every-phone (queued)
+## Track B — Runs-on-every-phone (SHIPPED 2026-07-17, commit b6bc689)
 
-`libggml-opencl.so` hard-links `libOpenCL.so`; devices without it (Tensor Pixels, Mali
-Samsungs) fail `System.loadLibrary` entirely — CPU transcription dead too. Fix: build ggml
-backends with `GGML_BACKEND_DL` (dlopen-able modules), load OpenCL via `ggml_backend_load()`
-in a try, CPU always present. Test matrix: Fold 6 (GPU) + simulated absence.
+Done: `GGML_BACKEND_DL=ON`; backends are dlopen modules loaded by BARE SONAME through the
+app's linker namespace (`ggml_backend_load("libggml-cpu.so")` etc.). CPU always loads;
+OpenCL is best-effort — absent vendor `libOpenCL.so` (Tensor Pixels, Mali Samsungs) is
+skipped instead of killing `System.loadLibrary`. Verified: `llvm-readelf` shows zero OpenCL
+references on the hard chain (whisper_jni→whisper→ggml→base); GPU still engages on the Fold 6.
+LESSON (cost one brief crash loop): with `extractNativeLibs=false` the nativeLibraryDir holds
+no real files — `ggml_backend_load_all_from_path()` scans find NOTHING; always load by SONAME
+on Android. Remaining (final-test item): behavior on an actual non-OpenCL device is simulated
+only (dlopen-failure path); a Pixel/Mali test device would fully close it.
 
 ## Track C — Production leftovers (queued)
 
