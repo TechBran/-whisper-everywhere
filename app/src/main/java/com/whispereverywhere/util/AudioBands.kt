@@ -30,34 +30,67 @@ object AudioBands {
     private const val SAMPLE_RATE = 16000f
 
     /**
-     * Per-band rolling peak for AGC: the speaker's own voice defines "loud".
-     *
-     * Startup direction matters (user feedback 2026-07-18: ribbons "so fast and aggressive"
-     * for the first seconds, then settle): initialized LOW, every early chunk was a new
-     * record and normalized to exactly 1.0 — maximum slam until calibration caught up. Now
-     * the reference starts at a realistic speech level (calm first seconds) and ADAPTS DOWN
-     * for quiet speakers via the decay within a few seconds.
+     * Per-band AGC constants, set from an on-device acoustic measurement (Fold 6 speaker->mic
+     * loop of real speech, 2026-07-18, 305 voiced chunks): far-field p90 per band =
+     * [0.017, 0.045, 0.077, 0.006]; near-field dictation runs several times hotter. INIT sits
+     * ~2-3x the far-field p90 (mid-ground toward near-field); FLOOR ≈ p90/6 so quiet-room
+     * noise can't define "loud" — the old global 0.08 floor sat ABOVE the sibilance band's
+     * measured maximum and kept it permanently dead in far-field use.
      */
-    private val peaks = FloatArray(PROBES.size) { 0.30f }
+    private val PEAK_INIT = floatArrayOf(0.05f, 0.10f, 0.12f, 0.02f)
+    private val PEAK_FLOOR = floatArrayOf(0.004f, 0.008f, 0.012f, 0.002f)
+
+    private val peaks = FloatArray(PROBES.size) { PEAK_INIT[it] }
+
+    // Session warm-up (user feedback: startup "fast and aggressive... adjustment period needs
+    // tuning"): no fixed reference fits both far-field and close dictation, so the OUTPUT
+    // itself ramps 35% -> 100% over the first ~2 s of each session — a deterministic, smooth
+    // crescendo instead of a calibration slam. A >1 s gap in analyze() calls = new session.
+    private var warmupFrames = 0
+    private var lastAnalyzeNs = 0L
 
     val ZERO = FloatArray(PROBES.size)
 
-    fun analyze(pcm: ByteArray, lenBytes: Int): FloatArray {
+    /** Calibration-only observer (band, raw, peak, out); null in production. */
+    @Volatile var calibrationTap: ((Int, Float, Float, Float) -> Unit)? = null
+
+    /** Calibration-only: reset the AGC to its cold-start state for a measurement run. */
+    fun resetForCalibration() {
+        for (b in peaks.indices) peaks[b] = PEAK_INIT[b]
+        warmupFrames = 0
+        lastAnalyzeNs = 0L
+    }
+
+    /** ~2 s of 32 ms chunks. */
+    private const val WARMUP_CHUNKS = 60
+
+    /**
+     * @param rawOut optional: filled with the PRE-AGC band energies (calibration tooling —
+     * the instrumented level-measurement test reads these; production callers pass nothing).
+     */
+    fun analyze(pcm: ByteArray, lenBytes: Int, rawOut: FloatArray? = null): FloatArray {
         val n = lenBytes / 2
         val out = FloatArray(PROBES.size)
         if (n < 64) return out
+        val nowNs = System.nanoTime()
+        if (nowNs - lastAnalyzeNs > 1_000_000_000L) warmupFrames = 0
+        lastAnalyzeNs = nowNs
+        if (warmupFrames < WARMUP_CHUNKS) warmupFrames++
+        val warmScale = 0.35f + 0.65f * (warmupFrames / WARMUP_CHUNKS.toFloat())
         for (b in PROBES.indices) {
             var sum = 0f
             for (f in PROBES[b]) sum += goertzelAmplitude(pcm, n, f)
             val v = sum / PROBES[b].size * GAINS[b]
+            rawOut?.set(b, v)
             // AGC: normalize against a slowly-decaying per-band peak. Absolute mic levels vary
             // wildly between devices/distances; without this the bands sit at 0.1-0.3 and the
             // visuals look sleepy. With it, the user's OWN dynamics span the full 0..1 range.
             // The peak RISES on a blend (not a snap): one plosive still spikes the ribbon once
             // — as it should — but can't instantly rescale the session and crush what follows.
-            val decayed = maxOf(peaks[b] * 0.995f, 0.08f)
+            val decayed = maxOf(peaks[b] * 0.995f, PEAK_FLOOR[b])
             peaks[b] = if (v > decayed) decayed + (v - decayed) * 0.6f else decayed
-            out[b] = (v / peaks[b]).coerceIn(0f, 1f)
+            out[b] = ((v / peaks[b]) * warmScale).coerceIn(0f, 1f)
+            calibrationTap?.invoke(b, v, peaks[b], out[b])
         }
         return out
     }

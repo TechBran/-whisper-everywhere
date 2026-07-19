@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 70
-        versionName = "3.1.4"  // AGC warm-up inverted: ribbons start calm and grow into calibration (no startup slam)
+        versionCode = 71
+        versionName = "3.1.5"  // measured AGC: per-band init/floors from on-device calibration + 2s output crescendo
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
