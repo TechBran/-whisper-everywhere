@@ -1,5 +1,16 @@
 # Play Store Listing — 3.2.0 Generational Release
 
+> REPLACED 2026-07-18 via Play Console. The old listing (archived below) described the
+> RETIRED cloud-API-key product ("audio goes directly to OpenAI", "Bring Your Own Key",
+> "requires OpenAI API key") — factually wrong for the on-device app — and named a
+> competitor (Otter AI) plus price-comparison claims, both metadata-policy hazards.
+>
+> **Old short:** "Floating voice-to-text bubble powered by Whisper. Bring Your Own Key."
+> **Old full (2,645 chars):** "STOP PAYING $15/MONTH FOR VOICE-TO-TEXT..." — cloud-era text
+> pitching wholesale OpenAI API access, BYO-key setup, $0.36/hour cost comparisons, and
+> per-app feature bullets. Full text recoverable from Console change history if ever needed.
+> **Old video:** youtube.com/shorts/Xsv-x4a6I5o (user replacing).
+
 > Research-backed (workflow wf_240c6655, 2026-07-18): positioning is ARCHITECTURE-LED because
 > every major competitor is adjective-led and cloud-backed. Four pillars in order: (1) speak
 > into any app, (2) transcribe what the phone is playing (category-defining — nothing on Play
