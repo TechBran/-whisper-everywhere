@@ -29,8 +29,16 @@ object AudioBands {
 
     private const val SAMPLE_RATE = 16000f
 
-    /** Per-band rolling peak for AGC: the speaker's own voice defines "loud". */
-    private val peaks = FloatArray(PROBES.size) { 0.04f }
+    /**
+     * Per-band rolling peak for AGC: the speaker's own voice defines "loud".
+     *
+     * Startup direction matters (user feedback 2026-07-18: ribbons "so fast and aggressive"
+     * for the first seconds, then settle): initialized LOW, every early chunk was a new
+     * record and normalized to exactly 1.0 — maximum slam until calibration caught up. Now
+     * the reference starts at a realistic speech level (calm first seconds) and ADAPTS DOWN
+     * for quiet speakers via the decay within a few seconds.
+     */
+    private val peaks = FloatArray(PROBES.size) { 0.30f }
 
     val ZERO = FloatArray(PROBES.size)
 
@@ -45,7 +53,10 @@ object AudioBands {
             // AGC: normalize against a slowly-decaying per-band peak. Absolute mic levels vary
             // wildly between devices/distances; without this the bands sit at 0.1-0.3 and the
             // visuals look sleepy. With it, the user's OWN dynamics span the full 0..1 range.
-            peaks[b] = maxOf(v, peaks[b] * 0.995f, 0.02f)
+            // The peak RISES on a blend (not a snap): one plosive still spikes the ribbon once
+            // — as it should — but can't instantly rescale the session and crush what follows.
+            val decayed = maxOf(peaks[b] * 0.995f, 0.08f)
+            peaks[b] = if (v > decayed) decayed + (v - decayed) * 0.6f else decayed
             out[b] = (v / peaks[b]).coerceIn(0f, 1f)
         }
         return out

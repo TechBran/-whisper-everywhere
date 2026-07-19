@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 69
-        versionName = "3.1.3"  // 16KB page alignment for the ggml backend modules; sherpa AAR dead-weight trimmed (-5MB)
+        versionCode = 70
+        versionName = "3.1.4"  // AGC warm-up inverted: ribbons start calm and grow into calibration (no startup slam)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
