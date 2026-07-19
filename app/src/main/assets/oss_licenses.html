@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Open-Source Licenses - Whisper Everywhere</title>
+    <title>Licenses - Whisper Everywhere</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
@@ -14,81 +14,75 @@
             padding: 20px;
             background-color: #fafafa;
         }
-        h1 {
-            color: #1a73e8;
-            border-bottom: 2px solid #1a73e8;
-            padding-bottom: 10px;
-        }
-        h2 {
-            color: #202124;
-            margin-top: 30px;
-        }
-        p, li {
-            color: #5f6368;
-        }
+        h1 { color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 10px; }
+        h2 { color: #202124; margin-top: 30px; }
+        p, li { color: #5f6368; }
         .license {
             background-color: #ffffff;
             border: 1px solid #e0e0e0;
             padding: 15px;
             border-radius: 8px;
             margin: 12px 0;
-            white-space: pre-wrap;
-            font-family: 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace;
-            font-size: 0.82em;
+            font-size: 0.9em;
             color: #444;
-            overflow-x: auto;
         }
         a { color: #1a73e8; }
     </style>
 </head>
 <body>
-    <h1>Open-Source Licenses</h1>
-    <p>Whisper Everywhere is built on excellent open-source software. We are grateful to the authors and contributors of the following projects.</p>
+    <h1>Licenses</h1>
 
-    <h2>whisper.cpp</h2>
-    <p>High-performance on-device inference for OpenAI's Whisper model.<br>
-    Copyright &copy; 2023-2024 Georgi Gerganov and contributors.<br>
-    <a href="https://github.com/ggerganov/whisper.cpp">https://github.com/ggerganov/whisper.cpp</a></p>
-    <div class="license">MIT License
+    <h2>Whisper Everywhere</h2>
+    <div class="license">
+        Whisper Everywhere is free software, licensed under the <b>GNU General Public License
+        v3.0 (GPLv3)</b>. You may redistribute and/or modify it under the terms of that
+        license. The complete source code is available at
+        <a href="https://github.com/TechBran/-whisper-everywhere">github.com/TechBran/-whisper-everywhere</a>,
+        with the full license text included as LICENSE. This program is distributed in the
+        hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+        warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+    </div>
 
-Copyright (c) 2023-2024 The ggml authors
+    <h2>Speech recognition</h2>
+    <div class="license"><b>whisper.cpp</b> (Georgi Gerganov &amp; contributors) — MIT License.
+        On-device speech-to-text, including the ggml tensor library and its OpenCL GPU backend
+        (Qualcomm Innovation Center contributions).
+        <a href="https://github.com/ggerganov/whisper.cpp">github.com/ggerganov/whisper.cpp</a></div>
+    <div class="license"><b>OpenAI Whisper models</b> — MIT License. The speech-recognition
+        model weights (all tiers).</div>
+    <div class="license"><b>Silero VAD</b> — MIT License. Voice-activity detection model.
+        <a href="https://github.com/snakers4/silero-vad">github.com/snakers4/silero-vad</a></div>
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+    <h2>Read-aloud (text-to-speech)</h2>
+    <div class="license"><b>sherpa-onnx</b> (k2-fsa / Xiaomi Corporation) — Apache License 2.0.
+        On-device TTS runtime.
+        <a href="https://github.com/k2-fsa/sherpa-onnx">github.com/k2-fsa/sherpa-onnx</a></div>
+    <div class="license"><b>ONNX Runtime</b> (Microsoft) — MIT License. Neural-network
+        inference engine used by sherpa-onnx.</div>
+    <div class="license"><b>Kokoro-82M</b> (hexgrad) — Apache License 2.0. The text-to-speech
+        voice model (multi-lang v1.0 export by csukuangfj).
+        <a href="https://huggingface.co/hexgrad/Kokoro-82M">huggingface.co/hexgrad/Kokoro-82M</a></div>
+    <div class="license"><b>eSpeak NG</b> — GNU General Public License v3.0. Phonemization
+        (letter-to-sound) engine for out-of-vocabulary words, statically linked within the
+        sherpa-onnx native library. Its inclusion is why Whisper Everywhere itself is
+        distributed under the GPLv3.
+        <a href="https://github.com/espeak-ng/espeak-ng">github.com/espeak-ng/espeak-ng</a></div>
+    <div class="license"><b>piper-phonemize</b> (Michael Hansen) — MIT License. The espeak-ng
+        integration layer inside sherpa-onnx.</div>
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+    <h2>Android libraries</h2>
+    <div class="license"><b>AndroidX / Jetpack Compose / Material 3</b> (Google) — Apache
+        License 2.0. UI framework, navigation, lifecycle, DataStore, security-crypto.</div>
+    <div class="license"><b>Kotlin &amp; kotlinx libraries</b> (JetBrains) — Apache License
+        2.0. Language runtime, coroutines, serialization.</div>
+    <div class="license"><b>Apache Commons Compress</b> — Apache License 2.0. Voice-model
+        archive extraction.</div>
+    <div class="license"><b>Accompanist</b> (Google) — Apache License 2.0. Permissions
+        utilities.</div>
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.</div>
-
-    <h2>ggml</h2>
-    <p>Tensor library for machine learning that powers whisper.cpp. Distributed under the MIT License (shown above), Copyright &copy; 2023-2024 The ggml authors.<br>
-    <a href="https://github.com/ggerganov/ggml">https://github.com/ggerganov/ggml</a></p>
-
-    <h2>OpenAI Whisper Models</h2>
-    <p>The downloadable speech-recognition model weights are derived from OpenAI's Whisper, released under the MIT License.<br>
-    Copyright &copy; 2022 OpenAI.<br>
-    <a href="https://github.com/openai/whisper">https://github.com/openai/whisper</a> &mdash; GGML conversions hosted at <a href="https://huggingface.co/ggerganov/whisper.cpp">huggingface.co/ggerganov/whisper.cpp</a>.</p>
-
-    <h2>AndroidX &amp; Jetpack Compose</h2>
-    <p>Android Jetpack, Jetpack Compose, and Material Components for Android.<br>
-    Copyright &copy; The Android Open Source Project. Licensed under the Apache License, Version 2.0.<br>
-    <a href="https://www.apache.org/licenses/LICENSE-2.0">https://www.apache.org/licenses/LICENSE-2.0</a></p>
-
-    <h2>Kotlin</h2>
-    <p>The Kotlin programming language and standard library.<br>
-    Copyright &copy; 2010-2024 JetBrains s.r.o. and Kotlin Programming Language contributors. Licensed under the Apache License, Version 2.0.<br>
-    <a href="https://github.com/JetBrains/kotlin">https://github.com/JetBrains/kotlin</a></p>
-
+    <p>Full license texts:
+        <a href="https://www.gnu.org/licenses/gpl-3.0.html">GPLv3</a> ·
+        <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</a> ·
+        <a href="https://opensource.org/license/mit">MIT</a></p>
 </body>
 </html>

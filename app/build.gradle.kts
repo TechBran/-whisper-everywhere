@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 71
-        versionName = "3.1.5"  // measured AGC: per-band init/floors from on-device calibration + 2s output crescendo
+        versionCode = 72
+        versionName = "3.2.0"  // the Play Store generational release: GPLv3 licensed, full listing revamp
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
