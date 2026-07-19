@@ -572,19 +572,41 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Find focused editable field (for text injection)
+     * True while a soft keyboard window is on screen — the most reliable cross-app signal
+     * that SOMETHING has input focus (the user's criterion: "if there's no keyboard or cursor
+     * for you to type with, use our own window").
+     */
+    fun isImeVisible(): Boolean = runCatching {
+        windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+    }.getOrDefault(false)
+
+    /**
+     * Find focused editable field (for text injection). Searches ALL windows, not just the
+     * active one — on foldables/multi-window the focused field often lives in a window that
+     * rootInActiveWindow does not return (user-reported injection failures 2026-07-18).
      */
     private fun findFocusedEditText(): AccessibilityNodeInfo? {
+        // Method 1: input focus across every interactive window.
+        runCatching {
+            for (w in windows) {
+                val focused = w.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: continue
+                if (isEditableTextField(focused)) {
+                    lastFocusedEditText = focused
+                    return focused
+                }
+            }
+        }
+
         val rootNode = rootInActiveWindow ?: return null
 
-        // Method 1: Check input focus
+        // Method 2: input focus on the active window (kept as belt-and-braces).
         val focusedNode = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null && isEditableTextField(focusedNode)) {
             lastFocusedEditText = focusedNode
             return focusedNode
         }
 
-        // Method 2: Search for any focused editable field
+        // Method 3: Search for any focused editable field
         return findFocusedEditableRecursive(rootNode)
     }
 
@@ -1149,6 +1171,18 @@ class WhisperAccessibilityService : AccessibilityService() {
             } catch (e: Exception) {
                 false
             }
+        }
+
+        /**
+         * Is there a REAL input target right now: the keyboard is up, or a focused editable
+         * exists in ANY window. The session-routing gate (typing sessions vs preview window) —
+         * deliberately more generous than the stale-cached-node check.
+         */
+        fun hasLiveInputTarget(): Boolean {
+            val svc = instance ?: return false
+            if (svc.isImeVisible()) return true
+            if (hasActiveFocusedField()) return true
+            return runCatching { svc.findFocusedEditText() != null }.getOrDefault(false)
         }
 
         fun injectText(text: String): Boolean {

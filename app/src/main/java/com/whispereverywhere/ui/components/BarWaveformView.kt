@@ -136,12 +136,14 @@ class BarWaveformView @JvmOverloads constructor(
                 val boundTop = (halfH - inset).coerceAtLeast(0f)
                 val yTop = (cy + drift + sin((progress * Math.PI * frequency) + phaseOffset).toFloat() * ampX)
                     .coerceIn(cy - boundTop, cy + boundTop)
-                // Silhouette: how far this sheet's crest reaches ABOVE center, 0..1 of the
-                // local bound — the max across sheets is the mountain the blob's top follows.
+                // Silhouette: crest excursion normalized by the FULL half-height (capR), NOT
+                // the local bound — dividing by the shrinking cap bound saturated the caps to
+                // 1.0 and bulged the pill's rounded ends at rest (user photo 2026-07-18). With
+                // capR the caps only move when a mountain genuinely reaches them tall.
                 if (boundTop > 1f && yTop < cy) {
                     val station = (progress * (RibbonProfile.N - 1)).toInt()
                         .coerceIn(0, RibbonProfile.N - 1)
-                    val up = ((cy - yTop) / boundTop).coerceIn(0f, 1f)
+                    val up = ((cy - yTop) / capR).coerceIn(0f, 1f)
                     if (up > profileTop[station]) profileTop[station] = up
                 }
                 if (!started) {
@@ -164,7 +166,7 @@ class BarWaveformView @JvmOverloads constructor(
                 if (boundBot > 1f && yBot > cy) {
                     val station = (progress * (RibbonProfile.N - 1)).toInt()
                         .coerceIn(0, RibbonProfile.N - 1)
-                    val down = ((yBot - cy) / boundBot).coerceIn(0f, 1f)
+                    val down = ((yBot - cy) / capR).coerceIn(0f, 1f)
                     if (down > profileBottom[station]) profileBottom[station] = down
                 }
                 sheetPath.lineTo(xf, yBot)

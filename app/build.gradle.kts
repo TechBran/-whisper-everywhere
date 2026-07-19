@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 66
-        versionName = "3.1.0"  // blob truly morphs (36 pts, direct headroom); fieldless sessions -> preview; one clipboard save
+        versionCode = 67
+        versionName = "3.1.1"  // caps rest in pill shape (capR norm); robust input-target detection (IME window + all-windows focus)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

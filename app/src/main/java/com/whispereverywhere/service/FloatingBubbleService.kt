@@ -1347,13 +1347,14 @@ class FloatingBubbleService : Service(),
         // seconds later and the user may click anywhere in between; the session must not follow.
         // Both released/re-captured per session (injection session in teardownRealtime).
         sessionContext = currentContext
-        // A TEXT_FIELD session must have a LIVE field at the tap (user feedback 2026-07-18:
-        // stale field context sent every utterance to the clipboard separately). No live
-        // field -> this is a preview session: window + ONE clipboard save at the end.
+        // A typing session needs a REAL input target at the tap: keyboard up, or a focused
+        // editable in ANY window (the cached-node-only check demoted working fields — user
+        // regression report 2026-07-18). No target -> preview session: window + ONE clipboard
+        // save at the end.
         if (sessionContext == BubbleContext.TEXT_FIELD &&
-            !WhisperAccessibilityService.hasActiveFocusedField()
+            !WhisperAccessibilityService.hasLiveInputTarget()
         ) {
-            android.util.Log.i("WE-DIAG", "no live field at tap -> preview session")
+            android.util.Log.i("WE-DIAG", "no live input target at tap -> preview session")
             sessionContext = BubbleContext.NONE
         }
         sessionClipboardFallback = false
