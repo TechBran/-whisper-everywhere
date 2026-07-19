@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 68
-        versionName = "3.1.2"  // preview sessions deliver into a field focused by the end (clipboard + full-text inject)
+        versionCode = 69
+        versionName = "3.1.3"  // 16KB page alignment for the ggml backend modules; sherpa AAR dead-weight trimmed (-5MB)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
@@ -83,6 +83,12 @@ android {
                 // Vulkan CLOSED on Adreno (driver-compiler aborts + DeviceLost at Queue::submit,
                 // proven on-device 2026-07-17). Revisit only for Mali/Xclipse experiments.
                 arguments += "-DGGML_VULKAN=OFF"
+                // 16 KB page-size alignment (Play requirement): the dlopen backend MODULES
+                // (libggml-cpu/opencl) linked at 4 KB — cmake MODULE targets dodge the flag the
+                // SHARED targets get. Force it on both linker classes (verified via
+                // llvm-readelf LOAD p_align, 2026-07-18).
+                arguments += "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
+                arguments += "-DCMAKE_MODULE_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
                 cppFlags += "-std=c++17"
             }
         }
@@ -145,6 +151,12 @@ android {
             // use the DEVICE's own /vendor copy (see uses-native-library in the manifest).
             // Bundling it breaks dlopen: our namespace can't resolve its private libc++.so dep.
             excludes += "**/libOpenCL.so"
+            // sherpa-onnx AAR dead weight: the Kotlin API needs only libsherpa-onnx-jni.so
+            // (+ libonnxruntime.so, its sole non-system DT_NEEDED — verified via llvm-readelf).
+            // The C/CXX API libs and the parakeet model runtime are ~5 MB of unused payload.
+            excludes += "**/libsherpa-onnx-c-api.so"
+            excludes += "**/libsherpa-onnx-cxx-api.so"
+            excludes += "**/libparakeet.so"
         }
     }
 
