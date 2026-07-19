@@ -1554,7 +1554,17 @@ class FloatingBubbleService : Service(),
                         if (full.isNotEmpty()) {
                             val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                             clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
-                            showToast("Transcription copied to clipboard")
+                            // User decision 2026-07-18: a preview session whose user has moved
+                            // into a text field by the END delivers there too — the whole
+                            // transcript in one block (clipboard stays set either way). Covers
+                            // the capture-video-then-tap-into-prompt flow end to end.
+                            val injected = WhisperAccessibilityService.hasLiveInputTarget() &&
+                                WhisperAccessibilityService.injectTextWithResult(full) ==
+                                WhisperAccessibilityService.InjectionResult.SUCCESS
+                            showToast(
+                                if (injected) "Transcription inserted — also on your clipboard"
+                                else "Transcription copied to clipboard",
+                            )
                         }
                     }
                 } else if (sessionClipboardFallback && sessionTranscript.isNotBlank()) {

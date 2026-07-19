@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 35
-        versionCode = 67
-        versionName = "3.1.1"  // caps rest in pill shape (capR norm); robust input-target detection (IME window + all-windows focus)
+        versionCode = 68
+        versionName = "3.1.2"  // preview sessions deliver into a field focused by the end (clipboard + full-text inject)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
