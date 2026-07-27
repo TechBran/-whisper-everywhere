@@ -285,12 +285,22 @@ class TtsEngine(
                         return 1
                     }
                 }
-                engine.generateWithCallback(
-                    text = clean, sid = speakerId, speed = speed, callback = callback,
-                )
-                doneFlag.set(true)
+                try {
+                    engine.generateWithCallback(
+                        text = clean, sid = speakerId, speed = speed, callback = callback,
+                    )
+                } finally {
+                    // MUST be in a finally. If generateWithCallback throws (OOM on sherpa's
+                    // whole-utterance float[], or a native error), skipping this leaves the
+                    // playback loop's readAt() returning null forever: the thread never exits,
+                    // the AudioTrack leaks, and onDone tears down the stop button while banked
+                    // audio keeps playing with focus already abandoned.
+                    doneFlag.set(true)
+                }
                 // Playback outlives synthesis by up to the whole retained read; a newer speak()
                 // or stop() bumps the generation and this join returns within a slice.
+                // On the throw path we still reach the outer catch AFTER banked audio drains,
+                // which is deliberate: the user keeps the words already synthesized.
                 playbackThread.join(RETAIN_CAP_JOIN_MS)
             } catch (t: Throwable) {
                 android.util.Log.w("WE-TTS", "speak failed", t)
