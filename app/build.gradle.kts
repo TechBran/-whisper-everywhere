@@ -19,7 +19,7 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "com.whispereverywhere"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     externalNativeBuild {
@@ -36,7 +36,7 @@ android {
     defaultConfig {
         applicationId = "com.whispereverywhere"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 72
         versionName = "3.2.0"  // the Play Store generational release: GPLv3 licensed, full listing revamp
 
