@@ -905,10 +905,21 @@ This task produces no code. It produces the measurement that Release 0.1 depends
 > consequence and let the human decide. If they accept, have them export anything they want to
 > keep first.
 
+> ### ⚠️ ORDERING: `connectedAndroidTest` UNINSTALLS THE APP WHEN IT FINISHES
+>
+> AGP's instrumented-test task installs the app APK + test APK, runs the tests, and then
+> **removes both as teardown**. So installing the app for a capture and *then* running the
+> instrumented tests leaves you with no app — which looks exactly like a failed install.
+>
+> **Correct order:**
+> 1. Run any instrumented tests FIRST (they self-install and self-clean).
+> 2. THEN install the build for the capture.
+> 3. Do NOT run instrumented tests again until the capture is saved.
+
 - [ ] **Step 1: Install the instrumented build**
 
 Only after the preflight above passes, or after an explicit informed decision to accept the
-uninstall:
+uninstall — and only after any instrumented-test runs are finished:
 
 ```bash
 ./gradlew :app:installDebug --no-daemon
@@ -919,6 +930,13 @@ this avoids Gradle's installer plugin entirely:
 
 ```bash
 adb install <buildDir>/app/outputs/apk/debug/app-debug.apk
+```
+
+Verify it is actually there before handing the device back:
+
+```bash
+adb shell pm path com.whispereverywhere
+adb shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.whispereverywhere
 ```
 
 - [ ] **Step 2: Start a clean capture**
