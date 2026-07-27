@@ -224,16 +224,23 @@ Beside `entries`:
 
 Then change the default (currently `pro`, `WhisperModel.kt:113`):
 
+The existing declaration is `WhisperModel.kt:113-114`:
+
+```kotlin
+    /** Default tier selected on first run (Pro / small.en). */
+    const val DEFAULT_MODEL_ID = "pro"
+```
+
+Replace with — note **no explicit type annotation**, matching the existing style:
+
 ```kotlin
     /**
      * Default tier on first run. Eco (base.en) since 2026-07-27: on-device testing found it fast
      * enough for real-time dictation, and Play reviews cite latency on the larger tiers. It is
      * also a 60 MB first-run download instead of 190 MB.
      */
-    const val DEFAULT_MODEL_ID: String = "eco"
+    const val DEFAULT_MODEL_ID = "eco"
 ```
-
-Match the existing declaration's exact name and type — read the file rather than assuming.
 
 - [ ] **Step 6: Run the test to verify it passes**
 
@@ -246,7 +253,32 @@ Then the full suite:
 ```bash
 .\gradlew.bat :app:testDebugUnitTest --no-daemon
 ```
-Expected: 92 + 8 new = **100 tests**, 0 failures. If an existing test asserted the old default or the entry count, fix the test to the new intent — and say so explicitly in your report rather than quietly editing it.
+Expected: 92 + 8 new = **100 tests**, 0 failures.
+
+**Two EXISTING assertions will fail, and here is exactly how to fix them.** These are correct
+failures — the catalog genuinely changed — but do not improvise the new values.
+
+`app/src/test/java/com/whispereverywhere/model/WhisperCatalogHelpersTest.kt:14-15` currently reads:
+
+```kotlin
+        assertEquals(5, WhisperCatalog.entries.size)
+        assertEquals(listOf("eco", "pro", "extreme", "multi", "ultra"), ids)
+```
+
+Change to (the new entry is inserted after `eco`, per Step 4, and retired tiers REMAIN in
+`entries` — that is the whole point of retiring rather than deleting):
+
+```kotlin
+        assertEquals(6, WhisperCatalog.entries.size)
+        assertEquals(listOf("eco", "base", "pro", "extreme", "multi", "ultra"), ids)
+```
+
+Every other existing assertion in that file — the `extreme`/`ultra` scopes, `minRamBytes`,
+`approxBytes`, and the `isRecommendedForDevice` cases at `:65-72` — must keep passing **unchanged**.
+If any of those break, you have altered a retired entry's data, which you must not do: an existing
+installation is verified against exactly those values. Revert and report.
+
+State in your report which existing assertions you changed and why.
 
 - [ ] **Step 7: Commit**
 
