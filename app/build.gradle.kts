@@ -224,9 +224,6 @@ dependencies {
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // Security - Encrypted SharedPreferences for API key storage
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-
     // Accompanist for permissions
     implementation("com.google.accompanist:accompanist-permissions:0.36.0")
 
