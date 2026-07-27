@@ -22,6 +22,13 @@ data class WhisperModel(
     val sha256: String,
     val scope: ModelScope,
     val minRamBytes: Long,
+    /**
+     * A tier that is no longer offered but must remain RESOLVABLE. Removing an entry outright
+     * makes [WhisperCatalog.byId] return null for anyone who selected it, which makes
+     * `installedModel()` return null, which trips the app-wide gate and force-marches that user
+     * into onboarding — with their model file orphaned on disk. Retire; never delete.
+     */
+    val retired: Boolean = false,
 )
 
 /**
@@ -45,6 +52,7 @@ object WhisperCatalog {
     // is the sha256 of the LFS content). Now that these are valid 64-char hex, download
     // verification enforces them (streaming sha256) on top of the approxBytes size gate.
     private const val SHA256_ECO = "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f"
+    private const val SHA256_BASE = "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"
     private const val SHA256_PRO = "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30"
     private const val SHA256_EXTREME = "76733e26ad8fe1c7a5bf7531a9d41917b2adc0f20f2e4f5531688a8c6cd88eb0"
     private const val SHA256_MULTI = "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
@@ -63,6 +71,17 @@ object WhisperCatalog {
             approxBytes = 59_721_011L,
             sha256 = SHA256_ECO,
             scope = ModelScope.ENGLISH,
+            minRamBytes = 0L,
+        ),
+        WhisperModel(
+            id = "base",
+            displayName = "Base multilingual",
+            fileName = "ggml-base-q5_1.bin",
+            url = urlFor("ggml-base-q5_1.bin"),
+            // Exact LFS byte size at the pinned commit — do NOT round (see the eco note above).
+            approxBytes = 59_707_625L,
+            sha256 = SHA256_BASE,
+            scope = ModelScope.MULTILINGUAL,
             minRamBytes = 0L,
         ),
         WhisperModel(
@@ -86,6 +105,7 @@ object WhisperCatalog {
             // ActivityManager.totalMem under-reports physical RAM (kernel/carveouts) — a 6 GB
             // gate mislabels genuine 6 GB devices. 5.5e9 keeps the intent (6 GB-class hardware).
             minRamBytes = 5_500_000_000L,
+            retired = true,
         ),
         WhisperModel(
             id = "multi",
@@ -107,11 +127,19 @@ object WhisperCatalog {
             scope = ModelScope.MULTILINGUAL,
             // See extreme tier note: 7.0e9 = genuine 8 GB-class hardware after totalMem slack.
             minRamBytes = 7_000_000_000L,
+            retired = true,
         ),
     )
 
-    /** Default tier selected on first run (Pro / small.en). */
-    const val DEFAULT_MODEL_ID = "pro"
+    /** Tiers offered to users. Retired tiers stay in [entries] so byId() keeps resolving them. */
+    val pickable: List<WhisperModel> = entries.filter { !it.retired }
+
+    /**
+     * Default tier on first run. Eco (base.en) since 2026-07-27: on-device testing found it fast
+     * enough for real-time dictation, and Play reviews cite latency on the larger tiers. It is
+     * also a 60 MB first-run download instead of 190 MB.
+     */
+    const val DEFAULT_MODEL_ID = "eco"
 
     fun byId(id: String?): WhisperModel? = entries.firstOrNull { it.id == id }
 
