@@ -706,11 +706,29 @@ with only 3,262 ms banked against it — a 7.2× ratio against the 1.73× starva
    granted `NONE` with a 401 ms buffer. §6A.2's keep-LOW_LATENCY argument is **moot on this
    device** — the app is already running in `NONE`. Do not spend effort defending a mode that
    isn't being granted; re-check `performanceMode` on any device before reasoning about it.
-2. **Real RTF is ~7% worse than the bench** — p50 0.62 / p95 0.73 vs the quoted 0.577. Still far
-   below 1.0, so the §6A.4 "buffering cannot help" regime is **not** in play here.
-3. **`dutyPct` is unreliable as implemented.** `audioMs` (96.4 s) exceeded `wallMs` (65.4 s)
-   because it counts *synthesized* rather than *played* audio and the session was stopped early.
-   Confirms the review's Minor 4 in the field. Do not read `dutyPct` from a stopped session.
+2. **Real RTF matches the bench almost exactly — 0.583 vs 0.577, a 1.1% difference.**
+
+   > **Correction, 2026-07-27.** An earlier revision of this section claimed "~7% worse than the
+   > bench" by quoting `rtfP50=0.62`. That was wrong: `rtfP50` is an **unweighted** median over
+   > callbacks whose durations span 2.5 s to 23.6 s, and the bench's 0.577 is a **duration-weighted
+   > aggregate**. Comparing them is apples to oranges. Recomputed from the capture,
+   > `Σ synthMs / Σ audMs` = 56,206 / 96,357 = **0.5833** (0.5828 excluding the phonemization-laden
+   > first callback). Cross-check: the summed `audMs` lands within 5 ms of the record's
+   > `audioMs=96362`.
+   >
+   > **The device is performing as benched.** There is no meaningful RTF degradation under real
+   > load, and the "7% worse" figure must not be cited. The summary record is being amended to
+   > emit `rtfAgg=` so this comparison cannot be got wrong again.
+
+   Either way, far below 1.0 — so the §6A.4 "buffering cannot help" regime is **not** in play.
+3. **`dutyPct` is broken, not merely unreliable — it printed `100` on the same line that
+   reported a 9-second gap.** `audioMs` (96.4 s) exceeded `wallMs` (65.4 s) — a 147% ratio that
+   `.coerceIn(0, 100)` silently rendered as "gapless". The final `play` record shows
+   `leadMs=45767`: the session ended with 46 s of synthesized audio never played, because
+   `audioMs` counts *synthesized* rather than *played* audio.
+   A spec caveat is not sufficient for this — the log line itself lies, and the next reader will
+   not have this document open. Being fixed in code: drop the upper clamp so >100 self-identifies,
+   correct the KDoc, and emit `playedMs=` alongside.
 4. **`ttfwMs=1997` matches the advertised ~1.9 s** — and is only trustworthy because the
    `diagT0` cold-load defect was fixed before capture. Unfixed it would have read ~4 s.
 
