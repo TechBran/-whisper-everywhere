@@ -10,6 +10,10 @@
 
 ## Global Constraints
 
+- **Unit tests run with `unitTests.isReturnDefaultValues = true`** (`app/build.gradle.kts:166`).
+  Any `android.*` call in JVM-unit-tested code returns a type default (null / 0 / false) instead
+  of throwing, so a broken dependency on an Android API can PASS silently or fail confusingly.
+  Keep JVM-unit-tested classes free of `android.*` — every existing one in this repo is.
 - **`java` is NOT on PATH.** In PowerShell, before any gradle command:
   `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"` (JDK 21, verified working).
   Use `.\gradlew.bat`, not `./gradlew`. Always pass `--no-daemon`.
@@ -243,7 +247,7 @@ Create `app/src/main/java/com/whispereverywhere/data/local/SecureStoreCodec.kt`:
 ```kotlin
 package com.whispereverywhere.data.local
 
-import android.util.Base64
+import java.util.Base64
 
 /**
  * On-disk framing for [SecureStore]: `"<version>:<base64 iv>:<base64 ciphertext>"`.
@@ -256,9 +260,12 @@ import android.util.Base64
  * [decode] is total: any malformed, truncated, or corrupted input yields null. Credential storage
  * sits on the app-start path, so a parse failure must degrade to "no value", never crash.
  *
- * NOTE: this file imports android.util.Base64 and therefore is not strictly JVM-pure; it is unit
- * tested via the android.jar stubs available to unit tests. If that ever becomes a problem, swap
- * to java.util.Base64 (API 26+, which matches minSdk) — the wire format is identical.
+ * Uses java.util.Base64, NOT android.util.Base64, for a load-bearing reason: this project sets
+ * `unitTests.isReturnDefaultValues = true` (app/build.gradle.kts:166), so android.util.Base64
+ * would return NULL under plain JVM unit tests rather than throwing — encode() would silently
+ * produce the literal string "1:null:null" and the tests would fail confusingly. java.util.Base64
+ * is available from API 26, which is exactly this app's minSdk, and the wire format is identical.
+ * Keeping this file free of android.* also matches every other unit-tested class in the repo.
  */
 object SecureStoreCodec {
 
@@ -269,10 +276,11 @@ object SecureStoreCodec {
 
     data class Framed(val version: Int, val iv: ByteArray, val ciphertext: ByteArray)
 
-    private const val FLAGS = Base64.NO_WRAP or Base64.NO_PADDING
+    private val encoder: Base64.Encoder = Base64.getEncoder().withoutPadding()
+    private val decoder: Base64.Decoder = Base64.getDecoder()
 
     fun encode(iv: ByteArray, ciphertext: ByteArray): String =
-        "$VERSION:${Base64.encodeToString(iv, FLAGS)}:${Base64.encodeToString(ciphertext, FLAGS)}"
+        "$VERSION:${encoder.encodeToString(iv)}:${encoder.encodeToString(ciphertext)}"
 
     fun decode(blob: String): Framed? {
         val parts = blob.split(':')
@@ -280,15 +288,19 @@ object SecureStoreCodec {
         val version = parts[0].toIntOrNull() ?: return null
         if (version != VERSION) return null
         return try {
-            val iv = Base64.decode(parts[1], FLAGS)
+            val iv = decoder.decode(parts[1])
             if (iv.size != GCM_IV_BYTES) return null
-            Framed(version, iv, Base64.decode(parts[2], FLAGS))
+            Framed(version, iv, decoder.decode(parts[2]))
         } catch (_: IllegalArgumentException) {
             null
         }
     }
 }
 ```
+
+Note `Base64.getEncoder()` is the standard (non-URL-safe) alphabet, which can emit `+` and `/`.
+Both are ASCII-printable and legal in SharedPreferences XML, so the ASCII-safety test still holds.
+`=` padding is disabled so the blob cannot be confused by trailing-padding differences.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -297,7 +309,10 @@ object SecureStoreCodec {
 ```
 Expected: PASS, 7 tests.
 
-If `android.util.Base64` returns null-ish or throws under plain unit tests (it is a stubbed API), STOP and report — the fix is to switch to `java.util.Base64`, which is available at `minSdk 26`, but that is a decision to record rather than make silently.
+There is no `android.*` import in this file by design (see the KDoc), so it runs on a plain JVM
+exactly like every other unit-tested class in this repo. If it somehow does not, STOP and report
+rather than reaching for `unitTests.isReturnDefaultValues` behaviour — that setting is already
+`true` at `app/build.gradle.kts:166` and is precisely what would mask a broken codec.
 
 - [ ] **Step 5: Commit**
 
