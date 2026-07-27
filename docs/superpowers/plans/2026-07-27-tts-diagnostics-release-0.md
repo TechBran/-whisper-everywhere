@@ -587,19 +587,16 @@ In `speak()`, immediately after the existing `val doneFlag = ...` line (currentl
                 // --- TTSDIAG session state (Release 0 instrumentation; no behaviour change) ---
                 val diagRtfs = java.util.Collections.synchronizedList(ArrayList<Double>())
                 val diagSentSeq = java.util.concurrent.atomic.AtomicInteger(0)
-                @Volatile var diagLastCallbackExitMs = 0L   // callback EXIT -> next ENTRY
+                // Callback EXIT -> next ENTRY. A one-element array, not @Volatile: Kotlin does
+                // not permit @Volatile on a local, and the sherpa callback is this value's only
+                // reader and only writer (it runs on the executor thread, one call at a time).
+                val diagLastCallbackExitMs = longArrayOf(0L)
                 val diagT0 = System.currentTimeMillis()
                 val diagTtfwMs = java.util.concurrent.atomic.AtomicLong(-1)
                 val diagUnderN = java.util.concurrent.atomic.AtomicInteger(0)
                 val diagUnderMs = java.util.concurrent.atomic.AtomicLong(0)
                 val diagMaxGapMs = java.util.concurrent.atomic.AtomicLong(0)
                 val diagHwUnder = java.util.concurrent.atomic.AtomicInteger(0)
-```
-
-Kotlin does not allow `@Volatile` on a local, so declare `diagLastCallbackExitMs` as a single-element `LongArray(1)` instead — the callback is the only writer and reader:
-
-```kotlin
-                val diagLastCallbackExitMs = longArrayOf(0L)
 ```
 
 - [ ] **Step 2: Instrument the sherpa callback for per-sentence RTF**
@@ -644,9 +641,10 @@ In the playback thread, immediately after `val localTrack = newTrack(engine.samp
                             sampleRate = localTrack.sampleRate,
                         ),
                     )
-                    var hwUnderBase = localTrack.underrunCount
-                    var headBase = 0
 ```
+
+Do **not** add any other tracking variable here. `underrunCount` is sampled per-stall in Step 5,
+not against a session baseline — a session-wide baseline would be dead code.
 
 `bufferSizeInFrames` and `performanceMode` are what the framework actually granted, which may differ from what `newTrack` requested — that difference is itself a finding.
 
@@ -762,15 +760,28 @@ Declare the three new stall locals alongside `var stalled = false` (line 181):
 
 - [ ] **Step 6: Re-baseline the head after every flush**
 
-`flush()` resets `playbackHeadPosition`, so a seek during a stall would corrupt `renderMs`. In the seek branch (lines 187-193), after the existing `runCatching { localTrack.pause(); localTrack.flush(); localTrack.play() }`, add:
+`flush()` resets `playbackHeadPosition` to 0, so a seek that lands during a stall would make the
+Step 5 subtraction read a post-flush head against a pre-flush baseline and report a wildly wrong
+`renderMs`. In the seek branch, inside the existing `if (started) { ... }` guard and immediately
+after `runCatching { localTrack.pause(); localTrack.flush(); localTrack.play() }`, add this single
+statement:
 
 ```kotlin
                                     stallHeadStart = 0
-                                    headBase = 0
-                                }
 ```
 
-so the next stall measures from a fresh baseline rather than a pre-flush value.
+The resulting seek branch reads:
+
+```kotlin
+                            val seek = seekRequest.getAndSet(-1)
+                            if (seek >= 0) {
+                                cursor = seek.coerceIn(0L, availableSamples)
+                                if (started) {
+                                    runCatching { localTrack.pause(); localTrack.flush(); localTrack.play() }
+                                    stallHeadStart = 0   // flush() zeroed the head; re-baseline
+                                }
+                            }
+```
 
 - [ ] **Step 7: Emit the end-of-utterance summary**
 
