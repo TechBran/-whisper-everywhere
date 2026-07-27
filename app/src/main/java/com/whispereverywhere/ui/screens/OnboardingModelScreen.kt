@@ -39,7 +39,9 @@ fun OnboardingModelScreen(
 ) {
     val app = WhisperEverywhereApp.getInstance()
     val manager = app.whisperModelManager
-    val models = manager.catalog
+    // Only tiers still offered — retired tiers stay resolvable via WhisperCatalog.byId for
+    // existing users but must not be selectable by anyone new.
+    val models = WhisperCatalog.pickable
 
     val state by viewModel.state.collectAsState()
 

@@ -1,6 +1,9 @@
 package com.whispereverywhere.ui.screens
 
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.clickable
@@ -21,7 +24,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.whispereverywhere.BuildConfig
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.model.ModelMigration
 import com.whispereverywhere.model.ModelScope
+import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.ui.theme.*
 import com.whispereverywhere.util.formatBytes
@@ -66,6 +71,13 @@ fun SettingsScreen(
 
     val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
 
+    // Retired-tier migration (model catalog trim): non-null when the selected tier is retired.
+    // Drives the "no longer supported" card above the model picker.
+    val retiredModel = remember(modelRefreshKey) { modelManager.retiredInstalledModel() }
+    val migrationScope = rememberCoroutineScope()
+    var migrationBusy by remember { mutableStateOf(false) }
+    var migrationStatus by remember { mutableStateOf<String?>(null) }
+
     // Compute models-dir total disk usage off the main thread.
     // Suppression: the producer DOES assign `value` (directly below); the compose-runtime
     // checker just can't see assignments that follow a suspend call in this lint version.
@@ -104,6 +116,131 @@ fun SettingsScreen(
         ) {
             // Speech model (on-device whisper) — replaces the old cloud API-key section.
             SettingsSection(title = "Speech model") {
+                if (retiredModel != null) {
+                    val eco = WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!
+                    // Re-derived every recomposition (same idiom as the permission checks
+                    // below) so the card reacts to connectivity and to a completed download.
+                    val migrationAction = ModelMigration.decide(
+                        selectedId = app.preferencesManager.selectedModelId,
+                        selectedInstalled = modelManager.isInstalled(retiredModel),
+                        targetInstalled = modelManager.isInstalled(eco),
+                        online = isNetworkAvailable(context),
+                    )
+                    Surface(
+                        color = Warning.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.ErrorOutline,
+                                    contentDescription = null,
+                                    tint = Warning,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "This model is no longer supported",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Eco is much faster and works well for everyday " +
+                                    "dictation. We'll download it (60 MB), then free up the " +
+                                    "space your old model is using.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            when {
+                                migrationBusy -> {
+                                    Text(
+                                        text = migrationStatus ?: "Switching…",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                migrationAction is ModelMigration.Action.WaitForNetwork -> {
+                                    Text(
+                                        text = "Connect to the internet to switch.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                else -> {
+                                    Button(
+                                        onClick = {
+                                            migrationScope.launch {
+                                                migrationBusy = true
+                                                migrationStatus = "Starting…"
+                                                runCatching {
+                                                    when (migrationAction) {
+                                                        is ModelMigration.Action.OfferDownload -> {
+                                                            modelManager.download(
+                                                                eco,
+                                                                onProgress = { soFar, total ->
+                                                                    val safeTotal = if (total > 0L) total
+                                                                        else eco.approxBytes
+                                                                    migrationStatus = "${formatBytes(soFar)} / " +
+                                                                        formatBytes(safeTotal)
+                                                                },
+                                                                onVerifying = { migrationStatus = "Verifying…" },
+                                                            )
+                                                            // Re-evaluate rather than sequencing by hand:
+                                                            // download() only returns once Eco is verified
+                                                            // on disk, so this now resolves to SwapAndDelete.
+                                                            val after = ModelMigration.decide(
+                                                                selectedId = app.preferencesManager.selectedModelId,
+                                                                selectedInstalled =
+                                                                    modelManager.isInstalled(retiredModel),
+                                                                targetInstalled = modelManager.isInstalled(eco),
+                                                                online = isNetworkAvailable(context),
+                                                            )
+                                                            if (after is ModelMigration.Action.SwapAndDelete) {
+                                                                app.preferencesManager.selectedModelId = after.toId
+                                                                modelManager.deleteModelFile(
+                                                                    WhisperCatalog.byId(after.fromId)!!
+                                                                )
+                                                            }
+                                                        }
+                                                        is ModelMigration.Action.SwapAndDelete -> {
+                                                            app.preferencesManager.selectedModelId =
+                                                                migrationAction.toId
+                                                            modelManager.deleteModelFile(
+                                                                WhisperCatalog.byId(migrationAction.fromId)!!
+                                                            )
+                                                        }
+                                                        else -> Unit // WaitForNetwork/None: no button shown
+                                                    }
+                                                }.onFailure {
+                                                    android.widget.Toast.makeText(
+                                                        context,
+                                                        it.message ?: "Couldn't switch to Eco",
+                                                        android.widget.Toast.LENGTH_LONG,
+                                                    ).show()
+                                                }
+                                                migrationBusy = false
+                                                migrationStatus = null
+                                                modelRefreshKey++
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Switch to Eco")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (installedModel != null) {
                     val onDiskBytes = remember(modelRefreshKey, installedModel.id) {
                         val f = File(modelManager.modelsDir(), installedModel.fileName)
@@ -638,6 +775,15 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+/** True when the device currently reports an internet-capable network. */
+private fun isNetworkAvailable(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        ?: return false
+    val network = cm.activeNetwork ?: return false
+    val capabilities = cm.getNetworkCapabilities(network) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
 
 @Composable
