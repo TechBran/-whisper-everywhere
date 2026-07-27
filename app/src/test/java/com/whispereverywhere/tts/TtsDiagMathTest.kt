@@ -1,6 +1,7 @@
 package com.whispereverywhere.tts
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TtsDiagMathTest {
@@ -54,5 +55,21 @@ class TtsDiagMathTest {
         assertEquals(87, TtsDiagMath.dutyPct(12_500, 14_296))
         assertEquals(100, TtsDiagMath.dutyPct(5_000, 5_000))
         assertEquals(0, TtsDiagMath.dutyPct(5_000, 0))
+    }
+
+    @Test fun duty_pct_has_no_upper_clamp_so_over_synthesis_self_identifies() {
+        // The real capture (I1): 96 362 ms synthesized against 65 429 ms wall clock — the run
+        // ended with audio banked but never played. The old coerceIn(0, 100) rendered this as
+        // "gapless" (100) on the same summary line as underMs=9031; the fix must let it read
+        // above 100 instead.
+        val pct = TtsDiagMath.dutyPct(96_362, 65_429)
+        assertTrue("expected > 100, got $pct", pct > 100)
+        assertEquals(147, pct)
+    }
+
+    @Test fun duty_pct_still_floors_at_zero() {
+        // Only the floor is clamped now — a pathological/negative numerator must not read as
+        // a negative percentage.
+        assertEquals(0, TtsDiagMath.dutyPct(-1_000, 5_000))
     }
 }

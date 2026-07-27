@@ -9,7 +9,15 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Regression guard for the stranded-playback-thread bug: no thread named "tts-playback" may
- * outlive an utterance, on ANY exit path. A leaked thread also leaks its AudioTrack.
+ * outlive an utterance.
+ *
+ * Coverage is PARTIAL, not "any exit path": the two tests below drive normal completion and
+ * stop() mid-utterance. They do NOT drive the exit path the underlying fix actually addressed —
+ * `generateWithCallback()` throwing (OOM on sherpa's whole-utterance float[], or a native
+ * error), guarded by the `finally { doneFlag.set(true) }` in `TtsEngine.speak()`. Forcing that
+ * throw requires making sherpa's JNI layer fail on demand, which is out of scope for an
+ * instrumented test running against the real native library. A leaked thread also leaks its
+ * AudioTrack.
  */
 class TtsPlaybackThreadTest {
 

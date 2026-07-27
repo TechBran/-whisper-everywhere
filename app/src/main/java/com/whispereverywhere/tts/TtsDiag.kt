@@ -42,7 +42,17 @@ object TtsDiag {
         "TTSDIAG under gen=$gen seq=$seq atMs=$atMs wallMs=$wallMs renderMs=$renderMs " +
             "audibleMs=${TtsDiagMath.audibleSilenceMs(wallMs, renderMs)} hwUnderD=$hwUnderD"
 
-    /** Utterance summary. [rtfs] may arrive in any order; sorted here. */
+    /**
+     * Utterance summary. [rtfs] may arrive in any order; sorted here.
+     *
+     * [audioMs] is audio SYNTHESIZED (available); [playedMs] is audio actually PLAYED — they
+     * diverge whenever synthesis outruns playback, which is exactly when `dutyPct` (derived
+     * from [audioMs], not [playedMs]) can legitimately read above 100.
+     *
+     * [rtfAgg] is the duration-weighted realtime factor (Σ synthMs / Σ audioMs across
+     * callbacks) — unlike the percentiles below it, a short callback cannot skew it the way it
+     * skews `rtfP50`.
+     */
     fun end(
         gen: Long,
         ttfwMs: Long,
@@ -50,14 +60,17 @@ object TtsDiag {
         underMs: Long,
         maxGapMs: Long,
         audioMs: Long,
+        playedMs: Long,
         wallMs: Long,
+        rtfAgg: Double,
         rtfs: List<Double>,
         hwUnderTotal: Int,
     ): String {
         val sorted = rtfs.sorted()
         return "TTSDIAG end gen=$gen ttfwMs=$ttfwMs underN=$underN underMs=$underMs " +
-            "maxGapMs=$maxGapMs audioMs=$audioMs wallMs=$wallMs " +
+            "maxGapMs=$maxGapMs audioMs=$audioMs playedMs=$playedMs wallMs=$wallMs " +
             "dutyPct=${TtsDiagMath.dutyPct(audioMs, wallMs)} " +
+            "rtfAgg=${d2(rtfAgg)} " +
             "rtfP50=${d2(TtsDiagMath.percentile(sorted, 0.50))} " +
             "rtfP95=${d2(TtsDiagMath.percentile(sorted, 0.95))} " +
             "rtfMax=${d2(TtsDiagMath.percentile(sorted, 1.0))} " +

@@ -40,8 +40,15 @@ object TtsDiagMath {
         return sorted[idx]
     }
 
-    /** Percentage of wall clock that was actually speech. 100 means gapless. */
+    /**
+     * Percentage of wall clock that was [audioMs] SYNTHESIZED audio, over [wallMs] elapsed.
+     * 100 means gapless. A value ABOVE 100 is not a bug: it means more audio was synthesized
+     * than the run had time to play — synthesis outran playback and the excess is still banked,
+     * unplayed. Clamping that to 100 would render a real gap (see `end`'s `playedMs`, which is
+     * always <= wallMs and can never exceed it) as indistinguishable from a perfect run, so only
+     * the floor is clamped, at 0.
+     */
     fun dutyPct(audioMs: Long, wallMs: Long): Int =
         if (wallMs <= 0L) 0 else ((audioMs.toDouble() / wallMs.toDouble()) * 100.0)
-            .roundToInt().coerceIn(0, 100)
+            .roundToInt().coerceAtLeast(0)
 }

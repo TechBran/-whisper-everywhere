@@ -154,6 +154,12 @@ class TtsEngine(
             val diagUnderMs = java.util.concurrent.atomic.AtomicLong(0)
             val diagMaxGapMs = java.util.concurrent.atomic.AtomicLong(0)
             val diagHwUnder = java.util.concurrent.atomic.AtomicInteger(0)
+            // (I2) Duration-weighted RTF aggregate: Σ synthMs / Σ audMs across callbacks, under
+            // the same seq > 0 exclusion as diagRtfs below. An unweighted percentile of the
+            // per-callback RTFs treats a 2.5 s callback the same as a 23.6 s one and can read
+            // misleadingly high; this aggregate is what the spec's RTF conclusion should rest on.
+            val diagTotalSynthMs = java.util.concurrent.atomic.AtomicLong(0)
+            val diagTotalAudMs = java.util.concurrent.atomic.AtomicLong(0)
             try {
                 val engine = tts ?: modelManager.installedDir()?.let { d ->
                     buildTts(d).also { tts = it }
@@ -273,7 +279,13 @@ class TtsEngine(
                                 val audible = TtsDiagMath.audibleSilenceMs(wallMs, renderMs)
                                 diagUnderN.incrementAndGet()
                                 diagUnderMs.addAndGet(audible)
-                                diagHwUnder.addAndGet(hwD)
+                                // (I3) diagHwUnder is NOT accumulated here. A per-stall sum only
+                                // sees underruns that coincide with an observed producer stall
+                                // (readAt() returning null) — the HAL can starve while readAt()
+                                // still returns data (playback-thread descheduling, perfMode=0,
+                                // a small buffer), and that gap would never touch this branch.
+                                // hwD is still reported per-stall on the `under` record below;
+                                // the session TOTAL is read once at loop exit, in the finally.
                                 if (audible > diagMaxGapMs.get()) diagMaxGapMs.set(audible)
                                 android.util.Log.i(
                                     TtsDiag.TAG,
@@ -335,6 +347,11 @@ class TtsEngine(
                         }
                     } finally {
                         if (stalled) onBuffering?.invoke(false)
+                        // (I3) Session total, read ONCE here rather than accumulated per stall:
+                        // underrunCount counts everything since track creation and is unaffected
+                        // by flush(), so this is the true total on every exit path (normal
+                        // completion, stop(), or a write()/exception break above).
+                        diagHwUnder.set(localTrack.underrunCount)
                         runCatching { localTrack.release() }
                     }
                 }, "tts-playback")
@@ -376,7 +393,11 @@ class TtsEngine(
                         val seq = diagSentSeq.getAndIncrement()
                         val audMs = TtsDiagMath.audioMs(pcm.size, engine.sampleRate())
                         android.util.Log.i(TtsDiag.TAG, TtsDiag.sent(myGen, seq, pcm.size, audMs, synthMs))
-                        if (seq > 0) diagRtfs.add(TtsDiagMath.rtf(synthMs, audMs))
+                        if (seq > 0) {
+                            diagRtfs.add(TtsDiagMath.rtf(synthMs, audMs))
+                            diagTotalSynthMs.addAndGet(synthMs)
+                            diagTotalAudMs.addAndGet(audMs)
+                        }
                         diagLastCallbackExitMs[0] = System.currentTimeMillis()
                         return 1
                     }
@@ -426,7 +447,13 @@ class TtsEngine(
                             underMs = diagUnderMs.get(),
                             maxGapMs = diagMaxGapMs.get(),
                             audioMs = TtsDiagMath.audioMs(availableSamples.toInt(), diagRate),
+                            // (I1) SYNTHESIZED total (above) can exceed wall clock when playback
+                            // never catches up; PLAYED total is what the user actually heard —
+                            // derived the same way audioMs is, just off playedSamples instead.
+                            playedMs = TtsDiagMath.audioMs(playedSamples.toInt(), diagRate),
                             wallMs = System.currentTimeMillis() - diagT0,
+                            // (I2) Duration-weighted, not the unweighted per-callback median.
+                            rtfAgg = TtsDiagMath.rtf(diagTotalSynthMs.get(), diagTotalAudMs.get()),
                             rtfs = ArrayList(diagRtfs),
                             hwUnderTotal = diagHwUnder.get(),
                         ),
