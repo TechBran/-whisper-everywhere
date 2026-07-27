@@ -134,6 +134,22 @@ class TtsEngine(
         executor.execute {
             var myFocus: AudioFocusRequest? = null
             var playbackThread: Thread? = null
+            // --- TTSDIAG session state (Release 0 instrumentation; no behaviour change) ---
+            // Declared here (not inside the try below) for the same reason as playbackThread
+            // above: the outer finally block emits the end-of-utterance summary and needs these
+            // in scope, and a try-block-local val is not visible from its own finally.
+            val diagRtfs = java.util.Collections.synchronizedList(ArrayList<Double>())
+            val diagSentSeq = java.util.concurrent.atomic.AtomicInteger(0)
+            // Callback EXIT -> next ENTRY. A one-element array, not @Volatile: Kotlin does
+            // not permit @Volatile on a local, and the sherpa callback is this value's only
+            // reader and only writer (it runs on the executor thread, one call at a time).
+            val diagLastCallbackExitMs = longArrayOf(0L)
+            val diagT0 = System.currentTimeMillis()
+            val diagTtfwMs = java.util.concurrent.atomic.AtomicLong(-1)
+            val diagUnderN = java.util.concurrent.atomic.AtomicInteger(0)
+            val diagUnderMs = java.util.concurrent.atomic.AtomicLong(0)
+            val diagMaxGapMs = java.util.concurrent.atomic.AtomicLong(0)
+            val diagHwUnder = java.util.concurrent.atomic.AtomicInteger(0)
             try {
                 val engine = tts ?: modelManager.installedDir()?.let { d ->
                     buildTts(d).also { tts = it }
@@ -175,10 +191,23 @@ class TtsEngine(
 
                 playbackThread = Thread({
                     val localTrack = newTrack(engine.sampleRate())
+                    android.util.Log.i(
+                        TtsDiag.TAG,
+                        TtsDiag.open(
+                            gen = myGen,
+                            bufFrames = localTrack.bufferSizeInFrames,
+                            perfMode = localTrack.performanceMode,
+                            chars = clean.length,
+                            sampleRate = localTrack.sampleRate,
+                        ),
+                    )
                     val slice = localTrack.sampleRate / 10
                     var cursor = 0L
                     var started = false
                     var stalled = false
+                    var stallStartMs = 0L
+                    var stallHeadStart = 0
+                    var stallUnderStart = 0
                     var lastProgressMs = 0L
                     try {
                         loop@ while (!cancelled()) {
@@ -189,6 +218,7 @@ class TtsEngine(
                                 cursor = seek.coerceIn(0L, availableSamples)
                                 if (started) {
                                     runCatching { localTrack.pause(); localTrack.flush(); localTrack.play() }
+                                    stallHeadStart = 0   // flush() zeroed the head; re-baseline
                                 }
                             }
                             if (paused) {
@@ -205,6 +235,9 @@ class TtsEngine(
                                 if (doneFlag.get()) break@loop
                                 if (started && !stalled) {
                                     stalled = true
+                                    stallStartMs = System.currentTimeMillis()
+                                    stallHeadStart = localTrack.playbackHeadPosition
+                                    stallUnderStart = localTrack.underrunCount
                                     onBuffering?.invoke(true)
                                 }
                                 try { Thread.sleep(50) } catch (_: InterruptedException) {}
@@ -212,11 +245,39 @@ class TtsEngine(
                             }
                             if (stalled) {
                                 stalled = false
+                                val wallMs = System.currentTimeMillis() - stallStartMs
+                                // playbackHeadPosition is an UNSIGNED 32-bit frame count in an
+                                // Int; mask before subtracting or a wrap reads as a huge
+                                // negative and audibleMs silently clamps to 0.
+                                val framesRendered =
+                                    ((localTrack.playbackHeadPosition.toLong() and 0xFFFFFFFFL) -
+                                        (stallHeadStart.toLong() and 0xFFFFFFFFL)).coerceAtLeast(0L)
+                                val renderMs = TtsDiagMath.audioMs(
+                                    framesRendered.toInt(), localTrack.sampleRate,
+                                )
+                                val hwD = localTrack.underrunCount - stallUnderStart
+                                val audible = TtsDiagMath.audibleSilenceMs(wallMs, renderMs)
+                                diagUnderN.incrementAndGet()
+                                diagUnderMs.addAndGet(audible)
+                                diagHwUnder.addAndGet(hwD)
+                                if (audible > diagMaxGapMs.get()) diagMaxGapMs.set(audible)
+                                android.util.Log.i(
+                                    TtsDiag.TAG,
+                                    TtsDiag.under(
+                                        gen = myGen,
+                                        seq = diagSentSeq.get(),
+                                        atMs = System.currentTimeMillis() - diagT0,
+                                        wallMs = wallMs,
+                                        renderMs = renderMs,
+                                        hwUnderD = hwD,
+                                    ),
+                                )
                                 onBuffering?.invoke(false)
                             }
                             if (!started) {
                                 localTrack.play()
                                 started = true
+                                diagTtfwMs.set(System.currentTimeMillis() - diagT0)
                             }
                             onPcmChunk?.let { tap ->
                                 var sum = 0.0
@@ -243,6 +304,14 @@ class TtsEngine(
                             if (now - lastProgressMs >= 100) {
                                 lastProgressMs = now
                                 onProgress?.invoke(cursor, availableSamples, doneFlag.get())
+                                val leadMs = TtsDiagMath.audioMs(
+                                    (availableSamples - cursor).toInt().coerceAtLeast(0),
+                                    localTrack.sampleRate,
+                                )
+                                android.util.Log.i(
+                                    TtsDiag.TAG,
+                                    TtsDiag.play(myGen, diagSentSeq.get(), leadMs),
+                                )
                             }
                         }
                         if (!cancelled() && !stalled) {
@@ -262,6 +331,7 @@ class TtsEngine(
                 // default invokedynamic lambdas do not generate (SIGABRT proven on-device).
                 val callback = object : Function1<FloatArray, Int> {
                     override fun invoke(samples: FloatArray): Int {
+                        val entryMs = System.currentTimeMillis()
                         if (cancelled()) return 0
                         val pcm = ShortArray(samples.size) { i ->
                             (samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
@@ -282,6 +352,18 @@ class TtsEngine(
                             storeTotal += pcm.size
                             availableSamples = storeTotal
                         }
+                        // Measure callback EXIT -> ENTRY so the AHEAD_CAP backpressure hold below
+                        // never reads as slow synthesis (spec 6A.3). The FIRST burst of an
+                        // utterance is still logged but is excluded from the summary percentiles
+                        // by the seq==0 check, because it carries whole-text espeak phonemisation
+                        // whose cost scales with SELECTION length, not sentence length.
+                        val prevExit = diagLastCallbackExitMs[0]
+                        val synthMs = if (prevExit == 0L) entryMs - diagT0 else entryMs - prevExit
+                        val seq = diagSentSeq.getAndIncrement()
+                        val audMs = TtsDiagMath.audioMs(pcm.size, engine.sampleRate())
+                        android.util.Log.i(TtsDiag.TAG, TtsDiag.sent(myGen, seq, pcm.size, audMs, synthMs))
+                        if (seq > 0) diagRtfs.add(TtsDiagMath.rtf(synthMs, audMs))
+                        diagLastCallbackExitMs[0] = System.currentTimeMillis()
                         return 1
                     }
                 }
@@ -316,6 +398,20 @@ class TtsEngine(
                     speaking = false
                     scheduleIdleUnload()
                 }
+                android.util.Log.i(
+                    TtsDiag.TAG,
+                    TtsDiag.end(
+                        gen = myGen,
+                        ttfwMs = diagTtfwMs.get().coerceAtLeast(0),
+                        underN = diagUnderN.get(),
+                        underMs = diagUnderMs.get(),
+                        maxGapMs = diagMaxGapMs.get(),
+                        audioMs = TtsDiagMath.audioMs(availableSamples.toInt(), 24_000),
+                        wallMs = System.currentTimeMillis() - diagT0,
+                        rtfs = ArrayList(diagRtfs),
+                        hwUnderTotal = diagHwUnder.get(),
+                    ),
+                )
                 main.post(onDone)
             }
         }
