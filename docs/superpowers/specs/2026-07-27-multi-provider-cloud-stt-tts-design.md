@@ -43,7 +43,9 @@ Locked during design. Do not relitigate without a new decision record.
 | # | Decision | Choice |
 |---|---|---|
 | D1 | Providers | OpenAI, Google **Gemini**, ElevenLabs |
-| D2 | Transport | Batch only in v1; `TranscriptionEngine` seam kept clean for streaming later |
+| D2 | Transport | ~~Batch only~~ **REVISED 2026-07-27** — WebSocket streaming for OpenAI and ElevenLabs; **Gemini stays batch** (no BYOK streaming path exists). See §5.6 |
+| D24 | Live partials | Rendered in the **bubble's own preview only**. The text field still receives committed text on segment close — never word-by-word. See §5.6a |
+| D25 | IME | **Deferred, not rejected.** True word-for-word into third-party fields requires an `InputMethodService`; accessibility `ACTION_SET_TEXT` structurally cannot do it. See §5.6b |
 | D3 | Data boundary | Mic audio + accessibility-**selected** text may go cloud. MediaProjection device audio **never** |
 | D4 | Local model | Strong nudge — cloud-only permitted; onboarding defaults to the smallest tier as "offline backup", skippable |
 | D5 | Fallback | Local is terminal fallback for every cloud failure class |
@@ -406,7 +408,84 @@ documented at `FloatingBubbleService.kt:1520-1525`.
 mic was too quiet when their card declined is the worst output in the entire failure space, and
 it is a three-line fix.
 
-### 5.6 Why batch, not streaming
+### 5.6 REVISED 2026-07-27 — streaming where a BYOK client can actually get it
+
+D2 originally chose batch-only. That is **partially reversed**: the owner's goal is the lowest
+possible perceived latency, and two of the three providers can deliver real streaming to a client
+holding nothing but the user's own API key.
+
+| Provider | Transport | Why |
+|---|---|---|
+| **OpenAI** | **WebSocket** — Realtime API, live partials | Works with a pasted key. (Ephemeral tokens exist but are only needed for developer-owned keys.) |
+| **ElevenLabs** | **WebSocket** — `scribe_v2_realtime`, `commit_strategy=manual` | `manual` commit maps almost exactly onto this app's caller-driven `commit()`, so the app's own VAD stays the segment authority *inside* a persistent stream |
+| **Google Gemini** | **Batch. No streaming.** | Not a preference — a hard blocker. The Live API is preview, session-capped at 15 minutes, and explicitly recommends ephemeral tokens minted by a backend this app does not have. **There is no usable BYOK streaming path on Google.** |
+
+So "streaming on all cloud providers" is not achievable. Gemini remains batch, and the UI must not
+imply otherwise — the provider row should state which providers stream.
+
+**Costs accepted with this reversal**, all previously documented as reasons *not* to do it:
+1.8–2.8× the per-minute price (OpenAI realtime ~$0.017/min vs ~$0.006 batch; ElevenLabs $0.39/hr
+vs $0.22/hr), hand-rolled WebSocket clients for two providers (ElevenLabs ships **no** official
+Android SDK and has 13+ realtime error message types, two with unpublished thresholds), and
+reconnect/keepalive state machines. The batch path remains as each streaming provider's own
+fallback, so it is not thrown away.
+
+Note `sendAudio()` runs on the capture thread every ~32 ms and must never block (§3.7) — a
+WebSocket write with backpressure needs its own queue, or it stalls `AudioRecord` and freezes the
+waveform.
+
+### 5.6a Where live partials go — and where they must not
+
+**Decision D24: partials render in the bubble's own preview surface only. The user's text field
+receives committed text on segment close, exactly as today.**
+
+This is forced by §3.8. Injection is a full-field read-modify-write: read the whole field, splice,
+`ACTION_SET_TEXT` the entire rebuilt string. Emitting partials word-by-word into a live field
+would mean rewriting the complete field on every word — clobbering concurrent user typing, jumping
+the cursor, fighting autocorrect, and growing more expensive as the text grows. Two of the three
+delivery paths (document apps `:993-1030`, social apps `:782-847`) are clipboard + `ACTION_PASTE`
+with **no position control at all**, so ordering cannot even be enforced there.
+
+The plumbing already exists and is 90% done: `onDelta` reaches `transcriptionDeltaText` today. It
+is gated off for the primary path at `FloatingBubbleService.kt:1442`
+(`if (sessionContext != BubbleContext.TEXT_FIELD)`). **Un-gate it for the preview only.**
+
+Two prerequisites before doing so:
+- **Separate the delta TextView from the FINALIZING status TextView.** They are currently the same
+  view, so late deltas would clobber the "Finishing transcript…" message.
+- **Suppress `onDelta` unless `seq == head`** (§5.3), or a streaming provider leaks later words
+  into the preview ahead of earlier ones.
+
+### 5.6b Why true word-for-word needs an IME — deferred, not rejected
+
+**Decision D25.** The best-possible UX the owner described — word-for-word text appearing live in
+any app — is how Gboard voice typing works, and it works because Gboard **is an input method**.
+`InputConnection.commitText()` appends incrementally without rewriting the field.
+
+This app has **no `InputMethodService`** (verified) and never calls `ACTION_SET_SELECTION`
+(verified: zero occurrences). An accessibility service doing full-field `ACTION_SET_TEXT`
+structurally cannot deliver incremental word-level insertion.
+
+Shipping an IME would additionally **remove the accessibility-permission dependency**, which is
+this app's single largest Play-review liability (§3.2, §8.2, §8.3). That makes it strategically
+interesting beyond the UX win.
+
+Deferred because it is a substantial new subsystem — keyboard UI, IME lifecycle, per-app input
+quirks — and because users must explicitly enable and switch to it, which is a real adoption cost.
+**Revisit if word-for-word becomes a priority, or if Play pressure on the accessibility
+declaration increases.**
+
+### 5.6c Local streaming — the honest ceiling
+
+whisper.cpp is not a streaming architecture; it processes fixed windows, and this app's JNI layer
+returns one string per `whisper_full` call. Word-level local output would mean re-running inference
+over a growing buffer — multiplying compute on precisely the axis that already draws latency
+complaints, and which motivated retiring the medium and large tiers.
+
+**On-device stays segment-level.** The realistic local win is faster, better-bounded segments
+(clause splitting, §6A.1b), not live words. Do not promise local word-for-word in UI copy.
+
+### 5.6d Superseded — the original batch-only argument
 
 - 1.8–2.8× the running cost, paid by the user (OpenAI realtime $0.017/min vs ~$0.006 batch;
   ElevenLabs $0.39/hr vs $0.22/hr).
