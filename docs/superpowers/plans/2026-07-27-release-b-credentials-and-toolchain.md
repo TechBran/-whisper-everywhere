@@ -17,7 +17,7 @@
 - **`java` is NOT on PATH.** In PowerShell, before any gradle command:
   `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"` (JDK 21, verified working).
   Use `.\gradlew.bat`, not `./gradlew`. Always pass `--no-daemon`.
-- **Baseline to preserve: 15 suites / 88 tests / 0 failures.** Any task that lowers this has broken something.
+- **Baseline to preserve: 15 suites / 92 tests / 0 failures** (as of commit a32d59a, end of Release 0). Any task that lowers this has broken something.
 - **Kotlin 2.0.21 caps dependency versions.** A 2.0.x compiler reads metadata at most one minor ahead (2.1.0). **Unusable:** Ktor 3.5.1, kotlinx-serialization-json ≥1.9.0, kotlinx-coroutines 1.11.0, `okhttp-coroutines` 5.4.0. **Safe:** serialization-json 1.8.1, coroutines 1.10.2, OkHttp 5.4.0.
 - **Never write a credential to plaintext storage, and never silently fall back to it.** A store that cannot encrypt must fail and surface the failure.
 - **No credential may ever reach logcat.** `WE-DIAG` and `WE-TTS` log liberally; any new logging near the store must be redacted by construction.
@@ -76,7 +76,7 @@ cd <buildDir>/app/test-results/testDebugUnitTest
 grep -hoE 'tests="[0-9]+" skipped="[0-9]+" failures="[0-9]+" errors="[0-9]+"' TEST-*.xml \
   | awk -F'"' '{t+=$2;s+=$4;f+=$6;e+=$8} END{print "tests="t" skipped="s" failures="f" errors="e}'
 ```
-Expected: `tests=88 skipped=0 failures=0 errors=0`. Record this — it is the regression bar.
+Expected: `tests=92 skipped=0 failures=0 errors=0`. Record this — it is the regression bar.
 
 - [ ] **Step 2: Bump AGP**
 
@@ -124,7 +124,7 @@ Run:
 ```bash
 .\gradlew.bat :app:testDebugUnitTest --no-daemon --rerun-tasks
 ```
-Expected: still `tests=88 skipped=0 failures=0 errors=0`.
+Expected: still `tests=92 skipped=0 failures=0 errors=0`.
 
 - [ ] **Step 6: Verify the release build still assembles**
 
@@ -226,7 +226,7 @@ class SecureStoreCodecTest {
 
     @Test fun decode_never_throws_on_arbitrary_input() {
         // Corrupted prefs must degrade to "no value", never crash app start.
-        listOf("1:", "1::", ":::", "1:@@@:@@@", "1:AAAA", " ").forEach {
+        listOf("1:", "1::", ":::", "1:@@@:@@@", "1:AAAA", " ", "\u0000").forEach {
             SecureStoreCodec.decode(it)   // must not throw
         }
     }
@@ -515,7 +515,7 @@ Expected: BUILD SUCCESSFUL. Record the instrumented run as DEFERRED; the control
 ```bash
 .\gradlew.bat :app:testDebugUnitTest --no-daemon
 ```
-Expected: 95 tests (88 + 7 from Task 2), 0 failures.
+Expected: 99 tests (92 + 7 from Task 2), 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -644,7 +644,7 @@ In `app/build.gradle.kts`, delete line 228:
 .\gradlew.bat :app:testDebugUnitTest --no-daemon
 .\gradlew.bat :app:assembleRelease --no-daemon
 ```
-Expected: all BUILD SUCCESSFUL; tests still 95, 0 failures.
+Expected: all BUILD SUCCESSFUL; tests still 99, 0 failures.
 
 Then prove the dependency is gone:
 ```bash
