@@ -875,10 +875,50 @@ This task produces no code. It produces the measurement that Release 0.1 depends
 - Consumes: the shipped instrumentation from Tasks 1-4.
 - Produces: a logcat capture that decides whether the §6A diagnosis stands.
 
+> ### ⚠️ MANDATORY SIGNATURE PREFLIGHT — read before ANY install or instrumented test
+>
+> **This destroyed a real user's data on 2026-07-27. Do not skip it.**
+>
+> `app/build.gradle.kts:120-128` signs the debug build with the release key so debug APKs
+> "install straight over the release build without uninstalling (which would wipe the downloaded
+> model)." **That comment is only true when the installed build came from a locally-built APK.**
+> If the app was installed from Google Play, **Play App Signing has re-signed it with Google's
+> key**, not your upload key — so the on-device signature can never match a locally-signed debug
+> build, and the presence of `keystore.properties` proves nothing.
+>
+> What happens if you skip this: `./gradlew :app:connectedDebugAndroidTest` fails with
+> `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, **but Gradle's `AndroidTestApkInstallerPlugin`
+> uninstalls the existing package first** — so you end up with neither build installed and
+> **all app data destroyed**: the 60-574 MB whisper model, the ~330 MB Kokoro voice, the
+> transcript history (unrecoverable), and any stored credentials.
+>
+> **Run this first, every time:**
+>
+> ```bash
+> adb shell pm path com.whispereverywhere            # is it installed at all?
+> adb shell pm list packages -i | grep whisper       # installer: com.android.vending == from Play
+> adb shell dumpsys package com.whispereverywhere | grep -A2 signatures
+> ```
+>
+> **STOP and ask the user** if the app is installed AND its signer does not match the local
+> keystore. Never let a build tool resolve a signature conflict for you — surface the uninstall
+> consequence and let the human decide. If they accept, have them export anything they want to
+> keep first.
+
 - [ ] **Step 1: Install the instrumented build**
+
+Only after the preflight above passes, or after an explicit informed decision to accept the
+uninstall:
 
 ```bash
 ./gradlew :app:installDebug --no-daemon
+```
+
+If the package is absent (fresh device, or a prior uninstall), install the built APK directly —
+this avoids Gradle's installer plugin entirely:
+
+```bash
+adb install <buildDir>/app/outputs/apk/debug/app-debug.apk
 ```
 
 - [ ] **Step 2: Start a clean capture**
