@@ -62,8 +62,8 @@ Locked during design. Do not relitigate without a new decision record.
 | D18 | Retention sweeper | Add `androidx.work`; 12 h periodic + boot sweep |
 | D19 | Transcript window | Default **7 days**, user-selectable 7/14/30/forever |
 | D20 | TTS gap fix order | **Diagnostics first**, measure on-device, then tune constants |
-| D21 | TTS prebuffer | **Always prebuffer** (~2 s) on start and resume; cost offset by clause splitting |
-| D22 | Clause splitting | Split sentences over ~300 chars; the size bound is a memory fix, not optional |
+| D21 | TTS prebuffer | ~~Always prebuffer (~2 s)~~ **DEFERRED 2026-07-27** — the measured first burst was 3,262 ms, so a 2 s watermark would not have prevented the observed gap. See §6A.1b |
+| D22 | Clause splitting | Split sentences over ~300 chars. **Promoted to THE fix** by the 2026-07-27 capture, and required cloud infrastructure regardless (provider input caps). The size bound is also a memory fix |
 | D23 | Truncation | Surface a distinct `Truncated` outcome + speak-from-offset; never silent |
 
 ---
@@ -675,7 +675,70 @@ of magnitude; chunks are sentences, not slices); AudioTrack buffer depth (`write
 `WRITE_BLOCKING`, so track contents are a *subset* of synthesized audio — enlarging it moves the
 gap by **0 ms**); the `onPcmChunk` tap (0.06-0.2% duty).
 
+### 6A.1a MEASURED — Fold 6 baseline, 2026-07-27
+
+Captured with the Release 0 instrumentation on SM-F956U / Android 16.
+Raw log: `docs/measurements/2026-07-27-tts-baseline-fold6.log`.
+**These numbers supersede the modelled ones above wherever they conflict.**
+
+```
+open  bufFrames=9640 bufMs=401 perfMode=0 rate=24000 chars=2198
+sent  seq=0  audMs=3262   synthMs=1954   rtf=0.60
+sent  seq=1  audMs=23603  synthMs=12347  rtf=0.52
+under seq=2  wallMs=9413  renderMs=382   audibleMs=9031  hwUnderD=1
+end   ttfwMs=1997 underN=1 underMs=9031 maxGapMs=9031 rtfP50=0.62 rtfP95=0.73 hwUnder=1
+```
+
+**Verdict: starvation confirmed** (`hwUnder > 0` AND `audibleMs > 0`). The §6A.1 gap formula
+predicted `r·A₂ − A₁` = 12,347 − 3,262 = **9,085 ms**; measured **9,031 ms** — within 54 ms.
+
+**One stall, not chronic starvation.** Eleven sentences, a single gap, at the first boundary.
+After the 23.6 s block landed the bank never depleted again — exactly as the model predicts for
+uniform prose. The reported "pauses every few seconds" was this one 9-second gap.
+
+**The cause is structural, not slow synthesis.** RTF 0.62 means synthesis ran at ~1.6× realtime.
+The device kept up. What broke was a single **23,603 ms** unit (sherpa splits only on `.`/`?`/`!`)
+with only 3,262 ms banked against it — a 7.2× ratio against the 1.73× starvation threshold.
+
+**Four corrections to the assumptions above:**
+
+1. **`perfMode=0` — the `PERFORMANCE_MODE_LOW_LATENCY` request was DENIED**; the framework
+   granted `NONE` with a 401 ms buffer. §6A.2's keep-LOW_LATENCY argument is **moot on this
+   device** — the app is already running in `NONE`. Do not spend effort defending a mode that
+   isn't being granted; re-check `performanceMode` on any device before reasoning about it.
+2. **Real RTF is ~7% worse than the bench** — p50 0.62 / p95 0.73 vs the quoted 0.577. Still far
+   below 1.0, so the §6A.4 "buffering cannot help" regime is **not** in play here.
+3. **`dutyPct` is unreliable as implemented.** `audioMs` (96.4 s) exceeded `wallMs` (65.4 s)
+   because it counts *synthesized* rather than *played* audio and the session was stopped early.
+   Confirms the review's Minor 4 in the field. Do not read `dutyPct` from a stopped session.
+4. **`ttfwMs=1997` matches the advertised ~1.9 s** — and is only trustworthy because the
+   `diagT0` cold-load defect was fixed before capture. Unfixed it would have read ~4 s.
+
+### 6A.1b The fix, re-ranked against evidence
+
+**A fixed start prebuffer would NOT have prevented the measured gap.** The first burst was
+already 3,262 ms — any watermark at or below that is satisfied instantly and playback begins at
+the same moment. Decision D21 ("always prebuffer ~2 s") is therefore **not the fix for the
+observed failure** and is deferred.
+
+**Clause splitting is the fix.** Capping a submission at `SPLIT_MAX_CHARS = 300` (~3.5 s of
+audio) turns the 23.6 s unit into ~7 chunks needing ~2.1 s each — comfortably under the 3.26 s
+already playing. The gap disappears.
+
+It is also **required cloud infrastructure, not local polish**: every provider caps input
+(OpenAI ~4,096 chars, ElevenLabs 5k–40k by model, Gemini degrades past "a few minutes") against
+this app's 100,000-char selection limit, and Gemini 2.5 TTS returns one complete blob with no
+streaming — so an unsplit run-on reproduces this exact failure with a network round-trip added.
+
+**Deferred as unjustified by the data:** the adaptive watermark, rebuffer hysteresis, and the
+`isBelowRealtime()` degraded mode (§6A.3, §6A.4). Revisit only if a capture shows chronic
+multi-stall starvation or RTF ≥ 0.95.
+
 ### 6A.2 Keep `PERFORMANCE_MODE_LOW_LATENCY`
+
+> **Superseded in practice — see §6A.1a.** The measured `perfMode=0` shows the request is denied
+> and `NONE` granted on the Fold 6. Retained below as the reasoning for *why not to actively
+> switch* to `NONE`, which remains valid on devices where `LOW_LATENCY` IS granted.
 
 Switching to `PERFORMANCE_MODE_NONE` auto-enables `FLAG_DEEP_BUFFER` for this attribute set, and
 `flush()` **cannot recall HAL-resident audio** — audible stop goes ~150 ms → ~300-400 ms, breaking
