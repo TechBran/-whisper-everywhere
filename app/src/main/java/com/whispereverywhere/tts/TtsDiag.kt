@@ -24,7 +24,12 @@ object TtsDiag {
         "TTSDIAG sent gen=$gen seq=$seq samples=$samples audMs=$audMs synthMs=$synthMs " +
             "rtf=${d2(TtsDiagMath.rtf(synthMs, audMs))}"
 
-    /** Playback cursor crossed into sentence [seq]; [leadMs] is the bank ahead of the cursor. */
+    /**
+     * Periodic playback-progress sample. [seq] is the count of sentences SYNTHESIZED so far
+     * (the producer frontier), NOT the sentence the playback cursor is currently in — synthesis
+     * can run well ahead of the cursor, so this only bounds it from above. [leadMs] is the bank
+     * ahead of the cursor.
+     */
     fun play(gen: Long, seq: Int, leadMs: Long): String =
         "TTSDIAG play gen=$gen seq=$seq leadMs=$leadMs"
 

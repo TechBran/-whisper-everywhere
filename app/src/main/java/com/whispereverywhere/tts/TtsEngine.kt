@@ -144,7 +144,11 @@ class TtsEngine(
             // not permit @Volatile on a local, and the sherpa callback is this value's only
             // reader and only writer (it runs on the executor thread, one call at a time).
             val diagLastCallbackExitMs = longArrayOf(0L)
-            val diagT0 = System.currentTimeMillis()
+            // Declared (not initialised) here: 0L means "this session never reached the
+            // measurement anchor below" — used by the finally block to skip emitting an `end`
+            // record for a run that bailed before anything was actually spoken (findings 1/2).
+            var diagT0 = 0L
+            var diagRate = 24_000
             val diagTtfwMs = java.util.concurrent.atomic.AtomicLong(-1)
             val diagUnderN = java.util.concurrent.atomic.AtomicInteger(0)
             val diagUnderMs = java.util.concurrent.atomic.AtomicLong(0)
@@ -173,6 +177,12 @@ class TtsEngine(
                 seekRequest.set(-1)
                 val doneFlag = java.util.concurrent.atomic.AtomicBoolean(false)
 
+                // Measurement anchor (findings 1/2): zeroed HERE, after the cold model load and
+                // the cancellation check above, not before — so ttfwMs/wallMs measure the actual
+                // utterance, not a cache-miss model load or a task that never spoke anything.
+                diagT0 = System.currentTimeMillis()
+                diagRate = engine.sampleRate()
+
                 fun readAt(cursor: Long, maxLen: Int): ShortArray? {
                     synchronized(store) {
                         if (cursor >= storeTotal) return null
@@ -191,16 +201,6 @@ class TtsEngine(
 
                 playbackThread = Thread({
                     val localTrack = newTrack(engine.sampleRate())
-                    android.util.Log.i(
-                        TtsDiag.TAG,
-                        TtsDiag.open(
-                            gen = myGen,
-                            bufFrames = localTrack.bufferSizeInFrames,
-                            perfMode = localTrack.performanceMode,
-                            chars = clean.length,
-                            sampleRate = localTrack.sampleRate,
-                        ),
-                    )
                     val slice = localTrack.sampleRate / 10
                     var cursor = 0L
                     var started = false
@@ -210,6 +210,20 @@ class TtsEngine(
                     var stallUnderStart = 0
                     var lastProgressMs = 0L
                     try {
+                        // Moved inside the try (finding 5): these read off localTrack right
+                        // after construction, and belong under the same finally-release guard
+                        // as everything else that touches the track — a throw here must not
+                        // leak the AudioTrack or kill this thread uncaught.
+                        android.util.Log.i(
+                            TtsDiag.TAG,
+                            TtsDiag.open(
+                                gen = myGen,
+                                bufFrames = localTrack.bufferSizeInFrames,
+                                perfMode = localTrack.performanceMode,
+                                chars = clean.length,
+                                sampleRate = localTrack.sampleRate,
+                            ),
+                        )
                         loop@ while (!cancelled()) {
                             // Consume a pending seek between slices; flush queued audio HERE
                             // (sole track owner) so the jump is instant.
@@ -398,20 +412,26 @@ class TtsEngine(
                     speaking = false
                     scheduleIdleUnload()
                 }
-                android.util.Log.i(
-                    TtsDiag.TAG,
-                    TtsDiag.end(
-                        gen = myGen,
-                        ttfwMs = diagTtfwMs.get().coerceAtLeast(0),
-                        underN = diagUnderN.get(),
-                        underMs = diagUnderMs.get(),
-                        maxGapMs = diagMaxGapMs.get(),
-                        audioMs = TtsDiagMath.audioMs(availableSamples.toInt(), 24_000),
-                        wallMs = System.currentTimeMillis() - diagT0,
-                        rtfs = ArrayList(diagRtfs),
-                        hwUnderTotal = diagHwUnder.get(),
-                    ),
-                )
+                // Gate: diagT0 == 0L means this task returned before the measurement anchor
+                // (no model dir, or cancelled pre-anchor) — availableSamples etc. are still the
+                // PREVIOUS utterance's values at that point, so emitting here would fabricate a
+                // summary for an utterance that was never spoken (findings 1/2).
+                if (diagT0 != 0L) {
+                    android.util.Log.i(
+                        TtsDiag.TAG,
+                        TtsDiag.end(
+                            gen = myGen,
+                            ttfwMs = diagTtfwMs.get().coerceAtLeast(0),
+                            underN = diagUnderN.get(),
+                            underMs = diagUnderMs.get(),
+                            maxGapMs = diagMaxGapMs.get(),
+                            audioMs = TtsDiagMath.audioMs(availableSamples.toInt(), diagRate),
+                            wallMs = System.currentTimeMillis() - diagT0,
+                            rtfs = ArrayList(diagRtfs),
+                            hwUnderTotal = diagHwUnder.get(),
+                        ),
+                    )
+                }
                 main.post(onDone)
             }
         }
