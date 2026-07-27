@@ -782,9 +782,12 @@ the instrumentation reports a clean pass and the symptom persists.
   down the stop button and scrubber while banked audio keeps playing **unstoppably, with audio
   focus already abandoned**. Fix: `doneFlag` in a `finally`; record the failure and return
   normally so banked audio drains. The OOM path strands the thread today.
-- **`PcmStore` single-appender invariant** is enforced only by a KDoc comment, and the cloud
-  design introduces a worker pool. Add a debug-build assertion **now** — the failure mode is
-  silent index corruption, not a deadlock.
+- **Single-appender invariant.** Today the store is a local `ArrayList<ShortArray>` inside
+  `speak()`, guarded by `synchronized(store)`, with exactly one appender (the sherpa callback on
+  the executor thread) — so it is currently safe. There is no `PcmStore` class yet. The invariant
+  becomes load-bearing when the extracted store meets the cloud design's worker pool: add a
+  debug-build single-appender assertion **as part of that extraction**, not before. The failure
+  mode would be silent index corruption, not a deadlock.
 
 ---
 
