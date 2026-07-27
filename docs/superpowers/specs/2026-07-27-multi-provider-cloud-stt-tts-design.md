@@ -61,6 +61,10 @@ Locked during design. Do not relitigate without a new decision record.
 | D17 | Archive default | **OFF.** No hidden scratch buffer. Contextual prompt at first failure |
 | D18 | Retention sweeper | Add `androidx.work`; 12 h periodic + boot sweep |
 | D19 | Transcript window | Default **7 days**, user-selectable 7/14/30/forever |
+| D20 | TTS gap fix order | **Diagnostics first**, measure on-device, then tune constants |
+| D21 | TTS prebuffer | **Always prebuffer** (~2 s) on start and resume; cost offset by clause splitting |
+| D22 | Clause splitting | Split sentences over ~300 chars; the size bound is a memory fix, not optional |
+| D23 | Truncation | Surface a distinct `Truncated` outcome + speak-from-offset; never silent |
 
 ---
 
@@ -628,6 +632,162 @@ cloud retry.
 
 ---
 
+## 6A. TTS playback smoothness
+
+Read-aloud has audible gaps every few seconds during live synthesis. Root-caused 2026-07-27;
+this is a **prerequisite** for cloud TTS, because a network producer has worse jitter than local
+synthesis and would ride the same broken pipeline.
+
+### 6A.1 Root cause
+
+**Proven from source (sherpa-onnx v1.13.4):** `batch_size = 1` is hard-coded for Kokoro and
+`max_num_sentences` is explicitly ignored. Only `.`/`?`/`!` terminate a unit. **No sub-sentence
+streaming exists**, so audio genuinely arrives in whole-sentence bursts and the fix must be
+entirely consumer-side.
+
+The operative buffer is the in-memory `store`, **not** the AudioTrack. The underrun condition is:
+
+```
+UNDERRUN  ⟺  banked_audio < RTF × duration(next_sentence)
+```
+
+At RTF 0.577 that means any sentence **more than 1.73× longer than everything banked before it**
+starves the pipeline — an ordinary ratio in prose.
+
+Ranked contributors:
+
+1. **No resume hysteresis** (dominant; explains recurrence). After a stall the loop resumes on
+   the first 100 ms available (`TtsEngine.kt:203-220`), so no lead is ever rebuilt and it
+   re-stalls at the next long sentence. Every heading or one-word sentence re-arms it.
+2. **Uncontrolled start prebuffer** — largest single gap; bites when sentence 1 is short.
+3. **Unbounded `D_max`** — gap scales with the *next* sentence; no buffer bounds it.
+4. **Unverified RTF headroom under production load** (60 fps render loop, thermal soak).
+5. Playback thread at nice 0 with no `THREAD_PRIORITY_URGENT_AUDIO`.
+6. Sherpa's discarded whole-utterance `float[]` — GC hitch; OOM at the cap.
+7. `stalled`/`doneFlag` exit race — clips the last ~160 ms.
+
+Worked example: `"Chapter Three."` (1.0 s) followed by a 45-word sentence (15 s) = **7.66 s of
+silence**. Each stall additionally costs 161–403 ms because AudioFlinger forces a full track
+re-prebuffer (`FS_FILLING`) after every underrun — which is why they read as discrete *pauses*.
+
+**Explicitly refuted — do not spend effort:** `readAt()` O(n) under the lock (wrong by 4-5 orders
+of magnitude; chunks are sentences, not slices); AudioTrack buffer depth (`write()` is
+`WRITE_BLOCKING`, so track contents are a *subset* of synthesized audio — enlarging it moves the
+gap by **0 ms**); the `onPcmChunk` tap (0.06-0.2% duty).
+
+### 6A.2 Keep `PERFORMANCE_MODE_LOW_LATENCY`
+
+Switching to `PERFORMANCE_MODE_NONE` auto-enables `FLAG_DEEP_BUFFER` for this attribute set, and
+`flush()` **cannot recall HAL-resident audio** — audible stop goes ~150 ms → ~300-400 ms, breaking
+the documented instant-stop guarantee. Worst case: speech over an incoming call on
+`AUDIOFOCUS_LOSS_TRANSIENT`. `LOW_LATENCY` is floor-only and does not cap `setBufferSizeInBytes`.
+
+Do size the track buffer in **milliseconds** (`TRACK_BUFFER_MS = 400`) rather than `minBuf * 4`,
+which silently ranged 161-403 ms across devices. It absorbs 0 ms of producer stalls by design —
+it is writer-deschedule insurance only.
+
+### 6A.3 The fix
+
+A single pure-Kotlin `TtsBufferPolicy` (no `android.*`, JUnit-testable) is the only gate:
+
+```
+shouldStart / shouldResume  ⟸  bufferedMs > 0 && (done || bufferedMs >= targetMs() || waitedMs >= capMs)
+targetMs() = SAFETY * rtfEwma * dMaxMs + stallBumpMs,  clamped [MIN_WM_MS, MAX_WM_MS]
+```
+
+The `bufferedMs > 0` guard on **resume** is a real shipping bug fix: without it, a long drought
+lets the cap fire on an empty store and the loop flaps play/pause/`onBuffering` at ~0.4 Hz,
+strobing the ring.
+
+**RTF measurement must exclude two contaminants:** skip the first burst of every segment from the
+EWMA (it carries whole-text espeak phonemization, which scales with *selection* length, not
+sentence length), and measure callback-**exit** to callback-**entry** so the `AHEAD_CAP`
+backpressure hold never reads as slow synthesis.
+
+**Decision (owner, 2026-07-27): always prebuffer.** Start and resume both gate on the watermark.
+This is the smoothness-over-latency choice; it is made affordable by clause splitting (§6A.5),
+which bounds the first chunk to ~2.2 s of audio and therefore satisfies the watermark in ~1.3 s —
+better than today's ~1.9 s time-to-first-word.
+
+Playback loop also gets: `THREAD_PRIORITY_URGENT_AUDIO` (in its **own commit**, after the
+baseline — see §6A.6); `awaitDrain(...)` with a `cancelled() || seek || paused` abort predicate
+(mandatory, or seek/pause latency regresses to 500-1200 ms) replacing the blind `Thread.sleep(150)`;
+`store.awaitMoreThan(total, WAIT_TICK_MS = 20)` replacing `Thread.sleep(50)` (data-driven, and
+mandatory for cloud packet cadences); pause wall-time excluded from the gate clock; and reporting
+the **rendered** position (`cursor - (writtenFrames - playbackHeadPosition)`) so the scrubber
+stops leading the audio.
+
+### 6A.4 When RTF ≥ 1, buffering cannot help — say so
+
+At RTF > 1 the speech fraction of wall clock is capped at `1/RTF` by arithmetic. The only free
+parameter is **how the missing time is distributed**, and a short resume cap picks the worst
+distribution (maximum interruptions).
+
+Above `REALTIME_RTF = 0.95` (over ≥3 samples), switch the resume gate to a bank target
+`min((rtf-1) * remainingAudioEstimate, MAX_BANK_MS = 8000)` — at RTF 1.3 that is ~10 s of
+preparation then ~35 s continuous, versus a 2.5 s / 8.3 s sawtooth. Emit a one-shot **Degraded**
+notice with an estimated prepare time. Above ~2× realtime, detect and refuse, pointing at cloud
+TTS. **Never an unbounded spinner** — `LOCAL_STALL_DEADLINE_MS = 60_000`, then drain what is
+banked and stop with a real error.
+
+Today the app shows a spinner and no explanation. That is the part users experience as breakage.
+
+### 6A.5 Clause splitting and truncation
+
+**Split sentences over `SPLIT_MAX_CHARS = 300`** (~3.5 s of audio) at clause boundaries, target
+`SPLIT_TARGET_CHARS = 190`. Normal prose keeps its prosody. This bounds `D_max`, improves
+time-to-first-word, and — **not optional** — bounds sherpa's discarded whole-utterance array from
+**~173 MB at the retention cap to ~100 KB**. That array is an OOM-class defect today on a
+no-`largeHeap` app. A/B the split aggressiveness on comma-spliced prose, where the seam is most audible.
+
+**Surface a distinct `Truncated` outcome.** The 100,000-char selection limit (~96 min) and the
+30-min `RETAIN_CAP` disagree by 3.2×, so "Select all → Speak" silently drops ~69% of the content —
+and after the completion-guard fix it would report a pristine 100% done. Add a "continue from here"
+speak-from-offset entry point, plus an up-front duration estimate.
+
+### 6A.6 Ship order — diagnostics before fix
+
+**Decision (owner, 2026-07-27): measure first.** Every watermark constant above is arithmetic on
+one cold bench run on a Fold 6. Land them in three bisectable commits:
+
+1. **Diagnostics only.** `WE-TTS` `TTSDIAG` single-line key=value records: `open` (granted
+   `bufferSizeInFrames`, performance mode), `sent` (seq, samples, audMs, synthMs, per-sentence
+   RTF), `play` (lead ms at each boundary crossing), `under`, `end` (ttfwMs, underN, underMs,
+   maxGapMs, dutyPct, rtf p50/p95/max). Sample `getUnderrunCount()` (API 24; minSdk 26, so
+   unconditional) at track creation, stall entry, stall exit, and end — paired with
+   `playbackHeadPosition`, re-baselined after every `flush()`.
+   **`audibleMs = wallStalled − renderedDuringStall` is the only honest silence measurement** —
+   `underrunCount` alone says we fed late, never how much silence the user heard.
+2. **Policy + watermarks + correctness fixes** (including `doneFlag` in a `finally`, and the
+   truncation race).
+3. **Store / tap / segmentation**, and `THREAD_PRIORITY_URGENT_AUDIO` separately so it does not
+   contaminate the baseline.
+
+**Triangulation that can refute this whole diagnosis:**
+
+| `hwUnderrunΔ` | audible silence | Verdict |
+|---|---|---|
+| > 0 | > 0 | Starvation confirmed |
+| > 0 | ~0 | Thread descheduling — different fix |
+| ~0 | ~0 | **Diagnosis wrong.** Next: sherpa `silence_scale=0.2` inter-sentence padding, truncation race |
+
+Known blind spot: `audibleMs` cannot resolve gaps shorter than one AudioTrack buffer
+(~160-400 ms). If the real complaint is rapid sub-buffer chops rather than multi-second pauses,
+the instrumentation reports a clean pass and the symptom persists.
+
+### 6A.7 Bugs to fix regardless of measurement
+
+- **Stranded playback thread.** A permanently-failed chunk throws out of the drain loop, skipping
+  `doneFlag.set(true)`. The playback thread never exits, leaks the AudioTrack, and `onDone` tears
+  down the stop button and scrubber while banked audio keeps playing **unstoppably, with audio
+  focus already abandoned**. Fix: `doneFlag` in a `finally`; record the failure and return
+  normally so banked audio drains. The OOM path strands the thread today.
+- **`PcmStore` single-appender invariant** is enforced only by a KDoc comment, and the cloud
+  design introduces a worker pool. Add a debug-build assertion **now** — the failure mode is
+  silent index corruption, not a deadlock.
+
+---
+
 ## 7. Credentials and security
 
 ### 7.1 Storage
@@ -779,12 +939,21 @@ note and keep it. It costs an hour and it is the first thing a regulator asks fo
 
 ## 9. Release sequencing
 
-> **Planning note.** This spec deliberately spans five releases and is **too large for a single
+> **Planning note.** This spec deliberately spans six releases and is **too large for a single
 > implementation plan**. Each release gets its own plan → implementation → review cycle.
-> **Start with Release A.** It is independently shippable, independently valuable, ships no cloud
-> code, and produces the benchmark data that several Release C decisions depend on. Releases A and
-> B together are a coherent first plan if a larger unit is wanted; C and D should not be planned
-> until A's bench numbers exist.
+> **Start with Release 0** (TTS diagnostics — smallest, and it unblocks a bug the user is hitting
+> today), then **Release A**. A is independently shippable, ships no cloud code, and produces the
+> benchmark data that several Release C decisions depend on. C and D should not be planned until
+> A's bench numbers exist.
+
+**Release 0 — TTS diagnostics + the two unconditional bug fixes.**
+`TTSDIAG` instrumentation (§6A.6 commit 1), plus the stranded-playback-thread fix and the
+`PcmStore` single-appender assertion (§6A.7), which are correct regardless of what the
+measurement shows. Owner runs one read-aloud and returns logcat. **No tuning until that lands** —
+every watermark constant is currently arithmetic on one cold bench.
+
+**Release 0.1 — the TTS buffer policy**, once the measurement confirms (or refutes) the diagnosis.
+§6A.6 commits 2 and 3.
 
 **Release A — local only, no cloud code, zero user-visible regression.**
 Segment identity + `SegmentOrderer` (pass-through at N=1) + enqueue-race fix + terminal-callback
