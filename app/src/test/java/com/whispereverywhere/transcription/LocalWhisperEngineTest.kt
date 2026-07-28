@@ -216,7 +216,7 @@ class LocalWhisperEngineTest {
     }
 
     @Test
-    fun commit_withPermanentFailure_resolvesLostAfterRetriesExhausted() {
+    fun commit_withPermanentFailure_resolvesEmptyExpectedAndReportsError() {
         // Fail more times than maxAttempts (3) -> never succeeds.
         val backend = FakeWhisperBackend(text = "never", failTimes = 99)
         val engine = LocalWhisperEngine(
@@ -230,15 +230,17 @@ class LocalWhisperEngineTest {
         engine.sendAudio(pcm)
         val seq = engine.commit()
 
-        // A terminal failure is a LOST segment, not an onError: onError is the connect-time /
-        // fatal channel, and routing a segment failure there left its seq unresolved forever.
+        // A terminal failure resolves EmptyExpected, NOT Lost — Lost renders as "[…]" in the
+        // user's field, and onError mid-RECORDING is a no-op in the service, so this reproduces
+        // pre-identity-work behaviour byte-for-byte (nothing typed) while still resolving the seq
+        // exactly once. onError still fires so the failure is observable/loggable.
         assertEquals(0L, seq)
         assertEquals(
-            listOf(0L to SegmentOutcome.Lost("transient transcribe failure")),
+            listOf(0L to SegmentOutcome.EmptyExpected),
             listener.resolved,
         )
         assertTrue(listener.completed.isEmpty())
-        assertTrue(listener.errors.isEmpty())
+        assertEquals(listOf("transient transcribe failure"), listener.errors)
         assertEquals(3, backend.transcribeCalls.size)   // exactly maxAttempts, then give up
     }
 
@@ -376,17 +378,21 @@ class LocalWhisperEngineTest {
             listOf(
                 0L to SegmentOutcome.Text("one"),
                 1L to SegmentOutcome.EmptyExpected,
-                2L to SegmentOutcome.Lost("boom"),
+                // A terminal failure resolves EmptyExpected too (never Lost, which would type a
+                // "[…]" marker into the user's field) — see runSegment's KDoc.
+                2L to SegmentOutcome.EmptyExpected,
             ),
             listener.resolved,
         )
+        // The terminal failure is still reported via onError, distinct from the ordinary blank.
+        assertEquals(listOf("boom"), listener.errors)
         // Exactly once: no seq appears twice, none is missing.
         assertEquals(seqs.toSet(), listener.resolved.map { it.first }.toSet())
         assertEquals(seqs.size, listener.resolved.size)
     }
 
     @Test
-    fun commit_whenContextIsNotLoaded_resolvesLost() {
+    fun commit_whenContextIsNotLoaded_resolvesEmptyExpectedAndReportsError() {
         // load() returning 0 leaves ctxPtr == 0 with the listener still attached.
         val backend = FakeWhisperBackend(loadReturns = 0L)
         val engine = LocalWhisperEngine(
@@ -403,15 +409,24 @@ class LocalWhisperEngineTest {
         engine.sendAudio(pcm)
         val seq = engine.commit()
 
+        // Not Lost (which renders "[…]" in the user's field) — EmptyExpected, matching
+        // pre-identity-work behaviour (onError mid-RECORDING is a no-op in the service, so
+        // nothing was ever typed for this failure), while still resolving the seq exactly once.
         assertEquals(0L, seq)
-        assertEquals(listOf(0L to SegmentOutcome.Lost("Speech model not loaded")), listener.resolved)
+        assertEquals(listOf(0L to SegmentOutcome.EmptyExpected), listener.resolved)
+        assertEquals(
+            listOf("Failed to load speech model (may be corrupt - re-download)", "Speech model not loaded"),
+            listener.errors,
+        )
         assertTrue(backend.transcribeCalls.isEmpty())
     }
 
     @Test
-    fun commit_whenQualityRejectsADegenerateLoop_resolvesEmptyExpectedNotText() {
-        // The exact failure SegmentQuality exists for: syntactically fine, semantically garbage.
-        // It must not be typed, and it must not be shown to the user as a lost sentence either.
+    fun commit_withADegenerateRepetitionLoop_stillResolvesAsText_becauseTheQualityGateIsNotWired() {
+        // SegmentQuality exists but is deliberately NOT wired into runSegment — see its KDoc: the
+        // measured threshold rejects ordinary emphatic speech ("no no no ..." scores above the
+        // gate) and must be recalibrated before it can be wired back in. Until then, even a
+        // degenerate repetition loop must pass through untouched, same as any other text.
         val loop = "Thank you for watching. ".repeat(20)
         val backend = FakeWhisperBackend(text = loop)
         val engine = LocalWhisperEngine(
@@ -426,8 +441,8 @@ class LocalWhisperEngineTest {
         val seq = engine.commit()
 
         assertEquals(0L, seq)
-        assertEquals(listOf(0L to SegmentOutcome.EmptyExpected), listener.resolved)
-        assertTrue(listener.completed.isEmpty())
+        assertEquals(listOf(0L to SegmentOutcome.Text(loop.trim())), listener.resolved)
+        assertEquals(listOf(loop.trim()), listener.completed)
     }
 
     // ===== Lifecycle on the interface =====

@@ -1621,7 +1621,14 @@ class FloatingBubbleService : Service(),
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_RUNNING_LOW && currentState != BubbleState.RECORDING && currentState != BubbleState.FINALIZING) {
+        // CONNECTING is excluded alongside RECORDING/FINALIZING: a trim here can free ctxPtr
+        // before the very first segment of the session runs, making the ctx==0 branch in
+        // LocalWhisperEngine.runSegment reachable on segment #1 instead of only mid-teardown.
+        if (level >= TRIM_MEMORY_RUNNING_LOW &&
+            currentState != BubbleState.RECORDING &&
+            currentState != BubbleState.FINALIZING &&
+            currentState != BubbleState.CONNECTING
+        ) {
             transcriptionEngine?.releaseContext()
         }
     }

@@ -58,9 +58,6 @@ class LocalWhisperEngine(
 
         /** commit() cut nothing, so no seq was allocated and nothing is owed a resolution. */
         const val NO_SEGMENT = -1L
-
-        /** PCM16 mono @16 kHz: 16000 samples/s x 2 bytes = 32 bytes per millisecond. */
-        const val BYTES_PER_MS = 32
     }
 
     /**
@@ -194,6 +191,16 @@ class LocalWhisperEngine(
      * head and holds every later segment with it. That is why the blank case, which previously
      * just logged "dropped" and emitted nothing at all, now resolves explicitly, and why the
      * catch is deliberately broad: any escape here is an unresolvable seq.
+     *
+     * The two failure branches (no context loaded, transcribe threw) resolve as
+     * [SegmentOutcome.EmptyExpected] — deliberately NOT the sealed "terminally lost" outcome type
+     * in [SegmentOutcome], which renders as a "[…]" marker the service types into the user's field
+     * — and additionally call [myListener]'s onError, both guarded by the same listener-identity
+     * check as the terminal onSegmentResolved call below. That combination reproduces the
+     * pre-identity-work behaviour exactly (onError while RECORDING is a no-op in the service, so
+     * nothing is typed) while still resolving the seq. That other outcome type stays defined,
+     * unused here, for a future engine (e.g. cloud) that can genuinely lose a segment after every
+     * retry.
      */
     private fun runSegment(
         seq: Long,
@@ -205,7 +212,12 @@ class LocalWhisperEngine(
             val ctx = ctxPtr
             if (ctx == 0L) {
                 android.util.Log.w("WE-DIAG", "commit: ctx==0 (model not loaded)")
-                SegmentOutcome.Lost("Speech model not loaded")
+                // Not a Lost segment: Lost renders as "[…]" in the user's field. Pre-release this
+                // path only called onError (which, mid-RECORDING, the service just logs and keeps
+                // going) and typed nothing — EmptyExpected preserves that byte-for-byte while still
+                // resolving the seq exactly once.
+                if (listener === myListener) myListener.onError("Speech model not loaded")
+                SegmentOutcome.EmptyExpected
             } else {
                 val samples = AudioMath.pcm16ToFloat(pcm)
                 android.util.Log.i("WE-DIAG", "transcribe START seq=$seq samples=${samples.size} lang=$lang")
@@ -242,18 +254,16 @@ class LocalWhisperEngine(
                     // of its own; that is where the peak split belongs.
                     android.util.Log.i("WE-DIAG", "transcribe result blank/non-speech -> empty")
                     SegmentOutcome.EmptyExpected
-                } else if (SegmentQuality.assess(cleaned, pcm.size / BYTES_PER_MS) != QualityVerdict.ACCEPT) {
-                    // Degenerate repetition or an impossible word rate. Not a loss the user should
-                    // see a marker for — it is garbage we chose not to type.
-                    android.util.Log.i("WE-DIAG", "segment rejected by quality gate -> empty")
-                    SegmentOutcome.EmptyExpected
                 } else {
                     SegmentOutcome.Text(cleaned)
                 }
             }
         } catch (t: Throwable) {
             android.util.Log.w("WE-DIAG", "transcribe THREW", t)
-            SegmentOutcome.Lost(t.message ?: "Transcription failed")
+            // See the ctx==0 branch above: EmptyExpected + onError reproduces pre-release
+            // behaviour (nothing typed) while still resolving the seq exactly once.
+            if (listener === myListener) myListener.onError(t.message ?: "Transcription failed")
+            SegmentOutcome.EmptyExpected
         }
         // Guard: only fire if the listener hasn't been replaced/nulled since commit().
         if (listener === myListener) myListener.onSegmentResolved(seq, outcome)

@@ -15,6 +15,15 @@ package com.whispereverywhere.util
  */
 class SpeechSegmenter(
     private val voiceThreshold: Int = 500,
+    // KNOWN LIMITATION: a room whose noise floor sits between 251 and 499 opens a segment
+    // (amplitude >= voiceThreshold) but can never satisfy the close condition
+    // (amplitude <= silenceThreshold), so dispatch silently degrades to the maxSegmentMs
+    // wall-clock cap. An adaptive floor was attempted and reverted on 2026-07-28: the EMA update
+    // ran unconditionally, above the `!hasSpoken` guard, so it was fed the user's own sub-pauseMs
+    // inter-syllable speech instead of only room tone (talking raised the bar for detecting that
+    // they stopped), and it reset to 0 on every commit, so it was re-seeded from a speech tail
+    // after every segment rather than converging on the room. A correct fix must sample room tone
+    // only while `!hasSpoken` and must not reset per segment.
     private val silenceThreshold: Int = 250,
     private val pauseMs: Long = 800,
     private val maxSegmentMs: Long = 15000,
@@ -22,9 +31,6 @@ class SpeechSegmenter(
     private var hasSpoken = false
     private var lastVoiceMs = 0L
     private var segmentStartMs = 0L
-
-    /** EMA of non-voiced chunk amplitude — the room's noise floor. */
-    private var floorEma = 0f
 
     /** @return true when the caller should commit the buffer now. */
     fun onAmplitude(amplitude: Int, nowMs: Long): Boolean {
@@ -36,13 +42,9 @@ class SpeechSegmenter(
             lastVoiceMs = nowMs
             return false
         }
-
-        floorEma = if (floorEma == 0f) amplitude.toFloat()
-                   else floorEma + FLOOR_ALPHA * (amplitude - floorEma)
-
         if (!hasSpoken) return false
 
-        val pausedLongEnough = amplitude <= effectiveSilence() && (nowMs - lastVoiceMs) >= pauseMs
+        val pausedLongEnough = amplitude <= silenceThreshold && (nowMs - lastVoiceMs) >= pauseMs
         val segmentTooLong = (nowMs - segmentStartMs) >= maxSegmentMs
         if (pausedLongEnough || segmentTooLong) {
             reset()
@@ -51,23 +53,6 @@ class SpeechSegmenter(
         return false
     }
 
-    /**
-     * Effective silence threshold. `max()` with the configured floor makes regression IMPOSSIBLE
-     * by construction: in a quiet room floorEma * 1.6 is below silenceThreshold, so this returns
-     * exactly the original value and behaviour is byte-identical. `min()` with
-     * voiceThreshold - 1 stops a loud room from raising the bar until speech itself counts as
-     * silence.
-     *
-     * Fixes a real dead band: with a fixed 250, any room whose floor sits between 251 and 499
-     * opens a segment (>=500) but can NEVER satisfy the close condition, so dispatch silently
-     * degrades to the 15-second wall-clock cap with no log distinguishing it.
-     *
-     * Only the SILENCE threshold adapts. voiceThreshold stays fixed — raising it would hurt soft
-     * talkers, which is the opposite of the goal.
-     */
-    private fun effectiveSilence(): Int =
-        minOf(maxOf(silenceThreshold, (floorEma * NOISE_FLOOR_MULTIPLIER).toInt()), voiceThreshold - 1)
-
     /** True if speech has been detected since the last commit/reset. */
     fun hasPendingSpeech(): Boolean = hasSpoken
 
@@ -75,13 +60,5 @@ class SpeechSegmenter(
         hasSpoken = false
         lastVoiceMs = 0L
         segmentStartMs = 0L
-        floorEma = 0f
-    }
-
-    companion object {
-        /** ~2 s of 32 ms chunks to converge. */
-        private const val FLOOR_ALPHA = 0.02f
-        /** Headroom above the measured floor before a sample counts as silence. */
-        private const val NOISE_FLOOR_MULTIPLIER = 1.6f
     }
 }

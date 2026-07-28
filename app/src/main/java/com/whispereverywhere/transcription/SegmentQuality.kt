@@ -14,6 +14,21 @@ import java.util.zip.Deflater
  * Pure and Android-free. Applied to EVERY engine, local and cloud: local has whisper's own
  * temperature fallback as a partial defence, but a cloud response is a finished string with no
  * equivalent.
+ *
+ * NOT WIRED. Deliberately: an independent measurement with `zlib` level 6 (matching Java's
+ * default `Deflater()`) found ordinary emphatic speech scoring well past [COMPRESSION_GATE] —
+ * "no no no no no no no no no no no no" compresses to ~2.69, above the 2.4 gate — while the
+ * actual target, a degenerate repetition loop ("thank you for watching " x40), scores ~23.0. The
+ * gate sits roughly 10x below what it is meant to catch and inside the range of real speech, and
+ * [MIN_CHARS_FOR_RATIO] gives no safe band: rejection begins at almost exactly that length. Wired
+ * as-is, this silently deletes legitimate speech (REJECT -> EmptyExpected -> nothing released, no
+ * marker, and on a single-segment session `sessionProducedText` stays false, so the app claims
+ * "No speech detected" after the user spoke perfectly clearly).
+ *
+ * Before wiring this back in: recalibrate — the measurements above plus the 23.0 target suggest
+ * something like `COMPRESSION_GATE` ~4.0 with `MIN_CHARS_FOR_RATIO` ~120 — and turn the measured
+ * false positives above ("no no no ..." and similar emphatic-repetition phrases) into ACCEPT
+ * regression tests at the new threshold before they can regress silently again.
  */
 enum class QualityVerdict { ACCEPT, REJECT_REPETITION, REJECT_IMPLAUSIBLE }
 
