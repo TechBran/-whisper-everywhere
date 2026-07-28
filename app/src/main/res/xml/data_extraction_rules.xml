@@ -2,18 +2,24 @@
 <!--
   Same allowlist discipline as backup_rules.xml, for both cloud backup and device-to-device
   transfer. Credentials must not travel by either route.
+
+  With an <include> present each block is SCOPED to it, so anything not named is already excluded.
+  Do NOT add <exclude> elements — a path outside the included scope is a FATAL FullBackupContent
+  lint error that fails lintVitalRelease and blocks the release build entirely, while leaving debug
+  builds and the whole unit suite green.
+
+  Excluded by omission in BOTH blocks, deliberately: secure_store.xml (Keystore-wrapped
+  credentials), domain="file" (the whisper model, the Kokoro voice, and any future session-audio
+  archive), and domain="database".
+
+  NEVER restore `<include domain="sharedpref" path="."/>` — that is the denylist form that made a
+  plaintext API key eligible for Drive backup and device-to-device transfer.
 -->
 <data-extraction-rules>
     <cloud-backup>
         <include domain="sharedpref" path="whisper_everywhere_prefs.xml" />
-        <exclude domain="sharedpref" path="secure_store.xml" />
-        <exclude domain="file" path="." />
-        <exclude domain="database" path="." />
     </cloud-backup>
     <device-transfer>
         <include domain="sharedpref" path="whisper_everywhere_prefs.xml" />
-        <exclude domain="sharedpref" path="secure_store.xml" />
-        <exclude domain="file" path="." />
-        <exclude domain="database" path="." />
     </device-transfer>
 </data-extraction-rules>
