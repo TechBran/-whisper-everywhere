@@ -45,4 +45,26 @@ object AudioMath {
         }
         return out
     }
+
+    /**
+     * Largest absolute sample, normalised to 0f..1f. Mirrors the native peak-energy gate in
+     * whisper_jni.cpp so the same "is there anything here at all" question can be asked in Kotlin
+     * before an expensive or billable operation.
+     *
+     * Reads whole samples only — [android.media.AudioRecord] can return an odd byte count, and a
+     * stride-2 loop that ignores that runs off the end. Uses [kotlin.math.abs] on an Int, not a
+     * Short: the Short -32768 has no positive counterpart and abs() of it stays negative.
+     */
+    fun peak(pcm: ByteArray): Float {
+        var max = 0
+        var i = 0
+        val end = pcm.size - 1
+        while (i < end) {
+            val s = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xFF)).toShort().toInt()
+            val a = kotlin.math.abs(s)
+            if (a > max) max = a
+            i += 2
+        }
+        return (max / 32768f).coerceIn(0f, 1f)
+    }
 }

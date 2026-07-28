@@ -40,10 +40,18 @@ class RetryPolicy(
     /**
      * Runs [block] with a 1-based attempt index, from 1 up to [maxAttempts]. On a thrown
      * [Throwable], if [shouldRetry] returns true and attempts remain, [delay]s for
-     * [delayForAttempt] then retries; otherwise rethrows.
+     * [delayForAttempt] (or [delayOverrideMs], when it returns non-null) then retries; otherwise
+     * rethrows.
+     *
+     * @param delayOverrideMs given (throwable, attempt), returns a delay to use INSTEAD of the
+     *   computed backoff, or null to keep the computed one. Exists so a server-stated `Retry-After`
+     *   can be honoured: without it a 429 asking for 8 seconds is answered with ~0.2s then ~0.4s,
+     *   burning every attempt inside a window that is still closed and extending the outage the
+     *   client is reacting to.
      */
     suspend fun <T> retry(
         shouldRetry: (Throwable) -> Boolean = { true },
+        delayOverrideMs: (Throwable, Int) -> Long? = { _, _ -> null },
         block: suspend (attempt: Int) -> T,
     ): T {
         var attempt = 1
@@ -53,7 +61,8 @@ class RetryPolicy(
             } catch (t: Throwable) {
                 val hasMore = attempt < maxAttempts
                 if (!hasMore || !shouldRetry(t)) throw t
-                delay(delayForAttempt(attempt))
+                val wait = delayOverrideMs(t, attempt) ?: delayForAttempt(attempt)
+                delay(wait)
                 attempt++
             }
         }

@@ -90,4 +90,29 @@ class AudioMathTest {
         // odd-length guard: a lone byte is not a full sample
         assertEquals(0, AudioMath.pcm16ToFloat(byteArrayOf(0x42)).size)
     }
+
+    @Test fun peak_is_the_largest_absolute_sample_normalised() {
+        // PCM16 LE. 0x7FFF = 32767 -> ~1.0
+        val pcm = byteArrayOf(0x00, 0x00, 0xFF.toByte(), 0x7F)
+        assertEquals(1.0f, AudioMath.peak(pcm), 0.001f)
+    }
+
+    @Test fun peak_of_silence_is_zero() {
+        assertEquals(0.0f, AudioMath.peak(ByteArray(64)), 0.0001f)
+    }
+
+    @Test fun peak_of_empty_is_zero_not_a_crash() {
+        assertEquals(0.0f, AudioMath.peak(ByteArray(0)), 0.0001f)
+    }
+
+    @Test fun peak_handles_a_trailing_odd_byte_without_throwing() {
+        // AudioRecord can hand back an odd length; a naive stride-2 read would run off the end.
+        assertEquals(0.5f, AudioMath.peak(byteArrayOf(0x00, 0x40, 0x11)), 0.01f)
+    }
+
+    @Test fun peak_treats_negative_full_scale_as_full_scale() {
+        // -32768 has no positive counterpart; abs() of it overflows in Int if done naively.
+        val pcm = byteArrayOf(0x00, 0x80.toByte())
+        assertTrue(AudioMath.peak(pcm) > 0.99f)
+    }
 }
