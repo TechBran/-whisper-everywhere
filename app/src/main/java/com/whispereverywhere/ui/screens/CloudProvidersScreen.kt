@@ -62,9 +62,22 @@ internal fun maskedKeyPlaceholder(key: String): String =
  * — telling a user their key is wrong when the real cause was a dead radio sends them off to
  * regenerate a perfectly good key.
  */
-internal fun statusMessage(status: KeyStatus, providerDisplayName: String): String = when (status) {
+internal fun statusMessage(
+    status: KeyStatus,
+    providerDisplayName: String,
+    providerId: ProviderId? = null,
+): String = when (status) {
     KeyStatus.Valid -> "Key verified ✓"
-    KeyStatus.Invalid -> "That key was rejected. Check you copied all of it."
+    // ElevenLabs is the ONLY one of the three with per-endpoint API-key restrictions, so a
+    // rejection there is at least as likely to be a scoping problem as a bad paste. Blaming the
+    // user's typing sends someone with a perfectly good — and correctly locked-down — key off to
+    // regenerate it. Observed in the field 2026-07-28.
+    KeyStatus.Invalid -> if (providerId == ProviderId.ELEVENLABS) {
+        "That key was rejected. Check you copied all of it — or, if the key is restricted, " +
+            "give it voice read access in your ElevenLabs dashboard."
+    } else {
+        "That key was rejected. Check you copied all of it."
+    }
     KeyStatus.NoCredit -> "The key works, but the account has no credit."
     KeyStatus.RateLimited -> "Rate limited — try again in a moment."
     KeyStatus.Offline -> "Couldn't reach $providerDisplayName. Check your connection."
@@ -468,7 +481,7 @@ private fun ProviderCard(
                 status != null -> {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = statusMessage(status, provider.displayName),
+                        text = statusMessage(status, provider.displayName, provider.id),
                         style = MaterialTheme.typography.bodySmall,
                         color = when (status) {
                             is KeyStatus.Valid, is KeyStatus.NoCredit -> Success

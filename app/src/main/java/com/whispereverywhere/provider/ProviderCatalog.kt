@@ -69,7 +69,13 @@ object ProviderCatalog {
             // NOT a Bearer scheme — this is the most commonly got-wrong header of the three.
             authHeaderName = "xi-api-key",
             authHeaderValue = { it },
-            validationUrl = "https://api.elevenlabs.io/v1/user",
+            // /v1/voices, NOT /v1/user. ElevenLabs is the only one of the three that supports
+            // per-endpoint API-key restrictions, and /v1/user needs `user_read` — which a key
+            // scoped for speech work will not have, so a perfectly good key 401s. Probed
+            // 2026-07-28: /v1/voices returns 200 unauthenticated but 401 for a BAD key, so it
+            // still validates, at a lower privilege. It is also the endpoint the voice picker
+            // will need anyway once cloud TTS lands.
+            validationUrl = "https://api.elevenlabs.io/v1/voices",
             supportsStt = true,
             supportsTts = true,
             supportsStreaming = true,

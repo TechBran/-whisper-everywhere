@@ -159,4 +159,36 @@ class CloudProvidersScreenLogicTest {
             assertTrue(providerTrainingDisclosure(provider).isNotBlank())
         }
     }
+
+    @Test fun elevenlabs_rejection_mentions_key_restrictions_not_just_a_bad_paste() {
+        // ElevenLabs is the only one of the three with per-endpoint API-key restrictions, so a
+        // 401 there is at least as likely to be a scoping problem as a typo. Blaming the paste
+        // sends a user with a correctly locked-down key off to regenerate it. Observed in the
+        // field 2026-07-28 against the old /v1/user endpoint.
+        val msg = statusMessage(KeyStatus.Invalid, "ElevenLabs", ProviderId.ELEVENLABS)
+        assertTrue(msg, msg.contains("restricted"))
+        assertTrue(msg, msg.contains("ElevenLabs dashboard"))
+    }
+
+    @Test fun other_providers_keep_the_plain_rejection_copy() {
+        // OpenAI and Gemini have no per-endpoint key scoping, so the scoping hint would be noise.
+        assertEquals(
+            "That key was rejected. Check you copied all of it.",
+            statusMessage(KeyStatus.Invalid, "OpenAI", ProviderId.OPENAI),
+        )
+        assertEquals(
+            "That key was rejected. Check you copied all of it.",
+            statusMessage(KeyStatus.Invalid, "Google Gemini", ProviderId.GEMINI),
+        )
+    }
+
+    @Test fun elevenlabs_validation_url_is_the_lower_privilege_voices_endpoint() {
+        // /v1/user requires `user_read`, which a key scoped for speech work will not have —
+        // a valid key 401s. /v1/voices still rejects a bad key (probed 2026-07-28) at a lower
+        // privilege, and is what the voice picker will need anyway.
+        assertEquals(
+            "https://api.elevenlabs.io/v1/voices",
+            ProviderCatalog.byId(ProviderId.ELEVENLABS).validationUrl,
+        )
+    }
 }
