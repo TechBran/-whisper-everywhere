@@ -49,10 +49,10 @@
 </head>
 <body>
     <h1>Privacy Policy</h1>
-    <p class="last-updated">Last Updated: July 16, 2026</p>
+    <p class="last-updated">Last Updated: July 27, 2026</p>
 
     <div class="highlight">
-        <strong>Summary:</strong> Whisper Everywhere transcribes your speech <strong>100% on your device</strong>. Your audio is processed locally by an on-device speech-recognition model and <strong>never leaves your phone</strong>. There are no accounts, no servers we control, and no analytics or tracking. The only time the app uses the network is to download a speech model file once, so it can work fully offline afterward.
+        <strong>Summary:</strong> Whisper Everywhere transcribes your speech <strong>100% on your device by default</strong>. Your audio is processed locally by an on-device speech-recognition model and <strong>never leaves your phone unless you choose to add your own cloud provider key</strong> (see Section 6 — off by default, and entirely optional). There are no accounts, no servers we control, and no analytics or tracking. Other than an optional cloud provider you configure yourself, the only time the app uses the network is to download a speech model file once, so it can work fully offline afterward.
     </div>
 
     <h2>1. Introduction</h2>
@@ -61,8 +61,8 @@
     <h2>2. Information We Do NOT Collect</h2>
     <p>Whisper Everywhere is built to keep everything on your device:</p>
     <ul>
-        <li><strong>We do not collect your audio recordings.</strong> Your voice is captured and transcribed entirely on your device; audio is never uploaded anywhere.</li>
-        <li><strong>We do not collect your transcriptions.</strong> Transcribed text is produced on your device and stays on your device.</li>
+        <li><strong>We do not collect your audio recordings.</strong> Your voice is captured and transcribed entirely on your device by default; audio is never uploaded anywhere unless you choose to add your own cloud provider key (see Section 6), and even then it goes only to that provider, never to us.</li>
+        <li><strong>We do not collect your transcriptions.</strong> Transcribed text is produced on your device and stays on your device (or, if you use an optional cloud provider, is produced by that provider and returned to your device — see Section 6).</li>
         <li><strong>We do not collect personal information.</strong> There is no account creation, email address, or any personal identifier required to use the App.</li>
         <li><strong>We do not use analytics or tracking.</strong> There are no third-party analytics, advertising, or tracking SDKs in the App.</li>
         <li><strong>We do not operate any server that receives your data.</strong> We have no backend that your audio or text passes through.</li>
@@ -92,35 +92,55 @@
         <li>These are ordinary file downloads. No audio, transcription, or personal data is sent as part of the request.</li>
         <li>After a model is downloaded, transcription works entirely offline and the App does not need a network connection to function.</li>
     </ul>
-    <p><strong>At no point is your audio or transcription data transmitted off your device.</strong></p>
+    <p><strong>By default, at no point is your audio or transcription data transmitted off your device.</strong> The only exception is the optional cloud providers feature described next, which is off until you deliberately turn it on.</p>
 
-    <h2>6. Permissions We Request</h2>
+    <h2>6. Cloud Providers (Optional)</h2>
+    <div class="highlight">
+        <strong>Off by default.</strong> Cloud transcription and cloud read-aloud are entirely optional and stay off until you add your own API key for a provider in the App's Settings.
+    </div>
+    <p>If you choose to add a key for OpenAI, Google Gemini, or ElevenLabs, the App sends the following to that provider's own servers, using your own account with them:</p>
+    <ul>
+        <li><strong>Audio you dictate</strong>, so that provider can transcribe it.</li>
+        <li><strong>Text you select for read-aloud</strong>, so that provider can synthesize speech from it.</li>
+    </ul>
+    <p>This only happens for the providers you have configured, and only while a key is saved. Nothing is sent to any provider until you add a key, and <strong>removing a key stops all transmission to that provider immediately.</strong></p>
+    <p><strong>You are using your own account.</strong> That provider bills you directly for usage, and your data is handled under that provider's own privacy policy and terms of service, not ours. We recommend reviewing each provider's policy before adding a key.</p>
+    <p>What each provider does with data you send them differs, and matters for this decision:</p>
+    <ul>
+        <li><strong>OpenAI:</strong> Does not train its models on data sent through the API.</li>
+        <li><strong>Google Gemini:</strong> On the free tier, Google uses what you send to improve its products, and human reviewers may read it. Paid tiers do not.</li>
+        <li><strong>ElevenLabs:</strong> Trains on API data by default; you can opt out in your ElevenLabs account settings.</li>
+    </ul>
+    <p>Your provider API key is stored only on your device, encrypted using the Android Keystore. We never see it, log it, or transmit it anywhere except in the authenticated request to the provider you configured it for.</p>
+
+    <h2>7. Permissions We Request</h2>
     <p>The App requests the following permissions, used only for the stated purposes:</p>
     <ul>
-        <li><strong>Microphone (RECORD_AUDIO):</strong> To capture your voice for on-device transcription. Audio is processed locally and is never stored permanently or sent anywhere.</li>
+        <li><strong>Microphone (RECORD_AUDIO):</strong> To capture your voice for transcription. By default this is processed entirely on-device and never stored permanently or sent anywhere; it is sent to a cloud provider only if you have added your own key for one (see Section 6).</li>
         <li><strong>Display Over Other Apps (SYSTEM_ALERT_WINDOW):</strong> To show the floating bubble overlay that lets you dictate from any app.</li>
         <li><strong>Accessibility Service:</strong> To detect the focused text field and insert your transcribed text into it. The service only responds to text-field focus and performs text insertion when you dictate; it does not read, collect, or transmit the content of your screen.</li>
         <li><strong>Notification Access (Optional):</strong> To detect media playback for the optional media-transcription feature. This permission is optional and used only to detect when audio/video is playing.</li>
-        <li><strong>Internet:</strong> Used solely to download the speech model file from Hugging Face. It is not used to transmit your audio or transcriptions.</li>
+        <li><strong>Internet:</strong> Used to download the speech model file from Hugging Face, and — only if you have added your own key for a cloud provider (see Section 6) — to send your dictated audio or selected read-aloud text to that provider. It is never used to send your data to us.</li>
         <li><strong>Vibration:</strong> To provide optional haptic feedback during recording (can be disabled).</li>
     </ul>
 
-    <h2>7. Data Security</h2>
+    <h2>8. Data Security</h2>
     <p>We take the security of your data seriously:</p>
     <ul>
-        <li>Because transcription is on-device, your audio and text never traverse the internet and are not exposed to interception in transit.</li>
+        <li>By default, transcription is on-device, so your audio and text never traverse the internet and are not exposed to interception in transit.</li>
+        <li>If you add your own cloud provider key, requests to that provider use HTTPS, and your key is encrypted on-device using the Android Keystore (see Section 6).</li>
         <li>Model downloads use HTTPS encryption.</li>
         <li>Model files, preferences, and transcripts are kept in the App's private storage.</li>
-        <li>No data is stored on external servers or cloud services controlled by us.</li>
+        <li>No data is stored on external servers or cloud services controlled by us — cloud providers you configure yourself are controlled by you, under your own account with them.</li>
     </ul>
 
-    <h2>8. Children's Privacy</h2>
+    <h2>9. Children's Privacy</h2>
     <p>Whisper Everywhere is not directed at children under the age of 13. We do not knowingly collect personal information from children. Since we do not collect personal information from any users, this naturally extends to children as well.</p>
 
-    <h2>9. Changes to This Privacy Policy</h2>
+    <h2>10. Changes to This Privacy Policy</h2>
     <p>We may update this Privacy Policy from time to time. We will notify you of any changes by updating the "Last Updated" date at the top of this policy. We encourage you to review this Privacy Policy periodically.</p>
 
-    <h2>10. Your Rights and Data Deletion</h2>
+    <h2>11. Your Rights and Data Deletion</h2>
     <p>Because we do not collect or store your data on any server, all of your data lives on your device and is fully under your control:</p>
     <ul>
         <li>You can delete downloaded speech models from within the App's Settings.</li>
@@ -128,11 +148,11 @@
         <li>You can uninstall the App to remove all locally stored data.</li>
     </ul>
 
-    <h2>11. Contact Us</h2>
+    <h2>12. Contact Us</h2>
     <p>If you have any questions about this Privacy Policy or our privacy practices, please contact us at:</p>
     <p>Email: privacy@whispereverywhere.com</p>
 
-    <h2>12. Consent</h2>
+    <h2>13. Consent</h2>
     <p>By using Whisper Everywhere, you consent to this Privacy Policy and agree to its terms.</p>
 
 </body>

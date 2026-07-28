@@ -18,6 +18,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.ui.screens.CloudProvidersScreen
 import com.whispereverywhere.ui.screens.HomeScreen
 import com.whispereverywhere.ui.screens.LegalDocumentScreen
 import com.whispereverywhere.ui.screens.OnboardingModelScreen
@@ -160,6 +161,20 @@ fun WhisperEverywhereNavigation() {
                 },
                 onNavigateToLicenses = {
                     navController.navigate("open_source_licenses")
+                },
+                onNavigateToCloudProviders = {
+                    navController.navigate("cloud_providers")
+                }
+            )
+        }
+
+        composable("cloud_providers") {
+            CloudProvidersScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToPrivacyPolicy = {
+                    navController.navigate("privacy_policy")
                 }
             )
         }

@@ -206,6 +206,18 @@ class PreferencesManager(private val context: Context) {
             prefs.edit().putInt(KEY_TTS_VOICE_ID, value).apply()
         }
 
+    /**
+     * True once the user has seen the cloud disclosure and affirmatively accepted it.
+     *
+     * Play requires prominent in-app disclosure BEFORE any personal data is sent off-device, shown
+     * during normal usage rather than buried in a menu, with affirmative action. Back-press or
+     * tap-away must NOT count as acceptance — hence a persisted flag set only by the accept
+     * button, never by dismissal.
+     */
+    var cloudDisclosureAccepted: Boolean
+        get() = prefs.getBoolean(KEY_CLOUD_DISCLOSURE_ACCEPTED, false)
+        set(value) { prefs.edit().putBoolean(KEY_CLOUD_DISCLOSURE_ACCEPTED, value).apply() }
+
     companion object {
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_LEGACY_PURGED = "legacy_credential_stores_purged_v1"
@@ -221,6 +233,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_OVERLAY_PINNED = "overlay_pinned"
         private const val KEY_TTS_SPEED = "tts_speed"
         private const val KEY_TTS_VOICE_ID = "tts_voice_id"
+        private const val KEY_CLOUD_DISCLOSURE_ACCEPTED = "cloud_disclosure_accepted_v1"
 
         // Whisper API supported languages with display names
         // See: https://platform.openai.com/docs/guides/speech-to-text/supported-languages

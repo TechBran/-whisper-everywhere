@@ -42,7 +42,8 @@ fun SettingsScreen(
     onNavigateToPrivacyPolicy: () -> Unit = {},
     onNavigateToTerms: () -> Unit = {},
     onNavigateToModelOnboarding: () -> Unit = {},
-    onNavigateToLicenses: () -> Unit = {}
+    onNavigateToLicenses: () -> Unit = {},
+    onNavigateToCloudProviders: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = WhisperEverywhereApp.getInstance()
@@ -433,6 +434,21 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+
+            // Cloud providers (Release C1): bring-your-own-key credential management. No audio
+            // is sent anywhere yet — that lands in C2, gated behind the same key.
+            SettingsSection(title = "Cloud providers") {
+                val configured = app.preferencesManager.providerAccounts.configured()
+                SettingsItem(
+                    icon = Icons.Filled.Cloud,
+                    title = "Cloud providers",
+                    subtitle = if (configured.isEmpty())
+                        "Use your own OpenAI, Gemini or ElevenLabs key"
+                    else
+                        "${configured.size} configured",
+                    onClick = onNavigateToCloudProviders
+                )
             }
 
             // Preferences Section
