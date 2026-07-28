@@ -59,6 +59,14 @@ class OkHttpTransport(private val client: OkHttpClient = defaultClient()) : Http
             val body = response.use { it.body?.string().orEmpty() }
             if (response.isSuccessful) HttpResult.Ok(response.code, body)
             else HttpResult.HttpError(response.code, body)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // MUST be rethrown, and MUST come before the Exception catch below.
+            // CancellationException extends IllegalStateException -> RuntimeException ->
+            // Exception, so the broad catch would otherwise swallow it and report a cancelled
+            // call as a network failure. That breaks structured concurrency: the coroutine never
+            // unwinds, the caller sets a bogus "couldn't reach the provider" state, and it may
+            // touch UI state belonging to a scope that has already gone away.
+            throw c
         } catch (e: Exception) {
             HttpResult.NetworkError(e)
         }
