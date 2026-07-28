@@ -511,40 +511,63 @@ Open `app/src/main/java/com/whispereverywhere/data/local/SecureStore.kt` and con
 
 - [ ] **Step 2: Harden `secretKey()`**
 
-Make key acquisition atomic. Replace the body of `secretKey()` with a double-checked
-`synchronized` block on a private lock object, and treat a wrong-typed entry as absent:
+Two class-level fields, then a rewritten `secretKey()`. **The two `private val`/`private var`
+declarations go at CLASS level, immediately after the existing `prefs` field — not inside the
+function.** The existing `secretKey()` body is replaced entirely.
 
 ```kotlin
     private val keyLock = Any()
+
     @Volatile private var cachedKey: SecretKey? = null
 
     private fun secretKey(): SecretKey {
         cachedKey?.let { return it }
-        synchronized(keyLock) {
-            cachedKey?.let { return it }
-            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-            // A non-SecretKeyEntry under our alias means someone else's key is squatting it.
-            // Treat it as absent and generate ours rather than crashing on a bad cast.
-            val existing = (ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
-            val key = existing ?: run {
-                val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-                gen.init(
-                    KeyGenParameterSpec.Builder(
-                        KEY_ALIAS,
-                        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-                    )
-                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                        .setKeySize(256)
-                        .build(),
-                )
-                gen.generateKey()
-            }
-            cachedKey = key
-            return key
+        return synchronized(keyLock) {
+            cachedKey ?: loadOrGenerateKey().also { cachedKey = it }
         }
     }
+
+    private fun loadOrGenerateKey(): SecretKey {
+        val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        // A non-SecretKeyEntry under our alias means something else is squatting it. Treat that
+        // as absent and generate ours rather than crashing on a bad cast.
+        (ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+        gen.init(
+            KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build(),
+        )
+        return gen.generateKey()
+    }
+
+    /**
+     * Drop the cached key so the next call re-resolves from the Keystore.
+     *
+     * Caching introduces a failure mode that did not exist before: Keystore keys are DESTROYED
+     * when the user removes their screen lock or re-enrolls biometrics, and a cached SecretKey
+     * reference to a destroyed key fails every time it is used. Without this, one invalidation
+     * would break the store for the entire process lifetime even though re-resolving would
+     * succeed. Call it from every crypto failure path.
+     */
+    private fun invalidateCachedKey() { synchronized(keyLock) { cachedKey = null } }
 ```
+
+- [ ] **Step 2b: Clear the cache on every crypto failure**
+
+In `put`, inside the existing `catch (t: Throwable)` block, call `invalidateCachedKey()` **before**
+throwing `SecureStoreException`.
+
+In `get`, inside the existing `catch (_: Throwable)` block, call `invalidateCachedKey()` before
+returning null.
+
+Without this, Step 2's cache turns a recoverable one-off (key invalidated → next call regenerates)
+into a permanent process-lifetime failure.
 
 Add to the class KDoc:
 
@@ -553,6 +576,10 @@ Add to the class KDoc:
  * threads each generate a key, the second overwriting the first — which makes every value written
  * under the first key permanently undecryptable, with no error at write time. That was
  * unreachable while this class had no callers; it does now.
+ *
+ * The cache is dropped on any crypto failure, because Keystore keys are destroyed when the user
+ * removes their screen lock or re-enrolls biometrics, and a cached reference to a destroyed key
+ * fails forever otherwise.
 ```
 
 - [ ] **Step 3: Write `ProviderAccounts`**
