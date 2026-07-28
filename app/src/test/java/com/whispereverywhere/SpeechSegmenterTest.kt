@@ -55,4 +55,35 @@ class SpeechSegmenterTest {
         assertFalse(s.onAmplitude(100, 100))
         assertTrue(s.hasPendingSpeech())
     }
+
+    @Test fun a_quiet_room_behaves_exactly_as_before() {
+        // The adaptive floor must be provably non-regressive: with a low noise floor the effective
+        // silence threshold stays at the original 250.
+        val s = SpeechSegmenter()
+        var t = 0L
+        assertFalse(s.onAmplitude(600, t))          // speech opens the segment
+        t += 900
+        assertTrue("must close on a quiet sample after the hangover", s.onAmplitude(100, t))
+    }
+
+    @Test fun a_noisy_room_can_still_close_a_segment() {
+        // THE bug this fixes. With a fixed 250 threshold, a room whose floor sits at ~350 can
+        // never satisfy the close condition: speech opens at >=500 but nothing ever drops to
+        // <=250, so dispatch silently degrades to 15-second wall-clock chunks.
+        val s = SpeechSegmenter()
+        var t = 0L
+        repeat(70) { s.onAmplitude(350, t); t += 32 }   // establish a ~350 noise floor
+        assertFalse(s.onAmplitude(600, t))              // speech
+        t += 900
+        assertTrue("noisy room must still close", s.onAmplitude(350, t))
+    }
+
+    @Test fun the_adaptive_floor_never_rises_to_swallow_speech() {
+        // effSilence is clamped below voiceThreshold, so a loud room cannot make speech itself
+        // count as silence.
+        val s = SpeechSegmenter()
+        var t = 0L
+        repeat(70) { s.onAmplitude(490, t); t += 32 }
+        assertFalse("a sample at the voice threshold must never close a segment", s.onAmplitude(500, t))
+    }
 }
