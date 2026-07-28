@@ -117,13 +117,16 @@ fun SettingsScreen(
             // Speech model (on-device whisper) — replaces the old cloud API-key section.
             SettingsSection(title = "Speech model") {
                 if (retiredModel != null) {
-                    val eco = WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!
+                    // MF3: the target must match the retired model's scope — a multilingual
+                    // user must land on "base" (multilingual), not silently on the ENGLISH-only
+                    // default. See ModelMigration.targetIdFor.
+                    val target = WhisperCatalog.byId(ModelMigration.targetIdFor(retiredModel.scope))!!
                     // Re-derived every recomposition (same idiom as the permission checks
                     // below) so the card reacts to connectivity and to a completed download.
                     val migrationAction = ModelMigration.decide(
                         selectedId = app.preferencesManager.selectedModelId,
                         selectedInstalled = modelManager.isInstalled(retiredModel),
-                        targetInstalled = modelManager.isInstalled(eco),
+                        targetInstalled = modelManager.isInstalled(target),
                         online = isNetworkAvailable(context),
                     )
                     Surface(
@@ -150,8 +153,9 @@ fun SettingsScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Eco is much faster and works well for everyday " +
-                                    "dictation. We'll download it (60 MB), then free up the " +
+                                text = "${target.displayName} is much faster and works well " +
+                                    "for everyday dictation. We'll download it " +
+                                    "(${formatBytes(target.approxBytes)}), then free up the " +
                                     "space your old model is using.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -177,63 +181,88 @@ fun SettingsScreen(
                                 else -> {
                                     Button(
                                         onClick = {
-                                            migrationScope.launch {
+                                            // MF2: the busy flag must be set here, synchronously,
+                                            // at tap time — not inside the launched coroutine.
+                                            // rememberCoroutineScope dispatches on
+                                            // AndroidUiDispatcher.Main, which always dispatches
+                                            // (never runs inline), so a second tap inside that
+                                            // dispatch+recomposition window would otherwise start
+                                            // a second coroutine and race the first: coroutine A
+                                            // could finish, delete the retired file, then
+                                            // coroutine B's pre-existing dest.delete() unlinks the
+                                            // freshly-verified replacement, leaving the user with
+                                            // no model and no way back (onboarding has no back
+                                            // navigation).
+                                            if (!migrationBusy) {
                                                 migrationBusy = true
-                                                migrationStatus = "Starting…"
-                                                runCatching {
-                                                    when (migrationAction) {
-                                                        is ModelMigration.Action.OfferDownload -> {
-                                                            modelManager.download(
-                                                                eco,
-                                                                onProgress = { soFar, total ->
-                                                                    val safeTotal = if (total > 0L) total
-                                                                        else eco.approxBytes
-                                                                    migrationStatus = "${formatBytes(soFar)} / " +
-                                                                        formatBytes(safeTotal)
-                                                                },
-                                                                onVerifying = { migrationStatus = "Verifying…" },
-                                                            )
-                                                            // Re-evaluate rather than sequencing by hand:
-                                                            // download() only returns once Eco is verified
-                                                            // on disk, so this now resolves to SwapAndDelete.
-                                                            val after = ModelMigration.decide(
-                                                                selectedId = app.preferencesManager.selectedModelId,
-                                                                selectedInstalled =
-                                                                    modelManager.isInstalled(retiredModel),
-                                                                targetInstalled = modelManager.isInstalled(eco),
-                                                                online = isNetworkAvailable(context),
-                                                            )
-                                                            if (after is ModelMigration.Action.SwapAndDelete) {
-                                                                app.preferencesManager.selectedModelId = after.toId
+                                                migrationScope.launch {
+                                                    migrationStatus = "Starting…"
+                                                    try {
+                                                        when (migrationAction) {
+                                                            is ModelMigration.Action.OfferDownload -> {
+                                                                modelManager.download(
+                                                                    target,
+                                                                    onProgress = { soFar, total ->
+                                                                        val safeTotal = if (total > 0L) total
+                                                                            else target.approxBytes
+                                                                        migrationStatus = "${formatBytes(soFar)} / " +
+                                                                            formatBytes(safeTotal)
+                                                                    },
+                                                                    onVerifying = { migrationStatus = "Verifying…" },
+                                                                )
+                                                                // Re-evaluate rather than sequencing by hand:
+                                                                // download() only returns once the target is
+                                                                // verified on disk, so this now resolves to
+                                                                // SwapAndDelete.
+                                                                val after = ModelMigration.decide(
+                                                                    selectedId = app.preferencesManager.selectedModelId,
+                                                                    selectedInstalled =
+                                                                        modelManager.isInstalled(retiredModel),
+                                                                    targetInstalled = modelManager.isInstalled(target),
+                                                                    online = isNetworkAvailable(context),
+                                                                )
+                                                                if (after is ModelMigration.Action.SwapAndDelete) {
+                                                                    app.preferencesManager.selectedModelId = after.toId
+                                                                    modelManager.deleteModelFile(
+                                                                        WhisperCatalog.byId(after.fromId)!!
+                                                                    )
+                                                                }
+                                                            }
+                                                            is ModelMigration.Action.SwapAndDelete -> {
+                                                                app.preferencesManager.selectedModelId =
+                                                                    migrationAction.toId
                                                                 modelManager.deleteModelFile(
-                                                                    WhisperCatalog.byId(after.fromId)!!
+                                                                    WhisperCatalog.byId(migrationAction.fromId)!!
                                                                 )
                                                             }
+                                                            else -> Unit // WaitForNetwork/None: no button shown
                                                         }
-                                                        is ModelMigration.Action.SwapAndDelete -> {
-                                                            app.preferencesManager.selectedModelId =
-                                                                migrationAction.toId
-                                                            modelManager.deleteModelFile(
-                                                                WhisperCatalog.byId(migrationAction.fromId)!!
-                                                            )
-                                                        }
-                                                        else -> Unit // WaitForNetwork/None: no button shown
+                                                    } catch (c: kotlinx.coroutines.CancellationException) {
+                                                        // CC1: leaving Settings or rotating cancels
+                                                        // migrationScope. Rethrow so structured
+                                                        // concurrency completes the cancellation
+                                                        // instead of it being caught below and
+                                                        // toasted as a raw framework string on
+                                                        // whatever screen the user landed on.
+                                                        throw c
+                                                    } catch (t: Throwable) {
+                                                        android.widget.Toast.makeText(
+                                                            context,
+                                                            t.message ?: "Couldn't switch to ${target.displayName}",
+                                                            android.widget.Toast.LENGTH_LONG,
+                                                        ).show()
+                                                    } finally {
+                                                        migrationBusy = false
+                                                        migrationStatus = null
+                                                        modelRefreshKey++
                                                     }
-                                                }.onFailure {
-                                                    android.widget.Toast.makeText(
-                                                        context,
-                                                        it.message ?: "Couldn't switch to Eco",
-                                                        android.widget.Toast.LENGTH_LONG,
-                                                    ).show()
                                                 }
-                                                migrationBusy = false
-                                                migrationStatus = null
-                                                modelRefreshKey++
                                             }
                                         },
+                                        enabled = !migrationBusy,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text("Switch to Eco")
+                                        Text("Switch to ${target.displayName}")
                                     }
                                 }
                             }
@@ -295,7 +324,8 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Filled.CloudDownload,
                     title = if (installedModel != null) "Change or add a model" else "Download a model",
-                    subtitle = "Pick a speech-model tier (Eco / Pro / Extreme / Multilingual / Ultra)",
+                    subtitle = "Pick a speech-model tier " +
+                        "(${WhisperCatalog.pickable.joinToString(" / ") { it.displayName }})",
                     onClick = onNavigateToModelOnboarding
                 )
 

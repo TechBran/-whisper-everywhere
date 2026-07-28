@@ -2,6 +2,7 @@ package com.whispereverywhere.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,12 +33,37 @@ class PreferencesManager(private val context: Context) {
      * Google Drive backup and device-to-device transfer. Users who ran the 2.x cloud-era build
      * may still have a real key sitting there. Delete both files unconditionally; the migration
      * is one-way and a lost key is re-enterable, whereas a leaked one is not retractable.
+     *
+     * CC3: the completion flag is only written once BOTH stores are confirmed gone. Writing it
+     * unconditionally (the old behavior) would permanently mark the purge done even when a
+     * transient failure left a plaintext credential on disk forever. Never setting the flag on a
+     * genuine failure just costs a cheap retry next launch — the safe side to err on.
      */
     private fun purgeLegacyCredentialStores() {
         if (prefs.getBoolean(KEY_LEGACY_PURGED, false)) return
-        runCatching { context.deleteSharedPreferences("encrypted_api_key") }
-        runCatching { context.deleteSharedPreferences("encrypted_api_key_fallback") }
-        prefs.edit().putBoolean(KEY_LEGACY_PURGED, true).apply()
+        val primaryGone = purgeLegacyStore("encrypted_api_key")
+        val fallbackGone = purgeLegacyStore("encrypted_api_key_fallback")
+        if (primaryGone && fallbackGone) {
+            prefs.edit().putBoolean(KEY_LEGACY_PURGED, true).apply()
+        }
+    }
+
+    /**
+     * True once [name]'s SharedPreferences file is confirmed absent — either it never existed,
+     * or this call deleted it. False means it may still be sitting on disk.
+     *
+     * `Context.deleteSharedPreferences` returns false both when deletion fails AND when the file
+     * never existed in the first place, so a bare `false` can't be trusted as "still there" on
+     * its own; confirm with the file itself. `Context.getSharedPreferencesPath` isn't in the
+     * public SDK, so this uses the public `getDataDir()` (API 24+) plus the documented
+     * `shared_prefs/<name>.xml` layout every SharedPreferences file lives at.
+     */
+    private fun purgeLegacyStore(name: String): Boolean {
+        val deleted = runCatching { context.deleteSharedPreferences(name) }.getOrDefault(false)
+        if (deleted) return true
+        return runCatching {
+            !File(context.dataDir, "shared_prefs/$name.xml").exists()
+        }.getOrDefault(false)
     }
 
     // State flows for reactive updates

@@ -23,6 +23,17 @@ object ModelMigration {
         data class SwapAndDelete(val fromId: String, val toId: String) : Action
     }
 
+    /**
+     * The pickable tier a retired model's users should land on. MUST match the retired model's
+     * [ModelScope] — moving a MULTILINGUAL user to the ENGLISH-only default silently breaks
+     * dictation in every other language with no warning (that was the MF3 bug). "base" (Base
+     * multilingual) is the multilingual counterpart to the ENGLISH default "eco".
+     */
+    fun targetIdFor(scope: ModelScope): String =
+        if (scope == ModelScope.MULTILINGUAL) MULTILINGUAL_TARGET_ID else WhisperCatalog.DEFAULT_MODEL_ID
+
+    private const val MULTILINGUAL_TARGET_ID = "base"
+
     fun decide(
         selectedId: String?,
         selectedInstalled: Boolean,
@@ -31,7 +42,7 @@ object ModelMigration {
     ): Action {
         val selected = selectedId?.let { WhisperCatalog.byId(it) } ?: return Action.None
         if (!selected.retired) return Action.None
-        val target = WhisperCatalog.DEFAULT_MODEL_ID
+        val target = targetIdFor(selected.scope)
         // Target on disk wins regardless of connectivity — nothing left to download.
         if (targetInstalled) return Action.SwapAndDelete(selected.id, target)
         return if (online) Action.OfferDownload else Action.WaitForNetwork

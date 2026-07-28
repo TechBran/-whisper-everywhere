@@ -39,8 +39,10 @@ class ModelMigrationTest {
     }
 
     @Test fun swap_only_happens_once_the_target_is_actually_on_disk() {
+        // "ultra" is MULTILINGUAL, so its target is "base", not the ENGLISH default "eco" —
+        // see the MF3 tests below pinning the scope-aware mapping.
         assertEquals(
-            ModelMigration.Action.SwapAndDelete("ultra", "eco"),
+            ModelMigration.Action.SwapAndDelete("ultra", "base"),
             decide("ultra", targetInstalled = true),
         )
     }
@@ -58,8 +60,19 @@ class ModelMigrationTest {
         assertEquals(ModelMigration.Action.OfferDownload, decide("ultra", selectedInstalled = false))
     }
 
-    @Test fun migration_target_is_the_catalog_default() {
+    // MF3: the target must match the retired model's language scope. "ultra" is MULTILINGUAL
+    // (large-v3-turbo) — routing it to the ENGLISH-only default ("eco") silently breaks
+    // dictation in every other language. "extreme" is ENGLISH, so "eco" is correct for it.
+    // Replaces the old `migration_target_is_the_catalog_default`, which assumed every retired
+    // tier maps to WhisperCatalog.DEFAULT_MODEL_ID regardless of scope — that assumption is the
+    // bug MF3 fixes.
+    @Test fun a_multilingual_retired_tier_migrates_to_base_not_the_english_default() {
         val a = decide("ultra", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
+        assertEquals("base", a.toId)
+    }
+
+    @Test fun an_english_retired_tier_migrates_to_eco() {
+        val a = decide("extreme", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
         assertEquals(WhisperCatalog.DEFAULT_MODEL_ID, a.toId)
     }
 }
