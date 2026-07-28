@@ -2,62 +2,78 @@ package com.whispereverywhere.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.Build
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.File
 
 class PreferencesManager(private val context: Context) {
 
-    // Lazy initialization of MasterKey to prevent startup crashes
-    private val masterKey by lazy {
-        MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-    }
+    private val secureStore = SecureStore(context)
 
-    // Encrypted preferences for sensitive data (API key)
-    // Wrapped in lazy with error handling to prevent startup crashes
-    private val encryptedPrefs: SharedPreferences by lazy {
-        try {
-            createEncryptedPrefs()
-        } catch (e: Exception) {
-            // If initialization fails, try to delete the file and recreate
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    context.deleteSharedPreferences("encrypted_api_key")
-                } else {
-                    // Fallback for older versions: try to delete the file manually
-                    val dir = File(context.applicationInfo.dataDir, "shared_prefs")
-                    File(dir, "encrypted_api_key.xml").delete()
-                }
-                createEncryptedPrefs()
-            } catch (e2: Exception) {
-                // If it still fails, fallback to standard preferences to prevent crash
-                // This is less secure but allows the app to function
-                context.getSharedPreferences("encrypted_api_key_fallback", Context.MODE_PRIVATE)
-            }
-        }
-    }
-
-    private fun createEncryptedPrefs(): SharedPreferences {
-        return EncryptedSharedPreferences.create(
-            context,
-            "encrypted_api_key",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-    }
+    /** True when the Keystore is usable. False means credentials cannot be stored at all. */
+    fun secureStorageAvailable(): Boolean = secureStore.isAvailable()
 
     // Regular preferences for non-sensitive settings
     private val prefs: SharedPreferences = context.getSharedPreferences(
         "whisper_everywhere_prefs",
         Context.MODE_PRIVATE
     )
+
+    init {
+        purgeLegacyCredentialStores()
+    }
+
+    /**
+     * One-time cleanup of the pre-3.3 credential stores.
+     *
+     * "encrypted_api_key_fallback" is the dangerous one: it was a MODE_PRIVATE PLAINTEXT file
+     * written whenever EncryptedSharedPreferences failed to initialise twice, and both backup
+     * rule files excluded only "encrypted_api_key.xml" — so a raw key in it was eligible for
+     * Google Drive backup and device-to-device transfer. Users who ran the 2.x cloud-era build
+     * may still have a real key sitting there. Delete both files unconditionally; the migration
+     * is one-way and a lost key is re-enterable, whereas a leaked one is not retractable.
+     *
+     * CC3: the completion flag is only written once BOTH stores are confirmed gone. Writing it
+     * unconditionally (the old behavior) would permanently mark the purge done even when a
+     * transient failure left a plaintext credential on disk forever. Never setting the flag on a
+     * genuine failure just costs a cheap retry next launch — the safe side to err on.
+     */
+    private fun purgeLegacyCredentialStores() {
+        if (prefs.getBoolean(KEY_LEGACY_PURGED, false)) return
+        val primaryGone = purgeLegacyStore("encrypted_api_key")
+        val fallbackGone = purgeLegacyStore("encrypted_api_key_fallback")
+        if (primaryGone && fallbackGone) {
+            prefs.edit().putBoolean(KEY_LEGACY_PURGED, true).apply()
+        }
+    }
+
+    /**
+     * True once [name]'s SharedPreferences file is confirmed absent — either it never existed,
+     * or this call deleted it. False means it may still be sitting on disk.
+     *
+     * `Context.deleteSharedPreferences` returns false both when deletion fails AND when the file
+     * never existed in the first place, so a bare `false` can't be trusted as "still there" on
+     * its own; confirm with the file itself. `Context.getSharedPreferencesPath` isn't in the
+     * public SDK, so this uses the public `getDataDir()` (API 24+) plus the documented
+     * `shared_prefs/<name>.xml` layout every SharedPreferences file lives at.
+     */
+    private fun purgeLegacyStore(name: String): Boolean {
+        val deleted = runCatching { context.deleteSharedPreferences(name) }.getOrDefault(false)
+        if (deleted) return true
+        return runCatching {
+            // The absence check below is only trustworthy if our path model is right. If
+            // shared_prefs/ is not where we think it is, File.exists() returns false for a file
+            // that is actually sitting on disk somewhere else — and we would then mark the purge
+            // complete and leave a plaintext credential forever. That is the one direction this
+            // must never fail in, so confirm the directory first and treat "cannot confirm" as
+            // "may still be there". The cost of being wrong this way is one cheap retry next
+            // launch; the cost of being wrong the other way is permanent.
+            val sharedPrefsDir = File(context.dataDir, "shared_prefs")
+            if (!sharedPrefsDir.isDirectory) return@runCatching false
+            !File(sharedPrefsDir, "$name.xml").exists()
+        }.getOrDefault(false)
+    }
 
     // State flows for reactive updates
     private val _vibrationEnabled = MutableStateFlow(prefs.getBoolean(KEY_VIBRATION_ENABLED, true))
@@ -69,11 +85,17 @@ class PreferencesManager(private val context: Context) {
     private val _selectedLanguage = MutableStateFlow(prefs.getString(KEY_SELECTED_LANGUAGE, "auto") ?: "auto")
     val selectedLanguage: StateFlow<String> = _selectedLanguage.asStateFlow()
 
-    // API Key (encrypted storage)
+    /**
+     * The user's own provider credential. Backed by [SecureStore] (Keystore AES-256-GCM).
+     *
+     * The setter THROWS [SecureStoreException] when secure storage is unavailable. That is
+     * deliberate: the previous implementation swallowed the failure and wrote plaintext. Callers
+     * must surface the error to the user rather than pretending the key was saved.
+     */
     var apiKey: String
-        get() = try { encryptedPrefs.getString(KEY_API_KEY, "") ?: "" } catch (e: Exception) { "" }
+        get() = secureStore.get(KEY_API_KEY) ?: ""
         set(value) {
-            try { encryptedPrefs.edit().putString(KEY_API_KEY, value).apply() } catch (e: Exception) { e.printStackTrace() }
+            if (value.isEmpty()) secureStore.remove(KEY_API_KEY) else secureStore.put(KEY_API_KEY, value)
         }
 
     fun hasApiKey(): Boolean = apiKey.isNotBlank()
@@ -182,6 +204,7 @@ class PreferencesManager(private val context: Context) {
 
     companion object {
         private const val KEY_API_KEY = "openai_api_key"
+        private const val KEY_LEGACY_PURGED = "legacy_credential_stores_purged_v1"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_BUBBLE_ENABLED = "bubble_enabled"
         private const val KEY_BUBBLE_ALWAYS_ON = "bubble_always_on"

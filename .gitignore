@@ -113,3 +113,4 @@ whispereverywhere-release.jks
 keystore.properties
 *.jks
 *.keystore
+.superpowers/

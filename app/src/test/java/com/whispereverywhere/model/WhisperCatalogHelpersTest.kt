@@ -2,6 +2,7 @@ package com.whispereverywhere.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,8 +12,8 @@ class WhisperCatalogHelpersTest {
     @Test
     fun catalog_hasFiveEntries_withExpectedIds() {
         val ids = WhisperCatalog.entries.map { it.id }
-        assertEquals(5, WhisperCatalog.entries.size)
-        assertEquals(listOf("eco", "pro", "extreme", "multi", "ultra"), ids)
+        assertEquals(6, WhisperCatalog.entries.size)
+        assertEquals(listOf("eco", "base", "pro", "extreme", "multi", "ultra"), ids)
     }
 
     @Test
@@ -92,5 +93,55 @@ class WhisperCatalogHelpersTest {
         assertFalse(WhisperCatalog.sizeWithinTolerance(105_000_001L, approx))
         // just under -5%
         assertFalse(WhisperCatalog.sizeWithinTolerance(94_999_999L, approx))
+    }
+
+    @Test fun retired_tiers_remain_resolvable_by_id() {
+        // The app-wide gate is installedModel() != null, which starts with byId(). If byId
+        // returns null for a retired tier, every user on it is force-marched into onboarding
+        // with no back navigation and their model file is orphaned. Resolvable forever.
+        assertNotNull(WhisperCatalog.byId("extreme"))
+        assertNotNull(WhisperCatalog.byId("ultra"))
+    }
+
+    @Test fun retired_tiers_are_not_pickable() {
+        val ids = WhisperCatalog.pickable.map { it.id }
+        assertFalse(ids.contains("extreme"))
+        assertFalse(ids.contains("ultra"))
+    }
+
+    @Test fun pickable_is_exactly_the_four_fast_tiers() {
+        assertEquals(listOf("eco", "base", "pro", "multi"), WhisperCatalog.pickable.map { it.id })
+    }
+
+    @Test fun default_is_eco() {
+        assertEquals("eco", WhisperCatalog.DEFAULT_MODEL_ID)
+        assertNotNull(WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID))
+    }
+
+    @Test fun default_is_pickable() {
+        // A retired default would be unreachable from the picker — an unshippable state.
+        assertTrue(WhisperCatalog.pickable.any { it.id == WhisperCatalog.DEFAULT_MODEL_ID })
+    }
+
+    @Test fun base_multilingual_tier_has_its_pinned_lfs_values() {
+        // Exact LFS byte size and digest, fetched at the catalog's pinned commit. Rounding
+        // approxBytes has previously left a correct download barely inside the +/-5% gate.
+        val m = WhisperCatalog.byId("base")!!
+        assertEquals("ggml-base-q5_1.bin", m.fileName)
+        assertEquals(59_707_625L, m.approxBytes)
+        assertEquals("422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898", m.sha256)
+        assertEquals(ModelScope.MULTILINGUAL, m.scope)
+    }
+
+    @Test fun every_entry_has_a_distinct_id_and_filename() {
+        assertEquals(WhisperCatalog.entries.size, WhisperCatalog.entries.map { it.id }.toSet().size)
+        assertEquals(WhisperCatalog.entries.size, WhisperCatalog.entries.map { it.fileName }.toSet().size)
+    }
+
+    @Test fun every_sha256_is_lowercase_hex_of_the_right_length() {
+        WhisperCatalog.entries.forEach {
+            assertEquals("${it.id} sha256 length", 64, it.sha256.length)
+            assertTrue("${it.id} sha256 must be lowercase hex", it.sha256.matches(Regex("[0-9a-f]{64}")))
+        }
     }
 }

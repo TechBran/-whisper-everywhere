@@ -134,6 +134,32 @@ class TtsEngine(
         executor.execute {
             var myFocus: AudioFocusRequest? = null
             var playbackThread: Thread? = null
+            // --- TTSDIAG session state (Release 0 instrumentation; no behaviour change) ---
+            // Declared here (not inside the try below) for the same reason as playbackThread
+            // above: the outer finally block emits the end-of-utterance summary and needs these
+            // in scope, and a try-block-local val is not visible from its own finally.
+            val diagRtfs = java.util.Collections.synchronizedList(ArrayList<Double>())
+            val diagSentSeq = java.util.concurrent.atomic.AtomicInteger(0)
+            // Callback EXIT -> next ENTRY. A one-element array, not @Volatile: Kotlin does
+            // not permit @Volatile on a local, and the sherpa callback is this value's only
+            // reader and only writer (it runs on the executor thread, one call at a time).
+            val diagLastCallbackExitMs = longArrayOf(0L)
+            // Declared (not initialised) here: 0L means "this session never reached the
+            // measurement anchor below" — used by the finally block to skip emitting an `end`
+            // record for a run that bailed before anything was actually spoken (findings 1/2).
+            var diagT0 = 0L
+            var diagRate = 24_000
+            val diagTtfwMs = java.util.concurrent.atomic.AtomicLong(-1)
+            val diagUnderN = java.util.concurrent.atomic.AtomicInteger(0)
+            val diagUnderMs = java.util.concurrent.atomic.AtomicLong(0)
+            val diagMaxGapMs = java.util.concurrent.atomic.AtomicLong(0)
+            val diagHwUnder = java.util.concurrent.atomic.AtomicInteger(0)
+            // (I2) Duration-weighted RTF aggregate: Σ synthMs / Σ audMs across callbacks, under
+            // the same seq > 0 exclusion as diagRtfs below. An unweighted percentile of the
+            // per-callback RTFs treats a 2.5 s callback the same as a 23.6 s one and can read
+            // misleadingly high; this aggregate is what the spec's RTF conclusion should rest on.
+            val diagTotalSynthMs = java.util.concurrent.atomic.AtomicLong(0)
+            val diagTotalAudMs = java.util.concurrent.atomic.AtomicLong(0)
             try {
                 val engine = tts ?: modelManager.installedDir()?.let { d ->
                     buildTts(d).also { tts = it }
@@ -157,6 +183,12 @@ class TtsEngine(
                 seekRequest.set(-1)
                 val doneFlag = java.util.concurrent.atomic.AtomicBoolean(false)
 
+                // Measurement anchor (findings 1/2): zeroed HERE, after the cold model load and
+                // the cancellation check above, not before — so ttfwMs/wallMs measure the actual
+                // utterance, not a cache-miss model load or a task that never spoke anything.
+                diagT0 = System.currentTimeMillis()
+                diagRate = engine.sampleRate()
+
                 fun readAt(cursor: Long, maxLen: Int): ShortArray? {
                     synchronized(store) {
                         if (cursor >= storeTotal) return null
@@ -179,8 +211,25 @@ class TtsEngine(
                     var cursor = 0L
                     var started = false
                     var stalled = false
+                    var stallStartMs = 0L
+                    var stallHeadStart = 0
+                    var stallUnderStart = 0
                     var lastProgressMs = 0L
                     try {
+                        // Moved inside the try (finding 5): these read off localTrack right
+                        // after construction, and belong under the same finally-release guard
+                        // as everything else that touches the track — a throw here must not
+                        // leak the AudioTrack or kill this thread uncaught.
+                        android.util.Log.i(
+                            TtsDiag.TAG,
+                            TtsDiag.open(
+                                gen = myGen,
+                                bufFrames = localTrack.bufferSizeInFrames,
+                                perfMode = localTrack.performanceMode,
+                                chars = clean.length,
+                                sampleRate = localTrack.sampleRate,
+                            ),
+                        )
                         loop@ while (!cancelled()) {
                             // Consume a pending seek between slices; flush queued audio HERE
                             // (sole track owner) so the jump is instant.
@@ -189,6 +238,7 @@ class TtsEngine(
                                 cursor = seek.coerceIn(0L, availableSamples)
                                 if (started) {
                                     runCatching { localTrack.pause(); localTrack.flush(); localTrack.play() }
+                                    stallHeadStart = 0   // flush() zeroed the head; re-baseline
                                 }
                             }
                             if (paused) {
@@ -205,6 +255,9 @@ class TtsEngine(
                                 if (doneFlag.get()) break@loop
                                 if (started && !stalled) {
                                     stalled = true
+                                    stallStartMs = System.currentTimeMillis()
+                                    stallHeadStart = localTrack.playbackHeadPosition
+                                    stallUnderStart = localTrack.underrunCount
                                     onBuffering?.invoke(true)
                                 }
                                 try { Thread.sleep(50) } catch (_: InterruptedException) {}
@@ -212,11 +265,45 @@ class TtsEngine(
                             }
                             if (stalled) {
                                 stalled = false
+                                val wallMs = System.currentTimeMillis() - stallStartMs
+                                // playbackHeadPosition is an UNSIGNED 32-bit frame count in an
+                                // Int; mask before subtracting or a wrap reads as a huge
+                                // negative and audibleMs silently clamps to 0.
+                                val framesRendered =
+                                    ((localTrack.playbackHeadPosition.toLong() and 0xFFFFFFFFL) -
+                                        (stallHeadStart.toLong() and 0xFFFFFFFFL)).coerceAtLeast(0L)
+                                val renderMs = TtsDiagMath.audioMs(
+                                    framesRendered.toInt(), localTrack.sampleRate,
+                                )
+                                val hwD = localTrack.underrunCount - stallUnderStart
+                                val audible = TtsDiagMath.audibleSilenceMs(wallMs, renderMs)
+                                diagUnderN.incrementAndGet()
+                                diagUnderMs.addAndGet(audible)
+                                // (I3) diagHwUnder is NOT accumulated here. A per-stall sum only
+                                // sees underruns that coincide with an observed producer stall
+                                // (readAt() returning null) — the HAL can starve while readAt()
+                                // still returns data (playback-thread descheduling, perfMode=0,
+                                // a small buffer), and that gap would never touch this branch.
+                                // hwD is still reported per-stall on the `under` record below;
+                                // the session TOTAL is read once at loop exit, in the finally.
+                                if (audible > diagMaxGapMs.get()) diagMaxGapMs.set(audible)
+                                android.util.Log.i(
+                                    TtsDiag.TAG,
+                                    TtsDiag.under(
+                                        gen = myGen,
+                                        seq = diagSentSeq.get(),
+                                        atMs = System.currentTimeMillis() - diagT0,
+                                        wallMs = wallMs,
+                                        renderMs = renderMs,
+                                        hwUnderD = hwD,
+                                    ),
+                                )
                                 onBuffering?.invoke(false)
                             }
                             if (!started) {
                                 localTrack.play()
                                 started = true
+                                diagTtfwMs.set(System.currentTimeMillis() - diagT0)
                             }
                             onPcmChunk?.let { tap ->
                                 var sum = 0.0
@@ -243,6 +330,14 @@ class TtsEngine(
                             if (now - lastProgressMs >= 100) {
                                 lastProgressMs = now
                                 onProgress?.invoke(cursor, availableSamples, doneFlag.get())
+                                val leadMs = TtsDiagMath.audioMs(
+                                    (availableSamples - cursor).toInt().coerceAtLeast(0),
+                                    localTrack.sampleRate,
+                                )
+                                android.util.Log.i(
+                                    TtsDiag.TAG,
+                                    TtsDiag.play(myGen, diagSentSeq.get(), leadMs),
+                                )
                             }
                         }
                         if (!cancelled() && !stalled) {
@@ -252,6 +347,11 @@ class TtsEngine(
                         }
                     } finally {
                         if (stalled) onBuffering?.invoke(false)
+                        // (I3) Session total, read ONCE here rather than accumulated per stall:
+                        // underrunCount counts everything since track creation and is unaffected
+                        // by flush(), so this is the true total on every exit path (normal
+                        // completion, stop(), or a write()/exception break above).
+                        diagHwUnder.set(localTrack.underrunCount)
                         runCatching { localTrack.release() }
                     }
                 }, "tts-playback")
@@ -262,6 +362,7 @@ class TtsEngine(
                 // default invokedynamic lambdas do not generate (SIGABRT proven on-device).
                 val callback = object : Function1<FloatArray, Int> {
                     override fun invoke(samples: FloatArray): Int {
+                        val entryMs = System.currentTimeMillis()
                         if (cancelled()) return 0
                         val pcm = ShortArray(samples.size) { i ->
                             (samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
@@ -282,15 +383,41 @@ class TtsEngine(
                             storeTotal += pcm.size
                             availableSamples = storeTotal
                         }
+                        // Measure callback EXIT -> ENTRY so the AHEAD_CAP backpressure hold below
+                        // never reads as slow synthesis (spec 6A.3). The FIRST burst of an
+                        // utterance is still logged but is excluded from the summary percentiles
+                        // by the seq==0 check, because it carries whole-text espeak phonemisation
+                        // whose cost scales with SELECTION length, not sentence length.
+                        val prevExit = diagLastCallbackExitMs[0]
+                        val synthMs = if (prevExit == 0L) entryMs - diagT0 else entryMs - prevExit
+                        val seq = diagSentSeq.getAndIncrement()
+                        val audMs = TtsDiagMath.audioMs(pcm.size, engine.sampleRate())
+                        android.util.Log.i(TtsDiag.TAG, TtsDiag.sent(myGen, seq, pcm.size, audMs, synthMs))
+                        if (seq > 0) {
+                            diagRtfs.add(TtsDiagMath.rtf(synthMs, audMs))
+                            diagTotalSynthMs.addAndGet(synthMs)
+                            diagTotalAudMs.addAndGet(audMs)
+                        }
+                        diagLastCallbackExitMs[0] = System.currentTimeMillis()
                         return 1
                     }
                 }
-                engine.generateWithCallback(
-                    text = clean, sid = speakerId, speed = speed, callback = callback,
-                )
-                doneFlag.set(true)
+                try {
+                    engine.generateWithCallback(
+                        text = clean, sid = speakerId, speed = speed, callback = callback,
+                    )
+                } finally {
+                    // MUST be in a finally. If generateWithCallback throws (OOM on sherpa's
+                    // whole-utterance float[], or a native error), skipping this leaves the
+                    // playback loop's readAt() returning null forever: the thread never exits,
+                    // the AudioTrack leaks, and onDone tears down the stop button while banked
+                    // audio keeps playing with focus already abandoned.
+                    doneFlag.set(true)
+                }
                 // Playback outlives synthesis by up to the whole retained read; a newer speak()
                 // or stop() bumps the generation and this join returns within a slice.
+                // On the throw path we still reach the outer catch AFTER banked audio drains,
+                // which is deliberate: the user keeps the words already synthesized.
                 playbackThread.join(RETAIN_CAP_JOIN_MS)
             } catch (t: Throwable) {
                 android.util.Log.w("WE-TTS", "speak failed", t)
@@ -305,6 +432,32 @@ class TtsEngine(
                 if (!cancelled()) {
                     speaking = false
                     scheduleIdleUnload()
+                }
+                // Gate: diagT0 == 0L means this task returned before the measurement anchor
+                // (no model dir, or cancelled pre-anchor) — availableSamples etc. are still the
+                // PREVIOUS utterance's values at that point, so emitting here would fabricate a
+                // summary for an utterance that was never spoken (findings 1/2).
+                if (diagT0 != 0L) {
+                    android.util.Log.i(
+                        TtsDiag.TAG,
+                        TtsDiag.end(
+                            gen = myGen,
+                            ttfwMs = diagTtfwMs.get().coerceAtLeast(0),
+                            underN = diagUnderN.get(),
+                            underMs = diagUnderMs.get(),
+                            maxGapMs = diagMaxGapMs.get(),
+                            audioMs = TtsDiagMath.audioMs(availableSamples.toInt(), diagRate),
+                            // (I1) SYNTHESIZED total (above) can exceed wall clock when playback
+                            // never catches up; PLAYED total is what the user actually heard —
+                            // derived the same way audioMs is, just off playedSamples instead.
+                            playedMs = TtsDiagMath.audioMs(playedSamples.toInt(), diagRate),
+                            wallMs = System.currentTimeMillis() - diagT0,
+                            // (I2) Duration-weighted, not the unweighted per-callback median.
+                            rtfAgg = TtsDiagMath.rtf(diagTotalSynthMs.get(), diagTotalAudMs.get()),
+                            rtfs = ArrayList(diagRtfs),
+                            hwUnderTotal = diagHwUnder.get(),
+                        ),
+                    )
                 }
                 main.post(onDone)
             }

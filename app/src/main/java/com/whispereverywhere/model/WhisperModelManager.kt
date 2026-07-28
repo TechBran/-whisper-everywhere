@@ -50,6 +50,21 @@ class WhisperModelManager(
         return if (isInstalled(model)) model else null
     }
 
+    /**
+     * The selected tier when it is RETIRED — i.e. still resolvable and possibly still installed,
+     * but no longer offered. Drives the migration prompt. Returns null in the normal case.
+     */
+    fun retiredInstalledModel(): WhisperModel? {
+        val model = WhisperCatalog.byId(prefs.selectedModelId) ?: return null
+        return if (model.retired) model else null
+    }
+
+    /** Delete a tier's file from disk. Returns true if a file was actually removed. */
+    fun deleteModelFile(model: WhisperModel): Boolean {
+        val f = fileFor(model)
+        return f.exists() && f.delete()
+    }
+
     /** Absolute path to the installed selected model file, or null. */
     override fun installedModelPath(): String? {
         val model = installedModel() ?: return null

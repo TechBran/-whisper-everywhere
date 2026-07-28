@@ -1,6 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  ALLOWLIST, not a denylist. The previous version included ALL of `sharedpref` and excluded a
+  single filename, so any prefs file added later was backed up by default — which is how a
+  plaintext credential file became eligible for Google Drive backup.
+
+  With an <include> present, the ruleset is SCOPED to it: anything not named here is already
+  excluded. Do NOT add <exclude> elements — a path outside the included scope is a FATAL
+  FullBackupContent lint error ("… is not in an included path") that fails lintVitalRelease and
+  blocks the release build entirely, while debug builds and the whole unit suite stay green.
+
+  The security properties below therefore hold by OMISSION, deliberately:
+    - secure_store.xml (Keystore-wrapped credentials) — not listed, never backed up
+    - domain="file"     (the 190 MB whisper model, the 325 MB Kokoro voice, and any future
+                         session-audio archive) — not listed, never backed up
+    - domain="database" — not listed, never backed up
+
+  NEVER restore `<include domain="sharedpref" path="."/>`. That is the denylist form that made a
+  plaintext API key eligible for Drive backup and device-to-device transfer.
+-->
 <full-backup-content>
-    <include domain="sharedpref" path="." />
-    <exclude domain="sharedpref" path="encrypted_api_key.xml" />
-    <include domain="database" path="." />
+    <include domain="sharedpref" path="whisper_everywhere_prefs.xml" />
 </full-backup-content>
