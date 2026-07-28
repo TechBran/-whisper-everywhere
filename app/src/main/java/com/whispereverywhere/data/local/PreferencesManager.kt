@@ -62,7 +62,16 @@ class PreferencesManager(private val context: Context) {
         val deleted = runCatching { context.deleteSharedPreferences(name) }.getOrDefault(false)
         if (deleted) return true
         return runCatching {
-            !File(context.dataDir, "shared_prefs/$name.xml").exists()
+            // The absence check below is only trustworthy if our path model is right. If
+            // shared_prefs/ is not where we think it is, File.exists() returns false for a file
+            // that is actually sitting on disk somewhere else — and we would then mark the purge
+            // complete and leave a plaintext credential forever. That is the one direction this
+            // must never fail in, so confirm the directory first and treat "cannot confirm" as
+            // "may still be there". The cost of being wrong this way is one cheap retry next
+            // launch; the cost of being wrong the other way is permanent.
+            val sharedPrefsDir = File(context.dataDir, "shared_prefs")
+            if (!sharedPrefsDir.isDirectory) return@runCatching false
+            !File(sharedPrefsDir, "$name.xml").exists()
         }.getOrDefault(false)
     }
 
