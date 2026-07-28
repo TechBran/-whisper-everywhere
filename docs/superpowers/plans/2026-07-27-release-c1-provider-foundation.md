@@ -6,12 +6,12 @@
 
 **Architecture:** A pure `ProviderCatalog` describes the three providers. `ProviderAccounts` stores one credential per provider through the existing `SecureStore` (Keystore AES-256-GCM), keyed by enum *name*. A thin `HttpTransport` seam over OkHttp makes every network call fakeable in unit tests. Key validation is one cheap authenticated GET per provider. Nothing transcribes yet — that is C2.
 
-**Tech Stack:** Kotlin 2.0.21, OkHttp 5.4.0, kotlinx-serialization-json 1.7.3 (already present), JUnit 4, Compose, Android Keystore.
+**Tech Stack:** Kotlin 2.0.21, OkHttp 4.12.0, kotlinx-serialization-json 1.7.3 (already present), JUnit 4, Compose, Android Keystore.
 
 ## Global Constraints
 
-- **Kotlin 2.0.21 caps dependency versions.** A 2.0.x compiler reads metadata at most one minor ahead (2.1.0). **UNUSABLE:** Ktor 3.5.1, kotlinx-serialization-json ≥1.9.0, kotlinx-coroutines 1.11.0, and `okhttp-coroutines` 5.4.0 (it pulls coroutines 1.11.0). **SAFE:** OkHttp 5.4.0, serialization-json 1.8.1, coroutines 1.10.2. Hand-roll the ~20-line `suspendCancellableCoroutine` `Call.await()` bridge instead of adding `okhttp-coroutines`.
-- **`compileSdk` must be 36** — already done; OkHttp 5.4.0's AAR declares `minCompileSdk=36`.
+- **Kotlin 2.0.21 caps dependency versions.** A 2.0.x compiler reads metadata at most one minor ahead (2.1.0). **UNUSABLE:** Ktor 3.5.1, kotlinx-serialization-json ≥1.9.0, kotlinx-coroutines 1.11.0, and `okhttp-coroutines` 5.4.0 (it pulls coroutines 1.11.0). **SAFE:** OkHttp **4.12.0**, serialization-json 1.8.1, coroutines 1.10.2. (OkHttp 5.4.0 is NOT safe — its Android artifact forces kotlin-stdlib to 2.2.21 project-wide, breaking the compiler. Proven empirically 2026-07-27.) Hand-roll the ~20-line `suspendCancellableCoroutine` `Call.await()` bridge instead of adding `okhttp-coroutines`.
+- **`compileSdk` is 36** — already done, and required by Play's 31 Aug 2026 targetSdk deadline independently of OkHttp. (OkHttp 4.12.0 does not require it.)
 - **No credential may ever reach logcat.** `WE-DIAG` and `WE-TTS` log liberally. Never log a request that carries an auth header, never log a key even partially, and never put a key in an exception message.
 - **GPLv3: plain HTTPS only.** Per the FSF, posting to a documented HTTPS endpoint creates no combined work. Linking a proprietary vendor Android SDK into this GPLv3 binary would. **Do not add any vendor SDK.**
 - **Never embed a developer-owned key.** Every credential is the user's own, entered by them.
@@ -47,7 +47,7 @@ No audio or text is transcribed, synthesized, or uploaded. The only network call
 
 | File | Responsibility |
 |---|---|
-| `app/build.gradle.kts` | **Modify.** Add OkHttp 5.4.0. |
+| `app/build.gradle.kts` | **Modify.** Add OkHttp 4.12.0. |
 | `app/proguard-rules.pro` | **Modify.** OkHttp keep rules. |
 | `app/src/main/java/com/whispereverywhere/net/HttpTransport.kt` | **Create.** Interface + OkHttp impl + `Call.await()`. The seam that makes providers testable. |
 | `app/src/main/java/com/whispereverywhere/net/FakeHttpTransport.kt` | **Create (test source set).** Scripted responses for unit tests. |
@@ -94,10 +94,19 @@ Expected: `tests=117 failures=0 errors=0`.
 In `app/build.gradle.kts`, in the `dependencies { }` block beside the other `implementation` lines:
 
 ```kotlin
-    // OkHttp 5.4.0: requires compileSdk 36 (already set). Do NOT add okhttp-coroutines — it pulls
-    // kotlinx-coroutines 1.11.0, whose Kotlin metadata 2.2.0 is unreadable by this project's
-    // Kotlin 2.0.21 compiler. The Call.await() bridge below is hand-rolled for that reason.
-    implementation("com.squareup.okhttp3:okhttp:5.4.0")
+    // OkHttp is PINNED TO 4.12.0 — do not "upgrade" it to 5.x without also moving Kotlin.
+    //
+    // okhttp 5.4.0's Android artifact depends on kotlin-stdlib 2.2.21, and Gradle's conflict
+    // resolution then forces the whole project to 2.2.21. That breaks this project's Kotlin
+    // 2.0.21 compiler outright: `compileDebugKotlin` fails with "metadata is 2.2.0, expected
+    // 2.0.0". Verified by `:app:dependencies`, which shows `kotlin-stdlib:2.0.21 -> 2.2.21`.
+    // 4.12.0 leaves the stdlib at 2.0.21 and has everything needed here, including WebSocket
+    // support for the streaming work.
+    //
+    // Also do NOT add okhttp-coroutines: it pulls kotlinx-coroutines 1.11.0, whose metadata has
+    // the same problem. The Call.await() bridge in net/HttpTransport.kt is hand-rolled for that
+    // reason.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 ```
 
 - [ ] **Step 3: Add R8 keep rules**
@@ -105,7 +114,7 @@ In `app/build.gradle.kts`, in the `dependencies { }` block beside the other `imp
 Append to `app/proguard-rules.pro`:
 
 ```proguard
-# --- OkHttp 5.x -------------------------------------------------------------
+# --- OkHttp 4.12.0 -------------------------------------------------------------
 # OkHttp references optional Conscrypt/BouncyCastle/OpenJSSE providers reflectively and ships
 # Animal Sniffer + JSR-305 annotations that R8 warns about. These are the upstream-recommended
 # rules; without them the RELEASE build fails or strips TLS provider lookup, which debug builds
@@ -195,8 +204,9 @@ class OkHttpTransport(private val client: OkHttpClient = defaultClient()) : Http
 }
 
 /**
- * Hand-rolled because okhttp-coroutines 5.4.0 pulls kotlinx-coroutines 1.11.0, whose Kotlin
- * metadata this project's 2.0.21 compiler cannot read.
+ * Hand-rolled rather than taking `okhttp-coroutines`, which pulls kotlinx-coroutines 1.11.0 —
+ * Kotlin metadata 2.2.0, unreadable by this project's 2.0.21 compiler. (The same constraint pins
+ * OkHttp itself to 4.12.0; see the dependency comment in app/build.gradle.kts.)
  *
  * The cancellation handler is load-bearing: without it a cancelled coroutine leaves the HTTP call
  * running to completion, holding a connection and — once C2 lands — continuing to spend the
@@ -231,7 +241,7 @@ Expected: still 117, 0 failures.
 
 ```bash
 git add app/build.gradle.kts app/proguard-rules.pro app/src/main/java/com/whispereverywhere/net/HttpTransport.kt
-git commit -m "feat(net): OkHttp 5.4.0 + HttpTransport seam
+git commit -m "feat(net): OkHttp 4.12.0 + HttpTransport seam
 
 First HTTP client in the app since OkHttp was removed in 1d869c8 when it
 went fully on-device.
@@ -240,8 +250,10 @@ HttpResult is three cases, not a nullable success: a 401 and a dead radio
 need different handling, and collapsing them is how a client retries
 forever against an invalid key.
 
-Call.await() is hand-rolled because okhttp-coroutines 5.4.0 pulls
-coroutines 1.11.0, whose Kotlin metadata 2.0.21 cannot read. Its
+OkHttp is pinned to 4.12.0, not 5.x: okhttp 5.4.0's Android artifact
+depends on kotlin-stdlib 2.2.21 and Gradle forces that project-wide,
+breaking the 2.0.21 compiler. Call.await() is hand-rolled because
+okhttp-coroutines has the same problem via coroutines 1.11.0. Its
 cancellation handler is load-bearing — without it a cancelled coroutine
 leaves the call running, and once cloud STT lands that is the user's
 money being spent on a request nobody awaits."
@@ -1145,7 +1157,7 @@ same release that actually transmits."
 
 | Spec requirement | Task |
 |---|---|
-| OkHttp 5.4.0 + R8 rules | Task 1 |
+| OkHttp 4.12.0 + R8 rules | Task 1 |
 | Hand-rolled `Call.await()` (no `okhttp-coroutines`) | Task 1 Step 4 |
 | `HttpTransport` seam + fake for tests | Tasks 1, 4 |
 | `ProviderId` keyed by name, never ordinal | Task 2, Task 3 |

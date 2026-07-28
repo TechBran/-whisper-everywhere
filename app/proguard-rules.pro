@@ -21,7 +21,20 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
-# (OkHttp removed in v2.0.0 - on-device only, no networking library on the classpath)
+# --- OkHttp 5.x -------------------------------------------------------------
+# OkHttp references optional Conscrypt/BouncyCastle/OpenJSSE providers reflectively and ships
+# Animal Sniffer + JSR-305 annotations that R8 warns about. These are the upstream-recommended
+# rules; without them the RELEASE build fails or strips TLS provider lookup, which debug builds
+# never reveal (this project has a history of release-only failures — see b19233c).
+-dontwarn okhttp3.internal.platform.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-dontwarn javax.annotation.**
+-dontwarn org.codehaus.mojo.animal_sniffer.*
+-keepclasseswithmembers class * {
+    @okhttp3.* <methods>;
+}
 
 # Keep accessibility service
 -keep class com.whispereverywhere.service.WhisperAccessibilityService { *; }

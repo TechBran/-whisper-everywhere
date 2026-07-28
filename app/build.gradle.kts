@@ -227,6 +227,20 @@ dependencies {
     // Accompanist for permissions
     implementation("com.google.accompanist:accompanist-permissions:0.36.0")
 
+    // OkHttp is PINNED TO 4.12.0 — do not "upgrade" it to 5.x without also moving Kotlin.
+    //
+    // okhttp 5.4.0's Android artifact depends on kotlin-stdlib 2.2.21, and Gradle's conflict
+    // resolution then forces the whole project to 2.2.21. That breaks this project's Kotlin
+    // 2.0.21 compiler outright: `compileDebugKotlin` fails with "metadata is 2.2.0, expected
+    // 2.0.0". Verified by `:app:dependencies`, which shows `kotlin-stdlib:2.0.21 -> 2.2.21`.
+    // 4.12.0 leaves the stdlib at 2.0.21 and has everything needed here, including WebSocket
+    // support for the streaming work.
+    //
+    // Also do NOT add okhttp-coroutines: it pulls kotlinx-coroutines 1.11.0, whose metadata has
+    // the same problem. The Call.await() bridge in net/HttpTransport.kt is hand-rolled for that
+    // reason.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

@@ -117,7 +117,15 @@ A 2.0.x compiler reads metadata at most one minor ahead (2.1.0).
 
 - **Unusable:** Ktor 3.5.1, kotlinx-serialization-json ≥1.9.0, kotlinx-coroutines 1.11.0, and
   therefore `okhttp-coroutines` 5.4.0 (which pulls coroutines 1.11.0).
-- **Safe:** serialization-json 1.8.1, coroutines 1.10.2, OkHttp 5.4.0, Retrofit 3.0.0.
+- **Safe:** serialization-json 1.8.1, coroutines 1.10.2, **OkHttp 4.12.0**, Retrofit 3.0.0.
+  > **CORRECTED 2026-07-27, proven empirically.** This line previously said OkHttp **5.4.0**
+  > was safe. It is not. `okhttp:5.4.0`'s Android artifact depends on `kotlin-stdlib 2.2.21`,
+  > and Gradle's conflict resolution forces that project-wide — `:app:dependencies` shows
+  > `kotlin-stdlib:2.0.21 -> 2.2.21` — which breaks the 2.0.21 compiler with
+  > "metadata is 2.2.0, expected 2.0.0". The earlier analysis caught that *okhttp-coroutines*
+  > pulls coroutines 1.11.0 but missed that *okhttp-android* itself drags the stdlib up.
+  > **OkHttp 4.12.0 leaves the stdlib at 2.0.21, compiles clean, and passes `assembleRelease`
+  > with R8.** It also has WebSocket support, so the streaming work is unaffected.
 - Hand-roll the ~20-line `suspendCancellableCoroutine` `Call.await()` bridge.
 
 ### 3.5 The credential layer is a live data leak — fix before anything else
