@@ -215,4 +215,51 @@ class CloudProvidersScreenLogicTest {
     @Test fun only_openai_is_stt_capable_in_this_release() {
         assertEquals(setOf(ProviderId.OPENAI), STT_CAPABLE_PROVIDERS)
     }
+
+    // --- cloudDisclosureMainText / cloudDisclosureOffUntilText (Release C2a Task 7): the
+    // disclosure modal must speak in PRESENT tense now that audio actually leaves the device,
+    // must require the explicit engine-selection step (not just adding a key), must say what
+    // happens on provider failure, and must never claim speed. ---
+
+    @Test fun cloud_disclosure_main_text_is_present_tense_not_future() {
+        val text = cloudDisclosureMainText()
+        assertTrue(text, text.contains("is sent"))
+        assertFalse(text, text.contains("future update"))
+        assertFalse(text, text.contains("will also be sent"))
+        assertFalse(text, text.contains("will be sent"))
+    }
+
+    @Test fun cloud_disclosure_main_text_requires_selecting_the_engine_not_just_adding_a_key() {
+        // A stored key alone sends nothing per-utterance (only a one-time verification call);
+        // audio only flows once the provider is also selected as the transcription engine.
+        val text = cloudDisclosureMainText()
+        assertTrue(text, text.contains("select", ignoreCase = true))
+    }
+
+    @Test fun cloud_disclosure_main_text_mentions_the_on_device_fallback_on_provider_failure() {
+        val text = cloudDisclosureMainText()
+        assertTrue(text, text.contains("on-device"))
+    }
+
+    @Test fun cloud_disclosure_main_text_never_makes_a_speed_claim() {
+        // Measured on-device: a typical 3 s utterance transcribes locally in 1.1-1.3 s, so cloud
+        // is roughly a tie at best. The copy must say what happens, not that it is faster.
+        val text = cloudDisclosureMainText()
+        listOf("faster", "quicker", "speed", "instant", "quick").forEach { word ->
+            assertFalse(text, text.contains(word, ignoreCase = true))
+        }
+    }
+
+    @Test fun cloud_disclosure_main_text_does_not_overclaim_read_aloud_is_sent() {
+        // Cloud read-aloud has no adapter in this release (TtsController is untouched) — the
+        // modal must not claim text-you-select-for-read-aloud is transmitted anywhere yet.
+        val text = cloudDisclosureMainText()
+        assertFalse(text, text.contains("read-aloud"))
+    }
+
+    @Test fun cloud_disclosure_off_until_text_names_both_gating_steps() {
+        val text = cloudDisclosureOffUntilText()
+        assertTrue(text, text.contains("add a key"))
+        assertTrue(text, text.contains("select"))
+    }
 }
