@@ -11,6 +11,10 @@ class PreferencesManager(private val context: Context) {
 
     private val secureStore = SecureStore(context)
 
+    /** Per-provider cloud credentials (Release C1). Backed by the same SecureStore. */
+    val providerAccounts: com.whispereverywhere.provider.ProviderAccounts =
+        com.whispereverywhere.provider.ProviderAccounts(secureStore)
+
     /** True when the Keystore is usable. False means credentials cannot be stored at all. */
     fun secureStorageAvailable(): Boolean = secureStore.isAvailable()
 

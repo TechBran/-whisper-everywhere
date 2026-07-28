@@ -24,6 +24,15 @@ class SecureStoreException(message: String, cause: Throwable? = null) : Exceptio
  *
  * setUserAuthenticationRequired is deliberately NOT set: it would make the key unobtainable while
  * the screen is locked, which breaks background dictation — the app's core use case.
+ *
+ * Key acquisition is synchronized and cached. An unsynchronised check-then-generate lets two
+ * threads each generate a key, the second overwriting the first — which makes every value written
+ * under the first key permanently undecryptable, with no error at write time. That was
+ * unreachable while this class had no callers; it does now.
+ *
+ * The cache is dropped on any crypto failure, because Keystore keys are destroyed when the user
+ * removes their screen lock or re-enrolls biometrics, and a cached reference to a destroyed key
+ * fails forever otherwise.
  */
 class SecureStore(
     private val context: Context,
@@ -31,8 +40,21 @@ class SecureStore(
 ) {
     private val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
+    private val keyLock = Any()
+
+    @Volatile private var cachedKey: SecretKey? = null
+
     private fun secretKey(): SecretKey {
+        cachedKey?.let { return it }
+        return synchronized(keyLock) {
+            cachedKey ?: loadOrGenerateKey().also { cachedKey = it }
+        }
+    }
+
+    private fun loadOrGenerateKey(): SecretKey {
         val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        // A non-SecretKeyEntry under our alias means something else is squatting it. Treat that
+        // as absent and generate ours rather than crashing on a bad cast.
         (ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
         val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         gen.init(
@@ -48,6 +70,17 @@ class SecureStore(
         return gen.generateKey()
     }
 
+    /**
+     * Drop the cached key so the next call re-resolves from the Keystore.
+     *
+     * Caching introduces a failure mode that did not exist before: Keystore keys are DESTROYED
+     * when the user removes their screen lock or re-enrolls biometrics, and a cached SecretKey
+     * reference to a destroyed key fails every time it is used. Without this, one invalidation
+     * would break the store for the entire process lifetime even though re-resolving would
+     * succeed. Call it from every crypto failure path.
+     */
+    private fun invalidateCachedKey() { synchronized(keyLock) { cachedKey = null } }
+
     fun isAvailable(): Boolean = runCatching { secretKey() }.isSuccess
 
     fun put(key: String, value: String) {
@@ -57,6 +90,7 @@ class SecureStore(
             prefs.edit().putString(key, SecureStoreCodec.encode(cipher.iv, ct)).apply()
         } catch (t: Throwable) {
             // Never degrade to plaintext. Surface it.
+            invalidateCachedKey()
             throw SecureStoreException("Secure storage unavailable; value not saved", t)
         }
     }
@@ -70,7 +104,9 @@ class SecureStore(
             String(cipher.doFinal(framed.ciphertext), Charsets.UTF_8)
         } catch (_: Throwable) {
             // Key invalidated (screen lock removed, biometrics re-enrolled) or blob corrupt.
-            // Treat as absent — the user re-enters the credential.
+            // Treat as absent — the user re-enters the credential. Also drop the cached key: a
+            // stale reference to a destroyed Keystore key would otherwise fail this way forever.
+            invalidateCachedKey()
             null
         }
     }
