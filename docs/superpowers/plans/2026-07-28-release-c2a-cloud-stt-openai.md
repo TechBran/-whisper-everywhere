@@ -18,7 +18,7 @@
 - **No credential may reach logcat.** Never log a request carrying an auth header, a key even partially, or an exception message that could embed one. Never add `HttpLoggingInterceptor`.
 - **Never log transcript content.** Lengths only, as the existing code does.
 - **`LocalWhisperEngine`'s executor stays single-threaded.** All native `whisper_context` access is serialised there.
-- **Unit tests run with `unitTests.isReturnDefaultValues = true`** — an `android.*` call in JVM-unit-tested code returns a type default instead of throwing, so a broken dependency can PASS silently. Keep the pure classes free of `android.*`.
+- **Unit tests run with `unitTests.isReturnDefaultValues = true`** (`app/build.gradle.kts:166`) — anything from `android.jar` returns a type default instead of throwing in a JVM unit test, so broken code can PASS silently or fail inexplicably. **This includes `org.json`**, which ships in `android.jar`: `JSONObject.optString` would return `""` for every input. Use `kotlinx.serialization` (already a dependency, plugin applied, pure JVM) for all JSON. This exact trap cost a task in C1 via `android.util.Base64`.
 - **`java` is NOT on PATH.** PowerShell: `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"`. `.\gradlew.bat --no-daemon`.
 - **NEVER run `connectedAndroidTest` or `installDebug`.** AGP's instrumented task uninstalls the app on teardown and has twice destroyed the user's 500+ MB of models. To run an instrumented test: `adb install -r` both APKs, then `adb shell am instrument -w -e class <FQCN> com.whispereverywhere.test/androidx.test.runner.AndroidJUnitRunner` — that path does not uninstall.
 - **Baseline: 205 tests / 0 failures**, `assembleDebug` and `assembleRelease` both green.
@@ -603,7 +603,12 @@ import com.whispereverywhere.net.HttpResult
 import com.whispereverywhere.net.HttpTransport
 import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
-import org.json.JSONObject
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+/** `response_format=json` returns `{"text": "..."}`. Defaulted so a missing field is "" not a throw. */
+@Serializable
+private data class OpenAiTranscription(val text: String = "")
 
 /**
  * OpenAI transcription. One multipart POST per committed segment.
@@ -666,7 +671,7 @@ class OpenAiStt(
     private fun parse(body: String): SttResult = try {
         // A 200 whose body will not parse is NOT an empty transcript. Returning "" would look like
         // silence, suppress fallback, and silently lose the user's sentence.
-        SttResult.Text(JSONObject(body).optString("text", ""))
+        SttResult.Text(JSON.decodeFromString<OpenAiTranscription>(body).text)
     } catch (_: Throwable) {
         SttResult.Failed(SttError.Transient(null))
     }
@@ -685,6 +690,17 @@ class OpenAiStt(
     }
 
     companion object {
+        /**
+         * kotlinx.serialization, NOT org.json, and the reason is load-bearing: org.json ships in
+         * android.jar, and this project sets `unitTests.isReturnDefaultValues = true`
+         * (app/build.gradle.kts:166), so JSONObject's methods return type defaults under plain
+         * JVM unit tests. `optString("text", "")` would return "" for every input — the parsing
+         * tests would fail for a reason invisible in the code, exactly as android.util.Base64 did
+         * in C1. kotlinx-serialization-json 1.7.3 is already a dependency with the plugin applied
+         * and is pure JVM.
+         */
+        private val JSON = Json { ignoreUnknownKeys = true }
+
         /**
          * Pinned dated snapshot. An undated id can be retired under a shipped APK — the
          * -2025-03-20 snapshot of this model shut down on 23 Jul 2026.
