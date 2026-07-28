@@ -13,11 +13,43 @@ interface TranscriptionEngine {
     /** Buffer one chunk of PCM16 mono @16kHz. Called rapidly from the recorder thread. */
     fun sendAudio(pcm: ByteArray)
 
-    /** Transcribe everything buffered since the last commit, now. */
-    fun commit()
+    /**
+     * Transcribe everything buffered since the last commit, now.
+     *
+     * Returns the monotonic seq allocated for the cut segment, or -1 if there was nothing to
+     * commit. Every returned seq is guaranteed to reach [Listener.onSegmentResolved] exactly once.
+     * Seq numbering restarts at 0 on every [connect].
+     */
+    fun commit(): Long
 
     /** Release the session (cancel pending work). */
     fun close()
+
+    /**
+     * Warm any expensive backing resource. Default no-op.
+     *
+     * These four were previously reached via `(engine as? LocalWhisperEngine)?` downcasts in
+     * FloatingBubbleService. For any second implementation those silently no-op — and one of them
+     * is [awaitIdle], the fence that drains in-flight transcribes before close() detaches the
+     * listener. Skipping it drops every pending segment via the listener-identity guard, which is
+     * exactly the "No speech detected despite valid audio" bug the in-code comment at that call
+     * site records as already fixed once.
+     */
+    fun prewarm() {}
+
+    /** Release the engine permanently. Default no-op. */
+    fun shutdown() {}
+
+    /**
+     * Block until every already-submitted segment has resolved, or [timeoutMs] elapses.
+     * Returns true if it drained. Default: nothing outstanding, so true.
+     *
+     * MUST be called off the main thread — implementations may block.
+     */
+    fun awaitIdle(timeoutMs: Long): Boolean = true
+
+    /** Release heavy resources under memory pressure, keeping the engine reusable. Default no-op. */
+    fun releaseContext() {}
 
     /**
      * Receives engine lifecycle and transcription result events.
@@ -30,7 +62,15 @@ interface TranscriptionEngine {
     interface Listener {
         fun onOpen()
         fun onDelta(text: String)     // unused on-device; kept for interface compatibility
-        fun onCompleted(text: String) // final transcript for one committed segment
+
+        /**
+         * Terminal result for exactly one committed segment. EVERY seq returned by [commit] MUST
+         * arrive here exactly once — including empties and failures. A seq that never resolves
+         * stalls the SegmentOrderer head forever and holds every later segment with it.
+         */
+        fun onSegmentResolved(seq: Long, outcome: SegmentOutcome)
+
+        /** Session-level failure (connect-time / fatal). NOT the per-segment failure channel. */
         fun onError(message: String)
         fun onClosed()
     }

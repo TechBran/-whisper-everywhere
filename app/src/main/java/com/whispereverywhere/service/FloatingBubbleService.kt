@@ -35,6 +35,7 @@ import com.whispereverywhere.MainActivity
 import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.transcription.LocalWhisperEngine
+import com.whispereverywhere.transcription.SegmentOutcome
 import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.ui.components.BarWaveformView
 import com.whispereverywhere.util.SpeechSegmenter
@@ -134,6 +135,17 @@ class FloatingBubbleService : Service(),
     // Set true when any transcription text is produced during a recording session; drives the
     // "No speech detected" feedback on stop so the user is not left with silent nothing.
     @Volatile private var sessionProducedText = false
+
+    // Releases segment outcomes into the user's text in STRICT seq order. Recreated per session in
+    // startRecording, because it starts at head 0 and the engine restarts seq numbering at 0 too.
+    // Main-thread confined: every touch below is inside a Dispatchers.Main block.
+    //
+    // With the on-device engine this is a PROVABLE PASS-THROUGH — LocalWhisperEngine's executor is
+    // single-threaded, so results always arrive with seq == head, each drain releases exactly the
+    // segment that just resolved, and flush() below is always a no-op. Local delivery timing is
+    // therefore unchanged by its presence; it earns its keep only when a second engine can have
+    // more than one segment in flight.
+    private var segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()
 
     // Transcription history (text only — user decision 2026-07-17): per-session accumulator,
     // persisted via TranscriptStore at finalize with rolling 14-day/10MB retention.
@@ -256,7 +268,7 @@ class FloatingBubbleService : Service(),
             delay(1500)
             val engine = transcriptionEngine
                 ?: LocalWhisperEngine(app.whisperModelManager).also { transcriptionEngine = it }
-            (engine as? LocalWhisperEngine)?.prewarm()
+            engine.prewarm()
         }
     }
 
@@ -507,7 +519,7 @@ class FloatingBubbleService : Service(),
         teardownRealtime()
         // Fully release the reused engine on service end: free the native context and stop its
         // worker thread (teardownRealtime only detaches the session listener, for reuse).
-        (transcriptionEngine as? LocalWhisperEngine)?.shutdown()
+        transcriptionEngine?.shutdown()
         transcriptionEngine = null
         try {
             windowManager.removeView(bubbleView)
@@ -1342,6 +1354,10 @@ class FloatingBubbleService : Service(),
         isSpeakingNow = false
         sessionProducedText = false
         sessionTranscript.setLength(0)
+        // Per-session ordering state. MUST be recreated: the orderer drops any seq below its head,
+        // and the engine restarts seq numbering at 0 in connect() — a reused orderer sitting at
+        // head N would silently discard the whole next session.
+        segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()
         sessionStartMs = System.currentTimeMillis()
         // Freeze this session's routing mode and injection target at the tap. Segments finish
         // seconds later and the user may click anywhere in between; the session must not follow.
@@ -1450,24 +1466,13 @@ class FloatingBubbleService : Service(),
                     }
                 }
             }
-            override fun onCompleted(text: String) {
-                android.util.Log.i("WE-DIAG", "onCompleted: len=${text.length}")
-                val trimmed = text.trim()
-                if (trimmed.isNotEmpty()) {
-                    sessionProducedText = true
-                    serviceScope.launch(Dispatchers.Main) {
-                        if (sessionContext != BubbleContext.TEXT_FIELD) {
-                            // During FINALIZING the delta line carries the "finishing…" status —
-                            // keep it up between drain segments instead of blanking it.
-                            if (currentState != BubbleState.FINALIZING) {
-                                transcriptionDeltaText.visibility = View.GONE
-                            }
-                            // Route through the bounded-memory sink; the preview StateFlow
-                            // drives transcriptionEditText via collectLatest above (Task 7).
-                            transcriptSink?.append(trimmed)
-                        }
-                        handleTranscriptionResult(trimmed)
-                    }
+            override fun onSegmentResolved(seq: Long, outcome: SegmentOutcome) {
+                android.util.Log.i("WE-DIAG", "onSegmentResolved: seq=$seq outcome=${outcome.javaClass.simpleName}")
+                // Hop to Main FIRST: the orderer is main-thread confined, and the engine calls
+                // this from its executor thread. The hop is the same one the old onCompleted did,
+                // so delivery timing is unchanged.
+                serviceScope.launch(Dispatchers.Main) {
+                    deliverReleasedText(segmentOrderer.onResolved(seq, outcome).text)
                 }
             }
             override fun onError(message: String) {
@@ -1524,9 +1529,16 @@ class FloatingBubbleService : Service(),
         // result injects live as it finishes, so the earlier chunks keep appearing during the
         // finalize wait. Bounded by FINALIZE_TIMEOUT_MS. The blocking await runs on IO; UI on Main.
         serviceScope.launch(Dispatchers.Main) {
-            withContext(Dispatchers.IO) {
-                (transcriptionEngine as? LocalWhisperEngine)?.awaitIdle(FINALIZE_TIMEOUT_MS)
+            val drained = withContext(Dispatchers.IO) {
+                transcriptionEngine?.awaitIdle(FINALIZE_TIMEOUT_MS) ?: true
             }
+            if (!drained) {
+                android.util.Log.w("WE-DIAG", "finalize: drain timed out after ${FINALIZE_TIMEOUT_MS}ms")
+            }
+            // Release anything the orderer is still holding, BEFORE teardown closes the sink —
+            // held text's only exit is flush(), and the pile is largest exactly here, at the end
+            // of a session. (Provably empty for the on-device engine, which resolves in order.)
+            deliverReleasedText(segmentOrderer.flush().text)
             // Capture the sink before teardown nulls it, so the full transcript can still be read.
             val finalizingSink = transcriptSink
             teardownRealtime()
@@ -1587,6 +1599,12 @@ class FloatingBubbleService : Service(),
     }
 
     private fun teardownRealtime() {
+        // Backstop flush: teardown is the LAST thing every session-exit path runs — normal drain
+        // end (already flushed above, so this returns empty), recorder start failure, fatal
+        // onError, and onDestroy. Held text is uniquely fragile: unlike per-segment injection it
+        // accumulates finished work in RAM whose only exit is this call. Must run before the sink
+        // is closed and before the injection session ends, or the released text has nowhere to go.
+        deliverReleasedText(segmentOrderer.flush().text)
         previewJob?.cancel(); previewJob = null
         // The preview stays up through FINALIZING (live "still working" signal); EVERY teardown
         // path — normal drain end, error, start-failure, destroy — brings it down here.
@@ -1604,8 +1622,30 @@ class FloatingBubbleService : Service(),
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= TRIM_MEMORY_RUNNING_LOW && currentState != BubbleState.RECORDING && currentState != BubbleState.FINALIZING) {
-            (transcriptionEngine as? LocalWhisperEngine)?.releaseContext()
+            transcriptionEngine?.releaseContext()
         }
+    }
+
+    /**
+     * The ONE routing point for text the [segmentOrderer] releases — used by onSegmentResolved and
+     * by every flush() site, so text that was held and released late is delivered exactly like an
+     * in-order segment (preview sink + history + injection) rather than a subset of that. Main
+     * thread only.
+     */
+    private fun deliverReleasedText(text: String) {
+        if (text.isBlank()) return
+        sessionProducedText = true
+        if (sessionContext != BubbleContext.TEXT_FIELD) {
+            // During FINALIZING the delta line carries the "finishing…" status — keep it up
+            // between drain segments instead of blanking it.
+            if (currentState != BubbleState.FINALIZING) {
+                transcriptionDeltaText.visibility = View.GONE
+            }
+            // Route through the bounded-memory sink; the preview StateFlow drives
+            // transcriptionEditText via collectLatest in onOpen (Task 7).
+            transcriptSink?.append(text)
+        }
+        handleTranscriptionResult(text)
     }
 
     /**
