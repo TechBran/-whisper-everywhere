@@ -103,6 +103,25 @@ class CloudProvidersScreenLogicTest {
         assertFalse(shouldPersistKey(KeyStatus.Unknown("HTTP 500: boom")))
     }
 
+    // --- looksLikeInvalidKey: suppresses "Save anyway" for a key already known to be bad ---
+
+    @Test fun recognizes_geminis_api_key_invalid_marker() {
+        assertTrue(looksLikeInvalidKey("HTTP 400: ...\"reason\":\"API_KEY_INVALID\"..."))
+    }
+
+    @Test fun recognizes_the_lowercase_invalid_api_key_marker() {
+        assertTrue(looksLikeInvalidKey("HTTP 401: {\"error\":\"invalid_api_key\"}"))
+    }
+
+    @Test fun recognizes_the_api_key_not_valid_marker_case_insensitively() {
+        assertTrue(looksLikeInvalidKey("api key not valid, please check it"))
+    }
+
+    @Test fun an_unrelated_detail_does_not_look_like_an_invalid_key() {
+        assertFalse(looksLikeInvalidKey("HTTP 403: unsupported_country_region_territory"))
+        assertFalse(looksLikeInvalidKey("HTTP 500: boom"))
+    }
+
     // --- providerTrainingDisclosure: per-provider copy, because one generic line would lie ---
 
     @Test fun openai_line_matches_its_trainsOnDataByDefault_false_flag() {

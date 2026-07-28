@@ -16,6 +16,15 @@ class ProviderAccounts(private val secureStore: SecureStore) {
 
     fun key(id: ProviderId): String? = secureStore.get(prefKey(id))?.takeIf { it.isNotBlank() }
 
+    /**
+     * A display stand-in for a stored key, safe to hold in UI state: derived from only the last
+     * 4 characters, so even this can't reconstruct the credential. Lets the UI show "key saved"
+     * without the raw decrypted value ever crossing into the UI layer for display purposes.
+     */
+    fun maskedKey(id: ProviderId): String? = key(id)?.let { raw ->
+        if (raw.length <= 4) "•".repeat(raw.length) else "••••${raw.takeLast(4)}"
+    }
+
     fun setKey(id: ProviderId, key: String) {
         val trimmed = key.trim()
         if (trimmed.isEmpty()) secureStore.remove(prefKey(id)) else secureStore.put(prefKey(id), trimmed)

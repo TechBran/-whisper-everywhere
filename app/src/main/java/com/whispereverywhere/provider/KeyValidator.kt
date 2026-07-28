@@ -18,6 +18,14 @@ sealed interface KeyStatus {
 }
 
 /**
+ * Substrings a provider embeds in an error body when the key itself is the problem, even under a
+ * status code that isn't the clean 401 — Gemini answers a bad key with 400 `API_KEY_INVALID`, not
+ * 401. Shared with the UI (`CloudProvidersScreen`) so "Save anyway" can be suppressed for a key
+ * that is recognizably wrong rather than merely unverifiable.
+ */
+val INVALID_KEY_MARKERS = listOf("API_KEY_INVALID", "invalid_api_key", "API key not valid")
+
+/**
  * Verifies a key with one cheap authenticated GET per provider.
  *
  * NEVER log the key, the header map, or the raw request. [KeyStatus.Unknown.detail] carries only
@@ -32,6 +40,16 @@ class KeyValidator(private val transport: HttpTransport) {
         // request for it wastes a round trip and can count against a rate limit.
         if (trimmed.isEmpty()) return KeyStatus.Invalid
 
+        // Reject anything outside printable ASCII (0x21-0x7e) BEFORE a header is ever built. A
+        // char copied from a rendered web page/PDF (e.g. U+200B zero-width space) or typed with
+        // smart punctuation survives `.trim()` — U+200B is Unicode category Cf, so
+        // Char.isWhitespace() is false — and would otherwise reach OkHttp's Headers.checkValue,
+        // which throws IllegalArgumentException embedding the raw header value for every header
+        // except Authorization/Cookie/Proxy-Authorization/Set-Cookie. For xi-api-key and
+        // x-goog-api-key that means the plaintext key in an uncaught crash trace. A bad paste
+        // must be an ordinary Invalid outcome, never a crash.
+        if (trimmed.any { it.code !in 0x21..0x7e }) return KeyStatus.Invalid
+
         val provider = ProviderCatalog.byId(id)
         val headers = mapOf(provider.authHeaderName to provider.authHeaderValue(trimmed))
 
@@ -42,13 +60,23 @@ class KeyValidator(private val transport: HttpTransport) {
         }
     }
 
-    private fun classify(code: Int, body: String): KeyStatus = when (code) {
-        401, 403 -> KeyStatus.Invalid
-        402 -> KeyStatus.NoCredit
+    private fun classify(code: Int, body: String): KeyStatus = when {
+        code == 401 -> KeyStatus.Invalid
+        // Gemini answers a wrong/revoked key with HTTP 400 and API_KEY_INVALID in the body, not
+        // 401. Without this, garbage falls to the `else` branch below -> Unknown -> the UI's
+        // "Save anyway" affordance -> a persisted, unusable key.
+        code == 400 && INVALID_KEY_MARKERS.any { body.contains(it, ignoreCase = true) } ->
+            KeyStatus.Invalid
+        // 403 is ALSO the standard code for a WORKING key that is region-blocked (OpenAI
+        // unsupported_country_region_territory), scope-restricted, or on a project without the
+        // API enabled. Asserting "check you copied all of it" here sends a correct key back for
+        // regeneration. Unknown carries the provider's own message instead.
+        code == 403 -> KeyStatus.Unknown("HTTP 403: ${body.take(200)}")
+        code == 402 -> KeyStatus.NoCredit
         // OpenAI returns 429 for BOTH transient rate limiting and permanently exhausted credit,
         // distinguishable only from the body. Collapsing them makes the client back off
         // exponentially against an empty wallet, forever.
-        429 -> if (QUOTA_MARKERS.any { body.contains(it, ignoreCase = true) }) {
+        code == 429 -> if (QUOTA_MARKERS.any { body.contains(it, ignoreCase = true) }) {
             KeyStatus.NoCredit
         } else {
             KeyStatus.RateLimited

@@ -98,12 +98,12 @@
     <div class="highlight">
         <strong>Off by default.</strong> Cloud transcription and cloud read-aloud are entirely optional and stay off until you add your own API key for a provider in the App's Settings.
     </div>
-    <p>If you choose to add a key for OpenAI, Google Gemini, or ElevenLabs, the App sends the following to that provider's own servers, using your own account with them:</p>
+    <p><strong>Today, adding a provider key sends only that key</strong> to the provider's own servers, once, to verify it works with your account — nothing else. <strong>When cloud transcription and cloud read-aloud are enabled in a future update</strong>, adding a key for OpenAI, Google Gemini, or ElevenLabs will send the following to that provider's own servers, using your own account with them:</p>
     <ul>
         <li><strong>Audio you dictate</strong>, so that provider can transcribe it.</li>
         <li><strong>Text you select for read-aloud</strong>, so that provider can synthesize speech from it.</li>
     </ul>
-    <p>This only happens for the providers you have configured, and only while a key is saved. Nothing is sent to any provider until you add a key, and <strong>removing a key stops all transmission to that provider immediately.</strong></p>
+    <p>This will only happen for the providers you have configured, and only while a key is saved. Nothing is sent to any provider until you add a key, and <strong>removing a key stops all transmission to that provider immediately.</strong></p>
     <p><strong>You are using your own account.</strong> That provider bills you directly for usage, and your data is handled under that provider's own privacy policy and terms of service, not ours. We recommend reviewing each provider's policy before adding a key.</p>
     <p>What each provider does with data you send them differs, and matters for this decision:</p>
     <ul>
@@ -111,16 +111,16 @@
         <li><strong>Google Gemini:</strong> On the free tier, Google uses what you send to improve its products, and human reviewers may read it. Paid tiers do not.</li>
         <li><strong>ElevenLabs:</strong> Trains on API data by default; you can opt out in your ElevenLabs account settings.</li>
     </ul>
-    <p>Your provider API key is stored only on your device, encrypted using the Android Keystore. We never see it, log it, or transmit it anywhere except in the authenticated request to the provider you configured it for.</p>
+    <p>Your provider API key is stored only on your device, encrypted using the Android Keystore. We never see it, log it, or transmit it anywhere except: once, to the provider you added it for, to verify it works, and thereafter in the authenticated request to that same provider once cloud transcription or read-aloud is enabled.</p>
 
     <h2>7. Permissions We Request</h2>
     <p>The App requests the following permissions, used only for the stated purposes:</p>
     <ul>
-        <li><strong>Microphone (RECORD_AUDIO):</strong> To capture your voice for transcription. By default this is processed entirely on-device and never stored permanently or sent anywhere; it is sent to a cloud provider only if you have added your own key for one (see Section 6).</li>
+        <li><strong>Microphone (RECORD_AUDIO):</strong> To capture your voice for transcription. This is processed entirely on-device and never stored permanently or sent anywhere; a future update will send it to a cloud provider only if you have added your own key for one (see Section 6).</li>
         <li><strong>Display Over Other Apps (SYSTEM_ALERT_WINDOW):</strong> To show the floating bubble overlay that lets you dictate from any app.</li>
         <li><strong>Accessibility Service:</strong> To detect the focused text field and insert your transcribed text into it. The service only responds to text-field focus and performs text insertion when you dictate; it does not read, collect, or transmit the content of your screen.</li>
         <li><strong>Notification Access (Optional):</strong> To detect media playback for the optional media-transcription feature. This permission is optional and used only to detect when audio/video is playing.</li>
-        <li><strong>Internet:</strong> Used to download the speech model file from Hugging Face, and — only if you have added your own key for a cloud provider (see Section 6) — to send your dictated audio or selected read-aloud text to that provider. It is never used to send your data to us.</li>
+        <li><strong>Internet:</strong> Used to download the speech model file from Hugging Face, and — only if you have added your own key for a cloud provider (see Section 6) — to send that key to the provider once to verify it, and in a future update to send your dictated audio or selected read-aloud text to that provider. It is never used to send your data to us.</li>
         <li><strong>Vibration:</strong> To provide optional haptic feedback during recording (can be disabled).</li>
     </ul>
 

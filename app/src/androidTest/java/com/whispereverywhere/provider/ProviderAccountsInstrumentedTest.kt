@@ -53,4 +53,18 @@ class ProviderAccountsInstrumentedTest {
         accounts.setKey(ProviderId.OPENAI, "  sk-padded  ")
         assertEquals("sk-padded", accounts.key(ProviderId.OPENAI))
     }
+
+    @Test fun masked_key_shows_only_the_last_4_characters_and_never_the_raw_value() {
+        // The UI (CloudProvidersScreen) is expected to hold ONLY this, never accounts.key(),
+        // for display -- so the raw decrypted value never crosses into Compose state.
+        val secret = "sk-super-secret-provider-key"
+        accounts.setKey(ProviderId.OPENAI, secret)
+        val masked = accounts.maskedKey(ProviderId.OPENAI)
+        assertEquals("••••-key", masked)
+        assertTrue("must not contain the raw key body", masked?.contains(secret.dropLast(4)) != true)
+    }
+
+    @Test fun masked_key_is_null_when_nothing_is_stored() {
+        assertNull(accounts.maskedKey(ProviderId.GEMINI))
+    }
 }

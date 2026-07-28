@@ -1,11 +1,14 @@
 package com.whispereverywhere.ui.screens
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.view.WindowManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -19,6 +22,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -26,6 +31,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.data.local.SecureStoreException
 import com.whispereverywhere.net.OkHttpTransport
+import com.whispereverywhere.provider.INVALID_KEY_MARKERS
 import com.whispereverywhere.provider.KeyStatus
 import com.whispereverywhere.provider.KeyValidator
 import com.whispereverywhere.provider.Provider
@@ -35,6 +41,7 @@ import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.ui.theme.Primary
 import com.whispereverywhere.ui.theme.Success
 import com.whispereverywhere.ui.theme.Warning
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,6 +82,15 @@ internal fun shouldPersistKey(status: KeyStatus): Boolean =
     status is KeyStatus.Valid || status is KeyStatus.NoCredit
 
 /**
+ * True when a [KeyStatus.Unknown] detail embeds a provider's own "the key itself is wrong"
+ * marker, even under a status code (Gemini's 400 API_KEY_INVALID) that isn't the clean 401. When
+ * true, the screen must not offer "Save anyway" — that would persist a key already known to be
+ * bad rather than merely unverifiable.
+ */
+internal fun looksLikeInvalidKey(detail: String): Boolean =
+    INVALID_KEY_MARKERS.any { detail.contains(it, ignoreCase = true) }
+
+/**
  * Per-provider training-on-data disclosure line. One generic sentence would be materially
  * inaccurate: OpenAI does not train on API data, Gemini's free tier does with human review,
  * ElevenLabs trains by default with an account-level opt-out. Exhaustive over [ProviderId] on
@@ -104,6 +120,21 @@ fun CloudProvidersScreen(
     val app = WhisperEverywhereApp.getInstance()
     val accounts = app.preferencesManager.providerAccounts
     val validator = remember { KeyValidator(OkHttpTransport()) }
+    val context = LocalContext.current
+
+    // This is the only screen that can render a credential (behind the eye-icon reveal), and a
+    // screenshot here would land in the gallery and, for most users, auto-sync to Google Photos —
+    // exactly the exposure backup_rules.xml exists to prevent; the recents thumbnail captures it
+    // passively too. FLAG_SECURE covers the screen's ENTIRE lifetime — it is deliberately not
+    // gated on the reveal toggle, which would race the recents snapshot taken when the app
+    // backgrounds.
+    DisposableEffect(Unit) {
+        val window = (context as? Activity)?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
 
     // Local mirror of the persisted flag: it only ever flips false->true here, via the accept
     // button. Reading the persisted value fresh on every entry means "Not now" (which never
@@ -146,11 +177,15 @@ fun CloudProvidersScreen(
             )
 
             ProviderCatalog.all.forEach { provider ->
-                val storedKey = remember(refreshKey, provider.id) { accounts.key(provider.id) }
+                // Off Main: SecureStore.get() runs a Keystore cipher, and a raw key must never
+                // sit in Compose state anyway — only the masked stand-in crosses into the UI.
+                val storedKeyDisplay by produceState<String?>(null, refreshKey, provider.id) {
+                    value = withContext(Dispatchers.IO) { accounts.maskedKey(provider.id) }
+                }
                 ProviderCard(
                     provider = provider,
                     accounts = accounts,
-                    storedKey = storedKey,
+                    storedKeyDisplay = storedKeyDisplay,
                     validator = validator,
                     editable = disclosureAccepted,
                     onChanged = { refreshKey++ },
@@ -193,7 +228,7 @@ private fun CloudDisclosureDialog(
         icon = { Icon(Icons.Filled.CloudUpload, contentDescription = null) },
         title = {
             Text(
-                "Cloud transcription sends your audio off this device.",
+                "Adding a cloud key sends data to that provider.",
                 fontWeight = FontWeight.Bold,
             )
         },
@@ -204,10 +239,11 @@ private fun CloudDisclosureDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    "Whisper Everywhere works entirely on your device by default. If you add " +
-                        "a provider key below, the audio you dictate — and text you " +
-                        "select for read-aloud — is sent to that company's servers to be " +
-                        "processed.",
+                    "Whisper Everywhere works entirely on your device by default. Adding a " +
+                        "provider key below sends that key to the provider once, to verify " +
+                        "it works. When cloud transcription is enabled in a future update, " +
+                        "the audio you dictate — and text you select for read-aloud — will " +
+                        "also be sent to that company's servers to be processed.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -260,7 +296,7 @@ private fun CloudDisclosureDialog(
 private fun ProviderCard(
     provider: Provider,
     accounts: ProviderAccounts,
-    storedKey: String?,
+    storedKeyDisplay: String?,
     validator: KeyValidator,
     editable: Boolean,
     onChanged: () -> Unit,
@@ -275,13 +311,17 @@ private fun ProviderCard(
     var saveFailure by remember(provider.id) { mutableStateOf<String?>(null) }
 
     // Wrapped per the brief: a failed secure write must be surfaced, never silently swallowed.
-    fun persist(rawKey: String): Boolean = try {
-        accounts.setKey(provider.id, rawKey)
-        saveFailure = null
-        true
-    } catch (e: SecureStoreException) {
-        saveFailure = "Couldn't save securely — your key was not stored."
-        false
+    // Runs on Dispatchers.IO: Cipher init/doFinal, and on the first-ever save a 256-bit
+    // KeyGenerator.generateKey() in the TEE (commonly 100-500 ms), must never run on Main.
+    suspend fun persist(rawKey: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            accounts.setKey(provider.id, rawKey)
+            saveFailure = null
+            true
+        } catch (e: SecureStoreException) {
+            saveFailure = "Couldn't save securely — your key was not stored."
+            false
+        }
     }
 
     fun verifyAndSave() {
@@ -290,13 +330,25 @@ private fun ProviderCard(
         lastStatus = null
         saveFailure = null
         scope.launch {
-            val result = withContext(Dispatchers.IO) { validator.validate(provider.id, candidate) }
-            lastStatus = result
-            if (shouldPersistKey(result) && persist(candidate)) {
-                fieldValue = ""
-                onChanged()
+            // Without this handler+finally, any throw here (including one from a malformed
+            // header — see KeyValidator's ASCII guard and OkHttpTransport's widened catch) would
+            // leave `verifying` stuck true forever: the spinner never stops and the button never
+            // re-enables.
+            try {
+                val result = withContext(Dispatchers.IO) { validator.validate(provider.id, candidate) }
+                lastStatus = result
+                if (shouldPersistKey(result) && persist(candidate)) {
+                    fieldValue = ""
+                    onChanged()
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                lastStatus = null
+                saveFailure = "Something went wrong verifying that key. Try again."
+            } finally {
+                verifying = false
             }
-            verifying = false
         }
     }
 
@@ -326,7 +378,7 @@ private fun ProviderCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = storedKey?.let { "Key saved: ${maskedKeyPlaceholder(it)}" } ?: "No key saved",
+                text = storedKeyDisplay?.let { "Key saved: $it" } ?: "No key saved",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -342,11 +394,22 @@ private fun ProviderCard(
                 },
                 enabled = editable && !verifying,
                 singleLine = true,
-                label = { Text(if (storedKey != null) "Replace key" else "API key") },
+                label = { Text(if (storedKeyDisplay != null) "Replace key" else "API key") },
                 placeholder = {
-                    Text(storedKey?.let { maskedKeyPlaceholder(it) } ?: "Paste your key")
+                    Text(storedKeyDisplay ?: "Paste your key")
                 },
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                // Masking is visual only (PasswordVisualTransformation just changes what Compose
+                // paints); without this the IME still sees KeyboardType.Text with autocorrect on,
+                // so the raw key would appear in the keyboard's suggestion strip above the very
+                // field the app masked, and could be committed to the personal dictionary.
+                // Applies identically whether showKey is true or false — the IME contract must
+                // not depend on the visual reveal state.
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    autoCorrect = false,
+                    imeAction = ImeAction.Done,
+                ),
                 trailingIcon = {
                     IconButton(onClick = { showKey = !showKey }, enabled = editable) {
                         Icon(
@@ -376,12 +439,14 @@ private fun ProviderCard(
                     Text("Save & verify")
                 }
 
-                if (storedKey != null) {
+                if (storedKeyDisplay != null) {
                     Spacer(modifier = Modifier.width(8.dp))
                     TextButton(
                         onClick = {
-                            accounts.clear(provider.id)
-                            onChanged()
+                            scope.launch {
+                                withContext(Dispatchers.IO) { accounts.clear(provider.id) }
+                                onChanged()
+                            }
                         },
                         enabled = editable,
                     ) {
@@ -411,13 +476,19 @@ private fun ProviderCard(
                             else -> Warning
                         },
                     )
-                    if (status is KeyStatus.Unknown) {
+                    // Suppressed when the provider's own body recognizably says the key itself
+                    // is wrong (e.g. Gemini's 400 API_KEY_INVALID, routed to Unknown because it
+                    // isn't a clean 401) — offering to save a key already known to be bad is
+                    // worse than offering nothing.
+                    if (status is KeyStatus.Unknown && !looksLikeInvalidKey(status.detail)) {
                         TextButton(
                             onClick = {
-                                if (persist(fieldValue)) {
-                                    fieldValue = ""
-                                    lastStatus = null
-                                    onChanged()
+                                scope.launch {
+                                    if (persist(fieldValue)) {
+                                        fieldValue = ""
+                                        lastStatus = null
+                                        onChanged()
+                                    }
                                 }
                             },
                             enabled = editable,

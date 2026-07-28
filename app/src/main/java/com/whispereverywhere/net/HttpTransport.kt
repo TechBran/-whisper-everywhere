@@ -39,21 +39,28 @@ interface HttpTransport {
 class OkHttpTransport(private val client: OkHttpClient = defaultClient()) : HttpTransport {
 
     override suspend fun get(url: String, headers: Map<String, String>, timeoutMs: Long): HttpResult {
-        val request = Request.Builder().url(url).apply {
-            headers.forEach { (k, v) -> header(k, v) }
-        }.build()
-        val call = client.newBuilder()
-            .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
-            .build()
-            .newCall(request)
         return try {
+            // Request.Builder().header(k, v) MUST stay inside this try. OkHttp's
+            // Headers.checkValue throws IllegalArgumentException for any header value with a
+            // char outside 0x20-0x7e, and that exception's message embeds the raw value for
+            // every header except Authorization/Cookie/Proxy-Authorization/Set-Cookie — so for
+            // xi-api-key / x-goog-api-key a malformed paste would otherwise put the plaintext
+            // API key into an uncaught crash trace. KeyValidator rejects those chars first, but
+            // this must not rely on every caller doing that.
+            val request = Request.Builder().url(url).apply {
+                headers.forEach { (k, v) -> header(k, v) }
+            }.build()
+            val call = client.newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+                .newCall(request)
             val response = call.await()
             // Read the body ONCE; it is a one-shot stream.
             val body = response.use { it.body?.string().orEmpty() }
             if (response.isSuccessful) HttpResult.Ok(response.code, body)
             else HttpResult.HttpError(response.code, body)
-        } catch (io: IOException) {
-            HttpResult.NetworkError(io)
+        } catch (e: Exception) {
+            HttpResult.NetworkError(e)
         }
     }
 
