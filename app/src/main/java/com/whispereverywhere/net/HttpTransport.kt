@@ -3,8 +3,11 @@ package com.whispereverywhere.net
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -33,7 +36,34 @@ interface HttpTransport {
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     ): HttpResult
 
-    companion object { const val DEFAULT_TIMEOUT_MS = 10_000L }
+    /**
+     * A file in a multipart/form-data body. [fileName] is load-bearing for OpenAI, which infers
+     * the audio format from it rather than from [contentType].
+     */
+    data class FilePart(
+        val fieldName: String,
+        val fileName: String,
+        val contentType: String,
+        val bytes: ByteArray,
+    )
+
+    /**
+     * Upload one file plus form fields. Separate from [get] because the timeout profile is
+     * completely different: a 15-second audio segment on a slow cellular link needs far longer
+     * than a key-validation GET.
+     */
+    suspend fun postMultipart(
+        url: String,
+        headers: Map<String, String>,
+        filePart: FilePart,
+        fields: Map<String, String>,
+        timeoutMs: Long = DEFAULT_UPLOAD_TIMEOUT_MS,
+    ): HttpResult
+
+    companion object {
+        const val DEFAULT_TIMEOUT_MS = 10_000L
+        const val DEFAULT_UPLOAD_TIMEOUT_MS = 60_000L
+    }
 }
 
 class OkHttpTransport(private val client: OkHttpClient = defaultClient()) : HttpTransport {
@@ -66,6 +96,48 @@ class OkHttpTransport(private val client: OkHttpClient = defaultClient()) : Http
             // call as a network failure. That breaks structured concurrency: the coroutine never
             // unwinds, the caller sets a bogus "couldn't reach the provider" state, and it may
             // touch UI state belonging to a scope that has already gone away.
+            throw c
+        } catch (e: Exception) {
+            HttpResult.NetworkError(e)
+        }
+    }
+
+    override suspend fun postMultipart(
+        url: String,
+        headers: Map<String, String>,
+        filePart: HttpTransport.FilePart,
+        fields: Map<String, String>,
+        timeoutMs: Long,
+    ): HttpResult {
+        return try {
+            // Body construction stays INSIDE the try for the same reason as get(): OkHttp's
+            // header validation throws IllegalArgumentException whose message embeds the raw
+            // header value for every header except Authorization/Cookie/Proxy-Authorization/
+            // Set-Cookie — and an uncaught throw here would put a credential in a crash trace.
+            val body = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+                fields.forEach { (k, v) -> addFormDataPart(k, v) }
+                addFormDataPart(
+                    filePart.fieldName,
+                    filePart.fileName,
+                    filePart.bytes.toRequestBody(filePart.contentType.toMediaType()),
+                )
+            }.build()
+            val request = Request.Builder().url(url).post(body).apply {
+                headers.forEach { (k, v) -> header(k, v) }
+            }.build()
+            val call = client.newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+                .newCall(request)
+            val response = call.await()
+            val respBody = response.use { it.body?.string().orEmpty() }
+            if (response.isSuccessful) HttpResult.Ok(response.code, respBody)
+            else HttpResult.HttpError(response.code, respBody)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // Rethrow BEFORE the broad catch — CancellationException extends
+            // IllegalStateException -> RuntimeException -> Exception, so the catch below would
+            // otherwise swallow it and report a cancelled upload as a network failure while the
+            // coroutine never unwinds.
             throw c
         } catch (e: Exception) {
             HttpResult.NetworkError(e)

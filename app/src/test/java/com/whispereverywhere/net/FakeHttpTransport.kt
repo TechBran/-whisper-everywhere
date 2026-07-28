@@ -12,10 +12,29 @@ class FakeHttpTransport(private val script: (String, Map<String, String>) -> Htt
         private set
     var callCount: Int = 0
         private set
+    var lastFilePart: HttpTransport.FilePart? = null
+        private set
+    var lastFields: Map<String, String> = emptyMap()
+        private set
 
     override suspend fun get(url: String, headers: Map<String, String>, timeoutMs: Long): HttpResult {
         lastUrl = url
         lastHeaders = headers
+        callCount++
+        return script(url, headers)
+    }
+
+    override suspend fun postMultipart(
+        url: String,
+        headers: Map<String, String>,
+        filePart: HttpTransport.FilePart,
+        fields: Map<String, String>,
+        timeoutMs: Long,
+    ): HttpResult {
+        lastUrl = url
+        lastHeaders = headers
+        lastFilePart = filePart
+        lastFields = fields
         callCount++
         return script(url, headers)
     }
