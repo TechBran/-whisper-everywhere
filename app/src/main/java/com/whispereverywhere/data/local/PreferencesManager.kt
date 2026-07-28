@@ -218,6 +218,17 @@ class PreferencesManager(private val context: Context) {
         get() = prefs.getBoolean(KEY_CLOUD_DISCLOSURE_ACCEPTED, false)
         set(value) { prefs.edit().putBoolean(KEY_CLOUD_DISCLOSURE_ACCEPTED, value).apply() }
 
+    /**
+     * Which engine transcribes. null = on-device (the default and the shipped behaviour).
+     * A ProviderId NAME selects cloud with local as fallback.
+     */
+    var sttProviderId: String?
+        get() = prefs.getString(KEY_STT_PROVIDER, null)
+        set(value) {
+            if (value == null) prefs.edit().remove(KEY_STT_PROVIDER).apply()
+            else prefs.edit().putString(KEY_STT_PROVIDER, value).apply()
+        }
+
     companion object {
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_LEGACY_PURGED = "legacy_credential_stores_purged_v1"
@@ -234,6 +245,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_TTS_SPEED = "tts_speed"
         private const val KEY_TTS_VOICE_ID = "tts_voice_id"
         private const val KEY_CLOUD_DISCLOSURE_ACCEPTED = "cloud_disclosure_accepted_v1"
+        private const val KEY_STT_PROVIDER = "stt_provider_id"
 
         // Whisper API supported languages with display names
         // See: https://platform.openai.com/docs/guides/speech-to-text/supported-languages

@@ -191,4 +191,28 @@ class CloudProvidersScreenLogicTest {
             ProviderCatalog.byId(ProviderId.ELEVENLABS).validationUrl,
         )
     }
+
+    // --- sttSelectionCaption: names the provider, explains the fallback, never claims speed ---
+
+    @Test fun stt_selection_caption_names_the_provider_and_explains_the_fallback() {
+        assertEquals(
+            "Audio is sent to OpenAI. If it fails, the on-device model takes over.",
+            sttSelectionCaption("OpenAI"),
+        )
+    }
+
+    @Test fun stt_selection_caption_never_makes_a_speed_claim() {
+        // Measured on-device: a typical 3 s utterance transcribes locally in 1.1-1.3 s, so cloud
+        // is roughly a tie at best. The copy must say what happens, not that it is faster.
+        val caption = sttSelectionCaption("OpenAI")
+        listOf("faster", "quicker", "speed", "instant", "quick").forEach { word ->
+            assertFalse(caption, caption.contains(word, ignoreCase = true))
+        }
+    }
+
+    // --- STT_CAPABLE_PROVIDERS: C2a ships only the OpenAI adapter; Gemini/ElevenLabs are C2b ---
+
+    @Test fun only_openai_is_stt_capable_in_this_release() {
+        assertEquals(setOf(ProviderId.OPENAI), STT_CAPABLE_PROVIDERS)
+    }
 }

@@ -120,6 +120,27 @@ internal fun providerTrainingDisclosure(provider: Provider): String = when (prov
             "ElevenLabs account settings."
 }
 
+/**
+ * Providers this release can actually transcribe through. Deliberately narrower than
+ * [ProviderCatalog.all] / [Provider.supportsStt] — those describe general provider capability,
+ * but Release C2a ships only the OpenAI STT adapter (Gemini/ElevenLabs are C2b, not yet built).
+ * Offering a provider here that [com.whispereverywhere.service.FloatingBubbleService] has no
+ * adapter for would fall back to on-device with a misleading "no key" message even when a key IS
+ * stored; excluding it here is the honest fix, not a downstream one.
+ */
+internal val STT_CAPABLE_PROVIDERS: Set<ProviderId> = setOf(ProviderId.OPENAI)
+
+/**
+ * Caption shown under a selected cloud STT provider.
+ *
+ * Deliberately makes no speed claim — measured on-device: a typical 3 s utterance transcribes
+ * locally in 1.1-1.3 s, so cloud is roughly a tie at best on a good connection. Cloud's case here
+ * is accuracy and language coverage, not speed. States what happens (audio goes to the provider,
+ * local takes over on failure), nothing more.
+ */
+internal fun sttSelectionCaption(providerDisplayName: String): String =
+    "Audio is sent to $providerDisplayName. If it fails, the on-device model takes over."
+
 // ---------------------------------------------------------------------------------------------
 // UI
 // ---------------------------------------------------------------------------------------------
@@ -157,6 +178,9 @@ fun CloudProvidersScreen(
     // Bumped after every save/remove so provider rows re-read their stored key from SecureStore.
     var refreshKey by remember { mutableStateOf(0) }
 
+    // Local mirror of the persisted engine selection. null = on-device (the default).
+    var sttProviderId by remember { mutableStateOf(app.preferencesManager.sttProviderId) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -188,6 +212,18 @@ fun CloudProvidersScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp)
             )
+
+            SttEngineSelector(
+                accounts = accounts,
+                refreshKey = refreshKey,
+                selectedProviderId = sttProviderId,
+                onSelect = { providerId ->
+                    app.preferencesManager.sttProviderId = providerId
+                    sttProviderId = providerId
+                },
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             ProviderCatalog.all.forEach { provider ->
                 // Off Main: SecureStore.get() runs a Keystore cipher, and a raw key must never
@@ -303,6 +339,76 @@ private fun CloudDisclosureDialog(
             TextButton(onClick = onNotNow) { Text("Not now") }
         },
     )
+}
+
+/**
+ * "Transcribe with" selector: on-device (always offered, the default) plus one row per provider
+ * that both has a stored key AND is [STT_CAPABLE_PROVIDERS] — i.e. only providers
+ * [com.whispereverywhere.service.FloatingBubbleService] can genuinely route audio to. Selecting a
+ * provider writes [com.whispereverywhere.data.local.PreferencesManager.sttProviderId]; selecting
+ * on-device clears it.
+ */
+@Composable
+private fun SttEngineSelector(
+    accounts: ProviderAccounts,
+    refreshKey: Int,
+    selectedProviderId: String?,
+    onSelect: (String?) -> Unit,
+) {
+    // Off Main: configured() runs a Keystore lookup per provider, same as the masked-key reads
+    // below — must not run on the Compose/Main thread.
+    val configured by produceState<Set<ProviderId>>(emptySet(), refreshKey) {
+        value = withContext(Dispatchers.IO) { accounts.configured() }
+    }
+    val selectable = ProviderCatalog.all.filter { it.id in STT_CAPABLE_PROVIDERS && it.id in configured }
+
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        Text(
+            text = "Transcribe with",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SttEngineRow(
+            label = "On-device (free, private)",
+            selected = selectedProviderId == null,
+            onClick = { onSelect(null) },
+        )
+        selectable.forEach { provider ->
+            SttEngineRow(
+                label = provider.displayName,
+                selected = selectedProviderId == provider.id.name,
+                onClick = { onSelect(provider.id.name) },
+            )
+        }
+
+        val selectedProvider = selectable.firstOrNull { it.id.name == selectedProviderId }
+        if (selectedProvider != null) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = sttSelectionCaption(selectedProvider.displayName),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 40.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SttEngineRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 
 @Composable

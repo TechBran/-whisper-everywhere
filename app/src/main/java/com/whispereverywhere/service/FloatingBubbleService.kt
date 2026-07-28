@@ -34,9 +34,15 @@ import androidx.core.content.ContextCompat
 import com.whispereverywhere.MainActivity
 import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.net.ConnectivityMonitor
+import com.whispereverywhere.net.OkHttpTransport
+import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.transcription.LocalWhisperEngine
 import com.whispereverywhere.transcription.SegmentOutcome
 import com.whispereverywhere.transcription.TranscriptionEngine
+import com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine
+import com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine
+import com.whispereverywhere.transcription.cloud.OpenAiStt
 import com.whispereverywhere.ui.components.BarWaveformView
 import com.whispereverywhere.util.SpeechSegmenter
 import com.whispereverywhere.util.StreamingAudioRecorder
@@ -50,6 +56,48 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/**
+ * Which engine a session should use, decided from three inputs that are otherwise entangled with
+ * Android services (SharedPreferences, SecureStore, ConnectivityManager). Kept pure and free of
+ * Context so the branch table itself is unit-testable without Robolectric — see
+ * `EngineSelectionTest`.
+ *
+ * On-device is the default AND the only reachable outcome when [decideEngineChoice] is given a
+ * null `sttProviderId` — that is the one-way valve: no combination of `hasKey` /
+ * `hasValidatedNetwork` can select cloud without a provider having been explicitly chosen first,
+ * and there is no path back from [CLOUD_WITH_FALLBACK] to itself once local has taken over — the
+ * fallback happens INSIDE [FallbackTranscriptionEngine], never by re-selecting here.
+ */
+internal enum class EngineChoice { LOCAL_ONLY, LOCAL_NO_KEY, LOCAL_OFFLINE, CLOUD_WITH_FALLBACK }
+
+/**
+ * Decision table (brief: Release C2a Task 6):
+ *  - no provider selected            -> local only (unchanged, pre-cloud path)
+ *  - provider selected, no key       -> local, one-time toast
+ *  - provider selected, key, offline -> local, one-time toast
+ *  - provider selected, key, online  -> cloud, wrapped in the local fallback
+ */
+internal fun decideEngineChoice(
+    sttProviderId: String?,
+    hasKey: Boolean,
+    hasValidatedNetwork: Boolean,
+): EngineChoice = when {
+    sttProviderId == null -> EngineChoice.LOCAL_ONLY
+    !hasKey -> EngineChoice.LOCAL_NO_KEY
+    !hasValidatedNetwork -> EngineChoice.LOCAL_OFFLINE
+    else -> EngineChoice.CLOUD_WITH_FALLBACK
+}
+
+/**
+ * The stored preference names a usable provider only when it is OpenAI's own enum name — the
+ * only STT adapter this release ships (Gemini/ElevenLabs are C2b, not yet built). Anything else —
+ * null, a foreign provider name, a stale/corrupt value — resolves to null, which
+ * [decideEngineChoice] then treats exactly like "no key": a build that predates a provider's
+ * adapter can never attempt a cloud call for it.
+ */
+internal fun resolveSttProvider(raw: String?): ProviderId? =
+    raw?.takeIf { it == ProviderId.OPENAI.name }?.let { ProviderId.valueOf(it) }
 
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
@@ -185,6 +233,7 @@ class FloatingBubbleService : Service(),
     private lateinit var params: WindowManager.LayoutParams
 
     private val app by lazy { WhisperEverywhereApp.getInstance() }
+    private val connectivityMonitor by lazy { ConnectivityMonitor(this) }
     private val vibrator by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -266,9 +315,7 @@ class FloatingBubbleService : Service(),
         // the engine's own single-thread executor, so it never races a session.
         serviceScope.launch {
             delay(1500)
-            val engine = transcriptionEngine
-                ?: LocalWhisperEngine(app.whisperModelManager).also { transcriptionEngine = it }
-            engine.prewarm()
+            resolveTranscriptionEngine().prewarm()
         }
     }
 
@@ -1340,6 +1387,59 @@ class FloatingBubbleService : Service(),
         }
     }
 
+    /**
+     * Resolves this session's transcription engine, building and caching it ONCE for the
+     * service's lifetime — the same reuse policy the local-only engine already had (see the
+     * `transcriptionEngine` field doc), now extended to the composite cloud+local engine so the
+     * warm native model context is never rebuilt mid-service.
+     *
+     * Cloud is opt-in per provider and ALWAYS wrapped in the local fallback: [decideEngineChoice]
+     * has exactly one path to [EngineChoice.CLOUD_WITH_FALLBACK] and it requires a provider to
+     * have been selected first (`prefs.sttProviderId != null`) — on-device stays reachable with
+     * zero configuration and cloud can never be chosen implicitly. No key or no validated network
+     * is never presented as a failure: the on-device model still answers, with one honest toast
+     * the first time this is discovered (this function only ever runs its construction branch
+     * once, so the toast cannot repeat on later sessions).
+     */
+    private fun resolveTranscriptionEngine(): TranscriptionEngine {
+        transcriptionEngine?.let { return it }
+
+        val providerId = app.preferencesManager.sttProviderId
+        val provider = resolveSttProvider(providerId)
+        val key = provider?.let { app.preferencesManager.providerAccounts.key(it) }
+
+        val choice = decideEngineChoice(
+            sttProviderId = providerId,
+            hasKey = !key.isNullOrBlank(),
+            hasValidatedNetwork = connectivityMonitor.hasValidatedNetwork(),
+        )
+        android.util.Log.i("WE-DIAG", "resolveTranscriptionEngine: providerId=$providerId choice=$choice")
+
+        // The local engine is constructed unconditionally — even for a pure cloud session it is
+        // the safety net FallbackTranscriptionEngine falls back to.
+        val local = LocalWhisperEngine(app.whisperModelManager)
+        val engine: TranscriptionEngine = when (choice) {
+            EngineChoice.LOCAL_ONLY -> local
+            EngineChoice.LOCAL_NO_KEY -> {
+                showToast("No key saved — using the on-device model")
+                local
+            }
+            EngineChoice.LOCAL_OFFLINE -> {
+                showToast("Offline — using the on-device model")
+                local
+            }
+            EngineChoice.CLOUD_WITH_FALLBACK -> {
+                // Non-null/non-blank is guaranteed here: CLOUD_WITH_FALLBACK is reachable only
+                // when hasKey was true above.
+                val stt = OpenAiStt(OkHttpTransport(), requireNotNull(key))
+                val cloud = CloudTranscriptionEngine(stt, serviceScope)
+                FallbackTranscriptionEngine(cloud, local, serviceScope)
+            }
+        }
+        transcriptionEngine = engine
+        return engine
+    }
+
     private fun startRecording() {
         if (!audioRecorder.hasPermission()) {
             vibrateError(); showToast("Microphone permission required"); return
@@ -1383,8 +1483,7 @@ class FloatingBubbleService : Service(),
         // Reuse a single engine across sessions so the native model context is loaded once and
         // reused (spec: "loaded once and reused"); it is released only on memory pressure
         // (onTrimMemory) or on service destroy (onDestroy), not at the end of each recording.
-        val engine: TranscriptionEngine = transcriptionEngine
-            ?: LocalWhisperEngine(app.whisperModelManager).also { transcriptionEngine = it }
+        val engine: TranscriptionEngine = resolveTranscriptionEngine()
 
         // Resolve the transcription language. English-only (.en) models must NOT use auto-detect:
         // whisper's language auto-detect is unreliable on non-multilingual models. Force "en" for
