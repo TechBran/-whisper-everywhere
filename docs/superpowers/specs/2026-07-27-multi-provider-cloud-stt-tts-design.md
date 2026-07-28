@@ -416,6 +416,48 @@ documented at `FloatingBubbleService.kt:1520-1525`.
 mic was too quiet when their card declined is the worst output in the entire failure space, and
 it is a three-line fix.
 
+### 5.7a MEASURED 2026-07-28 — on-device STT latency, at last
+
+First execution of `WhisperBenchTest`, SM-F956U (Fold 6), Android 16.
+Raw log: `docs/measurements/2026-07-28-whisper-stt-bench-fold6.log`.
+**These supersede every modelled local-latency figure in this document.**
+
+| tier | 1 s | 3 s | 8 s | 15 s |
+|---|---|---|---|---|
+| eco (base.en) | 1320 ms | 1136 ms | 2221 ms | 4220 ms |
+| base (multilingual) | 1234 ms | 1322 ms | 1458 ms | 1961 ms |
+
+**The headline: transcription cost is dominated by a FIXED per-call floor, not by audio length.**
+A one-second utterance costs **1234-1320 ms**. Fitting the 3 s -> 15 s span gives a fixed overhead
+of roughly 365 ms (eco) to 1162 ms (base) plus only 53-257 ms per additional second of audio.
+
+This **empirically confirms** §5.7's prediction, which was previously modelled: whisper's
+`audio_ctx = clamp(pcm.size()/320 + 64, 768, 1500)` (`whisper_jni.cpp:270-277`) floors the encoder
+at 768, so short clips pay nearly the full encode. The consequence is now measured rather than
+argued.
+
+**Three things this changes:**
+
+1. **Local is FASTER than this document assumed.** §5.7 modelled "local ~1.8-2.7 s vs warm cloud
+   ~1.5 s - roughly a wash" on a flagship. Measured, a typical 3 s utterance transcribes in
+   **1.1-1.3 s**. Cloud must beat that including network round-trip, upload and inference — which
+   on a good connection is roughly a tie and on a poor one is a loss. **Cloud STT's justification
+   on this device is accuracy and language coverage, NOT speed.** C2a's UI copy must not promise
+   speed.
+
+2. **Short VAD segments are disproportionately expensive**, locally and on cloud alike. This is a
+   real argument for merging very short adjacent utterances before dispatch — the coalescing that
+   is currently deferred to C2c.
+
+3. **Cold model load is ~11.7 s** (eco, first load; base loaded in 110 ms once warm). That is a
+   one-time cost per process, already mitigated by `prewarm()`, but it dwarfs any per-segment
+   figure and belongs in any honest time-to-first-transcript claim.
+
+**Two caveats, stated rather than buried.** Eco ran first, immediately after its cold 11.7 s load,
+so its numbers carry warm-up cost that base's do not — the eco-vs-base comparison is confounded by
+run order and must not be read as "multilingual is faster than English-only". And this is one
+device, one run, on a flagship; mid-range hardware is unmeasured.
+
 ### 5.6 REVISED 2026-07-27 — streaming where a BYOK client can actually get it
 
 D2 originally chose batch-only. That is **partially reversed**: the owner's goal is the lowest

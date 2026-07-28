@@ -1,0 +1,13 @@
+﻿--------- beginning of main
+07-28 13:31:20.130 31603 31621 I WE-BENCH: load tier=eco loadMs=11672
+07-28 13:31:21.456 31603 31621 I WE-BENCH: BENCH stt tier=eco slice=1s audioMs=1000 wallMs=1320 rtf=1.320
+07-28 13:31:22.606 31603 31621 I WE-BENCH: BENCH stt tier=eco slice=3s audioMs=3000 wallMs=1136 rtf=0.379
+07-28 13:31:24.843 31603 31621 I WE-BENCH: BENCH stt tier=eco slice=8s audioMs=8000 wallMs=2221 rtf=0.278
+07-28 13:31:29.068 31603 31621 I WE-BENCH: BENCH stt tier=eco slice=15s audioMs=15000 wallMs=4220 rtf=0.281
+07-28 13:31:29.070 31603 31621 I WE-BENCH: BENCH stt tier=eco summary p50Rtf=0.330 p95Rtf=1.179 maxRtf=1.320
+07-28 13:31:29.228 31603 31621 I WE-BENCH: load tier=base loadMs=110
+07-28 13:31:30.462 31603 31621 I WE-BENCH: BENCH stt tier=base slice=1s audioMs=1000 wallMs=1234 rtf=1.234
+07-28 13:31:31.784 31603 31621 I WE-BENCH: BENCH stt tier=base slice=3s audioMs=3000 wallMs=1322 rtf=0.441
+07-28 13:31:33.243 31603 31621 I WE-BENCH: BENCH stt tier=base slice=8s audioMs=8000 wallMs=1458 rtf=0.182
+07-28 13:31:35.205 31603 31621 I WE-BENCH: BENCH stt tier=base slice=15s audioMs=15000 wallMs=1961 rtf=0.131
+07-28 13:31:35.205 31603 31621 I WE-BENCH: BENCH stt tier=base summary p50Rtf=0.311 p95Rtf=1.115 maxRtf=1.234
