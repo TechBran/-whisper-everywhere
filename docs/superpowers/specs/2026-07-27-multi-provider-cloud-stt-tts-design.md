@@ -16,7 +16,7 @@ Three providers, each with the user's own API key:
 
 | Provider | STT | TTS |
 |---|---|---|
-| OpenAI | `gpt-4o-mini-transcribe` (pinned snapshot) | `gpt-4o-mini-tts` (pinned), `tts-1` fallback |
+| OpenAI | `gpt-transcribe` (alias — see C2a plan) | `gpt-4o-mini-tts` (pinned), `tts-1` fallback |
 | Google **Gemini API** | `gemini-3.6-flash` / lite tiers | `gemini-2.5-flash-preview-tts` |
 | ElevenLabs | `scribe_v2` | `eleven_flash_v2_5` |
 

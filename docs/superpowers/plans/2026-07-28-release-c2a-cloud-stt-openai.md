@@ -40,7 +40,9 @@ Gemini and ElevenLabs adapters are C2b. Graduated degradation UX, spend tracking
 - **Raw PCM is REJECTED.** Accepted containers only: mp3, mp4, mpeg, mpga, m4a, wav, webm. The app captures raw PCM16, so a 44-byte WAV header is mandatory.
 - **OpenAI infers format from the multipart FILENAME** — the file part must be named `audio.wav`.
 - 25 MB request cap ≈ **13 minutes** of PCM16 at 16 kHz (32 KB/s). A 15 s segment is ~480 KB, 1.9% of the cap.
-- Model: pin a dated snapshot. `gpt-4o-mini-transcribe-2025-12-15` — the `-2025-03-20` snapshot shut down 23 Jul 2026.
+- Model: **`gpt-transcribe`** — OpenAI's current high-accuracy transcription model, $0.0045/min. **Verified against live docs 2026-07-28**, along with the endpoint, the WAV requirement and the 25 MB cap above.
+  - **Deliberately an alias, not a dated snapshot** — reversing this plan's original instruction. The two risks run opposite ways: a dated snapshot pins behaviour but *is* eventually retired (`gpt-4o-mini-transcribe-2025-03-20` shut down 23 Jul 2026), whereas an alias is repointed forward and stays reachable while its behaviour drifts. In an APK a user may not update for months, retirement is a hard outage and drift is merely a worse transcript. Reachability wins. `gpt-transcribe` also publishes no dated snapshot, so there is no alternative to weigh.
+  - Same id is supported on `v1/realtime`, so **C4 streaming will not require a model change**.
 - Response: `{"text": "..."}` for `response_format=json`.
 - **429 means EITHER rate limiting OR exhausted credit**, distinguishable only from the body (`insufficient_quota`). Retrying the latter burns battery forever.
 
@@ -702,10 +704,17 @@ class OpenAiStt(
         private val JSON = Json { ignoreUnknownKeys = true }
 
         /**
-         * Pinned dated snapshot. An undated id can be retired under a shipped APK — the
-         * -2025-03-20 snapshot of this model shut down on 23 Jul 2026.
+         * OpenAI's current high-accuracy transcription model. Verified against live docs
+         * 2026-07-28: supported on v1/audio/transcriptions, $0.0045/min.
+         *
+         * An ALIAS, not a dated snapshot, deliberately. A dated snapshot pins behaviour but is
+         * eventually retired — gpt-4o-mini-transcribe-2025-03-20 shut down on 23 Jul 2026 — and in
+         * an APK a user may not update for months, retirement is a hard outage. An alias is
+         * repointed forward instead, so it stays reachable while its behaviour may drift. A
+         * drifting transcript beats a broken feature. gpt-transcribe publishes no dated snapshot
+         * anyway. Also supported on v1/realtime, so C4 streaming needs no model change.
          */
-        const val DEFAULT_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
+        const val DEFAULT_MODEL = "gpt-transcribe"
         private const val ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
         private const val WAV_HEADER_BYTES = 44
         private val QUOTA_MARKERS = listOf("insufficient_quota", "quota_exceeded")
