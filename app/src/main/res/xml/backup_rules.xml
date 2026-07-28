@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  ALLOWLIST, not a denylist. The previous version included all of `sharedpref` and excluded a
+  single filename, so any prefs file added later was backed up by default — which is how a
+  plaintext credential file became eligible for Google Drive backup.
+
+  Name only what is safe to leave the device. Anything not listed here stays local.
+  Never add `secure_store` (Keystore-wrapped credentials) or a broad `<include domain="file">`.
+-->
 <full-backup-content>
-    <include domain="sharedpref" path="." />
-    <exclude domain="sharedpref" path="encrypted_api_key.xml" />
-    <include domain="database" path="." />
+    <include domain="sharedpref" path="whisper_everywhere_prefs.xml" />
+    <exclude domain="sharedpref" path="secure_store.xml" />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
 </full-backup-content>

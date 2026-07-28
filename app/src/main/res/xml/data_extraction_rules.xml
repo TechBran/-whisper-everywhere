@@ -1,11 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Same allowlist discipline as backup_rules.xml, for both cloud backup and device-to-device
+  transfer. Credentials must not travel by either route.
+-->
 <data-extraction-rules>
     <cloud-backup>
-        <include domain="sharedpref" path="." />
-        <exclude domain="sharedpref" path="encrypted_api_key.xml" />
+        <include domain="sharedpref" path="whisper_everywhere_prefs.xml" />
+        <exclude domain="sharedpref" path="secure_store.xml" />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
     </cloud-backup>
     <device-transfer>
-        <include domain="sharedpref" path="." />
-        <exclude domain="sharedpref" path="encrypted_api_key.xml" />
+        <include domain="sharedpref" path="whisper_everywhere_prefs.xml" />
+        <exclude domain="sharedpref" path="secure_store.xml" />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
     </device-transfer>
 </data-extraction-rules>
