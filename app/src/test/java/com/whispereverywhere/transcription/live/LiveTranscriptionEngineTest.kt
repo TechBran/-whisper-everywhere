@@ -224,6 +224,26 @@ class LiveTranscriptionEngineTest {
         assertEquals("a dropped turn's Commit must not cross onto the socket", 0, h.transport.commits.get())
     }
 
+    @Test fun commit_while_the_socket_is_down_resolves_Lost_not_dangling() {
+        // The pre-onOpen handshake window, or a reconnect backoff gap after the queue was cleared:
+        // both the appends and the commit are dropped, so the server never raises an item. The seq
+        // must NOT sit bindable forever (off-by-one poisoning + tail-stall); it resolves Lost locally.
+        val h = connected()
+        h.transport.open = false
+        h.engine.sendAudio(byteArrayOf(1, 2))
+        val seq = h.engine.commit()
+        assertTrue(seq >= 0)
+
+        val (rSeq, outcome) = h.l.next()
+        assertEquals(seq, rSeq)
+        assertTrue("a fully-dropped turn resolves Lost, rescued locally — never dangles", outcome is SegmentOutcome.Lost)
+
+        // The orphan is gone from `pending`: no tail-stall, no awaitIdle timeout, nothing to mis-bind.
+        assertTrue("no seq dangles after a socket-down commit", h.engine.awaitIdle(2_000))
+        h.transport.listener.onCompleted("it_orphan", "ignored") // cannot resolve or bind the vanished turn
+        assertEquals(1, h.l.all.size)
+    }
+
     // ---------------------------------------------------------------- backpressure
 
     @Test fun backpressure_sheds_turn_as_Lost_never_blocks() {

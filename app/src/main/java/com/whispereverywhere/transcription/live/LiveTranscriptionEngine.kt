@@ -131,7 +131,8 @@ class LiveTranscriptionEngine(
 
     private sealed interface SendOp {
         class Append(val pcm: ByteArray) : SendOp
-        data object Commit : SendOp
+        /** Carries the seq it finalizes so a commit that fails to send (socket down) can resolve it. */
+        class Commit(val seq: Long) : SendOp
     }
 
     /** The latched fatal for this session, or null. Read by the service's latch-toast and Task 5's valve. */
@@ -193,7 +194,7 @@ class LiveTranscriptionEngine(
             turnShed = false
             // Only a deliverable turn tells the server to finalize. A shed or fatal turn sends no
             // commit — its audio is gone or its session is dead — so the server raises no item for it.
-            if (latched == null && !shed) sendQueue.addLast(SendOp.Commit)
+            if (latched == null && !shed) sendQueue.addLast(SendOp.Commit(seq))
         }
         if (latched == null && !shed) wakeups.trySend(Unit)
 
@@ -231,7 +232,14 @@ class LiveTranscriptionEngine(
                     // engine's own maxBacklog cannot see — that only guards a CPU-starved sender,
                     // not a live-but-stalled socket where our queue drains but OkHttp's does not.
                     if (!transport.sendAppend(encodeAppend(op.pcm))) markTurnShed()
-                SendOp.Commit -> transport.sendCommit()
+                is SendOp.Commit ->
+                    // A commit that cannot be sent (socket down in the reconnect gap or the pre-onOpen
+                    // handshake window) means the server will NEVER raise an item for this turn. Left
+                    // alone the seq sits bindable in `pending` forever — the next real turn's item
+                    // binds to it, poisoning correlation off-by-one for the rest of the session, and
+                    // the tail seq never resolves (orderer stall / awaitIdle timeout). Resolve it Lost
+                    // so the fallback rescues it from the mirror and correlation stays aligned.
+                    if (!transport.sendCommit()) resolveOnce(op.seq, SegmentOutcome.Lost(WS_DROP))
             }
         }
     }
