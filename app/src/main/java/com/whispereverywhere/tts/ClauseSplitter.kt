@@ -52,9 +52,38 @@ object ClauseSplitter {
             units.add(clean.substring(i, cut))
             i = cut
         }
+        rebalanceTail(units)
         // Trim seams (sherpa trims anyway); drop nothing that carried text.
         val trimmed = units.map { it.trim() }.filter { it.isNotEmpty() }
         return if (trimmed.isEmpty()) listOf(clean) else trimmed
+    }
+
+    /**
+     * Greedy cutting dumps the leftover of the last window as the final unit, which can be a few
+     * chars — a sliver clause synthesised as its own utterance gets isolated falling-pitch prosody.
+     * If the final unit is below [MIN_CHARS], fold it back into its predecessor: re-split the pair
+     * near the middle so neither piece is a sliver, both stay within the cap and land on a real
+     * boundary (surrogate-safe). A lone unbroken token is the one case a piece may still be short.
+     */
+    private fun rebalanceTail(units: MutableList<String>) {
+        if (units.size < 2) return
+        val last = units.last()
+        if (last.trim().length >= MIN_CHARS) return
+        val prev = units[units.size - 2]
+        val merged = prev + last // exact content; seams are trimmed by the caller
+        units.removeAt(units.size - 1)
+        units.removeAt(units.size - 1)
+        if (merged.length <= SPLIT_MAX_CHARS) {
+            units.add(merged)
+        } else {
+            // end = length - MIN guarantees the second piece is >= MIN; chooseCut never returns
+            // below MIN except via hardCut, which here returns exactly `end` (>= MIN). Both pieces
+            // therefore satisfy MIN_CHARS <= piece <= SPLIT_MAX_CHARS.
+            val end = minOf(SPLIT_MAX_CHARS, merged.length - MIN_CHARS)
+            val cut = chooseCut(merged, 0, end)
+            units.add(merged.substring(0, cut))
+            units.add(merged.substring(cut))
+        }
     }
 
     /** Index in (start, end] at which to end the current unit, by descending boundary priority. */

@@ -66,6 +66,30 @@ class ClauseSplitterTest {
         assertEquals(s.split(" "), units.joinToString(" ").split(" "))
     }
 
+    @Test fun no_multi_word_unit_is_a_sub_min_sliver() {
+        // plan() cut as late as possible each window and dumped the remainder as the final unit,
+        // which could be a few chars — a standalone sliver gets isolated falling-pitch prosody.
+        // Across many lengths, no unit that contains a space (i.e. is not a lone unbroken token)
+        // may fall below MIN_CHARS.
+        val words = "the quick brown fox jumps over a lazy dog while nine wet owls hid".split(" ")
+        for (target in (cap() + 1)..(cap() * 2 + 20)) {
+            val sb = StringBuilder()
+            var wi = 0
+            while (sb.length < target) { sb.append(words[wi % words.size]).append(' '); wi++ }
+            val s = sb.toString().take(target).trim()
+            if (s.length <= cap()) continue
+            val units = ClauseSplitter.plan(s)
+            each(units)
+            units.forEach { u ->
+                val loneToken = !u.trim().contains(' ')
+                assertTrue("sub-MIN sliver \"$u\" (${u.length}) at len=$target: $units",
+                    loneToken || u.length >= 20)
+            }
+            assertEquals("content lost at len=$target",
+                s.filter { !it.isWhitespace() }, units.joinToString("").filter { !it.isWhitespace() })
+        }
+    }
+
     @Test fun a_single_unbroken_token_is_hard_cut_at_the_cap() {
         val s = "x".repeat(cap() * 2 + 5) // no spaces anywhere
         val units = ClauseSplitter.plan(s)
