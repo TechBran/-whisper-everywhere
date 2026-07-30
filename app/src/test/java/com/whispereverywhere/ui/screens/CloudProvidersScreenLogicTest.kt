@@ -5,6 +5,7 @@ import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -261,5 +262,33 @@ class CloudProvidersScreenLogicTest {
         val text = cloudDisclosureOffUntilText()
         assertTrue(text, text.contains("add a key"))
         assertTrue(text, text.contains("select"))
+    }
+
+    // ---- selectionAfterKeyRemoval: a selection must never outlive its own credential ----
+
+    @Test fun removing_the_selected_providers_key_returns_the_app_to_on_device() {
+        assertNull(selectionAfterKeyRemoval(ProviderId.OPENAI.name, ProviderId.OPENAI))
+    }
+
+    @Test fun removing_a_different_providers_key_leaves_the_selection_alone() {
+        // Removing an unused ElevenLabs key must not silently switch a working OpenAI user back
+        // to on-device.
+        assertEquals(
+            ProviderId.OPENAI.name,
+            selectionAfterKeyRemoval(ProviderId.OPENAI.name, ProviderId.ELEVENLABS),
+        )
+    }
+
+    @Test fun removing_a_key_while_already_on_device_stays_on_device() {
+        assertNull(selectionAfterKeyRemoval(null, ProviderId.OPENAI))
+    }
+
+    @Test fun every_provider_can_deselect_itself() {
+        // Guards the comparison being by enum NAME rather than by ordinal or display name: a
+        // mismatch here would leave cloud selected with no key, which decideEngineChoice reports
+        // as "no key saved" forever.
+        ProviderId.entries.forEach { id ->
+            assertNull(id.name, selectionAfterKeyRemoval(id.name, id))
+        }
     }
 }

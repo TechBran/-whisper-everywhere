@@ -146,6 +146,15 @@ class FloatingBubbleService : Service(),
     // Non-null ONLY when this service's engine can reach the network, i.e. exactly when the routing
     // gate has something to gate. On-device-only users keep the pre-cloud path untouched.
     private var sourceRouter: com.whispereverywhere.transcription.SourceRoutedTranscriptionEngine? = null
+
+    // ONE HTTP client for the service's whole life. OkHttpTransport's default constructor builds a
+    // fresh OkHttpClient — each with its own dispatcher threads and connection pool — so building a
+    // transport per session would leak both on a bubble that stays up for days.
+    private var httpTransport: com.whispereverywhere.net.OkHttpTransport? = null
+
+    // The engine shape the user was last TOLD about, so a degraded mode is announced when it
+    // changes rather than on every single recording.
+    private var notifiedChoice: EngineChoice? = null
     private val speechSegmenter = SpeechSegmenter()
     private lateinit var mediaDetector: MediaSessionDetector
 
@@ -322,9 +331,13 @@ class FloatingBubbleService : Service(),
         // GPU path) so the FIRST recording connects instantly instead of paying it inside
         // CONNECTING. Slightly delayed to keep service startup/view inflation snappy; queued on
         // the engine's own single-thread executor, so it never races a session.
+        // Deliberately the LOCAL engine, not the session engine: the native context is the only
+        // expensive thing to warm, and resolving the session engine here would (a) decide the
+        // cloud/local question ~1.5 s after boot and then cache that answer for the service's
+        // whole life, and (b) toast about a degraded mode before the user has asked for anything.
         serviceScope.launch {
             delay(1500)
-            resolveTranscriptionEngine().prewarm()
+            warmLocalEngine().prewarm()
         }
     }
 
@@ -573,14 +586,21 @@ class FloatingBubbleService : Service(),
         com.whispereverywhere.audio.MediaProjectionGate.listener = null
         com.whispereverywhere.audio.MediaProjectionGate.clear()
         teardownRealtime()
-        // Fully release the reused engine on service end: free the native context and stop its
-        // worker thread (teardownRealtime only detaches the session listener, for reuse).
-        transcriptionEngine?.shutdown()
-        transcriptionEngine = null
-        // Both are views onto the engine just shut down (the router forwards shutdown to the
-        // composite, which owns the local engine); drop the references, never shut down twice.
+        // Fully release on service end: free the native context and stop its worker thread
+        // (teardownRealtime only detaches the session listener, for reuse).
+        //
+        // Order and target both matter. The wrapper is CLOSED (resolving anything it still owes,
+        // and cleaning up the cloud engine, whose shutdown() is close()), then the local engine —
+        // the sole owner of the native context — is SHUT DOWN exactly once. Going through
+        // `transcriptionEngine` instead would leak the context whenever the service is destroyed
+        // after prewarm but before any recording, because that field is still null at that point.
+        sourceRouter?.close()
         sourceRouter = null
+        transcriptionEngine = null
+        localEngine?.shutdown()
         localEngine = null
+        httpTransport = null
+        notifiedChoice = null
         try {
             windowManager.removeView(bubbleView)
         } catch (e: Exception) {
@@ -1431,22 +1451,42 @@ class FloatingBubbleService : Service(),
     }
 
     /**
-     * Resolves this session's transcription engine, building and caching it ONCE for the
-     * service's lifetime — the same reuse policy the local-only engine already had (see the
-     * `transcriptionEngine` field doc), now extended to the composite cloud+local engine so the
-     * warm native model context is never rebuilt mid-service.
+     * The warm on-device engine. Built once and kept for the service's whole life, because loading
+     * the native context costs seconds (model mmap + ~7 s Adreno OpenCL kernel compile). It
+     * OUTLIVES every cloud wrapper built around it, and it is the only object here that owns a
+     * native resource — so it is also the only one that may be `shutdown()`.
+     */
+    private fun warmLocalEngine(): LocalWhisperEngine =
+        localEngine ?: LocalWhisperEngine(app.whisperModelManager).also { localEngine = it }
+
+    /** One shared client for the service's life — see the [httpTransport] field comment. */
+    private fun sharedTransport(): com.whispereverywhere.net.OkHttpTransport =
+        httpTransport ?: com.whispereverywhere.net.OkHttpTransport().also { httpTransport = it }
+
+    /**
+     * Resolves this session's transcription engine, RE-DECIDING the cloud/local question at every
+     * session start.
+     *
+     * It used to decide once and cache for the service's lifetime, which made three user actions
+     * silently ineffective on a bubble that stays up for days: selecting "On-device" did not stop
+     * uploads, deleting the API key did not stop uploads (OpenAiStt captures the key by value at
+     * construction), and selecting cloud did nothing until the service was restarted. The privacy
+     * policy ships the sentence "switching back to on-device or removing the key stops all
+     * transmission to that provider immediately" — this function is what makes that true. It also
+     * re-samples connectivity, so a bubble started in a tunnel is no longer pinned to on-device
+     * for the rest of the day.
+     *
+     * Rebuilding is cheap BECAUSE the expensive part is deliberately not rebuilt: [warmLocalEngine]
+     * and [sharedTransport] persist, and only the thin wrappers that carry the user's choice (and
+     * the key) are recreated.
      *
      * Cloud is opt-in per provider and ALWAYS wrapped in the local fallback: [decideEngineChoice]
      * has exactly one path to [EngineChoice.CLOUD_WITH_FALLBACK] and it requires a provider to
      * have been selected first (`prefs.sttProviderId != null`) — on-device stays reachable with
      * zero configuration and cloud can never be chosen implicitly. No key or no validated network
-     * is never presented as a failure: the on-device model still answers, with one honest toast
-     * the first time this is discovered (this function only ever runs its construction branch
-     * once, so the toast cannot repeat on later sessions).
+     * is never presented as a failure: the on-device model still answers.
      */
     private fun resolveTranscriptionEngine(): TranscriptionEngine {
-        transcriptionEngine?.let { return it }
-
         val providerId = app.preferencesManager.sttProviderId
         val provider = resolveSttProvider(providerId)
         val key = provider?.let { app.preferencesManager.providerAccounts.key(it) }
@@ -1458,24 +1498,34 @@ class FloatingBubbleService : Service(),
         )
         android.util.Log.i("WE-DIAG", "resolveTranscriptionEngine: providerId=$providerId choice=$choice")
 
-        // The local engine is constructed unconditionally — even for a pure cloud session it is
-        // the safety net FallbackTranscriptionEngine falls back to.
-        val local = LocalWhisperEngine(app.whisperModelManager)
-        localEngine = local
+        // Retire the previous session's wrapper. close(), NEVER shutdown(): close() resolves
+        // everything the wrapper still owes and detaches it, whereas shutdown() cascades to
+        // LocalWhisperEngine.shutdown() and releases the native context — the one thing that must
+        // survive between sessions.
+        sourceRouter?.close()
+        sourceRouter = null
+
+        val local = warmLocalEngine()
+        // Announced when the SHAPE CHANGES, not once per service and not once per session: a user
+        // who loses signal at noon should be told, and a user who dictates forty times should not
+        // be told forty times.
+        fun announceIfNew(message: String) {
+            if (notifiedChoice != choice) showToast(message)
+        }
         val engine: TranscriptionEngine = when (choice) {
             EngineChoice.LOCAL_ONLY -> local
             EngineChoice.LOCAL_NO_KEY -> {
-                showToast("No key saved — using the on-device model")
+                announceIfNew("No key saved — using the on-device model")
                 local
             }
             EngineChoice.LOCAL_OFFLINE -> {
-                showToast("Offline — using the on-device model")
+                announceIfNew("Offline — using the on-device model")
                 local
             }
             EngineChoice.CLOUD_WITH_FALLBACK -> {
                 // Non-null/non-blank is guaranteed here: CLOUD_WITH_FALLBACK is reachable only
                 // when hasKey was true above.
-                val stt = OpenAiStt(OkHttpTransport(), requireNotNull(key))
+                val stt = OpenAiStt(sharedTransport(), requireNotNull(key))
                 val cloud = CloudTranscriptionEngine(stt, serviceScope)
                 // The cloud engine may serve the MICROPHONE, which is the user's own voice and the
                 // user's own choice. It may NEVER serve MediaProjection playback capture: that is
@@ -1490,6 +1540,7 @@ class FloatingBubbleService : Service(),
                 ).also { sourceRouter = it }
             }
         }
+        notifiedChoice = choice
         transcriptionEngine = engine
         return engine
     }
@@ -1786,7 +1837,10 @@ class FloatingBubbleService : Service(),
             currentState != BubbleState.FINALIZING &&
             currentState != BubbleState.CONNECTING
         ) {
-            transcriptionEngine?.releaseContext()
+            // The local engine directly: it owns the native context, and after a prewarm with no
+            // recording yet `transcriptionEngine` is still null — so releasing through that field
+            // would ignore memory pressure in exactly the idle state where it matters most.
+            localEngine?.releaseContext()
         }
     }
 

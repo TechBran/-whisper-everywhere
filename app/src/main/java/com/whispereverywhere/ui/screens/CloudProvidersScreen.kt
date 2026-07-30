@@ -131,6 +131,18 @@ internal fun providerTrainingDisclosure(provider: Provider): String = when (prov
 internal val STT_CAPABLE_PROVIDERS: Set<ProviderId> = setOf(ProviderId.OPENAI)
 
 /**
+ * The STT selection that should survive removing [removedProvider]'s key: the same selection,
+ * unless it was that very provider, in which case the app returns to on-device.
+ *
+ * A selection must not outlive its own credential. If it did, re-adding a key would silently
+ * resume cloud transcription in ONE action, while the gate this app advertises — and describes in
+ * its privacy policy — is TWO: add a key, then choose it. It would also leave the selector
+ * pointing at a provider that cannot transcribe anything.
+ */
+internal fun selectionAfterKeyRemoval(selected: String?, removedProvider: ProviderId): String? =
+    if (selected == removedProvider.name) null else selected
+
+/**
  * Caption shown under a selected cloud STT provider.
  *
  * Deliberately makes no speed claim — measured on-device: a typical 3 s utterance transcribes
@@ -261,6 +273,16 @@ fun CloudProvidersScreen(
                     validator = validator,
                     editable = disclosureAccepted,
                     onChanged = { refreshKey++ },
+                    onKeyRemoved = {
+                        // A selection must not outlive its own credential — see
+                        // selectionAfterKeyRemoval for why re-adding a key must not be enough on
+                        // its own to resume cloud transcription.
+                        val next = selectionAfterKeyRemoval(sttProviderId, provider.id)
+                        if (next != sttProviderId) {
+                            app.preferencesManager.sttProviderId = next
+                            sttProviderId = next
+                        }
+                    },
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -438,6 +460,7 @@ private fun ProviderCard(
     validator: KeyValidator,
     editable: Boolean,
     onChanged: () -> Unit,
+    onKeyRemoved: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -583,6 +606,10 @@ private fun ProviderCard(
                         onClick = {
                             scope.launch {
                                 withContext(Dispatchers.IO) { accounts.clear(provider.id) }
+                                // Deselect BEFORE onChanged(): onChanged bumps the refresh key and
+                                // recomposes the selector, which must not paint a selected row for
+                                // a provider whose key has just gone.
+                                onKeyRemoved()
                                 onChanged()
                             }
                         },
