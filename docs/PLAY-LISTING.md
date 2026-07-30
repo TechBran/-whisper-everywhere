@@ -106,3 +106,78 @@ visible; right side headline "Voice typing. Media transcription. Read-aloud." su
 
 Staged: start 10% → monitor vitals/reviews ~48h → 25% → 50% → 100%. Halting is possible,
 decreasing isn't. versionCode 72 (3.2.0) — Play only requires higher-than-last.
+
+---
+
+# DRAFT — 3.3.0 listing revisions (NOT LIVE — owner decision required)
+
+> **Why this draft exists:** 3.3.0 ships optional cloud transcription (user's own OpenAI key)
+> and flips the Data Safety form to voice recordings Collected=Yes / Shared=Yes / Optional.
+> Google diffs the Data Safety form against the storefront: keeping "100% on-device",
+> "No audio ever uploaded", and "Zero audio or text leaves your phone" beside that declaration
+> is the textbook inconsistency rejection, and a false-claim metadata violation on its own.
+>
+> The on-device story is still substantially TRUE — it is the default, it is what every
+> existing user gets, and it is unconditionally true for media/device audio — so both variants
+> below keep it as the hero and add the cloud path honestly. **Neither is live. Nothing
+> changes in the Console until the owner picks one and edits it there by hand.**
+>
+> ⚠️ **Checklist rule:** this file and the Play Console are TWO copies of the same copy.
+> Any listing change happens in BOTH, in the same release. (This draft exists because the
+> 3.2.0 listing was left untouched while the app gained cloud upload.)
+
+## The four strings that must change
+
+| Where | Live text (false once 3.3.0 ships) |
+|---|---|
+| Short description | "…100% on-device." |
+| Full description, opener | "No audio ever uploaded — it works in airplane mode." |
+| Privacy bullets | "Zero audio or text leaves your phone…" / "Internet used once: downloading your chosen model" |
+| Feature graphic subline | "100% on your device." |
+
+## Variant A — "on-device by default" (minimal change, defensive)
+
+**Short (77 chars):**
+> Offline voice typing, media transcription & read-aloud. On-device by default.
+
+**Opener:** …All of it happens on your device by default. No account. No subscription. Your
+audio is never uploaded unless you connect your own cloud provider key — and everything works
+in airplane mode.
+
+**Privacy block:**
+• Speech recognition, voices, everything: on-device by default
+• Your audio leaves your phone ONLY if you add your own cloud key and select it — verifiable, it's open source
+• Audio captured from other apps never leaves your phone, in any configuration
+• No account, no ads, no analytics, no tracking
+• Internet used for: one model download — and nothing else unless you enable cloud
+
+**Feature graphic subline:** "Private by default."
+
+## Variant B — "your choice" (leans into the returning feature)
+
+**Short (75 chars):**
+> Voice typing, media transcription, read-aloud. On-device or your own cloud.
+
+**Opener:** …All of it happens on your device by default — no account, no subscription, works
+in airplane mode. Prefer the big cloud models? Bring your own key and switch anytime; your
+audio then goes only to the provider you chose, under your own account.
+
+**Adds a pillar block (this was the #1 review complaint when BYOK was removed):**
+<b>🔑 Optional: bring your own cloud</b>
+Add your own OpenAI API key and choose cloud transcription per session. Your key stays
+encrypted on your phone, your audio goes only to your provider, and the on-device model takes
+over automatically if the network drops. Remove the key and it all stops — instantly.
+
+**Privacy block:** same as Variant A.
+
+**Feature graphic subline:** "Your voice. Your device. Your choice."
+
+## Draft release notes — 3.3.0 (within 500 chars)
+
+> Cloud transcription is back — on your terms. Add your own OpenAI key and choose it per
+> session; on-device stays the default and the automatic fallback. Audio from other apps is
+> never uploaded, ever. Smoother long dictations and sharper accuracy on the models you
+> already have. Your keys are stored encrypted; remove one and transmission stops instantly.
+
+(No speed claims about cloud — measured on-device is 1.1–1.3 s for a 3 s utterance; cloud is
+a tie at best. The pitch is accuracy and language coverage, never latency.)
