@@ -106,6 +106,23 @@ internal fun cloudVoiceDisplayName(
     return catalog.firstOrNull { it.voiceId == voiceId }?.displayName ?: voiceId
 }
 
+/**
+ * The privacy line at the foot of the in-app "How read-aloud works" guide.
+ *
+ * It used to assert, in bold, "Everything is generated on your phone — nothing you read or hear
+ * ever leaves the device." That became FALSE the moment cloud read-aloud shipped (Task 5/6): a user
+ * who selects a cloud voice sends the selected text to that provider. The unqualified claim
+ * contradicted the flipped privacy §6, the v3 disclosure, the Play declaration, and the code itself.
+ *
+ * Qualified to the two-state truth — on-device by default, cloud only if the user chooses a cloud
+ * voice — kept consistent with [com.whispereverywhere.ui.screens.cloudDisclosureMainText] and the
+ * privacy pair. Pure so the honesty is JVM-pinned (the guide Text is Compose-untestable).
+ */
+internal fun readAloudGuidePrivacyLine(): String =
+    "By default everything is generated on your phone, and nothing you read or hear leaves the " +
+        "device. If you choose a cloud read-aloud voice, the text you select is sent to that " +
+        "provider to be spoken."
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -833,8 +850,7 @@ fun SettingsScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        "Everything is generated on your phone — nothing you read or hear " +
-                            "ever leaves the device.",
+                        readAloudGuidePrivacyLine(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold,

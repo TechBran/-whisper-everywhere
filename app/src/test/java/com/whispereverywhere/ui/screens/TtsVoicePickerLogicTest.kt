@@ -93,6 +93,33 @@ class TtsVoicePickerLogicTest {
         assertNull(ttsNoSpeedControlNote(ProviderId.OPENAI))
     }
 
+    // --- readAloudGuidePrivacyLine: the in-app how-to guide's privacy claim. It once asserted, in
+    // bold, that NOTHING you read or hear EVER leaves the device — false once cloud read-aloud
+    // shipped. It must be qualified to the two-state truth and stay consistent with the v3 disclosure. ---
+
+    @Test fun read_aloud_guide_no_longer_claims_nothing_ever_leaves_the_device() {
+        // The exact false absolute the finding flags. Its presence would re-contradict the flipped
+        // privacy §6, the v3 disclosure, the Play declaration, and the code.
+        val line = readAloudGuidePrivacyLine()
+        assertFalse(line, line.contains("ever leaves the device", ignoreCase = true))
+        assertFalse(line, line.contains("never leaves the device", ignoreCase = true))
+    }
+
+    @Test fun read_aloud_guide_qualifies_to_default_on_device_and_discloses_cloud_egress() {
+        val line = readAloudGuidePrivacyLine()
+        // Scoped to the default, not stated as an absolute.
+        assertTrue(line, line.contains("By default", ignoreCase = true))
+        // And it discloses the cloud case honestly: choosing a cloud voice sends the selected text.
+        assertTrue(line, line.contains("cloud", ignoreCase = true))
+        assertTrue(line, line.contains("text you select", ignoreCase = true))
+        assertTrue(line, line.contains("sent", ignoreCase = true))
+    }
+
+    @Test fun read_aloud_guide_makes_no_speed_claim() {
+        val line = readAloudGuidePrivacyLine()
+        SPEED_WORDS.forEach { word -> assertFalse(line, line.contains(word, ignoreCase = true)) }
+    }
+
     private companion object {
         // Same guard-list the STT copy tests use, so "no speed claim" means the same thing here.
         val SPEED_WORDS = listOf("faster", "quicker", "speed", "instant", "quick")
