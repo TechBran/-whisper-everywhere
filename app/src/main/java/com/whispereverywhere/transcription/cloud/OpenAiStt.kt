@@ -78,17 +78,24 @@ class OpenAiStt(
         SttResult.Failed(SttError.Transient(null))
     }
 
-    private fun classify(code: Int, body: String): SttError = when (code) {
-        401 -> SttError.Fatal(FatalKind.INVALID_KEY, "Key rejected")
-        403 -> SttError.Fatal(FatalKind.FORBIDDEN, "Access denied for this key")
-        400, 413 -> SttError.BadSegment
-        429 -> if (QUOTA_MARKERS.any { body.contains(it, ignoreCase = true) }) {
-            SttError.Fatal(FatalKind.OUT_OF_CREDIT, "Account has no remaining credit")
-        } else {
-            SttError.Transient(null)
+    private fun classify(code: Int, body: String): SttError {
+        // The STATUS CODE alone — never the body (it can echo request details) and never a header.
+        // Without this line a failing provider is invisible in logcat and the local fallback masks
+        // the failure completely: the 2026-07-29 device test ran a whole session of latched fatals
+        // that looked, on screen, like cloud working.
+        android.util.Log.w("WE-DIAG", "openai stt http $code")
+        return when (code) {
+            401 -> SttError.Fatal(FatalKind.INVALID_KEY, "Key rejected")
+            403 -> SttError.Fatal(FatalKind.FORBIDDEN, "Access denied for this key")
+            400, 413 -> SttError.BadSegment
+            429 -> if (QUOTA_MARKERS.any { body.contains(it, ignoreCase = true) }) {
+                SttError.Fatal(FatalKind.OUT_OF_CREDIT, "Account has no remaining credit")
+            } else {
+                SttError.Transient(null)
+            }
+            in 500..599 -> SttError.Transient(null)
+            else -> SttError.Transient(null)
         }
-        in 500..599 -> SttError.Transient(null)
-        else -> SttError.Transient(null)
     }
 
     companion object {

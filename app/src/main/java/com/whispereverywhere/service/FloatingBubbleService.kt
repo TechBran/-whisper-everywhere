@@ -155,6 +155,15 @@ class FloatingBubbleService : Service(),
     // The engine shape the user was last TOLD about, so a degraded mode is announced when it
     // changes rather than on every single recording.
     private var notifiedChoice: EngineChoice? = null
+
+    // This session-family's cloud engine, kept ONLY so finalize can read its latched fatal — the
+    // composite engine deliberately hides which member answered. Rebuilt with the wrapper each
+    // session; nulled with it in onDestroy.
+    private var lastCloudEngine: com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine? = null
+
+    // The latched-fatal kind the user was last TOLD about — once per latch, not once per session:
+    // dictating ten times against a dead key should produce one toast, not ten.
+    private var notifiedFatalKind: com.whispereverywhere.transcription.cloud.FatalKind? = null
     private val speechSegmenter = SpeechSegmenter()
     private lateinit var mediaDetector: MediaSessionDetector
 
@@ -601,6 +610,8 @@ class FloatingBubbleService : Service(),
         localEngine = null
         httpTransport = null
         notifiedChoice = null
+        lastCloudEngine = null
+        notifiedFatalKind = null
         try {
             windowManager.removeView(bubbleView)
         } catch (e: Exception) {
@@ -1504,6 +1515,9 @@ class FloatingBubbleService : Service(),
         // survive between sessions.
         sourceRouter?.close()
         sourceRouter = null
+        // A stale latch must not outlive its engine: after switching to on-device, finalize must
+        // not toast about a fatal from a previous session's cloud engine.
+        lastCloudEngine = null
 
         val local = warmLocalEngine()
         // Announced when the SHAPE CHANGES, not once per service and not once per session: a user
@@ -1527,6 +1541,7 @@ class FloatingBubbleService : Service(),
                 // when hasKey was true above.
                 val stt = OpenAiStt(sharedTransport(), requireNotNull(key))
                 val cloud = CloudTranscriptionEngine(stt, serviceScope)
+                lastCloudEngine = cloud
                 // The cloud engine may serve the MICROPHONE, which is the user's own voice and the
                 // user's own choice. It may NEVER serve MediaProjection playback capture: that is
                 // other people's audio, and the four shipped statements that say device audio stays
@@ -1751,6 +1766,18 @@ class FloatingBubbleService : Service(),
             val finalizingSink = transcriptSink
             teardownRealtime()
             android.util.Log.i("WE-DIAG", "finalize: state=$currentState producedText=$sessionProducedText")
+
+            // If the cloud provider latched a fatal this session, SAY SO — once per latch, not per
+            // session. Without this the local fallback masks the failure completely: the
+            // 2026-07-29 device test ran an entire "cloud" session on latched fatals and the
+            // owner had no way to know. Read at finalize, after the drain, so the latch state is
+            // final. (Pulled forward from C2c's degradation UX for exactly this reason.)
+            lastCloudEngine?.lastFatal()?.let { fatal ->
+                if (notifiedFatalKind != fatal.kind) {
+                    notifiedFatalKind = fatal.kind
+                    showToast("${fatal.message} — used the on-device model instead")
+                }
+            }
 
             // History: persist the session (text only) + apply rolling retention.
             // NOTE: history inherits the FINALIZE_TIMEOUT_MS bound above — a segment still

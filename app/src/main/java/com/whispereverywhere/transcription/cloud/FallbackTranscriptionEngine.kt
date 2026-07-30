@@ -207,7 +207,16 @@ class FallbackTranscriptionEngine(
         override fun onClosed() = owner.onClosed()
 
         override fun onSegmentResolved(seq: Long, outcome: SegmentOutcome) {
-            val pcm = retained.remove(seq)
+            // Synchronized with commit(), which holds mirrorLock from before cloud.commit() until
+            // after the snapshot lands in [retained]. A cloud engine that resolves a fresh seq
+            // near-instantly — the fatal latch and the backlog shed both do, with no permit and no
+            // network — can deliver this callback inside that window; without the lock the lookup
+            // finds nothing, skips the local retry, and the user gets a loss marker for audio we
+            // were holding the whole time. Proven on-device 2026-07-29: with a latched fatal,
+            // every VAD segment lost this race. Blocking here for the microseconds commit() needs
+            // to finish is the fix; no deadlock is possible because cloud.commit() never waits on
+            // its resolver thread.
+            val pcm = synchronized(mirrorLock) { retained.remove(seq) }
             if (!accepting || pcm == null || !FallbackPolicy.shouldFallBack(outcome)) {
                 owner.onSegmentResolved(seq, outcome)
                 return

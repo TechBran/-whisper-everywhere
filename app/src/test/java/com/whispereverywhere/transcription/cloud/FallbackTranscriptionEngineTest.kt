@@ -613,4 +613,52 @@ class FallbackTranscriptionEngineTest {
         assertEquals(SegmentOutcome.Text("rescued locally"), outcome)
         assertNull("no session error is shown for a fallback that worked", l.errors.firstOrNull())
     }
+
+    @Test fun segments_committed_after_a_fatal_latch_are_still_rescued_locally() {
+        // THE 2026-07-29 DEVICE BUG. Once the cloud engine latches a fatal, every later commit is
+        // resolved near-INSTANTLY (no permit, no network) on a dispatcher thread — fast enough to
+        // beat commit()'s retained-snapshot insertion. Unsynchronized, the relay's lookup found
+        // nothing, skipped the local retry, and the user got a loss marker for every latched
+        // segment; on the Fold this lost the race 100% of the time. The fix serializes the lookup
+        // against commit() under mirrorLock. This test hammers the window: with the lock the
+        // rescue count must be perfect, without it this fails almost every run.
+        val provider = FakeStt(respond = {
+            SttResult.Failed(SttError.Fatal(FatalKind.INVALID_KEY, "Key rejected"))
+        })
+        val backend = object : WhisperBackend {
+            override fun load(modelPath: String) = 42L
+            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?) = "rescued locally"
+            override fun release(ctx: Long) = Unit
+        }
+        val local = LocalWhisperEngine(
+            modelPathProvider = object : ModelPathProvider {
+                override fun installedModelPath() = "/models/tiny.bin"
+            },
+            retry = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+            backend = backend,
+            executor = SameThreadExecutorService(),
+        )
+        val e = engine(CloudTranscriptionEngine(provider, scope()), local)
+        val l = Rec()
+        e.connect(null, l)
+
+        // Segment 0 takes the real 401 and latches. Everything after it resolves instantly.
+        val total = 21
+        repeat(total) {
+            e.sendAudio(ByteArray(3200) { 1 })
+            e.commit()
+            assertTrue("segment $it drained", e.awaitIdle(5_000))
+        }
+
+        val outcomes = (0 until total).map { l.next() }.sortedBy { it.first }
+        assertEquals("every seq resolves exactly once", total, outcomes.map { it.first }.distinct().size)
+        outcomes.forEach { (seq, outcome) ->
+            assertEquals(
+                "seq $seq must be rescued by the local model, not lost to the race",
+                SegmentOutcome.Text("rescued locally"),
+                outcome,
+            )
+        }
+        assertEquals("one fatal costs ONE request — the latch held", 1, provider.payloads.size)
+    }
 }
