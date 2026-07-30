@@ -28,8 +28,9 @@ class RealtimeTransportTest {
         val sent = mutableListOf<String>()
         var closeCode: Int? = null
         var closeCount = 0
+        var queued = 0L
         override fun request(): Request = Request.Builder().url("https://api.openai.com/").build()
-        override fun queueSize(): Long = 0
+        override fun queueSize(): Long = queued
         override fun send(text: String): Boolean { sent += text; return true }
         override fun send(bytes: ByteString): Boolean = true
         override fun close(code: Int, reason: String?): Boolean { closeCode = code; closeCount++; return true }
@@ -143,6 +144,21 @@ class RealtimeTransportTest {
             listOf(RealtimeEvents.sessionUpdate(), RealtimeEvents.append("QUJD"), RealtimeEvents.commit()),
             r.factory.lastSocket.sent,
         )
+    }
+
+    @Test fun sendAppend_refuses_when_the_outbound_buffer_is_over_threshold() {
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+
+        // A live socket whose OkHttp outbound buffer is past the cap must reject the append as
+        // backpressure — not silently pile bytes toward OkHttp's 16 MiB hard-cancel.
+        r.factory.lastSocket.queued = RealtimeTransport.MAX_OUTBOUND_BYTES + 1
+        assertTrue("over-threshold append is refused", !r.transport.sendAppend("QUJD"))
+
+        // Once the buffer drains below the threshold it sends normally again.
+        r.factory.lastSocket.queued = 0
+        assertTrue(r.transport.sendAppend("QUJD"))
     }
 
     @Test fun send_without_a_live_socket_returns_false_and_does_not_throw() {

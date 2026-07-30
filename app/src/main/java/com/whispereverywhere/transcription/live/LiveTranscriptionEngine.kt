@@ -224,11 +224,20 @@ class LiveTranscriptionEngine(
                 continue
             }
             when (op) {
-                is SendOp.Append -> transport.sendAppend(encodeAppend(op.pcm))
+                is SendOp.Append ->
+                    // A false append is the transport's backpressure/socket-down signal. Shed the
+                    // current turn so commit() resolves it Lost(BACKLOG) for the local fallback,
+                    // rather than pretend the audio reached the server. This is the shed the
+                    // engine's own maxBacklog cannot see — that only guards a CPU-starved sender,
+                    // not a live-but-stalled socket where our queue drains but OkHttp's does not.
+                    if (!transport.sendAppend(encodeAppend(op.pcm))) markTurnShed()
                 SendOp.Commit -> transport.sendCommit()
             }
         }
     }
+
+    /** Mark the in-flight turn undeliverable; commit() will resolve it Lost(BACKLOG) off-thread. */
+    private fun markTurnShed() = synchronized(bufferLock) { turnShed = true }
 
     private suspend fun currentScopeIsActive(): Boolean =
         kotlin.coroutines.coroutineContext[Job]?.isActive ?: true

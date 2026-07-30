@@ -55,6 +55,8 @@ class LiveTranscriptionEngineTest {
     private class FakeTransport(val listener: RealtimeTransport.Listener) :
         LiveTranscriptionEngine.Transport {
         val appends = Collections.synchronizedList(mutableListOf<String>())
+        /** Every sendAppend CALL, including refused ones — lets a test await the sender draining. */
+        val appendCalls = AtomicInteger(0)
         val commits = AtomicInteger(0)
         var connects = 0
         var closes = 0
@@ -70,6 +72,7 @@ class LiveTranscriptionEngineTest {
         override fun connect(apiKey: String, language: String?) { connects++; open = true }
         override fun sendAppend(base64: String): Boolean {
             gate?.await()
+            appendCalls.incrementAndGet()
             if (!open || refuseAppends) return false
             appends += base64
             return true
@@ -240,6 +243,29 @@ class LiveTranscriptionEngineTest {
             FallbackPolicy.shouldFallBack(outcome),
         )
         h.transport.releaseGate()
+    }
+
+    @Test fun transport_backpressure_on_a_live_socket_sheds_the_turn_as_Lost() {
+        // The primary stall mode the engine's own maxBacklog cannot see: the socket is alive and our
+        // queue drains fine, but the transport reports its outbound buffer is over the cap and refuses
+        // the append. A false append must shed the turn to the local fallback, not vanish.
+        val h = connected()
+        h.transport.refuseAppends = true // socket alive, but OkHttp's buffer is over MAX_OUTBOUND_BYTES
+        repeat(5) { h.engine.sendAudio(ByteArray(64)) }
+
+        // Wait until the sender has processed all five appends (each refused -> turn shed) so commit
+        // observes the shed deterministically, with no sleep-and-hope.
+        val deadline = System.currentTimeMillis() + 2_000
+        while (h.transport.appendCalls.get() < 5 && System.currentTimeMillis() < deadline) Thread.sleep(5)
+        assertEquals(5, h.transport.appendCalls.get())
+        assertTrue("a refused append never reaches the socket", h.transport.appends.isEmpty())
+
+        val seq = h.engine.commit()
+        assertTrue("a shed turn still allocates a real seq", seq >= 0)
+        val (rSeq, outcome) = h.l.next()
+        assertEquals(seq, rSeq)
+        assertTrue("transport backpressure -> Lost", outcome is SegmentOutcome.Lost)
+        assertTrue("and routes to the local retry", FallbackPolicy.shouldFallBack(outcome))
     }
 
     // ---------------------------------------------------------------- the fatal latch

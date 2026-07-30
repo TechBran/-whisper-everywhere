@@ -131,9 +131,21 @@ class RealtimeTransport(
         }
     }
 
-    /** Enqueue one `input_audio_buffer.append`. Returns false if there is no live socket. */
-    fun sendAppend(base64: String): Boolean =
-        synchronized(lock) { webSocket?.send(RealtimeEvents.append(base64)) ?: false }
+    /**
+     * Enqueue one `input_audio_buffer.append`. Returns false if there is no live socket OR the
+     * socket's own outbound buffer is over [MAX_OUTBOUND_BYTES] (network backpressure).
+     *
+     * The threshold is the real fix for a live-but-stalled socket: OkHttp's `send()` is a
+     * non-blocking enqueue into its OWN buffer (bounded at 16 MiB, past which it cancels the
+     * socket). If the engine only watched its own send queue, that queue would drain to ~0 while
+     * bytes piled up invisibly inside OkHttp for minutes before the hard cap fired. Watching
+     * [WebSocket.queueSize] here lets the false return reach the engine as a prompt shed signal.
+     */
+    fun sendAppend(base64: String): Boolean = synchronized(lock) {
+        val ws = webSocket ?: return false
+        if (ws.queueSize() > MAX_OUTBOUND_BYTES) return false
+        ws.send(RealtimeEvents.append(base64))
+    }
 
     /** Enqueue one `input_audio_buffer.commit`. Returns false if there is no live socket. */
     fun sendCommit(): Boolean =
@@ -252,6 +264,13 @@ class RealtimeTransport(
 
         /** Consecutive reconnects before the transport gives up for the session (see [maxReconnects]). */
         const val DEFAULT_MAX_RECONNECTS = 6
+
+        /**
+         * Shed the turn once OkHttp's outbound buffer passes this, well under its 16 MiB hard cap
+         * (past which OkHttp cancels the socket). 2 MiB of un-drained base64 audio already means the
+         * network is far enough behind that the turn is better rescued locally than buffered.
+         */
+        const val MAX_OUTBOUND_BYTES = 2L * 1024 * 1024
 
         /** Transcription intent per the pinned protocol. `OpenAI-Beta` is added only on a 4xx. */
         const val ENDPOINT = "wss://api.openai.com/v1/realtime?intent=transcription"
