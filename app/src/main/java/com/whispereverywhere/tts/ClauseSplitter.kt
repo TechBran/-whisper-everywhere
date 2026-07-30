@@ -109,7 +109,12 @@ object ClauseSplitter {
             val c = s[p]
             // A hyphen counts only when spaced (punctuation dash), never inside "state-of-the-art".
             val isDash = c == '-' && p + 1 < s.length && s[p + 1].isWhitespace()
-            if ((c in CLAUSE || isDash) && p + 1 - start >= MIN_CHARS) return p + 1
+            // A ',' or ':' flanked by digits is a thousands separator ("1,234,567") or a
+            // time/ratio colon ("3:30"), not a clause boundary. The isTerminatorAt decimal guard
+            // protects only '.'; without this, a number is voiced split across two utterances.
+            val insideNumber = (c == ',' || c == ':') &&
+                p > 0 && s[p - 1].isDigit() && p + 1 < s.length && s[p + 1].isDigit()
+            if (!insideNumber && (c in CLAUSE || isDash) && p + 1 - start >= MIN_CHARS) return p + 1
             p--
         }
         return null

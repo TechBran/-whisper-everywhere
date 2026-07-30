@@ -83,6 +83,31 @@ class ClauseSplitterTest {
         assertTrue("3.5 was split", units.none { it.endsWith("3.") || it.startsWith("5 ") })
     }
 
+    @Test fun a_thousands_separator_comma_is_never_a_clause_boundary() {
+        // The number sits early so char-80 window search lands on its commas; without the
+        // digit guard the unit would end "...1,234," and sherpa would voice a broken number.
+        val s = "the total was 1,234,567 and it then climbed steadily over the next few weeks ahead."
+        assertTrue(s.length > cap())
+        val units = ClauseSplitter.plan(s)
+        each(units)
+        assertTrue("thousands number was split across units: $units",
+            units.any { it.contains("1,234,567") })
+        units.forEach { u ->
+            assertTrue("unit ends inside a number: \"$u\"", !Regex("\\d,$").containsMatchIn(u))
+        }
+    }
+
+    @Test fun a_time_or_ratio_colon_is_never_a_clause_boundary() {
+        val s = "the meeting is at 3:30 and everyone must arrive on time or the schedule slips today."
+        assertTrue(s.length > cap())
+        val units = ClauseSplitter.plan(s)
+        each(units)
+        assertTrue("time colon was split across units: $units", units.any { it.contains("3:30") })
+        units.forEach { u ->
+            assertTrue("unit ends inside a time/ratio: \"$u\"", !Regex("\\d:$").containsMatchIn(u))
+        }
+    }
+
     @Test fun common_abbreviations_are_not_sentence_boundaries() {
         listOf("e.g.", "i.e.", "Dr.", "Mr.", "etc.").forEach { abbr ->
             val a = "consider the smaller portable devices $abbr the handheld field units we shipped"
