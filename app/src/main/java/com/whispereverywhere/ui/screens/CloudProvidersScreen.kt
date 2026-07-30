@@ -333,6 +333,21 @@ fun CloudProvidersScreen(
                             app.preferencesManager.sttProviderId = next
                             sttProviderId = next
                         }
+                        // The SAME rule for read-aloud (a distinct data class: selected TEXT, not
+                        // audio). Without this, removing a provider's key cleared only the STT
+                        // selection while ttsProviderId / its stored voice survived — so re-adding
+                        // the key silently resumed text egress in ONE action, defeating the
+                        // two-deliberate-actions gate the app enforces for STT and advertises in the
+                        // privacy policy. Clear the read-aloud engine if it was this provider, and
+                        // always drop this provider's stored voice (setTtsCloudVoiceId's own doc:
+                        // "Clearing keeps the store tidy on key removal").
+                        val ttsNext = selectionAfterKeyRemoval(
+                            app.preferencesManager.ttsProviderId, provider.id,
+                        )
+                        if (ttsNext != app.preferencesManager.ttsProviderId) {
+                            app.preferencesManager.ttsProviderId = ttsNext
+                        }
+                        app.preferencesManager.setTtsCloudVoiceId(provider.id, null)
                     },
                 )
                 Spacer(modifier = Modifier.height(12.dp))

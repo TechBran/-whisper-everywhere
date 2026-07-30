@@ -322,6 +322,26 @@ class CloudProvidersScreenLogicTest {
         assertNull(selectionAfterKeyRemoval(null, ProviderId.OPENAI))
     }
 
+    // The SAME rule governs the read-aloud (TTS) engine selection, which onKeyRemoved now clears
+    // through this very function — a cloud VOICE selection sends selected TEXT off-device, so it
+    // must not outlive its credential any more than the STT audio selection does. (The stored
+    // per-provider voice is dropped unconditionally alongside; that is a pref side-effect the
+    // Compose closure performs, verified by compile + review, but the engine-clear decision is
+    // this pure witness.)
+
+    @Test fun removing_the_selected_read_aloud_providers_key_returns_to_on_device_voice() {
+        assertNull(selectionAfterKeyRemoval(ProviderId.ELEVENLABS.name, ProviderId.ELEVENLABS))
+        assertNull(selectionAfterKeyRemoval(ProviderId.OPENAI.name, ProviderId.OPENAI))
+    }
+
+    @Test fun removing_a_different_providers_key_leaves_the_read_aloud_selection_alone() {
+        // A user reading aloud through OpenAI who removes an unused Gemini key keeps their voice.
+        assertEquals(
+            ProviderId.OPENAI.name,
+            selectionAfterKeyRemoval(ProviderId.OPENAI.name, ProviderId.GEMINI),
+        )
+    }
+
     // ---- sttSelectableProviders: selecting is what starts transmission, so it needs consent ----
 
     @Test fun a_configured_provider_is_offered_once_the_disclosure_is_accepted() {
