@@ -259,4 +259,51 @@ class ClauseSplitterTest {
         each(units)
         assertEquals(prose.filter { !it.isWhitespace() }, units.joinToString(" ").filter { !it.isWhitespace() })
     }
+
+    // --- The parameterized CLOUD cap: cloud fetch cost is a round-trip independent of audio length,
+    // so larger units bank more audio per POST and hide the next fetch's RTT. The default arg keeps
+    // the on-device path byte-identical; a cloud fall-back re-splits a cloud unit at the local cap. ---
+
+    @Test fun the_default_cap_is_unchanged_so_the_on_device_path_is_byte_identical() {
+        // plan(clean) and plan(clean, SPLIT_MAX_CHARS) must be the same list — the regression contract.
+        val giant = ("the road climbed steadily past the old quarry and the light kept fading, "
+            .repeat(7).trim() + ".")
+        assertEquals(ClauseSplitter.plan(giant), ClauseSplitter.plan(giant, ClauseSplitter.SPLIT_MAX_CHARS))
+    }
+
+    @Test fun the_cloud_cap_is_larger_so_it_banks_more_audio_per_fetch() {
+        // At the cloud cap the same over-cap sentence produces FEWER, LARGER units than at the local
+        // cap — each fetch banks more audio to hide the next round-trip.
+        val giant = ("the road climbed steadily past the old quarry and the light kept fading, "
+            .repeat(9).trim() + ".")
+        val local = ClauseSplitter.plan(giant, ClauseSplitter.SPLIT_MAX_CHARS)
+        val cloud = ClauseSplitter.plan(giant, ClauseSplitter.CLOUD_SPLIT_MAX_CHARS)
+        assertTrue("cloud units should be fewer: local=${local.size} cloud=${cloud.size}", cloud.size < local.size)
+        assertTrue(ClauseSplitter.CLOUD_SPLIT_MAX_CHARS > ClauseSplitter.SPLIT_MAX_CHARS)
+    }
+
+    @Test fun cloud_units_never_exceed_the_cloud_cap_and_preserve_content() {
+        val giant = ("the road climbed steadily past the old quarry and the light kept fading, "
+            .repeat(9).trim() + ".")
+        val cloud = ClauseSplitter.plan(giant, ClauseSplitter.CLOUD_SPLIT_MAX_CHARS)
+        cloud.forEach {
+            assertTrue("unit over cloud cap (${it.length})", it.length <= ClauseSplitter.CLOUD_SPLIT_MAX_CHARS)
+        }
+        assertEquals(giant.filter { !it.isWhitespace() }, cloud.joinToString("").filter { !it.isWhitespace() })
+    }
+
+    @Test fun a_cloud_unit_re_split_at_the_local_cap_is_bank_safe_for_the_local_fallback() {
+        // The fall-back contract: a cloud unit that fails is re-split at the local cap before it
+        // reaches sherpa, so each resulting sub-unit is bank-safe (the same 3262 ms bound the local
+        // path guarantees). Re-splitting every cloud unit and checking each sub-unit proves it.
+        val giant = ("the road climbed steadily past the old quarry and the light kept fading, "
+            .repeat(9).trim() + ".")
+        ClauseSplitter.plan(giant, ClauseSplitter.CLOUD_SPLIT_MAX_CHARS).forEach { cloudUnit ->
+            ClauseSplitter.plan(cloudUnit, ClauseSplitter.SPLIT_MAX_CHARS).forEach { sub ->
+                assertTrue("re-split sub over local cap (${sub.length})", sub.length <= ClauseSplitter.SPLIT_MAX_CHARS)
+                val synthMs = (0.73 * ClauseSplitter.estimateAudioMs(sub.length)).toLong()
+                assertTrue("re-split sub would starve the bank: $synthMs ms > 3262 ms", synthMs <= 3262L)
+            }
+        }
+    }
 }

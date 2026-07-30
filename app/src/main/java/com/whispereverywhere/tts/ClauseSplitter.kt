@@ -24,6 +24,26 @@ object ClauseSplitter {
     const val SPLIT_MAX_CHARS = 80
 
     /**
+     * The unit cap for CLOUD synthesis. Cloud inverts the local economics [SPLIT_MAX_CHARS] was
+     * derived for: a unit's fetch cost is a network round-trip INDEPENDENT of its audio length, so
+     * the smaller the unit the worse the ratio — an 80-char unit banks ~3.6 s of audio but still
+     * costs a full POST (commonly 1-4 s, worse on cellular), and whenever RTT(N+1) > audio_dur(N)
+     * the bank drains and playback stutters at every clause boundary. The producer loop is only ever
+     * ONE unit ahead (runBlocking per unit), so smaller units cannot be hidden by pipelining.
+     *
+     * The local OOM/underrun rationale for 80 does NOT bind cloud: cloud PCM never becomes a sherpa
+     * whole-utterance float[] (only its decoded PCM appends to the bank), so the cap can be raised
+     * to bank enough audio to hide the next fetch's RTT. 220 chars ~ 9.9 s of audio at MS_PER_CHAR,
+     * comfortably over a 1-4 s RTT. On cloud FALLBACK the failed unit is re-split back down to
+     * [SPLIT_MAX_CHARS] before it reaches sherpa, so the local bound is preserved for on-device.
+     *
+     * Trade-off: a larger FIRST unit (TTFW = its full fetch). Accepted as the simplest correct fix;
+     * a progressive first-small-then-large cap is a possible later refinement. Real per-provider RTT
+     * is unmeasured here and should be validated on device.
+     */
+    const val CLOUD_SPLIT_MAX_CHARS = 220
+
+    /**
      * The comfortable aim point (0.73 * 60 * 45 = 1971 ms << 3262 ms bank). A long sentence is cut
      * as LATE as the cap allows, not down to this target, because fewer/larger fragments mean fewer
      * synthesized seam boundaries (findings on per-unit overhead and seam prosody). The target is
@@ -58,11 +78,11 @@ object ClauseSplitter {
      * then a conjunction, then any word boundary, then (last resort) a hard cut that never lands
      * inside a surrogate pair; a short trailing remainder is rebalanced rather than left a sliver.
      */
-    fun plan(clean: String): List<String> {
-        if (clean.length <= SPLIT_MAX_CHARS) return listOf(clean)
+    fun plan(clean: String, maxChars: Int = SPLIT_MAX_CHARS): List<String> {
+        if (clean.length <= maxChars) return listOf(clean)
         val out = ArrayList<String>()
         for (sentence in splitIntoSentences(clean)) {
-            if (sentence.length <= SPLIT_MAX_CHARS) out.add(sentence) else out.addAll(splitLongSentence(sentence))
+            if (sentence.length <= maxChars) out.add(sentence) else out.addAll(splitLongSentence(sentence, maxChars))
         }
         // Trim seams (sherpa trims anyway); drop nothing that carried text.
         val trimmed = out.map { it.trim() }.filter { it.isNotEmpty() }
@@ -85,21 +105,21 @@ object ClauseSplitter {
         return out
     }
 
-    /** Greedily bound a single over-cap sentence into <= SPLIT_MAX_CHARS units, no sliver tail. */
-    private fun splitLongSentence(s: String): List<String> {
+    /** Greedily bound a single over-cap sentence into <= [maxChars] units, no sliver tail. */
+    private fun splitLongSentence(s: String, maxChars: Int): List<String> {
         val units = ArrayList<String>()
         var i = 0
         val n = s.length
         while (i < n) {
-            if (n - i <= SPLIT_MAX_CHARS) {
+            if (n - i <= maxChars) {
                 units.add(s.substring(i))
                 break
             }
-            val cut = chooseCut(s, i, i + SPLIT_MAX_CHARS)
+            val cut = chooseCut(s, i, i + maxChars)
             units.add(s.substring(i, cut))
             i = cut
         }
-        rebalanceTail(units)
+        rebalanceTail(units, maxChars)
         return units
     }
 
@@ -111,7 +131,7 @@ object ClauseSplitter {
      * and land on a real boundary (surrogate-safe). A lone unbroken token is the one case a piece
      * may still be short.
      */
-    private fun rebalanceTail(units: MutableList<String>) {
+    private fun rebalanceTail(units: MutableList<String>, maxChars: Int) {
         if (units.size < 2) return
         val last = units.last()
         if (last.trim().length >= MIN_CHARS) return
@@ -119,7 +139,7 @@ object ClauseSplitter {
         val merged = prev + last // exact content; seams are trimmed by the caller
         units.removeAt(units.size - 1)
         units.removeAt(units.size - 1)
-        if (merged.length <= SPLIT_MAX_CHARS) {
+        if (merged.length <= maxChars) {
             units.add(merged)
         } else {
             // Aim the cut at the target; clamp so the second piece is still >= MIN. Since merged is

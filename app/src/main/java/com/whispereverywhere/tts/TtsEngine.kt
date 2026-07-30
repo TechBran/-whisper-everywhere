@@ -463,23 +463,40 @@ class TtsEngine(
                 var consecutiveSoft = 0
                 var softLatched = false
                 try {
-                    // Bound each synthesis unit so sherpa's whole-utterance float[] stays small
-                    // (OOM bound, 6A.5) and no unit outruns the banked audio (underrun law, 6A.1).
-                    // A selection within the cap yields a single unit equal to `clean`, so short
-                    // text takes the exact prior path; only long sentences become multiple units.
-                    // Feed order is preserved and cancellation is re-checked between units so
-                    // stop() still lands within one sherpa call (C1).
+                    // Bound each synthesis unit so no unit outruns the banked audio (underrun law,
+                    // 6A.1) and — for the LOCAL path — sherpa's whole-utterance float[] stays small
+                    // (OOM bound, 6A.5). A selection within the cap yields a single unit equal to
+                    // `clean`, so short text takes the exact prior path; only long sentences become
+                    // multiple units. Feed order is preserved and cancellation is re-checked between
+                    // units so stop() still lands within one sherpa call (C1).
                     //
                     // The SEAM: each clause-bounded unit is one cloud synthesis when cloud is active
-                    // and unlatched; on ANY cloud failure the SAME unit is re-synthesized locally and
-                    // the read continues (one-way valve, mirroring STT). Only a Fatal latches the
-                    // rest of the read to local; a Transient/BadUnit falls just this unit back and
-                    // cloud stays eligible for the next. The bank, callback, and playback thread are
-                    // untouched — cloud PCM appends through the same appendToBank as sherpa.
+                    // and unlatched; on ANY cloud failure the SAME unit is re-synthesized locally
+                    // (re-split to the local cap by localResplit) and the read continues (one-way
+                    // valve, mirroring STT). Only a Fatal latches the rest of the read to local; a
+                    // Transient/BadUnit falls just this unit back and cloud stays eligible for the
+                    // next. The bank, callback, and playback thread are untouched — cloud PCM appends
+                    // through the same appendToBank as sherpa.
                     fun local(unit: String) = engine.generateWithCallback(
                         text = unit, sid = speakerId, speed = speed, callback = callback,
                     )
-                    for (unit in ClauseSplitter.plan(clean)) {
+                    // A cloud unit may be up to CLOUD_SPLIT_MAX_CHARS (banking enough audio to hide
+                    // the next fetch's RTT). That is safe for cloud — its PCM never becomes a sherpa
+                    // whole-utterance float[] — but a FALLBACK re-synthesizes the unit on-device, so
+                    // it must be re-split back to the local cap first or the local OOM/underrun bound
+                    // is violated. localResplit is used on every path that reaches sherpa with a unit
+                    // that may exceed the local cap (cloud fall-back, and a latched-to-local unit that
+                    // was planned at the cloud cap). The pure-local read plans at the local cap, so
+                    // its units are already <= cap and take the byte-identical `local(unit)` path.
+                    fun localResplit(unit: String) {
+                        for (sub in ClauseSplitter.plan(unit, ClauseSplitter.SPLIT_MAX_CHARS)) {
+                            if (cancelled()) return
+                            local(sub)
+                        }
+                    }
+                    val unitCap =
+                        if (hasCloud) ClauseSplitter.CLOUD_SPLIT_MAX_CHARS else ClauseSplitter.SPLIT_MAX_CHARS
+                    for (unit in ClauseSplitter.plan(clean, unitCap)) {
                         if (cancelled()) break
                         val latched = latchedFatal != null || softLatched
                         when (planUnitOutcome(hasCloud, latched, synthResult = null)) {
@@ -517,12 +534,16 @@ class TtsEngine(
                                             }
                                         }
                                         if (err != null) fallbackSnap?.invoke(err)
-                                        local(unit)
+                                        // The failed unit is at the cloud cap — re-split to the local
+                                        // cap before it reaches sherpa.
+                                        localResplit(unit)
                                     }
                                     else -> consecutiveSoft = 0 // Cloud delivered: reset the streak.
                                 }
                             }
-                            else -> local(unit) // UnitAction.Local: on-device voice (default or latched).
+                            // UnitAction.Local: on-device voice. A latched cloud read left this unit
+                            // at the cloud cap, so re-split; a pure-local read is already <= cap.
+                            else -> if (hasCloud) localResplit(unit) else local(unit)
                         }
                     }
                 } finally {
