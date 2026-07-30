@@ -50,10 +50,19 @@ class ElevenLabsSttTest {
         assertTrue(!f2.lastFields.containsKey("language_code"))
     }
 
-    @Test fun a_401_is_fatal_invalid_key() = runBlocking {
+    @Test fun a_plain_401_is_fatal_invalid_key() = runBlocking {
         val (_, p) = provider(HttpResult.HttpError(401, ""))
         val r = p.transcribe(pcm, null) as SttResult.Failed
         assertEquals(FatalKind.INVALID_KEY, (r.error as SttError.Fatal).kind)
+    }
+
+    @Test fun a_401_with_a_quota_body_is_fatal_out_of_credit_not_invalid_key() = runBlocking {
+        // ElevenLabs has signalled exhausted credit with 401 + a quota body. Reporting that as
+        // INVALID_KEY sends the user to delete a good key instead of topping up.
+        val body = """{"detail":{"status":"quota_exceeded"}}"""
+        val (_, p) = provider(HttpResult.HttpError(401, body))
+        val r = p.transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.OUT_OF_CREDIT, (r.error as SttError.Fatal).kind)
     }
 
     @Test fun a_422_validation_error_is_a_bad_segment() = runBlocking {

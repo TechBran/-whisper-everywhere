@@ -18,6 +18,8 @@ private data class ElevenLabsTranscription(val text: String = "")
  *  - The audio is WAV-wrapped (the `file` part carries a real container).
  *  - Auth is the bare `xi-api-key` header (no Bearer), from the catalog.
  *  - 422 is a validation error for THIS segment (BadSegment), NOT an account fault.
+ *  - 401 splits: a quota marker in the body is exhausted credit (OUT_OF_CREDIT, top up), a plain
+ *    401 is a rejected key (INVALID_KEY). ElevenLabs has used 401 for both, unlike OpenAI.
  *  - 429 splits: a quota marker in the body is exhausted credit (Fatal), plain 429 is Transient.
  *
  * Never log the key, the headers, or the transcript — status codes only.
@@ -70,7 +72,15 @@ class ElevenLabsStt(
     private fun classify(code: Int, body: String): SttError {
         android.util.Log.w("WE-DIAG", "elevenlabs stt http $code")   // status code ONLY
         return when (code) {
-            401 -> SttError.Fatal(FatalKind.INVALID_KEY, "Key rejected")
+            // ElevenLabs has signalled exhausted credit with 401 + a quota body, not 429. Check the
+            // quota markers FIRST so an out-of-credit account is reported as OUT_OF_CREDIT (top up),
+            // not INVALID_KEY (delete a perfectly good key). Both still latch + fall back to local;
+            // only the remediation the user is told differs. Mirrors the 429 split below.
+            401 -> if (QUOTA_MARKERS.any { body.contains(it, ignoreCase = true) }) {
+                SttError.Fatal(FatalKind.OUT_OF_CREDIT, "Account has no remaining credit")
+            } else {
+                SttError.Fatal(FatalKind.INVALID_KEY, "Key rejected")
+            }
             403 -> SttError.Fatal(FatalKind.FORBIDDEN, "Access denied for this key")
             400, 413, 422 -> SttError.BadSegment
             429 -> if (QUOTA_MARKERS.any { body.contains(it, ignoreCase = true) }) {
