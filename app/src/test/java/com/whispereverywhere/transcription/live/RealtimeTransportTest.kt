@@ -61,6 +61,8 @@ class RealtimeTransportTest {
     private class RecordingListener : RealtimeTransport.Listener {
         val deltas = mutableListOf<Pair<String, String>>()
         val completed = mutableListOf<Pair<String, String>>()
+        val committed = mutableListOf<String>()
+        val failed = mutableListOf<String>()
         val errors = mutableListOf<Pair<String?, Int>>()
         val fatals = mutableListOf<Pair<FatalKind, Int>>()
         var connects = 0
@@ -68,6 +70,8 @@ class RealtimeTransportTest {
         override fun onConnected() { connects++ }
         override fun onDelta(itemId: String, text: String) { deltas += itemId to text }
         override fun onCompleted(itemId: String, transcript: String) { completed += itemId to transcript }
+        override fun onCommitted(itemId: String) { committed += itemId }
+        override fun onTranscriptionFailed(itemId: String) { failed += itemId }
         override fun onErrorEvent(code: String?, messageLength: Int) { errors += code to messageLength }
         override fun onDisconnected() { disconnects++ }
         override fun onFatal(kind: FatalKind, code: Int) { fatals += kind to code }
@@ -177,6 +181,24 @@ class RealtimeTransportTest {
 
         assertEquals(listOf("it_1" to "hel"), r.listener.deltas)
         assertEquals(listOf("it_1" to "hello"), r.listener.completed)
+    }
+
+    @Test fun inbound_committed_and_failed_dispatched_to_listener() {
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+
+        r.factory.lastListener.onMessage(
+            r.factory.lastSocket,
+            """{"type":"input_audio_buffer.committed","item_id":"it_5"}""",
+        )
+        r.factory.lastListener.onMessage(
+            r.factory.lastSocket,
+            """{"type":"conversation.item.input_audio_transcription.failed","item_id":"it_5"}""",
+        )
+
+        assertEquals(listOf("it_5"), r.listener.committed)
+        assertEquals(listOf("it_5"), r.listener.failed)
     }
 
     @Test fun inbound_error_event_surfaces_length_only_never_content() {

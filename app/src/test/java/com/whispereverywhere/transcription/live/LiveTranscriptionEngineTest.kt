@@ -108,10 +108,10 @@ class LiveTranscriptionEngineTest {
         }
     }
 
-    private inner class Harness(maxBacklog: Int) {
+    private inner class Harness(maxBacklog: Int, minCommitBytes: Int) {
         lateinit var transport: FakeTransport
         val l = Rec()
-        val engine = LiveTranscriptionEngine("sk-test", scope(), maxBacklog) { listener ->
+        val engine = LiveTranscriptionEngine("sk-test", scope(), maxBacklog, minCommitBytes) { listener ->
             FakeTransport(listener).also { transport = it }
         }
         init { harnesses += this }
@@ -119,8 +119,10 @@ class LiveTranscriptionEngineTest {
 
     private val harnesses = Collections.synchronizedList(mutableListOf<Harness>())
 
-    private fun connected(maxBacklog: Int = 128): Harness =
-        Harness(maxBacklog).also { it.engine.connect(null, it.l) }
+    // minCommitBytes defaults to 0 here so the correlation tests can drive turns with tiny fixtures;
+    // the sub-minimum test passes the real 3200 B threshold explicitly.
+    private fun connected(maxBacklog: Int = 128, minCommitBytes: Int = 0): Harness =
+        Harness(maxBacklog, minCommitBytes).also { it.engine.connect(null, it.l) }
 
     // ---------------------------------------------------------------- the capture thread
 
@@ -160,6 +162,7 @@ class LiveTranscriptionEngineTest {
         val h = connected()
         h.engine.sendAudio(byteArrayOf(1)); assertEquals(0L, h.engine.commit())
 
+        h.transport.listener.onCommitted("it_1") // commit ack binds it_1 -> seq 0
         h.transport.listener.onCompleted("it_1", "  hello world \n")
         assertEquals(1, h.l.all.size)
         assertEquals(0L to SegmentOutcome.Text("hello world"), h.l.all.single())
@@ -172,14 +175,17 @@ class LiveTranscriptionEngineTest {
 
     @Test fun out_of_order_completions_resolve_correct_seqs() {
         // The documented case: "Ordering between completion events from different speech turns isn't
-        // guaranteed. Use item_id." item_ids surface in first-mention order (A's deltas precede B's,
-        // because A committed first), so the completions may then arrive in any order.
+        // guaranteed. Use item_id." The commit ACKS arrive in commit order (A before B) and are what
+        // bind item_id<->seq; the completions may then arrive in any order and still land correctly.
         val h = connected()
         h.engine.sendAudio(byteArrayOf(1)); assertEquals(0L, h.engine.commit()) // turn A
         h.engine.sendAudio(byteArrayOf(2)); assertEquals(1L, h.engine.commit()) // turn B
 
-        h.transport.listener.onDelta("it_A", "al")   // binds it_A -> seq 0 (oldest unbound)
-        h.transport.listener.onDelta("it_B", "br")   // binds it_B -> seq 1
+        h.transport.listener.onCommitted("it_A") // ack order is commit order: it_A -> seq 0
+        h.transport.listener.onCommitted("it_B") // it_B -> seq 1
+
+        h.transport.listener.onDelta("it_A", "al")   // preview only; binding already fixed by the acks
+        h.transport.listener.onDelta("it_B", "br")
         assertEquals(listOf("al", "br"), h.l.deltas)  // deltas forwarded, never resolve
 
         h.transport.listener.onCompleted("it_B", "bravo")  // later turn finishes first
@@ -188,6 +194,70 @@ class LiveTranscriptionEngineTest {
         val bySeq = h.l.all.toMap()
         assertEquals(SegmentOutcome.Text("bravo"), bySeq[1L])
         assertEquals(SegmentOutcome.Text("alpha"), bySeq[0L])
+    }
+
+    @Test fun deltaless_turns_bind_by_committed_ack_not_by_completion_race() {
+        // Two short turns that each emit a single `completed` with NO prior delta. First-mention
+        // binding would swap them when B completes before A; the committed ACKS (in commit order)
+        // fix the binding first, so the swap is impossible.
+        val h = connected()
+        h.engine.sendAudio(byteArrayOf(1)); assertEquals(0L, h.engine.commit()) // turn A
+        h.engine.sendAudio(byteArrayOf(2)); assertEquals(1L, h.engine.commit()) // turn B
+
+        h.transport.listener.onCommitted("it_A")
+        h.transport.listener.onCommitted("it_B")
+
+        h.transport.listener.onCompleted("it_B", "bravo") // B's completion races ahead of A's
+        h.transport.listener.onCompleted("it_A", "alpha")
+
+        val bySeq = h.l.all.toMap()
+        assertEquals("B's transcript stays on B's seq", SegmentOutcome.Text("bravo"), bySeq[1L])
+        assertEquals("A's transcript stays on A's seq", SegmentOutcome.Text("alpha"), bySeq[0L])
+    }
+
+    @Test fun a_transcription_failed_resolves_its_seq_Lost_and_keeps_correlation_aligned() {
+        // A per-item failure must resolve THAT seq Lost (fallback rescues) and never strand it to
+        // poison the next turn's binding.
+        val h = connected()
+        h.engine.sendAudio(byteArrayOf(1)); assertEquals(0L, h.engine.commit()) // turn A
+        h.engine.sendAudio(byteArrayOf(2)); assertEquals(1L, h.engine.commit()) // turn B
+
+        h.transport.listener.onCommitted("it_A")
+        h.transport.listener.onCommitted("it_B")
+
+        h.transport.listener.onTranscriptionFailed("it_A") // A cannot be transcribed
+        h.transport.listener.onCompleted("it_B", "bravo")  // B still lands on its own seq
+
+        val bySeq = h.l.all.toMap()
+        assertTrue("the failed turn resolves Lost", bySeq[0L] is SegmentOutcome.Lost)
+        assertTrue("and routes to the local retry", FallbackPolicy.shouldFallBack(bySeq[0L]!!))
+        assertEquals("the next turn is unaffected", SegmentOutcome.Text("bravo"), bySeq[1L])
+    }
+
+    @Test fun a_subminimum_turn_resolves_Lost_without_committing_and_never_poisons_the_next() {
+        // A cough / VAD false-trigger under the ~100 ms server minimum. Committing it would draw an
+        // `input_audio_buffer_commit_empty` with NO item raised, stranding this seq and binding the
+        // next real turn's item onto it (permanent off-by-one). Refuse the commit; resolve Lost.
+        val h = connected(minCommitBytes = 3_200)
+        h.engine.sendAudio(ByteArray(64)) // ~2 ms — far under the minimum
+        val a = h.engine.commit()
+        assertTrue("a too-short turn still allocates a real seq", a >= 0)
+        val (ra, oa) = h.l.next()
+        assertEquals(a, ra)
+        assertTrue("too-short -> Lost, not a server-rejected phantom", oa is SegmentOutcome.Lost)
+        assertTrue("and routes to the local retry", FallbackPolicy.shouldFallBack(oa))
+
+        // Give the sender time; NO commit may be sent for the sub-minimum turn.
+        Thread.sleep(100)
+        assertEquals("no commit is sent for a sub-minimum turn", 0, h.transport.commits.get())
+
+        // A real utterance follows. Its committed ack binds to B, NOT the vanished A.
+        h.engine.sendAudio(ByteArray(4_000)) // >= 3200 B
+        val b = h.engine.commit()
+        assertTrue(b > a)
+        h.transport.listener.onCommitted("it_B")
+        h.transport.listener.onCompleted("it_B", "hello")
+        assertEquals(SegmentOutcome.Text("hello"), h.l.all.toMap()[b])
     }
 
     @Test fun ws_drop_resolves_outstanding_turns_Lost() {

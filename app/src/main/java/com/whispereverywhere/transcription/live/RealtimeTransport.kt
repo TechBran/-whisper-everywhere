@@ -77,6 +77,15 @@ class RealtimeTransport(
         fun onCompleted(itemId: String, transcript: String)
 
         /**
+         * The server acknowledged our commit and created the item [itemId]. Emitted in commit order,
+         * so the consumer binds item_id<->seq HERE (deterministic) rather than on first delta/completed.
+         */
+        fun onCommitted(itemId: String)
+
+        /** A per-item transcription failure: the item [itemId] will yield no transcript. */
+        fun onTranscriptionFailed(itemId: String)
+
+        /**
          * An in-band `error` event. Only the message LENGTH crosses this boundary — never its
          * content. The consumer maps [code] to a fatal latch.
          */
@@ -219,6 +228,8 @@ class RealtimeTransport(
             when (val event = RealtimeEventParser.parse(text)) {
                 is Inbound.Delta -> listener.onDelta(event.itemId, event.text)
                 is Inbound.Completed -> listener.onCompleted(event.itemId, event.transcript)
+                is Inbound.Committed -> listener.onCommitted(event.itemId)
+                is Inbound.Failed -> listener.onTranscriptionFailed(event.itemId)
                 is Inbound.Error -> listener.onErrorEvent(event.code, event.message.length)
                 is Inbound.Ack -> Unit // benign ack — log-and-ignore
                 null -> Unit // unknown/forward-compat type — ignore

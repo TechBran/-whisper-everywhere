@@ -41,10 +41,25 @@ class RealtimeEventParserTest {
 
     @Test fun ack_events_are_recognized_not_dispatched_as_content() {
         assertEquals(Inbound.Ack("session.updated"), RealtimeEventParser.parse("""{"type":"session.updated"}"""))
+    }
+
+    @Test fun committed_ack_carries_the_item_id_for_binding() {
+        // The commit ack is the ordered signal the engine binds item_id<->seq on.
         assertEquals(
-            Inbound.Ack("input_audio_buffer.committed"),
+            Inbound.Committed("it_1"),
             RealtimeEventParser.parse("""{"type":"input_audio_buffer.committed","item_id":"it_1"}"""),
         )
+        // Without an item_id there is nothing to bind: it degrades to a benign ack, never crashes.
+        assertEquals(
+            Inbound.Ack("input_audio_buffer.committed"),
+            RealtimeEventParser.parse("""{"type":"input_audio_buffer.committed"}"""),
+        )
+    }
+
+    @Test fun transcription_failed_parses_to_a_per_item_failure() {
+        val json =
+            """{"type":"conversation.item.input_audio_transcription.failed","item_id":"it_9","error":{"message":"x"}}"""
+        assertEquals(Inbound.Failed("it_9"), RealtimeEventParser.parse(json))
     }
 
     @Test fun unknown_event_type_is_ignored_not_thrown() {

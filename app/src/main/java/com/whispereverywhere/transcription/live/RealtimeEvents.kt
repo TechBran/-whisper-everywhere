@@ -19,8 +19,10 @@ import kotlinx.serialization.json.contentOrNull
  * Inbound events we consume, keyed by their `type` discriminator:
  *  - conversation.item.input_audio_transcription.delta      -> [Inbound.Delta]
  *  - conversation.item.input_audio_transcription.completed  -> [Inbound.Completed]
+ *  - conversation.item.input_audio_transcription.failed     -> [Inbound.Failed]
+ *  - input_audio_buffer.committed                           -> [Inbound.Committed] (carries item_id)
  *  - error                                                  -> [Inbound.Error]
- *  - session.updated / input_audio_buffer.committed         -> [Inbound.Ack] (log-and-ignore)
+ *  - session.updated                                        -> [Inbound.Ack] (log-and-ignore)
  * Every other type -> null (the stream carries many events we do not need; forward-compatible).
  */
 sealed interface Inbound {
@@ -31,12 +33,25 @@ sealed interface Inbound {
     data class Completed(val itemId: String, val transcript: String) : Inbound
 
     /**
+     * The server's ack of our `input_audio_buffer.commit`: it has created the item and assigned it
+     * [itemId]. This is the DETERMINISTIC, in-commit-order signal the engine binds item_id<->seq on
+     * — not the first delta/completed, whose order the protocol does not guarantee across turns.
+     */
+    data class Committed(val itemId: String) : Inbound
+
+    /**
+     * A per-item transcription failure (`...transcription.failed`). The item exists but yields no
+     * transcript, so the engine resolves its bound seq Lost for the local fallback to rescue.
+     */
+    data class Failed(val itemId: String) : Inbound
+
+    /**
      * An in-band error event. [message] is retained for the engine to map [code] -> FatalKind;
      * only its LENGTH is ever logged, never its content (it can echo request detail).
      */
     data class Error(val code: String?, val message: String) : Inbound
 
-    /** A benign acknowledgement (`session.updated`, `input_audio_buffer.committed`). */
+    /** A benign acknowledgement (`session.updated`). */
     data class Ack(val type: String) : Inbound
 }
 
@@ -121,12 +136,15 @@ object RealtimeEventParser {
         return when (obj.string("type")) {
             TYPE_DELTA -> obj.string("item_id")?.let { Inbound.Delta(it, obj.string("delta").orEmpty()) }
             TYPE_COMPLETED -> obj.string("item_id")?.let { Inbound.Completed(it, obj.string("transcript").orEmpty()) }
+            TYPE_FAILED -> obj.string("item_id")?.let { Inbound.Failed(it) }
             TYPE_ERROR -> {
                 val err = obj["error"] as? JsonObject
                 Inbound.Error(code = err?.string("code"), message = err?.string("message").orEmpty())
             }
             TYPE_SESSION_UPDATED -> Inbound.Ack(TYPE_SESSION_UPDATED)
-            TYPE_COMMITTED -> Inbound.Ack(TYPE_COMMITTED)
+            // The commit ack carries the new item's id; without it there is nothing to bind, so it
+            // degrades to a benign ack rather than a null (still forward-compatible).
+            TYPE_COMMITTED -> obj.string("item_id")?.let { Inbound.Committed(it) } ?: Inbound.Ack(TYPE_COMMITTED)
             else -> null
         }
     }
@@ -137,6 +155,7 @@ object RealtimeEventParser {
 
     const val TYPE_DELTA = "conversation.item.input_audio_transcription.delta"
     const val TYPE_COMPLETED = "conversation.item.input_audio_transcription.completed"
+    const val TYPE_FAILED = "conversation.item.input_audio_transcription.failed"
     const val TYPE_ERROR = "error"
     const val TYPE_SESSION_UPDATED = "session.updated"
     const val TYPE_COMMITTED = "input_audio_buffer.committed"

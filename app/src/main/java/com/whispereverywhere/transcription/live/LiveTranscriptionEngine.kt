@@ -53,9 +53,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     caller's scope must NOT be `Dispatchers.Unconfined`, for the same reason batch requires it.
  *
  * item_id↔seq: OpenAI does NOT guarantee ordering between completion events from different turns
- * ("Use item_id"). Turns commit in order, and each turn's item_id first surfaces in order (its
- * deltas stream before the next turn's), so the first `delta`/`completed` naming an unmapped item_id
- * binds it to the OLDEST unbound pending seq. Completions then resolve their bound seq in any order.
+ * ("Use item_id"). It DOES emit `input_audio_buffer.committed` in commit order, each carrying the
+ * new item's id — so binding happens THERE, at the commit ack, mapping each item_id to the OLDEST
+ * unbound bindable seq deterministically. Deltas and completions then resolve their bound seq in any
+ * order. Binding on first delta/completed (as an earlier revision did) let first-mention races swap
+ * transcripts between seqs or strand a seq forever; the ack is the only ordered signal (C4).
  *
  * Never logs transcript content, the key, or audio — lengths and codes only.
  */
@@ -63,6 +65,14 @@ class LiveTranscriptionEngine(
     private val apiKey: String,
     private val scope: CoroutineScope,
     private val maxBacklog: Int = DEFAULT_MAX_BACKLOG,
+    /**
+     * Bytes of 16 kHz PCM16 a turn must carry before we send its commit. The Realtime server rejects
+     * a commit under ~100 ms (`input_audio_buffer_commit_empty`) and raises NO item, which would
+     * strand the turn's seq and poison correlation. A turn below this is resolved Lost locally and
+     * never committed. Default 3200 B = 100 ms; tests pass 0 to exercise the correlation machine
+     * with tiny fixtures.
+     */
+    private val minCommitBytes: Int = DEFAULT_MIN_COMMIT_BYTES,
     /**
      * Builds the transport wired to the engine's own listener. A factory, not a ready-made transport,
      * because [RealtimeTransport] takes its listener at construction and the listener IS this engine
@@ -97,6 +107,8 @@ class LiveTranscriptionEngine(
     private var queuedAppends = 0
     /** Any audio captured since the last cut. This — not the drained queue — is commit()'s emptiness. */
     private var turnHasAudio = false
+    /** Bytes of 16 kHz PCM16 captured since the last cut; gates the sub-minimum commit. Under [bufferLock]. */
+    private var turnAudioBytes = 0
     /** The current turn overflowed the backlog and cannot be delivered whole. */
     private var turnShed = false
     /** Monotonic identity for the CURRENT session, allocated with the cut. Reset per [connect]. */
@@ -171,6 +183,7 @@ class LiveTranscriptionEngine(
         if (pcm.isEmpty()) return
         synchronized(bufferLock) {
             turnHasAudio = true
+            turnAudioBytes += pcm.size // counts even a dropped chunk: the turn still HAD that audio
             if (queuedAppends >= maxBacklog) {
                 turnShed = true
                 return
@@ -186,20 +199,27 @@ class LiveTranscriptionEngine(
         val latched = fatal
         var seq: Long
         var shed: Boolean
+        var tooShort: Boolean
         synchronized(bufferLock) {
             if (!turnHasAudio) return NO_SEGMENT
             seq = nextSeq++
             shed = turnShed
+            // A turn under the server's ~100 ms minimum would be rejected with no item raised,
+            // stranding this seq and mis-binding the next turn. Treat it like a shed turn: resolve
+            // Lost locally, never commit it.
+            tooShort = turnAudioBytes < minCommitBytes
             turnHasAudio = false
             turnShed = false
-            // Only a deliverable turn tells the server to finalize. A shed or fatal turn sends no
-            // commit — its audio is gone or its session is dead — so the server raises no item for it.
-            if (latched == null && !shed) sendQueue.addLast(SendOp.Commit(seq))
+            turnAudioBytes = 0
+            // Only a deliverable turn tells the server to finalize. A shed, fatal, or too-short turn
+            // sends no commit — its audio is gone, its session is dead, or the server would reject it
+            // — so the server raises no item, and this turn owns no bindable slot.
+            if (latched == null && !shed && !tooShort) sendQueue.addLast(SendOp.Commit(seq))
         }
-        if (latched == null && !shed) wakeups.trySend(Unit)
+        val deliverable = latched == null && !shed && !tooShort
+        if (deliverable) wakeups.trySend(Unit)
 
-        val bindable = latched == null && !shed
-        synchronized(correlationLock) { pending[seq] = PendingTurn(seq, owner, bindable) }
+        synchronized(correlationLock) { pending[seq] = PendingTurn(seq, owner, bindable = deliverable) }
 
         // Resolve the dead-on-arrival turns OFF this thread. Doing it inline would fire the owner's
         // callback before FallbackTranscriptionEngine.commit() (which is calling us under its mirror
@@ -208,6 +228,7 @@ class LiveTranscriptionEngine(
         when {
             latched != null -> scope.launch { resolveOnce(seq, SegmentOutcome.Lost(reasonFor(latched))) }
             shed -> scope.launch { resolveOnce(seq, SegmentOutcome.Lost(BACKLOG)) }
+            tooShort -> scope.launch { resolveOnce(seq, SegmentOutcome.Lost(TOO_SHORT)) }
         }
         return seq
     }
@@ -265,13 +286,31 @@ class LiveTranscriptionEngine(
         }
 
         override fun onDelta(itemId: String, text: String) {
-            bindItem(itemId) // first mention binds the item to the oldest unbound seq, in order
-            listener?.onDelta(text) // preview strip ONLY — deltas never resolve, never inject
+            // Preview strip ONLY — deltas never resolve, never inject, and (post-C4) never BIND.
+            // Binding is the committed ack's job; a reordered or delta-less turn cannot shear seqs.
+            listener?.onDelta(text)
+        }
+
+        override fun onCommitted(itemId: String) {
+            // The deterministic, in-commit-order binding point: map this item to the oldest unbound
+            // bindable seq. Every later delta/completed for it resolves the RIGHT seq regardless of
+            // cross-turn event ordering.
+            bindItem(itemId)
         }
 
         override fun onCompleted(itemId: String, transcript: String) {
+            // Normally already bound by the committed ack; bindItem returns that binding. The
+            // fallback bind (oldest unbound) fires only if the ack was missed, so a completed still
+            // resolves rather than strands — but the deterministic path is the ack, not this.
             val seq = bindItem(itemId) ?: return
             resolveOnce(seq, outcomeFor(transcript))
+        }
+
+        override fun onTranscriptionFailed(itemId: String) {
+            // The item exists but produced no transcript. Resolve its bound seq Lost so the fallback
+            // rescues it and it never lingers in `pending` to mis-bind the next turn.
+            val seq = bindItem(itemId) ?: return
+            resolveOnce(seq, SegmentOutcome.Lost(TRANSCRIBE_FAILED))
         }
 
         override fun onErrorEvent(code: String?, messageLength: Int) {
@@ -372,6 +411,7 @@ class LiveTranscriptionEngine(
         queuedAppends = 0
         turnHasAudio = false
         turnShed = false
+        turnAudioBytes = 0
     }
 
     override fun close() {
@@ -425,10 +465,15 @@ class LiveTranscriptionEngine(
         /** Max un-drained append ops before the current turn is shed. ~4 s of capture at 32 ms/chunk. */
         const val DEFAULT_MAX_BACKLOG = 128
 
+        /** ~100 ms of 16 kHz PCM16 (0.1 * 16000 * 2 B) — the Realtime server's minimum commit size. */
+        const val DEFAULT_MIN_COMMIT_BYTES = 3_200
+
         private const val BACKLOG = "network too far behind"
         private const val WS_DROP = "connection dropped"
         private const val CLOSED = "session closed"
         private const val SUPERSEDED = "session restarted"
+        private const val TOO_SHORT = "utterance too short to transcribe"
+        private const val TRANSCRIBE_FAILED = "transcription failed"
 
         private fun reasonFor(kind: FatalKind): String = when (kind) {
             FatalKind.INVALID_KEY -> "key rejected"
