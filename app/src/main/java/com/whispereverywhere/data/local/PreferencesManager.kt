@@ -232,6 +232,20 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
+     * The batch-vs-live axis for cloud STT (C4). false (the default and shipped behaviour) = the
+     * one-shot batch POST; true = word-for-word live streaming over the OpenAI Realtime WebSocket.
+     *
+     * Orthogonal to [sttProviderId], which still names the provider: this only flips HOW the audio
+     * is sent. It is consulted ONLY when the selected provider is OpenAI — the sole provider that
+     * streams — so leaving it true while on Gemini/ElevenLabs is inert (see decideEngineChoice).
+     * Same mic audio, same provider, same v3 disclosure as batch; the ONLY user-visible change is a
+     * new transport and a higher cost tier (~$0.017/min), surfaced on the selector row itself.
+     */
+    var sttLiveMode: Boolean
+        get() = prefs.getBoolean(KEY_STT_LIVE_MODE, false)
+        set(value) { prefs.edit().putBoolean(KEY_STT_LIVE_MODE, value).apply() }
+
+    /**
      * Which engine READS ALOUD. null = on-device Kokoro (the default and the shipped behaviour, the
      * regression contract). A [ProviderId] NAME selects a cloud voice with local Kokoro as the
      * one-way fallback — parallel to [sttProviderId]. Distinct from [ttsVoiceId], which stays the
@@ -293,6 +307,7 @@ class PreferencesManager(private val context: Context) {
          */
         private const val KEY_CLOUD_DISCLOSURE_ACCEPTED = "cloud_disclosure_accepted_v3"
         private const val KEY_STT_PROVIDER = "stt_provider_id"
+        private const val KEY_STT_LIVE_MODE = "stt_live_mode"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
 
         // Whisper API supported languages with display names

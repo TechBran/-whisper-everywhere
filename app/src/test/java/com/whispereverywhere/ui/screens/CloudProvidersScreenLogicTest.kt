@@ -374,4 +374,46 @@ class CloudProvidersScreenLogicTest {
             assertNull(id.name, selectionAfterKeyRemoval(id.name, id))
         }
     }
+
+    // ---- live-mode selector row (C4 Task 5e): OpenAI-only, price-bearing, no speed claim ----
+
+    @Test fun live_mode_row_visible_only_for_openai_with_key_and_disclosure() {
+        assertTrue(
+            liveModeRowVisible(
+                selectedProviderId = ProviderId.OPENAI.name,
+                configured = setOf(ProviderId.OPENAI),
+                disclosureAccepted = true,
+            ),
+        )
+    }
+
+    @Test fun live_mode_row_hidden_for_gemini_and_elevenlabs_which_cannot_stream() {
+        assertFalse(liveModeRowVisible(ProviderId.GEMINI.name, setOf(ProviderId.GEMINI), true))
+        assertFalse(liveModeRowVisible(ProviderId.ELEVENLABS.name, setOf(ProviderId.ELEVENLABS), true))
+    }
+
+    @Test fun live_mode_row_hidden_without_disclosure_key_or_active_selection() {
+        // No v3 disclosure -> hidden: live adds a cost tier, not a new consent surface, so it
+        // stays behind the SAME gate that lets audio leave at all.
+        assertFalse(liveModeRowVisible(ProviderId.OPENAI.name, setOf(ProviderId.OPENAI), false))
+        // Key gone -> hidden: a live toggle must not outlive the credential it would stream with.
+        assertFalse(liveModeRowVisible(ProviderId.OPENAI.name, emptySet(), true))
+        // OpenAI configured but on-device is the selected engine -> hidden: the row is a
+        // sub-option of transcribing THROUGH OpenAI, not a standalone switch.
+        assertFalse(liveModeRowVisible(null, setOf(ProviderId.OPENAI), true))
+    }
+
+    @Test fun live_mode_label_surfaces_the_price_where_the_mode_is_chosen() {
+        assertTrue(liveModeLabel(), liveModeLabel().contains("\$0.017/min"))
+    }
+
+    @Test fun live_mode_copy_says_word_for_word_and_never_claims_speed() {
+        // The mode is honest about WHAT it does (word-for-word), never that it is faster —
+        // measured on-device transcription is a tie at best, so a speed claim would be a lie.
+        val text = liveModeLabel() + " " + liveModeCaption()
+        assertTrue(text, text.contains("word-for-word", ignoreCase = true))
+        listOf("faster", "quicker", "speed", "instant", "quick").forEach { word ->
+            assertFalse(text, text.contains(word, ignoreCase = true))
+        }
+    }
 }

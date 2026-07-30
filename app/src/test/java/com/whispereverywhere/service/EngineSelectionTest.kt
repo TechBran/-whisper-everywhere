@@ -60,6 +60,65 @@ class EngineSelectionTest {
         )
     }
 
+    // --- decideEngineChoice: the C4 live-streaming branch, gated AFTER the local valve ---
+
+    @Test fun live_flag_with_openai_and_key_and_net_gives_CLOUD_LIVE() {
+        assertEquals(
+            EngineChoice.CLOUD_LIVE,
+            decideEngineChoice(
+                sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = true, liveMode = true,
+            ),
+        )
+    }
+
+    @Test fun live_flag_without_key_still_falls_to_LOCAL_NO_KEY() {
+        // The live check sits AFTER the local guards: a dead key resolves to on-device, NEVER a
+        // socket. Live must never bypass the one-way valve batch already obeys.
+        assertEquals(
+            EngineChoice.LOCAL_NO_KEY,
+            decideEngineChoice(
+                sttProviderId = "OPENAI", hasKey = false, hasValidatedNetwork = true, liveMode = true,
+            ),
+        )
+    }
+
+    @Test fun live_flag_offline_gives_LOCAL_OFFLINE() {
+        // Same valve order: no validated network is on-device, not a socket that cannot open.
+        assertEquals(
+            EngineChoice.LOCAL_OFFLINE,
+            decideEngineChoice(
+                sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = false, liveMode = true,
+            ),
+        )
+    }
+
+    @Test fun live_flag_with_non_openai_provider_stays_CLOUD_WITH_FALLBACK() {
+        // Only OpenAI streams (BYOK Realtime WS); Gemini and ElevenLabs cannot, so the flag is
+        // inert for them and the batch-POST path is unchanged.
+        assertEquals(
+            EngineChoice.CLOUD_WITH_FALLBACK,
+            decideEngineChoice(
+                sttProviderId = "GEMINI", hasKey = true, hasValidatedNetwork = true, liveMode = true,
+            ),
+        )
+        assertEquals(
+            EngineChoice.CLOUD_WITH_FALLBACK,
+            decideEngineChoice(
+                sttProviderId = "ELEVENLABS", hasKey = true, hasValidatedNetwork = true, liveMode = true,
+            ),
+        )
+    }
+
+    @Test fun live_flag_OFF_with_openai_stays_batch_so_the_default_path_is_unchanged() {
+        // Additive-only guarantee: OpenAI + key + net with the flag off is the shipped batch path.
+        assertEquals(
+            EngineChoice.CLOUD_WITH_FALLBACK,
+            decideEngineChoice(
+                sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = true, liveMode = false,
+            ),
+        )
+    }
+
     // --- resolveSttProvider: C2b widens live mode to OpenAI, Gemini, and ElevenLabs ---
 
     @Test fun resolves_openai_by_its_stored_name() {

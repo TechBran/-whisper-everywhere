@@ -69,23 +69,31 @@ import kotlinx.coroutines.withContext
  * and there is no path back from [CLOUD_WITH_FALLBACK] to itself once local has taken over — the
  * fallback happens INSIDE [FallbackTranscriptionEngine], never by re-selecting here.
  */
-internal enum class EngineChoice { LOCAL_ONLY, LOCAL_NO_KEY, LOCAL_OFFLINE, CLOUD_WITH_FALLBACK }
+internal enum class EngineChoice { LOCAL_ONLY, LOCAL_NO_KEY, LOCAL_OFFLINE, CLOUD_WITH_FALLBACK, CLOUD_LIVE }
 
 /**
- * Decision table (brief: Release C2a Task 6):
- *  - no provider selected            -> local only (unchanged, pre-cloud path)
- *  - provider selected, no key       -> local, one-time toast
- *  - provider selected, key, offline -> local, one-time toast
- *  - provider selected, key, online  -> cloud, wrapped in the local fallback
+ * Decision table (brief: Release C2a Task 6; C4 adds the live-streaming leaf):
+ *  - no provider selected                    -> local only (unchanged, pre-cloud path)
+ *  - provider selected, no key               -> local, one-time toast
+ *  - provider selected, key, offline         -> local, one-time toast
+ *  - provider selected, key, online          -> cloud batch POST, wrapped in the local fallback
+ *  - + live flag on AND provider is OpenAI   -> cloud LIVE stream, wrapped in the SAME fallback
+ *
+ * The live leaf sits AFTER the local guards on purpose: the one-way valve is untouched, so no key
+ * or no network still resolves to on-device — live never opens a socket the batch path would have
+ * refused. Live is OpenAI-only because only OpenAI's BYOK Realtime WebSocket can stream; the flag
+ * is inert for every other provider, whose batch path is byte-unchanged.
  */
 internal fun decideEngineChoice(
     sttProviderId: String?,
     hasKey: Boolean,
     hasValidatedNetwork: Boolean,
+    liveMode: Boolean = false,
 ): EngineChoice = when {
     sttProviderId == null -> EngineChoice.LOCAL_ONLY
     !hasKey -> EngineChoice.LOCAL_NO_KEY
     !hasValidatedNetwork -> EngineChoice.LOCAL_OFFLINE
+    liveMode && sttProviderId == ProviderId.OPENAI.name -> EngineChoice.CLOUD_LIVE
     else -> EngineChoice.CLOUD_WITH_FALLBACK
 }
 
@@ -164,6 +172,24 @@ class FloatingBubbleService : Service(),
     // composite engine deliberately hides which member answered. Rebuilt with the wrapper each
     // session; nulled with it in onDestroy.
     private var lastCloudEngine: com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine? = null
+
+    // The C4 live engine, kept for the SAME reason as lastCloudEngine — finalize's latch-toast —
+    // but a separate field because LiveTranscriptionEngine is not a CloudTranscriptionEngine (its
+    // lastFatal() returns a FatalKind, not an SttError.Fatal). Exactly one of the two is non-null
+    // per session: resolveTranscriptionEngine nulls both, then sets whichever branch built.
+    private var lastLiveEngine: com.whispereverywhere.transcription.live.LiveTranscriptionEngine? = null
+
+    // Frozen per session in resolveTranscriptionEngine: true only for a CLOUD_LIVE session. Read by
+    // the delta surface to lift the preview strip into a TEXT_FIELD session (deltas render, never
+    // inject). Batch/on-device sessions leave it false, so their behavior is byte-unchanged.
+    @Volatile private var sessionIsLive = false
+
+    // The live WS transport + reconnect executor, held for the service's life for the SAME reason
+    // httpTransport is: a fresh OkHttpClient (dispatcher threads + connection pool) or a fresh
+    // daemon scheduler thread per session would leak on a bubble that stays up for days. Built
+    // lazily so on-device-only and batch-only users never allocate the streaming client.
+    private var liveWsFactory: com.whispereverywhere.transcription.live.WebSocketFactory? = null
+    private var liveReconnectScheduler: com.whispereverywhere.transcription.live.ReconnectScheduler? = null
 
     // The latched-fatal kind the user was last TOLD about — once per latch, not once per session:
     // dictating ten times against a dead key should produce one toast, not ten.
@@ -613,8 +639,11 @@ class FloatingBubbleService : Service(),
         localEngine?.shutdown()
         localEngine = null
         httpTransport = null
+        liveWsFactory = null
+        liveReconnectScheduler = null
         notifiedChoice = null
         lastCloudEngine = null
+        lastLiveEngine = null
         notifiedFatalKind = null
         try {
             windowManager.removeView(bubbleView)
@@ -1479,6 +1508,37 @@ class FloatingBubbleService : Service(),
         httpTransport ?: com.whispereverywhere.net.OkHttpTransport().also { httpTransport = it }
 
     /**
+     * One WebSocket factory for the service's life — see the [liveWsFactory] field comment. Reuses
+     * the standard client CONFIG via [com.whispereverywhere.net.OkHttpTransport.defaultClient]
+     * (OkHttpTransport keeps its own client private, and HttpTransport.kt is outside this task's
+     * files); [com.whispereverywhere.transcription.live.OkHttpWebSocketFactory] then derives the
+     * no-timeout, ping-kept streaming variant the long-lived socket needs.
+     */
+    private fun sharedLiveWsFactory(): com.whispereverywhere.transcription.live.WebSocketFactory =
+        liveWsFactory ?: com.whispereverywhere.transcription.live.OkHttpWebSocketFactory(
+            com.whispereverywhere.net.OkHttpTransport.defaultClient(),
+        ).also { liveWsFactory = it }
+
+    /** One reconnect scheduler (a single daemon thread) for the service's life — see the field comment. */
+    private fun sharedLiveReconnectScheduler(): com.whispereverywhere.transcription.live.ReconnectScheduler =
+        liveReconnectScheduler
+            ?: com.whispereverywhere.transcription.live.ExecutorReconnectScheduler().also { liveReconnectScheduler = it }
+
+    /**
+     * User-facing copy for a live-session [com.whispereverywhere.transcription.cloud.FatalKind],
+     * kept word-for-word identical to the batch providers' `SttError.Fatal` messages so the
+     * latch-toast reads the same whichever transport failed (batch carries its own message string;
+     * the live WS carries only a kind — the handshake body is off-limits for credential safety).
+     */
+    private fun liveFatalMessage(kind: com.whispereverywhere.transcription.cloud.FatalKind): String =
+        when (kind) {
+            com.whispereverywhere.transcription.cloud.FatalKind.INVALID_KEY -> "Key rejected"
+            com.whispereverywhere.transcription.cloud.FatalKind.FORBIDDEN -> "Access denied for this key"
+            com.whispereverywhere.transcription.cloud.FatalKind.OUT_OF_CREDIT -> "Account has no remaining credit"
+            com.whispereverywhere.transcription.cloud.FatalKind.MODEL_UNAVAILABLE -> "Transcription model unavailable"
+        }
+
+    /**
      * Resolves this session's transcription engine, RE-DECIDING the cloud/local question at every
      * session start.
      *
@@ -1510,6 +1570,7 @@ class FloatingBubbleService : Service(),
             sttProviderId = providerId,
             hasKey = !key.isNullOrBlank(),
             hasValidatedNetwork = connectivityMonitor.hasValidatedNetwork(),
+            liveMode = app.preferencesManager.sttLiveMode,
         )
         android.util.Log.i("WE-DIAG", "resolveTranscriptionEngine: providerId=$providerId choice=$choice")
 
@@ -1520,8 +1581,13 @@ class FloatingBubbleService : Service(),
         sourceRouter?.close()
         sourceRouter = null
         // A stale latch must not outlive its engine: after switching to on-device, finalize must
-        // not toast about a fatal from a previous session's cloud engine.
+        // not toast about a fatal from a previous session's cloud engine. Both cloud references are
+        // cleared here; the chosen branch below re-sets exactly one (or neither, for local).
         lastCloudEngine = null
+        lastLiveEngine = null
+        // Frozen fresh each session and read by the delta surface; default off so batch/on-device
+        // sessions keep their exact behavior. Only the CLOUD_LIVE branch flips it on.
+        sessionIsLive = false
 
         val local = warmLocalEngine()
         // Announced when the SHAPE CHANGES, not once per service and not once per session: a user
@@ -1557,6 +1623,37 @@ class FloatingBubbleService : Service(),
                 // docs/PLAY-DECLARATIONS.md §3 and §5) are only true because of this router. The
                 // ROUTE is decided by the capture source alone — never by the provider, the key or
                 // the network, none of which can make third-party audio shippable.
+                com.whispereverywhere.transcription.SourceRoutedTranscriptionEngine(
+                    micEngine = FallbackTranscriptionEngine(cloud, local, serviceScope),
+                    deviceEngine = local,
+                ).also { sourceRouter = it }
+            }
+            EngineChoice.CLOUD_LIVE -> {
+                // OpenAI-only and key-present, both guaranteed by decideEngineChoice: the live leaf
+                // is reachable ONLY when the selected provider is OPENAI and hasKey was true. Same
+                // mic audio, same provider, same v3 disclosure as batch — this swaps the transport
+                // (Realtime WebSocket) and the cost tier, nothing about what data leaves.
+                val cloud = com.whispereverywhere.transcription.live.LiveTranscriptionEngine(
+                    apiKey = requireNotNull(key),
+                    scope = serviceScope,
+                    makeTransport = { transportListener ->
+                        com.whispereverywhere.transcription.live.LiveTranscriptionEngine.realTransport(
+                            com.whispereverywhere.transcription.live.RealtimeTransport(
+                                factory = sharedLiveWsFactory(),
+                                scheduler = sharedLiveReconnectScheduler(),
+                                listener = transportListener,
+                            ),
+                        )
+                    },
+                )
+                lastLiveEngine = cloud
+                sessionIsLive = true
+                // Wired IDENTICALLY to batch: the live engine is the `cloud` member of the SAME
+                // FallbackTranscriptionEngine behind the SAME SourceRoutedTranscriptionEngine. A
+                // dropped socket resolves its turn Lost and the untouched fallback rescues it
+                // locally from the mirrored PCM. The router still decides the ROUTE by capture
+                // source alone, so device (playback) audio remains physically unreachable from this
+                // engine — the same privacy guarantee the batch branch above documents.
                 com.whispereverywhere.transcription.SourceRoutedTranscriptionEngine(
                     micEngine = FallbackTranscriptionEngine(cloud, local, serviceScope),
                     deviceEngine = local,
@@ -1641,6 +1738,8 @@ class FloatingBubbleService : Service(),
 
                     // Show preview text bubble if we are not injecting into a text field
                     if (sessionContext != BubbleContext.TEXT_FIELD) {
+                        // Restore the full-transcript view a prior live session may have hidden.
+                        transcriptionEditText.visibility = View.VISIBLE
                         transcriptionEditText.text = ""
                         transcriptionDeltaText.text = ""
                         transcriptionDeltaText.visibility = View.GONE
@@ -1665,6 +1764,16 @@ class FloatingBubbleService : Service(),
                                 }
                             }
                         }
+                    } else if (sessionIsLive) {
+                        // A live TEXT_FIELD session injects each finished turn into the real field,
+                        // but the field has no affordance for the word-for-word partials — so lift
+                        // the preview STRIP (the delta line only) for live mode. The full-transcript
+                        // editText stays hidden: deltas render on this strip and NEVER inject.
+                        // Completions still flow through the unchanged orderer -> full-field RMW path.
+                        transcriptionEditText.visibility = View.GONE
+                        transcriptionDeltaText.text = ""
+                        transcriptionDeltaText.visibility = View.GONE
+                        transcriptionPreviewContainer.visibility = View.VISIBLE
                     } else {
                         transcriptionPreviewContainer.visibility = View.GONE
                     }
@@ -1681,8 +1790,11 @@ class FloatingBubbleService : Service(),
                 }
             }
             override fun onDelta(text: String) {
-                // On-device engine emits no intra-segment deltas; kept for interface parity.
-                if (sessionContext != BubbleContext.TEXT_FIELD) {
+                // On-device and batch engines emit no intra-segment deltas; only the live engine
+                // does. The strip already renders for NONE/MEDIA_PLAYBACK preview sessions; the
+                // `|| sessionIsLive` clause lifts it into a live TEXT_FIELD session too, where the
+                // onOpen branch above made the container (delta line only) visible for exactly this.
+                if (sessionContext != BubbleContext.TEXT_FIELD || sessionIsLive) {
                     serviceScope.launch(Dispatchers.Main) {
                         if (text.isNotBlank()) {
                             transcriptionDeltaText.visibility = View.VISIBLE
@@ -1784,6 +1896,16 @@ class FloatingBubbleService : Service(),
                 if (notifiedFatalKind != fatal.kind) {
                     notifiedFatalKind = fatal.kind
                     showToast("${fatal.message} — used the on-device model instead")
+                }
+            }
+            // Same latch-toast for a live session: the live engine reports a bare FatalKind (its
+            // WS handshake carries no safe body to build a message from — credential safety), so the
+            // kind is mapped to the same copy the batch providers use. Exactly one of the two
+            // engines is ever non-null per session, and the once-per-latch dedup is shared.
+            lastLiveEngine?.lastFatal()?.let { kind ->
+                if (notifiedFatalKind != kind) {
+                    notifiedFatalKind = kind
+                    showToast("${liveFatalMessage(kind)} — used the on-device model instead")
                 }
             }
 

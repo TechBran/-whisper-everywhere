@@ -195,6 +195,35 @@ internal fun sttSelectionCaption(providerDisplayName: String): String =
     "Audio is sent to $providerDisplayName. If it fails, the on-device model takes over."
 
 /**
+ * Whether the C4 live-mode toggle should be offered. It is a sub-option of transcribing THROUGH
+ * OpenAI, so all three must hold: OpenAI is the SELECTED engine (not merely configured), its key is
+ * stored, and the v3 disclosure is accepted. OpenAI is the only provider whose BYOK Realtime
+ * WebSocket can stream, so no other provider ever shows it.
+ *
+ * Gated on the SAME [disclosureAccepted] v3 flag as selection itself — live adds a cost tier, not a
+ * new data class, so it needs no new consent surface. Requiring the stored key too means the toggle
+ * can never outlive the credential it would stream with.
+ */
+internal fun liveModeRowVisible(
+    selectedProviderId: String?,
+    configured: Set<ProviderId>,
+    disclosureAccepted: Boolean,
+): Boolean =
+    disclosureAccepted &&
+        selectedProviderId == ProviderId.OPENAI.name &&
+        ProviderId.OPENAI in configured
+
+/**
+ * The live-mode row's label. Surfaces the price where the mode is chosen — the ONLY new user-facing
+ * cost disclosure this mode adds (~4x batch). Deliberately makes NO speed claim: "word-for-word",
+ * never "faster". Measured on-device transcription is a tie at best, so a speed claim would be a lie.
+ */
+internal fun liveModeLabel(): String = "Cloud word-for-word (OpenAI) · about \$0.017/min"
+
+/** Sub-copy under the live-mode toggle. Says WHAT it does, never that it is fast. */
+internal fun liveModeCaption(): String = "Transcribes word-for-word as you speak."
+
+/**
  * Body of the one-time cloud disclosure dialog (Release C2a Task 7; extended Task 7 of the cloud
  * TTS plan for v3).
  *
@@ -266,6 +295,10 @@ fun CloudProvidersScreen(
     // Local mirror of the persisted engine selection. null = on-device (the default).
     var sttProviderId by remember { mutableStateOf(app.preferencesManager.sttProviderId) }
 
+    // Local mirror of the batch-vs-live axis (C4). false = one-shot batch POST (the default);
+    // consulted only while OpenAI is the selected engine — see decideEngineChoice.
+    var sttLiveMode by remember { mutableStateOf(app.preferencesManager.sttLiveMode) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -306,6 +339,11 @@ fun CloudProvidersScreen(
                 onSelect = { providerId ->
                     app.preferencesManager.sttProviderId = providerId
                     sttProviderId = providerId
+                },
+                liveMode = sttLiveMode,
+                onLiveModeChange = { enabled ->
+                    app.preferencesManager.sttLiveMode = enabled
+                    sttLiveMode = enabled
                 },
             )
 
@@ -462,6 +500,8 @@ private fun SttEngineSelector(
     selectedProviderId: String?,
     disclosureAccepted: Boolean,
     onSelect: (String?) -> Unit,
+    liveMode: Boolean,
+    onLiveModeChange: (Boolean) -> Unit,
 ) {
     // Off Main: configured() runs a Keystore lookup per provider, same as the masked-key reads
     // below — must not run on the Compose/Main thread.
@@ -501,6 +541,39 @@ private fun SttEngineSelector(
                 modifier = Modifier.padding(start = 40.dp),
             )
         }
+
+        // C4: the word-for-word live toggle, offered only when OpenAI is the selected engine (the
+        // one provider that streams). Same v3 disclosure gate as selection — no new consent surface.
+        if (liveModeRowVisible(selectedProviderId, configured, disclosureAccepted)) {
+            Spacer(modifier = Modifier.height(8.dp))
+            LiveModeRow(enabled = liveMode, onToggle = onLiveModeChange)
+        }
+    }
+}
+
+/**
+ * The live-mode toggle row. Names the mode and its PRICE (the one new cost surface this mode adds)
+ * with a "word-for-word" sub-line and NO speed claim — see [liveModeLabel] / [liveModeCaption].
+ */
+@Composable
+private fun LiveModeRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle(!enabled) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = liveModeLabel(), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = liveModeCaption(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Switch(checked = enabled, onCheckedChange = onToggle)
     }
 }
 
