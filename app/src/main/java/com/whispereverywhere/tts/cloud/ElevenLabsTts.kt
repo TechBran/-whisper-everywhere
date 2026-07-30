@@ -215,8 +215,10 @@ class ElevenLabsTts(
         }
 
         /** Linear-interpolation upsample 16 kHz -> 24 kHz mono PCM16. Mirrors `Resampler.to16k`'s
-         *  math; a rate bridge, not a resampler dependency. */
-        private fun upsample16kTo24k(input: ShortArray): ShortArray {
+         *  math; a rate bridge, not a resampler dependency. `internal` (not private) so the pure
+         *  off-by-one / endpoint-clamp risk is JVM-unit-tested without running MediaCodec — the
+         *  only new arithmetic the mp3 fallback added, and previously reachable on-device only. */
+        internal fun upsample16kTo24k(input: ShortArray): ShortArray {
             if (input.isEmpty()) return input
             val src = 16_000
             val dst = 24_000

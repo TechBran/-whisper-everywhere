@@ -126,4 +126,34 @@ class ElevenLabsTtsTest {
         assertEquals(first, second)
         assertEquals(1, fake.callCount) // second voices() made NO second GET
     }
+
+    // ---- upsample16kTo24k: the ONLY new arithmetic the mp3 fallback added. AudioDecoder is
+    // hardwired to 16 kHz (shared with whisper STT), so the mp3 path upsamples to honor the
+    // 24 kHz bank contract. Linear interpolation with real off-by-one / endpoint-clamp risk that
+    // previously ran on-device only (the tier-rejection test stubs decodeMp3 and never reaches it). ----
+
+    @Test fun upsample_16k_to_24k_lands_the_3_to_2_length_ratio() {
+        // 24000/16000 = 3/2: N input samples -> N*3/2 output samples, truncated.
+        assertEquals(6, ElevenLabsTts.upsample16kTo24k(shortArrayOf(0, 100, 200, 300)).size)
+        assertEquals(3, ElevenLabsTts.upsample16kTo24k(shortArrayOf(10, 20)).size)
+        assertEquals(15, ElevenLabsTts.upsample16kTo24k(ShortArray(10)).size)
+    }
+
+    @Test fun upsample_empty_input_stays_empty() {
+        assertEquals(0, ElevenLabsTts.upsample16kTo24k(ShortArray(0)).size)
+    }
+
+    @Test fun upsample_clamps_the_final_sample_without_index_overflow() {
+        // The last output index maps past the last input sample; minOf(i+1, size-1) must clamp
+        // rather than read out of bounds. A ramp's final upsampled value equals the final input.
+        val ramp = shortArrayOf(0, 100, 200, 300)
+        val out = ElevenLabsTts.upsample16kTo24k(ramp) // no ArrayIndexOutOfBounds
+        assertEquals(300.toShort(), out.last())
+    }
+
+    @Test fun upsample_interpolates_a_known_ramp_linearly() {
+        // input [0,100,200,300] at step 16000/24000 = 0.6667 -> [0,66,133,200,266,300].
+        val out = ElevenLabsTts.upsample16kTo24k(shortArrayOf(0, 100, 200, 300)).toList()
+        assertEquals(listOf<Short>(0, 66, 133, 200, 266, 300), out)
+    }
 }
