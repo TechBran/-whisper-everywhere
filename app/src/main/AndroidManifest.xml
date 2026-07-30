@@ -25,6 +25,10 @@
     <!-- Device-audio capture for media transcription (AudioPlaybackCapture, Android 10+). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
+    <!-- Required for foregroundServiceType="dataSync" on Android 14+ (batch file transcription).
+         Narrowest FGS type that fits "process a picked file to completion"; batch never captures. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <!-- Post notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -106,6 +110,14 @@
             android:name=".service.FloatingBubbleService"
             android:exported="false"
             android:foregroundServiceType="microphone|mediaProjection" />
+
+        <!-- Batch file transcription: decode a user-picked audio file, then transcribe it to
+             completion off the main thread. dataSync is the honest type for "process a saved file";
+             it needs no capture permission because batch has no capture path. -->
+        <service
+            android:name=".service.BatchTranscriptionService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Accessibility Service for Text Injection -->
         <service
