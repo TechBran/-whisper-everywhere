@@ -19,6 +19,8 @@ import com.whispereverywhere.tts.cloud.TtsResult
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -50,6 +52,13 @@ class TtsEngine(
     // which cancels every older task the moment it next checks — nothing can ever "un-cancel"
     // an in-flight task, unlike a shared boolean the next request resets.
     private val generation = java.util.concurrent.atomic.AtomicLong(0)
+
+    // The in-flight cloud synthesis coroutine (async child of the per-unit runBlocking), published
+    // while a fetch is outstanding so stop() and a superseding speak() can CANCEL it — which aborts
+    // the underlying OkHttp Call (transport's invokeOnCancellation) and frees the single synthesis
+    // thread immediately, instead of leaving it blocked in the fetch for up to the 45 s TTS timeout
+    // while a queued next read cannot start. null whenever no cloud fetch is outstanding.
+    @Volatile private var inFlightSynth: Job? = null
 
     // (C2) The AudioTrack is a LOCAL of its executor task — no other thread ever touches it.
     // Cancellation latency stays low because writes happen in ~100 ms slices with a generation
@@ -159,6 +168,11 @@ class TtsEngine(
         // Bumping the generation IS the cancellation of any older task (C1) — nothing resets
         // a shared flag, so an old task can never be "un-cancelled" by a new request.
         val myGen = generation.incrementAndGet()
+        // A newer read supersedes any in-flight cloud fetch. The generation bump above already
+        // cancels it LOGICALLY, but this speak() is queued behind the old task on the single-thread
+        // executor and cannot start until it returns — so cancel the fetch to free the thread now,
+        // rather than waiting out the transport timeout (finding: stop()/next-read responsiveness).
+        inFlightSynth?.cancel()
         cancelIdleUnload()
         paused = false
         speaking = true
@@ -503,20 +517,35 @@ class TtsEngine(
                             UnitAction.Cloud -> {
                                 // runBlocking on the synthesis executor is deliberate: playback runs
                                 // on its own thread and drains banked audio while this unit is in
-                                // flight; cancelled() inside onPcm + the per-unit transport timeout
-                                // keep stop() responsive. cloudSnap/voiceSnap are non-null here.
+                                // flight. The synth runs in an async child whose Job is published to
+                                // [inFlightSynth]; stop() (and a superseding speak()) CANCEL it, which
+                                // — via the transport's Call.await() invokeOnCancellation — aborts the
+                                // in-flight OkHttp Call and unwinds await() with a CancellationException
+                                // in ~one round of coroutine dispatch, instead of blocking this single
+                                // synthesis thread for up to DEFAULT_TTS_TIMEOUT_MS (45 s) while a
+                                // queued next read waits behind it. cloudSnap/voiceSnap are non-null.
                                 val res = runCatching {
                                     runBlocking {
-                                        cloudSnap!!.synth(unit, voiceSnap!!, speed) { pcm ->
-                                            appendToBank(pcm); !cancelled()
+                                        val deferred = async {
+                                            cloudSnap!!.synth(unit, voiceSnap!!, speed) { pcm ->
+                                                appendToBank(pcm); !cancelled()
+                                            }
                                         }
+                                        inFlightSynth = deferred
+                                        try { deferred.await() } finally { inFlightSynth = null }
                                     }
                                 }.getOrElse {
-                                    // A provider that THREW (rather than returning Failed) must never
-                                    // abandon the read: treat it as a non-fatal fall-back for THIS
-                                    // unit, exactly like a Transient — reading never stops.
+                                    // Threw, or was CANCELLED by stop()/a newer speak(): treat as a
+                                    // non-fatal fall-back for THIS unit, exactly like a Transient. The
+                                    // cancelled() checks below unwind the loop promptly; reading never
+                                    // stops (and on cancellation, localResplit's own cancelled() guard
+                                    // makes the fall-back a no-op).
                                     TtsResult.Failed(TtsError.Transient(null))
                                 }
+                                // A stop()/supersede that cancelled the fetch surfaces here as the
+                                // synthetic Transient above — break BEFORE it is counted as a soft
+                                // failure, so a user stop can never spuriously trip the breaker toast.
+                                if (cancelled()) break
                                 when (val post = planUnitOutcome(hasCloud, latched, res)) {
                                     UnitAction.Cancel -> break
                                     is UnitAction.LocalFallback -> {
@@ -607,10 +636,14 @@ class TtsEngine(
 
     /**
      * Instant stop: bumps the generation; the in-flight task cancels at its next slice check
-     * (~100 ms). Safe from any thread — never touches the AudioTrack (C2).
+     * (~100 ms). Safe from any thread — never touches the AudioTrack (C2). Also cancels any
+     * in-flight cloud fetch so a stop() during a slow POST frees the single synthesis thread at
+     * once (aborting the OkHttp Call) rather than leaving it blocked for up to the 45 s TTS timeout
+     * — otherwise a subsequent speak(), queued behind it, would appear to "do nothing".
      */
     fun stop() {
         generation.incrementAndGet()
+        inFlightSynth?.cancel()
         speaking = false
         paused = false // a paused task must wake to observe the cancellation
         // The superseded task won't schedule the unload (it lost ownership) — do it here so a
