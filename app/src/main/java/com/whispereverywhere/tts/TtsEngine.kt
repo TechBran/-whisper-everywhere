@@ -403,9 +403,18 @@ class TtsEngine(
                     }
                 }
                 try {
-                    engine.generateWithCallback(
-                        text = clean, sid = speakerId, speed = speed, callback = callback,
-                    )
+                    // Bound each synthesis unit so sherpa's whole-utterance float[] stays small
+                    // (OOM bound, 6A.5) and no unit outruns the banked audio (underrun law, 6A.1).
+                    // A selection within the cap yields a single unit equal to `clean`, so short
+                    // text takes the exact prior path; only long sentences become multiple units.
+                    // Feed order is preserved and cancellation is re-checked between units so
+                    // stop() still lands within one sherpa call (C1).
+                    for (unit in ClauseSplitter.plan(clean)) {
+                        if (cancelled()) break
+                        engine.generateWithCallback(
+                            text = unit, sid = speakerId, speed = speed, callback = callback,
+                        )
+                    }
                 } finally {
                     // MUST be in a finally. If generateWithCallback throws (OOM on sherpa's
                     // whole-utterance float[], or a native error), skipping this leaves the
