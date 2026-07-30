@@ -85,4 +85,15 @@ object ProviderCatalog {
     )
 
     fun byId(id: ProviderId): Provider = all.first { it.id == id }
+
+    /**
+     * Providers this release can actually synthesize read-aloud through — the TTS analogue of
+     * [com.whispereverywhere.ui.screens.STT_CAPABLE_PROVIDERS]. It is the honest "has a built cloud
+     * TTS adapter" gate and MUST stay in lockstep with [com.whispereverywhere.tts.cloud.TtsProviderFactory]
+     * (whose exhaustive `when` will not compile if a mapped provider is missing here, or vice-versa).
+     * All three ship a [Provider.supportsTts] adapter as of this release; on-device Kokoro remains the
+     * default and the fallback and is never a member of this set.
+     */
+    val TTS_CAPABLE_PROVIDERS: Set<ProviderId> =
+        setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS)
 }

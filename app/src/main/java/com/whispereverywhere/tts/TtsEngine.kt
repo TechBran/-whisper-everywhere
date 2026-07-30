@@ -12,9 +12,14 @@ import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.whispereverywhere.transcription.cloud.FatalKind
+import com.whispereverywhere.tts.cloud.TtsError
+import com.whispereverywhere.tts.cloud.TtsProvider
+import com.whispereverywhere.tts.cloud.TtsResult
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlinx.coroutines.runBlocking
 
 /**
  * On-device read-aloud engine (Track F): Kokoro-82M fp32 via sherpa-onnx, CPU, 4 threads
@@ -52,10 +57,28 @@ class TtsEngine(
     @Volatile private var focusRequest: AudioFocusRequest? = null
     private var unloadRunnable: Runnable? = null
 
-    /** Kokoro speaker id (multi-lang v1_0, see TtsVoices; default af_heart is set by callers). */
+    /** Kokoro speaker id (multi-lang v1_0, see TtsVoices; default af_heart is set by callers). This
+     *  is the LOCAL voice — the default AND the one-way cloud fallback both read through it. */
     @Volatile var speakerId: Int = 0
 
     @Volatile var speed: Float = 1.0f
+
+    /**
+     * Cloud read-aloud selection, resolved by [TtsController] from prefs before each [speak].
+     * null (the default and the shipped path) ⇒ pure on-device Kokoro, byte-identical to before.
+     * When both this and [cloudVoiceId] are set, each clause unit is synthesized through this
+     * provider with a ONE-WAY fall back to the local voice ([speakerId]) on failure — the local
+     * voice stays the default and the fallback, and reading never stops.
+     */
+    @Volatile var cloudProvider: TtsProvider? = null
+    @Volatile var cloudVoiceId: String? = null
+
+    /**
+     * Invoked (on the executor thread) when a cloud unit has ALREADY fallen back to local. Carries
+     * the failure so [TtsController] can toast at most once per latched fatal; non-fatal fall-backs
+     * pass through here too but stay silent. Never blocks — the read has already continued.
+     */
+    @Volatile var onCloudFallback: ((TtsError) -> Unit)? = null
 
     /**
      * Per-slice visual tap: (pcm16 bytes, rms amplitude 0..32767) for every ~100 ms slice as
@@ -131,6 +154,11 @@ class TtsEngine(
         paused = false
         speaking = true
         fun cancelled() = generation.get() != myGen
+        // Snapshot the cloud selection for THIS read on the calling thread, so a concurrent newer
+        // speak() cannot swap the provider mid-read. null (the shipped default) ⇒ pure local path.
+        val cloudSnap = cloudProvider
+        val voiceSnap = cloudVoiceId
+        val fallbackSnap = onCloudFallback
         executor.execute {
             var myFocus: AudioFocusRequest? = null
             var playbackThread: Thread? = null
@@ -202,6 +230,17 @@ class TtsEngine(
                             base += chunk.size
                         }
                         return null
+                    }
+                }
+
+                // ONE bank-append path shared by sherpa's callback and the cloud-synth seam below
+                // (C2): producers only APPEND here; the playback thread remains the AudioTrack's sole
+                // owner. Cloud PCM (24 kHz PCM16 mono, same ShortArray shape) drops in identically.
+                fun appendToBank(pcm: ShortArray) {
+                    synchronized(store) {
+                        store.add(pcm)
+                        storeTotal += pcm.size
+                        availableSamples = storeTotal
                     }
                 }
 
@@ -378,11 +417,7 @@ class TtsEngine(
                             android.util.Log.w("WE-TTS", "retention cap hit — truncating synthesis")
                             return 0
                         }
-                        synchronized(store) {
-                            store.add(pcm)
-                            storeTotal += pcm.size
-                            availableSamples = storeTotal
-                        }
+                        appendToBank(pcm)
                         // Measure callback EXIT -> ENTRY so the AHEAD_CAP backpressure hold below
                         // never reads as slow synthesis (spec 6A.3). The FIRST burst of an
                         // utterance is still logged but is excluded from the summary percentiles
@@ -402,6 +437,12 @@ class TtsEngine(
                         return 1
                     }
                 }
+                // Cloud read-aloud (this read only): a fatal latches the REST of the read to local.
+                // hasCloud is false unless BOTH a provider and a voice were resolved (defence in
+                // depth over TtsController, which sets them together) — so null ⇒ the exact prior
+                // path and the regression contract holds byte-for-byte.
+                val hasCloud = cloudSnap != null && !voiceSnap.isNullOrBlank()
+                var latchedFatal: FatalKind? = null
                 try {
                     // Bound each synthesis unit so sherpa's whole-utterance float[] stays small
                     // (OOM bound, 6A.5) and no unit outruns the banked audio (underrun law, 6A.1).
@@ -409,11 +450,49 @@ class TtsEngine(
                     // text takes the exact prior path; only long sentences become multiple units.
                     // Feed order is preserved and cancellation is re-checked between units so
                     // stop() still lands within one sherpa call (C1).
+                    //
+                    // The SEAM: each clause-bounded unit is one cloud synthesis when cloud is active
+                    // and unlatched; on ANY cloud failure the SAME unit is re-synthesized locally and
+                    // the read continues (one-way valve, mirroring STT). Only a Fatal latches the
+                    // rest of the read to local; a Transient/BadUnit falls just this unit back and
+                    // cloud stays eligible for the next. The bank, callback, and playback thread are
+                    // untouched — cloud PCM appends through the same appendToBank as sherpa.
+                    fun local(unit: String) = engine.generateWithCallback(
+                        text = unit, sid = speakerId, speed = speed, callback = callback,
+                    )
                     for (unit in ClauseSplitter.plan(clean)) {
                         if (cancelled()) break
-                        engine.generateWithCallback(
-                            text = unit, sid = speakerId, speed = speed, callback = callback,
-                        )
+                        when (planUnitOutcome(hasCloud, latchedFatal != null, synthResult = null)) {
+                            UnitAction.Cloud -> {
+                                // runBlocking on the synthesis executor is deliberate: playback runs
+                                // on its own thread and drains banked audio while this unit is in
+                                // flight; cancelled() inside onPcm + the per-unit transport timeout
+                                // keep stop() responsive. cloudSnap/voiceSnap are non-null here.
+                                val res = runCatching {
+                                    runBlocking {
+                                        cloudSnap!!.synth(unit, voiceSnap!!, speed) { pcm ->
+                                            appendToBank(pcm); !cancelled()
+                                        }
+                                    }
+                                }.getOrElse {
+                                    // A provider that THREW (rather than returning Failed) must never
+                                    // abandon the read: treat it as a non-fatal fall-back for THIS
+                                    // unit, exactly like a Transient — reading never stops.
+                                    TtsResult.Failed(TtsError.Transient(null))
+                                }
+                                when (val post = planUnitOutcome(hasCloud, latchedFatal != null, res)) {
+                                    UnitAction.Cancel -> break
+                                    is UnitAction.LocalFallback -> {
+                                        val err = (res as? TtsResult.Failed)?.error
+                                        if (post.latchNow && err is TtsError.Fatal) latchedFatal = err.kind
+                                        if (err != null) fallbackSnap?.invoke(err)
+                                        local(unit)
+                                    }
+                                    else -> Unit // UnitAction.Cloud: the cloud voice delivered the unit.
+                                }
+                            }
+                            else -> local(unit) // UnitAction.Local: on-device voice (default or latched).
+                        }
                     }
                 } finally {
                     // MUST be in a finally. If generateWithCallback throws (OOM on sherpa's
@@ -603,4 +682,47 @@ class TtsEngine(
         private const val RETAIN_CAP_SAMPLES = 30L * 60 * 24_000
         private const val RETAIN_CAP_JOIN_MS = 35L * 60_000
     }
+}
+
+/**
+ * The per-unit seam decision, extracted PURE so it is JVM-unit-testable without the AudioTrack /
+ * sherpa / coroutine machinery around it (that is the whole point of the split — see
+ * TtsEngineSeamTest). It carries the entire one-way valve in one function.
+ *
+ * [synthResult] is null on the PRE-synth call (decide whether this unit even attempts cloud) and
+ * non-null on the POST-synth call (decide what to do with the cloud attempt's result):
+ *  - no cloud, or already latched to local  → [UnitAction.Local]  (the byte-identical prior path)
+ *  - cloud eligible (pre-synth)             → [UnitAction.Cloud]
+ *  - cloud Done (post-synth)                → [UnitAction.Cloud]  (delivered; keep reading on cloud)
+ *  - cloud Cancelled                        → [UnitAction.Cancel] (stop() landed; break the loop)
+ *  - cloud Failed(Fatal)                    → [UnitAction.LocalFallback] latchNow = true
+ *  - cloud Failed(non-fatal)                → [UnitAction.LocalFallback] latchNow = false
+ */
+fun planUnitOutcome(hasCloud: Boolean, latched: Boolean, synthResult: TtsResult?): UnitAction {
+    if (synthResult == null) {
+        return if (hasCloud && !latched) UnitAction.Cloud else UnitAction.Local
+    }
+    return when (synthResult) {
+        is TtsResult.Done -> UnitAction.Cloud
+        is TtsResult.Cancelled -> UnitAction.Cancel
+        is TtsResult.Failed -> UnitAction.LocalFallback(latchNow = synthResult.error is TtsError.Fatal)
+    }
+}
+
+/** What the producer loop does with one clause unit. See [planUnitOutcome]. */
+sealed interface UnitAction {
+    /** Synthesize this unit through the cloud provider (pre-synth); or it was delivered (post-synth). */
+    data object Cloud : UnitAction
+
+    /** Synthesize this unit through the local sherpa voice — no cloud attempt is made. */
+    data object Local : UnitAction
+
+    /**
+     * The cloud attempt failed: re-synthesize THIS unit locally (reading never stops). [latchNow]
+     * true (a Fatal) disables cloud for the REST of this read; false keeps cloud eligible next unit.
+     */
+    data class LocalFallback(val latchNow: Boolean) : UnitAction
+
+    /** onPcm returned false — stop() cancelled the read; break the loop. */
+    data object Cancel : UnitAction
 }

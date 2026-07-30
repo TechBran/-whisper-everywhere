@@ -2,6 +2,8 @@ package com.whispereverywhere.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.whispereverywhere.provider.ProviderId
+import com.whispereverywhere.tts.ttsCloudVoiceKey
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -229,6 +231,32 @@ class PreferencesManager(private val context: Context) {
             else prefs.edit().putString(KEY_STT_PROVIDER, value).apply()
         }
 
+    /**
+     * Which engine READS ALOUD. null = on-device Kokoro (the default and the shipped behaviour, the
+     * regression contract). A [ProviderId] NAME selects a cloud voice with local Kokoro as the
+     * one-way fallback — parallel to [sttProviderId]. Distinct from [ttsVoiceId], which stays the
+     * Kokoro speaker id used for the on-device voice AND the fallback.
+     */
+    var ttsProviderId: String?
+        get() = prefs.getString(KEY_TTS_PROVIDER_ID, null)
+        set(value) {
+            if (value == null) prefs.edit().remove(KEY_TTS_PROVIDER_ID).apply()
+            else prefs.edit().putString(KEY_TTS_PROVIDER_ID, value).apply()
+        }
+
+    /**
+     * The chosen cloud voice for [id], namespaced per provider ([ttsCloudVoiceKey]) so OpenAI's
+     * selection can never be read as Gemini's — a single shared key (or the Kokoro [ttsVoiceId]:Int)
+     * cannot carry a provider voice string. null = none chosen for that provider yet.
+     */
+    fun ttsCloudVoiceId(id: ProviderId): String? = prefs.getString(ttsCloudVoiceKey(id), null)
+
+    /** Set (or, with null/blank, clear) [id]'s cloud voice. Clearing keeps the store tidy on key removal. */
+    fun setTtsCloudVoiceId(id: ProviderId, voiceId: String?) {
+        if (voiceId.isNullOrBlank()) prefs.edit().remove(ttsCloudVoiceKey(id)).apply()
+        else prefs.edit().putString(ttsCloudVoiceKey(id), voiceId).apply()
+    }
+
     companion object {
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_LEGACY_PURGED = "legacy_credential_stores_purged_v1"
@@ -255,10 +283,17 @@ class PreferencesManager(private val context: Context) {
          * so without a bump, 100% of them would have had their consent to "we will do this later"
          * silently treated as consent to doing it now.
          *
-         * v1 is deliberately left in place rather than migrated: an unset v2 simply re-prompts.
+         * v1 is deliberately left in place rather than migrated: an unset later version re-prompts.
+         *
+         * Bumped v2 -> v3 for the cloud read-aloud release. The MEANING changed again: selected
+         * read-aloud TEXT now leaves the device (a NEW data class) when a cloud voice is chosen, so
+         * the disclosure gains "text you select for read-aloud is also sent." Per the same rule that
+         * drove v1 -> v2, the version bumps on the meaning change; v2 stays in the store and an unset
+         * v3 re-prompts everyone who accepted the audio-only v2.
          */
-        private const val KEY_CLOUD_DISCLOSURE_ACCEPTED = "cloud_disclosure_accepted_v2"
+        private const val KEY_CLOUD_DISCLOSURE_ACCEPTED = "cloud_disclosure_accepted_v3"
         private const val KEY_STT_PROVIDER = "stt_provider_id"
+        private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
 
         // Whisper API supported languages with display names
         // See: https://platform.openai.com/docs/guides/speech-to-text/supported-languages
