@@ -82,6 +82,43 @@ class ElevenLabsTtsTest {
         assertEquals(TtsError.BadUnit, r.error)
     }
 
+    // ---- 429 / credit taxonomy: materially under-tested vs OpenAI/Gemini (which pin BOTH 429
+    // directions). A plain 429 must stay recoverable (Transient); only a quota-marked 429 is the
+    // fatal out-of-credit. And a credit fault must NEVER be retried as mp3 — the wasted request
+    // would hide the fatal — which rests entirely on isFormatTierRejection's quota short-circuit. ----
+
+    @Test fun a_plain_429_is_Transient_not_a_credit_fatal() = runBlocking {
+        val fake = bytesFake(HttpResultBytes.HttpError(429, """{"detail":"rate limit exceeded, slow down"}"""))
+        val r = el(fake).synth("hello", "voiceX", 1.0f) { true } as TtsResult.Failed
+        assertTrue(r.error.toString(), r.error is TtsError.Transient)
+        assertEquals(1, fake.callCount) // a 429 is not a format rejection: no mp3 retry
+    }
+
+    @Test fun a_429_with_a_quota_marker_is_Fatal_OUT_OF_CREDIT() = runBlocking {
+        val fake = bytesFake(HttpResultBytes.HttpError(429, """{"detail":{"status":"quota_exceeded"}}"""))
+        val r = el(fake).synth("hello", "voiceX", 1.0f) { true } as TtsResult.Failed
+        assertEquals(FatalKind.OUT_OF_CREDIT, (r.error as TtsError.Fatal).kind)
+        assertEquals(1, fake.callCount)
+    }
+
+    @Test fun a_401_credit_body_that_echoes_pcm_24000_is_OUT_OF_CREDIT_never_an_mp3_retry() = runBlocking {
+        // The exact masquerade the code guards against: ElevenLabs error bodies commonly echo the
+        // request, so an out-of-credit 401 can carry "pcm_24000" (a FORMAT_MARKER). Only the quota
+        // short-circuit in isFormatTierRejection stops that being read as a tier rejection and burning
+        // a wasted mp3 request that would hide the fatal. Assert Fatal OUT_OF_CREDIT with callCount==1.
+        val fake = bytesFake(
+            HttpResultBytes.HttpError(
+                401,
+                """{"detail":{"status":"quota_exceeded","message":"insufficient_quota for output_format pcm_24000"}}""",
+            ),
+        )
+        val collected = mutableListOf<Short>()
+        val r = el(fake).synth("hello", "voiceX", 1.0f) { pcm -> collected.addAll(pcm.toList()); true } as TtsResult.Failed
+        assertEquals(FatalKind.OUT_OF_CREDIT, (r.error as TtsError.Fatal).kind)
+        assertEquals(1, fake.callCount) // NO mp3 retry — the quota short-circuit fired first
+        assertTrue(collected.isEmpty()) // and nothing was delivered
+    }
+
     @Test fun onPcm_returning_false_stops_and_returns_Cancelled() = runBlocking {
         val fake = bytesFake(HttpResultBytes.Ok(200, byteArrayOf(0x00, 0x00)))
         val result = el(fake).synth("hello", "voiceX", 1.0f) { false }
