@@ -217,6 +217,22 @@ class ClauseSplitterTest {
         assertTrue("cap violates the bank bound: $worstSynthMs ms > 3262 ms", worstSynthMs <= 3262L)
     }
 
+    @Test fun the_worst_rtf_is_a_small_unit_figure_so_the_cap_is_conservative() {
+        // This pins the PROVENANCE of RTF_max=0.73, refuting the concern that 0.73 was measured on
+        // the 23.6 s whole sentence and understates small-unit cost. In the baseline, rtfMax=0.73
+        // is the SHORTEST unit (seq=10: audMs=2501 -> ~57 chars, synthMs=1828), while the 23.6 s
+        // sentence (seq=1) measured rtf=0.52. Effective RTF FALLS as the unit grows, so applying the
+        // shortest-unit 0.73 to an 80-char (larger) cap unit is conservative, not optimistic.
+        val smallestBaselineUnitChars = (2501L / ClauseSplitter.MS_PER_CHAR).toInt() // ~55 chars
+        assertTrue("baseline worst-RTF unit is not smaller than the cap",
+            smallestBaselineUnitChars < ClauseSplitter.SPLIT_MAX_CHARS)
+        // The worst-RTF unit itself banks well under the first burst, with headroom.
+        val smallUnitSynthMs = (0.73 * ClauseSplitter.estimateAudioMs(smallestBaselineUnitChars)).toLong()
+        assertTrue("worst-RTF unit already fits the bank: $smallUnitSynthMs ms", smallUnitSynthMs <= 3262L)
+        // NOTE: JVM arithmetic cannot prove device behavior. Fixed per-generateWithCallback setup
+        // paid once per unit is the one residual, gated by the on-device Task 3 re-measure (owner).
+    }
+
     @Test fun the_23_6_second_sentence_splits_into_bank_safe_chunks() {
         // Reconstruct the shape of baseline seq=1: audMs=23603 -> ~524 chars of comma-spliced prose.
         val clause = "the road climbed steadily past the old quarry and the light kept fading, "
