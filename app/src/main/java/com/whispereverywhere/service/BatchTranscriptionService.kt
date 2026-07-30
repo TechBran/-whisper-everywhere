@@ -292,7 +292,15 @@ class BatchTranscriptionService : Service() {
         val meta = store.read(id) ?: return
         if (meta.status == BatchStatus.Done) {
             val text = store.assembledText(meta)
-            TranscriptStore(File(filesDir, "transcripts")).save(meta.createdAtMs, text)
+            // Save the transcript, then apply the SAME rolling 14-day/10 MB retention every other
+            // writer honors. Batch was the one writer that never swept: a user who only ever batches
+            // (never live-dictates) would otherwise grow transcripts/ without bound — and batch
+            // produces the app's largest transcripts (hour-long files). deliver() already runs off
+            // the main thread (runJob is on Dispatchers.Default), so the sweep is safe to run inline.
+            TranscriptStore(File(filesDir, "transcripts")).apply {
+                save(meta.createdAtMs, text)
+                sweep()
+            }
             store.delete(id)
         }
     }
