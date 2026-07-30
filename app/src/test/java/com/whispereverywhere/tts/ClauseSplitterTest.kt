@@ -36,6 +36,31 @@ class ClauseSplitterTest {
         assertEquals(listOf("   "), ClauseSplitter.plan("   "))
     }
 
+    // --- Sentence-scoped guarantee: a sub-cap sentence is never re-cut mid-clause -------------
+
+    @Test fun a_short_sentence_beside_a_long_one_is_fed_whole() {
+        // The bit-identical guarantee is sentence-scoped, not window-scoped: a sub-cap sentence
+        // must be fed whole even when a neighbour pushes the total over the cap. The old greedy
+        // window could not cut at "quiet." (only 19 chars, below MIN) so it merged the short
+        // sentence into a mid-clause slice of the long one.
+        val shortSent = "The room was quiet." // 19 chars, below MIN, <= cap
+        val longSent = "The morning was cold and the streets were completely empty, so the " +
+            "whole city felt like it belonged to no one at all this quiet grey winter day."
+        val units = ClauseSplitter.plan("$shortSent $longSent")
+        each(units)
+        assertTrue("short sentence was re-cut mid-clause: $units", units.contains(shortSent))
+    }
+
+    @Test fun two_sub_cap_sentences_over_the_cap_split_at_the_sentence_boundary() {
+        // Two whole sentences, each <= cap, total > cap: the feed is exactly the two sentences
+        // sherpa would produce internally anyway — no synthesized mid-clause boundary tone.
+        val s1 = "The engine warmed slowly under a grey winter sky."
+        val s2 = "The driver waited by the door without any real impatience."
+        val units = ClauseSplitter.plan("$s1 $s2")
+        each(units)
+        assertEquals(listOf(s1, s2), units)
+    }
+
     // --- Boundary preference: punctuation before conjunctions before hard cuts ----------------
 
     @Test fun splits_prefer_a_comma_boundary() {

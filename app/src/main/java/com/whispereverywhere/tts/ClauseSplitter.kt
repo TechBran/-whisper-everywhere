@@ -32,30 +32,68 @@ object ClauseSplitter {
 
     /**
      * Split [clean] into ordered submission units, each <= SPLIT_MAX_CHARS, text preserved.
-     * A selection already within the cap is returned unchanged as a single element -- this is the
-     * bit-identical fast path the caller feeds through the exact current code line. Longer input
-     * is cut greedily at the strongest boundary in each window: sentence terminator, then clause
-     * punctuation, then a conjunction, then any word boundary, then (last resort) a hard cut that
-     * never lands inside a surrogate pair.
+     *
+     * The split is SENTENCE-SCOPED, not window-scoped. A selection within the cap is returned
+     * unchanged (the bit-identical fast path). Otherwise the text is first cut into sentences at
+     * genuine terminators, then EACH sentence within the cap is fed WHOLE and only a sentence that
+     * alone exceeds the cap is sub-split. This matters because sherpa phonemises per sentence
+     * (batch_size=1, sentence-scoped espeak): feeding whole sub-cap sentences yields exactly the
+     * per-sentence audio sherpa would produce internally from the joined text, so common prose
+     * stays bit-identical. Only a genuinely long sentence -- the one shape that starves the bank
+     * (baseline seq=1: 524 chars, synthMs 12347 > 3262 ms first burst -> the measured 9 s gap) --
+     * is cut mid-clause, and that mid-clause prosody delta is the accepted, underrun-mandated cost.
+     *
+     * Feeding a >cap sentence whole is NOT a safe alternative: an early one would starve the bank
+     * (200 chars -> 0.73*200*45 = 6570 ms synth > 3262 ms bank), exactly the seq=1 failure. So the
+     * whole-feed threshold stays at the bank-safe cap, not a larger char count.
+     *
+     * A long sentence is cut greedily at the strongest boundary in each window: clause punctuation,
+     * then a conjunction, then any word boundary, then (last resort) a hard cut that never lands
+     * inside a surrogate pair; a short trailing remainder is rebalanced rather than left a sliver.
      */
     fun plan(clean: String): List<String> {
         if (clean.length <= SPLIT_MAX_CHARS) return listOf(clean)
+        val out = ArrayList<String>()
+        for (sentence in splitIntoSentences(clean)) {
+            if (sentence.length <= SPLIT_MAX_CHARS) out.add(sentence) else out.addAll(splitLongSentence(sentence))
+        }
+        // Trim seams (sherpa trims anyway); drop nothing that carried text.
+        val trimmed = out.map { it.trim() }.filter { it.isNotEmpty() }
+        return if (trimmed.isEmpty()) listOf(clean) else trimmed
+    }
+
+    /** Cut [s] after every genuine terminator; the remainder (no trailing terminator) is the tail. */
+    private fun splitIntoSentences(s: String): List<String> {
+        val out = ArrayList<String>()
+        var start = 0
+        var p = 0
+        while (p < s.length) {
+            if (isTerminatorAt(s, p)) {
+                out.add(s.substring(start, p + 1))
+                start = p + 1
+            }
+            p++
+        }
+        if (start < s.length) out.add(s.substring(start))
+        return out
+    }
+
+    /** Greedily bound a single over-cap sentence into <= SPLIT_MAX_CHARS units, no sliver tail. */
+    private fun splitLongSentence(s: String): List<String> {
         val units = ArrayList<String>()
         var i = 0
-        val n = clean.length
+        val n = s.length
         while (i < n) {
             if (n - i <= SPLIT_MAX_CHARS) {
-                units.add(clean.substring(i))
+                units.add(s.substring(i))
                 break
             }
-            val cut = chooseCut(clean, i, i + SPLIT_MAX_CHARS)
-            units.add(clean.substring(i, cut))
+            val cut = chooseCut(s, i, i + SPLIT_MAX_CHARS)
+            units.add(s.substring(i, cut))
             i = cut
         }
         rebalanceTail(units)
-        // Trim seams (sherpa trims anyway); drop nothing that carried text.
-        val trimmed = units.map { it.trim() }.filter { it.isNotEmpty() }
-        return if (trimmed.isEmpty()) listOf(clean) else trimmed
+        return units
     }
 
     /**
