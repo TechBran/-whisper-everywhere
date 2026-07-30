@@ -142,13 +142,8 @@ class LiveTranscriptionEngine(
         // old session's seq 0 and the new one's would collide in [pending] and one would never resolve.
         abandonOutstanding(SUPERSEDED)
         senderJob?.cancel()
-        synchronized(bufferLock) {
-            sendQueue.clear()
-            queuedAppends = 0
-            turnHasAudio = false
-            turnShed = false
-            nextSeq = 0L
-        }
+        clearSendBuffer()
+        synchronized(bufferLock) { nextSeq = 0L }
         // The user may have fixed the key or topped up between sessions, so the latch must not outlive
         // the session that earned it.
         fatal = null
@@ -272,6 +267,12 @@ class LiveTranscriptionEngine(
             // The server buffer is gone; the transport reconnects itself. Outstanding turns can never
             // complete, so resolve them Lost for the fallback to rescue from the mirror. nextSeq is
             // NOT reset — the orderer runs continuously across a reconnect.
+            //
+            // Clear the send buffer too: a pre-drop turn's queued Commit (and trailing appends) must
+            // NOT survive to flush onto the reconnected socket. That turn is already being resolved
+            // Lost here; a stale Commit crossing over would commit the fresh socket's partial buffer
+            // into a phantom item that mis-correlates to a later seq. Same reset connect()/close() do.
+            clearSendBuffer()
             abandonOutstanding(WS_DROP)
         }
 
@@ -342,14 +343,17 @@ class LiveTranscriptionEngine(
         synchronized(correlationLock) { itemToSeq.clear() }
     }
 
+    /** Drop every queued send op and reset per-turn flags. Does NOT touch nextSeq or correlation. */
+    private fun clearSendBuffer() = synchronized(bufferLock) {
+        sendQueue.clear()
+        queuedAppends = 0
+        turnHasAudio = false
+        turnShed = false
+    }
+
     override fun close() {
         val owner = listener
-        synchronized(bufferLock) {
-            sendQueue.clear()
-            queuedAppends = 0
-            turnHasAudio = false
-            turnShed = false
-        }
+        clearSendBuffer()
         // Resolve everything still owed BEFORE detaching, so the resolutions reach the session that
         // is still listening for them.
         abandonOutstanding(CLOSED)

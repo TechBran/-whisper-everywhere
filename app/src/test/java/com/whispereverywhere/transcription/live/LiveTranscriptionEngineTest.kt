@@ -195,6 +195,24 @@ class LiveTranscriptionEngineTest {
         assertEquals(2, h.l.all.size)
     }
 
+    @Test fun ws_drop_clears_a_queued_commit_so_it_never_crosses_to_the_reconnected_socket() {
+        // A pre-drop turn's Commit must not survive in the queue to flush onto the fresh socket,
+        // where it would commit that socket's partial buffer into a phantom item (mis-correlation).
+        val h = connected()
+        h.transport.stall() // wedge the sender inside the first append BEFORE any op is enqueued
+        h.engine.sendAudio(byteArrayOf(1))
+        assertEquals(0L, h.engine.commit()) // Commit enqueued; the gated sender cannot reach it
+
+        h.transport.listener.onDisconnected() // resolves seq 0 Lost AND clears the send buffer
+        val (seq, outcome) = h.l.next()
+        assertEquals(0L, seq)
+        assertTrue("the dropped turn resolves Lost", outcome is SegmentOutcome.Lost)
+
+        h.transport.releaseGate() // sender resumes to a cleared queue — no commit may flush
+        Thread.sleep(100)
+        assertEquals("a dropped turn's Commit must not cross onto the socket", 0, h.transport.commits.get())
+    }
+
     // ---------------------------------------------------------------- backpressure
 
     @Test fun backpressure_sheds_turn_as_Lost_never_blocks() {
