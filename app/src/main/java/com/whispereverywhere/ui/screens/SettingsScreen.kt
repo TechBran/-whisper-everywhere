@@ -27,13 +27,84 @@ import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.model.ModelMigration
 import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.WhisperCatalog
+import com.whispereverywhere.net.OkHttpTransport
+import com.whispereverywhere.provider.ProviderCatalog
+import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.WhisperAccessibilityService
+import com.whispereverywhere.tts.cloud.CloudVoice
+import com.whispereverywhere.tts.cloud.ElevenLabsTts
+import com.whispereverywhere.tts.cloud.GeminiTtsVoices
+import com.whispereverywhere.tts.cloud.OpenAiTtsVoices
+import com.whispereverywhere.tts.resolveTtsProvider
 import com.whispereverywhere.ui.theme.*
 import com.whispereverywhere.util.formatBytes
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+// ---------------------------------------------------------------------------------------------
+// Read-aloud voice-picker copy — pure, Compose-free so it is JVM-unit-testable (Task 6). Every
+// user-facing string here is HONEST: a cloud preview spends the user's own key and real money, and
+// two of the three providers expose no speed parameter, so the copy says so plainly. NO speed
+// claim ever appears — a synthesized voice is not sold on being fast.
+// ---------------------------------------------------------------------------------------------
+
+/** The fixed, short sentence a Preview taps synthesizes — a pangram, so every phoneme is heard. */
+internal const val TTS_PREVIEW_SAMPLE = "The quick brown fox jumps over the lazy dog."
+
+/**
+ * Caption under a cloud voice list. A preview runs the REAL provider request against the user's own
+ * key, so it costs them real money — never dressed up, never a speed claim.
+ */
+internal fun ttsPreviewCaption(): String =
+    "Previews use your key and cost real money."
+
+/**
+ * Per-provider price note from the numbers re-verified against live docs 2026-07-30. Honest about
+ * uncertainty (Gemini's TTS models are preview, with no committed GA price) and never a speed claim.
+ * Exhaustive over [ProviderId] so a fourth provider must get its own reviewed line, not inherit one.
+ */
+internal fun ttsProviderPriceNote(providerId: ProviderId): String = when (providerId) {
+    ProviderId.OPENAI ->
+        "About \$0.015 per minute of audio, billed to your OpenAI key."
+    ProviderId.ELEVENLABS ->
+        "About half a credit per character, billed to your ElevenLabs plan."
+    ProviderId.GEMINI ->
+        "Preview model — Google's pricing is not final; billed to your Gemini key."
+}
+
+/**
+ * The honest no-speed-control note for the two providers whose synthesis API has no request-time
+ * speed parameter (ElevenLabs, Gemini): the speed setting governs the on-device voice — and the
+ * on-device fallback — only. OpenAI DOES take a speed field, so it shows no such note (null).
+ * This is a disclosure, not a speed claim: it tells the user the control does nothing here.
+ */
+internal fun ttsNoSpeedControlNote(providerId: ProviderId): String? = when (providerId) {
+    ProviderId.ELEVENLABS, ProviderId.GEMINI ->
+        "This provider has no speed control; the speed setting applies to on-device voices only."
+    ProviderId.OPENAI -> null
+}
+
+/**
+ * Friendly name for a stored cloud [voiceId], resolved from the provider's catalog (static for
+ * OpenAI/Gemini, [dynamicVoices] for ElevenLabs). Falls back to the raw id if the catalog does not
+ * carry it (an ElevenLabs id whose dynamic catalog has not been fetched yet), and null when nothing
+ * is chosen — the caller shows "choose a voice". No claim, just a label.
+ */
+internal fun cloudVoiceDisplayName(
+    providerId: ProviderId,
+    voiceId: String?,
+    dynamicVoices: List<CloudVoice>?,
+): String? {
+    if (voiceId.isNullOrBlank()) return null
+    val catalog = when (providerId) {
+        ProviderId.OPENAI -> OpenAiTtsVoices.ALL
+        ProviderId.GEMINI -> GeminiTtsVoices.ALL
+        ProviderId.ELEVENLABS -> dynamicVoices ?: emptyList()
+    }
+    return catalog.firstOrNull { it.voiceId == voiceId }?.displayName ?: voiceId
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,6 +140,25 @@ fun SettingsScreen(
     var showDeleteVoiceDialog by remember { mutableStateOf(false) }
     var showVoicePickerDialog by remember { mutableStateOf(false) }
     var showReadAloudGuide by remember { mutableStateOf(false) }
+
+    // Cloud read-aloud voice selection (Task 6). null engine = on-device Kokoro (the default and
+    // the one-way fallback); a ProviderId NAME routes read-aloud through that cloud voice. The
+    // cloud-voice state mirrors the currently-selected engine's stored voice so the picker's radio
+    // and the Voice row subtitle stay in sync as the user switches engine tabs.
+    var ttsProviderIdState by remember { mutableStateOf(app.preferencesManager.ttsProviderId) }
+    var ttsCloudVoiceIdState by remember {
+        mutableStateOf(
+            resolveTtsProvider(app.preferencesManager.ttsProviderId)
+                ?.let { app.preferencesManager.ttsCloudVoiceId(it) },
+        )
+    }
+    // ElevenLabs' catalog is dynamic (GET /v1/voices), so it is fetched lazily the first time its
+    // tab is viewed and held for this screen's lifetime. An empty fetch (network/key failure) shows
+    // an honest error row, not a silent blank list.
+    val ttsTransport = remember { OkHttpTransport() }
+    var elVoices by remember { mutableStateOf<List<CloudVoice>?>(null) }
+    var elVoicesLoading by remember { mutableStateOf(false) }
+    var elVoicesError by remember { mutableStateOf(false) }
 
     val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
 
@@ -371,8 +461,17 @@ fun SettingsScreen(
                         SettingsItem(
                             icon = Icons.Filled.RecordVoiceOver,
                             title = "Voice",
-                            subtitle = com.whispereverywhere.tts.TtsVoices
-                                .byId(ttsVoiceIdState).displayName + " — tap to change",
+                            subtitle = run {
+                                val cloudId = resolveTtsProvider(ttsProviderIdState)
+                                if (cloudId == null) {
+                                    com.whispereverywhere.tts.TtsVoices
+                                        .byId(ttsVoiceIdState).displayName + " — tap to change"
+                                } else {
+                                    val name = cloudVoiceDisplayName(cloudId, ttsCloudVoiceIdState, elVoices)
+                                    "${ProviderCatalog.byId(cloudId).displayName}: " +
+                                        "${name ?: "choose a voice"} — tap to change"
+                                }
+                            },
                             onClick = { showVoicePickerDialog = true },
                         )
                         SettingsItem(
@@ -748,38 +847,214 @@ fun SettingsScreen(
         )
     }
 
-    // Voice picker (Track F): tap a voice to select it AND hear a short sample in it.
+    // Voice picker (Track F + Task 6): pick the read-aloud ENGINE (on-device Kokoro — the default
+    // and fallback — or a configured cloud provider gated on disclosure v3), then a voice within it.
+    // On-device voices preview for free on tap. A cloud voice is SELECTED on tap (free) and previewed
+    // only via the explicit Preview button, because a cloud preview spends the user's own key.
     if (showVoicePickerDialog) {
+        // Off Main: configured() runs a Keystore lookup per provider. (Suppression: the producer DOES
+        // assign value — the compose-runtime checker just can't see an assignment after a suspend call.)
+        @Suppress("ProduceStateDoesNotAssignValue")
+        val configuredForTts by produceState<Set<ProviderId>>(emptySet()) {
+            value = withContext(Dispatchers.IO) { app.preferencesManager.providerAccounts.configured() }
+        }
+        val selectableTts = ttsSelectableProviders(
+            configured = configuredForTts,
+            disclosureAccepted = app.preferencesManager.cloudDisclosureAccepted,
+        )
+        // Which engine's voice list is on screen. null = on-device Kokoro.
+        val viewedProviderId = resolveTtsProvider(ttsProviderIdState)
+
+        // ElevenLabs' catalog is dynamic — fetch it the first time its tab is viewed, once.
+        if (viewedProviderId == ProviderId.ELEVENLABS) {
+            LaunchedEffect(Unit) {
+                if (elVoices == null && !elVoicesLoading) {
+                    elVoicesLoading = true
+                    elVoicesError = false
+                    val fetched = withContext(Dispatchers.IO) {
+                        val key = app.preferencesManager.providerAccounts.key(ProviderId.ELEVENLABS)
+                        if (key.isNullOrBlank()) emptyList()
+                        else runCatching {
+                            ElevenLabsTts(ttsTransport, key, context.applicationContext).voices()
+                        }.getOrDefault(emptyList())
+                    }
+                    elVoicesLoading = false
+                    // ElevenLabs always returns default voices on success, so an empty list means the
+                    // fetch itself failed (bad key / offline) — show an honest error, not a blank list.
+                    if (fetched.isEmpty()) elVoicesError = true else elVoices = fetched
+                }
+            }
+        }
+
+        // Select a cloud voice (free) — persist so a subsequent read (or Preview) resolves it.
+        fun selectCloudVoice(providerId: ProviderId, voiceId: String) {
+            app.preferencesManager.setTtsCloudVoiceId(providerId, voiceId)
+            ttsCloudVoiceIdState = voiceId
+        }
+        // Preview a cloud voice (costs the user's key) — ensure engine + voice are persisted, then
+        // synthesize the fixed sample through the REAL provider path (falls back to Kokoro on failure).
+        fun previewCloudVoice(providerId: ProviderId, voiceId: String) {
+            app.preferencesManager.ttsProviderId = providerId.name
+            ttsProviderIdState = providerId.name
+            selectCloudVoice(providerId, voiceId)
+            com.whispereverywhere.tts.TtsController.speakFromTrigger(context, TTS_PREVIEW_SAMPLE)
+        }
+
         AlertDialog(
             onDismissRequest = { showVoicePickerDialog = false },
             icon = { Icon(Icons.Filled.RecordVoiceOver, contentDescription = null) },
             title = { Text("Read-aloud voice", fontWeight = FontWeight.Bold) },
             text = {
                 androidx.compose.foundation.lazy.LazyColumn(
-                    modifier = Modifier.heightIn(max = 420.dp)
+                    modifier = Modifier.heightIn(max = 460.dp)
                 ) {
-                    items(com.whispereverywhere.tts.TtsVoices.ALL.size) { i ->
-                        val voice = com.whispereverywhere.tts.TtsVoices.ALL[i]
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    ttsVoiceIdState = voice.id
-                                    app.preferencesManager.ttsVoiceId = voice.id
-                                    com.whispereverywhere.tts.TtsController.speakFromTrigger(
-                                        context, "Hi, I'm ${voice.displayName.substringBefore(" —")}. " +
-                                            "This is how I read your text."
-                                    )
-                                }
-                                .padding(vertical = 10.dp, horizontal = 4.dp),
-                        ) {
-                            RadioButton(
-                                selected = voice.id == ttsVoiceIdState,
-                                onClick = null,
+                    // 1. Engine selector — on-device (always) plus any cloud provider offered by
+                    //    ttsSelectableProviders (v3 accepted AND a stored key).
+                    item {
+                        Text(
+                            "Voice engine",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        TtsEngineRow(
+                            label = "On-device (Kokoro)",
+                            selected = ttsProviderIdState == null,
+                            onClick = {
+                                app.preferencesManager.ttsProviderId = null
+                                ttsProviderIdState = null
+                            },
+                        )
+                        selectableTts.forEach { provider ->
+                            TtsEngineRow(
+                                label = provider.displayName,
+                                selected = ttsProviderIdState == provider.id.name,
+                                onClick = {
+                                    app.preferencesManager.ttsProviderId = provider.id.name
+                                    ttsProviderIdState = provider.id.name
+                                    ttsCloudVoiceIdState =
+                                        app.preferencesManager.ttsCloudVoiceId(provider.id)
+                                },
                             )
-                            Spacer(Modifier.width(8.dp))
-                            Text(voice.displayName, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    }
+
+                    if (viewedProviderId == null) {
+                        // 2a. On-device Kokoro voices — tap selects AND previews (free, on-device).
+                        items(com.whispereverywhere.tts.TtsVoices.ALL.size) { i ->
+                            val voice = com.whispereverywhere.tts.TtsVoices.ALL[i]
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        ttsVoiceIdState = voice.id
+                                        app.preferencesManager.ttsVoiceId = voice.id
+                                        com.whispereverywhere.tts.TtsController.speakFromTrigger(
+                                            context, "Hi, I'm ${voice.displayName.substringBefore(" —")}. " +
+                                                "This is how I read your text."
+                                        )
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                            ) {
+                                RadioButton(
+                                    selected = voice.id == ttsVoiceIdState,
+                                    onClick = null,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(voice.displayName, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    } else {
+                        // 2b. Cloud provider — honest price note, the no-speed-control note where it
+                        //     applies, and the money caption. Then the provider's voice catalog.
+                        item {
+                            ttsNoSpeedControlNote(viewedProviderId)?.let { note ->
+                                Text(
+                                    note,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                            }
+                            Text(
+                                ttsProviderPriceNote(viewedProviderId),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                ttsPreviewCaption(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Warning,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+
+                        val staticVoices: List<CloudVoice>? = when (viewedProviderId) {
+                            ProviderId.OPENAI -> OpenAiTtsVoices.ALL
+                            ProviderId.GEMINI -> GeminiTtsVoices.ALL
+                            ProviderId.ELEVENLABS -> null // dynamic — handled below
+                        }
+
+                        if (staticVoices != null) {
+                            items(staticVoices.size) { i ->
+                                val voice = staticVoices[i]
+                                TtsCloudVoiceRow(
+                                    displayName = voice.displayName,
+                                    recommended = voice.recommended,
+                                    selected = voice.voiceId == ttsCloudVoiceIdState,
+                                    onSelect = { selectCloudVoice(viewedProviderId, voice.voiceId) },
+                                    onPreview = { previewCloudVoice(viewedProviderId, voice.voiceId) },
+                                )
+                            }
+                        } else {
+                            // ElevenLabs dynamic catalog: loading spinner, honest error row, or the list.
+                            when {
+                                elVoicesLoading -> item {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            "Loading ElevenLabs voices…",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                    }
+                                }
+                                elVoicesError -> item {
+                                    Text(
+                                        "Couldn't load ElevenLabs voices. Check your connection and " +
+                                            "that the saved key has voice access.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                                    )
+                                    TextButton(onClick = { elVoices = null; elVoicesError = false }) {
+                                        Text("Try again")
+                                    }
+                                }
+                                else -> {
+                                    val list = elVoices ?: emptyList()
+                                    items(list.size) { i ->
+                                        val voice = list[i]
+                                        TtsCloudVoiceRow(
+                                            displayName = voice.displayName,
+                                            recommended = voice.recommended,
+                                            selected = voice.voiceId == ttsCloudVoiceIdState,
+                                            onSelect = { selectCloudVoice(viewedProviderId, voice.voiceId) },
+                                            onPreview = { previewCloudVoice(viewedProviderId, voice.voiceId) },
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -819,6 +1094,81 @@ fun SettingsScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+}
+
+/** One engine radio row in the read-aloud voice picker (on-device or a cloud provider). */
+@Composable
+private fun TtsEngineRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(Modifier.width(4.dp))
+        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * One cloud voice row: a radio to SELECT (free), an optional provider "Recommended" chip, and a
+ * Preview button. Preview is a deliberate, separate action because it spends the user's own key.
+ */
+@Composable
+private fun TtsCloudVoiceRow(
+    displayName: String,
+    recommended: Boolean,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onPreview: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onSelect)
+            .padding(vertical = 6.dp, horizontal = 4.dp),
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = displayName,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        if (recommended) {
+            RecommendedChip()
+            Spacer(Modifier.width(4.dp))
+        }
+        TextButton(onClick = onPreview) {
+            Icon(
+                Icons.Filled.PlayArrow,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(2.dp))
+            Text("Preview")
+        }
+    }
+}
+
+/** Provider-suggested-voice chip (e.g. OpenAI's marin/cedar). Never a speed or quality claim. */
+@Composable
+private fun RecommendedChip() {
+    Surface(
+        color = Primary.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Text(
+            text = "Recommended",
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = Primary,
+            fontWeight = FontWeight.Bold,
         )
     }
 }

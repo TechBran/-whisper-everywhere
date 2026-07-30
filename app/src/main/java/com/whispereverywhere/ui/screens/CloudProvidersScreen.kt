@@ -163,6 +163,27 @@ internal fun sttSelectableProviders(
     else ProviderCatalog.all.filter { it.id in STT_CAPABLE_PROVIDERS && it.id in configured }
 
 /**
+ * Which providers may be OFFERED as the read-aloud voice engine — the TTS analogue of
+ * [sttSelectableProviders], and gated identically: disclosure accepted AND a stored key.
+ *
+ * Selecting a cloud VOICE is the action that starts sending selected read-aloud TEXT off-device (a
+ * new data class), so consent must gate SELECTION, not merely storing the key. [disclosureAccepted]
+ * is the v3 flag ([com.whispereverywhere.data.local.PreferencesManager.cloudDisclosureAccepted],
+ * whose key bumped v2 -> v3 when read-aloud text joined the audio already covered by v2): a user who
+ * accepted only the audio-only v2 has an unset v3 and is re-prompted, so this returns empty for them.
+ *
+ * Membership is the honest "has a built cloud TTS adapter" gate, [ProviderCatalog.TTS_CAPABLE_PROVIDERS],
+ * kept in lockstep with [com.whispereverywhere.tts.cloud.TtsProviderFactory]. An empty result is not
+ * an error: it means on-device Kokoro, which is the default, the fallback, and always available.
+ */
+internal fun ttsSelectableProviders(
+    configured: Set<ProviderId>,
+    disclosureAccepted: Boolean,
+): List<Provider> =
+    if (!disclosureAccepted) emptyList()
+    else ProviderCatalog.all.filter { it.id in ProviderCatalog.TTS_CAPABLE_PROVIDERS && it.id in configured }
+
+/**
  * Caption shown under a selected cloud STT provider.
  *
  * Deliberately makes no speed claim — measured on-device: a typical 3 s utterance transcribes
