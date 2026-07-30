@@ -25,8 +25,8 @@ import com.whispereverywhere.recording.RecordingStore
 import com.whispereverywhere.recording.StorageGuard
 import com.whispereverywhere.transcription.TranscriptStore
 import com.whispereverywhere.transcription.WhisperNativeBackend
-import com.whispereverywhere.transcription.batch.BatchCloudGate
 import com.whispereverywhere.transcription.batch.BatchCostEstimator
+import com.whispereverywhere.transcription.batch.BatchEngineDecision
 import com.whispereverywhere.transcription.batch.BatchProgress
 import com.whispereverywhere.transcription.batch.BatchTranscriber
 import com.whispereverywhere.transcription.cloud.OpenAiStt
@@ -124,9 +124,12 @@ class BatchTranscriptionService : Service() {
         val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
         val costConfirmed = intent.getBooleanExtra(EXTRA_COST_CONFIRMED, false)
         val reset = intent.getBooleanExtra(EXTRA_RESET, false)
+        // The per-job engine pick from the Ready screen. DEFAULTS TO FALSE (on-device): a missing
+        // flag must never upgrade a job to cloud — the caller has to ASK for cloud, explicitly.
+        val useCloud = intent.getBooleanExtra(EXTRA_USE_CLOUD, false)
 
         serviceScope.launch(Dispatchers.Default) {
-            runJob(isRetry, uri, retryId, displayName, durationMs, costConfirmed, reset)
+            runJob(isRetry, uri, retryId, displayName, durationMs, costConfirmed, reset, useCloud)
         }
         return START_NOT_STICKY
     }
@@ -143,6 +146,7 @@ class BatchTranscriptionService : Service() {
         durationMs: Long,
         costConfirmed: Boolean,
         reset: Boolean,
+        useCloud: Boolean,
     ) {
         var jobId: String? = null
         var mirror: Job? = null
@@ -217,7 +221,7 @@ class BatchTranscriptionService : Service() {
             }
 
             // ---- the ONE cloud decision, fully gated; degrades to local, never fails the job ----
-            val cloud = resolveCloud(meta.byteLength.toLong(), costConfirmed)
+            val cloud = resolveCloud(meta.byteLength.toLong(), costConfirmed, useCloud)
 
             val transcriber = BatchTranscriber(
                 store = store,
@@ -249,15 +253,15 @@ class BatchTranscriptionService : Service() {
             jobId?.let { BatchJobController.progress.value = BatchProgress(it, 0, 0, BatchStatus.Failed) }
         } finally {
             mirror?.cancel()
-            activeTranscriber = null
-            BatchJobController.active = null
-            running = false
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             // Backstop: transcribe() self-closes its native executor in its own finally, so on the
             // normal path this is an idempotent no-op. It only does real work for the narrow window
             // where the transcriber was constructed but transcribe() never ran (an early throw),
             // which would otherwise leak the eagerly-created "batch-native" thread.
             activeTranscriber?.shutdown()
+            activeTranscriber = null
+            BatchJobController.active = null
+            running = false
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
@@ -265,25 +269,30 @@ class BatchTranscriptionService : Service() {
     /**
      * Cloud is passed to the transcriber ONLY when the whole gate holds. Each failed condition
      * degrades to on-device (returns null); none fails the job. Never re-derives policy — it calls
-     * the pinned [BatchCloudGate] predicate and the pinned [BatchCostEstimator] threshold.
+     * the pinned [BatchEngineDecision] gate, which starts from the user's per-job [useCloud] floor
+     * and layers the [BatchCloudGate] triad and the [BatchCostEstimator] threshold on top.
+     *
+     * [useCloud] is authoritative: when the Ready screen presented "On-device", this returns null
+     * before any prefs/network/notification/cost evaluation — the service must NEVER upgrade to
+     * cloud a job the UI showed as local.
      */
-    private fun resolveCloud(byteLength: Long, costConfirmed: Boolean): SttProvider? {
+    private fun resolveCloud(byteLength: Long, costConfirmed: Boolean, useCloud: Boolean): SttProvider? {
         val prefs = app.preferencesManager
         val providerId = resolveSttProvider(prefs.sttProviderId)           // top-level, this package
         val key = providerId?.let { prefs.providerAccounts.key(it) }
-        val disclosureAccepted = prefs.cloudDisclosureAccepted
 
-        // (triad) key + provider + accepted disclosure, plus a validated network.
-        if (!BatchCloudGate.cloudEligible(providerId?.name, key, disclosureAccepted)) return null
-        if (!ConnectivityMonitor(this).hasValidatedNetwork()) return null
-
-        // (notifications) §6.5: no visible spend indicator -> do not charge silently -> local.
-        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return null
-
-        // (cost confirm) §6.5: a job past the threshold needs the explicit confirm that rode the
-        // intent, so no stale/future caller can start a large cloud job unconfirmed.
-        if (BatchCostEstimator.needsConfirmation(byteLength) && !costConfirmed) return null
-
+        val allowed = BatchEngineDecision.cloudAllowed(
+            useCloud = useCloud,
+            providerName = providerId?.name,
+            key = key,
+            disclosureAccepted = prefs.cloudDisclosureAccepted,
+            byteLength = byteLength,
+            costConfirmed = costConfirmed,
+            // Lazy: a local job never probes the network or the notification manager.
+            hasValidatedNetwork = { ConnectivityMonitor(this).hasValidatedNetwork() },
+            notificationsEnabled = { NotificationManagerCompat.from(this).areNotificationsEnabled() },
+        )
+        if (!allowed) return null
         return OpenAiStt(transport(), key!!)
     }
 
@@ -390,6 +399,10 @@ class BatchTranscriptionService : Service() {
         const val EXTRA_COST_CONFIRMED = "extra_cost_confirmed"
         const val EXTRA_RECORDING_ID = "extra_recording_id"
         const val EXTRA_RESET = "extra_reset"
+
+        /** The Ready screen's per-job engine pick. Absent/false = on-device; the caller must
+         *  explicitly set true to permit a cloud upload. Read as a HARD FLOOR by [resolveCloud]. */
+        const val EXTRA_USE_CLOUD = "extra_use_cloud"
 
         private const val PREPARING_TEXT = "Preparing audio…"
         private const val DEFAULT_DISPLAY_NAME = "audio"

@@ -132,11 +132,11 @@ fun BatchTranscribeScreen(
                             costBytes = BatchCostEstimator.bytesForDuration(durationMs),
                             confirmedStart = {
                                 sawActive = false; jobStarted = true
-                                viewModel.startNew(uri, displayName, durationMs, costConfirmed = true)
+                                viewModel.startNew(uri, displayName, durationMs, costConfirmed = true, useCloud = useCloud)
                             },
                             directStart = {
                                 sawActive = false; jobStarted = true
-                                viewModel.startNew(uri, displayName, durationMs, costConfirmed = false)
+                                viewModel.startNew(uri, displayName, durationMs, costConfirmed = false, useCloud = useCloud)
                             },
                         )
                     },
@@ -178,11 +178,11 @@ fun BatchTranscribeScreen(
                                     costBytes = BatchCostEstimator.bytesForDuration(durationMs),
                                     confirmedStart = {
                                         sawActive = false
-                                        viewModel.startNew(uri, displayName, durationMs, costConfirmed = true)
+                                        viewModel.startNew(uri, displayName, durationMs, costConfirmed = true, useCloud = useCloud)
                                     },
                                     directStart = {
                                         sawActive = false
-                                        viewModel.startNew(uri, displayName, durationMs, costConfirmed = false)
+                                        viewModel.startNew(uri, displayName, durationMs, costConfirmed = false, useCloud = useCloud)
                                     },
                                 )
                             } else {
@@ -192,11 +192,11 @@ fun BatchTranscribeScreen(
                                     costBytes = (m?.byteLength ?: 0).toLong(),
                                     confirmedStart = {
                                         sawActive = false
-                                        viewModel.retry(recordingId, reset = false, costConfirmed = true)
+                                        viewModel.retry(recordingId, reset = false, costConfirmed = true, useCloud = useCloud)
                                     },
                                     directStart = {
                                         sawActive = false
-                                        viewModel.retry(recordingId, reset = false, costConfirmed = false)
+                                        viewModel.retry(recordingId, reset = false, costConfirmed = false, useCloud = useCloud)
                                     },
                                 )
                             }

@@ -28,8 +28,12 @@ class BatchJobViewModel(app: Application) : AndroidViewModel(app) {
     /** The one source of truth for job state — written by the service, only read here. */
     val progress: StateFlow<BatchProgress?> = BatchJobController.progress
 
-    /** Start a brand-new job from a freshly picked file. The service decodes, plans, transcribes. */
-    fun startNew(uri: Uri, displayName: String, durationMs: Long, costConfirmed: Boolean) {
+    /**
+     * Start a brand-new job from a freshly picked file. The service decodes, plans, transcribes.
+     * [useCloud] is the user's per-job engine pick from the Ready screen; it rides the intent as a
+     * HARD FLOOR so the service can never upgrade an "On-device" job to a billed cloud upload.
+     */
+    fun startNew(uri: Uri, displayName: String, durationMs: Long, costConfirmed: Boolean, useCloud: Boolean) {
         val app = getApplication<Application>()
         val intent = Intent(app, BatchTranscriptionService::class.java).apply {
             data = uri
@@ -38,6 +42,7 @@ class BatchJobViewModel(app: Application) : AndroidViewModel(app) {
             putExtra(BatchTranscriptionService.EXTRA_DISPLAY_NAME, displayName)
             putExtra(BatchTranscriptionService.EXTRA_DURATION_MS, durationMs)
             putExtra(BatchTranscriptionService.EXTRA_COST_CONFIRMED, costConfirmed)
+            putExtra(BatchTranscriptionService.EXTRA_USE_CLOUD, useCloud)
         }
         ContextCompat.startForegroundService(app, intent)
     }
@@ -45,13 +50,15 @@ class BatchJobViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Resume (or, with [reset], restart) an existing workspace. A Done chunk is never re-run, so
      * Retry is safe on a paid API. The cost confirm is re-gated by the caller on the FULL byteLength.
+     * [useCloud] carries the same per-job engine floor as [startNew].
      */
-    fun retry(id: String, reset: Boolean, costConfirmed: Boolean) {
+    fun retry(id: String, reset: Boolean, costConfirmed: Boolean, useCloud: Boolean) {
         val app = getApplication<Application>()
         val intent = Intent(app, BatchTranscriptionService::class.java).apply {
             putExtra(BatchTranscriptionService.EXTRA_RECORDING_ID, id)
             putExtra(BatchTranscriptionService.EXTRA_RESET, reset)
             putExtra(BatchTranscriptionService.EXTRA_COST_CONFIRMED, costConfirmed)
+            putExtra(BatchTranscriptionService.EXTRA_USE_CLOUD, useCloud)
         }
         ContextCompat.startForegroundService(app, intent)
     }
