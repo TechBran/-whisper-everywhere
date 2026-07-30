@@ -43,7 +43,8 @@ import kotlinx.coroutines.delay
 fun HomeScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToOnboardingModel: () -> Unit = {},
-    onNavigateToTranscripts: () -> Unit = {}
+    onNavigateToTranscripts: () -> Unit = {},
+    onPickAudioFile: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -211,6 +212,48 @@ fun HomeScreen(
                         )
                         Text(
                             text = "Your saved sessions — kept 14 days",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        Icons.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Batch transcription entry — pick an audio file and transcribe it all at once.
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPickAudioFile() },
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.GraphicEq,
+                        contentDescription = null,
+                        tint = Primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Transcribe audio file",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Pick a recording and turn it into text",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

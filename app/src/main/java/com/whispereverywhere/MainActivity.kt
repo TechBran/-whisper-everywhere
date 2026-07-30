@@ -1,10 +1,15 @@
 package com.whispereverywhere
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,17 +18,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.ui.screens.BatchTranscribeScreen
 import com.whispereverywhere.ui.screens.CloudProvidersScreen
 import com.whispereverywhere.ui.screens.HomeScreen
 import com.whispereverywhere.ui.screens.LegalDocumentScreen
 import com.whispereverywhere.ui.screens.OnboardingModelScreen
 import com.whispereverywhere.ui.screens.SettingsScreen
 import com.whispereverywhere.ui.theme.WhisperEverywhereTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -99,6 +109,27 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun WhisperEverywhereNavigation() {
     val navController = rememberNavController()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // The picked file rides here from the SAF picker into the batch screen. Passing a content Uri
+    // through a nav route string would need encoding; a remembered holder is simpler and the screen
+    // is single-purpose anyway.
+    var pickedAudio by remember { mutableStateOf<PickedAudio?>(null) }
+
+    val audioPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                // DISPLAY_NAME + MediaMetadataRetriever duration, both off-main; a broken file just
+                // yields duration 0 and the service's decoder produces the honest failure.
+                val info = withContext(Dispatchers.IO) { queryPickedAudio(context, uri) }
+                pickedAudio = PickedAudio(uri, info.first, info.second)
+                navController.navigate("batch_transcribe")
+            }
+        }
+    }
 
     // Compute the start destination once, at launch: if there is no installed
     // speech model, gate the app behind the model-download onboarding wizard.
@@ -135,6 +166,9 @@ fun WhisperEverywhereNavigation() {
                 },
                 onNavigateToTranscripts = {
                     navController.navigate("transcripts")
+                },
+                onPickAudioFile = {
+                    audioPickerLauncher.launch(arrayOf("audio/*"))
                 }
             )
         }
@@ -143,6 +177,21 @@ fun WhisperEverywhereNavigation() {
             com.whispereverywhere.ui.screens.TranscriptsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
+        }
+
+        composable("batch_transcribe") {
+            val picked = pickedAudio
+            if (picked == null) {
+                // No selection survived (e.g. process death) — return to Home.
+                LaunchedEffect(Unit) { navController.popBackStack() }
+            } else {
+                BatchTranscribeScreen(
+                    uri = picked.uri,
+                    displayName = picked.displayName,
+                    durationMs = picked.durationMs,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
         }
 
         composable("settings") {
@@ -209,4 +258,39 @@ fun WhisperEverywhereNavigation() {
             )
         }
     }
+}
+
+/** One picked audio file on its way from the SAF picker to the batch screen. */
+private data class PickedAudio(
+    val uri: Uri,
+    val displayName: String,
+    val durationMs: Long,
+)
+
+/**
+ * Reads the picked file's display name (OpenableColumns.DISPLAY_NAME) and duration
+ * (MediaMetadataRetriever). Call OFF the main thread. Everything is guarded — a name that cannot be
+ * read falls back to "audio"; a duration that cannot be read falls back to 0 (the decoder then
+ * produces the honest failure). The Uri is never logged.
+ */
+private fun queryPickedAudio(context: Context, uri: Uri): Pair<String, Long> {
+    val name = runCatching {
+        context.contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c ->
+                if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null
+            }
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "audio"
+
+    val durationMs = runCatching {
+        val mmr = MediaMetadataRetriever()
+        try {
+            mmr.setDataSource(context, uri)
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } finally {
+            mmr.release()
+        }
+    }.getOrDefault(0L)
+
+    return name to durationMs
 }
