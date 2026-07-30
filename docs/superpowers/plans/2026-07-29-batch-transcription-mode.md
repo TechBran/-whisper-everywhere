@@ -20,11 +20,12 @@ Carried over from C2a and Release A, still binding here, plus the new batch-spec
 - **On-device is the default and must work fully offline.** With no provider selected, batch transcribes every recording locally with zero configuration and zero network.
 - **No credential or transcript CONTENT in logcat — lengths only.** Never log a key, a header, a chunk's text, or the assembled transcript. Chunk hard-cuts and progress are logged as counts/lengths only.
 - **No speed claims in any user-facing copy.** Status reads "Transcribing…", "Chunk 3 of 8", never "fast".
+- **Cloud batch is cost-transparent and never a surprise charge (§6.5).** The engine chip shows the per-minute price whenever a cloud provider is selected; before the FIRST cloud chunk uploads, a job whose estimate crosses **10¢ or 10 minutes** — estimated from the retained `byteLength`, not a promise, via the pure `BatchCostEstimator` — requires an explicit confirm. Cloud batch also requires `POST_NOTIFICATIONS` (Android 13+) so the foreground-service spend indicator is visible; denied, it falls to local. The local/offline path stays zero-friction: no price, no confirm, no permission.
 - **Storing raw audio is a NEW data-retention fact.** Audio lives in **app-private, non-backed-up** storage (`noBackupFilesDir`), is deletable per-recording, and is swept on a 30-day / 200 MB rolling cap. The privacy policy §5 needs one sentence — **FLAGGED as Task 8, NOT written into code, and `docs/privacy.html` is owner-locked this run (do not touch it).**
 - **kotlinx.serialization for ALL JSON — `org.json` is BANNED.** Unit tests run with `unitTests.isReturnDefaultValues = true` (`app/build.gradle.kts:166`); `org.json` ships in `android.jar` and returns type defaults (`optString` → `""`) under that config, so broken code passes silently. The manifest is `@Serializable` data classes via `Json`. This exact trap cost tasks in C1 (`android.util.Base64`) and is called out in C2a.
-- **25 MB / ~13.1 min is the OpenAI batch hard cap** (16 kHz PCM16 mono WAV = 32 KB/s). The cloud chunk **ceiling is 20 MB (~10.5 min)** — a deliberate margin below the cap, computed on the raw PCM plus the 44-byte WAV header added at dispatch. Local chunks are ~90 s to bound native memory. `gpt-transcribe` is the batch model ($0.0045/min), already `OpenAiStt.DEFAULT_MODEL`; **`gpt-live-transcribe` is realtime-only and must NEVER be used here.**
+- **25 MB / ~13.1 min is the OpenAI batch hard cap** (16 kHz PCM16 mono WAV = 32 KB/s). The cloud chunk **ceiling is 20 MB (~10.5 min)** — a deliberate margin below the cap, computed on the raw PCM plus the 44-byte WAV header added at dispatch. Local chunks are ~90 s (`LOCAL_CHUNK_BYTES`) to bound native memory to ~2.9 MB/chunk. **A cloud chunk that falls back to local is re-sliced to `LOCAL_CHUNK_BYTES` sub-chunks before it reaches the native model** — feeding a 20 MB cloud chunk straight to whisper would allocate a ~40 MB `FloatArray` plus a native copy plus minutes of encoder buffers in a foreground service, reintroducing the exact long-feed OOM the local ceiling exists to prevent. `gpt-transcribe` is the batch model ($0.0045/min), already `OpenAiStt.DEFAULT_MODEL`; **`gpt-live-transcribe` is realtime-only and must NEVER be used here.**
 - **Seq-exactly-once does NOT apply and `SegmentOrderer` is deliberately SKIPPED.** Batch output lands on a **screen, not an injected IME field**, so the orderer's sole job (stopping out-of-order injection from deleting text) is absent. Chunks run strictly sequentially — chunk N awaits before N+1 — so results always arrive in order and a `StringBuilder` join is provably correct. This is confirmed in the pipeline recon and unanimous across the design candidates.
-- **All native `whisper_context` access stays single-threaded.** `BatchTranscriber` runs its whole job on **one** single-thread dispatcher; it loads one ctx for the job, transcribes every local chunk on that thread, and releases it at the end. It calls `backend.transcribe` directly (bypassing `LocalWhisperEngine.sendAudio`'s 30 s self-commit) so chunk cuts stay plan-aligned — but it never touches the ctx from two threads.
+- **All native `whisper_context` access stays single-threaded — enforced inside `BatchTranscriber`, not by convention.** `BatchTranscriber` owns a private single-thread dispatcher and wraps **every** native call (`load`, `transcribe`, `release`) in `withContext(nativeDispatcher)`, so even though `transcribe()` suspends on the cloud path and can resume on any thread, native code is only ever touched from that one confined thread. It loads one ctx per job, transcribes every local (sub-)chunk on that thread, and releases it in a `finally` (also confined, under `NonCancellable`). It calls `backend.transcribe` directly (bypassing `LocalWhisperEngine.sendAudio`'s 30 s self-commit) so chunk cuts stay plan-aligned. The dispatcher is created and closed by the class, so a caller cannot break the invariant by choosing a multi-threaded dispatcher — "sequential" no longer has to imply "thread-confined" by luck.
 - **`java` is NOT on PATH.** PowerShell: `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"`, then `.\gradlew.bat --no-daemon`.
 - **NEVER run `connectedAndroidTest` or `installDebug`** — AGP's instrumented task uninstalls the app on teardown and has twice destroyed the user's 500+ MB of models. To run instrumented: `adb install -r` both APKs, then `adb shell am instrument -w …`.
 - **Do not touch** (owner is editing concurrently for a separate fix): `app/src/main/assets/*`, `docs/privacy.html`, `docs/terms.html`, `docs/PLAY-LISTING.md`. Do not touch Release A (`SegmentOrderer`/`SegmentOutcome`), `TranscriptStore` (its "audio never retained" contract is preserved — bubble history stays text-only), or the cloud engines from C2a.
@@ -68,6 +69,10 @@ The synthesized design specifies chunk boundaries from the **Silero VAD seam** (
 | `app/src/test/java/com/whispereverywhere/transcription/batch/ChunkPlannerTest.kt` | Create — the boundary math, all edge cases |
 | `app/src/main/java/com/whispereverywhere/transcription/batch/BatchRouting.kt` | Create — invariant #1 gate |
 | `app/src/test/java/com/whispereverywhere/transcription/batch/BatchRoutingTest.kt` | Create — pinning |
+| `app/src/main/java/com/whispereverywhere/transcription/batch/BatchCloudGate.kt` | Create — invariant #2 (key+provider+consent) as a pure predicate |
+| `app/src/test/java/com/whispereverywhere/transcription/batch/BatchCloudGateTest.kt` | Create — pinning the triad |
+| `app/src/main/java/com/whispereverywhere/transcription/batch/BatchCostEstimator.kt` | Create — §6.5 spend estimate + confirm threshold (pure) |
+| `app/src/test/java/com/whispereverywhere/transcription/batch/BatchCostEstimatorTest.kt` | Create — pinning the estimate/threshold math |
 | `app/src/main/java/com/whispereverywhere/transcription/batch/BatchTranscriber.kt` | Create — sequential, checkpoint/resume/cancel, per-chunk fallback |
 | `app/src/test/java/com/whispereverywhere/transcription/batch/BatchTranscriberTest.kt` | Create — resume, cancel, fallback, playback-never-networks pinning |
 | `app/src/main/java/com/whispereverywhere/service/BatchTranscriptionService.kt` | Create — foreground host |
@@ -103,6 +108,7 @@ The synthesized design specifies chunk boundaries from the **Silero VAD seam** (
   - `@Serializable data class ChunkEntry(index, startByte, endByte, hardCut, status = Pending, text = "")`
   - `@Serializable data class RecordingMeta(id, createdAtMs, durationMs, source, sampleRate = 16000, channels = 1, byteLength, status = Recorded, engineUsed = null, modelId = null, language = null, chunkPlan = emptyList())`
   - `class RecordingStore(root: File, clock = System::currentTimeMillis)` with `dir(id)`, `audioFile(id)`, `save(meta)`, `read(id): RecordingMeta?`, `list(): List<RecordingMeta>`, `delete(id)`, `sweep()`, `assembledText(meta): String`.
+  - `RecordingStore.forApp(context, clock = …): RecordingStore` — the **ONLY** production constructor path, hard-coding `noBackupFilesDir/recordings` so the root can never drift to `filesDir` (which Auto Backup can upload — invariant #7). The raw `root: File` ctor is unit-tests only.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -284,6 +290,7 @@ data class RecordingMeta(
 ```kotlin
 package com.whispereverywhere.recording
 
+import android.content.Context
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -291,8 +298,10 @@ import java.io.File
  * The recordings library: one directory per clip under [root], each holding audio.pcm (raw PCM16LE)
  * and manifest.json (a [RecordingMeta]).
  *
- * [root] is deliberately rooted at Context.noBackupFilesDir by the caller — raw audio must stay out
- * of Android Auto Backup, which would otherwise be an undisclosed off-device transfer.
+ * [root] is deliberately rooted at Context.noBackupFilesDir — and, in production, ONLY ever via the
+ * [forApp] factory below, so no future caller can pass filesDir and silently make raw voice audio
+ * eligible for Android Auto Backup. Raw audio must stay out of backup, which would otherwise be an
+ * undisclosed off-device transfer (invariant #7). The raw [root] ctor exists for unit tests.
  *
  * Separate from TranscriptStore on purpose: that store is TEXT-ONLY and its "audio never retained"
  * contract is preserved. This is a distinct audio library with its own retention.
@@ -331,11 +340,18 @@ class RecordingStore(
     /** Recursively removes the whole <uuid>/ directory — audio.pcm included (invariant #7). */
     fun delete(id: String) { File(root, id).deleteRecursively() }
 
-    /** The transcript so far: Done chunks, in index order, concatenated. */
+    /**
+     * The transcript so far: Done chunks, in index order, joined with ONE space.
+     *
+     * The join is " " and never "" because chunk text arrives TRIMMED — TranscriptText.clean
+     * collapses whitespace runs and .trim()s the result (TranscriptText.kt:27-31), so a ""
+     * join would glue chunk N's last word to chunk N+1's first word ("…meeting toMorrow…").
+     * Blank chunks (silence) are dropped so they cannot double the spacing.
+     */
     fun assembledText(meta: RecordingMeta): String =
         meta.chunkPlan.sortedBy { it.index }
-            .filter { it.status == ChunkStatus.Done }
-            .joinToString("") { it.text }
+            .filter { it.status == ChunkStatus.Done && it.text.isNotBlank() }
+            .joinToString(" ") { it.text.trim() }
 
     /**
      * Rolling retention: age first, then oldest-first eviction until under the byte cap. Byte size
@@ -356,13 +372,32 @@ class RecordingStore(
     }
 
     companion object {
+        /** The subdirectory name under noBackupFilesDir. Centralized so it can't drift. */
+        const val DIR_NAME = "recordings"
         /** "Keep it for retry" — a month. (Owner-question 4 default.) */
         const val MAX_AGE_MS: Long = 30L * 24 * 60 * 60 * 1000
         /** Audio is heavy; 200 MB holds hours of recordings. (Owner-question 4 default.) */
         const val MAX_TOTAL_BYTES: Long = 200L * 1024 * 1024
+
+        /**
+         * The ONLY production entry point. Hard-codes noBackupFilesDir/recordings so raw audio can
+         * never drift into filesDir (which Android Auto Backup can upload). EVERY caller — the
+         * service and both ViewModels — uses this; passing a bare File is a unit-test-only affordance.
+         */
+        fun forApp(context: Context, clock: () -> Long = System::currentTimeMillis): RecordingStore =
+            RecordingStore(File(context.noBackupFilesDir, DIR_NAME), clock)
     }
 }
 ```
+
+> **Centralization is the pin for invariant #7's storage boundary.** Because `forApp` is the single
+> production constructor and hard-codes `noBackupFilesDir`, the "raw audio must not be backed up"
+> boundary cannot be broken by a drifting call site — the exact leak spec §6.2 flags (one stray
+> `filesDir` and Auto Backup starts uploading voice). A JVM test cannot assert an Android
+> `noBackupFilesDir` path, so the code-review checklist for this plan MUST include: "every production
+> `RecordingStore` is built via `forApp`; no call site constructs it with a bare `File`." (An
+> instrumented assertion that the root resolves under `noBackupFilesDir` is a nice-to-have but
+> cannot run here — `connectedAndroidTest` is banned.)
 
 - [ ] **Step 5: Verify**
 
@@ -461,7 +496,12 @@ class PcmSink(file: File) {
     private val out = BufferedOutputStream(FileOutputStream(file))
     private var written = 0L
 
-    /** [len] mirrors StreamingAudioRecorder's onChunk(bytes, amplitude) contract — write exactly len. */
+    /**
+     * Writes exactly [len] bytes of [pcm]. NOTE: StreamingAudioRecorder.start delivers an
+     * already-exact chunk to its `onChunk(bytes, amplitude)` callback — the SECOND arg is the RMS
+     * amplitude (0..32767), NOT a length. Wire it as `recorder.start { bytes, _ -> sink.append(bytes,
+     * bytes.size) }`. Passing the amplitude as `len` would truncate quiet chunks and throw on loud ones.
+     */
     fun append(pcm: ByteArray, len: Int) {
         out.write(pcm, 0, len)
         written += len
@@ -778,7 +818,7 @@ object ChunkPlanner {
 ```bash
 .\gradlew.bat :app:testDebugUnitTest --no-daemon --tests "com.whispereverywhere.transcription.batch.ChunkPlannerTest"
 ```
-Expected: PASS, 16 tests. Full suite: previous **+16**, 0 failures.
+Expected: PASS, 15 tests. Full suite: previous **+15**, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -800,18 +840,34 @@ even so a cut never splits a PCM16 sample."
 
 ---
 
-## Task 4: `BatchRouting` — invariant #1 as code, with a pinning test
+## Task 4: The pure batch gates — `BatchRouting` (inv #1), `BatchCloudGate` (inv #2), `BatchCostEstimator` (§6.5)
+
+Three pure, Android-free, JUnit-testable policy objects in `transcription/batch/`, each giving one
+constraint a code gate AND a pinning test — the MF1 lesson applied three times rather than left as
+header prose.
 
 **Files:**
 - Create: `app/src/main/java/com/whispereverywhere/transcription/batch/BatchRouting.kt`
 - Test: `app/src/test/java/com/whispereverywhere/transcription/batch/BatchRoutingTest.kt`
+- Create: `app/src/main/java/com/whispereverywhere/transcription/batch/BatchCloudGate.kt`
+- Test: `app/src/test/java/com/whispereverywhere/transcription/batch/BatchCloudGateTest.kt`
+- Create: `app/src/main/java/com/whispereverywhere/transcription/batch/BatchCostEstimator.kt`
+- Test: `app/src/test/java/com/whispereverywhere/transcription/batch/BatchCostEstimatorTest.kt`
 
 **Interfaces:**
 - Consumes: `ActiveSource`.
-- Produces, used by Task 5:
-  - `object BatchRouting { fun cloudEligible(source: ActiveSource): Boolean }`
+- Produces, used by Tasks 5/6/7:
+  - `object BatchRouting { fun cloudEligible(source: ActiveSource): Boolean }` — invariant #1.
+  - `object BatchCloudGate { fun cloudEligible(providerId: String?, key: String?, disclosureAccepted: Boolean): Boolean }` — invariant #2, the C2a consent triad as one predicate.
+  - `object BatchCostEstimator { fun minutes(byteLength): Double; fun estimatedCents(byteLength): Double; fun needsConfirmation(byteLength): Boolean }` — §6.5 spend estimate + confirm threshold.
 
-**This is the MF1 lesson made concrete.** The invariant is not prose in a header — it is one pure function with its own pinning test, mirrored from `SourceRoutedTranscriptionEngine.engineForSource` (`PLAYBACK → on-device only`). Task 5 wires it as the first decision in `transcribe()`, and `BatchTranscriberTest` proves the network is never touched for a PLAYBACK recording.
+**This is the MF1 lesson made concrete.** Invariant #1 is one pure function mirrored from the free
+function `engineForSource` in `SourceRoutedTranscriptionEngine.kt` (`PLAYBACK → on-device only`); Task
+5 wires it as the first decision in `transcribe()`, and `BatchTranscriberTest` proves the network is
+never touched for a PLAYBACK recording. Invariant #2 (cloud requires stored key AND provider selection
+AND accepted disclosure v2) gets the SAME treatment here — a pure predicate with its own pin — instead
+of living only as prose in the service's provider-resolution step. §6.5's cost math likewise becomes a
+pinned pure object the UI and service both call, so the "never a surprise charge" rule has a mechanism.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -848,12 +904,103 @@ class BatchRoutingTest {
 }
 ```
 
+Create `app/src/test/java/com/whispereverywhere/transcription/batch/BatchCloudGateTest.kt`:
+
+```kotlin
+package com.whispereverywhere.transcription.batch
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Invariant #2 pinned: cloud requires ALL THREE of a selected provider, a stored key, and accepted
+ * disclosure v2. The service consults this ONE predicate instead of re-deriving the triad in prose —
+ * FloatingBubbleService.resolveTranscriptionEngine is private and does NOT itself read the
+ * disclosure flag (that gating lives upstream in provider setup), so batch needs its own gate.
+ */
+class BatchCloudGateTest {
+
+    @Test fun the_full_triad_is_eligible() {
+        assertTrue(BatchCloudGate.cloudEligible("OPENAI", "sk-test", disclosureAccepted = true))
+    }
+
+    @Test fun no_selected_provider_is_never_eligible() {
+        assertFalse(BatchCloudGate.cloudEligible(null, "sk-test", disclosureAccepted = true))
+    }
+
+    @Test fun no_stored_key_is_never_eligible() {
+        assertFalse(BatchCloudGate.cloudEligible("OPENAI", null, disclosureAccepted = true))
+    }
+
+    @Test fun a_blank_key_is_never_eligible() {
+        // decideEngineChoice treats a blank key as "no key"; the batch gate must agree.
+        assertFalse(BatchCloudGate.cloudEligible("OPENAI", "   ", disclosureAccepted = true))
+    }
+
+    @Test fun without_disclosure_v2_is_never_eligible() {
+        // The upgrade case: key stored under C1's future-tense v1 consent, v2 never accepted.
+        assertFalse(BatchCloudGate.cloudEligible("OPENAI", "sk-test", disclosureAccepted = false))
+    }
+
+    @Test fun the_default_state_is_ineligible() {
+        assertFalse(BatchCloudGate.cloudEligible(null, null, disclosureAccepted = false))
+    }
+}
+```
+
+Create `app/src/test/java/com/whispereverywhere/transcription/batch/BatchCostEstimatorTest.kt`:
+
+```kotlin
+package com.whispereverywhere.transcription.batch
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * §6.5's "never a surprise charge" as pinned math. Estimates derive from the recording's
+ * byteLength at the PCM16/16 kHz rate (32,000 bytes/s) and the published gpt-transcribe batch
+ * price ($0.0045/min) — an estimate shown to the user, never a promise.
+ */
+class BatchCostEstimatorTest {
+
+    private fun bytesForMinutes(min: Double): Long =
+        (min * 60 * BatchCostEstimator.BYTES_PER_SECOND).toLong()
+
+    @Test fun minutes_math_matches_the_pcm_rate() {
+        assertEquals(1.0, BatchCostEstimator.minutes(bytesForMinutes(1.0)), 1e-9)
+    }
+
+    @Test fun estimated_cents_uses_the_published_batch_price() {
+        // 10 minutes at $0.0045/min = 4.5 cents.
+        assertEquals(4.5, BatchCostEstimator.estimatedCents(bytesForMinutes(10.0)), 1e-6)
+    }
+
+    @Test fun a_five_minute_clip_needs_no_confirmation() {
+        assertFalse(BatchCostEstimator.needsConfirmation(bytesForMinutes(5.0)))
+    }
+
+    @Test fun a_ten_minute_clip_needs_confirmation() {
+        // The minutes threshold binds first with today's price (10¢ ≈ 22 min); both are OR-ed so a
+        // future price rise cannot silently widen the unconfirmed window.
+        assertTrue(BatchCostEstimator.needsConfirmation(bytesForMinutes(10.0)))
+    }
+
+    @Test fun zero_bytes_is_free_and_unconfirmed() {
+        assertEquals(0.0, BatchCostEstimator.estimatedCents(0L), 0.0)
+        assertFalse(BatchCostEstimator.needsConfirmation(0L))
+    }
+}
+```
+
 - [ ] **Step 2: Run to verify it fails**
 
 ```bash
-.\gradlew.bat :app:testDebugUnitTest --no-daemon --tests "com.whispereverywhere.transcription.batch.BatchRoutingTest"
+.\gradlew.bat :app:testDebugUnitTest --no-daemon --tests "com.whispereverywhere.transcription.batch.*"
 ```
-Expected: FAIL — `Unresolved reference: BatchRouting`.
+Expected: FAIL — `Unresolved reference: BatchRouting` (and `BatchCloudGate`, `BatchCostEstimator`).
 
 - [ ] **Step 3: Implement `BatchRouting.kt`**
 
@@ -864,14 +1011,16 @@ import com.whispereverywhere.audio.ActiveSource
 
 /**
  * Invariant #1 written as code: MediaProjection device audio (PLAYBACK) is transcribed on-device
- * ONLY, forever — including through batch mode and Retry. This mirrors
- * SourceRoutedTranscriptionEngine.engineForSource: the ROUTE is decided by the capture source
- * alone, never by the provider, the key, the accepted consent, or the network, none of which can
- * make third-party audio shippable.
+ * ONLY, forever — including through batch mode and Retry. This mirrors the free function
+ * `engineForSource` in SourceRoutedTranscriptionEngine.kt (a top-level `internal fun`, NOT a class
+ * member): the ROUTE is decided by the capture source alone, never by the provider, the key, the
+ * accepted consent, or the network, none of which can make third-party audio shippable.
  *
- * BatchTranscriber consults this as the FIRST decision in transcribe() and, defensively, again
- * before any cloud dispatch, so no future edit can route a PLAYBACK chunk to the network without
- * tripping a require().
+ * BatchTranscriber consults this as the FIRST decision in transcribe(): for PLAYBACK it nulls
+ * effectiveCloud so the whole cloud path is structurally unreachable, and — belt-and-suspenders — it
+ * runs check(cloudEligible(meta.source)) immediately before every cloud dispatch. (The plan enforces
+ * the gate by that null + check, NOT by throwing from a constructor as an earlier design sketch
+ * suggested.) Two tests pin it: BatchRoutingTest and playback_never_touches_the_network.
  */
 object BatchRouting {
     fun cloudEligible(source: ActiveSource): Boolean = when (source) {
@@ -881,25 +1030,89 @@ object BatchRouting {
 }
 ```
 
+Create `app/src/main/java/com/whispereverywhere/transcription/batch/BatchCloudGate.kt`:
+
+```kotlin
+package com.whispereverywhere.transcription.batch
+
+/**
+ * Invariant #2 written as code: batch cloud transcription requires ALL of a selected provider, a
+ * stored key, and accepted disclosure v2 — the same triad live dictation enforces.
+ *
+ * This exists because the live path's enforcement is not reusable here:
+ * FloatingBubbleService.resolveTranscriptionEngine is a private member returning a fully-wired
+ * engine, and it does NOT itself read cloudDisclosureAccepted (that gating lives upstream, in
+ * provider setup, where a key cannot be stored and a provider cannot be selected without
+ * acceptance). Batch constructs its own provider, so it re-asserts the whole triad in one pinned
+ * predicate rather than trusting the upstream implication from a different screen's flow.
+ *
+ * Deliberately BLIND to capture source — that is BatchRouting's job, and keeping the two gates
+ * orthogonal means neither can be weakened by "the other one probably covers it".
+ */
+object BatchCloudGate {
+    fun cloudEligible(providerId: String?, key: String?, disclosureAccepted: Boolean): Boolean =
+        providerId != null && !key.isNullOrBlank() && disclosureAccepted
+}
+```
+
+Create `app/src/main/java/com/whispereverywhere/transcription/batch/BatchCostEstimator.kt`:
+
+```kotlin
+package com.whispereverywhere.transcription.batch
+
+/**
+ * §6.5's "cloud is never a surprise charge" as math the UI and the service both call.
+ *
+ * Estimates derive from the recording's byteLength (retained in the manifest) at the PCM16/16 kHz
+ * byte rate, priced at gpt-transcribe's published batch rate. They are ESTIMATES shown to the
+ * user, never a promise — copy must say "about".
+ *
+ * needsConfirmation is an OR of a cents threshold and a minutes threshold: with today's price the
+ * minutes bound binds first (10¢ ≈ 22 min), but OR-ing both means a future price change cannot
+ * silently widen the unconfirmed window.
+ */
+object BatchCostEstimator {
+    /** 16 kHz × 2 bytes, mono PCM16. */
+    const val BYTES_PER_SECOND = 32_000
+
+    /** gpt-transcribe batch: $0.0045/min (verified against live docs 2026-07-29). */
+    const val CENTS_PER_MINUTE = 0.45
+
+    const val CONFIRM_CENTS = 10.0
+    const val CONFIRM_MINUTES = 10.0
+
+    fun minutes(byteLength: Long): Double = byteLength / (BYTES_PER_SECOND * 60.0)
+
+    fun estimatedCents(byteLength: Long): Double = minutes(byteLength) * CENTS_PER_MINUTE
+
+    fun needsConfirmation(byteLength: Long): Boolean =
+        estimatedCents(byteLength) >= CONFIRM_CENTS || minutes(byteLength) >= CONFIRM_MINUTES
+}
+```
+
 - [ ] **Step 4: Verify**
 
 ```bash
-.\gradlew.bat :app:testDebugUnitTest --no-daemon --tests "com.whispereverywhere.transcription.batch.BatchRoutingTest"
+.\gradlew.bat :app:testDebugUnitTest --no-daemon --tests "com.whispereverywhere.transcription.batch.*"
 ```
-Expected: PASS, 3 tests. Full suite: previous **+3**, 0 failures.
+Expected: PASS, 14 tests (BatchRouting 3, BatchCloudGate 6, BatchCostEstimator 5). Full suite: previous **+14**, 0 failures.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add app/src/main/java/com/whispereverywhere/transcription/batch/BatchRouting.kt \
-        app/src/test/java/com/whispereverywhere/transcription/batch/BatchRoutingTest.kt
-git commit -m "feat(batch): BatchRouting — PLAYBACK is on-device only, forever
+        app/src/test/java/com/whispereverywhere/transcription/batch/BatchRoutingTest.kt \
+        app/src/main/java/com/whispereverywhere/transcription/batch/BatchCloudGate.kt \
+        app/src/test/java/com/whispereverywhere/transcription/batch/BatchCloudGateTest.kt \
+        app/src/main/java/com/whispereverywhere/transcription/batch/BatchCostEstimator.kt \
+        app/src/test/java/com/whispereverywhere/transcription/batch/BatchCostEstimatorTest.kt
+git commit -m "feat(batch): the three pure batch gates — routing, consent triad, cost
 
-Invariant #1 as one pure function with its own pinning test, mirrored from
-SourceRoutedTranscriptionEngine: the capture source alone decides cloud
-eligibility, and PLAYBACK is never eligible under any key/provider/consent/
-network combination. A when() over the enum forces any future source to be
-ruled on deliberately rather than defaulting to eligible."
+Invariant #1 (PLAYBACK is on-device only, forever), invariant #2 (cloud
+needs provider+key+disclosure-v2), and the §6.5 spend estimate, each as one
+pure function with its own pinning test rather than prose in a header. A
+when() over ActiveSource forces any future capture source to be ruled on
+deliberately rather than defaulting to cloud-eligible."
 ```
 
 ---
@@ -1104,6 +1317,34 @@ class BatchTranscriberTest {
         assertTrue("audio.pcm is preserved on cancel", store.audioFile(id).exists())
         assertTrue("stopped early", m.chunkPlan.count { it.status == ChunkStatus.Done } < m.chunkPlan.size)
     }
+
+    @Test fun a_fallback_cloud_chunk_is_re_sliced_to_local_sized_sub_chunks() = runBlocking {
+        // THE OOM GUARD (review Critical): chunks are planned at the CLOUD ceiling when a provider
+        // is present. A chunk that then falls back must never reach the native model whole —
+        // pcm16ToFloat on a 20 MB chunk alone allocates a ~40 MB FloatArray. Every native call must
+        // see at most LOCAL_CHUNK_BYTES/2 samples.
+        val (store, id) = storeWith(pcmBytes = 24_000, source = ActiveSource.MIC)
+        val fake = FakeHttpTransport { _, _ -> HttpResult.HttpError(503, "down") } // always falls back
+        val maxSamplesSeen = AtomicInteger(0)
+        val backend = object : WhisperBackend {
+            override fun load(modelPath: String) = 1L
+            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+                maxSamplesSeen.getAndUpdate { seen -> maxOf(seen, samples.size) }
+                return "s"
+            }
+            override fun release(ctx: Long) {}
+        }
+        val t = BatchTranscriber(store, cloud = OpenAiStt(fake, "sk-k"), backend = backend,
+            modelPathProvider = modelPath)
+            .apply { testCloudCeiling = 24_000; testLocalChunk = 4000; testMaxCloudRetries = 0 }
+        t.transcribe(id)
+        val m = store.read(id)!!
+        assertEquals(BatchStatus.Done, m.status)
+        assertTrue(
+            "native saw ${maxSamplesSeen.get()} samples; local ceiling is ${4000 / 2}",
+            maxSamplesSeen.get() <= 4000 / 2,
+        )
+    }
 }
 ```
 
@@ -1132,11 +1373,15 @@ import com.whispereverywhere.transcription.cloud.SttError
 import com.whispereverywhere.transcription.cloud.SttProvider
 import com.whispereverywhere.transcription.cloud.SttResult
 import com.whispereverywhere.util.AudioMath
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import java.io.RandomAccessFile
+import java.util.concurrent.Executors
 
 data class BatchProgress(
     val recordingId: String,
@@ -1157,10 +1402,13 @@ data class BatchProgress(
  * a defensive require() guards every cloud dispatch, so a PLAYBACK recording can never reach the
  * network. The fallback valve is one-way (cloud -> local per chunk); a cloud Fatal latches.
  *
- * Threading: the caller (BatchTranscriptionService) launches transcribe() on ONE single-thread
- * dispatcher. This class loads exactly one native ctx per job and transcribes every local chunk on
- * that one thread, so the single-threaded-native-access invariant holds; the ctx is released in a
- * finally.
+ * Threading: the native single-thread invariant is enforced INSIDE this class, not by caller
+ * convention. transcribe() is a suspend function that hops threads at every cloud await, so "the
+ * service launched me on a single-thread dispatcher" is NOT enough — the resume after a cloud call
+ * may land elsewhere. Every native touch (load/transcribe/release) is therefore wrapped in
+ * withContext(nativeDispatcher), a private single-thread executor this class owns, creates, and
+ * closes; a caller cannot break the invariant by choosing a bad dispatcher. Release runs under
+ * NonCancellable so a cancelled job still frees the ctx, on the confined thread.
  */
 class BatchTranscriber(
     private val store: RecordingStore,
@@ -1171,6 +1419,18 @@ class BatchTranscriber(
 ) {
     private val _progress = MutableStateFlow<BatchProgress?>(null)
     val progress: StateFlow<BatchProgress?> = _progress.asStateFlow()
+
+    /**
+     * The ONLY thread that may touch the native whisper ctx. Owned here (created and closed by
+     * this class) so the confinement cannot be broken by a caller's dispatcher choice — see the
+     * class KDoc.
+     */
+    private val nativeDispatcher =
+        Executors.newSingleThreadExecutor { r -> Thread(r, "batch-native").apply { isDaemon = true } }
+            .asCoroutineDispatcher()
+
+    /** Call once when the owning service is destroyed. Idempotent. */
+    fun shutdown() = nativeDispatcher.close()
 
     @Volatile private var cancelled = false
     fun cancel() { cancelled = true }
@@ -1219,17 +1479,25 @@ class BatchTranscriber(
 
                     val (text, engine) = when {
                         effectiveCloud != null -> {
+                            // Belt-and-suspenders on invariant #1: structurally unreachable for
+                            // PLAYBACK (effectiveCloud is nulled at (1)), and asserted at the one
+                            // dispatch site so no future edit can reroute without tripping it.
+                            check(BatchRouting.cloudEligible(meta.source)) {
+                                "PLAYBACK chunk reached the cloud dispatch site"
+                            }
                             val r = runCloud(effectiveCloud, pcm, meta.language)
                             when (r) {
                                 is CloudChunkResult.Ok -> { usedCloud = true; r.text to EngineUsed.OPENAI }
                                 CloudChunkResult.Fatal -> { fatal = true; break }
                                 CloudChunkResult.FallBack -> {                 // (ONE-WAY VALVE)
                                     if (ctx == 0L) ctx = loadCtx()
-                                    usedLocal = true; runLocal(ctx, pcm, meta.language) to EngineUsed.LOCAL
+                                    // (RE-SLICE) This chunk was planned at the CLOUD ceiling.
+                                    usedLocal = true; runLocalSliced(ctx, pcm, meta.language) to EngineUsed.LOCAL
                                 }
                             }
                         }
                         else -> {
+                            // Planned at the LOCAL ceiling (see (1)) — safe to feed whole.
                             if (ctx == 0L) ctx = loadCtx()
                             usedLocal = true; runLocal(ctx, pcm, meta.language) to EngineUsed.LOCAL
                         }
@@ -1244,7 +1512,9 @@ class BatchTranscriber(
                 }
             }
         } finally {
-            if (ctx != 0L) backend.release(ctx)
+            // Confined AND NonCancellable: a cancelled job must still free the native ctx, and
+            // must free it from the one thread allowed to touch it.
+            if (ctx != 0L) withContext(nativeDispatcher + NonCancellable) { backend.release(ctx) }
         }
 
         val allDone = meta.chunkPlan.all { it.status == ChunkStatus.Done }
@@ -1291,17 +1561,38 @@ class BatchTranscriber(
         }
     }
 
-    private fun loadCtx(): Long {
+    private suspend fun loadCtx(): Long = withContext(nativeDispatcher) {
         val path = modelPathProvider.installedModelPath()
             ?: error("No on-device model installed — cannot transcribe locally")
-        return backend.load(path)
+        backend.load(path)
     }
 
-    private fun runLocal(ctx: Long, pcm: ByteArray, language: String?): String {
-        // Defensive: this path must be unreachable for PLAYBACK+cloud, but a local run for a PLAYBACK
-        // recording is always fine — the guard is on CLOUD dispatch, enforced by runCloud's callers.
-        val samples = AudioMath.pcm16ToFloat(pcm)
-        return TranscriptText.clean(backend.transcribe(ctx, samples, language))
+    /** One local-sized piece. A local run for a PLAYBACK recording is always fine — the gate is on CLOUD dispatch. */
+    private suspend fun runLocal(ctx: Long, pcm: ByteArray, language: String?): String =
+        withContext(nativeDispatcher) {
+            val samples = AudioMath.pcm16ToFloat(pcm)
+            TranscriptText.clean(backend.transcribe(ctx, samples, language))
+        }
+
+    /**
+     * (RE-SLICE) A chunk planned at the CLOUD ceiling (up to 20 MB / ~10.5 min) that falls back must
+     * never reach the native model whole: pcm16ToFloat alone would allocate a ~40 MB FloatArray on
+     * top of the 20 MB source, plus minutes of native encoder buffers, inside a foreground service —
+     * the exact long-feed OOM LOCAL_CHUNK_BYTES exists to prevent. Slice to the local ceiling at an
+     * even offset (a PCM16 sample is 2 bytes; an odd cut would shear every later sample) and join
+     * the pieces with a space, matching assembledText's convention for trimmed chunk text.
+     */
+    private suspend fun runLocalSliced(ctx: Long, pcm: ByteArray, language: String?): String {
+        val step = testLocalChunk - (testLocalChunk % 2)
+        val parts = ArrayList<String>()
+        var start = 0
+        while (start < pcm.size) {
+            val end = minOf(start + step, pcm.size)
+            val text = runLocal(ctx, pcm.copyOfRange(start, end), language)
+            if (text.isNotBlank()) parts.add(text)
+            start = end
+        }
+        return parts.joinToString(" ")
     }
 
     companion object {
@@ -1311,7 +1602,11 @@ class BatchTranscriber(
 }
 ```
 
-> **Defensive `require` for the cloud path:** `runCloud` is only ever called when `effectiveCloud != null`, and `effectiveCloud` is null whenever `!cloudEligible(source)`. To make the invariant impossible to break by a future edit, add at the top of `runCloud`: `require(true)` is not enough — instead the CALLER already gates it. Keep the structural guarantee (effectiveCloud nulled for PLAYBACK) AND assert it: the `a_playback_recording_never_touches_the_network` test is the pin. If a reviewer wants belt-and-suspenders, add `check(BatchRouting.cloudEligible(meta.source))` immediately before the `runCloud(...)` call site.
+> **The invariant-#1 enforcement, precisely:** structural (`effectiveCloud` is nulled for PLAYBACK at
+> decision (1), making the whole cloud branch unreachable) **plus** an assertion at the single cloud
+> dispatch site (`check(BatchRouting.cloudEligible(meta.source))`), **plus** the
+> `a_playback_recording_never_touches_the_network` pinning test. Not a constructor throw — a
+> PLAYBACK recording with a cloud-capable transcriber is a legal combination that simply routes local.
 
 - [ ] **Step 4: Verify**
 
@@ -1368,16 +1663,19 @@ stops between chunks, keeps partial results, and never deletes audio."
 
 Behavior spec (match the shape of `FloatingBubbleService`'s construction and `serviceScope` usage; the implementer reads that file):
 
-- `onStartCommand` reads `EXTRA_RECORDING_ID` (a String) and an optional `EXTRA_RESET` (Boolean). Missing id → `stopSelf()` and return `START_NOT_STICKY`.
+- `onStartCommand` reads `EXTRA_RECORDING_ID` (a String), an optional `EXTRA_RESET` (Boolean), and an optional `EXTRA_COST_CONFIRMED` (Boolean, default false). Missing id → `stopSelf()` and return `START_NOT_STICKY`.
 - Call `startForeground(NOTIF_ID, notification)` immediately with a low-priority, ongoing notification: title "Transcribing recording", text from `BatchTranscriber.progress` ("Chunk i of N"). **No speed claims.** Reuse the app's existing notification channel pattern.
 - Build the transcriber once per start:
-  - `store = RecordingStore(File(noBackupFilesDir, "recordings"))` — **`noBackupFilesDir`, not `filesDir`** (keeps audio out of Auto Backup).
-  - `provider`: resolve exactly as `FloatingBubbleService.resolveTranscriptionEngine` does — `sttProviderId` → `resolveSttProvider` → key via `providerAccounts.key(id)` → require `cloudDisclosureAccepted`. If all three hold AND network is validated, `cloud = OpenAiStt(sharedTransport, key)`, else `cloud = null`. **The BatchTranscriber's own `BatchRouting` gate still nulls cloud for a PLAYBACK recording regardless** — the service does not need to special-case source, but it must not pass cloud when the triad is unmet.
+  - `store = RecordingStore.forApp(this)` — the Task 1 factory; never a bare `File` in production.
+  - `provider`: **do NOT imitate `FloatingBubbleService.resolveTranscriptionEngine`** — it is a private member returning a fully-wired live engine, and it does not itself read `cloudDisclosureAccepted` (that gating lives upstream in provider setup). Batch asserts the whole triad explicitly through Task 4's pinned predicate: gather `providerId = prefs.sttProviderId` (validated via the top-level `resolveSttProvider`, FloatingBubbleService.kt:99), `key = providerAccounts.key(id)`, `disclosureAccepted = prefs.cloudDisclosureAccepted`, then `cloud = if (BatchCloudGate.cloudEligible(providerId?.name, key, disclosureAccepted) && network validated) OpenAiStt(transport, key!!) else null`.
+  - **Cloud also requires two more service-side checks, each degrading to local (never failing the job):**
+    (a) **POST_NOTIFICATIONS on 33+** (spec §6.5): if notifications are denied, the FGS spend indicator is invisible while the user is charged — so `cloud = null` and the job runs local. Check `NotificationManagerCompat.from(this).areNotificationsEnabled()`.
+    (b) **The §6.5 cost confirm:** if `BatchCostEstimator.needsConfirmation(meta.byteLength)` and `EXTRA_COST_CONFIRMED` was not passed `true`, `cloud = null`. The UI (Task 7) shows the confirm dialog and sets the extra; the service check means no path — a stale intent, a future caller — can start a large cloud job unconfirmed.
+  - **`BatchRouting` still nulls cloud for a PLAYBACK recording regardless** — the service does not special-case source.
   - `backend = WhisperNativeBackend`, `modelPathProvider = app.whisperModelManager` (already implements `ModelPathProvider`).
-- Launch on a dedicated single-thread dispatcher:
-  `val jobDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()` and `serviceScope.launch(jobDispatcher) { transcriber.transcribe(id, reset) ; stopForeground(...) ; stopSelf() }`. Close the dispatcher in a finally.
+- Launch off-main: `serviceScope.launch(Dispatchers.Default) { try { transcriber.transcribe(id, reset) } finally { stopForeground(...); stopSelf() } }`. **The service does NOT create a native-confinement dispatcher** — that confinement lives INSIDE `BatchTranscriber` (its own `nativeDispatcher`, Task 5) and cannot be affected by the launch context; `Default` is only the host for the suspend loop.
 - Expose progress to the UI via a process-scoped singleton the `BatchJobViewModel` reads (e.g. `BatchJobController` object holding the active `BatchTranscriber`'s `progress` StateFlow and a `cancel()` passthrough), OR bind — the simplest is a small `object BatchJobController { val progress = MutableStateFlow<BatchProgress?>(null); fun cancelActive() }` updated by the service. Keep it minimal; no binder.
-- `onDestroy` cancels the active job cooperatively (`transcriber.cancel()`) and shuts the dispatcher.
+- `onDestroy` cancels the active job cooperatively (`transcriber.cancel()`) and then calls `transcriber.shutdown()` to close its native dispatcher.
 
 - [ ] **Step 3: Verify**
 
@@ -1428,11 +1726,11 @@ key + provider triad holds, and BatchRouting still nulls it for PLAYBACK."
 
 - [ ] **Step 2: `BatchJobViewModel`** — observes `BatchJobController.progress` (StateFlow<BatchProgress?>), exposes `cancel()` (→ `BatchJobController.cancelActive()`), and `start(id, reset)` which fires an intent at `BatchTranscriptionService` with `EXTRA_RECORDING_ID`.
 
-- [ ] **Step 3: `RecordScreen`** — big mic button, elapsed timer, live amplitude bar bound to `StreamingAudioRecorder.amplitude`, Stop. On start: `StorageGuard` free-space gate (need ≥ a few minutes' headroom) — if it fails, a toast and no recording. Record writes MIC PCM through `PcmSink` to `store.audioFile(newId)`; **provenance is stamped `ActiveSource.MIC`** at save. Optional pre-record engine chip ("On-device" / "OpenAI") reflecting the current `sttProviderId` (read-only mirror; changing the engine still lives in Cloud providers). On Stop: write the `RecordingMeta` (id, createdAtMs, durationMs, source=MIC, byteLength=`sink.bytesWritten()`), call `store.sweep()`, start `BatchTranscriptionService`, and navigate to the detail screen for that id.
+- [ ] **Step 3: `RecordScreen`** — big mic button, elapsed timer, live amplitude bar bound to `StreamingAudioRecorder.amplitude`, Stop. On start: `StorageGuard` free-space gate (need ≥ a few minutes' headroom) — if it fails, a toast and no recording. Record writes MIC PCM through `PcmSink` to `store.audioFile(newId)`; **provenance is stamped `ActiveSource.MIC`** at save. Optional pre-record engine chip ("On-device" / "OpenAI") reflecting the current `sttProviderId` (read-only mirror; changing the engine still lives in Cloud providers) — **when a cloud provider is selected the chip also shows the price: "OpenAI · about ¢0.45/min" from `BatchCostEstimator.CENTS_PER_MINUTE`** (§6.5 cost surface; "about", never a promise; no speed claims). On Stop: write the `RecordingMeta` (id, createdAtMs, durationMs, source=MIC, byteLength=`sink.bytesWritten()`), call `store.sweep()`, then **the §6.5 confirm gate**: if a cloud provider is selected and `BatchCostEstimator.needsConfirmation(byteLength)`, show an `AlertDialog` — "Transcribe about N min in the cloud for about ¢X with your OpenAI key?" with "Use cloud" / "Use on-device" — and start `BatchTranscriptionService` with `EXTRA_COST_CONFIRMED=true` only on "Use cloud" ("Use on-device" starts it without the extra; the service then runs local). Below threshold, or with no provider, start directly. Navigate to the detail screen for that id.
 
 - [ ] **Step 4: `RecordingsScreen`** — `LazyColumn` of `Card`s, newest-first (`store.list()`), each showing date (`DateFormat.getDateTimeInstance()`), duration, a **source badge** (MIC / device), a **status chip** (Recorded / Transcribing i-of-N / Done / PartiallyDone / Failed), and an **engine chip**. Tap → detail. Long-press or a trailing delete icon → `store.delete(id)` + refresh. **Separate from `TranscriptsScreen`** (text-only history is untouched).
 
-- [ ] **Step 5: `RecordingDetailScreen`** — transcript text (from `store.assembledText(meta)`), Copy / Share (`ACTION_SEND`, `text/plain`, `EXTRA_TEXT` — the existing text-only share, **no audio export, no FileProvider**). State machine: Recorded → Transcribing (linear progress from `BatchJobViewModel`, Cancel button) → Done / PartiallyDone / Failed(reason). **Retry** is primary on Failed/PartiallyDone (`start(id, reset=false)` — resume). **Re-transcribe** is a separate, confirm-gated action (`AlertDialog` → `start(id, reset=true)`). **PLAYBACK provenance shown visually:** if `meta.source == PLAYBACK`, the engine chip is a **locked "On-device only" badge with a lock icon** and the cloud option is **absent** (not disabled) from the Retry/Re-transcribe menu — the UI reflects the `BatchRouting` code gate; enforcement never lives in the view.
+- [ ] **Step 5: `RecordingDetailScreen`** — transcript text (from `store.assembledText(meta)`), Copy / Share (`ACTION_SEND`, `text/plain`, `EXTRA_TEXT` — the existing text-only share, **no audio export, no FileProvider**). State machine: Recorded → Transcribing (linear progress from `BatchJobViewModel`, Cancel button) → Done / PartiallyDone / Failed(reason). **Retry** is primary on Failed/PartiallyDone (`start(id, reset=false)` — resume). **Re-transcribe** is a separate, confirm-gated action (`AlertDialog` → `start(id, reset=true)`). **Both apply the same §6.5 cost gate as RecordScreen** — with a cloud provider selected and `needsConfirmation(byteLength)`, the confirm dialog runs first and only "Use cloud" passes `EXTRA_COST_CONFIRMED=true`; note Retry estimates on the FULL byteLength (an over-estimate when chunks are already Done — acceptable: the estimate errs toward asking). **PLAYBACK provenance shown visually:** if `meta.source == PLAYBACK`, the engine chip is a **locked "On-device only" badge with a lock icon** and the cloud option is **absent** (not disabled) from the Retry/Re-transcribe menu — the UI reflects the `BatchRouting` code gate; enforcement never lives in the view.
 
 - [ ] **Step 6: Home card + nav** — In `HomeScreen.kt`, add a `Card` cloning the Transcriptions-card template (lines ~187-224) titled **"Record & transcribe"**, subtitle "Record a clip and transcribe it all at once", `clickable { onNavigateToRecordings() }`, threading a new `onNavigateToRecordings` param. In `MainActivity.kt`, add routes `recordings` (→ `RecordingsScreen`, with `onOpenRecording(id)` and `onRecordNew`), `record` (→ `RecordScreen`), and `recording_detail/{id}` (→ `RecordingDetailScreen`), exactly as `transcripts` was added (lines 136-146). Pass `onNavigateToRecordings` into `HomeScreen`.
 
@@ -1479,7 +1777,22 @@ BatchRouting code gate. No audio playback, no audio export (YAGNI)."
 
 - [ ] **Step 2: Confirm NO Data Safety change is required.** On-device-only, app-private, non-backed-up storage is **not** "collection." The mic→cloud upload was already declared in C2a; batch reuses that exact transmission, gated by the same consent-v2 + stored-key + provider-selection triad. **No new disclosure, no declaration flip.** Record this determination in the release ledger so a reviewer does not re-open it.
 
-- [ ] **Step 3: No commit** (no files changed). This task exists so the compliance obligation has an owner and a due date rather than living only in a plan header — the MF1 lesson applied to docs.
+- [ ] **Step 3: Amend `docs/PLAY-DECLARATIONS.md` §5's on-device-storage narrative.** No form answer flips (Step 2), but the §5 narrative currently describes on-device storage as "Transcription history … text-only" — untrue once a raw-audio library exists, and a reviewer diffing the doc against the app would read it as concealment. Add one sentence naming the new store: raw PCM16 recordings under `noBackupFilesDir/recordings` (excluded from Auto Backup by construction), retained at most 30 days / 200 MB rolling, per-recording deletion in the UI, never transmitted except through the already-declared user-initiated cloud transcription. Keep the "text-only" claim scoped to the transcript history, which remains true.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/PLAY-DECLARATIONS.md
+git commit -m "docs(play): declare the on-device recordings library in the storage narrative
+
+No Data Safety form answers change — app-private, non-backed-up, on-device
+storage is not collection, and the mic->cloud transmission was declared in
+C2a — but the section's 'text-only' description of on-device storage stops
+being true the moment batch mode ships a raw-audio library. Name it, its
+retention bounds, and its deletion path so the narrative matches the app."
+```
+
+This task exists so the compliance obligation has an owner and a due date rather than living only in a plan header — the MF1 lesson applied to docs.
 
 ---
 

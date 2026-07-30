@@ -809,7 +809,7 @@ bubble-teeing).
 | D30 | Retry semantics | **Resume** (re-dispatch only non-`Done` chunks) + separate confirm-gated **Re-transcribe** (full reset) | Re-uploading `Done` cloud chunks double-bills a paid API |
 | D31 | Job host | **Foreground service + per-chunk checkpoint** | A backgrounded 30-min job gets killed; both belts are needed |
 | D32 | Chunk fallback | Automatic **per-chunk** one-way cloud→local; `Fatal` latches | `FallbackPolicy` already exists; automatic is cheaper and better UX |
-| D33 | Silence detection | Existing **Silero VAD** seam (`we_vad_filter`) | Already compiled in (§5.5); an RMS-trough scan reinvents it |
+| D33 | Silence detection | ~~Silero VAD seam~~ **REVISED at planning: pure-Kotlin `SilenceScanner` energy scan for the COARSE cut; Silero still runs per-chunk inside `whisper_full` unchanged** | The Silero seam is native-INTERNAL to `whisper_full` with no JNI export usable for standalone boundary scanning, and running it over a whole clip requires the entire FloatArray in memory — the exact OOM chunking exists to avoid. A memory-bounded energy trough only picks WHERE to cut; a hard cut at the byte ceiling guarantees the 25 MB bound regardless of boundary quality, so the worst case of a poor trough is a mid-word cut, not an oversized request. Recorded as a deviation from the synthesized design, with the plan (Task 3) as the authority. |
 | D34 | Ordering | **Sequential; `SegmentOrderer` skipped** | Output lands on a screen, not an injected IME field, so the orderer's whole purpose (§3.8) is absent — it is a provable no-op |
 
 **Goal.** In the main UI: record a whole clip, save the raw audio + its transcript in a recordings
