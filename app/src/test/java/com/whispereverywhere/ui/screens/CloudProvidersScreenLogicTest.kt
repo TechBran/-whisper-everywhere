@@ -5,6 +5,7 @@ import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -261,6 +262,30 @@ class CloudProvidersScreenLogicTest {
         val text = cloudDisclosureMainText()
         assertTrue(text, text.contains("read aloud"))
         assertTrue(text, text.contains("text you select"))
+    }
+
+    @Test fun cloud_disclosure_read_aloud_clause_asserts_TRANSMISSION_not_just_vocabulary() {
+        // Regression-hardening (review finding): the two vocabulary checks above pass even for a
+        // REVERSED disclosure such as "the text you select for read aloud stays on device" — both
+        // phrases survive, and the global present-tense guard (contains "is sent") is already
+        // satisfied by the STT sentence alone, so nothing forced the read-aloud clause itself to
+        // assert egress. Pin the MEANING: the read-aloud sentence must say the selected text is
+        // ALSO sent to the provider. "is also sent" is absent from any on-device reversal.
+        val text = cloudDisclosureMainText()
+        assertTrue(text, text.contains("is also sent"))
+
+        // Stronger still: isolate the sentence that talks about read-aloud and require BOTH the
+        // subject ("text you select") and the transmission verb ("sent") to co-occur INSIDE it, so
+        // a rewrite that keeps the phrases but moves "sent" to an unrelated clause cannot pass.
+        val readAloudSentence = text.split('.', '!', '?')
+            .firstOrNull { it.contains("read aloud", ignoreCase = true) }
+        assertNotNull("no sentence mentions read aloud: $text", readAloudSentence)
+        readAloudSentence!!
+        assertTrue(readAloudSentence, readAloudSentence.contains("text you select", ignoreCase = true))
+        assertTrue(readAloudSentence, readAloudSentence.contains("sent", ignoreCase = true))
+        // And that same sentence must not smuggle in an on-device reassurance that would negate it.
+        assertFalse(readAloudSentence, readAloudSentence.contains("stays on device", ignoreCase = true))
+        assertFalse(readAloudSentence, readAloudSentence.contains("never leaves", ignoreCase = true))
     }
 
     @Test fun cloud_disclosure_main_text_still_makes_no_speed_claim_after_read_aloud_sentence() {
