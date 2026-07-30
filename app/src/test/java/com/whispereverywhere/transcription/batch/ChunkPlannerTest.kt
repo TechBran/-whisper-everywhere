@@ -4,8 +4,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import java.io.RandomAccessFile
 
 class ChunkPlannerTest {
+
+    // The scan now STREAMS a RandomAccessFile (never readBytes() the whole PCM — the OOM fix). These
+    // pause-detection tests keep their in-memory PCM patterns and route them through the file API.
+    private fun scan(pcm: ByteArray): List<Int> {
+        val f = File.createTempFile("scan", ".pcm").apply { deleteOnExit() }
+        f.writeBytes(pcm)
+        return RandomAccessFile(f, "r").use { SilenceScanner.scan(it, f.length()) }
+    }
 
     // ---------- ChunkPlanner.plan: the packing math ----------
 
@@ -102,7 +112,7 @@ class ChunkPlannerTest {
 
     @Test fun a_long_pause_between_two_utterances_yields_one_boundary() {
         val pcm = loud(20) + quiet(12) + loud(20)  // 12 frames ~= 360 ms of silence
-        val cuts = SilenceScanner.scan(pcm)
+        val cuts = scan(pcm)
         assertEquals(1, cuts.size)
         // Boundary sits inside the gap, i.e. between the two loud runs.
         assertTrue(cuts[0] > 20 * 960 && cuts[0] < 32 * 960)
@@ -111,11 +121,11 @@ class ChunkPlannerTest {
 
     @Test fun a_gap_shorter_than_the_minimum_is_not_a_boundary() {
         val pcm = loud(20) + quiet(3) + loud(20)   // ~90 ms — a within-speech micro-pause
-        assertTrue(SilenceScanner.scan(pcm).isEmpty())
+        assertTrue(scan(pcm).isEmpty())
     }
 
     @Test fun trailing_silence_at_the_end_is_not_a_boundary() {
         // A cut at the very end is useless; only gaps followed by more speech count.
-        assertTrue(SilenceScanner.scan(loud(20) + quiet(30)).isEmpty())
+        assertTrue(scan(loud(20) + quiet(30)).isEmpty())
     }
 }

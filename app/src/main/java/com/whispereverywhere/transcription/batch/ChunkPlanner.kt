@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription.batch
 
 import com.whispereverywhere.recording.ChunkEntry
 import com.whispereverywhere.util.AudioMath
+import java.io.RandomAccessFile
 
 /**
  * Coarse cut-planning by an energy scan, NOT the Silero VAD.
@@ -17,29 +18,46 @@ object SilenceScanner {
     private const val FRAME_BYTES = 960          // 30 ms @16 kHz PCM16 (480 samples)
     private const val SILENCE_RMS = 500          // matches the recorder's voiceThr
     private const val MIN_GAP_FRAMES = 8         // ~240 ms of continuous quiet = a real pause
+    private const val WINDOW_FRAMES = 1024       // ~30 s of audio per read; the ONLY resident buffer
 
-    /** Even byte offsets at the midpoint of each silence gap that is FOLLOWED by more speech. */
-    fun scan(pcm: ByteArray): List<Int> {
+    /**
+     * Even byte offsets at the midpoint of each silence gap that is FOLLOWED by more speech.
+     *
+     * Streams [file] in fixed, frame-aligned windows of [WINDOW_FRAMES]×[FRAME_BYTES] (~0.94 MB),
+     * reusing ONE buffer for the whole scan — the peak resident memory is that window, NOT the whole
+     * decoded PCM. This is the OOM fix: an hour-long file (≈115 MB) or a 3-hour file (≈345 MB) is
+     * scanned without ever holding its bytes in a single allocation, and with no per-frame copy.
+     */
+    fun scan(file: RandomAccessFile, totalBytes: Long): List<Int> {
         val out = ArrayList<Int>()
-        var pos = 0
-        var gapStart = -1
-        while (pos + 1 < pcm.size) {
-            val len = minOf(FRAME_BYTES, pcm.size - pos)
-            val rms = AudioMath.amplitude(pcm.copyOfRange(pos, pos + len), len)
-            if (rms < SILENCE_RMS) {
-                if (gapStart < 0) gapStart = pos
-            } else {
-                if (gapStart >= 0) {
-                    // A gap that ended because speech resumed. Long enough? Emit its midpoint.
-                    if (pos - gapStart >= MIN_GAP_FRAMES * FRAME_BYTES) {
-                        var mid = gapStart + (pos - gapStart) / 2
-                        mid -= mid % 2
-                        out.add(mid)
+        val window = ByteArray(WINDOW_FRAMES * FRAME_BYTES)   // multiple of FRAME_BYTES → frames never straddle reads
+        var pos = 0L
+        var gapStart = -1L
+        file.seek(0L)
+        while (pos + 1 < totalBytes) {
+            val want = minOf(window.size.toLong(), totalBytes - pos).toInt()
+            file.readFully(window, 0, want)
+            var off = 0
+            while (off + 1 < want) {
+                val len = minOf(FRAME_BYTES, want - off)
+                val rms = AudioMath.amplitude(window, off, len)
+                val framePos = pos + off
+                if (rms < SILENCE_RMS) {
+                    if (gapStart < 0) gapStart = framePos
+                } else {
+                    if (gapStart >= 0) {
+                        // A gap that ended because speech resumed. Long enough? Emit its midpoint.
+                        if (framePos - gapStart >= MIN_GAP_FRAMES.toLong() * FRAME_BYTES) {
+                            var mid = gapStart + (framePos - gapStart) / 2
+                            mid -= mid % 2
+                            out.add(mid.toInt())
+                        }
+                        gapStart = -1L
                     }
-                    gapStart = -1
                 }
+                off += len
             }
-            pos += len
+            pos += want
         }
         // A gap still open at end-of-file is trailing silence — never a useful cut. Dropped.
         return out

@@ -10,12 +10,21 @@ object AudioMath {
      * Root-mean-square amplitude of the first [length] bytes of [buffer],
      * interpreted as 16-bit little-endian mono samples, scaled to 0..32767.
      */
-    fun amplitude(buffer: ByteArray, length: Int): Int {
-        val end = min(length, buffer.size)
-        if (end < 2) return 0
+    fun amplitude(buffer: ByteArray, length: Int): Int = amplitude(buffer, 0, length)
+
+    /**
+     * Root-mean-square amplitude of [length] bytes of [buffer] starting at [offset], interpreted as
+     * 16-bit little-endian mono samples, scaled to 0..32767. The offset overload lets a streaming
+     * scanner compute a frame's energy over a slice of a reused window buffer with NO copyOfRange
+     * allocation per frame — the batch silence scan reads windows and calls this in place.
+     */
+    fun amplitude(buffer: ByteArray, offset: Int, length: Int): Int {
+        val start = offset.coerceAtLeast(0)
+        val end = min(offset + length, buffer.size)
+        if (end - start < 2) return 0
         var sumSquares = 0.0
         var count = 0
-        var i = 0
+        var i = start
         while (i + 1 < end) {
             val sample = (buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)
             sumSquares += sample.toDouble() * sample.toDouble()

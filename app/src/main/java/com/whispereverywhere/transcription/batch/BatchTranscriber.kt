@@ -107,12 +107,15 @@ class BatchTranscriber(
         val effectiveCloud: SttProvider? = cloud
         val ceiling = if (effectiveCloud != null) testCloudCeiling else testLocalChunk
 
-        // (2) Plan (or re-plan on reset). Reading the whole PCM once for the coarse scan is bounded
-        // by the 200 MB cap and freed immediately; per-chunk work below streams via RandomAccessFile.
+        // (2) Plan (or re-plan on reset). The coarse silence scan STREAMS the file in fixed windows
+        // (SilenceScanner reads ~0.94 MB at a time, reusing one buffer) — it never loads the whole
+        // decoded PCM into a single ByteArray, so an hour-long (≈115 MB) or multi-hour file plans
+        // without an OOM. Per-chunk work below likewise streams via the same RandomAccessFile.
         if (reset || meta.chunkPlan.isEmpty()) {
-            val pcm = store.audioFile(id).readBytes()
-            val boundaries = SilenceScanner.scan(pcm)
-            val plan = ChunkPlanner.plan(pcm.size, ceiling, minChunkBytes = 0, boundaries = boundaries)
+            val audio = store.audioFile(id)
+            val totalBytes = audio.length()
+            val boundaries = RandomAccessFile(audio, "r").use { SilenceScanner.scan(it, totalBytes) }
+            val plan = ChunkPlanner.plan(totalBytes.toInt(), ceiling, minChunkBytes = 0, boundaries = boundaries)
             meta = meta.copy(chunkPlan = plan, status = BatchStatus.Transcribing, engineUsed = null)
             store.save(meta)
         } else {
