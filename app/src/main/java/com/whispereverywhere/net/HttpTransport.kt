@@ -60,6 +60,18 @@ interface HttpTransport {
         timeoutMs: Long = DEFAULT_UPLOAD_TIMEOUT_MS,
     ): HttpResult
 
+    /**
+     * POST a raw JSON body. Separate from [postMultipart]: Gemini's generateContent takes an
+     * application/json body, not form-data. Same long upload-timeout profile — the body embeds
+     * base64 audio.
+     */
+    suspend fun postJson(
+        url: String,
+        headers: Map<String, String>,
+        jsonBody: String,
+        timeoutMs: Long = DEFAULT_UPLOAD_TIMEOUT_MS,
+    ): HttpResult
+
     companion object {
         const val DEFAULT_TIMEOUT_MS = 10_000L
         const val DEFAULT_UPLOAD_TIMEOUT_MS = 60_000L
@@ -138,6 +150,38 @@ class OkHttpTransport(private val client: OkHttpClient = defaultClient()) : Http
             // IllegalStateException -> RuntimeException -> Exception, so the catch below would
             // otherwise swallow it and report a cancelled upload as a network failure while the
             // coroutine never unwinds.
+            throw c
+        } catch (e: Exception) {
+            HttpResult.NetworkError(e)
+        }
+    }
+
+    override suspend fun postJson(
+        url: String,
+        headers: Map<String, String>,
+        jsonBody: String,
+        timeoutMs: Long,
+    ): HttpResult {
+        return try {
+            // Body + headers built INSIDE the try, exactly as postMultipart/get: OkHttp's
+            // Headers.checkValue embeds the raw header value in the IllegalArgumentException for
+            // every header except the four it redacts — x-goog-api-key is NOT one of them, so an
+            // uncaught throw here would put the API key in a crash trace.
+            val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder().url(url).post(body).apply {
+                headers.forEach { (k, v) -> header(k, v) }
+            }.build()
+            val call = client.newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+                .newCall(request)
+            val response = call.await()
+            val respBody = response.use { it.body?.string().orEmpty() }
+            if (response.isSuccessful) HttpResult.Ok(response.code, respBody)
+            else HttpResult.HttpError(response.code, respBody)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // Rethrow FIRST — CancellationException extends Exception, so the broad catch below
+            // would otherwise report a cancelled request as a network failure and never unwind.
             throw c
         } catch (e: Exception) {
             HttpResult.NetworkError(e)

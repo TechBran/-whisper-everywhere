@@ -16,6 +16,8 @@ class FakeHttpTransport(private val script: (String, Map<String, String>) -> Htt
         private set
     var lastFields: Map<String, String> = emptyMap()
         private set
+    var lastJsonBody: String? = null
+        private set
 
     override suspend fun get(url: String, headers: Map<String, String>, timeoutMs: Long): HttpResult {
         lastUrl = url
@@ -35,6 +37,19 @@ class FakeHttpTransport(private val script: (String, Map<String, String>) -> Htt
         lastHeaders = headers
         lastFilePart = filePart
         lastFields = fields
+        callCount++
+        return script(url, headers)
+    }
+
+    override suspend fun postJson(
+        url: String,
+        headers: Map<String, String>,
+        jsonBody: String,
+        timeoutMs: Long,
+    ): HttpResult {
+        lastUrl = url
+        lastHeaders = headers
+        lastJsonBody = jsonBody
         callCount++
         return script(url, headers)
     }
