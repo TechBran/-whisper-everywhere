@@ -52,6 +52,14 @@ class RealtimeTransport(
     private val scheduler: ReconnectScheduler,
     private val listener: Listener,
     private val backoff: Backoff = Backoff.DEFAULT,
+    /**
+     * How many consecutive reconnects to attempt before giving up for this session. A dead network,
+     * DNS failure, sustained 5xx, or a persistent non-fatal 4xx must NOT loop connect->fail->backoff
+     * forever, waking the radio every [Backoff.capMs] for the whole mic session. Reset to zero on a
+     * successful open; once exceeded the socket stays down and the engine rides its local fallback
+     * (every send returns false -> the turn resolves Lost) until the next explicit [connect].
+     */
+    private val maxReconnects: Int = DEFAULT_MAX_RECONNECTS,
 ) {
 
     /**
@@ -154,6 +162,12 @@ class RealtimeTransport(
 
     private fun scheduleReconnect() {
         // caller holds [lock]
+        if (reconnectAttempts >= maxReconnects) {
+            // Give up rather than burn battery retrying a dead network forever. The socket stays
+            // down; the engine keeps routing turns Lost -> local until the next explicit connect().
+            android.util.Log.w(TAG, "realtime giving up after $reconnectAttempts consecutive reconnects")
+            return
+        }
         val delay = backoff.delayFor(reconnectAttempts)
         reconnectAttempts++
         scheduler.schedule(delay) {
@@ -235,6 +249,9 @@ class RealtimeTransport(
     companion object {
         private const val TAG = "WE-DIAG"
         private const val NORMAL_CLOSURE = 1000
+
+        /** Consecutive reconnects before the transport gives up for the session (see [maxReconnects]). */
+        const val DEFAULT_MAX_RECONNECTS = 6
 
         /** Transcription intent per the pinned protocol. `OpenAI-Beta` is added only on a 4xx. */
         const val ENDPOINT = "wss://api.openai.com/v1/realtime?intent=transcription"

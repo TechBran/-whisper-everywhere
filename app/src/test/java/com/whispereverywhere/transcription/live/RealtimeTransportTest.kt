@@ -208,6 +208,40 @@ class RealtimeTransportTest {
         assertEquals(2000L, r.scheduler.lastDelay)
     }
 
+    @Test fun reconnect_gives_up_after_the_ceiling_instead_of_looping_forever() {
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        // Each failure schedules one reconnect, up to the ceiling; onOpen never fires, so these are
+        // consecutive failures with no reset.
+        repeat(RealtimeTransport.DEFAULT_MAX_RECONNECTS) {
+            r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null)
+            r.scheduler.runNext()
+        }
+        val scheduled = r.scheduler.delays.size
+        assertEquals(RealtimeTransport.DEFAULT_MAX_RECONNECTS, scheduled)
+
+        // One more failure past the ceiling must NOT schedule another reconnect (battery-safe latch),
+        // but it still surfaces the disconnect so the engine resolves its turns Lost -> local.
+        r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null)
+        assertEquals("no reconnect past the ceiling", scheduled, r.scheduler.delays.size)
+        assertEquals(RealtimeTransport.DEFAULT_MAX_RECONNECTS + 1, r.listener.disconnects)
+    }
+
+    @Test fun a_successful_open_resets_the_reconnect_ceiling() {
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        repeat(RealtimeTransport.DEFAULT_MAX_RECONNECTS) {
+            r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null)
+            r.scheduler.runNext()
+        }
+        // A successful open clears the consecutive-failure count, so the socket is willing again.
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+        val before = r.scheduler.delays.size
+        r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null)
+        assertEquals("open re-armed reconnect", before + 1, r.scheduler.delays.size)
+        assertEquals("and from the base delay", 500L, r.scheduler.lastDelay)
+    }
+
     @Test fun a_successful_open_resets_the_backoff() {
         val r = Rig()
         r.transport.connect("sk-x", null)
