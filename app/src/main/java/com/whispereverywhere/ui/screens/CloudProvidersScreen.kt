@@ -143,6 +143,24 @@ internal fun selectionAfterKeyRemoval(selected: String?, removedProvider: Provid
     if (selected == removedProvider.name) null else selected
 
 /**
+ * Which providers may be OFFERED as the transcription engine.
+ *
+ * Gated on [disclosureAccepted] as well as on having a key, because SELECTING a provider — not
+ * saving its key — is the action that starts sending audio. Gating only the key field would let a
+ * user who has never seen the present-tense disclosure (someone who accepted C1's future-tense
+ * version, which is everyone who can reach this screen on upgrade) turn transmission on.
+ *
+ * An empty result is not an error state: it means on-device, which is the default and always
+ * available.
+ */
+internal fun sttSelectableProviders(
+    configured: Set<ProviderId>,
+    disclosureAccepted: Boolean,
+): List<Provider> =
+    if (!disclosureAccepted) emptyList()
+    else ProviderCatalog.all.filter { it.id in STT_CAPABLE_PROVIDERS && it.id in configured }
+
+/**
  * Caption shown under a selected cloud STT provider.
  *
  * Deliberately makes no speed claim — measured on-device: a typical 3 s utterance transcribes
@@ -252,6 +270,7 @@ fun CloudProvidersScreen(
                 accounts = accounts,
                 refreshKey = refreshKey,
                 selectedProviderId = sttProviderId,
+                disclosureAccepted = disclosureAccepted,
                 onSelect = { providerId ->
                     app.preferencesManager.sttProviderId = providerId
                     sttProviderId = providerId
@@ -394,6 +413,7 @@ private fun SttEngineSelector(
     accounts: ProviderAccounts,
     refreshKey: Int,
     selectedProviderId: String?,
+    disclosureAccepted: Boolean,
     onSelect: (String?) -> Unit,
 ) {
     // Off Main: configured() runs a Keystore lookup per provider, same as the masked-key reads
@@ -401,7 +421,7 @@ private fun SttEngineSelector(
     val configured by produceState<Set<ProviderId>>(emptySet(), refreshKey) {
         value = withContext(Dispatchers.IO) { accounts.configured() }
     }
-    val selectable = ProviderCatalog.all.filter { it.id in STT_CAPABLE_PROVIDERS && it.id in configured }
+    val selectable = sttSelectableProviders(configured, disclosureAccepted)
 
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         Text(

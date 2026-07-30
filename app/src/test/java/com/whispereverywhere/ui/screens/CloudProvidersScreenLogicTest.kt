@@ -283,6 +283,31 @@ class CloudProvidersScreenLogicTest {
         assertNull(selectionAfterKeyRemoval(null, ProviderId.OPENAI))
     }
 
+    // ---- sttSelectableProviders: selecting is what starts transmission, so it needs consent ----
+
+    @Test fun a_configured_provider_is_offered_once_the_disclosure_is_accepted() {
+        val offered = sttSelectableProviders(setOf(ProviderId.OPENAI), disclosureAccepted = true)
+        assertEquals(listOf(ProviderId.OPENAI), offered.map { it.id })
+    }
+
+    @Test fun no_provider_is_offered_before_the_disclosure_is_accepted() {
+        // The upgrade case: a user holding only C1's future-tense acceptance has a stored key but
+        // has never been told audio is sent NOW. Selecting must be unreachable for them.
+        assertTrue(sttSelectableProviders(setOf(ProviderId.OPENAI), disclosureAccepted = false).isEmpty())
+    }
+
+    @Test fun a_provider_with_no_key_is_never_offered_even_after_acceptance() {
+        assertTrue(sttSelectableProviders(emptySet(), disclosureAccepted = true).isEmpty())
+    }
+
+    @Test fun a_configured_provider_with_no_stt_adapter_is_not_offered() {
+        // ElevenLabs is C2b. Offering it would fall back to on-device with a misleading
+        // "no key saved" message even though a key IS stored.
+        assertTrue(
+            sttSelectableProviders(setOf(ProviderId.ELEVENLABS), disclosureAccepted = true).isEmpty()
+        )
+    }
+
     @Test fun every_provider_can_deselect_itself() {
         // Guards the comparison being by enum NAME rather than by ordinal or display name: a
         // mismatch here would leave cloud selected with no key, which decideEngineChoice reports

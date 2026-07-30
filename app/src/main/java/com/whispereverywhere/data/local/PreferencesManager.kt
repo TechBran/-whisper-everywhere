@@ -244,7 +244,20 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_OVERLAY_PINNED = "overlay_pinned"
         private const val KEY_TTS_SPEED = "tts_speed"
         private const val KEY_TTS_VOICE_ID = "tts_voice_id"
-        private const val KEY_CLOUD_DISCLOSURE_ACCEPTED = "cloud_disclosure_accepted_v1"
+        /**
+         * VERSIONED, and the version must be bumped whenever the disclosure's MEANING changes —
+         * not merely its wording.
+         *
+         * Bumped v1 -> v2 for Release C2a. C1 shipped this dialog in the FUTURE tense ("a future
+         * update will send audio"); C2a is that update and rewrote it in the present tense. Every
+         * user who could reach a cloud selection on day one already held the v1 flag, because a key
+         * can only be stored after accepting and only providers with a stored key are selectable —
+         * so without a bump, 100% of them would have had their consent to "we will do this later"
+         * silently treated as consent to doing it now.
+         *
+         * v1 is deliberately left in place rather than migrated: an unset v2 simply re-prompts.
+         */
+        private const val KEY_CLOUD_DISCLOSURE_ACCEPTED = "cloud_disclosure_accepted_v2"
         private const val KEY_STT_PROVIDER = "stt_provider_id"
 
         // Whisper API supported languages with display names
