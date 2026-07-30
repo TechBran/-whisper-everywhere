@@ -58,6 +58,11 @@ class CloudTranscriptionEngine(
     private val provider: SttProvider,
     private val scope: CoroutineScope,
     maxInFlight: Int = DEFAULT_MAX_IN_FLIGHT,
+    /**
+     * How many committed-but-unresolved segments may pile up before further commits are shed to the
+     * fallback instead of queued. See [commit] for why a bound is necessary at all.
+     */
+    private val maxBacklog: Int = maxInFlight * DEFAULT_BACKLOG_MULTIPLE,
 ) : TranscriptionEngine {
 
     private val bufferLock = Any()
@@ -143,6 +148,33 @@ class CloudTranscriptionEngine(
         val lang = language
         android.util.Log.i(TAG, "commit: seq=$seq pcmBytes=${pcm.size}")
 
+        // BOUND THE BACKLOG. [gate] throttles concurrent UPLOADS, not commits: on a degraded link
+        // three uploads can each sit for the whole call timeout while the VAD keeps cutting
+        // segments, so commits arrive faster than they retire and the queue grows monotonically.
+        // Each backlogged segment pins TWO independent arrays — the snapshot
+        // FallbackTranscriptionEngine retains for a possible local retry, and this closure's own
+        // copy — which is roughly 320 KB per 5 s segment and up to ~960 KB at the 15 s wall cap.
+        // Nothing else sheds load, so the eventual outcome is an OutOfMemoryError on whichever
+        // thread allocates next, frequently the audio capture thread.
+        //
+        // The local engine cannot do this: it drains faster than real time (measured 1.1-1.3 s for
+        // a 3 s segment), so its queue is self-limiting. Cloud is this app's first unbounded queue.
+        //
+        // Shedding is a FLAG consumed inside the job, not an early resolution here, and that is
+        // deliberate: commit() must not resolve re-entrantly, because FallbackTranscriptionEngine
+        // sets up its retry bookkeeping for this seq only AFTER this call returns. The job then
+        // resolves without taking a permit or uploading, so it completes at once and releases both
+        // this closure's copy and the retained snapshot.
+        //
+        // Lost is the right outcome rather than a silent drop: FallbackPolicy.shouldFallBack(Lost)
+        // is true, so under the fallback engine the segment is re-transcribed on-device — exactly
+        // what "the network cannot keep up" should mean. The user gets their words from the local
+        // model instead of a loss marker.
+        val shed = pending.size >= maxBacklog
+        if (shed) {
+            android.util.Log.w(TAG, "backlog at $maxBacklog -> shedding seq=$seq to the fallback")
+        }
+
         // LAZY + register + completion handler + start, in that order, is what makes the
         // exactly-once guarantee hold. Registering before the body can run means the body can
         // never race ahead and remove an entry that was not there yet; the completion handler
@@ -151,11 +183,12 @@ class CloudTranscriptionEngine(
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val outcome = try {
                 val latched = fatal
-                if (latched != null) {
+                when {
                     // Do not even queue for a permit — the account is the problem.
-                    SegmentOutcome.Lost(latched.message)
-                } else {
-                    gate.withPermit { runOne(pcm, lang) }
+                    latched != null -> SegmentOutcome.Lost(latched.message)
+                    // Nor when the network is already further behind than it can recover from.
+                    shed -> SegmentOutcome.Lost(BACKLOG)
+                    else -> gate.withPermit { runOne(pcm, lang) }
                 }
             } catch (c: CancellationException) {
                 SegmentOutcome.Lost(CANCELLED)
@@ -299,6 +332,17 @@ class CloudTranscriptionEngine(
          */
         const val DEFAULT_MAX_IN_FLIGHT = 3
 
+        /**
+         * Backlog ceiling as a multiple of [DEFAULT_MAX_IN_FLIGHT], i.e. 24 segments by default.
+         *
+         * Chosen to be generous enough that an ordinary slow response never sheds — a burst of
+         * short segments while three uploads are in flight has ample room — while still capping
+         * retained audio at roughly 8-23 MB worst case rather than at "until the process dies".
+         * Reaching it means uploads are retiring far slower than speech is arriving, which is a
+         * connection that will not recover on its own.
+         */
+        const val DEFAULT_BACKLOG_MULTIPLE = 8
+
         private const val TAG = "WE-DIAG"
 
         /** commit() cut nothing, so no seq was allocated and nothing is owed a resolution. */
@@ -306,5 +350,6 @@ class CloudTranscriptionEngine(
 
         private const val CANCELLED = "cancelled"
         private const val SUPERSEDED = "session restarted"
+        private const val BACKLOG = "network too far behind"
     }
 }

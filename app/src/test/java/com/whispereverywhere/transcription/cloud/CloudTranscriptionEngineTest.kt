@@ -499,4 +499,89 @@ class CloudTranscriptionEngineTest {
         assertEquals(1, first.all.size)
         assertEquals(0L, first.all.single().first)
     }
+
+    // ---------------------------------------------------------------- the backlog bound
+
+    /**
+     * Stalls every upload so the backlog can only grow, commits well past the cap, and then
+     * asserts the cap actually bit. Without a bound this is the OOM path: the semaphore limits
+     * concurrent uploads, not commits.
+     */
+    private fun stalledEngineAtCap(
+        maxInFlight: Int = 1,
+        maxBacklog: Int = 3,
+        commits: Int = 10,
+    ): Triple<FakeStt, Rec, List<Long>> {
+        val release = CompletableDeferred<Unit>()
+        val p = FakeStt(gate = { _, _ -> release.await() })
+        val e = CloudTranscriptionEngine(p, scope(), maxInFlight = maxInFlight, maxBacklog = maxBacklog)
+        val l = Rec()
+        e.connect(null, l)
+        val seqs = (0 until commits).map {
+            e.sendAudio(ByteArray(640) { 7 })
+            e.commit()
+        }
+        // Every shed segment resolves without an upload, so the shed ones land promptly while the
+        // stalled ones stay outstanding.
+        Thread.sleep(400)
+        return Triple(p, l, seqs)
+    }
+
+    @Test fun a_commit_past_the_backlog_cap_is_shed_instead_of_queued() {
+        val (p, l, seqs) = stalledEngineAtCap()
+        assertEquals("every commit still allocates a real seq", 10, seqs.distinct().size)
+        assertTrue("no seq may be skipped", seqs.none { it < 0 })
+        // Only the ones inside the cap ever reached the provider.
+        assertTrue("shedding must not upload: ${p.calls.get()} calls", p.calls.get() <= 3)
+        assertTrue("the shed segments resolved: ${l.all.size}", l.all.size >= 6)
+    }
+
+    @Test fun a_shed_segment_is_reported_Lost_so_the_fallback_re_transcribes_it_locally() {
+        // Lost, NOT EmptyExpected: FallbackPolicy.shouldFallBack(Lost) is true, so under the
+        // fallback engine the user still gets these words from the on-device model. EmptyExpected
+        // would suppress the retry and silently lose the sentence.
+        val (_, l, _) = stalledEngineAtCap()
+        val shedOutcomes = l.all.map { it.second }
+        assertTrue("expected shed resolutions", shedOutcomes.isNotEmpty())
+        assertTrue(
+            "every shed outcome must be Lost, saw $shedOutcomes",
+            shedOutcomes.all { it is SegmentOutcome.Lost },
+        )
+        assertTrue(
+            "FallbackPolicy must route a shed segment to the local retry",
+            shedOutcomes.all { FallbackPolicy.shouldFallBack(it) },
+        )
+    }
+
+    @Test fun a_shed_seq_resolves_exactly_once() {
+        // The dangerous failure: a seq resolved at shed time AND again by the normal completion
+        // path double-injects, and injection is a full-field read-modify-write.
+        val (_, l, seqs) = stalledEngineAtCap()
+        val counts = l.all.groupingBy { it.first }.eachCount()
+        counts.forEach { (seq, n) -> assertEquals("seq $seq resolved $n times", 1, n) }
+        assertTrue("resolutions must all be seqs commit() handed out", counts.keys.all { it in seqs })
+    }
+
+    @Test fun an_unstalled_engine_never_sheds() {
+        // The cap must be invisible in normal use: a fast provider retires each segment before the
+        // next commit, so a long dictation never touches the bound.
+        val p = FakeStt()
+        val e = CloudTranscriptionEngine(p, scope(), maxInFlight = 1, maxBacklog = 3)
+        val l = Rec()
+        e.connect(null, l)
+        repeat(20) {
+            e.sendAudio(ByteArray(640))
+            e.commit()
+            assertTrue(e.awaitIdle(2_000))
+        }
+        assertEquals("no segment was shed", 20, p.calls.get())
+        assertTrue(l.all.all { it.second is SegmentOutcome.Text })
+    }
+
+    @Test fun the_default_backlog_cap_is_a_multiple_of_the_in_flight_limit() {
+        // Pins the relationship rather than the number: raising concurrency must raise the cap
+        // with it, or the bound would start shedding during ordinary bursts.
+        assertEquals(3, CloudTranscriptionEngine.DEFAULT_MAX_IN_FLIGHT)
+        assertTrue(CloudTranscriptionEngine.DEFAULT_BACKLOG_MULTIPLE > 1)
+    }
 }
