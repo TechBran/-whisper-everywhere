@@ -303,6 +303,12 @@ class LiveTranscriptionEngine(
         // A session-level fatal dooms every in-flight turn; resolve them Lost so none stalls the
         // orderer. Later commits fail fast in commit() via the latch.
         abandonOutstanding(reasonFor(kind))
+        // Retrying cannot help once the key/credit is proven unusable, so stop spending: drop any
+        // queued audio and CLOSE the socket. Without this, sendAudio keeps enqueuing appends that
+        // the sender keeps pushing to a live socket for the rest of the session — wasted work on a
+        // doomed session, and the socket never gives up. connect() reopens for the next session.
+        clearSendBuffer()
+        transport.close()
     }
 
     /** In-band error `code` -> latched fatal, or null for a transient/unknown error we do not latch. */

@@ -58,19 +58,27 @@ class LiveTranscriptionEngineTest {
         val commits = AtomicInteger(0)
         var connects = 0
         var closes = 0
+        /** Models the real transport: a closed/absent socket sends nothing and returns false. */
+        @Volatile var open = true
+        /** When set, sendAppend returns false (network backpressure / socket-down) without recording. */
+        @Volatile var refuseAppends = false
         @Volatile private var gate: CountDownLatch? = null
 
         fun stall() { gate = CountDownLatch(1) }
         fun releaseGate() { gate?.countDown() }
 
-        override fun connect(apiKey: String, language: String?) { connects++ }
+        override fun connect(apiKey: String, language: String?) { connects++; open = true }
         override fun sendAppend(base64: String): Boolean {
             gate?.await()
+            if (!open || refuseAppends) return false
             appends += base64
             return true
         }
-        override fun sendCommit(): Boolean { commits.incrementAndGet(); return true }
-        override fun close() { closes++ }
+        override fun sendCommit(): Boolean {
+            if (!open) return false
+            commits.incrementAndGet(); return true
+        }
+        override fun close() { closes++; open = false }
     }
 
     private class Rec : TranscriptionEngine.Listener {
@@ -254,6 +262,19 @@ class LiveTranscriptionEngineTest {
         // Latched: a second error event does not change or re-arm the latch.
         h.transport.listener.onErrorEvent("invalid_api_key", 9)
         assertEquals(FatalKind.INVALID_KEY, h.engine.lastFatal())
+    }
+
+    @Test fun fatal_latch_closes_the_transport_and_stops_further_appends() {
+        // A latched fatal means every further append is wasted work on a doomed, paid session, and a
+        // live socket that never gives up. The latch must close the socket and drop queued audio.
+        val h = connected()
+        h.transport.listener.onErrorEvent("invalid_api_key", 10)
+        assertEquals(FatalKind.INVALID_KEY, h.engine.lastFatal())
+        assertEquals("the latched session closes its socket", 1, h.transport.closes)
+
+        h.engine.sendAudio(byteArrayOf(1, 2))
+        Thread.sleep(100)
+        assertTrue("no audio may leave after a fatal latch", h.transport.appends.isEmpty())
     }
 
     @Test fun handshake_fatal_latches_and_abandons_outstanding() {
