@@ -157,6 +157,21 @@ class BatchTranscriberTest {
         assertTrue("stopped early", m.chunkPlan.count { it.status == ChunkStatus.Done } < m.chunkPlan.size)
     }
 
+    @Test fun the_owned_native_executor_is_closed_when_the_job_ends() = runBlocking {
+        // Review Important: the "batch-native" single-thread executor was leaked once per completed
+        // job — created eagerly in the ctor, but closed only from the service's onDestroy, which the
+        // normal completion path skips. The class now self-closes it in transcribe()'s finally.
+        val (store, id) = storeWith(pcmBytes = 8000)
+        val t = BatchTranscriber(store, cloud = null, backend = FakeBackend(), modelPathProvider = modelPath)
+            .apply { testCloudCeiling = 3000; testLocalChunk = 3000 }
+        assertTrue("executor is open before the job", !t.nativeExecutorClosed)
+        t.transcribe(id)
+        assertTrue("the class must close its own batch-native executor when the job ends", t.nativeExecutorClosed)
+        // Idempotent: an external backstop shutdown() after self-close is a harmless no-op.
+        t.shutdown()
+        assertTrue(t.nativeExecutorClosed)
+    }
+
     @Test fun a_fallback_cloud_chunk_is_re_sliced_to_local_sized_sub_chunks() = runBlocking {
         // THE OOM GUARD (review Critical): chunks are planned at the CLOUD ceiling when a provider
         // is present. A chunk that then falls back must never reach the native model whole —

@@ -70,8 +70,24 @@ class BatchTranscriber(
         Executors.newSingleThreadExecutor { r -> Thread(r, "batch-native").apply { isDaemon = true } }
             .asCoroutineDispatcher()
 
-    /** Call once when the owning service is destroyed. Idempotent. */
-    fun shutdown() = nativeDispatcher.close()
+    @Volatile private var dispatcherClosed = false
+
+    /** True once the owned single-thread native executor has been closed. Observability/test seam. */
+    internal val nativeExecutorClosed: Boolean get() = dispatcherClosed
+
+    /**
+     * Close the owned single-thread native executor. IDEMPOTENT (guarded by [dispatcherClosed]) and
+     * SELF-INVOKED at the end of [transcribe]'s finally, right after the confined release — so the
+     * executor is closed exactly where the job ends, on every path, without the caller having to
+     * remember. A leftover external call (e.g. from a service backstop) is a harmless no-op; the
+     * previous design leaked one parked "batch-native" thread per completed job because shutdown was
+     * only ever reached from the service's onDestroy, which the normal completion path skips.
+     */
+    fun shutdown() {
+        if (dispatcherClosed) return
+        dispatcherClosed = true
+        nativeDispatcher.close()
+    }
 
     @Volatile private var cancelled = false
     fun cancel() { cancelled = true }
@@ -148,9 +164,17 @@ class BatchTranscriber(
                 }
             }
         } finally {
-            // Confined AND NonCancellable: a cancelled job must still free the native ctx, and
-            // must free it from the one thread allowed to touch it.
-            if (ctx != 0L) withContext(nativeDispatcher + NonCancellable) { backend.release(ctx) }
+            try {
+                // Confined AND NonCancellable: a cancelled job must still free the native ctx, and
+                // must free it from the one thread allowed to touch it. This runs on the STILL-OPEN
+                // dispatcher because shutdown() is deferred to the outer finally below.
+                if (ctx != 0L) withContext(nativeDispatcher + NonCancellable) { backend.release(ctx) }
+            } finally {
+                // Close the owned executor exactly where the job ends — AFTER release has unwound on
+                // it. On a cancelled job (service onDestroy), the release above already ran on the
+                // open dispatcher; only then do we close it. No caller can race this from off-thread.
+                shutdown()
+            }
         }
 
         val allDone = meta.chunkPlan.all { it.status == ChunkStatus.Done }

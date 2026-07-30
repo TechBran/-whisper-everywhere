@@ -253,6 +253,11 @@ class BatchTranscriptionService : Service() {
             BatchJobController.active = null
             running = false
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            // Backstop: transcribe() self-closes its native executor in its own finally, so on the
+            // normal path this is an idempotent no-op. It only does real work for the narrow window
+            // where the transcriber was constructed but transcribe() never ran (an early throw),
+            // which would otherwise leak the eagerly-created "batch-native" thread.
+            activeTranscriber?.shutdown()
             stopSelf()
         }
     }
@@ -307,12 +312,14 @@ class BatchTranscriptionService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Cancel cooperatively (keeps the partial checkpoint), then close the transcriber's native
-        // dispatcher, then cancel the host scope.
+        // Cancel cooperatively (keeps the partial checkpoint), then cancel the host scope. We do
+        // NOT close the native dispatcher here: cancelling the scope unwinds transcribe(), whose
+        // finally runs its NonCancellable ctx-release on the STILL-OPEN dispatcher and only then
+        // self-closes it (see BatchTranscriber). Closing from this thread first — the old order —
+        // raced that release: release() could be rejected and the native ctx leaked, or be rerouted
+        // off the one thread allowed to touch it. The close now always happens on the job's own
+        // unwind, in the right order.
         activeTranscriber?.cancel()
-        activeTranscriber?.shutdown()
-        activeTranscriber = null
-        BatchJobController.active = null
         serviceScope.cancel()
         httpTransport = null
     }
