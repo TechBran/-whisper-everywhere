@@ -4,7 +4,11 @@ package com.whispereverywhere.net
  * Scripted HTTP for unit tests. Records the last request so tests can assert the auth header was
  * built correctly — the single most common provider-integration bug.
  */
-class FakeHttpTransport(private val script: (String, Map<String, String>) -> HttpResult) : HttpTransport {
+class FakeHttpTransport(
+    private val script: (String, Map<String, String>) -> HttpResult = { _, _ ->
+        error("FakeHttpTransport: no HttpResult script configured — this test only stubs postForBytes")
+    },
+) : HttpTransport {
 
     var lastUrl: String? = null
         private set
@@ -18,6 +22,13 @@ class FakeHttpTransport(private val script: (String, Map<String, String>) -> Htt
         private set
     var lastJsonBody: String? = null
         private set
+
+    private val queuedBytesResults = ArrayDeque<HttpResultBytes>()
+
+    /** Queue one [HttpResultBytes] to be returned by the next [postForBytes] call, in FIFO order. */
+    fun queueBytes(result: HttpResultBytes) {
+        queuedBytesResults.addLast(result)
+    }
 
     override suspend fun get(url: String, headers: Map<String, String>, timeoutMs: Long): HttpResult {
         lastUrl = url
@@ -52,5 +63,19 @@ class FakeHttpTransport(private val script: (String, Map<String, String>) -> Htt
         lastJsonBody = jsonBody
         callCount++
         return script(url, headers)
+    }
+
+    override suspend fun postForBytes(
+        url: String,
+        headers: Map<String, String>,
+        jsonBody: String,
+        timeoutMs: Long,
+    ): HttpResultBytes {
+        lastUrl = url
+        lastHeaders = headers
+        lastJsonBody = jsonBody
+        callCount++
+        return queuedBytesResults.removeFirstOrNull()
+            ?: error("FakeHttpTransport.postForBytes called with no queued HttpResultBytes — call queueBytes() first")
     }
 }

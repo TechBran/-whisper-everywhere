@@ -26,6 +26,16 @@ sealed interface HttpResult {
 }
 
 /**
+ * Outcome of one binary-body HTTP call — see [HttpTransport.postForBytes]. Mirrors [HttpResult]'s
+ * three-case shape; only the success payload differs (raw bytes, not a lossy `.string()` read).
+ */
+sealed interface HttpResultBytes {
+    data class Ok(val code: Int, val bytes: ByteArray) : HttpResultBytes
+    data class HttpError(val code: Int, val body: String) : HttpResultBytes
+    data class NetworkError(val cause: Throwable) : HttpResultBytes
+}
+
+/**
  * The seam that makes every provider client unit-testable without a network. Production uses
  * [OkHttpTransport]; tests use FakeHttpTransport in the test source set.
  */
@@ -72,9 +82,34 @@ interface HttpTransport {
         timeoutMs: Long = DEFAULT_UPLOAD_TIMEOUT_MS,
     ): HttpResult
 
+    /**
+     * POST a JSON body and read the response as RAW BYTES. Separate from [postJson] because a TTS
+     * endpoint returns a binary audio body (headerless PCM16 / mp3) that `.string()` corrupts. On a
+     * non-2xx the body is an error JSON, so it is read as String for classification.
+     */
+    suspend fun postForBytes(
+        url: String,
+        headers: Map<String, String>,
+        jsonBody: String,
+        timeoutMs: Long = DEFAULT_TTS_TIMEOUT_MS,
+    ): HttpResultBytes
+
     companion object {
         const val DEFAULT_TIMEOUT_MS = 10_000L
         const val DEFAULT_UPLOAD_TIMEOUT_MS = 60_000L
+
+        /** Generous read timeout for one clause-bounded TTS unit — a slow link + a preview model
+         *  can be slow, and the per-slice bank keeps playback going meanwhile. */
+        const val DEFAULT_TTS_TIMEOUT_MS = 45_000L
+
+        /**
+         * Hard cap on a [postForBytes] response body. One clause-bounded TTS unit is a few seconds
+         * of 24 kHz PCM16 mono (~50 KB/s) or a small mp3 — 32 MB is dozens of minutes of audio, far
+         * beyond a single unit. Bounding this defends against a runaway or malformed response
+         * filling heap; exceeding it fails closed (surfaces as [HttpResultBytes.NetworkError])
+         * rather than buffering an unbounded stream.
+         */
+        const val MAX_BINARY_RESPONSE_BYTES = 32L * 1024 * 1024
     }
 }
 
@@ -186,6 +221,76 @@ class OkHttpTransport(private val client: OkHttpClient = defaultClient()) : Http
         } catch (e: Exception) {
             HttpResult.NetworkError(e)
         }
+    }
+
+    override suspend fun postForBytes(
+        url: String,
+        headers: Map<String, String>,
+        jsonBody: String,
+        timeoutMs: Long,
+    ): HttpResultBytes {
+        return try {
+            // Body + headers built INSIDE the try, exactly as postJson/postMultipart/get: OkHttp's
+            // Headers.checkValue embeds the raw header value in the IllegalArgumentException for
+            // every header except the four it redacts — xi-api-key / x-goog-api-key are NOT among
+            // them, so an uncaught throw here would put a credential in a crash trace.
+            val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder().url(url).post(body).apply {
+                headers.forEach { (k, v) -> header(k, v) }
+            }.build()
+            val call = client.newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+                .newCall(request)
+            val response = call.await()
+            if (response.isSuccessful) {
+                val bytes = response.use { readBoundedBytes(it.body) }
+                HttpResultBytes.Ok(response.code, bytes)
+            } else {
+                // Error bodies are text/JSON, consumed by each provider's `classify` — read as
+                // String exactly like the other methods, no size bound needed here.
+                val respBody = response.use { it.body?.string().orEmpty() }
+                HttpResultBytes.HttpError(response.code, respBody)
+            }
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // Rethrow FIRST, same reason as every other method here: CancellationException must
+            // unwind the coroutine, not be reported as a network failure.
+            throw c
+        } catch (e: Exception) {
+            HttpResultBytes.NetworkError(e)
+        }
+    }
+
+    /**
+     * Reads [body] fully into memory but FAILS CLOSED past [HttpTransport.MAX_BINARY_RESPONSE_BYTES]
+     * instead of buffering an unbounded stream. A declared `Content-Length` over the cap is rejected
+     * before any read; a chunked/unknown-length body (`Content-Length: -1`) is still bounded by
+     * counting bytes as they stream in, so a lying or malformed server cannot force an unbounded
+     * allocation. Thrown from inside the caller's try — surfaces as [HttpResultBytes.NetworkError].
+     */
+    private fun readBoundedBytes(body: okhttp3.ResponseBody?): ByteArray {
+        if (body == null) return ByteArray(0)
+        val declaredLength = body.contentLength()
+        if (declaredLength > HttpTransport.MAX_BINARY_RESPONSE_BYTES) {
+            throw IOException(
+                "response body declares $declaredLength bytes, over the " +
+                    "${HttpTransport.MAX_BINARY_RESPONSE_BYTES}-byte cap",
+            )
+        }
+        val source = body.source()
+        val sink = okio.Buffer()
+        var total = 0L
+        while (true) {
+            val read = source.read(sink, 8192L)
+            if (read == -1L) break
+            total += read
+            if (total > HttpTransport.MAX_BINARY_RESPONSE_BYTES) {
+                throw IOException(
+                    "response body exceeded the ${HttpTransport.MAX_BINARY_RESPONSE_BYTES}-byte cap while streaming",
+                )
+            }
+        }
+        return sink.readByteArray()
     }
 
     companion object {
