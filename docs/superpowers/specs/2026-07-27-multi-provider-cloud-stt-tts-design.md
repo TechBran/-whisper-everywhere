@@ -554,6 +554,30 @@ so a future streaming engine does not have to untangle them.
 `scribe_v2_realtime_lite` in July 2026 with unpublished pricing. If a lite realtime tier prices
 near batch, this calculus changes.
 
+### 5.6e VERIFIED 2026-07-29 — the OpenAI model split (batch vs realtime)
+
+Checked against live OpenAI documentation 2026-07-29; recorded here as fact, not to be re-verified.
+OpenAI exposes **two** transcription models, and they are **not** interchangeable across endpoints.
+The §5.6 transport table's "OpenAI = WebSocket" row is the *realtime* model; the batch path (§6.6)
+and the C2a cloud engine both use the *batch* model.
+
+| Model | Endpoints | Price | Notes |
+|---|---|---|---|
+| **`gpt-transcribe`** | Batch `POST /v1/audio/transcriptions` **and** realtime | **$0.0045/min** | Alias only — no dated snapshot. Already pinned as `OpenAiStt.DEFAULT_MODEL`. **This is the batch model** (C2a, §6.6). |
+| **`gpt-live-transcribe`** | Realtime **only** (`v1/realtime/transcription_sessions`) — **rejected by the batch endpoint** | **$0.017/min** | Low-latency deltas, tunable latency, keyword hints. **This is the C4 streaming model.** |
+
+Two facts the C4 streaming work must carry — both already accommodated by shipped design:
+
+- **`gpt-live-transcribe` wants pcm16 at 24 kHz**; the app captures 16 kHz, so C4 needs a resample
+  step on the WebSocket send path (§3.7's non-blocking queue is where it goes). Batch is
+  unaffected — it uploads 16 kHz WAV.
+- **Realtime completion-event ordering is NOT guaranteed across turns** — reassociate by `item_id`.
+  Release A's `SegmentOrderer` (§5.3) already absorbs exactly this out-of-order-release hazard.
+
+**Batch endpoint limits** (reconfirmed): 25 MB request cap, WAV accepted, raw PCM rejected, no
+documented duration limit. 16 kHz PCM16 mono WAV = 32 KB/s ⇒ **~13.1 minutes per request**; longer
+recordings must be chunked — §6.6 chunks at a 20 MB / ~10.5 min ceiling for margin.
+
 ### 5.7 Latency, honestly
 
 The perceived floor is `pauseMs + ≤32 ms chunk + admission + inference + ~40 ms injection`.
@@ -758,6 +782,209 @@ $0.24, one cent under a 25¢ guard. Estimate from **retained** bytes, not segmen
 indicator with no mic open. On Android 13+ with `POST_NOTIFICATIONS` denied the FGS notification
 is not shown, so the only spend indicator disappears — require the permission before offering
 cloud retry.
+
+### 6.6 Batch transcription mode (whole-recording, in the main UI)
+
+**NEW 2026-07-29.** The owner's standing request, verbatim: *"take a whole recording and dump it
+directly into whichever model you have chosen and that will transcribe all at once"* — plus the
+older ask to **save the raw audio alongside the transcript with a Retry transcribe button** so a
+bad transcription can be redone from the saved audio. This lives in the app's **main UI, not the
+bubble.** It reuses §6's archive-and-retry machinery (raw PCM16LE on disk, `noBackupFilesDir`,
+provenance, non-destructive retry) but is a **separate, deliberate record→transcribe surface**,
+not a passive archive of bubble sessions.
+
+Skeleton: risk-first — it survives a real 30-minute recording via a foreground service, per-chunk
+checkpoint/resume, VAD-boundary chunking, and resume-not-restart (to stop double-billing) — grafted
+onto a dedicated in-app record surface, with ruthless scope cuts (no import, no playback, no
+bubble-teeing).
+
+**Decisions locked for batch mode** (extend the D-series; §2 is the canonical index if promoted):
+
+| # | Decision | Choice | Why |
+|---|---|---|---|
+| D26 | Capture surface | In-app `RecordScreen`, **MIC only** | Spec says batch lives in main UI *not the bubble*; teeing bubble PCM risks the live VAD hot thread and spreads PLAYBACK provenance |
+| D27 | File import (SAF) | **OUT** this release | An imported file has no MIC/PLAYBACK provenance — it cannot answer D3/invariant #1 — and drags in a codec/resample surface |
+| D28 | PLAYBACK capture in record screen | **OUT** this release; field + routing gate + pinning test still ship | No user asked to batch device audio; the future PLAYBACK inlet arrives against an already-enforced guard |
+| D29 | Provenance carrier | Reuse existing **`ActiveSource`** enum (`MIC`/`PLAYBACK`) | Avoids a duplicate `CaptureSource` enum and conversion |
+| D30 | Retry semantics | **Resume** (re-dispatch only non-`Done` chunks) + separate confirm-gated **Re-transcribe** (full reset) | Re-uploading `Done` cloud chunks double-bills a paid API |
+| D31 | Job host | **Foreground service + per-chunk checkpoint** | A backgrounded 30-min job gets killed; both belts are needed |
+| D32 | Chunk fallback | Automatic **per-chunk** one-way cloud→local; `Fatal` latches | `FallbackPolicy` already exists; automatic is cheaper and better UX |
+| D33 | Silence detection | Existing **Silero VAD** seam (`we_vad_filter`) | Already compiled in (§5.5); an RMS-trough scan reinvents it |
+| D34 | Ordering | **Sequential; `SegmentOrderer` skipped** | Output lands on a screen, not an injected IME field, so the orderer's whole purpose (§3.8) is absent — it is a provable no-op |
+
+**Goal.** In the main UI: record a whole clip, save the raw audio + its transcript in a recordings
+library, and transcribe it all at once through the user's chosen engine (local model or selected
+cloud provider). A **Retry transcribe** button re-runs the job from saved audio. It works fully
+offline with the local model (invariant #6); on-device stays the default.
+
+**Where recordings come from — one inlet.** An in-app `RecordScreen`, **MIC only**, reusing the
+Context-agnostic `StreamingAudioRecorder` and writing PCM straight to disk through a new
+`recording/PcmSink.kt`. Provenance is stamped `MIC` at capture; on Stop the recording is saved and
+batch transcription auto-starts. Explicitly cut: SAF/WAV import (D27 — provenance-ambiguous plus a
+codec surface); bubble-session auto-archive (D26 — `TranscriptStore` stays text-only, its "audio
+never retained" contract intact); PLAYBACK capture in the record screen (D28 — no MediaProjection
+flow in batch this release, though the provenance field, routing gate, and pinning test all ship
+and are exercised by a synthetic PLAYBACK meta).
+
+**Data model — new `recording/` package.** `recording/RecordingStore.kt`, sibling to
+`TranscriptStore`, rooted at **`noBackupFilesDir/recordings/<uuid>/`** — `noBackupFilesDir` is
+load-bearing (§6.2): it keeps raw audio out of Android Auto Backup, which would otherwise be an
+undisclosed off-device transfer. Each directory holds:
+
+- `audio.pcm` — raw PCM16LE, 16 kHz mono. Raw not WAV: the 44-byte header is dead weight when we
+  chunk by byte offset; each chunk is WAV-wrapped in memory at dispatch via the existing
+  `WavWriter.wrap`.
+- `manifest.json` — kotlinx.serialization (**org.json is BANNED** — under
+  `unitTests.isReturnDefaultValues = true` it returns type defaults, §3.4 trap):
+
+```kotlin
+RecordingMeta(
+  id, createdAtMs, durationMs,
+  source: ActiveSource,            // MIC | PLAYBACK — provenance carrier (reuse existing enum, D29)
+  sampleRate, channels, byteLength,
+  status: Recorded | Transcribing | PartiallyDone | Done | Failed,
+  engineUsed: LOCAL | OPENAI?, modelId?, language?,
+  chunkPlan: List<ChunkEntry(index, startByte, endByte, hardCut, status, text)>,
+)
+```
+
+The assembled transcript is `chunkPlan.joinToString { it.text }`. `RecordingStore` exposes
+`save / list(newest-first) / read / delete / sweep`. `delete(id)` recursively removes `<uuid>/`
+(per-recording deletion, invariant #7). `sweep()`: **byte-cap first**
+(`MAX_TOTAL_BYTES = 200 MB`, oldest-first eviction) plus **`MAX_AGE_MS = 30 days`** (30 d over 14 d —
+better serves "keep it for retry"). A **`StatFs` free-space gate** guards `RecordScreen` start and
+every save — no audio path currently checks free space, so this is a required new task.
+
+**Batch engine path — a job runner, not a `TranscriptionEngine`.**
+`transcription/batch/BatchTranscriber.kt` is a **one-shot job runner**, NOT a `TranscriptionEngine`
+(it does not implement connect/sendAudio/commit — that contract is a lie for a batch job). It is
+hosted in a new **foreground** `service/BatchTranscriptionService.kt` (D31) so the OS won't kill a
+long job; the foreground service *and* per-chunk checkpointing are both required, because a
+foreground service can still die.
+
+**Provenance gate — invariant #1 / D3 in CODE, not prose.** `transcription/batch/BatchRouting.kt`:
+
+```kotlin
+fun cloudEligible(source: ActiveSource) = source == ActiveSource.MIC
+fun engineForBatch(source, local, cloud) =
+    if (source == ActiveSource.PLAYBACK) local else (cloud ?: local)
+```
+
+The first line of `transcribe()` routes through this; constructing a cloud job for a PLAYBACK
+recording throws. It mirrors `SourceRoutedTranscriptionEngine.engineForSource`. **Pinning test
+`BatchRoutingTest.kt`:** a PLAYBACK meta carrying a stored key + selected provider + accepted
+consent v2 must resolve to **local** *and* assert `HttpTransport` is never invoked. This is the MF1
+lesson made concrete — the constraint has an implementing task and a pinning test, not just a
+sentence.
+
+**Chunking — `transcription/batch/ChunkPlanner.kt` (pure, Android-free, unit-tested).** Reuses the
+existing Silero VAD seam (`we_vad_filter`, §5.5, D33) to find silence boundaries. Greedy pack, cut
+at the last silence boundary before the ceiling, never mid-word:
+
+- **Cloud:** ceiling **20 MB (~10.5 min)** — margin under the hard 25 MB / 13.1 min batch limit
+  (§3.9, §5.6e).
+- **Local:** ~90 s chunks at VAD boundaries — bounds memory to ~3 MB/chunk, avoiding the ~38 MB
+  FloatArray + native-copy OOM on long feeds. Local chunks call `backend.transcribe` directly,
+  bypassing `LocalWhisperEngine.sendAudio`'s 30 s self-commit so cuts stay VAD-aligned.
+- **No-silence fallback:** a continuous-speech run past the ceiling is **hard-cut** with
+  `hardCut = true` (logged length-only). Degraded but bounded — cannot OOM or exceed 25 MB.
+
+**Ordering: strictly sequential; `SegmentOrderer` SKIPPED (D34).** Batch output lands on a **screen,
+not an injected IME field**, so §3.8's entire hazard (out-of-order injection deleting text) is
+absent. Chunk N awaits before N+1; append to a `StringBuilder`. Sequential ⇒ `seq` always == head ⇒
+the orderer is a provable no-op. This also bounds memory to one chunk and makes progress, cancel,
+resume, and per-chunk retry trivial. The trade-off (slower than cloud's 3-in-flight) is invisible
+for a backgrounded job. **Do not** reuse `CloudTranscriptionEngine`'s 3-in-flight dispatch here.
+
+**Checkpoint / resume — the anti-double-charge mechanism (D30).** After each chunk, its
+`status = Done` + `text` is written to the manifest. Two distinct affordances:
+
+- **Retry = resume:** re-dispatches only non-`Done` chunks. A `Done` cloud chunk is **never
+  re-uploaded** — this protects the user's wallet on a partial failure and is the headline "redo
+  from saved audio" feature made safe.
+- **Re-transcribe = confirmed full reset:** a separate, confirm-gated action (e.g. the user
+  switched provider or language) that clears all chunks.
+
+**Progress / cancel.** `StateFlow<BatchProgress>` = `chunk i of N + percent` → a linear progress
+bar. Cancel is a cooperative flag checked between chunks; partial results are retained as
+`PartiallyDone`; **cancel never deletes audio.**
+
+**Fallback (one-way valve, per chunk) (D32).** Reuses `FallbackPolicy` semantics: a chunk returning
+`Lost` or exhausting `Transient` retries falls to `localEngine`; `engineUsed` flips to reflect it.
+Cloud `Fatal` (INVALID_KEY / OUT_OF_CREDIT) **latches**, stops, marks the recording `Failed`, and
+surfaces **Retry** (which resumes after the user fixes the key). Local never escalates to cloud
+(invariant #3); PLAYBACK never enters this path.
+
+**UI — a new `recordings` nav route off a HomeScreen card "Record & transcribe"**, cloning the
+existing Transcriptions-card template. Two ViewModels (`RecordingsViewModel`, `BatchJobViewModel`) —
+justified because batch genuinely needs lifecycle/progress state.
+
+- **`ui/screens/RecordScreen.kt`** — big mic button, elapsed timer, live amplitude bar
+  (`StreamingAudioRecorder.amplitude`), Stop. Optional pre-record engine chip ("On-device" /
+  "OpenAI"). Stop → save + auto-start batch → navigate to detail.
+- **`ui/screens/RecordingsScreen.kt`** — a newest-first `LazyColumn`: date, duration, **source
+  badge**, **status chip** (Recorded / Transcribing i-of-N / Done / PartiallyDone / Failed),
+  **engine chip**. Kept **separate** from the text-only transcript history — mixing two stores in
+  one list adds complexity for little gain.
+- **`ui/screens/RecordingDetailScreen.kt`** — transcript text with Copy / Share (text/plain, the
+  existing `ACTION_SEND`) / Delete; states Recorded → Transcribing (progress + Cancel) → Done /
+  PartiallyDone / Failed(reason). **Retry** is primary on Failed/PartiallyDone; **Re-transcribe**
+  is confirm-gated. **No audio player/scrubber** — the owner asked to redo transcription, not to
+  listen (YAGNI).
+- **PLAYBACK = on-device-only, shown visually:** the engine chip becomes a **locked "On-device
+  only" badge** with a lock icon; the cloud option is **absent** from the Retry menu, not merely
+  disabled. The view reflects the `engineForBatch` code gate; enforcement never lives in the view.
+
+**Compliance deltas.**
+
+- **Privacy policy §5 (data storage) — FLAG as a task; do NOT edit `docs/privacy.html`**
+  (owner-locked). Exact sentence handed to the owner: *"Whisper Everywhere stores raw audio
+  recordings you create in Batch mode in private, non-backed-up storage on your device. You can
+  delete any recording individually; recordings are otherwise kept up to 30 days or until a storage
+  cap is reached. It is never uploaded except when you explicitly transcribe a microphone recording
+  with your chosen cloud provider; recordings captured from device playback are transcribed
+  on-device only and are never uploaded."*
+- **Data Safety: NO flip.** On-device-only, app-private storage is not "collection." The mic→cloud
+  upload was already declared in C2a; batch reuses that exact transmission, gated by the **same
+  consent v2 + stored key + provider-selection triad** (invariant #2) — no new disclosure.
+- **No speed claims** anywhere ("Transcribing…", never "fast") — measured local transcribes a 3 s
+  utterance in 1.1–1.3 s (§5.7a), so cloud is not a speedup on this device (invariant #5).
+
+**Scope cuts (OUT — this release).** SAF/file import; MP3/M4A/any codec decoding; bubble-session
+raw-audio retrofit; PLAYBACK capture in the record screen; audio playback / scrubbing / waveform;
+audio file export / `FileProvider`; parallel chunk upload / any batch use of
+`CloudTranscriptionEngine`'s 3-in-flight or `SegmentOrderer`; `SegmentQuality` wiring; cloud TTS;
+C4 streaming (`gpt-live-transcribe`, §5.6e); Gemini/ElevenLabs batch (C2b); translation; audio
+editing/trimming.
+
+**New footprint (batch mode).**
+
+| Path | Action |
+|---|---|
+| `recording/RecordingStore.kt` (+`RecordingMeta`, `BatchStatus`, `ChunkEntry`) | Create |
+| `recording/PcmSink.kt` | Create (PCM→disk, `StatFs` gate) |
+| `transcription/batch/ChunkPlanner.kt` | Create (pure; VAD boundaries, 20 MB ceiling, `hardCut`) |
+| `transcription/batch/BatchRouting.kt` | Create (invariant #1 / D3 gate) |
+| `transcription/batch/BatchTranscriber.kt` | Create (sequential, checkpoint/resume, per-chunk fallback) |
+| `service/BatchTranscriptionService.kt` | Create (foreground host) |
+| `ui/screens/RecordScreen.kt`, `RecordingsScreen.kt`, `RecordingDetailScreen.kt` | Create |
+| `ui/RecordingsViewModel.kt`, `ui/BatchJobViewModel.kt` | Create |
+| `ui/screens/HomeScreen.kt` + navigation | Modify (card + `recordings` route) |
+| `AndroidManifest.xml` | Modify (foreground service declaration) |
+| `test/.../BatchRoutingTest.kt`, `ChunkPlannerTest.kt` | Create (pinning + chunk math) |
+| `docs/privacy.html` §5 | **FLAG only** (owner-held) |
+
+**Open questions (owner's call — recommended default in bold; work proceeds on a nod).**
+
+1. **WAV/PCM import via SAF** as a second inlet, or is record-only enough for v1? Default: **OUT**
+   (provenance-ambiguous, codec surface; add in a later release).
+2. **Audio playback** of saved recordings — listen before retrying, or is re-transcribe-only fine?
+   Default: **OUT** (retry doesn't require playback; adds `MediaPlayer` plumbing).
+3. **Recordings as a separate library vs merged into transcript history** — the owner's phrasing
+   said "in the transcript history." Default: **separate `Recordings` screen** (cleaner; text
+   history stays text-only). Flag if interleaving into one list is wanted.
+4. **Retention window** — 30 days + 200 MB cap, oldest-first eviction. Default: **as stated.** Say
+   if recordings should instead persist until manually deleted.
 
 ---
 
