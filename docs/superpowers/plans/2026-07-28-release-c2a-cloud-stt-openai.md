@@ -1354,3 +1354,37 @@ Follow the preflight in `2026-07-27-tts-diagnostics-release-0.md`. Use `adb inst
 **Type consistency:** `SttResult`/`SttError`/`FatalKind` are used identically in `OpenAiStt`, `CloudTranscriptionEngine` and the tests. `HttpTransport.FilePart` field names match between the interface, `OkHttpTransport`, `FakeHttpTransport` and `OpenAiStt`. `commit(): Long` returning `-1L` is handled consistently in both new engines and matches `LocalWhisperEngine`. `FallbackPolicy.shouldFallBack(SegmentOutcome)` covers all four outcome cases exhaustively.
 
 **Two risks recorded rather than hidden.** First, the endpoint path and `DEFAULT_MODEL` were taken from research and not re-confirmed against live docs — Task 8 Step 2 check 2 is the only thing that proves them, and the ElevenLabs endpoint in C1 is precedent for getting this wrong. Second, `FallbackTranscriptionEngine` re-labels local retries with the original seq via `retryMap`; if a local retry ever fails to resolve, that seq stalls the orderer permanently. The audit should attack that path specifically.
+
+---
+
+## Verification record — 2026-07-29, owner's Fold 6, real OpenAI key
+
+**LIVE-VERIFIED.** Two real-key dictation sessions, all segments `Text`, resolved exactly once and
+in order, zero fallback activations, zero HTTP errors. Measured cloud round trips per segment:
+0.55–1.65 s (2.8–13.2 s of audio). This proved, in one shot: the endpoint path, the
+`gpt-transcribe` alias, the WAV container, the multipart filename, Bearer auth, and the
+empty-transcript→`EmptyExpected` classification.
+
+**The first attempt failed, and the failure was the more valuable test.** The owner's OpenAI
+account had no prepaid credit: every request drew a fatal in ~1.2 s, the latch held (one request
+per latch, not forty), and the on-device fallback transcribed the entire session so seamlessly the
+owner believed cloud was working. Three fixes came out of it (`dfdfa9f`):
+1. Instantly-resolving cloud outcomes (fatal latch, backlog shed) raced past
+   `FallbackTranscriptionEngine`'s retained-snapshot insertion and typed `[…]` instead of the
+   local rescue — the relay's lookup is now serialized under `mirrorLock`, pinned by a 21-segment
+   hammer test.
+2. `OpenAiStt` logs the HTTP status CODE (only) on failure, so a failing provider is no longer
+   invisible behind a working fallback.
+3. Finalize toasts once per latched fatal — pulled forward from C2c because a real user was
+   silently fooled.
+
+**Field note for support:** a key VALIDATES fine (GET /v1/models is free) on an account with $0.00
+prepaid credit, then every transcription draws 429 `insufficient_quota`. "Key valid but nothing
+transcribes in cloud" ⇒ check billing first.
+
+**C2c note:** a 15 s wall-cap silence segment was uploaded and billed (~$0.001) before OpenAI
+returned empty. Silero runs on-device — a pre-upload silence check is a cost win.
+
+**Still owed before Play submission:** owner picks an MF4 listing variant + edits the Console by
+hand; Data Safety form flip in the Console; device-audio-with-cloud-selected spot check (unit-pinned,
+cheap to confirm live); release AAB.
