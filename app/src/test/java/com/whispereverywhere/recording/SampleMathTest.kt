@@ -59,4 +59,29 @@ class SampleMathTest {
             assertTrue("sample $k: ${out[k]} !~ $expected", abs(out[k] - expected) <= 1.0)
         }
     }
+
+    // ---------------- Resampler.upsample16kTo24k (plan Task 1 lift) ----------------
+
+    @Test fun upsample16kTo24k_lengthIsThreeHalves() {
+        // 16 kHz -> 24 kHz is exactly 3:2, so N input samples become floor(N * 3/2) output samples.
+        assertEquals(6, Resampler.upsample16kTo24k(ShortArray(4)).size)
+        assertEquals(1_500, Resampler.upsample16kTo24k(ShortArray(1_000)).size)
+        assertEquals(0, Resampler.upsample16kTo24k(ShortArray(0)).size)
+    }
+
+    @Test fun upsample16kTo24k_endpointsPreserved() {
+        // Output sample 0 sits on input 0; the final output sample clamps to the final input rather
+        // than reading out of bounds — the off-by-one/endpoint-clamp risk the mp3 fallback added.
+        val ramp = shortArrayOf(0, 100, 200, 300)
+        val out = Resampler.upsample16kTo24k(ramp)
+        assertEquals(0.toShort(), out.first())
+        assertEquals(300.toShort(), out.last())
+    }
+
+    @Test fun upsample16kTo24k_matchesLegacyElevenLabsOutput() {
+        // The anti-drift guard: the lifted body must reproduce the golden the ElevenLabs bridge and
+        // the live engine were each independently pinned to ([0,66,133,200,266,300] for that ramp).
+        val out = Resampler.upsample16kTo24k(shortArrayOf(0, 100, 200, 300)).toList()
+        assertEquals(listOf<Short>(0, 66, 133, 200, 266, 300), out)
+    }
 }

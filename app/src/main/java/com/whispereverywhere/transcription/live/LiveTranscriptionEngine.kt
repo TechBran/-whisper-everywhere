@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription.live
 
+import com.whispereverywhere.recording.Resampler
 import com.whispereverywhere.transcription.SegmentOutcome
 import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.transcription.cloud.FatalKind
@@ -239,7 +240,7 @@ class LiveTranscriptionEngine(
 
     /** 16 kHz PCM16 bytes -> 24 kHz PCM16 -> base64, the format `gpt-live-transcribe` expects. */
     private fun encodeAppend(pcm: ByteArray): String {
-        val out24k = upsample16kTo24k(PcmBytes.toShortArrayLE(pcm))
+        val out24k = Resampler.upsample16kTo24k(PcmBytes.toShortArrayLE(pcm))
         return Base64.getEncoder().encodeToString(shortsToBytesLE(out24k))
     }
 
@@ -375,31 +376,7 @@ class LiveTranscriptionEngine(
         } ?: false
     }
 
-    // -------- inlined audio math (see class note / report: pending plan-Task-1's Resampler lift) --------
-
-    /**
-     * Linear-interpolation upsample 16 kHz -> 24 kHz mono PCM16. Byte-identical to
-     * `ElevenLabsTts.upsample16kTo24k`; inlined here because plan Task 1's `Resampler.upsample16kTo24k`
-     * lift is not yet committed and this file's diff must stay inside the named Task-4 files. Dedupe
-     * to `Resampler.upsample16kTo24k` when that lift lands.
-     */
-    private fun upsample16kTo24k(input: ShortArray): ShortArray {
-        if (input.isEmpty()) return input
-        val src = 16_000
-        val dst = 24_000
-        val outLen = ((input.size.toLong() * dst) / src).toInt()
-        val out = ShortArray(outLen)
-        val step = src.toDouble() / dst
-        for (k in 0 until outLen) {
-            val pos = k * step
-            val i = pos.toInt()
-            val frac = pos - i
-            val a = input[i].toInt()
-            val b = input[minOf(i + 1, input.size - 1)].toInt()
-            out[k] = (a + (b - a) * frac).toInt().toShort()
-        }
-        return out
-    }
+    // -------- inlined audio math (upsample lifted to Resampler.upsample16kTo24k — plan Task 1) --------
 
     /** PCM16 samples -> headerless little-endian bytes (inverse of [PcmBytes.toShortArrayLE]). */
     private fun shortsToBytesLE(samples: ShortArray): ByteArray {

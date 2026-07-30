@@ -214,27 +214,12 @@ class ElevenLabsTts(
             }
         }
 
-        /** Linear-interpolation upsample 16 kHz -> 24 kHz mono PCM16. Mirrors `Resampler.to16k`'s
-         *  math; a rate bridge, not a resampler dependency. `internal` (not private) so the pure
-         *  off-by-one / endpoint-clamp risk is JVM-unit-tested without running MediaCodec — the
-         *  only new arithmetic the mp3 fallback added, and previously reachable on-device only. */
-        internal fun upsample16kTo24k(input: ShortArray): ShortArray {
-            if (input.isEmpty()) return input
-            val src = 16_000
-            val dst = 24_000
-            val outLen = ((input.size.toLong() * dst) / src).toInt()
-            val out = ShortArray(outLen)
-            val step = src.toDouble() / dst
-            for (k in 0 until outLen) {
-                val pos = k * step
-                val i = pos.toInt()
-                val frac = pos - i
-                val a = input[i].toInt()
-                val b = input[minOf(i + 1, input.size - 1)].toInt()
-                out[k] = (a + (b - a) * frac).toInt().toShort()
-            }
-            return out
-        }
+        /** Linear-interpolation upsample 16 kHz -> 24 kHz mono PCM16 for the mp3 playback bridge.
+         *  Delegates to the single shared [com.whispereverywhere.recording.Resampler.upsample16kTo24k]
+         *  (plan Task 1 lift) so this path and the live engine cannot diverge; retained as an
+         *  `internal` alias so the existing golden-output test keeps pinning it here. */
+        internal fun upsample16kTo24k(input: ShortArray): ShortArray =
+            com.whispereverywhere.recording.Resampler.upsample16kTo24k(input)
     }
 }
 

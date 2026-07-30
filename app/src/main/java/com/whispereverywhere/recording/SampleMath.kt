@@ -44,4 +44,31 @@ object Resampler {
         }
         return out
     }
+
+    /**
+     * Mono PCM16 16 kHz -> 24 kHz, by the same linear interpolation as [to16k] run the other way.
+     *
+     * The single implementation shared by the ElevenLabs mp3 bridge (which decodes to 16 kHz then
+     * upsamples for playback) and the live transcription engine (which upsamples the 16 kHz capture
+     * to the 24 kHz the Realtime API expects). Both had a byte-identical private copy before this
+     * lift; keeping one body means the cross-impl golden ([0,66,133,200,266,300]) cannot silently
+     * diverge. Output length is exactly 3/2 the input; endpoints are preserved.
+     */
+    fun upsample16kTo24k(input: ShortArray): ShortArray {
+        if (input.isEmpty()) return input
+        val src = 16_000
+        val dst = 24_000
+        val outLen = ((input.size.toLong() * dst) / src).toInt()
+        val out = ShortArray(outLen)
+        val step = src.toDouble() / dst
+        for (k in 0 until outLen) {
+            val pos = k * step
+            val i = pos.toInt()
+            val frac = pos - i
+            val a = input[i].toInt()
+            val b = input[minOf(i + 1, input.size - 1)].toInt()
+            out[k] = (a + (b - a) * frac).toInt().toShort()
+        }
+        return out
+    }
 }
