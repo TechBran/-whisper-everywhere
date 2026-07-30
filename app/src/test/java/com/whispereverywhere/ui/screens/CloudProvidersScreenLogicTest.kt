@@ -254,11 +254,22 @@ class CloudProvidersScreenLogicTest {
         }
     }
 
-    @Test fun cloud_disclosure_main_text_does_not_overclaim_read_aloud_is_sent() {
-        // Cloud read-aloud has no adapter in this release (TtsController is untouched) — the
-        // modal must not claim text-you-select-for-read-aloud is transmitted anywhere yet.
+    @Test fun cloud_disclosure_main_text_discloses_read_aloud_text_is_sent() {
+        // Task 7 (v3): cloud read-aloud shipped in Task 5/6 — TtsController now has a real cloud
+        // path, so selected read-aloud TEXT is a NEW data class leaving the device. The disclosure
+        // meaning changed (MF3 rule), the flag bumped v2 -> v3, and this modal must say so.
         val text = cloudDisclosureMainText()
-        assertFalse(text, text.contains("read-aloud"))
+        assertTrue(text, text.contains("read aloud"))
+        assertTrue(text, text.contains("text you select"))
+    }
+
+    @Test fun cloud_disclosure_main_text_still_makes_no_speed_claim_after_read_aloud_sentence() {
+        // Explicit guard: the new read-aloud sentence must not smuggle in a speed claim even
+        // though it is describing the TTS path, where "fast" language would be easy to slip in.
+        val text = cloudDisclosureMainText()
+        listOf("faster", "quicker", "speed", "instant", "quick").forEach { word ->
+            assertFalse(text, text.contains(word, ignoreCase = true))
+        }
     }
 
     @Test fun cloud_disclosure_off_until_text_names_both_gating_steps() {

@@ -19,18 +19,20 @@ must be kept true.
   > exactly three things: (1) detecting that an editable text field is focused so the floating
   > microphone bubble can appear, (2) inserting the transcribed text into that field
   > (ACTION_SET_TEXT / clipboard paste), and (3) reading the text the user has highlighted so
-  > that, ONLY when the user taps the speaker bubble, it can be spoken aloud by the on-device
-  > voice (user-initiated read-aloud; the app never acts autonomously). The service reads only
-  > the focused input node's text/selection state. No screen content is collected, logged,
-  > stored, or transmitted; the app has no analytics and no server. By default, audio and text
-  > never leave the device; the only exception is dictated audio, which — starting this release —
-  > can be sent off-device, but only if the user has independently added their own API key for a
-  > cloud provider AND explicitly selected that provider as their transcription engine (see
-  > Section 5). This AccessibilityService itself plays no part in that choice and never sees or
-  > transmits screen content either way. A prominent disclosure with explicit consent is shown
-  > in-app before the user is directed to enable the service. (A permissionless
-  > ACTION_PROCESS_TEXT "Speak" toolbar entry provides the same read-aloud without accessibility
-  > involvement.)
+  > that, ONLY when the user taps the speaker bubble, it can be spoken aloud (user-initiated
+  > read-aloud; the app never acts autonomously) — by the on-device voice by default, or by a
+  > cloud voice the user has independently selected for read-aloud (see Section 5). The service
+  > reads only the focused input node's text/selection state. No screen content is collected,
+  > logged, stored, or transmitted; the app has no analytics and no server. By default, audio and
+  > text never leave the device; the exceptions are dictated audio and, separately, text selected
+  > for read-aloud, each of which — starting the release that adds it — can be sent off-device,
+  > but only if the user has independently added their own API key for a cloud provider AND
+  > explicitly selected that provider as their transcription engine or read-aloud voice
+  > respectively (see Section 5). This AccessibilityService itself plays no part in either
+  > choice and never sees or transmits screen content either way. A prominent disclosure with
+  > explicit consent is shown in-app before the user is directed to enable the service. (A
+  > permissionless ACTION_PROCESS_TEXT "Speak" toolbar entry provides the same read-aloud,
+  > cloud voice included, without accessibility involvement.)
 
 - Core functionality justification: text injection IS the product (system-wide voice typing);
   no narrower API can insert text into other apps' fields without replacing the user's IME.
@@ -79,11 +81,29 @@ must be kept true.
 **As of Release C2a, this is the first release in which audio actually leaves the device** — the
 declaration below must ship in the SAME release as the code that makes it true, not a follow-up.
 
+**Release ledger — Cloud TTS voice picker (2026-07-30):** three cloud voice providers (OpenAI,
+Google Gemini, ElevenLabs) behind the same one-way local-fallback philosophy as cloud STT;
+in-app disclosure bumped `cloud_disclosure_accepted_v2` -> `_v3` (meaning changed, so it
+re-prompts everyone, v2 acceptance stays in the store unused); both privacy-policy copies' §6
+read-aloud carve-out flipped from "not part of this release" to the two-step qualified form; and
+Data Safety gains the "Other user-generated content" entry below (Shared = Yes) for text the
+user selects to be read aloud through a cloud voice.
+
 - **Audio files → Voice or sound recordings:** Collected **Yes**, Shared **Yes**, purpose
   **App functionality**, **Optional**. The user must take two independent, deliberate actions
   before any audio is shared: add their own API key for a cloud provider, AND select that
   provider as the active transcription engine in the app's Cloud Providers settings. On-device
   transcription remains fully functional — and the default — with neither action taken.
+- **Other user-generated content → text you select for read-aloud:** Collected **Yes**, Shared
+  **Yes**, purpose **App functionality**, **Optional**. This is a NEW shared data type as of the
+  cloud TTS voice picker release — read-aloud text did not leave the device before. Shared only
+  when the user takes two deliberate actions — save a provider key AND select a cloud voice for
+  read-aloud — after accepting disclosure v3. On-device read-aloud remains the default with
+  neither action taken. The ephemeral-processing exemption is **NOT** claimed (same reasoning as
+  audio: the third-party provider sets its own retention). **Determination made 2026-07-30:
+  category "Other user-generated content", Shared = Yes, Optional** — chosen over "Other in-app
+  messages" because selected read-aloud text is arbitrary user-selected content, not a message
+  to another person.
 - **The ephemeral-processing exemption is NOT claimed.** That exemption is available only when
   the recipient retains the shared data no longer than necessary to service the user's real-time
   request and does not use it for any other purpose. Whichever provider the user configures
@@ -98,7 +118,9 @@ declaration below must ship in the SAME release as the code that makes it true, 
   additive and opt-in.
 - The `INTERNET` permission is used to download the whisper model (one-time, from a pinned
   Hugging Face commit URL) and, only if the user has configured a cloud provider, to verify a
-  newly-added key once and to send dictated audio to the provider the user selected. No
+  newly-added key once, to send dictated audio to the provider the user selected for
+  transcription, and — only if the user has also accepted disclosure v3 and selected a cloud
+  voice for read-aloud — to send the text they select to be read aloud to that same provider. No
   telemetry or analytics is ever uploaded — the app has no analytics SDK and no server of its
   own.
 - Advertising ID: removed via `tools:node="remove"` in the manifest — declare "app does not

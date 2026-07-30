@@ -195,22 +195,31 @@ internal fun sttSelectionCaption(providerDisplayName: String): String =
     "Audio is sent to $providerDisplayName. If it fails, the on-device model takes over."
 
 /**
- * Body of the one-time cloud disclosure dialog (Release C2a Task 7).
+ * Body of the one-time cloud disclosure dialog (Release C2a Task 7; extended Task 7 of the cloud
+ * TTS plan for v3).
  *
  * PRESENT tense, deliberately: C1 wrote this in future tense because no audio moved yet — C2a is
  * the release where it does, so the declaration and this in-app copy must flip together. Two
  * gating steps are named explicitly (add a key; then separately select the provider as the
  * transcription engine) because a stored key alone sends nothing per-utterance — only a one-time
  * verification call. Mentions the on-device fallback so the failure behavior is disclosed, not
- * just the happy path. Makes no claim about cloud read-aloud: there is no adapter for it in this
- * release (TtsController is untouched), so claiming it is "sent" would overclaim.
+ * just the happy path.
+ *
+ * The final sentence is the v3 addition: selected read-aloud TEXT is a NEW data class that now
+ * leaves the device (TtsController gained a real cloud path in Task 5/6 of the cloud TTS plan),
+ * so the disclosure's MEANING changed and the flag bumped `cloud_disclosure_accepted_v2` ->
+ * `_v3` (the MF3 rule — bump only on meaning change; v2 stays in the store; an unset v3
+ * re-prompts everyone, including users who already accepted the audio-only v2 text). Present
+ * tense, no speed claim, matching the rest of this copy.
  */
 internal fun cloudDisclosureMainText(): String =
     "Whisper Everywhere works entirely on your device by default. Adding a provider key below " +
         "sends that key to the provider once, to verify it works. Selecting that provider as " +
         "your transcription engine is what turns cloud on: from then on, the audio you dictate " +
         "is sent to that company's servers to be transcribed, with the on-device model taking " +
-        "over automatically if that provider fails."
+        "over automatically if that provider fails. When you choose a cloud voice for " +
+        "read-aloud, the text you select to be read aloud is also sent to that same provider " +
+        "to be spoken."
 
 /** Reiterates both gating steps from [cloudDisclosureMainText] so "off until" isn't read as "off until a key is added" alone. */
 internal fun cloudDisclosureOffUntilText(): String =
