@@ -40,14 +40,17 @@ class RealtimeTransportTest {
     private class FakeFactory : WebSocketFactory {
         val sockets = mutableListOf<FakeWebSocket>()
         val listeners = mutableListOf<WebSocketListener>()
+        val requests = mutableListOf<Request>()
         override fun newWebSocket(request: Request, listener: WebSocketListener): WebSocket {
             val ws = FakeWebSocket()
             sockets += ws
             listeners += listener
+            requests += request
             return ws
         }
         val lastSocket get() = sockets.last()
         val lastListener get() = listeners.last()
+        val lastRequest get() = requests.last()
     }
 
     private class FakeScheduler : ReconnectScheduler {
@@ -111,12 +114,37 @@ class RealtimeTransportTest {
         assertEquals(1, r.listener.connects)
     }
 
-    @Test fun handshake_failure_logs_status_code_only_and_reports_fatal() {
+    // --- the tolerant connector: one silent beta-header retry before any 4xx is believed --------
+
+    @Test fun the_first_4xx_retries_once_with_the_beta_header_before_any_fatal() {
+        // Current docs omit `OpenAI-Beta: realtime=v1`; older deployments require it. A
+        // header-caused 401 must NOT be reported as "key rejected" — the transport retries once
+        // with the header, silently: no fatal, no disconnect, no reconnect-attempt consumed.
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        assertNull("first attempt omits the beta header", r.factory.lastRequest.header("OpenAI-Beta"))
+
+        r.factory.lastListener.onFailure(r.factory.lastSocket, IOException("upgrade rejected"), httpResponse(401))
+
+        assertEquals("a second socket was opened immediately", 2, r.factory.sockets.size)
+        assertEquals("the retry carries the beta header", "realtime=v1", r.factory.lastRequest.header("OpenAI-Beta"))
+        assertTrue("no fatal yet — the retry is silent", r.listener.fatals.isEmpty())
+        assertEquals("no disconnect surfaced for the silent retry", 0, r.listener.disconnects)
+        assertEquals("no scheduled reconnect consumed", 0, r.scheduler.delays.size)
+
+        // The retry succeeds -> a normal session; the header sticks for later reconnects.
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+        assertEquals(1, r.listener.connects)
+    }
+
+    @Test fun handshake_failure_logs_status_code_only_and_reports_fatal_after_the_retry() {
         val r = Rig()
         r.transport.connect("sk-x", null)
         // A body is attached on purpose: the transport must NOT consume it.
         val resp = httpResponse(401, "SENSITIVE-BODY-should-never-be-read")
         r.factory.lastListener.onFailure(r.factory.lastSocket, IOException("upgrade rejected"), resp)
+        // First 401 spent the silent beta retry; the SECOND is believed and classified.
+        r.factory.lastListener.onFailure(r.factory.lastSocket, IOException("upgrade rejected"), httpResponse(401))
 
         assertEquals(listOf(FatalKind.INVALID_KEY to 401), r.listener.fatals)
         assertEquals("fatal must not reconnect", 0, r.scheduler.delays.size)
@@ -125,15 +153,29 @@ class RealtimeTransportTest {
         assertEquals("SENSITIVE-BODY-should-never-be-read", resp.body?.string())
     }
 
-    @Test fun a_403_is_forbidden_and_a_429_is_out_of_credit() {
+    @Test fun a_403_is_forbidden_and_a_429_is_out_of_credit_after_the_retry() {
         val r1 = Rig().also { it.transport.connect("sk", null) }
+        r1.factory.lastListener.onFailure(r1.factory.lastSocket, IOException(), httpResponse(403))
         r1.factory.lastListener.onFailure(r1.factory.lastSocket, IOException(), httpResponse(403))
         assertEquals(listOf(FatalKind.FORBIDDEN to 403), r1.listener.fatals)
 
         val r2 = Rig().also { it.transport.connect("sk", null) }
         r2.factory.lastListener.onFailure(r2.factory.lastSocket, IOException(), httpResponse(429))
+        r2.factory.lastListener.onFailure(r2.factory.lastSocket, IOException(), httpResponse(429))
         assertEquals(listOf(FatalKind.OUT_OF_CREDIT to 429), r2.listener.fatals)
         assertEquals(0, r2.scheduler.delays.size)
+    }
+
+    @Test fun a_network_drop_never_triggers_the_beta_retry() {
+        // The retry answers exactly one question — "was the header missing?" — which only a 4xx
+        // can pose. A plain network drop reconnects with backoff, headerless, as before.
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        r.factory.lastListener.onFailure(r.factory.lastSocket, IOException("reset"), null)
+        assertEquals("no immediate second socket", 1, r.factory.sockets.size)
+        assertEquals("normal backoff path", 1, r.scheduler.delays.size)
+        r.scheduler.runNext()
+        assertNull("reconnect stays headerless", r.factory.lastRequest.header("OpenAI-Beta"))
     }
 
     @Test fun append_and_commit_forwarded_as_correct_events() {

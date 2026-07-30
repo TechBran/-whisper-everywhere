@@ -129,6 +129,16 @@ class RealtimeTransport(
     private var closed = false
     private var reconnectAttempts = 0
 
+    /**
+     * The tolerant connector. Current docs omit the `OpenAI-Beta: realtime=v1` header; older
+     * examples require it. We connect WITHOUT it, and on the FIRST 4xx handshake we flip this and
+     * retry once, immediately and silently — before any fatal classification. Without the retry, a
+     * header-caused 401 would mis-latch as INVALID_KEY and toast "key rejected" at a user whose
+     * key is fine. Once flipped it stays on for the transport's lifetime: if the server wanted the
+     * header once, it wants it on every reconnect too.
+     */
+    private var useBetaHeader = false
+
     /** Open the session for [language] (null = auto) using [apiKey]. Resets backoff state. */
     fun connect(apiKey: String, language: String?) {
         synchronized(lock) {
@@ -177,6 +187,7 @@ class RealtimeTransport(
         val request = Request.Builder()
             .url(ENDPOINT)
             .header(provider.authHeaderName, provider.authHeaderValue(apiKey))
+            .apply { if (useBetaHeader) header(BETA_HEADER, BETA_VALUE) }
             .build()
         webSocket = factory.newWebSocket(request, InternalListener())
     }
@@ -240,6 +251,24 @@ class RealtimeTransport(
             val code = response?.code
             // STATUS CODE ONLY. Never touch response.body (it can echo request detail) or headers.
             android.util.Log.w(TAG, if (code != null) "openai realtime http $code" else "openai realtime dropped")
+
+            // The tolerant connector's one free retry: the FIRST 4xx may be the missing
+            // OpenAI-Beta header rather than a bad key. Retry once with it, silently — no fatal,
+            // no disconnect callback, no reconnect-attempt consumed. If the retry fails too, the
+            // failure falls through here a second time with useBetaHeader already true and takes
+            // the normal classification below.
+            if (code != null && code in 400..499) {
+                val retried = synchronized(lock) {
+                    if (!closed && !useBetaHeader) {
+                        useBetaHeader = true
+                        this@RealtimeTransport.webSocket = null
+                        openSocket()
+                        true
+                    } else false
+                }
+                if (retried) return
+            }
+
             val fatal = code?.let { classifyFatal(it) }
             synchronized(lock) {
                 if (closed) return
@@ -283,8 +312,14 @@ class RealtimeTransport(
          */
         const val MAX_OUTBOUND_BYTES = 2L * 1024 * 1024
 
-        /** Transcription intent per the pinned protocol. `OpenAI-Beta` is added only on a 4xx. */
+        /**
+         * Transcription intent per the pinned protocol. The `OpenAI-Beta: realtime=v1` header is
+         * NOT sent on the first attempt (current docs omit it); [useBetaHeader] adds it after the
+         * first 4xx and keeps it for the transport's lifetime.
+         */
         const val ENDPOINT = "wss://api.openai.com/v1/realtime?intent=transcription"
+        const val BETA_HEADER = "OpenAI-Beta"
+        const val BETA_VALUE = "realtime=v1"
     }
 }
 
