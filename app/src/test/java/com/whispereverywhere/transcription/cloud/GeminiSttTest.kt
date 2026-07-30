@@ -75,6 +75,15 @@ class GeminiSttTest {
         assertTrue(r.error is SttError.Transient)
     }
 
+    @Test fun a_404_model_not_found_is_fatal_model_unavailable_not_transient() = runBlocking {
+        // The model id is in the URL path, so a 404 is a permanently-wrong pin. It MUST latch as
+        // Fatal after one request, not fall to `else -> Transient` and retry every segment forever.
+        val body = """{"error":{"code":404,"status":"NOT_FOUND","message":"models/gemini-3.6-flash is not found"}}"""
+        val (_, p) = provider(HttpResult.HttpError(404, body))
+        val r = p.transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.MODEL_UNAVAILABLE, (r.error as SttError.Fatal).kind)
+    }
+
     @Test fun a_403_is_fatal_forbidden() = runBlocking {
         val (_, p) = provider(HttpResult.HttpError(403, "PERMISSION_DENIED"))
         val r = p.transcribe(pcm, null) as SttResult.Failed

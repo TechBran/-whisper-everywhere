@@ -14,7 +14,7 @@ sealed interface SttError {
     data object BadSegment : SttError
 }
 
-enum class FatalKind { INVALID_KEY, OUT_OF_CREDIT, FORBIDDEN }
+enum class FatalKind { INVALID_KEY, OUT_OF_CREDIT, FORBIDDEN, MODEL_UNAVAILABLE }
 
 sealed interface SttResult {
     data class Text(val text: String) : SttResult

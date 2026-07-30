@@ -91,6 +91,11 @@ class GeminiStt(
             }
             401 -> SttError.Fatal(FatalKind.INVALID_KEY, "Key rejected")
             403 -> SttError.Fatal(FatalKind.FORBIDDEN, "Access denied for this key")
+            // The model id lives in the URL path (unlike OpenAI/ElevenLabs, where it is a field), so
+            // a 404 here means the pinned model is retired/typo'd/not-yet-GA — a permanent config
+            // fault, not a hiccup. Left in `else -> Transient` it would doom-POST every segment of
+            // every session forever. LATCH it after one request so fallback-to-local kicks in fast.
+            404 -> SttError.Fatal(FatalKind.MODEL_UNAVAILABLE, "Transcription model unavailable")
             413 -> SttError.BadSegment
             429 -> if (QUOTA_MARKERS.any { body.contains(it, ignoreCase = true) }) {
                 SttError.Fatal(FatalKind.OUT_OF_CREDIT, "Account has no remaining credit")
