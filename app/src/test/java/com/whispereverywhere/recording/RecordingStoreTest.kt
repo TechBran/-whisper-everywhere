@@ -78,4 +78,27 @@ class RecordingStoreTest {
         s.sweepStale()
         assertEquals(listOf("live"), s.list().map { it.id })
     }
+
+    @Test fun sweepStale_reaps_a_manifestless_decode_orphan_older_than_the_window() {
+        // A crash during the DECODE phase leaves audio.pcm (the largest footprint) with no manifest,
+        // because the service writes the PCM before the manifest. list() ignores manifest-less dirs,
+        // so sweepStale is the only path that can reap them — by directory mtime.
+        val now = 3L * 24 * 60 * 60 * 1000
+        val root = File(tmp.root, "b")
+        val s = RecordingStore(root, clock = { now })
+
+        val orphan = File(root, "decode-orphan").apply { mkdirs() }
+        File(orphan, "audio.pcm").writeBytes(ByteArray(4096))
+        orphan.setLastModified(now - RecordingStore.STALE_MS - 1)
+
+        // A young manifest-less dir is a LIVE decode in progress — it must survive the sweep.
+        val liveDecode = File(root, "live-decode").apply { mkdirs() }
+        File(liveDecode, "audio.pcm").writeBytes(ByteArray(64))
+        liveDecode.setLastModified(now - 60_000L)
+
+        s.sweepStale()
+
+        assertFalse("stale decode orphan (audio.pcm, no manifest) must be reaped", orphan.exists())
+        assertTrue("a live in-progress decode must not be reaped", liveDecode.exists())
+    }
 }

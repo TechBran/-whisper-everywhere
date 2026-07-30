@@ -75,10 +75,28 @@ class RecordingStore(
     /**
      * The only sweep: collect workspaces orphaned by a crash. Normal completion deletes eagerly;
      * anything older than [STALE_MS] belongs to a process that died mid-job.
+     *
+     * Two kinds of orphan, both reaped here:
+     *  - a directory WITH a manifest older than the window (a job that saved its manifest, then died);
+     *  - a directory WITHOUT a readable manifest older than the window, by directory mtime. This is
+     *    the decode-phase orphan: the service writes audio.pcm (up to hundreds of MB) BEFORE it
+     *    writes the manifest, so a crash mid-decode leaves the largest footprint with no manifest.
+     *    [list] intentionally ignores manifest-less dirs, so this sweep is the ONLY path that reaps
+     *    them; without the mtime branch they survived every future sweep. The age gate protects a
+     *    live job — an in-flight decode is far younger than [STALE_MS].
      */
     fun sweepStale(maxAgeMs: Long = STALE_MS) {
         val now = clock()
-        list().forEach { m -> if (now - m.createdAtMs > maxAgeMs) delete(m.id) }
+        (root.listFiles() ?: emptyArray())
+            .filter { it.isDirectory }
+            .forEach { d ->
+                val meta = read(d.name)
+                if (meta != null) {
+                    if (now - meta.createdAtMs > maxAgeMs) delete(meta.id)
+                } else if (now - d.lastModified() > maxAgeMs) {
+                    d.deleteRecursively()
+                }
+            }
     }
 
     companion object {
