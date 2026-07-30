@@ -211,10 +211,13 @@ class CloudProvidersScreenLogicTest {
         }
     }
 
-    // --- STT_CAPABLE_PROVIDERS: C2a ships only the OpenAI adapter; Gemini/ElevenLabs are C2b ---
+    // --- STT_CAPABLE_PROVIDERS: C2b shipped the Gemini + ElevenLabs adapters alongside OpenAI ---
 
-    @Test fun only_openai_is_stt_capable_in_this_release() {
-        assertEquals(setOf(ProviderId.OPENAI), STT_CAPABLE_PROVIDERS)
+    @Test fun stt_capable_set_is_openai_gemini_elevenlabs() {
+        assertEquals(
+            setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS),
+            STT_CAPABLE_PROVIDERS,
+        )
     }
 
     // --- cloudDisclosureMainText / cloudDisclosureOffUntilText (Release C2a Task 7): the
@@ -300,13 +303,12 @@ class CloudProvidersScreenLogicTest {
         assertTrue(sttSelectableProviders(emptySet(), disclosureAccepted = true).isEmpty())
     }
 
-    @Test fun a_configured_provider_with_no_stt_adapter_is_not_offered() {
-        // ElevenLabs is C2b. Offering it would fall back to on-device with a misleading
-        // "no key saved" message even though a key IS stored.
-        assertTrue(
-            sttSelectableProviders(setOf(ProviderId.ELEVENLABS), disclosureAccepted = true).isEmpty()
-        )
-    }
+    // (Removed) `a_configured_provider_with_no_stt_adapter_is_not_offered`: C2b shipped the Gemini
+    // and ElevenLabs adapters, so all three catalog providers are now STT-capable — there is no
+    // longer a configured-but-adapter-less provider to exclude. That STT_CAPABLE_PROVIDERS now
+    // equals the full catalog is pinned by stt_capable_set_is_openai_gemini_elevenlabs above, and
+    // that each configured member IS offered is covered by
+    // a_configured_provider_is_offered_once_the_disclosure_is_accepted.
 
     @Test fun every_provider_can_deselect_itself() {
         // Guards the comparison being by enum NAME rather than by ordinal or display name: a

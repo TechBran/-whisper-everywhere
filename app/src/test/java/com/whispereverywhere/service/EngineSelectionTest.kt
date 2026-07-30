@@ -1,6 +1,9 @@
 package com.whispereverywhere.service
 
+import com.whispereverywhere.net.FakeHttpTransport
+import com.whispereverywhere.net.HttpResult
 import com.whispereverywhere.provider.ProviderId
+import com.whispereverywhere.transcription.cloud.SttProviderFactory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -57,24 +60,49 @@ class EngineSelectionTest {
         )
     }
 
-    // --- resolveSttProvider: C2a ships only the OpenAI adapter (Gemini/ElevenLabs are C2b) ---
+    // --- resolveSttProvider: C2b widens live mode to OpenAI, Gemini, and ElevenLabs ---
 
     @Test fun resolves_openai_by_its_stored_name() {
         assertEquals(ProviderId.OPENAI, resolveSttProvider("OPENAI"))
+    }
+
+    @Test fun resolves_gemini_and_elevenlabs_now_that_their_adapters_ship() {
+        // C2b built the Gemini and ElevenLabs STT adapters, so their stored names now resolve to a
+        // usable provider in live mode (both were null in C2a). SttProviderFactory maps each one.
+        assertEquals(ProviderId.GEMINI, resolveSttProvider("GEMINI"))
+        assertEquals(ProviderId.ELEVENLABS, resolveSttProvider("ELEVENLABS"))
     }
 
     @Test fun null_preference_resolves_to_null() {
         assertNull(resolveSttProvider(null))
     }
 
-    @Test fun an_unimplemented_but_valid_provider_name_resolves_to_null_not_a_crash() {
-        // Gemini/ElevenLabs are real ProviderId names but have no STT adapter in this build; a
-        // stale or foreign preference value must degrade to "no key", never throw.
-        assertNull(resolveSttProvider("GEMINI"))
-        assertNull(resolveSttProvider("ELEVENLABS"))
-    }
-
     @Test fun a_garbage_preference_value_resolves_to_null_without_throwing() {
         assertNull(resolveSttProvider("not-a-real-provider"))
+    }
+
+    // --- resolveBatchSttProvider: batch stays OpenAI-only this wave (C2b widens live mode only) ---
+
+    @Test fun batch_resolves_openai_but_clamps_gemini_and_elevenlabs_to_null() {
+        // resolveSttProvider now resolves all three, but batch's engineUsed decision was NOT
+        // widened: a Gemini/ElevenLabs selection degrades to on-device (null) here rather than
+        // mis-keying OpenAI with another provider's key.
+        assertEquals(ProviderId.OPENAI, resolveBatchSttProvider("OPENAI"))
+        assertNull(resolveBatchSttProvider("GEMINI"))
+        assertNull(resolveBatchSttProvider("ELEVENLABS"))
+        assertNull(resolveBatchSttProvider(null))
+        assertNull(resolveBatchSttProvider("not-a-real-provider"))
+    }
+
+    // --- SttProviderFactory: the ONE ProviderId -> adapter construction point (both services) ---
+
+    @Test fun factory_maps_each_provider_id_to_its_own_adapter() {
+        val fake = FakeHttpTransport { _, _ -> HttpResult.Ok(200, "") }
+        assertEquals(ProviderId.OPENAI, SttProviderFactory.create(ProviderId.OPENAI, fake, "k").id)
+        assertEquals(ProviderId.GEMINI, SttProviderFactory.create(ProviderId.GEMINI, fake, "k").id)
+        assertEquals(
+            ProviderId.ELEVENLABS,
+            SttProviderFactory.create(ProviderId.ELEVENLABS, fake, "k").id,
+        )
     }
 }

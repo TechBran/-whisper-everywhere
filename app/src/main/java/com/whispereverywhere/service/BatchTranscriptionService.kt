@@ -17,6 +17,7 @@ import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.net.ConnectivityMonitor
 import com.whispereverywhere.net.OkHttpTransport
+import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.recording.AudioDecoder
 import com.whispereverywhere.recording.BatchStatus
 import com.whispereverywhere.recording.PcmSink
@@ -29,8 +30,8 @@ import com.whispereverywhere.transcription.batch.BatchCostEstimator
 import com.whispereverywhere.transcription.batch.BatchEngineDecision
 import com.whispereverywhere.transcription.batch.BatchProgress
 import com.whispereverywhere.transcription.batch.BatchTranscriber
-import com.whispereverywhere.transcription.cloud.OpenAiStt
 import com.whispereverywhere.transcription.cloud.SttProvider
+import com.whispereverywhere.transcription.cloud.SttProviderFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,6 +61,17 @@ object BatchJobController {
     /** Cooperative cancel: the transcriber stops between chunks and keeps its partial checkpoint. */
     fun cancelActive() { active?.cancel() }
 }
+
+/**
+ * Batch mode stays OpenAI-only this wave. [resolveSttProvider] was widened in C2b to resolve Gemini
+ * and ElevenLabs too (live mode gained their adapters), which — without this clamp — would make a
+ * Gemini/ElevenLabs selection resolve non-null in [BatchTranscriptionService.resolveCloud] and get
+ * a different provider's key handed to an OpenAI adapter. Batch's `engineUsed` decision was NOT
+ * widened, so any non-OpenAI selection degrades to on-device (null) here rather than mis-keying.
+ * Widening batch is its own deliberate step, never a silent side effect of the resolver.
+ */
+internal fun resolveBatchSttProvider(raw: String?): ProviderId? =
+    resolveSttProvider(raw)?.takeIf { it == ProviderId.OPENAI }
 
 /**
  * The foreground host for one whole-file batch job: DECODE phase, then TRANSCRIBE phase, to
@@ -278,7 +290,9 @@ class BatchTranscriptionService : Service() {
      */
     private fun resolveCloud(byteLength: Long, costConfirmed: Boolean, useCloud: Boolean): SttProvider? {
         val prefs = app.preferencesManager
-        val providerId = resolveSttProvider(prefs.sttProviderId)           // top-level, this package
+        // Batch stays OpenAI-only this wave: a Gemini/ElevenLabs selection resolves non-null in live
+        // mode but clamps to null here, degrading the job to on-device rather than mis-keying OpenAI.
+        val providerId = resolveBatchSttProvider(prefs.sttProviderId)      // top-level, this package
         val key = providerId?.let { prefs.providerAccounts.key(it) }
 
         val allowed = BatchEngineDecision.cloudAllowed(
@@ -293,7 +307,10 @@ class BatchTranscriptionService : Service() {
             notificationsEnabled = { NotificationManagerCompat.from(this).areNotificationsEnabled() },
         )
         if (!allowed) return null
-        return OpenAiStt(transport(), key!!)
+        // providerId is guaranteed OPENAI here (resolveBatchSttProvider clamped it, and cloudAllowed
+        // required it non-null with a key). Construction goes through the ONE factory both services
+        // share — OpenAI is the only id that reaches it from batch this wave.
+        return SttProviderFactory.create(providerId!!, transport(), key!!)
     }
 
     /**

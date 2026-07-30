@@ -42,7 +42,7 @@ import com.whispereverywhere.transcription.SegmentOutcome
 import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine
 import com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine
-import com.whispereverywhere.transcription.cloud.OpenAiStt
+import com.whispereverywhere.transcription.cloud.SttProviderFactory
 import com.whispereverywhere.ui.components.BarWaveformView
 import com.whispereverywhere.util.SpeechSegmenter
 import com.whispereverywhere.util.StreamingAudioRecorder
@@ -90,14 +90,18 @@ internal fun decideEngineChoice(
 }
 
 /**
- * The stored preference names a usable provider only when it is OpenAI's own enum name — the
- * only STT adapter this release ships (Gemini/ElevenLabs are C2b, not yet built). Anything else —
- * null, a foreign provider name, a stale/corrupt value — resolves to null, which
+ * The stored preference names a usable provider only when it matches one of the STT adapters this
+ * release ships — OpenAI, Gemini, or ElevenLabs (C2b widened the set from OpenAI-only). Anything
+ * else — null, a foreign provider name, a stale/corrupt value — resolves to null, which
  * [decideEngineChoice] then treats exactly like "no key": a build that predates a provider's
- * adapter can never attempt a cloud call for it.
+ * adapter can never attempt a cloud call for it. [SttProviderFactory] has a mapping for every id in
+ * [STT_PROVIDERS], so a non-null result is always constructible.
  */
 internal fun resolveSttProvider(raw: String?): ProviderId? =
-    raw?.takeIf { it == ProviderId.OPENAI.name }?.let { ProviderId.valueOf(it) }
+    raw?.let { runCatching { ProviderId.valueOf(it) }.getOrNull() }
+        ?.takeIf { it in STT_PROVIDERS }
+
+private val STT_PROVIDERS = setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS)
 
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
@@ -1538,8 +1542,12 @@ class FloatingBubbleService : Service(),
             }
             EngineChoice.CLOUD_WITH_FALLBACK -> {
                 // Non-null/non-blank is guaranteed here: CLOUD_WITH_FALLBACK is reachable only
-                // when hasKey was true above.
-                val stt = OpenAiStt(sharedTransport(), requireNotNull(key))
+                // when hasKey was true above, which in turn required `provider` to be non-null.
+                // Construction goes through the ONE factory both services share — the only line
+                // that widened for C2b; the wrap below is provider-agnostic and unchanged.
+                val stt = SttProviderFactory.create(
+                    provider ?: ProviderId.OPENAI, sharedTransport(), requireNotNull(key),
+                )
                 val cloud = CloudTranscriptionEngine(stt, serviceScope)
                 lastCloudEngine = cloud
                 // The cloud engine may serve the MICROPHONE, which is the user's own voice and the

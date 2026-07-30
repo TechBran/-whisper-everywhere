@@ -121,14 +121,16 @@ internal fun providerTrainingDisclosure(provider: Provider): String = when (prov
 }
 
 /**
- * Providers this release can actually transcribe through. Deliberately narrower than
- * [ProviderCatalog.all] / [Provider.supportsStt] — those describe general provider capability,
- * but Release C2a ships only the OpenAI STT adapter (Gemini/ElevenLabs are C2b, not yet built).
- * Offering a provider here that [com.whispereverywhere.service.FloatingBubbleService] has no
- * adapter for would fall back to on-device with a misleading "no key" message even when a key IS
- * stored; excluding it here is the honest fix, not a downstream one.
+ * Providers this release can actually transcribe through. Tracks the STT adapters that ship in the
+ * app, which as of C2b are OpenAI, Gemini, and ElevenLabs — the full catalog. It stays a distinct
+ * set rather than collapsing to [Provider.supportsStt] on purpose: [Provider.supportsStt] describes
+ * general provider capability, while this is the honest "has a built adapter" gate. Offering a
+ * provider here that [com.whispereverywhere.service.FloatingBubbleService] has no adapter for would
+ * fall back to on-device with a misleading "no key" message even when a key IS stored; keeping the
+ * set adapter-driven is the honest fix, and it must stay in lockstep with [SttProviderFactory].
  */
-internal val STT_CAPABLE_PROVIDERS: Set<ProviderId> = setOf(ProviderId.OPENAI)
+internal val STT_CAPABLE_PROVIDERS: Set<ProviderId> =
+    setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS)
 
 /**
  * The STT selection that should survive removing [removedProvider]'s key: the same selection,
