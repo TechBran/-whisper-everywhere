@@ -115,6 +115,20 @@ class ClauseSplitterTest {
         }
     }
 
+    @Test fun a_rebalanced_tail_uses_the_target_aim_point() {
+        // A lone token of length cap+5 greedily yields ["x"*cap, "x"*5]; the sliver is folded back
+        // and the merged pair re-split at SPLIT_TARGET_CHARS, so the first piece sits at the target
+        // (not hugging the cap) and neither piece is a sliver.
+        val s = "x".repeat(cap() + 5)
+        val units = ClauseSplitter.plan(s)
+        each(units)
+        val pair = units.takeLast(2)
+        pair.forEach { assertTrue("rebalanced piece below MIN: ${it.length}", it.length >= 20) }
+        assertTrue("first rebalanced piece exceeds the target: ${pair.first().length}",
+            pair.first().length <= ClauseSplitter.SPLIT_TARGET_CHARS)
+        assertEquals(s, units.joinToString(""))
+    }
+
     @Test fun a_single_unbroken_token_is_hard_cut_at_the_cap() {
         val s = "x".repeat(cap() * 2 + 5) // no spaces anywhere
         val units = ClauseSplitter.plan(s)

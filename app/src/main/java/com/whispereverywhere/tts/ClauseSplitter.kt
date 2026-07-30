@@ -22,6 +22,13 @@ object ClauseSplitter {
 
     const val MS_PER_CHAR = 45L
     const val SPLIT_MAX_CHARS = 80
+
+    /**
+     * The comfortable aim point (0.73 * 60 * 45 = 1971 ms << 3262 ms bank). A long sentence is cut
+     * as LATE as the cap allows, not down to this target, because fewer/larger fragments mean fewer
+     * synthesized seam boundaries (findings on per-unit overhead and seam prosody). The target is
+     * used only to place a balanced cut when [rebalanceTail] re-splits a merged tail.
+     */
     const val SPLIT_TARGET_CHARS = 60
 
     /** Below this, a candidate boundary is ignored so we never emit a tiny sliver at a seam. */
@@ -100,8 +107,9 @@ object ClauseSplitter {
      * Greedy cutting dumps the leftover of the last window as the final unit, which can be a few
      * chars — a sliver clause synthesised as its own utterance gets isolated falling-pitch prosody.
      * If the final unit is below [MIN_CHARS], fold it back into its predecessor: re-split the pair
-     * near the middle so neither piece is a sliver, both stay within the cap and land on a real
-     * boundary (surrogate-safe). A lone unbroken token is the one case a piece may still be short.
+     * at the [SPLIT_TARGET_CHARS] aim point so neither piece is a sliver, both stay within the cap
+     * and land on a real boundary (surrogate-safe). A lone unbroken token is the one case a piece
+     * may still be short.
      */
     private fun rebalanceTail(units: MutableList<String>) {
         if (units.size < 2) return
@@ -114,10 +122,11 @@ object ClauseSplitter {
         if (merged.length <= SPLIT_MAX_CHARS) {
             units.add(merged)
         } else {
-            // end = length - MIN guarantees the second piece is >= MIN; chooseCut never returns
-            // below MIN except via hardCut, which here returns exactly `end` (>= MIN). Both pieces
-            // therefore satisfy MIN_CHARS <= piece <= SPLIT_MAX_CHARS.
-            val end = minOf(SPLIT_MAX_CHARS, merged.length - MIN_CHARS)
+            // Aim the cut at the target; clamp so the second piece is still >= MIN. Since merged is
+            // in (cap, cap+MIN), merged.length - MIN > SPLIT_TARGET_CHARS, so the target wins and
+            // both pieces satisfy MIN_CHARS <= piece <= SPLIT_MAX_CHARS. chooseCut never returns
+            // below MIN except via hardCut, which here returns exactly `end` (>= MIN).
+            val end = minOf(SPLIT_TARGET_CHARS, merged.length - MIN_CHARS)
             val cut = chooseCut(merged, 0, end)
             units.add(merged.substring(0, cut))
             units.add(merged.substring(cut))
