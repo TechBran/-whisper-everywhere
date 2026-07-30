@@ -96,6 +96,7 @@ object TtsController {
         e.cloudProvider = null
         e.cloudVoiceId = null
         e.onCloudFallback = null
+        e.onCloudSoftLatch = null
         notifiedTtsFatal = null
 
         val providerId = resolveTtsProvider(prefs.ttsProviderId) ?: return
@@ -107,6 +108,23 @@ object TtsController {
         e.cloudProvider = TtsProviderFactory.create(providerId, sharedTransport(), key, app)
         e.cloudVoiceId = voiceId
         e.onCloudFallback = { err -> onCloudFallback(app, err) }
+        e.onCloudSoftLatch = { onCloudSoftLatch(app) }
+    }
+
+    /**
+     * Called (on the engine's executor thread) ONCE per read when cloud has soft-latched to local
+     * after repeated non-fatal failures — the circuit breaker that stops a persistent transient
+     * (a Gemini no-audio refusal, a plain 429) silently re-billing every remaining clause. The read
+     * already continued on the on-device voice; this makes the otherwise-invisible bleed visible.
+     */
+    private fun onCloudSoftLatch(context: Context) {
+        main.post {
+            Toast.makeText(
+                context.applicationContext,
+                "Cloud read-aloud kept failing — using the on-device voice for the rest.",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 
     /**

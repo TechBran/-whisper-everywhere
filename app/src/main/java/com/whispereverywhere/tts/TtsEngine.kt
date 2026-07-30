@@ -81,6 +81,15 @@ class TtsEngine(
     @Volatile var onCloudFallback: ((TtsError) -> Unit)? = null
 
     /**
+     * Invoked (on the executor thread) AT MOST ONCE per read, the moment cloud soft-latches to local
+     * after [CLOUD_SOFT_LATCH_THRESHOLD] consecutive non-fatal fall-backs — the circuit breaker that
+     * stops a persistent transient (e.g. a Gemini safety refusal, or a plain 429) silently re-billing
+     * every remaining clause. [TtsController] toasts once so the bleed is never invisible. The read
+     * has already continued on the local voice; this only informs.
+     */
+    @Volatile var onCloudSoftLatch: (() -> Unit)? = null
+
+    /**
      * Per-slice visual tap: (pcm16 bytes, rms amplitude 0..32767) for every ~100 ms slice as
      * it is written to the AudioTrack — drives the bubble's waveform/aurora exactly like mic
      * chunks do. Called on the playback thread; keep it to thread-safe field writes.
@@ -159,6 +168,7 @@ class TtsEngine(
         val cloudSnap = cloudProvider
         val voiceSnap = cloudVoiceId
         val fallbackSnap = onCloudFallback
+        val softLatchSnap = onCloudSoftLatch
         executor.execute {
             var myFocus: AudioFocusRequest? = null
             var playbackThread: Thread? = null
@@ -443,6 +453,15 @@ class TtsEngine(
                 // path and the regression contract holds byte-for-byte.
                 val hasCloud = cloudSnap != null && !voiceSnap.isNullOrBlank()
                 var latchedFatal: FatalKind? = null
+                // Circuit breaker (finding): a persistent NON-FATAL condition — a Gemini 200 with no
+                // audio (safety refusal / preview quirk, which still bills input tokens), or a plain
+                // 429 — otherwise re-bills every remaining clause silently, because planUnitOutcome
+                // only latches on Fatal. Count consecutive non-fatal fall-backs; after
+                // CLOUD_SOFT_LATCH_THRESHOLD in a row, soft-latch cloud to local for the REST of this
+                // read (recoverable next read, unlike a Fatal) and fire onCloudSoftLatch ONCE so the
+                // bleed is never invisible. A delivered unit resets the streak.
+                var consecutiveSoft = 0
+                var softLatched = false
                 try {
                     // Bound each synthesis unit so sherpa's whole-utterance float[] stays small
                     // (OOM bound, 6A.5) and no unit outruns the banked audio (underrun law, 6A.1).
@@ -462,7 +481,8 @@ class TtsEngine(
                     )
                     for (unit in ClauseSplitter.plan(clean)) {
                         if (cancelled()) break
-                        when (planUnitOutcome(hasCloud, latchedFatal != null, synthResult = null)) {
+                        val latched = latchedFatal != null || softLatched
+                        when (planUnitOutcome(hasCloud, latched, synthResult = null)) {
                             UnitAction.Cloud -> {
                                 // runBlocking on the synthesis executor is deliberate: playback runs
                                 // on its own thread and drains banked audio while this unit is in
@@ -480,15 +500,26 @@ class TtsEngine(
                                     // unit, exactly like a Transient — reading never stops.
                                     TtsResult.Failed(TtsError.Transient(null))
                                 }
-                                when (val post = planUnitOutcome(hasCloud, latchedFatal != null, res)) {
+                                when (val post = planUnitOutcome(hasCloud, latched, res)) {
                                     UnitAction.Cancel -> break
                                     is UnitAction.LocalFallback -> {
                                         val err = (res as? TtsResult.Failed)?.error
-                                        if (post.latchNow && err is TtsError.Fatal) latchedFatal = err.kind
+                                        if (post.latchNow && err is TtsError.Fatal) {
+                                            latchedFatal = err.kind
+                                        } else {
+                                            // Non-fatal fall-back: count it toward the breaker. Trip
+                                            // the soft-latch (and toast once) at the threshold so a
+                                            // persistent transient cannot bleed the whole article.
+                                            consecutiveSoft++
+                                            if (!softLatched && shouldSoftLatchCloud(consecutiveSoft)) {
+                                                softLatched = true
+                                                softLatchSnap?.invoke()
+                                            }
+                                        }
                                         if (err != null) fallbackSnap?.invoke(err)
                                         local(unit)
                                     }
-                                    else -> Unit // UnitAction.Cloud: the cloud voice delivered the unit.
+                                    else -> consecutiveSoft = 0 // Cloud delivered: reset the streak.
                                 }
                             }
                             else -> local(unit) // UnitAction.Local: on-device voice (default or latched).
@@ -708,6 +739,27 @@ fun planUnitOutcome(hasCloud: Boolean, latched: Boolean, synthResult: TtsResult?
         is TtsResult.Failed -> UnitAction.LocalFallback(latchNow = synthResult.error is TtsError.Fatal)
     }
 }
+
+/**
+ * Consecutive NON-FATAL cloud fall-backs (Transient / BadUnit / Offline) after which cloud
+ * soft-latches to local for the REST of this read. A persistent transient condition otherwise
+ * re-bills EVERY unit of an article silently: [planUnitOutcome] only latches on Fatal, so a
+ * Transient falls just its own unit to local and leaves cloud eligible for the next — with no
+ * backoff and no toast. The concrete money case is a Gemini 200-with-no-audio (safety refusal or a
+ * preview-model modality quirk), classified Transient but STILL billing input tokens: a 40-clause
+ * article makes 40 billed no-audio POSTs, the user hears the whole piece in Kokoro, is billed 40
+ * times, and sees nothing. A plain 429 behaves the same (unbilled, but hammers the key).
+ *
+ * 2 (in [2,3]) trips fast enough that a per-unit bleed cannot run a whole article, while tolerating
+ * a single isolated hiccup. Unlike a Fatal latch this is RECOVERABLE next read — it only latches
+ * THIS read.
+ */
+const val CLOUD_SOFT_LATCH_THRESHOLD = 2
+
+/** True when [consecutiveSoftFailures] non-fatal cloud fall-backs in a row should soft-latch cloud
+ *  to local for the rest of the read (a circuit breaker over the silent per-unit re-bill). */
+fun shouldSoftLatchCloud(consecutiveSoftFailures: Int): Boolean =
+    consecutiveSoftFailures >= CLOUD_SOFT_LATCH_THRESHOLD
 
 /** What the producer loop does with one clause unit. See [planUnitOutcome]. */
 sealed interface UnitAction {
