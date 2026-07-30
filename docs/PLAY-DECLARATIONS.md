@@ -89,6 +89,20 @@ read-aloud carve-out flipped from "not part of this release" to the two-step qua
 Data Safety gains the "Other user-generated content" entry below (Shared = Yes) for text the
 user selects to be read aloud through a cloud voice.
 
+**Release ledger — C4 live transcribe (2026-07-30):** a third selectable STT mode, "Cloud
+word-for-word (OpenAI)", streams mic audio to OpenAI's Realtime WebSocket
+(`gpt-live-transcribe`) instead of the existing batch POST, so partial text renders as the user
+speaks. **Determination: this sends the SAME mic audio to the SAME provider (OpenAI) already
+covered by disclosure v3** (dictated-audio-to-provider, gated behind the existing key +
+provider-selection + disclosure triad) — it adds NO new data class, only a new *transport*
+(WebSocket vs POST) and a new *price tier* (about $0.017/min, roughly 4x the batch rate, since
+per-word streaming costs more than a single batch call). Therefore **NO disclosure version
+bump, NO re-prompt, and NO Data Safety form change** — the Audio files entry below already
+covers this traffic; live mode does not add or alter a collected/shared data type. The only new
+user-facing surface is the mode-selector row's price note (the honest cost disclosure — no
+speed claims are made anywhere in the copy, per the same triad gate as batch cloud STT). Ledger
+entry: **C4 live transcribe: transport+price only, v3 unchanged, price surfaced on selector.**
+
 - **Audio files → Voice or sound recordings:** Collected **Yes**, Shared **Yes**, purpose
   **App functionality**, **Optional**. The user must take two independent, deliberate actions
   before any audio is shared: add their own API key for a cloud provider, AND select that
