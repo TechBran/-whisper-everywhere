@@ -56,11 +56,20 @@ class ProviderCatalogTest {
         ProviderCatalog.all.forEach { assertTrue("${it.id} STT", it.supportsStt) }
     }
 
-    @Test fun soniox_is_stt_only_but_streams_now() {
+    @Test fun soniox_is_now_tts_capable_and_streams() {
+        // Soniox TTS ships this wave (SonioxTts, tts-rt-v1, pcm_s16le @ 24 kHz) — supportsTts flips
+        // false → true and it joins TTS_CAPABLE_PROVIDERS below.
         val s = ProviderCatalog.byId(ProviderId.SONIOX)
         assertTrue(s.supportsStt)
-        assertFalse("Soniox ships no TTS adapter this wave", s.supportsTts)
+        assertTrue("Soniox ships a TTS adapter this wave", s.supportsTts)
         assertTrue("Soniox realtime stt-rt-v5 ships this wave", s.supportsStreaming)
+    }
+
+    @Test fun tts_capable_set_is_the_four_adapter_backed_providers() {
+        assertEquals(
+            setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX),
+            ProviderCatalog.TTS_CAPABLE_PROVIDERS,
+        )
     }
 
     @Test fun soniox_uses_a_bearer_authorization_header() {

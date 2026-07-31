@@ -4,6 +4,7 @@ import com.whispereverywhere.net.FakeHttpTransport
 import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -29,17 +30,23 @@ class TtsProviderFactoryTest {
         assertEquals(ProviderId.ELEVENLABS, TtsProviderFactory.create(ProviderId.ELEVENLABS, fake, "k", null).id)
     }
 
+    @Test fun soniox_id_maps_to_the_soniox_adapter() {
+        val provider = TtsProviderFactory.create(ProviderId.SONIOX, fake, "k", null)
+        assertEquals(ProviderId.SONIOX, provider.id)
+        assertTrue("Soniox id must build a SonioxTts, not a sibling", provider is SonioxTts)
+    }
+
     @Test fun every_adapter_emits_the_24k_bank_contract_rate() {
-        // Iterate the providers that actually HAVE a TTS adapter, not the whole enum: Soniox is
-        // STT-only, so TtsProviderFactory.create rejects it — it is deliberately not a member here.
+        // Iterate the providers that actually HAVE a TTS adapter, not the whole enum. All four
+        // (OpenAI, Gemini, ElevenLabs, Soniox) emit the bank's 24 kHz contract rate.
         ProviderCatalog.TTS_CAPABLE_PROVIDERS.forEach { id ->
             assertEquals("$id sampleRate", 24_000, TtsProviderFactory.create(id, fake, "k", null).sampleRate)
         }
     }
 
-    @Test fun tts_capable_set_is_openai_gemini_elevenlabs() {
+    @Test fun tts_capable_set_is_openai_gemini_elevenlabs_soniox() {
         assertEquals(
-            setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS),
+            setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX),
             ProviderCatalog.TTS_CAPABLE_PROVIDERS,
         )
     }

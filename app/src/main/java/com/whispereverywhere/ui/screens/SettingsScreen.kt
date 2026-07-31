@@ -32,6 +32,7 @@ import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.tts.cloud.CloudVoice
 import com.whispereverywhere.tts.cloud.GeminiTtsVoices
 import com.whispereverywhere.tts.cloud.OpenAiTtsVoices
+import com.whispereverywhere.tts.cloud.SonioxTtsVoices
 import com.whispereverywhere.ui.theme.*
 import com.whispereverywhere.util.formatBytes
 import java.io.File
@@ -69,7 +70,7 @@ internal fun ttsProviderPriceNote(providerId: ProviderId): String = when (provid
     ProviderId.GEMINI ->
         "Preview model — Google's pricing is not final; billed to your Gemini key."
     ProviderId.SONIOX ->
-        "Soniox is transcription-only; it has no read-aloud voices."
+        "About \$0.70 per hour of audio (about 1.2¢ per minute), billed to your Soniox key."
 }
 
 /**
@@ -82,6 +83,8 @@ internal fun ttsNoSpeedControlNote(providerId: ProviderId): String? = when (prov
     ProviderId.ELEVENLABS, ProviderId.GEMINI ->
         "This provider has no speed control; the speed setting applies to on-device voices only."
     ProviderId.OPENAI -> null
+    // Soniox DOES take a request-time speed field (0.7–1.3), so it honors the speed setting like
+    // OpenAI — stays null on purpose; do NOT move it into the ELEVENLABS/GEMINI no-speed branch.
     ProviderId.SONIOX -> null
 }
 
@@ -101,7 +104,7 @@ internal fun cloudVoiceDisplayName(
         ProviderId.OPENAI -> OpenAiTtsVoices.ALL
         ProviderId.GEMINI -> GeminiTtsVoices.ALL
         ProviderId.ELEVENLABS -> dynamicVoices ?: emptyList()
-        ProviderId.SONIOX -> emptyList()
+        ProviderId.SONIOX -> SonioxTtsVoices.ALL
     }
     return catalog.firstOrNull { it.voiceId == voiceId }?.displayName ?: voiceId
 }

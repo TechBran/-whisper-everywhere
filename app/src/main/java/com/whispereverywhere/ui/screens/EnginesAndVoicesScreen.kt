@@ -32,6 +32,7 @@ import com.whispereverywhere.tts.cloud.CloudVoice
 import com.whispereverywhere.tts.cloud.ElevenLabsTts
 import com.whispereverywhere.tts.cloud.GeminiTtsVoices
 import com.whispereverywhere.tts.cloud.OpenAiTtsVoices
+import com.whispereverywhere.tts.cloud.SonioxTtsVoices
 import com.whispereverywhere.tts.resolveTtsProvider
 import com.whispereverywhere.ui.theme.Primary
 import com.whispereverywhere.ui.theme.Warning
@@ -437,7 +438,9 @@ fun EnginesAndVoicesScreen(
                             ProviderId.OPENAI -> OpenAiTtsVoices.ALL
                             ProviderId.GEMINI -> GeminiTtsVoices.ALL
                             ProviderId.ELEVENLABS -> null // dynamic — handled below
-                            ProviderId.SONIOX -> null // STT-only; never enters the TTS voice list
+                            // Static two-voice set (Maya/Adrian) — like Gemini/OpenAI, no dynamic
+                            // fetch / spinner / error-row wiring; the picker lights up automatically.
+                            ProviderId.SONIOX -> SonioxTtsVoices.ALL
                         }
 
                         if (staticVoices != null) {

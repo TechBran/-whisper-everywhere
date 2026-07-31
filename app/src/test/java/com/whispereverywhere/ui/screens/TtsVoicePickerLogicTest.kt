@@ -45,7 +45,8 @@ class TtsVoicePickerLogicTest {
 
     @Test fun offered_set_is_the_intersection_of_configured_and_tts_capable() {
         val offered = ttsSelectableProviders(
-            configured = setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS),
+            // All four configured, so the intersection is the whole TTS-capable set (now incl. Soniox).
+            configured = setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX),
             disclosureAccepted = true,
         ).map { it.id }.toSet()
         assertEquals(ProviderCatalog.TTS_CAPABLE_PROVIDERS, offered)

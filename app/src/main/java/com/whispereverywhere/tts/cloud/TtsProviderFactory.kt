@@ -16,9 +16,10 @@ import com.whispereverywhere.provider.ProviderId
  * [com.whispereverywhere.provider.ProviderCatalog.TTS_CAPABLE_PROVIDERS].
  *
  * [context] is threaded only because [ElevenLabsTts]'s mp3-tier fallback needs [Context.getCacheDir]
- * for its temp file; OpenAI and Gemini need nothing from it. It is nullable so the two context-free
- * adapters stay JVM-unit-testable and because [ElevenLabsTts] already tolerates a null context off
- * the on-device decode path (the default decode lambda requireNotNull-checks it only when invoked).
+ * for its temp file; OpenAI, Gemini, and Soniox need nothing from it (all emit headerless PCM with
+ * no decode tier). It is nullable so the three context-free adapters stay JVM-unit-testable and
+ * because [ElevenLabsTts] already tolerates a null context off the on-device decode path (the
+ * default decode lambda requireNotNull-checks it only when invoked).
  */
 object TtsProviderFactory {
     fun create(
@@ -30,6 +31,7 @@ object TtsProviderFactory {
         ProviderId.OPENAI -> OpenAiTts(transport, apiKey)
         ProviderId.GEMINI -> GeminiTts(transport, apiKey)
         ProviderId.ELEVENLABS -> ElevenLabsTts(transport, apiKey, context?.applicationContext)
-        ProviderId.SONIOX -> error("Soniox has no TTS adapter — it is speech-to-text only")
+        // Soniox emits headerless pcm_s16le @ 24 kHz — no mp3 tier, so context is deliberately NOT passed.
+        ProviderId.SONIOX -> SonioxTts(transport, apiKey)
     }
 }

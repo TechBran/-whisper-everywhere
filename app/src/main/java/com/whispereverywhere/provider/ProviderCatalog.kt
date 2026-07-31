@@ -93,9 +93,9 @@ object ProviderCatalog {
             // clean 401 for a bad key, and 402 for exhausted balance, both already handled).
             validationUrl = "https://api.soniox.com/v1/models",
             supportsStt = true,
-            // STT-only this wave. Soniox has a TTS surface, but no adapter ships here; it stays out
-            // of TTS_CAPABLE_PROVIDERS and TtsProviderFactory rejects it.
-            supportsTts = false,
+            // TTS ships this wave via SonioxTts — tts-rt-v1, pcm_s16le @ 24 kHz. Soniox joins
+            // TTS_CAPABLE_PROVIDERS and TtsProviderFactory maps it to the adapter.
+            supportsTts = true,
             // v1 async is the segment path (like Gemini/ElevenLabs' batch mode); realtime stt-rt-v5
             // ships this wave behind SonioxRealtimeProtocol, so Soniox streams now too.
             supportsStreaming = true,
@@ -117,9 +117,9 @@ object ProviderCatalog {
      * [com.whispereverywhere.ui.screens.STT_CAPABLE_PROVIDERS]. It is the honest "has a built cloud
      * TTS adapter" gate and MUST stay in lockstep with [com.whispereverywhere.tts.cloud.TtsProviderFactory]
      * (whose exhaustive `when` will not compile if a mapped provider is missing here, or vice-versa).
-     * All three ship a [Provider.supportsTts] adapter as of this release; on-device Kokoro remains the
+     * All four ship a [Provider.supportsTts] adapter as of this release; on-device Kokoro remains the
      * default and the fallback and is never a member of this set.
      */
     val TTS_CAPABLE_PROVIDERS: Set<ProviderId> =
-        setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS)
+        setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX)
 }
