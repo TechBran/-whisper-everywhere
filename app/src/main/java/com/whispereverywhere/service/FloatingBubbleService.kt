@@ -1673,7 +1673,7 @@ class FloatingBubbleService : Service(),
                     ProviderId.ELEVENLABS ->
                         com.whispereverywhere.transcription.live.ElevenLabsRealtimeProtocol()
                     ProviderId.SONIOX ->
-                        com.whispereverywhere.transcription.live.SonioxRealtimeProtocol(sharedLiveReconnectScheduler())
+                        com.whispereverywhere.transcription.live.SonioxRealtimeProtocol()
                     ProviderId.GEMINI -> error("Gemini is not realtime-capable; decideEngineChoice forbids CLOUD_LIVE for it")
                 }
                 val cloud = com.whispereverywhere.transcription.live.LiveTranscriptionEngine(

@@ -39,8 +39,6 @@ class SonioxNoLogDisciplineTest {
         override fun onFatal(kind: FatalKind, code: Int) { strings += kind.name; strings += code.toString() }
     }
 
-    private val noopScheduler = ReconnectScheduler { _, _ -> /* never fire */ }
-
     private fun leaks(s: String?): Boolean = s.orEmpty().let { it.contains(KEY) || it.contains(FRAGMENT) }
 
     // ---- the config frame is the SOLE carrier ---------------------------------------------------
@@ -51,7 +49,7 @@ class SonioxNoLogDisciplineTest {
     }
 
     @Test fun bootstrap_returns_the_key_bearing_config_and_nothing_else_holds_it() {
-        val p = SonioxRealtimeProtocol(noopScheduler).apply { bind(RecordingControl(), RecordingListener()) }
+        val p = SonioxRealtimeProtocol().apply { bind(RecordingControl(), RecordingListener()) }
         val frame = p.bootstrap(KEY, "en").single() as Frame.Text
         assertTrue("the config frame must carry the key to send it", frame.json.contains(KEY))
     }
@@ -59,13 +57,13 @@ class SonioxNoLogDisciplineTest {
     // ---- the key is never a field, and toString leaks nothing -----------------------------------
 
     @Test fun toString_of_the_protocol_never_contains_the_key() {
-        val p = SonioxRealtimeProtocol(noopScheduler).apply { bind(RecordingControl(), RecordingListener()) }
+        val p = SonioxRealtimeProtocol().apply { bind(RecordingControl(), RecordingListener()) }
         p.bootstrap(KEY, "en")
         assertFalse(leaks(p.toString()))
     }
 
     @Test fun no_declared_field_holds_the_key_after_bootstrap_and_reset() {
-        val p = SonioxRealtimeProtocol(noopScheduler).apply { bind(RecordingControl(), RecordingListener()) }
+        val p = SonioxRealtimeProtocol().apply { bind(RecordingControl(), RecordingListener()) }
         // Drive the key through the protocol the way a live session does…
         p.bootstrap(KEY, "en")
         p.onAppend(byteArrayOf(1, 2, 3, 4))
@@ -74,7 +72,7 @@ class SonioxNoLogDisciplineTest {
         // …then prove the class holds NO field that captured it (by construction it has no apiKey field).
         assertNoFieldLeaks(p)
         // And a second time before reset would have been the same — reflect a fresh instance mid-session.
-        val live = SonioxRealtimeProtocol(noopScheduler).apply { bind(RecordingControl(), RecordingListener()) }
+        val live = SonioxRealtimeProtocol().apply { bind(RecordingControl(), RecordingListener()) }
         live.bootstrap(KEY, null)
         assertNoFieldLeaks(live)
     }
@@ -92,7 +90,7 @@ class SonioxNoLogDisciplineTest {
     @Test fun a_full_session_leaks_the_key_only_in_the_config_frame() {
         val control = RecordingControl()
         val sink = RecordingListener()
-        val p = SonioxRealtimeProtocol(noopScheduler).apply { bind(control, sink) }
+        val p = SonioxRealtimeProtocol().apply { bind(control, sink) }
 
         // The transport would send the bootstrap frames; do it here so the config frame is recorded.
         val boot = p.bootstrap(KEY, "en")

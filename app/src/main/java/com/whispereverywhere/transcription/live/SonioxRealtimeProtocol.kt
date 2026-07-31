@@ -81,6 +81,9 @@ object SonioxEvents {
         @SerialName("audio_format") val audioFormat: String = "s16le",
         @SerialName("sample_rate") val sampleRate: Int = 16000,
         @SerialName("num_channels") val numChannels: Int = 1,
+        // Server endpoint detection: Soniox emits an `<end>` token at each speech boundary, which is
+        // the SERVER turn signal driving the engine's server-turn allocation (the 2026-07-31 inversion).
+        @SerialName("enable_endpoint_detection") val enableEndpointDetection: Boolean = true,
         @SerialName("language_hints") val languageHints: List<String>? = null,
     ) {
         override fun toString(): String = "Config(api_key=<redacted>, model=$model)"
@@ -88,7 +91,9 @@ object SonioxEvents {
 }
 
 /**
- * Soniox stt-rt-v5 behind the [RealtimeProtocol] seam.
+ * Soniox stt-rt-v5 behind the [RealtimeProtocol] seam, in SERVER-DRIVEN mode
+ * (`enable_endpoint_detection:true`): the SERVER marks each speech boundary with an `<end>` token,
+ * which is the turn signal driving the engine's server-turn allocation (the 2026-07-31 inversion).
  *
  * **The key never becomes a field of this object.** It arrives per open through [bootstrap] and is
  * consumed by [SonioxEvents.config]; [reset]/`toString`/any exception path therefore have nothing to
@@ -97,43 +102,31 @@ object SonioxEvents {
  * seam as a numeric code + a message LENGTH — never content — mirroring the OpenAI/ElevenLabs paths.
  *
  * **Audio is RAW s16le BINARY at 16 kHz** ([okhttp3.WebSocket.send] `ByteString` overload via
- * [Frame.Binary]) — no resample, no base64. There is no server-issued turn boundary: non-final tokens
- * are the live preview and final tokens accumulate.
+ * [Frame.Binary]) — no resample, no base64. Non-final tokens are the live preview (streamed as spoken)
+ * and final tokens accumulate into the current turn.
  *
- * **Client-assembled turns with a grace window (deviation from the plan's synchronous sketch — see the
- * report).** At the moment VAD cuts a turn ([onCommit]) the last words spoken are still *non-final*
- * (Soniox finalizes them a beat later as the continuing audio stream confirms them). Assembling
- * `finals` synchronously at [onCommit] would drop those trailing words AND misattribute them to the
- * NEXT turn once they finalize. So [onCommit] instead arms a short grace timer on the injected
- * [scheduler]; finals that land during the window keep accumulating for the just-cut turn, and when
- * the timer fires (or an inbound `finished:true` flushes early) the accumulated finals are assembled
- * and [RealtimeTransport.Listener.onCompleted] fires for the just-cut seq (the engine's oldest-unbound
- * fallback bind — binding stays deterministic because the grace timers fire in commit order). This is
- * exactly the async pattern [ElevenLabsRealtimeProtocol] uses for its deferred commit, on the same
- * scheduler.
+ * **The `<end>` token IS the turn boundary.** On each `<end>` (always final, once per segment) the
+ * accumulated finals are snapshotted into a fresh synthetic id and the accumulator opens the next
+ * empty turn: `onCommitted(id)` (rotate the mirror + allocate the seq) then `onCompleted(id, finals)`
+ * (resolve it exactly-once). The client-VAD-era grace window / `onCommit` machinery is GONE — server
+ * endpoint detection finalizes the trailing words itself, so the race the grace window guarded no
+ * longer exists. [onCommit] is an unreachable no-op (kept for the client-VAD fallback mode).
  *
  * **Turn-assembly edge cases the engine's exactly-once ledger relies on:**
- *  - *Zero finals:* a cut turn that produced no final tokens resolves via `onCompleted(id, "")` — the
- *    engine's empty-completion outcome, NOT `onTranscriptionFailed` (which would be a hard loss). See
- *    the report for the EmptyExpected-vs-EmptyUnexpected note (the untouched engine classifies an
- *    empty completion as EmptyUnexpected, which the fallback rescues locally).
- *  - *Rotation mid-turn:* a 413/403 rotation closes the socket, and the transport surfaces that as
- *    `onDisconnected` -> the engine resolves the in-flight turn Lost -> local rescue. [bootstrap]
- *    (fired on every reopen) drops the pre-rotation turn state so it never bleeds into the reopened
- *    session, and any still-armed grace timer is invalidated by the superseded `pending` token.
+ *  - *Zero finals:* an `<end>` with no accumulated finals resolves via `onCompleted(id, "")` — the
+ *    engine's empty-completion outcome (EmptyUnexpected, rescued locally), NOT `onTranscriptionFailed`.
+ *  - *The `<end>` token never enters `finals`*, so it can never leak into a transcript.
+ *  - *Boundaries fire OUTSIDE [gate]* (built under the lock, fired after it) to preserve the no-deadlock
+ *    discipline.
  *
  * **Session rotation under the ceiling.** A 413 max-duration signal sends the empty-frame finalize and
  * then [SessionControl.rotate], which rides the transport's `scheduleReconnect` and so respects
  * `maxReconnects` — a pathological session gives up instead of rotating forever. A 403 session-expiry
  * rotates ONCE per session (the retry counter is cleared only in [reset], i.e. on session close);
- * the plan-note's per-open reset is deliberately NOT taken — see the report (it would let inband 403s
- * rotate forever, since each successful reopen resets the transport's own reconnect counter).
+ * the plan-note's per-open reset is deliberately NOT taken (it would let inband 403s rotate forever,
+ * since each successful reopen resets the transport's own reconnect counter).
  */
-class SonioxRealtimeProtocol(
-    private val scheduler: ReconnectScheduler,
-    /** How long to keep accumulating trailing finals for a just-cut turn before assembling it. */
-    private val graceMs: Long = DEFAULT_GRACE_MS,
-) : RealtimeProtocol {
+class SonioxRealtimeProtocol : RealtimeProtocol {
 
     override val endpoint = ENDPOINT
     override val tolerant4xxRetry = false
@@ -144,15 +137,11 @@ class SonioxRealtimeProtocol(
 
     // All turn state guarded by `gate`; control.* / sink.* are never called while holding it.
     private val gate = Any()
-    private val finals = StringBuilder()  // accumulated FINAL text for the turn currently open/closing
+    private val finals = StringBuilder()  // accumulated FINAL text for the turn currently open
     private var lastPreview = ""          // last computed preview (finals + current non-finals)
-    private var pending: Pending? = null  // a VAD-cut turn inside its grace window
-    private var graceCounter = 0L         // one unique token per armed grace window (staleness guard)
     private var sessionExpiredRetries = 0 // 403 -> rotate once per session, then fatal
 
-    private class Pending(val id: String, val token: Long)
     private class Completion(val id: String, val text: String)
-    private class Armed(val id: String, val token: Long, val prior: Completion?)
 
     override fun upgradeHeaders(apiKey: String): List<Pair<String, String>> = emptyList() // key rides config
 
@@ -163,14 +152,13 @@ class SonioxRealtimeProtocol(
 
     /**
      * The ONLY carrier of the key: built here from [apiKey], returned, sent by the transport, never
-     * retained. Also the per-open reset point for TURN state (finals/preview/pending) so a reconnect
-     * or rotation starts clean — but NOT for [sessionExpiredRetries] (see the class KDoc / report).
+     * retained. Also the per-open reset point for TURN state (finals/preview) so a reconnect or
+     * rotation starts clean — but NOT for [sessionExpiredRetries] (see the class KDoc).
      */
     override fun bootstrap(apiKey: String, language: String?): List<Frame> {
         synchronized(gate) {
             finals.setLength(0)
             lastPreview = ""
-            pending = null // supersedes any still-armed grace timer via its now-stale token
         }
         return listOf(Frame.Text(SonioxEvents.config(apiKey, language)))
     }
@@ -178,46 +166,34 @@ class SonioxRealtimeProtocol(
     override fun onAppend(pcm16k: ByteArray): Boolean =
         control.send(Frame.Binary(pcm16k.toByteString())) // raw s16le binary — no resample, no base64
 
-    /**
-     * VAD close: arm the grace window for the just-cut turn. Nothing is sent; the turn resolves when
-     * the grace timer fires (or `finished:true` flushes it). If a prior turn is still in its window
-     * (two VAD cuts within [graceMs]), it is finalized first, OFF this thread, so no sink callback
-     * runs under the transport's send lock.
-     */
-    override fun onCommit(): Boolean {
-        val armed = synchronized(gate) {
-            val prior = closePendingLocked() // finalize any in-grace turn before opening the next
-            val id = ids.incrementAndGet().toString()
-            val token = ++graceCounter
-            pending = Pending(id, token)
-            Armed(id, token, prior)
-        }
-        armed.prior?.let { c -> scheduler.schedule(0L) { fire(c) } } // in commit order, before the new grace
-        scheduler.schedule(graceMs) { onGrace(armed.id, armed.token) }
-        return true
-    }
+    /** No client commit exists — the server marks turns via the `<end>` token. Kept for the fallback mode. */
+    override fun onCommit(): Boolean = true
 
     override fun onText(text: String) {
         val r = SonioxEvents.parse(text) ?: return
         r.errorCode?.let { handleError(it, r.errorLen); return }
 
         var preview = ""
-        var flushed: Completion? = null
+        val boundaries = ArrayList<Completion>() // built under gate, fired outside it (deadlock discipline)
         synchronized(gate) {
             val nonFinal = StringBuilder()
-            // Final tokens accumulate into the INJECTED turn, so the boundary between them must be
-            // melt-proof: if Soniox ever emits an adjacent BARE token (its docs sample shows a bare
-            // "Hello"), a raw append would glue 'Helloworld'. [appendJoined] routes through the shared
-            // policy — a no-op over Soniox's own baked spacing, a single space only where two
-            // alphanumerics would otherwise touch. Non-finals stay raw (preview-only, replaced each
-            // message) and the finals↔non-finals preview boundary is joined under the same policy.
-            for (t in r.tokens) if (t.isFinal) appendJoined(finals, t.text) else nonFinal.append(t.text)
+            for (t in r.tokens) when {
+                t.isFinal && t.text == END_TOKEN -> {
+                    // Server segment boundary: snapshot the finals for this turn and open the next empty.
+                    boundaries.add(Completion(ids.incrementAndGet().toString(), finals.toString()))
+                    finals.setLength(0)
+                }
+                // A real finalized word — melt-proof join (a no-op over Soniox's baked spacing, a single
+                // space only where two alphanumerics would otherwise touch).
+                t.isFinal -> appendJoined(finals, t.text)
+                // Preview only, replaced each message.
+                else -> nonFinal.append(t.text)
+            }
             lastPreview = TextJoin.join(finals.toString(), nonFinal.toString())
             preview = lastPreview
-            if (r.finished) flushed = closePendingLocked() // end-of-stream flush of the in-grace turn
         }
-        sink.onDelta("", preview) // preview strip ONLY — never injected
-        flushed?.let { fire(it) }
+        sink.onDelta("", preview) // streams non-final tokens AS SPOKEN — preview strip only, never injected
+        for (c in boundaries) { sink.onCommitted(c.id); fire(c) } // allocate+bind then resolve, in order
     }
 
     /**
@@ -256,31 +232,11 @@ class SonioxRealtimeProtocol(
     override fun reset() = synchronized(gate) {
         finals.setLength(0)
         lastPreview = ""
-        pending = null
         sessionExpiredRetries = 0
     }
 
-    /** Grace timer: assemble the accumulated finals for [id] and resolve its seq, unless superseded. */
-    private fun onGrace(id: String, token: Long) {
-        val completion = synchronized(gate) {
-            val p = pending
-            if (p == null || p.token != token) return // torn down / superseded by a later commit
-            closePendingLocked()
-        } ?: return
-        fire(completion)
-    }
-
-    /** Caller holds [gate]: snapshot the in-grace turn's finals, clear the accumulator, return it. */
-    private fun closePendingLocked(): Completion? {
-        val p = pending ?: return null
-        pending = null
-        val text = finals.toString()
-        finals.setLength(0)
-        lastPreview = ""
-        return Completion(p.id, text)
-    }
-
-    /** Resolve the just-cut seq exactly-once via the engine's oldest-unbound fallback bind. Never gated. */
+    /** Resolve the just-cut seq exactly-once via the engine's oldest-unbound fallback bind. Never gated.
+     *  A zero-final `<end>` fires `onCompleted(id, "")` — the engine's EmptyUnexpected -> local rescue. */
     private fun fire(c: Completion) = sink.onCompleted(c.id, c.text)
 
     /** Append [text] to [sb] under the shared join policy: a single space only where two runs melt. */
@@ -293,7 +249,7 @@ class SonioxRealtimeProtocol(
     companion object {
         const val ENDPOINT = "wss://stt-rt.soniox.com/transcribe-websocket"
 
-        /** Trailing finals almost always land inside this after a VAD cut on a continuous stream. */
-        const val DEFAULT_GRACE_MS = 600L
+        /** The server's endpoint-detection boundary token; always final, once per segment. Never injected. */
+        const val END_TOKEN = "<end>"
     }
 }

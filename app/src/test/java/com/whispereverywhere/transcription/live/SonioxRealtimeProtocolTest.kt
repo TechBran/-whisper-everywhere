@@ -10,13 +10,13 @@ import org.junit.Test
 
 /**
  * Soniox stt-rt-v5 behind the [RealtimeProtocol] seam, driven through a fake [SessionControl] + a
- * recording [RealtimeTransport.Listener] + a manual [ReconnectScheduler], with VERBATIM doc JSON fed
- * to the real [SonioxEvents] parser. The shared bootstrap/dispatch/fatal contract lives in
- * [RealtimeProtocolContractTest]; this suite pins what is Soniox-specific: the key-bearing config
- * shape, raw-binary audio, client-assembled turns with a grace window (late finals captured,
- * zero-final turns resolved empty-not-lost, `finished` early flush), the numeric error map, and the
- * finalize/rotate session cycling. The no-log discipline is pinned separately in
- * [SonioxNoLogDisciplineTest].
+ * recording [RealtimeTransport.Listener], with VERBATIM doc JSON fed to the real [SonioxEvents]
+ * parser. Server-driven (`enable_endpoint_detection:true`): non-final tokens stream as preview, final
+ * tokens accumulate, and the `<end>` token is the turn boundary — it snapshots the finals into a fresh
+ * synthetic id, binds it (`onCommitted`) then resolves it (`onCompleted`). This suite pins the
+ * key-bearing config shape (now incl. endpoint detection), raw-binary audio, the `<end>`-driven turn,
+ * zero-final empty completion, the numeric error map, and the finalize/rotate session cycling. The
+ * no-log discipline is pinned separately in [SonioxNoLogDisciplineTest].
  */
 class SonioxRealtimeProtocolTest {
 
@@ -37,30 +37,22 @@ class SonioxRealtimeProtocolTest {
         val failed = mutableListOf<String>()
         val errors = mutableListOf<Pair<String?, Int>>()
         val fatals = mutableListOf<Pair<FatalKind, Int>>()
+        val order = mutableListOf<String>()
         override fun onConnected() {}
-        override fun onDelta(itemId: String, text: String) { deltas += itemId to text }
-        override fun onCompleted(itemId: String, transcript: String) { completed += itemId to transcript }
-        override fun onCommitted(itemId: String) { committed += itemId }
+        override fun onDelta(itemId: String, text: String) { deltas += itemId to text; order += "delta:$text" }
+        override fun onCompleted(itemId: String, transcript: String) { completed += itemId to transcript; order += "completed:$itemId" }
+        override fun onCommitted(itemId: String) { committed += itemId; order += "committed:$itemId" }
         override fun onTranscriptionFailed(itemId: String) { failed += itemId }
         override fun onErrorEvent(code: String?, messageLength: Int) { errors += code to messageLength }
         override fun onDisconnected() {}
         override fun onFatal(kind: FatalKind, code: Int) { fatals += kind to code }
     }
 
-    /** Captures scheduled tasks (grace timers); [fireAll] runs the ones armed so far, in order. */
-    private class ManualScheduler : ReconnectScheduler {
-        val delays = mutableListOf<Long>()
-        private val tasks = mutableListOf<() -> Unit>()
-        override fun schedule(delayMs: Long, task: () -> Unit) { delays += delayMs; tasks += task }
-        fun fireAll() { val snapshot = tasks.toList(); tasks.clear(); snapshot.forEach { it() } }
-    }
-
     private val control = RecordingControl()
     private val sink = RecordingListener()
-    private val scheduler = ManualScheduler()
 
     private fun protocol(ctrl: SessionControl = control): SonioxRealtimeProtocol =
-        SonioxRealtimeProtocol(scheduler).apply { bind(ctrl, sink) }
+        SonioxRealtimeProtocol().apply { bind(ctrl, sink) }
 
     // ---- wire facts -----------------------------------------------------------------------------
 
@@ -103,12 +95,12 @@ class SonioxRealtimeProtocolTest {
         frames.forEach { sweep(it, 0) }
     }
 
-    // ---- config bootstrap shape (verbatim wire; language_hints present only when given) ----------
+    // ---- config bootstrap shape (verbatim wire; endpoint detection on; language_hints only when given) --
 
     @Test fun bootstrap_config_shape_is_exact_without_language() {
         val frame = protocol().bootstrap("sx-secret", null).single() as Frame.Text
         assertEquals(
-            """{"api_key":"sx-secret","model":"stt-rt-v5","audio_format":"s16le","sample_rate":16000,"num_channels":1}""",
+            """{"api_key":"sx-secret","model":"stt-rt-v5","audio_format":"s16le","sample_rate":16000,"num_channels":1,"enable_endpoint_detection":true}""",
             frame.json,
         )
     }
@@ -116,7 +108,7 @@ class SonioxRealtimeProtocolTest {
     @Test fun bootstrap_config_shape_adds_language_hints_only_when_a_language_is_given() {
         val frame = protocol().bootstrap("sx-secret", "en").single() as Frame.Text
         assertEquals(
-            """{"api_key":"sx-secret","model":"stt-rt-v5","audio_format":"s16le","sample_rate":16000,"num_channels":1,"language_hints":["en"]}""",
+            """{"api_key":"sx-secret","model":"stt-rt-v5","audio_format":"s16le","sample_rate":16000,"num_channels":1,"enable_endpoint_detection":true,"language_hints":["en"]}""",
             frame.json,
         )
     }
@@ -136,6 +128,15 @@ class SonioxRealtimeProtocolTest {
         assertFalse(p.onAppend(pcm(shortArrayOf(1, 2))))
     }
 
+    @Test fun onCommit_is_a_server_driven_no_op() {
+        // No client commit exists — the server marks turns via <end>. onCommit sends nothing, binds
+        // nothing, and never blocks the sender.
+        val p = protocol()
+        assertTrue(p.onCommit())
+        assertTrue(control.frames.isEmpty())
+        assertTrue(sink.committed.isEmpty() && sink.completed.isEmpty())
+    }
+
     // ---- preview: accumulated finals + current non-finals; finals persist, non-finals do not -----
 
     @Test fun mixed_tokens_preview_is_accumulated_finals_plus_current_non_finals() {
@@ -153,91 +154,66 @@ class SonioxRealtimeProtocolTest {
         assertTrue("preview never binds or completes a turn", sink.completed.isEmpty() && sink.committed.isEmpty())
     }
 
-    @Test fun bare_final_tokens_across_messages_do_not_melt_in_the_assembled_turn() {
+    @Test fun bare_final_tokens_do_not_melt_in_the_assembled_turn() {
         val p = protocol()
-        // Two BARE final tokens (no baked spacing) accumulate across messages. The assembled turn is
-        // what gets injected, so it must read "Hello world", not the melted "Helloworld".
+        // Two BARE final tokens (no baked spacing) accumulate across messages, then <end> cuts the turn.
+        // The assembled turn is what gets injected, so it must read "Hello world", not "Helloworld".
         p.onText("""{"tokens":[{"text":"Hello","is_final":true}]}""")
         p.onText("""{"tokens":[{"text":"world","is_final":true}]}""")
-        p.onCommit()
-        scheduler.fireAll()
+        p.onText("""{"tokens":[{"text":"<end>","is_final":true}]}""")
         assertEquals(listOf("1" to "Hello world"), sink.completed)
     }
 
-    // ---- client-assembled turn at VAD close, with the grace window ------------------------------
+    // ---- the <end> token IS the turn boundary ----------------------------------------------------
 
-    @Test fun commit_then_grace_assembles_the_accumulated_finals_and_clears_for_the_next_turn() {
+    @Test fun an_end_token_binds_then_completes_the_assembled_finals_and_clears_for_the_next_turn() {
         val p = protocol()
         p.onText("""{"tokens":[{"text":"first turn","is_final":true}]}""")
 
-        // VAD close arms the grace window (one timer); nothing resolves yet.
-        assertTrue(p.onCommit())
-        assertEquals("a commit arms exactly one grace timer", listOf(SonioxRealtimeProtocol.DEFAULT_GRACE_MS), scheduler.delays)
-        assertTrue("the turn does not resolve at commit time", sink.completed.isEmpty())
-
-        scheduler.fireAll()
-        assertEquals(listOf("1" to "first turn"), sink.completed)
+        // <end> cuts the turn: bind (allocate seq) strictly before completing it with the finals.
+        p.onText("""{"tokens":[{"text":"<end>","is_final":true}]}""")
+        val id1 = sink.committed.single()
+        assertEquals(listOf("committed:$id1", "completed:$id1"), sink.order.filter { it.startsWith("committed") || it.startsWith("completed") })
+        assertEquals(listOf(id1 to "first turn"), sink.completed)
         assertTrue("assembling a turn is never a failure", sink.failed.isEmpty())
 
-        // The accumulator is clear: a second turn starts empty and gets a fresh id.
+        // The accumulator is clear: a second turn starts empty and gets a fresh distinct id.
         p.onText("""{"tokens":[{"text":"second turn","is_final":true}]}""")
-        p.onCommit()
-        scheduler.fireAll()
-        assertEquals(listOf("1" to "first turn", "2" to "second turn"), sink.completed)
+        p.onText("""{"tokens":[{"text":"<end>","is_final":true}]}""")
+        val id2 = sink.committed.last()
+        assertTrue("each segment gets a fresh id", id1 != id2)
+        assertEquals(listOf(id1 to "first turn", id2 to "second turn"), sink.completed)
     }
 
-    @Test fun the_grace_window_captures_finals_that_arrive_after_the_vad_close() {
+    @Test fun a_delta_message_then_an_end_message_orders_deltas_before_the_completion() {
         val p = protocol()
-        // At VAD close the tail is still non-final: only "hello " has finalized so far.
         p.onText("""{"tokens":[{"text":"hello ","is_final":true},{"text":"there","is_final":false}]}""")
-        p.onCommit()
-
-        // "there" finalizes DURING the grace window — it belongs to the just-cut turn, not the next.
-        p.onText("""{"tokens":[{"text":"there","is_final":true}]}""")
-        scheduler.fireAll()
-        assertEquals("the late final is captured", listOf("1" to "hello there"), sink.completed)
+        // "there" finalizes, then <end> cuts the turn — all captured server-side, no grace window.
+        p.onText("""{"tokens":[{"text":"there","is_final":true},{"text":"<end>","is_final":true}]}""")
+        val id = sink.committed.single()
+        // The <end> clears the finals accumulator, so the post-boundary preview goes blank (the strip
+        // resets for the next turn) — but every delta still precedes the boundary and the completion.
+        assertEquals(
+            "deltas precede the boundary and completion",
+            listOf("delta:hello there", "delta:", "committed:$id", "completed:$id"),
+            sink.order,
+        )
+        assertEquals(listOf(id to "hello there"), sink.completed)
     }
 
-    @Test fun a_turn_with_zero_finals_resolves_empty_not_lost() {
+    @Test fun a_zero_final_end_resolves_empty_not_lost() {
         val p = protocol()
-        // VAD cut a turn but Soniox produced no final tokens before the grace window closed.
-        p.onCommit()
-        scheduler.fireAll()
-        // Resolved as an empty completion (the engine's empty-outcome path), NOT onTranscriptionFailed.
+        // An <end> with no accumulated finals before it.
+        p.onText("""{"tokens":[{"text":"<end>","is_final":true}]}""")
         assertEquals(listOf("1" to ""), sink.completed)
         assertTrue("zero finals is not a hard transcription failure", sink.failed.isEmpty())
     }
 
-    @Test fun finished_true_flushes_the_in_grace_turn_before_the_timer_fires() {
+    @Test fun the_end_token_never_leaks_into_the_transcript() {
         val p = protocol()
-        p.onText("""{"tokens":[{"text":"done","is_final":true}]}""")
-        p.onCommit()
-
-        // End-of-stream flush resolves the turn immediately; the later grace timer is then a no-op.
-        p.onText("""{"finished":true}""")
-        assertEquals(listOf("1" to "done"), sink.completed)
-        scheduler.fireAll()
-        assertEquals("the superseded grace timer resolves nothing", 1, sink.completed.size)
-    }
-
-    @Test fun a_second_commit_inside_the_grace_window_finalizes_the_prior_turn_first_in_order() {
-        val p = protocol()
-        p.onText("""{"tokens":[{"text":"one","is_final":true}]}""")
-        p.onCommit() // turn 1, grace armed
-
-        // A second VAD close lands before turn 1's grace fires. Turn 1 finalizes with what it has.
-        p.onText("""{"tokens":[{"text":"two","is_final":true}]}""")
-        p.onCommit() // turn 2 opened; turn 1's finalize was scheduled off-thread (delay 0)
-
-        scheduler.fireAll()
-        // Both seqs resolve, in commit order, each exactly once (turn 1 = "one two" it had accumulated
-        // under the melt-proof join, turn 2 = empty — its words, if any, arrive after and are rescued
-        // locally if empty).
-        assertEquals(2, sink.completed.size)
-        assertEquals("1", sink.completed[0].first)
-        assertEquals("one two", sink.completed[0].second)
-        assertEquals("2", sink.completed[1].first)
-        assertTrue(sink.failed.isEmpty())
+        p.onText("""{"tokens":[{"text":"word","is_final":true},{"text":"<end>","is_final":true}]}""")
+        assertEquals(listOf("1" to "word"), sink.completed)
+        assertTrue("the <end> marker never appears in any delta", sink.deltas.none { it.second.contains("<end>") })
     }
 
     // ---- numeric error map (code + length only; session cycling) --------------------------------
