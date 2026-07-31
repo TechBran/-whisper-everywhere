@@ -100,6 +100,24 @@ class TtsEngineSeamTest {
         assertFalse(cloudTrackRateMatches(providerRate = 48_000, trackRate = 24_000))
     }
 
+    // ---- bank caps: the cloud append path now honors the SAME RETAIN_CAP/AHEAD_CAP ceiling the
+    // sherpa callback always did (finding #4). Both producers route through these predicates, so a
+    // slow-draining cloud read can no longer grow the bank without bound. ----
+
+    @Test fun retention_cap_blocks_an_append_that_would_cross_the_ceiling() {
+        val cap = 100L
+        assertFalse(bankRetentionExceeded(available = 90, incoming = 10, retainCap = cap)) // lands exactly on cap
+        assertTrue(bankRetentionExceeded(available = 91, incoming = 10, retainCap = cap))  // one over
+        assertFalse(bankRetentionExceeded(available = 0, incoming = 0, retainCap = cap))
+    }
+
+    @Test fun backpressure_trips_only_once_the_lead_exceeds_the_ahead_cap() {
+        val cap = 50L
+        assertFalse(bankTooFarAhead(available = 150, played = 100, aheadCap = cap)) // lead == cap, not over
+        assertTrue(bankTooFarAhead(available = 151, played = 100, aheadCap = cap))  // lead one over cap
+        assertFalse(bankTooFarAhead(available = 100, played = 100, aheadCap = cap)) // caught up
+    }
+
     @Test fun all_three_cloud_providers_declare_the_24k_bank_rate() {
         // The contract the seam enforces: every shipped TTS adapter emits 24 kHz, so none is ever
         // disqualified against a 24 kHz track. Guards a future adapter that forgets the contract.

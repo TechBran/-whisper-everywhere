@@ -268,6 +268,25 @@ class TtsEngine(
                     }
                 }
 
+                // Cap-enforcing append shared by BOTH producers (finding #4). The sherpa callback
+                // already honored AHEAD_CAP backpressure and the RETAIN_CAP ceiling, but the cloud
+                // seam appended RAW — a slow-draining cloud read (playback paused/scrubbed while
+                // fetches keep landing) could blow past the ~86 MB retention bound the caps exist to
+                // hold. Both paths go through here now. Returns false when the retention cap is hit
+                // (caller stops synthesizing this unit) or the read was cancelled mid-hold.
+                fun appendWithCaps(pcm: ShortArray): Boolean {
+                    while (!cancelled() && bankTooFarAhead(availableSamples, playedSamples, AHEAD_CAP_SAMPLES)) {
+                        try { Thread.sleep(100) } catch (_: InterruptedException) {}
+                    }
+                    if (cancelled()) return false
+                    if (bankRetentionExceeded(availableSamples, pcm.size, RETAIN_CAP_SAMPLES)) {
+                        android.util.Log.w("WE-TTS", "retention cap hit — truncating synthesis")
+                        return false
+                    }
+                    appendToBank(pcm)
+                    return true
+                }
+
                 playbackThread = Thread({
                     val localTrack = newTrack(engine.sampleRate())
                     val slice = localTrack.sampleRate / 10
@@ -430,19 +449,9 @@ class TtsEngine(
                         val pcm = ShortArray(samples.size) { i ->
                             (samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
                         }
-                        // Backpressure: hold while far ahead of playback (seek-forward drains it).
-                        while (!cancelled() &&
-                            availableSamples - playedSamples > AHEAD_CAP_SAMPLES
-                        ) {
-                            try { Thread.sleep(100) } catch (_: InterruptedException) {}
-                        }
-                        if (cancelled()) return 0
-                        if (availableSamples + pcm.size > RETAIN_CAP_SAMPLES) {
-                            android.util.Log.w("WE-TTS", "retention cap hit — truncating synthesis")
-                            return 0
-                        }
-                        appendToBank(pcm)
-                        // Measure callback EXIT -> ENTRY so the AHEAD_CAP backpressure hold below
+                        // AHEAD_CAP backpressure + RETAIN_CAP ceiling, shared with the cloud seam.
+                        if (!appendWithCaps(pcm)) return 0
+                        // Measure callback EXIT -> ENTRY so the AHEAD_CAP backpressure hold above
                         // never reads as slow synthesis (spec 6A.3). The FIRST burst of an
                         // utterance is still logged but is excluded from the summary percentiles
                         // by the seq==0 check, because it carries whole-text espeak phonemisation
@@ -541,7 +550,10 @@ class TtsEngine(
                                     runBlocking {
                                         val deferred = async {
                                             cloudSnap!!.synth(unit, voiceSnap!!, speed) { pcm ->
-                                                appendToBank(pcm); !cancelled()
+                                                // Same AHEAD_CAP/RETAIN_CAP ceiling as sherpa (finding
+                                                // #4): a false return stops the provider streaming
+                                                // this unit, exactly as onPcm's cancel contract says.
+                                                appendWithCaps(pcm) && !cancelled()
                                             }
                                         }
                                         inFlightSynth = deferred
@@ -836,6 +848,21 @@ fun shouldSoftLatchCloud(consecutiveSoftFailures: Int): Boolean =
  * provider that lied about its rate is caught here and its read falls to the local voice.
  */
 fun cloudTrackRateMatches(providerRate: Int, trackRate: Int): Boolean = providerRate == trackRate
+
+/**
+ * True when appending [incoming] samples would push the retained bank past [retainCap] — the
+ * ceiling that bounds worst-case read-aloud memory (~86 MB at 24 kHz). Enforced on BOTH the sherpa
+ * callback and the cloud append path so neither producer can grow the bank without bound.
+ */
+fun bankRetentionExceeded(available: Long, incoming: Int, retainCap: Long): Boolean =
+    available + incoming > retainCap
+
+/**
+ * True when the synthesized frontier is more than [aheadCap] ahead of playback — the backpressure
+ * signal that holds synthesis until the playback cursor (or a seek) drains the lead.
+ */
+fun bankTooFarAhead(available: Long, played: Long, aheadCap: Long): Boolean =
+    available - played > aheadCap
 
 /** What the producer loop does with one clause unit. See [planUnitOutcome]. */
 sealed interface UnitAction {
