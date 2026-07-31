@@ -1,5 +1,7 @@
 package com.whispereverywhere.transcription
 
+import com.whispereverywhere.text.TextJoin
+
 /**
  * Releases segment outcomes into the user's text field in STRICT seq order, never
  * speculate-then-correct.
@@ -75,11 +77,15 @@ class SegmentOrderer(private val lostMarker: String = LOST_MARKER) {
             when (outcome) {
                 is SegmentOutcome.Text -> {
                     if (outcome.text.isNotBlank()) {
-                        // Space needed if this call already accumulated something, OR the
-                        // immediately preceding release (possibly from an earlier call) was a
-                        // loss marker — text must not glue onto "[…]".
-                        if (sb.isNotEmpty() || lastReleasedWasLost) sb.append(' ')
-                        sb.append(outcome.text.trim())
+                        val tok = outcome.text.trim()
+                        // Within-burst spacing is melt-proofed (punctuation attaches); the
+                        // cross-call gate (a preceding loss marker from an earlier call) stays an
+                        // unconditional space — text must not glue onto "[…]".
+                        when {
+                            sb.isNotEmpty() -> if (TextJoin.needsSpace(sb, tok)) sb.append(' ')
+                            lastReleasedWasLost -> sb.append(' ')
+                        }
+                        sb.append(tok)
                         lastReleasedWasLost = false
                         hasEmittedText = true
                     }
@@ -91,9 +97,12 @@ class SegmentOrderer(private val lostMarker: String = LOST_MARKER) {
                     // Collapse consecutive losses: a 90-second outage must produce ONE marker,
                     // not thirty, or the user is left deleting a wall of ellipses.
                     if (!lastReleasedWasLost) {
-                        // Space needed if this call already accumulated something, OR real text
-                        // was released at some earlier point — the marker must not glue onto it.
-                        if (sb.isNotEmpty() || hasEmittedText) sb.append(' ')
+                        // Same rule for the marker: melt-proof within-burst, unconditional space
+                        // across calls when real text was already emitted earlier.
+                        when {
+                            sb.isNotEmpty() -> if (TextJoin.needsSpace(sb, lostMarker)) sb.append(' ')
+                            hasEmittedText -> sb.append(' ')
+                        }
                         sb.append(lostMarker)
                         lastReleasedWasLost = true
                     }

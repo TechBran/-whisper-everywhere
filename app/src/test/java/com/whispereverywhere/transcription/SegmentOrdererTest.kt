@@ -98,4 +98,11 @@ class SegmentOrdererTest {
         val r = o.onResolved(0, SegmentOutcome.Lost("offline"))
         assertEquals(1, r.lostSegments)
     }
+
+    @Test fun a_punctuation_only_segment_attaches_without_a_stray_space() {
+        // Melt-proof routing: within one released burst, "a" then "." must read "a.", not "a .".
+        val o = SegmentOrderer()
+        o.onResolved(1, text("."))
+        assertEquals("a.", o.onResolved(0, text("a")).text)
+    }
 }
