@@ -111,62 +111,78 @@ decreasing isn't. versionCode 72 (3.2.0) — Play only requires higher-than-last
 
 # DRAFT — 3.3.0 listing revisions (NOT LIVE — owner decision required)
 
-> **Why this draft exists:** 3.3.0 ships optional cloud transcription (user's own OpenAI key)
-> and flips the Data Safety form to voice recordings Collected=Yes / Shared=Yes / Optional.
-> Google diffs the Data Safety form against the storefront: keeping "100% on-device",
-> "No audio ever uploaded", and "Zero audio or text leaves your phone" beside that declaration
-> is the textbook inconsistency rejection, and a false-claim metadata violation on its own.
+> **Why this draft exists:** 3.3.0 turns the app into a multi-provider product. It adds optional
+> cloud transcription across FOUR providers the user keys themselves (OpenAI, Google Gemini,
+> ElevenLabs, and Soniox — a multilingual specialist), optional cloud read-aloud voices chosen from
+> an in-app picker, batch transcription of audio files the user already has, and a word-for-word
+> live-typing mode (OpenAI). With any of those enabled the Data Safety form flips to voice
+> recordings Collected=Yes / Shared=Yes / Optional AND adds "text you select for read-aloud"
+> Collected=Yes / Shared=Yes / Optional (see PLAY-DECLARATIONS.md §5 and the §7 Console checklist).
 >
-> The on-device story is still substantially TRUE — it is the default, it is what every
-> existing user gets, and it is unconditionally true for media/device audio — so both variants
-> below keep it as the hero and add the cloud path honestly. **Neither is live. Nothing
-> changes in the Console until the owner picks one and edits it there by hand.**
+> Google diffs the Data Safety form against the storefront: keeping "100% on-device", "No audio
+> ever uploaded", and "Zero audio or text leaves your phone" beside those declarations is the
+> textbook inconsistency rejection, and a false-claim metadata violation on its own.
 >
-> ⚠️ **Checklist rule:** this file and the Play Console are TWO copies of the same copy.
-> Any listing change happens in BOTH, in the same release. (This draft exists because the
-> 3.2.0 listing was left untouched while the app gained cloud upload.)
+> The on-device story is still substantially TRUE — it is the default, it is what every existing
+> user gets with no key, and it is unconditionally true for media/device audio in every
+> configuration — so both variants below keep it as the hero and add the cloud paths honestly.
+> **Neither is live. Nothing changes in the Console until the owner picks one, reconciles it with
+> the declarations doc, and edits it there by hand.**
+>
+> ⚠️ **Checklist rule:** this file and the Play Console are TWO copies of the same copy. Any listing
+> change happens in BOTH, in the SAME release as the AAB. (This draft exists because the 3.2.0
+> listing was left untouched while the app gained cloud upload.)
 
-## The four strings that must change
+## The live strings that go false when 3.3.0 ships
 
 | Where | Live text (false once 3.3.0 ships) |
 |---|---|
 | Short description | "…100% on-device." |
 | Full description, opener | "No audio ever uploaded — it works in airplane mode." |
+| Read-aloud pillar | "generated entirely on your device" / "No per-word pricing, no reading limits, ever" — false once a cloud voice is picked |
 | Privacy bullets | "Zero audio or text leaves your phone…" / "Internet used once: downloading your chosen model" |
 | Feature graphic subline | "100% on your device." |
+
+**Stays TRUE — do NOT soften:** the media-transcription pillar's "captures the audio stream
+directly, microphone off" and "never leaves your phone" — device/playback audio is transcribed
+on-device only, in every configuration (PLAY-DECLARATIONS.md §5). It is the one claim cloud does not
+touch, and it should stay a headline.
 
 ## Variant A — "on-device by default" (minimal change, defensive)
 
 **Short (77 chars):**
 > Offline voice typing, media transcription & read-aloud. On-device by default.
 
-**Opener:** …All of it happens on your device by default. No account. No subscription. Your
-audio is never uploaded unless you connect your own cloud provider key — and everything works
-in airplane mode.
+**Opener:** …All of it happens on your device by default. No account. No subscription. Your dictated
+audio — and any text you pick for read-aloud — is never uploaded unless you add your own cloud
+provider key and select that provider; everything else works in airplane mode.
 
 **Privacy block:**
-• Speech recognition, voices, everything: on-device by default
-• Your audio leaves your phone ONLY if you add your own cloud key and select it — verifiable, it's open source
-• Audio captured from other apps never leaves your phone, in any configuration
+• Speech recognition, voices, and transcription: on-device by default
+• Your dictated audio — or text you choose for read-aloud — leaves your phone ONLY if you add your own cloud provider key and select that provider; it's open source, so you can verify it
+• Audio captured from other apps (videos, podcasts) is transcribed on-device and never leaves your phone, in any configuration
 • No account, no ads, no analytics, no tracking
-• Internet used for: one model download — and nothing else unless you enable cloud
+• Internet used for: a one-time model download — and nothing else unless you turn on a cloud provider
 
 **Feature graphic subline:** "Private by default."
 
 ## Variant B — "your choice" (leans into the returning feature)
 
-**Short (75 chars):**
-> Voice typing, media transcription, read-aloud. On-device or your own cloud.
+**Short (72 chars):**
+> Voice typing, transcription & read-aloud — on-device, or your own cloud.
 
-**Opener:** …All of it happens on your device by default — no account, no subscription, works
-in airplane mode. Prefer the big cloud models? Bring your own key and switch anytime; your
-audio then goes only to the provider you chose, under your own account.
+**Opener:** …All of it happens on your device by default — no account, no subscription, works in
+airplane mode. Want the big cloud models, or better coverage in another language? Bring your own key
+and switch anytime; your audio then goes only to the provider you chose, under your own account.
 
-**Adds a pillar block (this was the #1 review complaint when BYOK was removed):**
+**Adds a pillar block (bringing back BYOK was the #1 review request after it was removed):**
 <b>🔑 Optional: bring your own cloud</b>
-Add your own OpenAI API key and choose cloud transcription per session. Your key stays
-encrypted on your phone, your audio goes only to your provider, and the on-device model takes
-over automatically if the network drops. Remove the key and it all stops — instantly.
+Add your own key for OpenAI, Google Gemini, ElevenLabs, or Soniox — a multilingual specialist — and
+choose cloud transcription per session, including a word-for-word live-typing mode on OpenAI. Prefer
+a cloud voice for read-aloud? Pick one from the built-in voice picker. You can also transcribe audio
+files you already have. Your keys stay encrypted on your phone, your audio and selected text go only
+to the provider you chose, and the on-device engine takes over automatically if the network drops.
+Remove the key and it all stops — instantly.
 
 **Privacy block:** same as Variant A.
 
@@ -174,10 +190,12 @@ over automatically if the network drops. Remove the key and it all stops — ins
 
 ## Draft release notes — 3.3.0 (within 500 chars)
 
-> Cloud transcription is back — on your terms. Add your own OpenAI key and choose it per
-> session; on-device stays the default and the automatic fallback. Audio from other apps is
-> never uploaded, ever. Smoother long dictations and sharper accuracy on the models you
-> already have. Your keys are stored encrypted; remove one and transmission stops instantly.
+> Cloud is back — on your terms. Bring your own key for OpenAI, Google Gemini, ElevenLabs, or Soniox
+> (strong on other languages) and pick cloud transcription per session; on-device stays the default
+> and the automatic fallback. New: transcribe audio files you already have, word-for-word live typing
+> on OpenAI, and optional cloud read-aloud voices with a picker. Audio and read-aloud text go only to
+> the provider you choose; audio from other apps never leaves your phone. Keys are stored encrypted.
 
-(No speed claims about cloud — measured on-device is 1.1–1.3 s for a 3 s utterance; cloud is
-a tie at best. The pitch is accuracy and language coverage, never latency.)
+(495 chars. No speed claims: measured on-device dictation is not beaten by cloud on latency, so the
+cloud pitch is accuracy and language coverage — never speed. Soniox is positioned on multilingual
+breadth, not throughput; the live mode is "word-for-word as you speak," not "faster.")
