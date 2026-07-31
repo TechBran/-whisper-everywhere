@@ -55,8 +55,8 @@ class OpenAiRealtimeProtocolTest {
 
     @Test fun commit_is_a_server_driven_no_op_that_sends_nothing() {
         // Under server_vad the SERVER auto-commits; the engine never enqueues a client commit in
-        // server-driven mode, so onCommit is unreachable on the live path and sends no frame. It stays
-        // a benign true (the documented client-VAD fallback mode never blocks the sender).
+        // server-driven mode, so onCommit is unreachable on the live path and sends no frame. It is a
+        // benign true (the commit-frame send was removed with the inversion, not retained as a fallback).
         val control = RecordingControl()
         assertTrue(bound(control).onCommit())
         assertTrue("onCommit sends no frame under server_vad", control.frames.isEmpty())
@@ -65,6 +65,49 @@ class OpenAiRealtimeProtocolTest {
     @Test fun append_propagates_backpressure_from_control() {
         val control = RecordingControl(accept = false)
         assertFalse(bound(control).onAppend(pcm16LE(shortArrayOf(1, 2, 3, 4))))
+    }
+
+    // ---- incremental delta accumulation (the flagship "word-for-word AS SPOKEN" contract) ----
+
+    @Test fun incremental_deltas_render_as_the_accumulated_running_line() {
+        val rec = RecListener()
+        val p = OpenAiRealtimeProtocol().apply { bind(RecordingControl(), rec) }
+
+        // OpenAI sends the `delta` field as a FRAGMENT, not the running total. The strip is
+        // replace-only, so the adapter must emit the accumulation — the sentence must visibly grow.
+        p.onText(deltaFrame("it_1", "hel"))
+        p.onText(deltaFrame("it_1", "lo wor"))
+        p.onText(deltaFrame("it_1", "ld"))
+        assertEquals(
+            listOf("it_1" to "hel", "it_1" to "hello wor", "it_1" to "hello world"),
+            rec.deltas.toList(),
+        )
+
+        // The turn ends: the completion carries the full transcript and the accumulator is cleared.
+        p.onText(completedFrame("it_1", "hello world."))
+        assertEquals(listOf("it_1" to "hello world."), rec.completed.toList())
+
+        // A NEW turn (new item id) starts fresh, not appended onto the previous line.
+        p.onText(deltaFrame("it_2", "next"))
+        assertEquals("it_2" to "next", rec.deltas.last())
+    }
+
+    @Test fun a_completed_turn_resets_accumulation_even_for_a_reused_item_id() {
+        val rec = RecListener()
+        val p = OpenAiRealtimeProtocol().apply { bind(RecordingControl(), rec) }
+        p.onText(deltaFrame("it_1", "abc"))
+        p.onText(completedFrame("it_1", "abc"))
+        p.onText(deltaFrame("it_1", "xyz")) // same id reused after the turn ended
+        assertEquals("accumulation restarts after the turn ended", "it_1" to "xyz", rec.deltas.last())
+    }
+
+    @Test fun reset_clears_pending_delta_accumulation() {
+        val rec = RecListener()
+        val p = OpenAiRealtimeProtocol().apply { bind(RecordingControl(), rec) }
+        p.onText(deltaFrame("it_1", "abc"))
+        p.reset() // session rotation
+        p.onText(deltaFrame("it_1", "xyz"))
+        assertEquals("it_1" to "xyz", rec.deltas.last())
     }
 
     // ---- OpenAI-specific wire facts ----
@@ -94,7 +137,28 @@ class OpenAiRealtimeProtocolTest {
         override fun onDisconnected() {}
         override fun onFatal(kind: FatalKind, code: Int) {}
     }
+
+    /** Captures the (itemId, text) the protocol forwards, so delta accumulation is provable. */
+    private class RecListener : RealtimeTransport.Listener {
+        val deltas = mutableListOf<Pair<String, String>>()
+        val completed = mutableListOf<Pair<String, String>>()
+        override fun onConnected() {}
+        override fun onDelta(itemId: String, text: String) { deltas += itemId to text }
+        override fun onCompleted(itemId: String, transcript: String) { completed += itemId to transcript }
+        override fun onCommitted(itemId: String) {}
+        override fun onTranscriptionFailed(itemId: String) {}
+        override fun onErrorEvent(code: String?, messageLength: Int) {}
+        override fun onDisconnected() {}
+        override fun onFatal(kind: FatalKind, code: Int) {}
+    }
 }
+
+/** Verbatim-shape inbound frames (the same `type`/`item_id`/`delta` keys the live docs pin). */
+private fun deltaFrame(itemId: String, delta: String) =
+    """{"type":"${RealtimeEventParser.TYPE_DELTA}","item_id":"$itemId","delta":"$delta"}"""
+
+private fun completedFrame(itemId: String, transcript: String) =
+    """{"type":"${RealtimeEventParser.TYPE_COMPLETED}","item_id":"$itemId","transcript":"$transcript"}"""
 
 /** Little-endian PCM16 encode for the test only (mirrors the OpenAI protocol's inlined seam). */
 private fun pcm16LE(samples: ShortArray): ByteArray {

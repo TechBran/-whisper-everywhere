@@ -20,6 +20,20 @@ class OpenAiRealtimeProtocol : RealtimeProtocol {
     private lateinit var control: SessionControl
     private lateinit var sink: RealtimeTransport.Listener
 
+    /**
+     * item_id -> the running transcript accumulated from that turn's deltas. OpenAI streams
+     * `conversation.item.input_audio_transcription.delta` as INCREMENTAL fragments (the field is
+     * literally `delta`, per the Realtime convention — each event is the next fragment, NOT the whole
+     * line so far). The preview strip renders deltas replace-only (`strip.text = text`), which matches
+     * ElevenLabs (`partial_transcript`) and Soniox (`finals + non-finals`) because those are already
+     * cumulative — but OpenAI is not, so without accumulating here the strip would flicker one fragment
+     * at a time and never show the sentence grow, failing the "word-for-word AS SPOKEN" headline for
+     * the flagship provider. So this adapter folds the fragments into the running line and emits THAT.
+     * Cleared when the turn ends (committed/completed/failed) and on [reset]. Single-threaded: every
+     * mutation is on the socket callback ([onText]).
+     */
+    private val deltaByItem = HashMap<String, StringBuilder>()
+
     override fun upgradeHeaders(apiKey: String): List<Pair<String, String>> {
         val p = ProviderCatalog.byId(ProviderId.OPENAI)
         return listOf(p.authHeaderName to p.authHeaderValue(apiKey))
@@ -42,17 +56,25 @@ class OpenAiRealtimeProtocol : RealtimeProtocol {
         return control.send(Frame.Text(RealtimeEvents.append(b64)))
     }
 
-    // The server auto-commits under server_vad; the engine never enqueues a client commit in
-    // server-driven mode, so this is unreachable on the live path. Kept as a no-op only for the
-    // documented client-VAD fallback mode (a hypothetical non-segmenting provider).
+    // Unreachable on the live path: the server auto-commits under server_vad and the engine never
+    // enqueues a client commit in server-driven mode. This is a benign no-op, NOT a retained
+    // client-VAD path — the real commit-frame send (`input_audio_buffer.commit`) was DELETED with the
+    // inversion. The engine's serverDriven=false ledger still exists and is tested, but re-enabling a
+    // client-VAD turn HERE would mean restoring that removed send, so the fallback is documented, not
+    // built. All three providers segment server-side, so it stays unbuilt.
     override fun onCommit(): Boolean = true
 
     override fun onText(text: String) {
         when (val e = RealtimeEventParser.parse(text)) {
-            is Inbound.Delta -> sink.onDelta(e.itemId, e.text)
-            is Inbound.Completed -> sink.onCompleted(e.itemId, e.transcript)
-            is Inbound.Committed -> sink.onCommitted(e.itemId)
-            is Inbound.Failed -> sink.onTranscriptionFailed(e.itemId)
+            // Fold the incremental fragment into the turn's running line and emit the accumulated
+            // total, so the strip shows the sentence grow word-for-word (not a one-fragment flicker).
+            is Inbound.Delta -> {
+                val running = deltaByItem.getOrPut(e.itemId) { StringBuilder() }.append(e.text)
+                sink.onDelta(e.itemId, running.toString())
+            }
+            is Inbound.Completed -> { deltaByItem.remove(e.itemId); sink.onCompleted(e.itemId, e.transcript) }
+            is Inbound.Committed -> { deltaByItem.remove(e.itemId); sink.onCommitted(e.itemId) }
+            is Inbound.Failed -> { deltaByItem.remove(e.itemId); sink.onTranscriptionFailed(e.itemId) }
             is Inbound.Error -> sink.onErrorEvent(e.code, e.message.length)
             is Inbound.Ack, null -> Unit
         }
@@ -69,7 +91,7 @@ class OpenAiRealtimeProtocol : RealtimeProtocol {
         else -> null // 5xx / network → transient → reconnect
     }
 
-    override fun reset() {}
+    override fun reset() { deltaByItem.clear() }
 
     /** PCM16 samples → headerless little-endian bytes (inverse of [PcmBytes.toShortArrayLE]). */
     private fun shortsToBytesLE(samples: ShortArray): ByteArray {
