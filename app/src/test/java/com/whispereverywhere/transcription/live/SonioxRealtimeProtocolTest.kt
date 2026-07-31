@@ -153,6 +153,17 @@ class SonioxRealtimeProtocolTest {
         assertTrue("preview never binds or completes a turn", sink.completed.isEmpty() && sink.committed.isEmpty())
     }
 
+    @Test fun bare_final_tokens_across_messages_do_not_melt_in_the_assembled_turn() {
+        val p = protocol()
+        // Two BARE final tokens (no baked spacing) accumulate across messages. The assembled turn is
+        // what gets injected, so it must read "Hello world", not the melted "Helloworld".
+        p.onText("""{"tokens":[{"text":"Hello","is_final":true}]}""")
+        p.onText("""{"tokens":[{"text":"world","is_final":true}]}""")
+        p.onCommit()
+        scheduler.fireAll()
+        assertEquals(listOf("1" to "Hello world"), sink.completed)
+    }
+
     // ---- client-assembled turn at VAD close, with the grace window ------------------------------
 
     @Test fun commit_then_grace_assembles_the_accumulated_finals_and_clears_for_the_next_turn() {
@@ -219,10 +230,12 @@ class SonioxRealtimeProtocolTest {
         p.onCommit() // turn 2 opened; turn 1's finalize was scheduled off-thread (delay 0)
 
         scheduler.fireAll()
-        // Both seqs resolve, in commit order, each exactly once (turn 1 = "onetwo" it had accumulated,
-        // turn 2 = empty — its words, if any, would arrive after and be rescued locally if empty).
+        // Both seqs resolve, in commit order, each exactly once (turn 1 = "one two" it had accumulated
+        // under the melt-proof join, turn 2 = empty — its words, if any, arrive after and are rescued
+        // locally if empty).
         assertEquals(2, sink.completed.size)
         assertEquals("1", sink.completed[0].first)
+        assertEquals("one two", sink.completed[0].second)
         assertEquals("2", sink.completed[1].first)
         assertTrue(sink.failed.isEmpty())
     }

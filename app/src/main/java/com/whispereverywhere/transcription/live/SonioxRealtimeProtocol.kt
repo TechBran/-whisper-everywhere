@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription.live
 
+import com.whispereverywhere.text.TextJoin
 import com.whispereverywhere.transcription.cloud.FatalKind
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -204,8 +205,14 @@ class SonioxRealtimeProtocol(
         var flushed: Completion? = null
         synchronized(gate) {
             val nonFinal = StringBuilder()
-            for (t in r.tokens) if (t.isFinal) finals.append(t.text) else nonFinal.append(t.text)
-            lastPreview = finals.toString() + nonFinal.toString()
+            // Final tokens accumulate into the INJECTED turn, so the boundary between them must be
+            // melt-proof: if Soniox ever emits an adjacent BARE token (its docs sample shows a bare
+            // "Hello"), a raw append would glue 'Helloworld'. [appendJoined] routes through the shared
+            // policy — a no-op over Soniox's own baked spacing, a single space only where two
+            // alphanumerics would otherwise touch. Non-finals stay raw (preview-only, replaced each
+            // message) and the finals↔non-finals preview boundary is joined under the same policy.
+            for (t in r.tokens) if (t.isFinal) appendJoined(finals, t.text) else nonFinal.append(t.text)
+            lastPreview = TextJoin.join(finals.toString(), nonFinal.toString())
             preview = lastPreview
             if (r.finished) flushed = closePendingLocked() // end-of-stream flush of the in-grace turn
         }
@@ -275,6 +282,13 @@ class SonioxRealtimeProtocol(
 
     /** Resolve the just-cut seq exactly-once via the engine's oldest-unbound fallback bind. Never gated. */
     private fun fire(c: Completion) = sink.onCompleted(c.id, c.text)
+
+    /** Append [text] to [sb] under the shared join policy: a single space only where two runs melt. */
+    private fun appendJoined(sb: StringBuilder, text: String) {
+        if (text.isEmpty()) return
+        if (sb.isNotEmpty() && TextJoin.needsSpace(sb, text)) sb.append(' ')
+        sb.append(text)
+    }
 
     companion object {
         const val ENDPOINT = "wss://stt-rt.soniox.com/transcribe-websocket"
