@@ -70,7 +70,8 @@ object ElevenLabsEvents {
  *
  * The fold-slot / single-in-flight serialization / burned-count / timeout machinery of the client-VAD
  * era is GONE: it existed only to correlate CLIENT commits, which no longer exist under server VAD.
- * [onCommit] is an unreachable no-op (kept for the documented client-VAD fallback mode).
+ * [onCommit] is a benign no-op — NOT a retained fallback: the machinery a client-VAD turn needs was
+ * removed here, so the serverDriven seam is documented, not built (re-enabling it would rebuild that).
  *
  * Credential rule: the key rides the `xi-api-key` UPGRADE HEADER only (never a config frame, never a
  * field of this object). Content never crosses to a callback — deltas/completions carry text to the
@@ -104,7 +105,7 @@ class ElevenLabsRealtimeProtocol : RealtimeProtocol {
         return control.send(Frame.Text(ElevenLabsEvents.audioChunk(b64, commit = false)))
     }
 
-    /** Unreachable on the live path — the server commits under VAD. Kept for the client-VAD fallback mode. */
+    /** Unreachable no-op — the server commits under VAD; the client-VAD commit path was removed, not retained here. */
     override fun onCommit(): Boolean = true
 
     override fun onText(text: String) {

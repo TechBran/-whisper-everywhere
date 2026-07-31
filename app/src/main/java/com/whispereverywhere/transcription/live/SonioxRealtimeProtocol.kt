@@ -110,7 +110,8 @@ object SonioxEvents {
  * empty turn: `onCommitted(id)` (rotate the mirror + allocate the seq) then `onCompleted(id, finals)`
  * (resolve it exactly-once). The client-VAD-era grace window / `onCommit` machinery is GONE — server
  * endpoint detection finalizes the trailing words itself, so the race the grace window guarded no
- * longer exists. [onCommit] is an unreachable no-op (kept for the client-VAD fallback mode).
+ * longer exists. [onCommit] is a benign no-op — NOT a retained fallback: the grace-window machinery a
+ * client-VAD turn needs was removed here, so the serverDriven seam is documented, not built.
  *
  * **Turn-assembly edge cases the engine's exactly-once ledger relies on:**
  *  - *Zero finals:* an `<end>` with no accumulated finals resolves via `onCompleted(id, "")` — the
@@ -166,7 +167,7 @@ class SonioxRealtimeProtocol : RealtimeProtocol {
     override fun onAppend(pcm16k: ByteArray): Boolean =
         control.send(Frame.Binary(pcm16k.toByteString())) // raw s16le binary — no resample, no base64
 
-    /** No client commit exists — the server marks turns via the `<end>` token. Kept for the fallback mode. */
+    /** Unreachable no-op — the server marks turns via `<end>`; the client-VAD grace-window path was removed, not retained here. */
     override fun onCommit(): Boolean = true
 
     override fun onText(text: String) {
