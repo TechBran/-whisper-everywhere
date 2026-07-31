@@ -1339,17 +1339,22 @@ class FloatingBubbleService : Service(),
         waveformView.updateAmplitude(amp)
         blobView.updateAmplitude(amp)
         // Client VAD per audio chunk. Commit on a natural pause, or on the wall-clock cap when
-        // the amplitude never dips (continuous media).
-        val now = System.currentTimeMillis()
-        if (speechSegmenter.onAmplitude(amp, now)) {
-            android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
-            lastCommitWallMs = now
-            engine.commit()
-        } else if (now - lastCommitWallMs >= MAX_SEGMENT_WALL_MS) {
-            android.util.Log.i("WE-DIAG", "wall-clock cap -> commit")
-            lastCommitWallMs = now
-            engine.commit()
-            speechSegmenter.reset()
+        // the amplitude never dips (continuous media). Live (server-driven) sessions bypass this
+        // ENTIRELY — the SERVER cuts turns via its own VAD, and the stop button / session end is the
+        // outer bound. `sendAudio` above stays UNCONDITIONAL, so the mic is always fed; only the turn
+        // CUT moves to the server. Local + Gemini + batch keep this block byte-identical.
+        if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(sessionIsLive)) {
+            val now = System.currentTimeMillis()
+            if (speechSegmenter.onAmplitude(amp, now)) {
+                android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
+                lastCommitWallMs = now
+                engine.commit()
+            } else if (now - lastCommitWallMs >= MAX_SEGMENT_WALL_MS) {
+                android.util.Log.i("WE-DIAG", "wall-clock cap -> commit")
+                lastCommitWallMs = now
+                engine.commit()
+                speechSegmenter.reset()
+            }
         }
     }
 

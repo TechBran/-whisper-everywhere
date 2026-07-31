@@ -453,4 +453,14 @@ class CloudProvidersScreenLogicTest {
             }
         }
     }
+
+    @Test fun live_mode_caption_states_the_honest_continuous_billing_model() {
+        // Continuous streaming keeps the mic open and bills the whole open-mic time including silence.
+        // The copy must say so plainly — and still make no speed claim.
+        val caption = liveModeCaption()
+        assertTrue(caption, caption.contains("billed per minute while the mic is open"))
+        listOf("faster", "quicker", "speed", "instant", "quick", "fastest", "cheapest").forEach { word ->
+            assertFalse(caption, caption.contains(word, ignoreCase = true))
+        }
+    }
 }

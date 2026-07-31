@@ -229,8 +229,13 @@ internal fun liveModeLabel(providerId: ProviderId): String {
     return "Cloud word-for-word (${ProviderCatalog.byId(providerId).displayName}) · $price"
 }
 
-/** Sub-copy under the live-mode toggle. Says WHAT it does, never that it is fast. */
-internal fun liveModeCaption(): String = "Transcribes word-for-word as you speak."
+/**
+ * Sub-copy under the live-mode toggle. Says WHAT it does + the honest billing model, never that it is
+ * fast. Continuous streaming keeps the mic open and bills the whole open-mic time including silence,
+ * so the copy states that plainly ("billed per minute while the mic is open") — no speed claim.
+ */
+internal fun liveModeCaption(): String =
+    "Transcribes word-for-word as you speak — billed per minute while the mic is open."
 
 /**
  * Body of the one-time cloud disclosure dialog (Release C2a Task 7; extended Task 7 of the cloud
