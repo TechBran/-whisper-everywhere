@@ -78,7 +78,7 @@ class SonioxStt(
             is HttpResult.NetworkError -> return SttResult.Failed(SttError.Offline)
             is HttpResult.HttpError -> return SttResult.Failed(classify(up.code, up.body, Step.UPLOAD))
             is HttpResult.Ok -> parse<SonioxFile>(up.body)?.id?.takeIf { it.isNotBlank() }
-                ?: return SttResult.Failed(SttError.Transient(null)) // unparseable-200
+                ?: return leakedUpload() // unparseable-200: file stored but its id can't be read
         }
 
         // From here the file EXISTS on Soniox's servers — it MUST be deleted on every path out.
@@ -93,7 +93,7 @@ class SonioxStt(
                 is HttpResult.NetworkError -> return SttResult.Failed(SttError.Offline)
                 is HttpResult.HttpError -> return SttResult.Failed(classify(cr.code, cr.body, Step.CREATE))
                 is HttpResult.Ok -> parse<SonioxCreated>(cr.body)?.id?.takeIf { it.isNotBlank() }
-                    ?: return SttResult.Failed(SttError.Transient(null))
+                    ?: return leakedCreate() // unparseable-201: transcription may exist under an id we can't read
             }
             transcriptionId = tid
 
@@ -189,6 +189,28 @@ class SonioxStt(
 
     private inline fun <reified T> parse(body: String): T? =
         runCatching { JSON.decodeFromString<T>(body) }.getOrNull()
+
+    /**
+     * A 200 upload whose id will not parse (Soniox nested/renamed the field — the "changed response
+     * shape" case). The file IS stored server-side but its id was never read, so cleanup can never
+     * delete it: this transcription's audio is leaked on the way to falling local. Log the leak
+     * (status-shape only — no body, key, or URL) so an unverified upload shape is at least
+     * observable; the resolve phase lists confirming this shape as ship-blocking. Falls Transient.
+     */
+    private fun leakedUpload(): SttResult {
+        android.util.Log.w("WE-DIAG", "soniox stt upload 200 unparseable id — file may be leaked server-side")
+        return SttResult.Failed(SttError.Transient(null))
+    }
+
+    /**
+     * A create whose id will not parse. The uploaded FILE is still cleaned up by the caller's
+     * finally, but a transcription resource created under an unreadable id would leak. Same
+     * status-shape-only diagnostic; falls Transient.
+     */
+    private fun leakedCreate(): SttResult {
+        android.util.Log.w("WE-DIAG", "soniox stt create unparseable id — transcription may be leaked server-side")
+        return SttResult.Failed(SttError.Transient(null))
+    }
 
     companion object {
         private val JSON = Json { ignoreUnknownKeys = true; encodeDefaults = false } // kotlinx, NOT org.json

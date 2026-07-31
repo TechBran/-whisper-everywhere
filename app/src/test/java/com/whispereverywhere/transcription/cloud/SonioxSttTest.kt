@@ -246,6 +246,40 @@ class SonioxSttTest {
         assertTrue((soniox(fake).transcribe(pcm, null) as SttResult.Failed).error is SttError.Transient)
     }
 
+    @Test fun an_unparseable_upload_id_falls_transient_and_leaks_the_file_it_cannot_delete() = runBlocking {
+        // The most no-key-ship-aligned failure: upload returns 200 but the id is nested/renamed
+        // (here blank), so it can NEVER be read — the stored file cannot be deleted. The pipeline
+        // must stop right here (no create, no delete attempt) and fall local, not silently "".
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, """{"file_id":"renamed"}""") // id absent -> blank
+                else -> error("must not reach $url after an unreadable upload id")
+            }
+        }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertTrue(r.error is SttError.Transient)
+        assertEquals("only the upload should have fired", 1, fake.callCount)
+        assertTrue("no id was read, so nothing can be deleted", fake.deletedUrls.isEmpty())
+    }
+
+    @Test fun an_unparseable_create_id_falls_transient_but_still_deletes_the_uploaded_file() = runBlocking {
+        // Create returns 20x with no readable id. A transcription created under an unreadable id
+        // would leak, but the FILE id IS known — the finally must still clean it up.
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, """{"status":"queued"}""") // id absent -> blank
+                else -> error("must not poll after an unreadable create id")
+            }
+        }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertTrue(r.error is SttError.Transient)
+        assertTrue("the known file id must still be cleaned up",
+            fake.deletedUrls.any { it.endsWith("/files/file-1") })
+        assertTrue("no transcription id was read, so none is deleted",
+            fake.deletedUrls.none { it.contains("/transcriptions/") })
+    }
+
     @Test fun a_completed_job_with_no_tokens_is_a_legitimate_empty_transcript() = runBlocking {
         val fake = FakeHttpTransport { url, _ ->
             when {
