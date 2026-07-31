@@ -30,7 +30,8 @@ class OpenAiRealtimeProtocol : RealtimeProtocol {
         this.sink = sink
     }
 
-    // turn_detection:null — WE own turn commits. Identical to the pre-seam onOpen bootstrap.
+    // turn_detection:server_vad — the SERVER cuts turns and auto-commits, so `input_audio_buffer.committed`
+    // now arrives at each server-detected boundary and drives the engine's server-turn allocation.
     override fun bootstrap(apiKey: String, language: String?): List<Frame> =
         listOf(Frame.Text(RealtimeEvents.sessionUpdate()))
 
@@ -41,7 +42,10 @@ class OpenAiRealtimeProtocol : RealtimeProtocol {
         return control.send(Frame.Text(RealtimeEvents.append(b64)))
     }
 
-    override fun onCommit(): Boolean = control.send(Frame.Text(RealtimeEvents.commit()))
+    // The server auto-commits under server_vad; the engine never enqueues a client commit in
+    // server-driven mode, so this is unreachable on the live path. Kept as a no-op only for the
+    // documented client-VAD fallback mode (a hypothetical non-segmenting provider).
+    override fun onCommit(): Boolean = true
 
     override fun onText(text: String) {
         when (val e = RealtimeEventParser.parse(text)) {

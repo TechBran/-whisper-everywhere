@@ -58,9 +58,11 @@ sealed interface Inbound {
 /**
  * Outbound event builders. Each returns a minified JSON `String` ready for `WebSocket.send`.
  *
- * The [sessionUpdate] shape is pinned VERBATIM against the live docs (2026-07-30): pcm @ 24 kHz,
- * model `gpt-live-transcribe`, `turn_detection: null` (WE commit turns via client VAD — no
- * double-VAD). `RealtimeEventParserTest.outbound_session_update_shape_is_exact` is the contract pin.
+ * The [sessionUpdate] shape is pinned VERBATIM against the live docs: pcm @ 24 kHz, model
+ * `gpt-live-transcribe`, and `turn_detection: server_vad` — the SERVER detects speech boundaries and
+ * auto-commits, so the item is created mid-speech and transcription deltas stream AS SPOKEN. WE no
+ * longer commit turns on the live path (the 2026-07-31 server-driven inversion).
+ * `RealtimeEventParserTest.outbound_session_update_shape_is_exact` is the contract pin.
  */
 object RealtimeEvents {
 
@@ -71,9 +73,9 @@ object RealtimeEvents {
 
     fun commit(): String = OUT.encodeToString(CommitEvent())
 
-    // encodeDefaults=true so the constant `type` discriminators AND `turn_detection:null` are
-    // emitted; explicitNulls (default true) writes the null rather than dropping it. The result
-    // is deterministic and key-ordered by declaration, which is what the exact-shape test asserts.
+    // encodeDefaults=true so the constant `type` discriminators AND the full server_vad turn_detection
+    // object are emitted. The result is deterministic and key-ordered by declaration, which is what
+    // the exact-shape test asserts.
     private val OUT = Json { encodeDefaults = true }
 
     @Serializable
@@ -95,9 +97,20 @@ object RealtimeEvents {
     private data class Input(
         val format: Format = Format(),
         val transcription: Transcription = Transcription(),
-        // Always null: client-side VAD cuts turns, so the server must NOT run its own turn
-        // detection. Declared nullable (never assigned non-null) purely to emit the null field.
-        @SerialName("turn_detection") val turnDetection: String? = null,
+        // server_vad — the SERVER detects speech boundaries and auto-commits, creating the item
+        // mid-speech so transcription deltas stream AS SPOKEN. (Was null, which created no item until
+        // our client commit — the field bug the 2026-07-31 server-driven inversion fixes.)
+        @SerialName("turn_detection") val turnDetection: TurnDetection = TurnDetection(),
+    )
+
+    // Defaults from the realtime-vad guide; create_response / interrupt_response are inert in a
+    // transcription session, so they are omitted.
+    @Serializable
+    private data class TurnDetection(
+        val type: String = "server_vad",
+        val threshold: Double = 0.5,
+        @SerialName("prefix_padding_ms") val prefixPaddingMs: Int = 300,
+        @SerialName("silence_duration_ms") val silenceDurationMs: Int = 500,
     )
 
     @Serializable

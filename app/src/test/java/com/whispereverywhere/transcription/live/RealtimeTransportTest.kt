@@ -181,21 +181,22 @@ class RealtimeTransportTest {
         assertNull("reconnect stays headerless", r.factory.lastRequest.header("OpenAI-Beta"))
     }
 
-    @Test fun append_and_commit_forwarded_as_correct_events() {
+    @Test fun append_forwarded_as_an_encoded_event_and_commit_is_a_server_driven_no_op() {
         val r = Rig()
         r.transport.connect("sk-x", null)
         r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
 
         // The engine now hands raw 16 kHz PCM down; the default OpenAI protocol frames it (24 k
-        // upsample + base64), so the SAME append+commit JSON reaches the wire — meaning intact.
+        // upsample + base64), so the SAME append JSON reaches the wire — meaning intact. Under
+        // server_vad the SERVER auto-commits, so sendCommit is a benign no-op that sends no frame.
         val pcm = pcm16LE(shortArrayOf(0, 100, 200, 300))
         assertTrue(r.transport.sendAppend(pcm))
-        assertTrue(r.transport.sendCommit())
+        assertTrue("commit succeeds but sends nothing under server_vad", r.transport.sendCommit())
 
         val expectedB64 = Base64.getEncoder()
             .encodeToString(pcm16LE(Resampler.upsample16kTo24k(PcmBytes.toShortArrayLE(pcm))))
         assertEquals(
-            listOf(RealtimeEvents.sessionUpdate(), RealtimeEvents.append(expectedB64), RealtimeEvents.commit()),
+            listOf(RealtimeEvents.sessionUpdate(), RealtimeEvents.append(expectedB64)),
             r.factory.lastSocket.sent,
         )
     }

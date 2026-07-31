@@ -53,10 +53,13 @@ class OpenAiRealtimeProtocolTest {
         assertEquals(RealtimeEvents.append(expectedB64), json)
     }
 
-    @Test fun commit_sends_the_input_audio_buffer_commit_event() {
+    @Test fun commit_is_a_server_driven_no_op_that_sends_nothing() {
+        // Under server_vad the SERVER auto-commits; the engine never enqueues a client commit in
+        // server-driven mode, so onCommit is unreachable on the live path and sends no frame. It stays
+        // a benign true (the documented client-VAD fallback mode never blocks the sender).
         val control = RecordingControl()
         assertTrue(bound(control).onCommit())
-        assertEquals(listOf(RealtimeEvents.commit()), control.texts)
+        assertTrue("onCommit sends no frame under server_vad", control.frames.isEmpty())
     }
 
     @Test fun append_propagates_backpressure_from_control() {
