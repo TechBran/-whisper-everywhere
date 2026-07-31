@@ -5,6 +5,7 @@ import com.whispereverywhere.net.HttpResult
 import com.whispereverywhere.net.HttpTransport
 import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
+import com.whispereverywhere.text.TextJoin
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.Base64
@@ -71,17 +72,17 @@ class GeminiStt(
     }
 
     private fun parse(body: String): SttResult = try {
-        // Join ALL text parts in order: Gemini may split one transcript across several text parts
-        // (long audio, or a thinking/answer split), and taking only the first would silently drop
-        // the rest of the sentence. Non-text parts are skipped; concatenation is verbatim (no
-        // separator), matching how the parts reassemble into one continuous transcript.
+        // Join ALL text parts in order via the shared melt-proof policy: Gemini may split one
+        // transcript across several text parts (long audio, or a thinking/answer split); a bare
+        // concatenation melted the parts together ("...meeting toMorrow..."). TextJoin.join guards
+        // only the boundary — pre-existing leading/trailing spaces are respected, never doubled.
         val texts = JSON.decodeFromString<GeminiResponse>(body)
             .candidates.firstOrNull()?.content?.parts
             ?.mapNotNull { it.text }
             .orEmpty()
         // No text part at all (refusal / empty candidates) is Transient, not an empty transcript.
         if (texts.isEmpty()) SttResult.Failed(SttError.Transient(null))
-        else SttResult.Text(texts.joinToString(""))
+        else SttResult.Text(texts.reduce { acc, part -> TextJoin.join(acc, part) })
     } catch (_: Throwable) {
         SttResult.Failed(SttError.Transient(null))
     }
