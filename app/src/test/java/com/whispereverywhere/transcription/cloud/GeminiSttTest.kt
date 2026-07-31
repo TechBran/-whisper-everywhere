@@ -23,6 +23,26 @@ class GeminiSttTest {
         assertEquals(SttResult.Text("hello world"), p.transcribe(pcm, null))
     }
 
+    @Test fun all_text_parts_are_joined_in_order_not_just_the_first() = runBlocking {
+        // Gemini can split one transcript across several text parts (long audio, or a thinking/answer
+        // split). Taking only the first would silently drop the rest of the sentence — join in order.
+        val multi = """{"candidates":[{"content":{"parts":[
+            {"text":"the quick "},{"text":"brown fox "},{"text":"jumps"}
+        ]}}]}"""
+        val (_, p) = provider(HttpResult.Ok(200, multi))
+        assertEquals(SttResult.Text("the quick brown fox jumps"), p.transcribe(pcm, null))
+    }
+
+    @Test fun non_text_parts_are_skipped_while_joining_the_text_ones() = runBlocking {
+        // A leading non-text part (e.g. an inline_data echo) must not blank the transcript or insert
+        // a gap: only the text parts contribute, still in order.
+        val mixed = """{"candidates":[{"content":{"parts":[
+            {"inlineData":{"mimeType":"audio/wav","data":"AAAA"}},{"text":"hello "},{"text":"there"}
+        ]}}]}"""
+        val (_, p) = provider(HttpResult.Ok(200, mixed))
+        assertEquals(SttResult.Text("hello there"), p.transcribe(pcm, null))
+    }
+
     @Test fun the_key_rides_the_header_and_is_never_in_the_url() = runBlocking {
         val fake = FakeHttpTransport { _, _ -> HttpResult.Ok(200, ok) }
         GeminiStt(fake, "g-secret").transcribe(pcm, null)

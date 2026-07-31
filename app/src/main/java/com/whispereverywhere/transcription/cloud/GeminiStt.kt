@@ -71,11 +71,17 @@ class GeminiStt(
     }
 
     private fun parse(body: String): SttResult = try {
-        val text = JSON.decodeFromString<GeminiResponse>(body)
+        // Join ALL text parts in order: Gemini may split one transcript across several text parts
+        // (long audio, or a thinking/answer split), and taking only the first would silently drop
+        // the rest of the sentence. Non-text parts are skipped; concatenation is verbatim (no
+        // separator), matching how the parts reassemble into one continuous transcript.
+        val texts = JSON.decodeFromString<GeminiResponse>(body)
             .candidates.firstOrNull()?.content?.parts
-            ?.firstOrNull { it.text != null }?.text
+            ?.mapNotNull { it.text }
+            .orEmpty()
         // No text part at all (refusal / empty candidates) is Transient, not an empty transcript.
-        if (text == null) SttResult.Failed(SttError.Transient(null)) else SttResult.Text(text)
+        if (texts.isEmpty()) SttResult.Failed(SttError.Transient(null))
+        else SttResult.Text(texts.joinToString(""))
     } catch (_: Throwable) {
         SttResult.Failed(SttError.Transient(null))
     }
