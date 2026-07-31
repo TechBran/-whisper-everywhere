@@ -9,6 +9,7 @@ import com.whispereverywhere.recording.RecordingStore
 import com.whispereverywhere.transcription.ModelPathProvider
 import com.whispereverywhere.transcription.WhisperBackend
 import com.whispereverywhere.transcription.TranscriptText
+import com.whispereverywhere.text.TextJoin
 import com.whispereverywhere.transcription.cloud.SttError
 import com.whispereverywhere.transcription.cloud.SttProvider
 import com.whispereverywhere.transcription.cloud.SttResult
@@ -282,7 +283,7 @@ class BatchTranscriber(
      * top of the 20 MB source, plus minutes of native encoder buffers, inside a foreground service —
      * the exact long-feed OOM LOCAL_CHUNK_BYTES exists to prevent. Slice to the local ceiling at an
      * even offset (a PCM16 sample is 2 bytes; an odd cut would shear every later sample) and join
-     * the pieces with a space, matching assembledText's convention for trimmed chunk text.
+     * the pieces via the shared melt-proof policy, matching assembledText's convention.
      */
     private suspend fun runLocalSliced(ctx: Long, pcm: ByteArray, language: String?): String {
         val step = testLocalChunk - (testLocalChunk % 2)
@@ -294,7 +295,7 @@ class BatchTranscriber(
             if (text.isNotBlank()) parts.add(text)
             start = end
         }
-        return parts.joinToString(" ")
+        return TextJoin.assemble(parts)
     }
 
     companion object {

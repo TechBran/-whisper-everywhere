@@ -68,6 +68,16 @@ class RecordingStoreTest {
         assertEquals("one three", s.assembledText(m))
     }
 
+    @Test fun assembled_text_attaches_a_punctuation_chunk_without_a_stray_space() {
+        // Would be "hello ." under the old unconditional " " join.
+        val s = store()
+        val m = meta("k", 1L).copy(chunkPlan = listOf(
+            ChunkEntry(0, 0, 10, false, ChunkStatus.Done, "hello"),
+            ChunkEntry(1, 10, 20, false, ChunkStatus.Done, "."),
+        ))
+        assertEquals("hello.", s.assembledText(m))
+    }
+
     @Test fun sweepStale_collects_workspaces_orphaned_by_a_crash() {
         // The ONLY sweep. A workspace older than STALE_MS belongs to a job whose process died
         // without cleanup (normal completion deletes eagerly); a young one may be a live job.

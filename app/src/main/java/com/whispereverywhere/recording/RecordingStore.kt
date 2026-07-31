@@ -1,6 +1,7 @@
 package com.whispereverywhere.recording
 
 import android.content.Context
+import com.whispereverywhere.text.TextJoin
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -60,17 +61,18 @@ class RecordingStore(
     fun delete(id: String) { File(root, id).deleteRecursively() }
 
     /**
-     * The transcript so far: Done chunks, in index order, joined with ONE space.
+     * The transcript so far: Done chunks, in index order, joined via the shared melt-proof policy.
      *
-     * The join is " " and never "" because chunk text arrives TRIMMED — TranscriptText.clean
-     * collapses whitespace runs and .trim()s the result (TranscriptText.kt:27-31), so a ""
-     * join would glue chunk N's last word to chunk N+1's first word ("…meeting toMorrow…").
-     * Blank chunks (silence) are dropped so they cannot double the spacing.
+     * A bare "" join would glue chunk N's last word to chunk N+1's first word ("…meeting
+     * toMorrow…"); TextJoin.assemble guards the boundary, drops blank chunks (silence), and
+     * attaches a chunk that starts with closing punctuation with no stray leading space.
      */
     fun assembledText(meta: RecordingMeta): String =
-        meta.chunkPlan.sortedBy { it.index }
-            .filter { it.status == ChunkStatus.Done && it.text.isNotBlank() }
-            .joinToString(" ") { it.text.trim() }
+        TextJoin.assemble(
+            meta.chunkPlan.sortedBy { it.index }
+                .filter { it.status == ChunkStatus.Done && it.text.isNotBlank() }
+                .map { it.text }
+        )
 
     /**
      * The only sweep: collect workspaces orphaned by a crash. Normal completion deletes eagerly;
