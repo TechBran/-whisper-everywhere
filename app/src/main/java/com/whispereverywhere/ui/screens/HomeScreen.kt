@@ -203,7 +203,8 @@ fun HomeScreen(
             UsageStatsCard(
                 usedSeconds = usedSecondsToday,
                 totalUsage = app.usageTracker.getTotalUsageAllTime(),
-                totalTranscriptions = app.usageTracker.getTotalTranscriptionCount()
+                totalTranscriptions = app.usageTracker.getTotalTranscriptionCount(),
+                sttEngineName = sttEngineName,
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -491,11 +492,23 @@ fun MainControlButton(
     }
 }
 
+/**
+ * Footer line under the usage-stats card. The "No usage limits - transcription runs entirely
+ * on-device" promise is true ONLY when transcription actually resolves on-device, i.e. no cloud STT
+ * provider is selected ([sttEngineName] == null; see resolveSttProvider). For a cloud selection both
+ * clauses are false — transcription does NOT run on-device and there IS a per-minute cost / provider
+ * quota — so the honest thing is to show nothing rather than the on-device over-promise. Pure and
+ * top-level so it is unit-testable without composing the card.
+ */
+internal fun usageStatsFooterLabel(sttEngineName: String?): String? =
+    if (sttEngineName == null) "No usage limits - transcription runs entirely on-device" else null
+
 @Composable
 fun UsageStatsCard(
     usedSeconds: Int,
     totalUsage: Long,
-    totalTranscriptions: Int
+    totalTranscriptions: Int,
+    sttEngineName: String?,
 ) {
     val usageTracker = WhisperEverywhereApp.getInstance().usageTracker
 
@@ -557,15 +570,16 @@ fun UsageStatsCard(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "No usage limits - transcription runs entirely on-device",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
+            usageStatsFooterLabel(sttEngineName)?.let { footer ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = footer,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 }
