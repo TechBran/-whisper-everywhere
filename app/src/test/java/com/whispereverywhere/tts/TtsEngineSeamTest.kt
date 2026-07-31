@@ -84,4 +84,30 @@ class TtsEngineSeamTest {
         // enough to tolerate one isolated failure. Pin the band so it cannot silently drift large.
         assertTrue(CLOUD_SOFT_LATCH_THRESHOLD in 2..3)
     }
+
+    // ---- cloudTrackRateMatches: TtsProvider.sampleRate is consumed here (no lying interface). The
+    // cloud PCM drops into the SAME bank the on-device voice fills and plays at the AudioTrack rate,
+    // so a provider whose rate != the track rate would play at the wrong pitch and its read must
+    // fall to the local voice instead. ----
+
+    @Test fun a_provider_at_the_track_rate_is_accepted() {
+        assertTrue(cloudTrackRateMatches(providerRate = 24_000, trackRate = 24_000))
+    }
+
+    @Test fun a_provider_at_the_wrong_rate_is_rejected_so_the_read_falls_local() {
+        // A 16 kHz provider against a 24 kHz Kokoro track would play ~1.5x too fast: disqualify it.
+        assertFalse(cloudTrackRateMatches(providerRate = 16_000, trackRate = 24_000))
+        assertFalse(cloudTrackRateMatches(providerRate = 48_000, trackRate = 24_000))
+    }
+
+    @Test fun all_three_cloud_providers_declare_the_24k_bank_rate() {
+        // The contract the seam enforces: every shipped TTS adapter emits 24 kHz, so none is ever
+        // disqualified against a 24 kHz track. Guards a future adapter that forgets the contract.
+        val t = com.whispereverywhere.net.FakeHttpTransport()
+        listOf(
+            com.whispereverywhere.tts.cloud.OpenAiTts(t, "k").sampleRate,
+            com.whispereverywhere.tts.cloud.GeminiTts(t, "k").sampleRate,
+            com.whispereverywhere.tts.cloud.ElevenLabsTts(t, "k", context = null).sampleRate,
+        ).forEach { assertTrue(cloudTrackRateMatches(it, trackRate = 24_000)) }
+    }
 }

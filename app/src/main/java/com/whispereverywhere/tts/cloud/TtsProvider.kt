@@ -33,7 +33,11 @@ sealed interface TtsResult {
 interface TtsProvider {
     val id: ProviderId
 
-    /** Fixed output rate contract the bank relies on. All three providers emit 24 kHz. */
+    /**
+     * Fixed output rate contract the bank relies on. All three providers emit 24 kHz. Consumed at
+     * the engine seam (TtsEngine.cloudTrackRateMatches): a provider whose rate does not equal the
+     * AudioTrack rate has its read fall to the local voice, so this is not a dead field.
+     */
     val sampleRate: Int   // = 24_000
 
     /** @return false from onPcm to cancel (identical semantics to sherpa's 0). */

@@ -465,7 +465,20 @@ class TtsEngine(
                 // hasCloud is false unless BOTH a provider and a voice were resolved (defence in
                 // depth over TtsController, which sets them together) — so null ⇒ the exact prior
                 // path and the regression contract holds byte-for-byte.
-                val hasCloud = cloudSnap != null && !voiceSnap.isNullOrBlank()
+                // The cloud provider streams PCM straight into the SAME bank the on-device voice
+                // fills, played by an AudioTrack built at engine.sampleRate(). A provider whose
+                // sampleRate does not match the track rate would play at the wrong pitch/speed, so
+                // consume TtsProvider.sampleRate here as a hard contract: a mismatch disables cloud
+                // for this read (the local voice takes over) rather than trusting an unread field.
+                val rateMatches = cloudSnap == null ||
+                    cloudTrackRateMatches(cloudSnap.sampleRate, engine.sampleRate())
+                if (cloudSnap != null && !rateMatches) {
+                    android.util.Log.w(
+                        "WE-TTS",
+                        "cloud provider rate ${cloudSnap.sampleRate} != track ${engine.sampleRate()} — using local voice",
+                    )
+                }
+                val hasCloud = cloudSnap != null && !voiceSnap.isNullOrBlank() && rateMatches
                 var latchedFatal: FatalKind? = null
                 // Circuit breaker (finding): a persistent NON-FATAL condition — a Gemini 200 with no
                 // audio (safety refusal / preview quirk, which still bills input tokens), or a plain
@@ -814,6 +827,15 @@ const val CLOUD_SOFT_LATCH_THRESHOLD = 2
  *  to local for the rest of the read (a circuit breaker over the silent per-unit re-bill). */
 fun shouldSoftLatchCloud(consecutiveSoftFailures: Int): Boolean =
     consecutiveSoftFailures >= CLOUD_SOFT_LATCH_THRESHOLD
+
+/**
+ * True when a cloud [TtsProvider.sampleRate] is compatible with the engine's AudioTrack rate. The
+ * cloud PCM is appended into the SAME bank the on-device voice fills and played at the track rate,
+ * so the two rates MUST be equal or the cloud audio plays at the wrong pitch/speed. This is where
+ * [TtsProvider.sampleRate] is consumed — an interface field that would otherwise be dead: a
+ * provider that lied about its rate is caught here and its read falls to the local voice.
+ */
+fun cloudTrackRateMatches(providerRate: Int, trackRate: Int): Boolean = providerRate == trackRate
 
 /** What the producer loop does with one clause unit. See [planUnitOutcome]. */
 sealed interface UnitAction {
