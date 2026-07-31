@@ -39,8 +39,9 @@ import kotlinx.serialization.json.Json
  *    Soniox detects the language itself; a specific preference narrows it.
  *  - THE ASYNC PATH STORES the audio + transcript server-side until deleted, so cleanup runs on
  *    EVERY exit — success, error, and cancellation (NonCancellable) — never leaking user audio.
- *  - THE POLL LOOP IS BOUNDED: a job that has not completed within maxPolls returns Transient so
- *    the segment falls to on-device rather than hanging the dictation turn.
+ *  - THE POLL LOOP IS BOUNDED: a job that has not completed within maxPolls (or the wall-clock
+ *    deadline) returns ProviderTimedOut — NON-retryable — so the segment falls to on-device rather
+ *    than hanging the dictation turn AND without the batch layer re-billing a fresh async job.
  *  - 404 IS STEP-SENSITIVE: on CREATE it means the model id is wrong/retired -> Fatal
  *    MODEL_UNAVAILABLE (latched); on a later call it is odd server state -> Transient.
  *  - AMBIGUOUS STATUS SPLIT: a 401/429 whose body carries a balance marker is OUT_OF_CREDIT, not a
@@ -103,8 +104,8 @@ class SonioxStt(
             transcriptionId = tid
 
             // 3. Poll to a terminal state, BOUNDED by BOTH an iteration budget (maxPolls) AND an
-            //    outer wall-clock deadline (maxPollWallClockMs). Past either -> Transient (falls
-            //    local), so a job whose individual poll GETs are slow still honors the ~40 s bound.
+            //    outer wall-clock deadline (maxPollWallClockMs). Past either -> ProviderTimedOut
+            //    (falls local, no re-bill), so a job whose per-poll GETs are slow still honors ~40 s.
             var completed = false
             var polls = 0
             val pollDeadline = now() + maxPollWallClockMs
@@ -129,7 +130,11 @@ class SonioxStt(
                 }
                 if (completed) break
             }
-            if (!completed) return SttResult.Failed(SttError.Transient(null))
+            // Poll budget exhausted (iteration OR wall-clock): the job was accepted and may already
+            // be billing, but we abandon it. ProviderTimedOut (NOT Transient) so the batch retry
+            // layer falls straight to local instead of re-issuing a fresh — again-abandoned, again-
+            // billed — async job up to the retry budget for the same 10-min chunk.
+            if (!completed) return SttResult.Failed(SttError.ProviderTimedOut)
 
             // 4. Fetch + assemble from tokens (NO reliance on an unconfirmed top-level `text`).
             return when (val tr = transport.get("$TRANSCRIPTIONS_URL/$tid/transcript", headers)) {

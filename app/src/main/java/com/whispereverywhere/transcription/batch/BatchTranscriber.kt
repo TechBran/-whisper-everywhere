@@ -245,6 +245,10 @@ class BatchTranscriber(
                     // An undecodable 200 was already billed — retrying just re-bills for the same
                     // unreadable answer, so fall to local for this chunk (never retry).
                     SttError.Undecodable -> return CloudChunkResult.FallBack
+                    // The provider blew our poll budget (Soniox async). It may already be billing;
+                    // re-issuing starts a fresh job that abandons the same way — up to 4x the charge
+                    // for one chunk, all discarded once it runs locally. Fall to local, never retry.
+                    SttError.ProviderTimedOut -> return CloudChunkResult.FallBack
                     is SttError.Transient -> {
                         if (attempt >= testMaxCloudRetries) return CloudChunkResult.FallBack
                         delay(e.retryAfterMs ?: (BASE_BACKOFF_MS * (attempt + 1)))

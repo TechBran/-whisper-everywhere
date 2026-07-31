@@ -112,7 +112,7 @@ class SonioxSttTest {
         assertTrue(fake.deletedUrls.any { it.endsWith("/files/file-1") })
     }
 
-    @Test fun a_stuck_job_returns_transient_when_the_poll_budget_is_exhausted_and_cleans_up() = runBlocking {
+    @Test fun a_stuck_job_times_out_non_retryably_when_the_poll_budget_is_exhausted_and_cleans_up() = runBlocking {
         val fake = FakeHttpTransport { url, _ ->
             when {
                 url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
@@ -123,7 +123,9 @@ class SonioxSttTest {
         }
         val stt = SonioxStt(fake, "k", pollIntervalMs = 0L, maxPolls = 2)
         val r = stt.transcribe(pcm, null) as SttResult.Failed
-        assertTrue("a stuck job must fall local, never hang", r.error is SttError.Transient)
+        // Budget exhaustion is ProviderTimedOut, NOT Transient (finding #1): the async job may
+        // already be billing, so the batch layer must fall local rather than re-issue a fresh job.
+        assertEquals("a stuck job falls local non-retryably", SttError.ProviderTimedOut, r.error)
         assertTrue(fake.deletedUrls.any { it.endsWith("/files/file-1") })
     }
 
@@ -201,7 +203,7 @@ class SonioxSttTest {
             maxPollWallClockMs = 40_000L, now = { times.removeFirstOrNull() ?: 60_000L },
         )
         val r = stt.transcribe(pcm, null) as SttResult.Failed
-        assertTrue("past the deadline must fall Transient -> local", r.error is SttError.Transient)
+        assertEquals("past the deadline must time out non-retryably -> local", SttError.ProviderTimedOut, r.error)
         assertTrue("the wall clock bounded the loop far under maxPolls (got $pollGets)", pollGets <= 2)
         assertTrue("the stored file must still be cleaned up",
             fake.deletedUrls.any { it.endsWith("/files/file-1") })

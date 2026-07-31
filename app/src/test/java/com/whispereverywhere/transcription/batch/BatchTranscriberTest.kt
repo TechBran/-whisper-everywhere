@@ -176,6 +176,36 @@ class BatchTranscriberTest {
         assertEquals(EngineUsed.LOCAL, m.engineUsed)
     }
 
+    @Test fun a_soniox_poll_timeout_is_not_re_billed_and_falls_local_for_that_chunk() = runBlocking {
+        // Re-bill guard (finding #1): a Soniox chunk that blows the poll budget returns
+        // ProviderTimedOut (non-retryable). The async job may already be billing, so runCloud must
+        // NOT re-issue fresh POST /transcriptions jobs — each would be a NEW Soniox charge that
+        // abandons the same way. With a big retry budget, exactly ONE async job is created for the
+        // one chunk, then it is rescued locally. Pre-fix (Transient) this created 1 + retries jobs.
+        val (store, id) = storeWith(pcmBytes = 4000)
+        val creates = AtomicInteger(0)
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, """{"id":"file-1"}""")
+                url.endsWith("/transcriptions") -> { creates.incrementAndGet(); HttpResult.Ok(201, """{"id":"job-1","status":"queued"}""") }
+                url.contains("/transcriptions/") -> HttpResult.Ok(200, """{"status":"processing"}""") // never completes -> times out
+                else -> error("unexpected url $url")
+            }
+        }
+        val backend = FakeBackend("LOCAL-RESCUE")
+        val t = BatchTranscriber(
+            store, cloud = SonioxStt(fake, "sx-k", pollIntervalMs = 0L, maxPolls = 2),
+            backend = backend, modelPathProvider = modelPath,
+        ).apply { testCloudCeiling = 100_000; testLocalChunk = 100_000; testMaxCloudRetries = 5 }
+        t.transcribe(id)
+        val m = store.read(id)!!
+        assertEquals(BatchStatus.Done, m.status)
+        assertEquals("one chunk", 1, m.chunkPlan.size)
+        assertEquals("a poll timeout must NOT re-issue a fresh billed Soniox job", 1, creates.get())
+        assertTrue("local rescued the chunk", store.assembledText(m).contains("LOCAL-RESCUE"))
+        assertEquals(EngineUsed.LOCAL, m.engineUsed)
+    }
+
     @Test fun a_mid_job_consent_revocation_degrades_the_rest_to_local() = runBlocking {
         // Finding #6: the cheap consent/notification flags are re-read before EACH cloud chunk. Here
         // they permit only the first chunk, then flip off — the remaining chunks must degrade to
