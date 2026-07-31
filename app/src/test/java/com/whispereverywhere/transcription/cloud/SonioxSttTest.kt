@@ -2,6 +2,9 @@ package com.whispereverywhere.transcription.cloud
 
 import com.whispereverywhere.net.FakeHttpTransport
 import com.whispereverywhere.net.HttpResult
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -122,6 +125,36 @@ class SonioxSttTest {
         val r = stt.transcribe(pcm, null) as SttResult.Failed
         assertTrue("a stuck job must fall local, never hang", r.error is SttError.Transient)
         assertTrue(fake.deletedUrls.any { it.endsWith("/files/file-1") })
+    }
+
+    @Test fun a_cancellation_mid_poll_still_deletes_both_resources_off_the_cancellable_path() = runBlocking {
+        // The privacy claim's load-bearing case: the user cancels a segment WHILE it is polling, and
+        // the audio Soniox is already storing MUST still be deleted. The cleanup runs under
+        // withContext(NonCancellable); `deleteSuspends` makes delete a cancellable point, so both
+        // deletes are recorded ONLY because of that wrapper — a plain finally on the cancelled
+        // coroutine would see the cancellation at the yield and skip them, leaking the audio.
+        val created = CompletableDeferred<Unit>()
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                // Signal readiness on the CREATE: the coroutine then runs synchronously through
+                // `transcriptionId = tid` into the poll's delay before the parent gets control, so
+                // both resources provably exist when we cancel.
+                url.endsWith("/transcriptions") -> { created.complete(Unit); HttpResult.Ok(201, createOk) }
+                url.contains("/transcriptions/") -> HttpResult.Ok(200, """{"status":"processing"}""")
+                else -> error("unexpected $url")
+            }
+        }
+        fake.deleteSuspends = true
+        // Long interval so the coroutine parks in the poll delay; cancellation interrupts it at once.
+        val stt = SonioxStt(fake, "k", pollIntervalMs = 10_000L)
+        val job = launch { stt.transcribe(pcm, null) }
+        created.await()      // upload + create done -> file AND transcription exist server-side
+        job.cancelAndJoin()  // cancel while parked mid-poll
+        assertTrue("cancelled segment must still delete the transcription",
+            fake.deletedUrls.any { it.endsWith("/transcriptions/job-1") })
+        assertTrue("cancelled segment must still delete the uploaded file",
+            fake.deletedUrls.any { it.endsWith("/files/file-1") })
     }
 
     @Test fun a_401_on_upload_is_fatal_invalid_key() = runBlocking {

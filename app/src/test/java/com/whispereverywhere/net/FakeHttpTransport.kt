@@ -36,6 +36,15 @@ class FakeHttpTransport(
     /** Result the fake returns from [delete]; overridable per test (cleanup is a 204 by default). */
     var deleteResult: HttpResult = HttpResult.Ok(204, "")
 
+    /**
+     * When true, [delete] suspends at a cancellable point (`yield`) before recording. This lets a
+     * test prove cleanup runs *because of* `withContext(NonCancellable)`: under NonCancellable the
+     * yield never throws, so the delete is recorded; from a plain (still-cancellable) `finally` on a
+     * cancelled coroutine the yield throws `CancellationException` and the delete is skipped. Default
+     * false so every existing test's non-suspending delete is byte-for-byte unchanged.
+     */
+    var deleteSuspends: Boolean = false
+
     override suspend fun get(url: String, headers: Map<String, String>, timeoutMs: Long): HttpResult {
         lastUrl = url
         lastHeaders = headers
@@ -90,6 +99,7 @@ class FakeHttpTransport(
         // fetch it made, and cleanup running afterward must not overwrite those. Deletes are their
         // own observation channel (deletedUrls), distinct from the URL-dispatched script — so a
         // poll-GET and a cleanup-DELETE on the same /transcriptions/{id} URL stay distinguishable.
+        if (deleteSuspends) kotlinx.coroutines.yield() // cancellable point; see [deleteSuspends]
         deletedUrls.add(url)
         return deleteResult
     }
