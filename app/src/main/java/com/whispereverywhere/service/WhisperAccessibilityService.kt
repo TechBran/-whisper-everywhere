@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.InputConnection
 import com.whispereverywhere.text.InjectionAnchor
+import com.whispereverywhere.text.TextJoin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -383,10 +384,15 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (session != null) {
             val alive = try { session.refresh() } catch (e: Exception) { false }
             if (alive) return session
-            // Node died: drop the WHOLE session (node AND package) so strategy classification
-            // follows the fallback target's app, not the dead session's.
+            // Node died: drop the WHOLE session (node AND package AND anchor) so strategy
+            // classification follows the fallback target's app, not the dead session's — and, crucially,
+            // so the stale anchor (expectedText/anchor from the DEAD field) can never be applied against
+            // an unrelated fallback field, planting the dictation mid-text into a field the user never
+            // targeted. With the anchor cleared in lockstep, setTextViaAnchor builds a fresh transient
+            // anchor from the fallback field's own live caret.
             sessionTargetEditText = null
             sessionTargetPackage = null
+            sessionAnchor = null
         }
         return findFocusedEditText() ?: lastFocusedEditText
     }
@@ -728,16 +734,24 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun injectForSocialMediaWithResult(text: String): InjectionResult {
         val targetNode = resolveInjectionTarget()
 
-        // Always copy to clipboard first
-        try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
-        } catch (e: Exception) {
-            return InjectionResult.FAILED
+        if (targetNode?.refresh() != true) {
+            // No live field: keep the raw text on the clipboard so the user can paste it manually.
+            return try {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+                InjectionResult.CLIPBOARD_ONLY
+            } catch (e: Exception) {
+                InjectionResult.FAILED
+            }
         }
 
-        if (targetNode?.refresh() != true) {
-            return InjectionResult.CLIPBOARD_ONLY
+        // Live field: pad the segment against its existing text so a pasted segment never melts
+        // against the previous one, THEN place it on the clipboard for the paste actions below.
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", clipboardPayloadFor(text, targetNode)))
+        } catch (e: Exception) {
+            return InjectionResult.FAILED
         }
 
         // Check if field has existing content (might be a mention)
@@ -797,17 +811,21 @@ class WhisperAccessibilityService : AccessibilityService() {
      */
     private fun injectViaClipboardForDocumentApp(text: String): Boolean {
         return try {
-            // Step 1: Copy text to clipboard
+            // Step 1: Copy text to clipboard, padded against the target field so a pasted segment
+            // never melts against existing content.
+            val targetNode = resolveInjectionTarget()
+            val refreshed = targetNode?.refresh() == true
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+            clipboard.setPrimaryClip(
+                ClipData.newPlainText("Whisper", if (refreshed) clipboardPayloadFor(text, targetNode) else text),
+            )
 
             // Step 2: Try multiple paste methods
             var success = false
 
             // Method 1: Try ACTION_PASTE on the target node
-            val targetNode = resolveInjectionTarget()
-            if (targetNode?.refresh() == true) {
-                success = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (refreshed) {
+                success = targetNode!!.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             }
 
             // Method 2: Try ACTION_PASTE on focused input
@@ -877,15 +895,19 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun injectViaClipboard(text: String): Boolean {
         return try {
+            // Pad against the target field so a pasted segment never melts against existing content.
+            val targetNode = resolveInjectionTarget()
+            val refreshed = targetNode?.refresh() == true
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+            clipboard.setPrimaryClip(
+                ClipData.newPlainText("Whisper", if (refreshed) clipboardPayloadFor(text, targetNode) else text),
+            )
 
             var success = false
 
             // Try paste on target node
-            val targetNode = resolveInjectionTarget()
-            if (targetNode?.refresh() == true) {
-                success = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (refreshed) {
+                success = targetNode!!.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             }
 
             // Try paste on focused input
@@ -919,6 +941,24 @@ class WhisperAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             android.util.Log.d("WE-TTS", "SET_SELECTION threw (non-fatal)")
         }
+    }
+
+    /**
+     * The clipboard/paste delivery paths (social-media @mention fields, document apps) insert the RAW
+     * segment at the caret and share none of the anchor's spacing, so multi-segment dictation melts
+     * ('Hello therehow'). Pad the segment against the field's existing text under the shared [TextJoin]
+     * policy BEFORE it goes on the clipboard, so a pasted segment never touches the previous one. The
+     * pad is computed against the field END (append) because these exact fields report an unreliable
+     * caret — the append boundary is the one that actually melts on repeated dictation. Hint text is
+     * stripped so a placeholder never counts as existing content.
+     */
+    private fun clipboardPayloadFor(text: String, node: AccessibilityNodeInfo?): String {
+        val raw = node?.text?.toString() ?: return text
+        val hint = node.hintText?.toString() ?: ""
+        val existing = if (raw.isNotEmpty() && raw.equals(hint, ignoreCase = true)) "" else raw
+        // Append semantics: pad against the field END (right side empty). These fields report an
+        // unreliable caret, so the end boundary is the one that reliably melts on repeated dictation.
+        return TextJoin.pad(existing, text, "")
     }
 
     /**
@@ -965,15 +1005,19 @@ class WhisperAccessibilityService : AccessibilityService() {
         // For document apps, use clipboard approach
         if (injectionTargetIsDocumentApp()) {
             return try {
+                // Pad against the target field so a pasted segment never melts against existing content.
+                val targetNode = resolveInjectionTarget()
+                val refreshed = targetNode?.refresh() == true
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
+                clipboard.setPrimaryClip(
+                    ClipData.newPlainText("Whisper", if (refreshed) clipboardPayloadFor(text, targetNode) else text),
+                )
 
                 // Try paste methods
                 var pasteWorked = false
 
-                val targetNode = resolveInjectionTarget()
-                if (targetNode?.refresh() == true) {
-                    pasteWorked = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                if (refreshed) {
+                    pasteWorked = targetNode!!.performAction(AccessibilityNodeInfo.ACTION_PASTE)
                 }
 
                 if (!pasteWorked) {
