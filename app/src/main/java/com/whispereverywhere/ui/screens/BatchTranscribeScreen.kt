@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.recording.BatchStatus
 import com.whispereverywhere.recording.ChunkStatus
 import com.whispereverywhere.recording.RecordingMeta
@@ -63,18 +64,19 @@ fun BatchTranscribeScreen(
     val progress by viewModel.progress.collectAsState()
 
     // The per-job engine choice. Cloud is offered ONLY when the triad holds; it then defaults to the
-    // global selection (cloudEligible already encodes "cloud is both selected and usable").
+    // global selection (cloudEligible already encodes "cloud is both selected and usable"). The row
+    // mirrors the GLOBALLY SELECTED STT provider — the service resolves the SAME one through
+    // resolveBatchSttProvider (now the full set, as of 3.3.0), so the screen and the service agree on
+    // which provider's name and price to show. A selection with no key/disclosure just fails the gate.
+    val batchProvider = remember {                       // the resolved batch STT provider, or null
+        resolveBatchSttProvider(WhisperEverywhereApp.getInstance().preferencesManager.sttProviderId)
+    }
+    val providerName = batchProvider?.let { ProviderCatalog.byId(it).displayName } ?: ""
+    val providerCents = BatchCostEstimator.centsPerMinute(batchProvider)
     val cloudEligible = remember {
         val prefs = WhisperEverywhereApp.getInstance().preferencesManager
-        // Use the OpenAI-only batch clamp, NOT resolveSttProvider: the batch SERVICE resolves cloud
-        // through resolveBatchSttProvider (BatchTranscriptionService.resolveCloud), so a Gemini /
-        // ElevenLabs / Soniox selection that the wider live-mode resolver would accept must NOT make
-        // the cloud row appear here — the service would clamp it to on-device, and the row's
-        // hardcoded "OpenAI" title + OpenAI price would be for a key the user may not even hold.
-        // Matching the predicates keeps the screen and the service in agreement.
-        val providerId = resolveBatchSttProvider(prefs.sttProviderId)
-        val key = providerId?.let { prefs.providerAccounts.key(it) }
-        BatchCloudGate.cloudEligible(providerId?.name, key, prefs.cloudDisclosureAccepted)
+        val key = batchProvider?.let { prefs.providerAccounts.key(it) }
+        BatchCloudGate.cloudEligible(batchProvider?.name, key, prefs.cloudDisclosureAccepted)
     }
     var useCloud by remember { mutableStateOf(cloudEligible) }
 
@@ -94,10 +96,10 @@ fun BatchTranscribeScreen(
 
     // Show the cost dialog only for a cloud job past the §6.5 threshold; otherwise start directly.
     fun beginJob(costBytes: Long, confirmedStart: () -> Unit, directStart: () -> Unit) {
-        if (useCloud && BatchCostEstimator.needsConfirmation(costBytes)) {
+        if (useCloud && BatchCostEstimator.needsConfirmation(costBytes, batchProvider)) {
             pending = PendingConfirm(
                 minutes = BatchCostEstimator.minutes(costBytes),
-                cents = BatchCostEstimator.estimatedCents(costBytes),
+                cents = BatchCostEstimator.estimatedCents(costBytes, batchProvider),
                 onCloud = { pending = null; confirmedStart() },
                 onLocal = { pending = null; directStart() },
             )
@@ -131,6 +133,8 @@ fun BatchTranscribeScreen(
                     displayName = displayName,
                     durationMs = durationMs,
                     cloudEligible = cloudEligible,
+                    providerName = providerName,
+                    providerCents = providerCents,
                     useCloud = useCloud,
                     onUseCloud = { useCloud = it },
                     onTranscribe = {
@@ -224,7 +228,7 @@ fun BatchTranscribeScreen(
             text = {
                 Text(
                     "Transcribe about ${formatMinutes(pc.minutes)} in the cloud for about " +
-                        "${formatCents(pc.cents)} with your OpenAI key?"
+                        "${formatCents(pc.cents)} with your $providerName key?"
                 )
             },
             confirmButton = { Button(onClick = pc.onCloud) { Text("Use cloud") } },
@@ -246,6 +250,8 @@ private fun ReadyContent(
     displayName: String,
     durationMs: Long,
     cloudEligible: Boolean,
+    providerName: String,
+    providerCents: Double,
     useCloud: Boolean,
     onUseCloud: (Boolean) -> Unit,
     onTranscribe: () -> Unit,
@@ -274,8 +280,8 @@ private fun ReadyContent(
             Spacer(Modifier.height(8.dp))
             EngineRow(
                 selected = useCloud,
-                title = "OpenAI",
-                subtitle = "about ¢${BatchCostEstimator.CENTS_PER_MINUTE}/min",
+                title = providerName,
+                subtitle = "about ¢${providerCents}/min",
                 onClick = { onUseCloud(true) },
             )
         }

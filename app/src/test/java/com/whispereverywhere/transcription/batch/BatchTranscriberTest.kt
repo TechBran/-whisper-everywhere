@@ -9,7 +9,10 @@ import com.whispereverywhere.recording.RecordingMeta
 import com.whispereverywhere.recording.RecordingStore
 import com.whispereverywhere.transcription.ModelPathProvider
 import com.whispereverywhere.transcription.WhisperBackend
+import com.whispereverywhere.transcription.cloud.ElevenLabsStt
+import com.whispereverywhere.transcription.cloud.GeminiStt
 import com.whispereverywhere.transcription.cloud.OpenAiStt
+import com.whispereverywhere.transcription.cloud.SonioxStt
 import com.whispereverywhere.transcription.cloud.SttError
 import com.whispereverywhere.transcription.cloud.SttProvider
 import com.whispereverywhere.transcription.cloud.SttResult
@@ -70,6 +73,74 @@ class BatchTranscriberTest {
         assertTrue(fake.callCount >= 2)
         assertEquals(EngineUsed.OPENAI, m.engineUsed)
         assertTrue(store.assembledText(m).trim().startsWith("C"))
+    }
+
+    // --- 3.3.0: batch now serves the SAME set as live; engineUsed records the REAL provider ---
+
+    @Test fun cloud_happy_path_marks_gemini() = runBlocking {
+        val (store, id) = storeWith(pcmBytes = 8000)
+        val fake = FakeHttpTransport { _, _ ->
+            HttpResult.Ok(200, """{"candidates":[{"content":{"parts":[{"text":"G "}]}}]}""")
+        }
+        val t = BatchTranscriber(store, cloud = GeminiStt(fake, "gem-k"), backend = FakeBackend(),
+            modelPathProvider = modelPath).apply { testCloudCeiling = 3000; testLocalChunk = 3000 }
+        t.transcribe(id)
+        val m = store.read(id)!!
+        assertTrue(fake.callCount >= 2)
+        assertEquals(EngineUsed.GEMINI, m.engineUsed)
+        assertTrue(store.assembledText(m).trim().startsWith("G"))
+    }
+
+    @Test fun cloud_happy_path_marks_elevenlabs() = runBlocking {
+        val (store, id) = storeWith(pcmBytes = 8000)
+        val fake = FakeHttpTransport { _, _ -> HttpResult.Ok(200, """{"text":"E "}""") }
+        val t = BatchTranscriber(store, cloud = ElevenLabsStt(fake, "el-k"), backend = FakeBackend(),
+            modelPathProvider = modelPath).apply { testCloudCeiling = 3000; testLocalChunk = 3000 }
+        t.transcribe(id)
+        val m = store.read(id)!!
+        assertTrue(fake.callCount >= 2)
+        assertEquals(EngineUsed.ELEVENLABS, m.engineUsed)
+        assertTrue(store.assembledText(m).trim().startsWith("E"))
+    }
+
+    @Test fun cloud_happy_path_marks_soniox_via_the_upload_poll_delete_path() = runBlocking {
+        val (store, id) = storeWith(pcmBytes = 8000)
+        // Each chunk walks the whole async pipeline (upload -> create -> poll -> fetch -> delete),
+        // dispatched by URL. Soniox is the poll-based path; delete-after still runs per chunk.
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, """{"id":"file-1"}""")
+                url.endsWith("/transcript") -> HttpResult.Ok(200, """{"tokens":[{"text":"S "}]}""")
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, """{"id":"job-1","status":"queued"}""")
+                url.contains("/transcriptions/") -> HttpResult.Ok(200, """{"status":"completed"}""") // poll
+                else -> error("unexpected url $url")
+            }
+        }
+        val t = BatchTranscriber(store, cloud = SonioxStt(fake, "sx-k", pollIntervalMs = 0L),
+            backend = FakeBackend(), modelPathProvider = modelPath)
+            .apply { testCloudCeiling = 3000; testLocalChunk = 3000 }
+        t.transcribe(id)
+        val m = store.read(id)!!
+        assertEquals(EngineUsed.SONIOX, m.engineUsed)
+        assertTrue(store.assembledText(m).trim().startsWith("S"))
+        // delete-after ran per chunk: both the transcription and the file were deleted at least once.
+        assertTrue("transcription deleted", fake.deletedUrls.any { it.endsWith("/transcriptions/job-1") })
+        assertTrue("uploaded file deleted", fake.deletedUrls.any { it.endsWith("/files/file-1") })
+    }
+
+    @Test fun old_manifests_carrying_LOCAL_or_OPENAI_still_parse_no_migration() {
+        // EngineUsed widened additively and serializes by NAME, so a manifest written before the
+        // widen (only LOCAL/OPENAI existed) must still deserialize unchanged.
+        val store = RecordingStore(File(tmp.root, "compat"))
+        for (name in listOf("LOCAL", "OPENAI")) {
+            val jid = "old-$name"
+            store.dir(jid).mkdirs()
+            File(store.dir(jid), "manifest.json").writeText(
+                """{"id":"$jid","createdAtMs":1,"durationMs":1000,"displayName":"x","byteLength":100,"engineUsed":"$name"}"""
+            )
+            val m = store.read(jid)
+            assertEquals("manifest with engineUsed=$name must still parse", EngineUsed.valueOf(name), m?.engineUsed)
+        }
     }
 
     @Test fun a_cloud_chunk_that_fails_transiently_falls_back_to_local_one_way() = runBlocking {

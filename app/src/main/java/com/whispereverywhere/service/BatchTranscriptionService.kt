@@ -63,15 +63,12 @@ object BatchJobController {
 }
 
 /**
- * Batch mode stays OpenAI-only this wave. [resolveSttProvider] was widened in C2b to resolve Gemini
- * and ElevenLabs too (live mode gained their adapters), which — without this clamp — would make a
- * Gemini/ElevenLabs selection resolve non-null in [BatchTranscriptionService.resolveCloud] and get
- * a different provider's key handed to an OpenAI adapter. Batch's `engineUsed` decision was NOT
- * widened, so any non-OpenAI selection degrades to on-device (null) here rather than mis-keying.
- * Widening batch is its own deliberate step, never a silent side effect of the resolver.
+ * Batch cloud STT resolves the SAME provider set as live dictation (OpenAI, Gemini, ElevenLabs,
+ * Soniox) as of 3.3.0. Each is constructed through the shared [SttProviderFactory], gated by the
+ * identical triad + disclosure v3 + cost confirm + notifications, and rides the one-way local
+ * fallback. There is no longer a batch-specific clamp — resolveBatchSttProvider IS resolveSttProvider.
  */
-internal fun resolveBatchSttProvider(raw: String?): ProviderId? =
-    resolveSttProvider(raw)?.takeIf { it == ProviderId.OPENAI }
+internal fun resolveBatchSttProvider(raw: String?): ProviderId? = resolveSttProvider(raw)
 
 /**
  * The foreground host for one whole-file batch job: DECODE phase, then TRANSCRIBE phase, to
@@ -297,14 +294,14 @@ class BatchTranscriptionService : Service() {
      */
     private fun resolveCloud(byteLength: Long, costConfirmed: Boolean, useCloud: Boolean): SttProvider? {
         val prefs = app.preferencesManager
-        // Batch stays OpenAI-only this wave: a Gemini/ElevenLabs selection resolves non-null in live
-        // mode but clamps to null here, degrading the job to on-device rather than mis-keying OpenAI.
+        // Batch resolves the same STT set as live (3.3.0). A selection with no adapter/no key still
+        // degrades to on-device via the gate below — never mis-keyed.
         val providerId = resolveBatchSttProvider(prefs.sttProviderId)      // top-level, this package
         val key = providerId?.let { prefs.providerAccounts.key(it) }
 
         val allowed = BatchEngineDecision.cloudAllowed(
             useCloud = useCloud,
-            providerName = providerId?.name,
+            providerId = providerId,          // now carries identity for the per-provider cost gate
             key = key,
             disclosureAccepted = prefs.cloudDisclosureAccepted,
             byteLength = byteLength,
@@ -314,9 +311,8 @@ class BatchTranscriptionService : Service() {
             notificationsEnabled = { NotificationManagerCompat.from(this).areNotificationsEnabled() },
         )
         if (!allowed) return null
-        // providerId is guaranteed OPENAI here (resolveBatchSttProvider clamped it, and cloudAllowed
-        // required it non-null with a key). Construction goes through the ONE factory both services
-        // share — OpenAI is the only id that reaches it from batch this wave.
+        // The gate guaranteed a non-null providerId with a stored key. Construction goes through the
+        // ONE factory both services share — any of the four STT adapters may be built here now.
         return SttProviderFactory.create(providerId!!, transport(), key!!)
     }
 

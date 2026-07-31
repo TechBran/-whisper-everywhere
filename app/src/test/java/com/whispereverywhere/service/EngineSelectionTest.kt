@@ -169,31 +169,24 @@ class EngineSelectionTest {
         assertEquals(ProviderId.SONIOX, resolveSttProvider("SONIOX"))
     }
 
-    // --- resolveBatchSttProvider: batch stays OpenAI-only this wave (C2b widens live mode only) ---
+    // --- resolveBatchSttProvider: 3.3.0 widens batch to the SAME set as live (no more clamp) ---
 
-    @Test fun batch_resolves_openai_but_clamps_gemini_and_elevenlabs_to_null() {
-        // resolveSttProvider now resolves all three, but batch's engineUsed decision was NOT
-        // widened: a Gemini/ElevenLabs selection degrades to on-device (null) here rather than
-        // mis-keying OpenAI with another provider's key.
+    @Test fun batch_resolves_all_four_providers_now_that_the_clamp_is_gone() {
+        // The 3.3.0 wave dropped the batch-specific OpenAI clamp: resolveBatchSttProvider IS
+        // resolveSttProvider. Each provider resolves to its own id; only garbage / null -> null.
         assertEquals(ProviderId.OPENAI, resolveBatchSttProvider("OPENAI"))
-        assertNull(resolveBatchSttProvider("GEMINI"))
-        assertNull(resolveBatchSttProvider("ELEVENLABS"))
+        assertEquals(ProviderId.GEMINI, resolveBatchSttProvider("GEMINI"))
+        assertEquals(ProviderId.ELEVENLABS, resolveBatchSttProvider("ELEVENLABS"))
+        assertEquals(ProviderId.SONIOX, resolveBatchSttProvider("SONIOX"))
         assertNull(resolveBatchSttProvider(null))
         assertNull(resolveBatchSttProvider("not-a-real-provider"))
     }
 
-    @Test fun batch_clamps_soniox_to_null_batch_stays_openai_only() {
-        // Live mode gets Soniox; batch's engineUsed decision was NOT widened, so a Soniox selection
-        // degrades to on-device here rather than mis-keying OpenAI with a Soniox key.
-        assertNull(resolveBatchSttProvider("SONIOX"))
-    }
+    // --- BatchTranscribeScreen cloud-row eligibility MUST match the service's resolve ---
 
-    // --- BatchTranscribeScreen cloud-row eligibility MUST match the service's batch clamp ---
-
-    // The Ready screen computes its cloud-row eligibility exactly this way; pinned here so it can
-    // never drift back to resolveSttProvider (the wider live-mode resolver) and offer an "OpenAI"
-    // cloud row for a Gemini/ElevenLabs/Soniox selection the service would silently clamp to
-    // on-device. Same predicate the screen runs: cloudEligible(resolveBatchSttProvider(id)?.name, ...).
+    // The Ready screen computes its cloud-row eligibility exactly this way; pinned here so it stays
+    // in agreement with the service's resolveBatchSttProvider (now the full set). With a key +
+    // disclosure, the cloud row lights for every resolvable provider; a null selection never does.
     private fun batchScreenCloudEligible(sttProviderId: String?): Boolean =
         com.whispereverywhere.transcription.batch.BatchCloudGate.cloudEligible(
             providerId = resolveBatchSttProvider(sttProviderId)?.name,
@@ -201,14 +194,12 @@ class EngineSelectionTest {
             disclosureAccepted = true,
         )
 
-    @Test fun batch_cloud_row_is_eligible_only_for_openai_even_with_key_and_disclosure() {
+    @Test fun batch_cloud_row_is_eligible_for_all_four_with_key_and_disclosure() {
         assertEquals(true, batchScreenCloudEligible("OPENAI"))
-        // A non-OpenAI selection the live resolver accepts must NOT light the cloud row: the batch
-        // service clamps it to on-device, so the screen must too (else the hardcoded OpenAI label
-        // and price mislead, and "Use cloud" silently runs on-device).
-        assertEquals(false, batchScreenCloudEligible("GEMINI"))
-        assertEquals(false, batchScreenCloudEligible("ELEVENLABS"))
-        assertEquals(false, batchScreenCloudEligible("SONIOX"))
+        assertEquals(true, batchScreenCloudEligible("GEMINI"))
+        assertEquals(true, batchScreenCloudEligible("ELEVENLABS"))
+        assertEquals(true, batchScreenCloudEligible("SONIOX"))
+        // A null selection resolves to no provider, so the cloud row stays absent.
         assertEquals(false, batchScreenCloudEligible(null))
     }
 

@@ -5,9 +5,9 @@ import com.whispereverywhere.provider.ProviderId
 
 /**
  * The ONE place a [ProviderId] becomes an [SttProvider]. Both the live service
- * ([com.whispereverywhere.service.FloatingBubbleService]) and — for OpenAI only — the batch service
- * ([com.whispereverywhere.service.BatchTranscriptionService]) route construction through here, so a
- * new adapter is wired in exactly once.
+ * ([com.whispereverywhere.service.FloatingBubbleService]) and the batch service
+ * ([com.whispereverywhere.service.BatchTranscriptionService]) route construction through here — the
+ * full STT set for both as of 3.3.0 — so a new adapter is wired in exactly once.
  *
  * The `when` is exhaustive over [ProviderId]: a provider added to the enum will not compile until it
  * is mapped to an adapter here (or explicitly rejected), which is precisely the safety we want — a

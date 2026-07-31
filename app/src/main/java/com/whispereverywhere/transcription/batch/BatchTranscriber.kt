@@ -122,6 +122,9 @@ class BatchTranscriber(
         // large for cloud — is re-sliced to the local ceiling before it reaches the native model.
         var effectiveCloud: SttProvider? = cloud
         val plannedAtCloudCeiling = cloud != null
+        // The engine a cloud-served chunk records. Derived from the ORIGINAL cloud provider (not the
+        // mutable effectiveCloud), so it is non-null on every path where a cloud chunk can succeed.
+        val cloudEngine = cloud?.let { EngineUsed.fromProviderId(it.id) }
         val ceiling = if (effectiveCloud != null) testCloudCeiling else testLocalChunk
 
         // (2) Plan (or re-plan on reset). The coarse silence scan STREAMS the file in fixed windows
@@ -162,7 +165,7 @@ class BatchTranscriber(
                         effectiveCloud != null -> {
                             val r = runCloud(effectiveCloud, pcm, meta.language)
                             when (r) {
-                                is CloudChunkResult.Ok -> { usedCloud = true; r.text to EngineUsed.OPENAI }
+                                is CloudChunkResult.Ok -> { usedCloud = true; r.text to cloudEngine!! }
                                 CloudChunkResult.Fatal -> { fatal = true; break }
                                 CloudChunkResult.FallBack -> {                 // (ONE-WAY VALVE)
                                     if (ctx == 0L) ctx = loadCtx()
@@ -214,7 +217,7 @@ class BatchTranscriber(
         }
         val engineUsed = when {
             usedCloud && usedLocal -> EngineUsed.LOCAL   // mixed: at least one chunk stayed on-device
-            usedCloud -> EngineUsed.OPENAI
+            usedCloud -> cloudEngine!!
             usedLocal -> EngineUsed.LOCAL
             else -> meta.engineUsed
         }

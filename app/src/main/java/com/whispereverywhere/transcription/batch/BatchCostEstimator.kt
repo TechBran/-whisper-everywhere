@@ -22,13 +22,6 @@ object BatchCostEstimator {
     /** The dearest KNOWN rate; governs any provider whose price we could not pin (Gemini audio). */
     const val MOST_EXPENSIVE_KNOWN_CENTS_PER_MIN = OPENAI_CENTS_PER_MIN
 
-    /**
-     * Back-compat alias for the flat pre-3.3.0 rate, retained only so callers not yet migrated to
-     * [centsPerMinute] keep compiling across this multi-commit signature migration. Equal to the
-     * OpenAI known rate. Superseded by the per-provider lookup; do not use in new code.
-     */
-    const val CENTS_PER_MINUTE = OPENAI_CENTS_PER_MIN
-
     const val CONFIRM_CENTS = 10.0
     const val CONFIRM_MINUTES = 10.0
 
@@ -43,10 +36,10 @@ object BatchCostEstimator {
 
     fun minutes(byteLength: Long): Double = byteLength / (BYTES_PER_SECOND * 60.0)
 
-    fun estimatedCents(byteLength: Long, providerId: ProviderId? = null): Double =
+    fun estimatedCents(byteLength: Long, providerId: ProviderId?): Double =
         minutes(byteLength) * centsPerMinute(providerId)
 
-    fun needsConfirmation(byteLength: Long, providerId: ProviderId? = null): Boolean =
+    fun needsConfirmation(byteLength: Long, providerId: ProviderId?): Boolean =
         estimatedCents(byteLength, providerId) >= CONFIRM_CENTS || minutes(byteLength) >= CONFIRM_MINUTES
 
     /** Pre-flight bridge: decoded PCM16 @16 kHz mono is exactly 32 bytes/ms. */

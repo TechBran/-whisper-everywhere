@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription.batch
 
+import com.whispereverywhere.provider.ProviderId
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,7 +23,7 @@ class BatchEngineDecisionTest {
         var notificationsProbed = false
         val allowed = BatchEngineDecision.cloudAllowed(
             useCloud = false,                       // the user picked On-device
-            providerName = "OPENAI",
+            providerId = ProviderId.OPENAI,
             key = "sk-live",
             disclosureAccepted = true,
             byteLength = subThreshold,
@@ -39,7 +40,7 @@ class BatchEngineDecisionTest {
     @Test fun cloud_pick_with_full_triad_below_threshold_is_allowed() {
         val allowed = BatchEngineDecision.cloudAllowed(
             useCloud = true,
-            providerName = "OPENAI",
+            providerId = ProviderId.OPENAI,
             key = "sk-live",
             disclosureAccepted = true,
             byteLength = subThreshold,
@@ -53,7 +54,7 @@ class BatchEngineDecisionTest {
     @Test fun cloud_pick_missing_triad_degrades_to_local() {
         val allowed = BatchEngineDecision.cloudAllowed(
             useCloud = true,
-            providerName = "OPENAI",
+            providerId = ProviderId.OPENAI,
             key = null,                              // no stored key — triad broken
             disclosureAccepted = true,
             byteLength = subThreshold,
@@ -66,7 +67,7 @@ class BatchEngineDecisionTest {
 
     @Test fun cloud_pick_no_network_degrades_to_local() {
         val allowed = BatchEngineDecision.cloudAllowed(
-            useCloud = true, providerName = "OPENAI", key = "sk", disclosureAccepted = true,
+            useCloud = true, providerId = ProviderId.OPENAI, key = "sk", disclosureAccepted = true,
             byteLength = subThreshold, costConfirmed = false,
             hasValidatedNetwork = { false }, notificationsEnabled = { true },
         )
@@ -75,7 +76,7 @@ class BatchEngineDecisionTest {
 
     @Test fun cloud_pick_notifications_off_degrades_to_local() {
         val allowed = BatchEngineDecision.cloudAllowed(
-            useCloud = true, providerName = "OPENAI", key = "sk", disclosureAccepted = true,
+            useCloud = true, providerId = ProviderId.OPENAI, key = "sk", disclosureAccepted = true,
             byteLength = subThreshold, costConfirmed = false,
             hasValidatedNetwork = { true }, notificationsEnabled = { false },
         )
@@ -86,7 +87,7 @@ class BatchEngineDecisionTest {
         // A large file (well past the confirm threshold) that never got the explicit confirm.
         val huge = 400L * 1024 * 1024
         val allowed = BatchEngineDecision.cloudAllowed(
-            useCloud = true, providerName = "OPENAI", key = "sk", disclosureAccepted = true,
+            useCloud = true, providerId = ProviderId.OPENAI, key = "sk", disclosureAccepted = true,
             byteLength = huge, costConfirmed = false,
             hasValidatedNetwork = { true }, notificationsEnabled = { true },
         )
@@ -96,7 +97,7 @@ class BatchEngineDecisionTest {
     @Test fun above_threshold_with_cost_confirm_is_allowed() {
         val huge = 400L * 1024 * 1024
         val allowed = BatchEngineDecision.cloudAllowed(
-            useCloud = true, providerName = "OPENAI", key = "sk", disclosureAccepted = true,
+            useCloud = true, providerId = ProviderId.OPENAI, key = "sk", disclosureAccepted = true,
             byteLength = huge, costConfirmed = true,
             hasValidatedNetwork = { true }, notificationsEnabled = { true },
         )

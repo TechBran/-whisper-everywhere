@@ -1,5 +1,7 @@
 package com.whispereverywhere.transcription.batch
 
+import com.whispereverywhere.provider.ProviderId
+
 /**
  * The ONE cloud-vs-local decision for a batch job, as a pure predicate the service delegates to.
  *
@@ -21,7 +23,7 @@ package com.whispereverywhere.transcription.batch
 object BatchEngineDecision {
     fun cloudAllowed(
         useCloud: Boolean,
-        providerName: String?,
+        providerId: ProviderId?,
         key: String?,
         disclosureAccepted: Boolean,
         byteLength: Long,
@@ -30,10 +32,12 @@ object BatchEngineDecision {
         notificationsEnabled: () -> Boolean,
     ): Boolean {
         if (!useCloud) return false
-        if (!BatchCloudGate.cloudEligible(providerName, key, disclosureAccepted)) return false
+        // The triad only needs non-null + key + disclosure; the cost step needs the id for the
+        // per-provider rate (UNKNOWN -> most-expensive-known, so it asks sooner, never under-warns).
+        if (!BatchCloudGate.cloudEligible(providerId?.name, key, disclosureAccepted)) return false
         if (!hasValidatedNetwork()) return false
         if (!notificationsEnabled()) return false
-        if (BatchCostEstimator.needsConfirmation(byteLength) && !costConfirmed) return false
+        if (BatchCostEstimator.needsConfirmation(byteLength, providerId) && !costConfirmed) return false
         return true
     }
 }

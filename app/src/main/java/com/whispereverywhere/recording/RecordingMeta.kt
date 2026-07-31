@@ -8,8 +8,22 @@ enum class BatchStatus { Recorded, Transcribing, PartiallyDone, Done, Failed }
 /** Per-chunk checkpoint state. Only [Done] chunks are never re-run on Retry. */
 enum class ChunkStatus { Pending, Done, Failed }
 
-/** Which engine actually produced a chunk's text. Drives the detail-screen engine chip. */
-enum class EngineUsed { LOCAL, OPENAI }
+/**
+ * Which engine actually produced a chunk's text. Drives the detail-screen engine chip. Serialized
+ * by constant NAME (never the ordinal), so additive members keep old manifests (LOCAL/OPENAI)
+ * parsing — no migration.
+ */
+enum class EngineUsed {
+    LOCAL, OPENAI, GEMINI, ELEVENLABS, SONIOX;
+    companion object {
+        fun fromProviderId(id: com.whispereverywhere.provider.ProviderId): EngineUsed = when (id) {
+            com.whispereverywhere.provider.ProviderId.OPENAI -> OPENAI
+            com.whispereverywhere.provider.ProviderId.GEMINI -> GEMINI
+            com.whispereverywhere.provider.ProviderId.ELEVENLABS -> ELEVENLABS
+            com.whispereverywhere.provider.ProviderId.SONIOX -> SONIOX
+        }
+    }
+}
 
 /**
  * One planned slice of [RecordingMeta.chunkPlan]. Byte offsets are into audio.pcm (raw PCM16LE),
