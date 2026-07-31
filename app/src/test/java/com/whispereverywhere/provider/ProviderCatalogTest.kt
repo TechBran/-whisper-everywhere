@@ -7,9 +7,9 @@ import org.junit.Test
 
 class ProviderCatalogTest {
 
-    @Test fun all_three_providers_are_present() {
+    @Test fun all_four_providers_are_present_in_order() {
         assertEquals(
-            listOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS),
+            listOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX),
             ProviderCatalog.all.map { it.id },
         )
     }
@@ -43,11 +43,35 @@ class ProviderCatalogTest {
         assertTrue(ProviderCatalog.byId(ProviderId.ELEVENLABS).supportsStreaming)
     }
 
-    @Test fun every_provider_supports_both_modalities() {
-        ProviderCatalog.all.forEach {
-            assertTrue("${it.id} STT", it.supportsStt)
-            assertTrue("${it.id} TTS", it.supportsTts)
-        }
+    // Replaces every_provider_supports_both_modalities: Soniox is STT-only, so the old
+    // "everyone supports TTS" invariant is deliberately no longer true.
+    @Test fun every_provider_is_stt_capable() {
+        ProviderCatalog.all.forEach { assertTrue("${it.id} STT", it.supportsStt) }
+    }
+
+    @Test fun soniox_is_stt_only_no_tts_no_streaming() {
+        val s = ProviderCatalog.byId(ProviderId.SONIOX)
+        assertTrue(s.supportsStt)
+        assertFalse("Soniox ships no TTS adapter this wave", s.supportsTts)
+        assertFalse("Soniox realtime WS is a follow-up, not v1", s.supportsStreaming)
+    }
+
+    @Test fun soniox_uses_a_bearer_authorization_header() {
+        val s = ProviderCatalog.byId(ProviderId.SONIOX)
+        assertEquals("Authorization", s.authHeaderName)
+        assertEquals("Bearer sk-test", s.authHeaderValue("sk-test"))
+    }
+
+    @Test fun soniox_does_not_train_on_data_by_default() {
+        // Quote-backed: "never used to improve Soniox models or services."
+        assertFalse(ProviderCatalog.byId(ProviderId.SONIOX).trainsOnDataByDefault)
+    }
+
+    @Test fun soniox_validation_url_is_the_models_endpoint() {
+        assertEquals(
+            "https://api.soniox.com/v1/models",
+            ProviderCatalog.byId(ProviderId.SONIOX).validationUrl,
+        )
     }
 
     @Test fun only_gemini_trains_on_data_by_default() {
@@ -71,5 +95,6 @@ class ProviderCatalogTest {
         assertEquals("OPENAI", ProviderId.OPENAI.name)
         assertEquals("GEMINI", ProviderId.GEMINI.name)
         assertEquals("ELEVENLABS", ProviderId.ELEVENLABS.name)
+        assertEquals("SONIOX", ProviderId.SONIOX.name)
     }
 }

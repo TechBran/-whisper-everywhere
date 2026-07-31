@@ -109,6 +109,9 @@ internal fun providerTrainingDisclosure(provider: Provider): String = when (prov
     ProviderId.ELEVENLABS ->
         "ElevenLabs trains on API data by default; you can opt out in your " +
             "ElevenLabs account settings."
+    ProviderId.SONIOX ->
+        "Soniox does not train on audio or transcripts sent through its API; uploaded " +
+            "audio is deleted right after each transcription."
 }
 
 /**

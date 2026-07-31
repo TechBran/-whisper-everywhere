@@ -68,6 +68,8 @@ internal fun ttsProviderPriceNote(providerId: ProviderId): String = when (provid
         "About half a credit per character, billed to your ElevenLabs plan."
     ProviderId.GEMINI ->
         "Preview model — Google's pricing is not final; billed to your Gemini key."
+    ProviderId.SONIOX ->
+        "Soniox is transcription-only; it has no read-aloud voices."
 }
 
 /**
@@ -80,6 +82,7 @@ internal fun ttsNoSpeedControlNote(providerId: ProviderId): String? = when (prov
     ProviderId.ELEVENLABS, ProviderId.GEMINI ->
         "This provider has no speed control; the speed setting applies to on-device voices only."
     ProviderId.OPENAI -> null
+    ProviderId.SONIOX -> null
 }
 
 /**
@@ -98,6 +101,7 @@ internal fun cloudVoiceDisplayName(
         ProviderId.OPENAI -> OpenAiTtsVoices.ALL
         ProviderId.GEMINI -> GeminiTtsVoices.ALL
         ProviderId.ELEVENLABS -> dynamicVoices ?: emptyList()
+        ProviderId.SONIOX -> emptyList()
     }
     return catalog.firstOrNull { it.voiceId == voiceId }?.displayName ?: voiceId
 }

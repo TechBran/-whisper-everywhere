@@ -436,6 +436,7 @@ fun EnginesAndVoicesScreen(
                             ProviderId.OPENAI -> OpenAiTtsVoices.ALL
                             ProviderId.GEMINI -> GeminiTtsVoices.ALL
                             ProviderId.ELEVENLABS -> null // dynamic — handled below
+                            ProviderId.SONIOX -> null // STT-only; never enters the TTS voice list
                         }
 
                         if (staticVoices != null) {

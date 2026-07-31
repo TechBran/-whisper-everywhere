@@ -30,7 +30,9 @@ class TtsProviderFactoryTest {
     }
 
     @Test fun every_adapter_emits_the_24k_bank_contract_rate() {
-        ProviderId.entries.forEach { id ->
+        // Iterate the providers that actually HAVE a TTS adapter, not the whole enum: Soniox is
+        // STT-only, so TtsProviderFactory.create rejects it — it is deliberately not a member here.
+        ProviderCatalog.TTS_CAPABLE_PROVIDERS.forEach { id ->
             assertEquals("$id sampleRate", 24_000, TtsProviderFactory.create(id, fake, "k", null).sampleRate)
         }
     }

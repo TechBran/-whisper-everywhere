@@ -6,7 +6,7 @@ package com.whispereverywhere.provider
  * Persistence keys off [name], NEVER the ordinal: reordering this enum would otherwise silently
  * repoint every user's stored credential at a different provider.
  */
-enum class ProviderId { OPENAI, GEMINI, ELEVENLABS }
+enum class ProviderId { OPENAI, GEMINI, ELEVENLABS, SONIOX }
 
 /**
  * Everything the app needs to know about a provider that is not a secret.
@@ -81,6 +81,32 @@ object ProviderCatalog {
             supportsStreaming = true,
             keyHelpUrl = "https://elevenlabs.io/app/settings/api-keys",
             trainsOnDataByDefault = true,
+        ),
+        Provider(
+            id = ProviderId.SONIOX,
+            displayName = "Soniox",
+            // Bearer, like OpenAI — unlike ElevenLabs' bare xi-api-key / Gemini's bare header key.
+            authHeaderName = "Authorization",
+            authHeaderValue = { "Bearer $it" },
+            // Cheapest authenticated GET; a bad key returns 401 unauthenticated, which the generic
+            // KeyValidator already maps to Invalid — no per-provider marker needed (Soniox uses a
+            // clean 401 for a bad key, and 402 for exhausted balance, both already handled).
+            validationUrl = "https://api.soniox.com/v1/models",
+            supportsStt = true,
+            // STT-only this wave. Soniox has a TTS surface, but no adapter ships here; it stays out
+            // of TTS_CAPABLE_PROVIDERS and TtsProviderFactory rejects it.
+            supportsTts = false,
+            // v1 is the per-VAD-segment async path (like Gemini/ElevenLabs). The realtime WebSocket
+            // is a recorded follow-up, not this wave.
+            supportsStreaming = false,
+            // Verify against the live Console at resolve time; the API-keys page lives under the
+            // Soniox Console.
+            keyHelpUrl = "https://console.soniox.com/",
+            // Quote-backed from Security & Privacy: audio + transcripts are "never used to improve
+            // Soniox models or services." (The async path DOES store them until we DELETE — the
+            // disclosure line pairs no-training with delete-after, which the adapter's cleanup makes
+            // literally true.)
+            trainsOnDataByDefault = false,
         ),
     )
 

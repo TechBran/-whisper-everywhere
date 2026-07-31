@@ -30,5 +30,6 @@ object TtsProviderFactory {
         ProviderId.OPENAI -> OpenAiTts(transport, apiKey)
         ProviderId.GEMINI -> GeminiTts(transport, apiKey)
         ProviderId.ELEVENLABS -> ElevenLabsTts(transport, apiKey, context?.applicationContext)
+        ProviderId.SONIOX -> error("Soniox has no TTS adapter — it is speech-to-text only")
     }
 }
