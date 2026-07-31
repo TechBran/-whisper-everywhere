@@ -76,6 +76,33 @@ class SonioxRealtimeProtocolTest {
         assertFalse(protocol().tolerant4xxRetry)
     }
 
+    @Test fun no_reachable_toString_can_render_the_key() {
+        // The Config holder is deliberately NOT a data class: a synthesized toString() would
+        // render api_key in cleartext, one debug interpolation away from a leak. The wire frame
+        // is the ONE legal carrier; every object's toString must be key-free. Walk the protocol
+        // object graph reflectively and assert none of it stringifies the secret.
+        val key = "sx-SECRET-9137"
+        val p = protocol()
+        val frames = p.bootstrap(key, "en")
+        val seen = mutableSetOf<Any>()
+        fun sweep(obj: Any?, depth: Int) {
+            if (obj == null || depth > 4 || !seen.add(obj)) return
+            if (obj !is Frame.Text) {  // the wire frame is the one legal carrier
+                assertFalse(
+                    "toString of ${obj.javaClass.name} leaks the key",
+                    obj.toString().contains(key),
+                )
+            }
+            obj.javaClass.declaredFields.forEach { f ->
+                if (f.type.isPrimitive) return@forEach
+                f.isAccessible = true
+                runCatching { sweep(f.get(obj), depth + 1) }
+            }
+        }
+        sweep(p, 0)
+        frames.forEach { sweep(it, 0) }
+    }
+
     // ---- config bootstrap shape (verbatim wire; language_hints present only when given) ----------
 
     @Test fun bootstrap_config_shape_is_exact_without_language() {

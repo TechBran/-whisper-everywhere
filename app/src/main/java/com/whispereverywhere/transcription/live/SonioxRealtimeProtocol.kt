@@ -66,15 +66,24 @@ object SonioxEvents {
         Token(text, (t["is_final"] as? JsonPrimitive)?.booleanOrNull ?: false)
     }
 
+    /**
+     * The ONE structure that ever holds the key outside SecureStore. Deliberately NOT a `data`
+     * class: a data class's synthesized toString() renders every field — one debug log or
+     * exception interpolation away from the key in cleartext. A plain class has Object's
+     * identity toString, and the explicit override below makes the redaction permanent rather
+     * than accidental. (Release-audit carried Minor, closed 2026-07-31.)
+     */
     @Serializable
-    private data class Config(
+    private class Config(
         @SerialName("api_key") val apiKey: String,
         val model: String = "stt-rt-v5",
         @SerialName("audio_format") val audioFormat: String = "s16le",
         @SerialName("sample_rate") val sampleRate: Int = 16000,
         @SerialName("num_channels") val numChannels: Int = 1,
         @SerialName("language_hints") val languageHints: List<String>? = null,
-    )
+    ) {
+        override fun toString(): String = "Config(api_key=<redacted>, model=$model)"
+    }
 }
 
 /**
