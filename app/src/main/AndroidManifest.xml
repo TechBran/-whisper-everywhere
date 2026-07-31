@@ -9,8 +9,9 @@
     <!-- Overlay permission for floating bubble -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Internet: used only to download the on-device speech model from Hugging Face (one-time).
-         No audio or transcription is ever sent over the network. -->
+    <!-- Internet: (1) one-time download of the on-device speech model from Hugging Face;
+         (2) OPTIONAL, user-keyed cloud STT / TTS / live transcription when the user configures a
+         provider and accepts the disclosure. Nothing is ever sent to us; on-device is the default. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 

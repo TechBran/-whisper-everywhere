@@ -642,6 +642,9 @@ class FloatingBubbleService : Service(),
         localEngine = null
         httpTransport = null
         liveWsFactory = null
+        // Shut the reconnect scheduler's daemon executor down BEFORE nulling the field, or the
+        // "realtime-reconnect" thread leaks for the life of the process (release-audit Minor A).
+        (liveReconnectScheduler as? com.whispereverywhere.transcription.live.ExecutorReconnectScheduler)?.shutdown()
         liveReconnectScheduler = null
         notifiedChoice = null
         lastCloudEngine = null

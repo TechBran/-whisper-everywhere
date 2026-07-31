@@ -349,4 +349,6 @@ class ExecutorReconnectScheduler(
     override fun schedule(delayMs: Long, task: () -> Unit) {
         exec.schedule(task, delayMs, TimeUnit.MILLISECONDS)
     }
+    /** Stop the daemon executor. onDestroy must call this or the "realtime-reconnect" thread leaks. */
+    fun shutdown() { exec.shutdownNow() }
 }
