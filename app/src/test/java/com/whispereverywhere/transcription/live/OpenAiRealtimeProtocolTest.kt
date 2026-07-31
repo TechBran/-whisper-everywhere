@@ -142,14 +142,39 @@ class OpenAiRealtimeProtocolTest {
     private class RecListener : RealtimeTransport.Listener {
         val deltas = mutableListOf<Pair<String, String>>()
         val completed = mutableListOf<Pair<String, String>>()
+        /** Interleaved event order, sibling-suite idiom — the delta-before-completion pin reads this. */
+        val order = mutableListOf<String>()
         override fun onConnected() {}
-        override fun onDelta(itemId: String, text: String) { deltas += itemId to text }
-        override fun onCompleted(itemId: String, transcript: String) { completed += itemId to transcript }
-        override fun onCommitted(itemId: String) {}
+        override fun onDelta(itemId: String, text: String) { deltas += itemId to text; order += "delta:$text" }
+        override fun onCompleted(itemId: String, transcript: String) { completed += itemId to transcript; order += "completed:$itemId" }
+        override fun onCommitted(itemId: String) { order += "committed:$itemId" }
         override fun onTranscriptionFailed(itemId: String) {}
         override fun onErrorEvent(code: String?, messageLength: Int) {}
         override fun onDisconnected() {}
         override fun onFatal(kind: FatalKind, code: Int) {}
+    }
+
+    // ---- the wire-JSON delta-before-completion pin (the gap the release verdict carried) ----
+
+    @Test fun wire_deltas_reach_the_listener_before_the_committed_ack_and_the_completion() {
+        // The sibling suites (Soniox, ElevenLabs) pin this with verbatim wire JSON; OpenAI's pin
+        // was carried as a gap in the server-turns verdict. Under server_vad the server streams
+        // deltas WHILE speech is in flight, then auto-commits, then completes — the whole point of
+        // the inversion. This drives the REAL parser with verbatim frames and asserts the strip
+        // sees words strictly before any turn boundary.
+        val rec = RecListener()
+        val p = OpenAiRealtimeProtocol().apply { bind(RecordingControl(), rec) }
+
+        p.onText(deltaFrame("it_9", "words "))
+        p.onText(deltaFrame("it_9", "as spoken"))
+        p.onText("""{"type":"${RealtimeEventParser.TYPE_COMMITTED}","item_id":"it_9"}""")
+        p.onText(completedFrame("it_9", "words as spoken."))
+
+        assertEquals(
+            "deltas precede the boundary, the boundary precedes the completion",
+            listOf("delta:words ", "delta:words as spoken", "committed:it_9", "completed:it_9"),
+            rec.order,
+        )
     }
 }
 
