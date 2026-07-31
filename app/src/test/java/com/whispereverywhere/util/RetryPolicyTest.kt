@@ -122,30 +122,41 @@ class RetryPolicyTest {
         assertEquals(3000L, policy.delayForAttempt(9))
     }
 
-    @Test fun delay_override_wins_over_the_computed_backoff() = runBlocking {
-        // A server saying "wait 8 seconds" must be honoured. Without this hook the client waits
-        // ~0.2s then ~0.4s, burning every attempt inside a window that is still closed.
-        val policy = RetryPolicy(maxAttempts = 2, baseDelayMs = 10, maxDelayMs = 20)
-        val seen = mutableListOf<Long>()
+    @Test fun delay_override_wins_over_the_computed_backoff() = runTest {
+        // A server saying "wait N ms" must be honoured. Without this hook the client waits the
+        // computed backoff (~200 then ~400 ms here), burning attempts inside a still-closed window.
+        // Assert on the ACTUAL delay: virtual time must advance by the OVERRIDE, not the backoff.
+        val policy = noJitterPolicy(maxAttempts = 3, baseDelayMs = 200, maxDelayMs = 10_000)
+        val seenArgs = mutableListOf<Pair<String, Int>>()
         var attempts = 0
         runCatching {
             policy.retry(
                 shouldRetry = { true },
-                delayOverrideMs = { _: Throwable, _: Int -> 1L }.also { seen.add(1L) },
+                delayOverrideMs = { t, attempt -> seenArgs.add((t.message ?: "") to attempt); 5_000L },
             ) { attempts++; throw RuntimeException("boom") }
         }
-        assertEquals(2, attempts)
+        assertEquals(3, attempts)
+        // Two waits happened (after attempts 1 and 2), each the 5 000 ms override, NOT 200/400.
+        assertEquals(10_000L, testScheduler.currentTime)
+        // And the override was actually consulted with the real (throwable, attempt) pair.
+        assertEquals(listOf("boom" to 1, "boom" to 2), seenArgs)
     }
 
-    @Test fun a_null_override_falls_back_to_the_computed_backoff() = runBlocking {
-        val policy = RetryPolicy(maxAttempts = 2, baseDelayMs = 1, maxDelayMs = 2)
+    @Test fun a_null_override_falls_back_to_the_computed_backoff() = runTest {
+        // A null override returns to delayForAttempt: 200 then 400 (jitter=0), summing to 600 ms of
+        // virtual time — provably the computed backoff, not the override path.
+        val policy = noJitterPolicy(maxAttempts = 3, baseDelayMs = 200, maxDelayMs = 10_000)
+        var overrideCalls = 0
         var attempts = 0
         runCatching {
-            policy.retry(shouldRetry = { true }, delayOverrideMs = { _, _ -> null }) {
-                attempts++; throw RuntimeException("boom")
-            }
+            policy.retry(
+                shouldRetry = { true },
+                delayOverrideMs = { _, _ -> overrideCalls++; null },
+            ) { attempts++; throw RuntimeException("boom") }
         }
-        assertEquals(2, attempts)
+        assertEquals(3, attempts)
+        assertEquals(2, overrideCalls)
+        assertEquals(600L, testScheduler.currentTime)
     }
 
     @Test fun existing_two_arg_call_sites_still_compile_and_behave() = runBlocking {
