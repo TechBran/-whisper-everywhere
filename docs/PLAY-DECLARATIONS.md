@@ -135,6 +135,19 @@ apology copy. Deltas never inject; mic-only via SourceRouted; Fallback(live, loc
 recipient, no disclosure-version change (same audio-to-a-provider meaning under v3). Per-provider
 "about" prices: OpenAI $0.017/min, ElevenLabs $0.007/min, Soniox $0.002/min. No speed claims.
 
+**Release ledger — Soniox TTS voice provider (2026-07-31):** Soniox becomes a fourth cloud
+read-aloud recipient (`tts-rt.soniox.com`, `tts-rt-v1`, pcm_s16le @ 24 kHz) behind the identical
+key + cloud-voice-selection + disclosure-v3 triad. **Determination: SAME data class already
+declared — "Other user-generated content → text you select for read-aloud", Shared = Yes,
+Optional — to one additional recipient.** NO new Data Safety class, NO new shared type, NO
+disclosure-version bump, NO re-prompt (same read-aloud-text-to-a-provider meaning). The recipient
+set grows, so both privacy §6 copies and the §7 checklist now enumerate four TTS providers.
+Soniox's TTS-input-text stance: its policy says inputs are "never used to improve Soniox models
+or services" and real-time (`tts-rt`) is not the async/storage path, so read-aloud text is not
+retained — the wording is audio/transcript-centric, disclosed honestly on the privacy line.
+Ledger entry: **Soniox TTS: fourth read-aloud recipient, same UGC-read-aloud class, no new class,
+v3 unchanged; Console narrative names four TTS providers.**
+
 - **Audio files → Voice or sound recordings:** Collected **Yes**, Shared **Yes**, purpose
   **App functionality**, **Optional**. The user must take two independent, deliberate actions
   before any audio is shared: add their own API key for a cloud provider, AND select that
@@ -222,7 +235,7 @@ party's behavior):
 - **On-device transcription history** is text-only, app-private, auto-pruned, never transmitted — it
   is NOT "collected" in Play's sense; mention it only under the on-device narrative if asked.
 - **Recipient narrative must name all four STT providers** (OpenAI, Google Gemini, ElevenLabs,
-  Soniox) and the three TTS voice providers (OpenAI, Google Gemini, ElevenLabs) — the storefront,
+  Soniox) and the four TTS voice providers (OpenAI, Google Gemini, ElevenLabs, Soniox) — the storefront,
   privacy policy §6, and this form must enumerate the same set. MediaProjection device audio is
   never sent to any of them (Section 3); say so if a reviewer probes the media-transcription feature.
 

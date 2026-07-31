@@ -109,7 +109,7 @@
         <li><strong>OpenAI:</strong> Does not train its models on data sent through the API.</li>
         <li><strong>Google Gemini:</strong> On the free tier, Google uses what you send to improve its products, and human reviewers may read it. Paid tiers do not.</li>
         <li><strong>ElevenLabs:</strong> Trains on API data by default; you can opt out in your ElevenLabs account settings.</li>
-        <li><strong>Soniox:</strong> Does not train its models on the audio or transcripts you send; uploaded audio is deleted after each transcription.</li>
+        <li><strong>Soniox:</strong> Does not train its models on the audio or transcripts you send; uploaded audio is deleted after each transcription — and, for read-aloud, Soniox states inputs are not used to improve its models and real-time synthesis is not the stored async path, so the text you have read aloud is not retained (Soniox's wording is audio/transcript-centric; treated as covered).</li>
     </ul>
     <p>Your provider API key is stored only on your device, encrypted using the Android Keystore. We never see it, log it, or transmit it anywhere except: once, to the provider you added it for, to verify it works, and thereafter — only while that provider is selected as your transcription engine — in the authenticated transcription request to that same provider.</p>
 
