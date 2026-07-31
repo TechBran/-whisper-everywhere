@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 72
-        versionName = "3.2.0"  // the Play Store generational release: GPLv3 licensed, full listing revamp
+        versionCode = 73
+        versionName = "3.3.0"  // multi-provider cloud release: optional user-key STT (OpenAI/Gemini/ElevenLabs/Soniox), cloud read-aloud, batch file transcription, OpenAI live word-for-word
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
