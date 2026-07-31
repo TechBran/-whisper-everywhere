@@ -20,11 +20,26 @@ import java.nio.ByteOrder
 class AudioDecoder {
 
     sealed interface DecodeResult {
-        data class Ok(val byteLength: Long, val durationMs: Long) : DecodeResult
+        /** [sampleRate] is the rate of the PCM actually written to the sink: 16 kHz on the default
+         *  STT path, or the source's NATIVE rate when [decodeTo] was asked not to resample. */
+        data class Ok(val byteLength: Long, val durationMs: Long, val sampleRate: Int) : DecodeResult
         data class Unsupported(val reason: String) : DecodeResult
     }
 
-    fun decodeTo(context: Context, uri: Uri, sink: PcmSink, onProgress: (Float) -> Unit): DecodeResult {
+    /**
+     * [resampleTo16k] (default true) keeps the byte-identical STT behaviour: everything lands at
+     * 16 kHz mono. Pass false to emit the source's NATIVE-rate mono PCM instead and read the rate
+     * back from [DecodeResult.Ok.sampleRate] — the ElevenLabs mp3 fallback uses this so it can
+     * resample the full-band native audio straight to 24 kHz, rather than through the lossy 16 kHz
+     * whisper path.
+     */
+    fun decodeTo(
+        context: Context,
+        uri: Uri,
+        sink: PcmSink,
+        resampleTo16k: Boolean = true,
+        onProgress: (Float) -> Unit,
+    ): DecodeResult {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -78,11 +93,12 @@ class AudioDecoder {
                             val buf = codec.getOutputBuffer(outIdx)!!
                             val shorts = ShortArray(info.size / 2)
                             buf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
-                            val mono16k = Resampler.to16k(Downmix.toMono(shorts, outChannels), outRate)
-                            val bytes = ByteArray(mono16k.size * 2)
-                            for (i in mono16k.indices) {
-                                bytes[i * 2] = (mono16k[i].toInt() and 0xFF).toByte()
-                                bytes[i * 2 + 1] = (mono16k[i].toInt() shr 8).toByte()
+                            val mono = Downmix.toMono(shorts, outChannels)
+                            val pcm = if (resampleTo16k) Resampler.to16k(mono, outRate) else mono
+                            val bytes = ByteArray(pcm.size * 2)
+                            for (i in pcm.indices) {
+                                bytes[i * 2] = (pcm[i].toInt() and 0xFF).toByte()
+                                bytes[i * 2 + 1] = (pcm[i].toInt() shr 8).toByte()
                             }
                             sink.append(bytes, bytes.size)
                         }
@@ -91,7 +107,8 @@ class AudioDecoder {
                     }
                 }
             }
-            return DecodeResult.Ok(sink.bytesWritten(), durationUs / 1_000)
+            val emittedRate = if (resampleTo16k) Resampler.TARGET_RATE else outRate
+            return DecodeResult.Ok(sink.bytesWritten(), durationUs / 1_000, emittedRate)
         } catch (t: Throwable) {
             // Corrupt file, unsupported codec, revoked Uri grant — one honest failure, no partials
             // presented as success. Message is generic; never log the Uri (it can embed a filename).

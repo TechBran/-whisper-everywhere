@@ -84,4 +84,36 @@ class SampleMathTest {
         val out = Resampler.upsample16kTo24k(shortArrayOf(0, 100, 200, 300)).toList()
         assertEquals(listOf<Short>(0, 66, 133, 200, 266, 300), out)
     }
+
+    // -------- Resampler.resampleTo24k: arbitrary source rate -> 24 kHz (ElevenLabs mp3 full-band
+    // fix). The mp3 fallback decodes at the mp3's NATIVE rate (44_100 for mp3_44100_128) and lands
+    // straight on 24 kHz, never through the lossy 16 kHz whisper decode. --------
+
+    @Test fun resampleTo24k_isBackwardCompatibleWith16kUpsample() {
+        // upsample16kTo24k now delegates here with srcRate = 16_000, so the golden must survive.
+        assertEquals(
+            listOf<Short>(0, 66, 133, 200, 266, 300),
+            Resampler.resampleTo24k(shortArrayOf(0, 100, 200, 300), srcRate = 16_000).toList(),
+        )
+    }
+
+    @Test fun resampleTo24k_from44100_downsamples_by_the_right_ratio() {
+        // 44_100 -> 24_000: floor(N * 24000/44100). 441 native samples -> 240 at 24 kHz.
+        assertEquals(240, Resampler.resampleTo24k(ShortArray(441), srcRate = 44_100).size)
+        assertEquals(0, Resampler.resampleTo24k(ShortArray(0), srcRate = 44_100).size)
+    }
+
+    @Test fun resampleTo24k_from48000_downsamples_two_to_one_and_preserves_endpoints() {
+        // 48_000 -> 24_000 is exactly 2:1; endpoints must be preserved and no index overflow.
+        val ramp = shortArrayOf(0, 100, 200, 300, 400, 500)
+        val out = Resampler.resampleTo24k(ramp, srcRate = 48_000)
+        assertEquals(3, out.size)
+        assertEquals(0.toShort(), out.first())
+        assertEquals(400.toShort(), out.last()) // sample 2 -> input index 4
+    }
+
+    @Test fun resampleTo24k_passesThroughWhenAlready24k() {
+        val already = shortArrayOf(1, 2, 3)
+        assertEquals(already, Resampler.resampleTo24k(already, srcRate = 24_000))
+    }
 }

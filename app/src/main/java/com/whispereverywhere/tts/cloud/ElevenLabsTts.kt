@@ -9,6 +9,7 @@ import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.recording.AudioDecoder
 import com.whispereverywhere.recording.PcmSink
+import com.whispereverywhere.recording.Resampler
 import com.whispereverywhere.transcription.cloud.FatalKind
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -23,7 +24,8 @@ import java.io.File
  *     [PcmBytes.toShortArrayLE], no decode. Requires a paid (Creator+) tier.
  *  2. On a tier rejection of pcm (a 401/403 whose body names the output format, and is NOT a credit
  *     fault), retry the SAME unit with the universal `output_format=mp3_44100_128` and decode it
- *     through the EXISTING batch [AudioDecoder] (constraint: no second decoder) up to 24 kHz shorts.
+ *     through the EXISTING batch [AudioDecoder] (constraint: no second decoder) at its NATIVE rate,
+ *     then resample straight to 24 kHz — full-band, not through the lossy 16 kHz whisper path.
  *
  * The tier discriminator is deliberately narrow: a plain bad-key 401 or an out-of-credit 401 must
  * NOT be misread as a format rejection (that would spend a wasted mp3 request and hide a fatal
@@ -185,11 +187,12 @@ class ElevenLabsTts(
          * [PcmSink], so the in-memory mp3 is written to a temp file in [Context.getCacheDir], handed
          * in as `Uri.fromFile`, decoded, read back, and the temp files deleted in `finally`.
          *
-         * COMPILE-REALITY NOTE: [AudioDecoder] is hardwired to 16 kHz (`Resampler.to16k`, shared
-         * with the whisper STT path, which must stay untouched). The plan assumed it lands 24 kHz;
-         * it does not. So the decoded 16 kHz PCM is upsampled 16k->24k here (linear interpolation,
-         * mirroring `Resampler`) to honor the 24 kHz bank contract. This is a rate adaptation, NOT a
-         * new decoder. Framework end-to-end -> validated on device only (instrumented compile-check);
+         * FULL-BAND FIX (owner-promised): the decoder is asked NOT to resample (`resampleTo16k =
+         * false`), so it emits the mp3's NATIVE-rate mono PCM (44.1 kHz for mp3_44100_128) and
+         * reports that rate. We then resample the full-band native audio STRAIGHT to 24 kHz. The old
+         * path went through the shared 16 kHz whisper decoder first and discarded everything above
+         * ~8 kHz before upsampling — audibly band-limited. This is a rate adaptation, NOT a new
+         * decoder. Framework end-to-end -> validated on device only (instrumented compile-check);
          * the pure-logic tests inject a stub for [decodeMp3] and never reach this.
          */
         fun decodeMp3ToPcm24k(context: Context, bytes: ByteArray): ShortArray {
@@ -199,27 +202,24 @@ class ElevenLabsTts(
                 tmpIn.writeBytes(bytes)
                 val sink = PcmSink(tmpOut)
                 val result = try {
-                    AudioDecoder().decodeTo(context, Uri.fromFile(tmpIn), sink) { /* progress ignored */ }
+                    AudioDecoder().decodeTo(context, Uri.fromFile(tmpIn), sink, resampleTo16k = false) {
+                        /* progress ignored */
+                    }
                 } finally {
                     sink.close()
                 }
-                if (result is AudioDecoder.DecodeResult.Unsupported) {
-                    ShortArray(0) // a corrupt/undecodable body reads as silence; the seam reports Done
-                } else {
-                    upsample16kTo24k(PcmBytes.toShortArrayLE(tmpOut.readBytes()))
+                when (result) {
+                    is AudioDecoder.DecodeResult.Unsupported ->
+                        ShortArray(0) // a corrupt/undecodable body reads as silence; the seam reports Done
+                    is AudioDecoder.DecodeResult.Ok -> Resampler.resampleTo24k(
+                        PcmBytes.toShortArrayLE(tmpOut.readBytes()), result.sampleRate,
+                    )
                 }
             } finally {
                 runCatching { tmpIn.delete() }
                 runCatching { tmpOut.delete() }
             }
         }
-
-        /** Linear-interpolation upsample 16 kHz -> 24 kHz mono PCM16 for the mp3 playback bridge.
-         *  Delegates to the single shared [com.whispereverywhere.recording.Resampler.upsample16kTo24k]
-         *  (plan Task 1 lift) so this path and the live engine cannot diverge; retained as an
-         *  `internal` alias so the existing golden-output test keeps pinning it here. */
-        internal fun upsample16kTo24k(input: ShortArray): ShortArray =
-            com.whispereverywhere.recording.Resampler.upsample16kTo24k(input)
     }
 }
 
