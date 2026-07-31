@@ -1,0 +1,237 @@
+package com.whispereverywhere.transcription.cloud
+
+import com.whispereverywhere.net.FakeHttpTransport
+import com.whispereverywhere.net.HttpResult
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.IOException
+
+class SonioxSttTest {
+
+    private val pcm = ByteArray(3200) { (it % 127).toByte() }
+
+    private val fileOk = """{"id":"file-1"}"""
+    private val createOk = """{"id":"job-1","status":"queued"}"""
+    private val completed = """{"status":"completed"}"""
+    private val transcriptOk = """{"tokens":[{"text":"hello "},{"text":"world"}]}"""
+
+    /** A fake that walks the whole happy pipeline, dispatching by URL. */
+    private fun happyFake() = FakeHttpTransport { url, _ ->
+        when {
+            url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+            url.endsWith("/transcript") -> HttpResult.Ok(200, transcriptOk)
+            url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+            url.contains("/transcriptions/") -> HttpResult.Ok(200, completed) // poll
+            else -> error("unexpected url $url")
+        }
+    }
+
+    private fun soniox(fake: FakeHttpTransport) = SonioxStt(fake, "soniox-key", pollIntervalMs = 0L)
+
+    @Test fun happy_path_concatenates_tokens_into_the_transcript() = runBlocking {
+        assertEquals(SttResult.Text("hello world"), soniox(happyFake()).transcribe(pcm, null))
+    }
+
+    @Test fun the_upload_is_a_wav_container_in_the_file_part() = runBlocking {
+        val fake = happyFake()
+        soniox(fake).transcribe(pcm, null)
+        assertEquals("file", fake.lastFilePart?.fieldName)
+        val sent = fake.lastFilePart!!.bytes
+        assertEquals("RIFF", String(sent, 0, 4, Charsets.US_ASCII))
+        assertEquals(pcm.size + 44, sent.size)
+    }
+
+    @Test fun every_call_sends_the_bearer_header_and_the_key_is_never_in_a_url() = runBlocking {
+        val fake = happyFake()
+        SonioxStt(fake, "soniox-secret", pollIntervalMs = 0L).transcribe(pcm, null)
+        assertEquals("Bearer soniox-secret", fake.lastHeaders["Authorization"])
+        assertFalse(fake.lastUrl!!.contains("soniox-secret"))
+        fake.deletedUrls.forEach { assertFalse(it.contains("soniox-secret")) }
+    }
+
+    @Test fun create_sends_the_pinned_model_and_the_uploaded_file_id() = runBlocking {
+        val fake = happyFake()
+        soniox(fake).transcribe(pcm, null)
+        val body = fake.lastJsonBody!! // last postJson body = the create call
+        assertTrue(body.contains("stt-async-v5"))
+        assertTrue(body.contains("file-1"))
+    }
+
+    @Test fun a_specific_language_becomes_a_hint_and_auto_omits_it() = runBlocking {
+        val f1 = happyFake()
+        SonioxStt(f1, "k", pollIntervalMs = 0L).transcribe(pcm, "fr")
+        assertTrue(f1.lastJsonBody!!.contains("language_hints"))
+        assertTrue(f1.lastJsonBody!!.contains("fr"))
+        // Multilingual auto-detect is the default: null AND "auto" both omit the hint.
+        val f2 = happyFake(); SonioxStt(f2, "k", pollIntervalMs = 0L).transcribe(pcm, null)
+        assertFalse(f2.lastJsonBody!!.contains("language_hints"))
+        val f3 = happyFake(); SonioxStt(f3, "k", pollIntervalMs = 0L).transcribe(pcm, "auto")
+        assertFalse(f3.lastJsonBody!!.contains("language_hints"))
+    }
+
+    @Test fun happy_path_deletes_both_the_transcription_and_the_file() = runBlocking {
+        val fake = happyFake()
+        soniox(fake).transcribe(pcm, null)
+        assertTrue(fake.deletedUrls.any { it.endsWith("/transcriptions/job-1") })
+        assertTrue(fake.deletedUrls.any { it.endsWith("/files/file-1") })
+    }
+
+    @Test fun a_failed_create_still_deletes_the_uploaded_file() = runBlocking {
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcriptions") -> HttpResult.HttpError(400, "invalid_request")
+                else -> error("unexpected $url")
+            }
+        }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertEquals(SttError.BadSegment, r.error)
+        assertTrue("file must be cleaned up even though no job was created",
+            fake.deletedUrls.any { it.endsWith("/files/file-1") })
+    }
+
+    @Test fun a_failed_job_returns_transient_and_deletes_both() = runBlocking {
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+                url.contains("/transcriptions/") ->
+                    HttpResult.Ok(200, """{"status":"error","error_type":"internal_error"}""")
+                else -> error("unexpected $url")
+            }
+        }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertTrue(r.error is SttError.Transient)
+        assertTrue(fake.deletedUrls.any { it.endsWith("/transcriptions/job-1") })
+        assertTrue(fake.deletedUrls.any { it.endsWith("/files/file-1") })
+    }
+
+    @Test fun a_stuck_job_returns_transient_when_the_poll_budget_is_exhausted_and_cleans_up() = runBlocking {
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+                url.contains("/transcriptions/") -> HttpResult.Ok(200, """{"status":"processing"}""")
+                else -> error("unexpected $url")
+            }
+        }
+        val stt = SonioxStt(fake, "k", pollIntervalMs = 0L, maxPolls = 2)
+        val r = stt.transcribe(pcm, null) as SttResult.Failed
+        assertTrue("a stuck job must fall local, never hang", r.error is SttError.Transient)
+        assertTrue(fake.deletedUrls.any { it.endsWith("/files/file-1") })
+    }
+
+    @Test fun a_401_on_upload_is_fatal_invalid_key() = runBlocking {
+        val fake = FakeHttpTransport { _, _ -> HttpResult.HttpError(401, "unauthenticated") }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.INVALID_KEY, (r.error as SttError.Fatal).kind)
+    }
+
+    @Test fun a_401_with_a_balance_marker_is_out_of_credit_not_a_bad_key() = runBlocking {
+        val fake = FakeHttpTransport { _, _ -> HttpResult.HttpError(401, """{"error_type":"insufficient_balance"}""") }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.OUT_OF_CREDIT, (r.error as SttError.Fatal).kind)
+    }
+
+    @Test fun a_402_is_out_of_credit() = runBlocking {
+        val fake = FakeHttpTransport { _, _ -> HttpResult.HttpError(402, "balance exhausted") }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.OUT_OF_CREDIT, (r.error as SttError.Fatal).kind)
+    }
+
+    @Test fun a_404_on_create_is_model_unavailable() = runBlocking {
+        // 404 on the CREATE call means the pinned model id is wrong/retired — a permanent config
+        // fault, latched, not a per-segment hiccup.
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcriptions") -> HttpResult.HttpError(404, "model not found")
+                else -> error("unexpected $url")
+            }
+        }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.MODEL_UNAVAILABLE, (r.error as SttError.Fatal).kind)
+    }
+
+    @Test fun a_404_on_poll_is_transient_not_model_unavailable() = runBlocking {
+        // Same status code, different step: a missing file/transcription is odd server state, not a
+        // model fault. Must NOT latch the provider off.
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+                url.contains("/transcriptions/") -> HttpResult.HttpError(404, "not found")
+                else -> error("unexpected $url")
+            }
+        }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertTrue(r.error is SttError.Transient)
+    }
+
+    @Test fun a_400_is_a_bad_segment() = runBlocking {
+        val fake = FakeHttpTransport { _, _ -> HttpResult.HttpError(400, "invalid_request") }
+        assertEquals(SttError.BadSegment, (soniox(fake).transcribe(pcm, null) as SttResult.Failed).error)
+    }
+
+    @Test fun a_403_is_fatal_forbidden() = runBlocking {
+        val fake = FakeHttpTransport { _, _ -> HttpResult.HttpError(403, "") }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.FORBIDDEN, (r.error as SttError.Fatal).kind)
+    }
+
+    @Test fun a_plain_429_is_transient_but_a_429_with_balance_is_out_of_credit() = runBlocking {
+        val plain = FakeHttpTransport { _, _ -> HttpResult.HttpError(429, "limit_exceeded") }
+        assertTrue((soniox(plain).transcribe(pcm, null) as SttResult.Failed).error is SttError.Transient)
+        val quota = FakeHttpTransport { _, _ -> HttpResult.HttpError(429, "insufficient_balance") }
+        val r = soniox(quota).transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.OUT_OF_CREDIT, (r.error as SttError.Fatal).kind)
+    }
+
+    @Test fun a_5xx_is_transient() = runBlocking {
+        val fake = FakeHttpTransport { _, _ -> HttpResult.HttpError(503, "upstream") }
+        assertTrue((soniox(fake).transcribe(pcm, null) as SttResult.Failed).error is SttError.Transient)
+    }
+
+    @Test fun a_network_error_is_offline() = runBlocking {
+        val fake = FakeHttpTransport { _, _ -> HttpResult.NetworkError(IOException("no route")) }
+        assertEquals(SttError.Offline, (soniox(fake).transcribe(pcm, null) as SttResult.Failed).error)
+    }
+
+    @Test fun an_unparseable_transcript_body_is_transient_not_silently_empty() = runBlocking {
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcript") -> HttpResult.Ok(200, "not json")
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+                url.contains("/transcriptions/") -> HttpResult.Ok(200, completed)
+                else -> error("unexpected $url")
+            }
+        }
+        assertTrue((soniox(fake).transcribe(pcm, null) as SttResult.Failed).error is SttError.Transient)
+    }
+
+    @Test fun a_completed_job_with_no_tokens_is_a_legitimate_empty_transcript() = runBlocking {
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcript") -> HttpResult.Ok(200, """{"tokens":[]}""")
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+                url.contains("/transcriptions/") -> HttpResult.Ok(200, completed)
+                else -> error("unexpected $url")
+            }
+        }
+        assertEquals(SttResult.Text(""), soniox(fake).transcribe(pcm, null))
+    }
+
+    @Test fun oversized_audio_fails_locally_without_a_request() = runBlocking {
+        val fake = happyFake()
+        val huge = ByteArray(26 * 1024 * 1024)
+        val r = SonioxStt(fake, "k", pollIntervalMs = 0L).transcribe(huge, null) as SttResult.Failed
+        assertEquals(SttError.BadSegment, r.error)
+        assertEquals(0, fake.callCount)
+        assertTrue(fake.deletedUrls.isEmpty())
+    }
+}
