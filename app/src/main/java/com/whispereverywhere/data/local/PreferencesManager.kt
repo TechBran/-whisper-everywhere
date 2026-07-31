@@ -217,8 +217,11 @@ class PreferencesManager(private val context: Context) {
      * button, never by dismissal.
      */
     var cloudDisclosureAccepted: Boolean
-        get() = prefs.getBoolean(KEY_CLOUD_DISCLOSURE_ACCEPTED, false)
-        set(value) { prefs.edit().putBoolean(KEY_CLOUD_DISCLOSURE_ACCEPTED, value).apply() }
+        // Routes through the pure, version-scoped seam so the read path a unit test can pin (default
+        // false; a prior-version acceptance does NOT satisfy the current getter) IS the production
+        // read path — see readCloudDisclosureAccepted / CLOUD_DISCLOSURE_KEY.
+        get() = readCloudDisclosureAccepted(prefs::getBoolean)
+        set(value) { prefs.edit().putBoolean(CLOUD_DISCLOSURE_KEY, value).apply() }
 
     /**
      * Which engine transcribes. null = on-device (the default and the shipped behaviour).
@@ -326,7 +329,25 @@ class PreferencesManager(private val context: Context) {
          * drove v1 -> v2, the version bumps on the meaning change; v2 stays in the store and an unset
          * v3 re-prompts everyone who accepted the audio-only v2.
          */
-        private const val KEY_CLOUD_DISCLOSURE_ACCEPTED = "cloud_disclosure_accepted_v3"
+        /**
+         * The CURRENT disclosure version. Bumped in lockstep with [CLOUD_DISCLOSURE_KEY] whenever
+         * the disclosure's MEANING changes (see the history above). Kept as its own constant so a
+         * test can assert the key still carries this version — a meaning edit that forgets to bump
+         * either one breaks that assertion and forces a deliberate decision.
+         */
+        internal const val CLOUD_DISCLOSURE_VERSION = 3
+        internal const val CLOUD_DISCLOSURE_KEY = "cloud_disclosure_accepted_v3"
+
+        /**
+         * The one production read of cloud-disclosure consent, as a pure function of a
+         * `getBoolean(key, default)` accessor so it is unit-testable without a Context. Two
+         * invariants the entire cloud triad rests on live here: the default is **false** (an unset
+         * store never authorizes egress), and the read is scoped to [CLOUD_DISCLOSURE_KEY] — a value
+         * written under a PRIOR version key does not satisfy it, so a meaning change that bumps the
+         * version re-prompts everyone instead of silently inheriting stale consent.
+         */
+        internal fun readCloudDisclosureAccepted(getBoolean: (String, Boolean) -> Boolean): Boolean =
+            getBoolean(CLOUD_DISCLOSURE_KEY, false)
         private const val KEY_STT_PROVIDER = "stt_provider_id"
         private const val KEY_STT_LIVE_MODE = "stt_live_mode"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
