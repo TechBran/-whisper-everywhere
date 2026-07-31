@@ -103,6 +103,20 @@ user-facing surface is the mode-selector row's price note (the honest cost discl
 speed claims are made anywhere in the copy, per the same triad gate as batch cloud STT). Ledger
 entry: **C4 live transcribe: transport+price only, v3 unchanged, price surfaced on selector.**
 
+**Release ledger — Soniox STT provider (2026-07-31):** a fourth selectable cloud STT provider
+(Soniox, `api.soniox.com`) joins OpenAI, Google Gemini, and ElevenLabs behind the identical
+key + provider-selection + disclosure-v3 triad. **Determination: this sends the SAME data class
+already declared — dictated (and user-chosen file) audio, to a cloud provider under the user's own
+account** — to one additional recipient. It adds NO new Data Safety data class (still Audio files →
+Voice or sound recordings, Shared = Yes, Optional) and NO new shared type; it does NOT alter the
+read-aloud text entry (Soniox ships STT-only this wave — `supportsTts = false`). Therefore **NO
+disclosure version bump and NO re-prompt** (same audio-to-a-provider meaning as v3), but the set of
+recipients grows, so both privacy-policy copies' §6 enumeration and the exemption note above are
+updated to name Soniox as a fourth recipient. Soniox's retention profile differs (the async path
+stores audio + transcript server-side until the adapter DELETEs them after each transcription) and
+is disclosed on its own privacy-policy line. Ledger entry: **Soniox STT: fourth audio recipient,
+same Audio-files class, no new class, v3 unchanged; Console Data Safety narrative names all four.**
+
 - **Audio files → Voice or sound recordings:** Collected **Yes**, Shared **Yes**, purpose
   **App functionality**, **Optional**. The user must take two independent, deliberate actions
   before any audio is shared: add their own API key for a cloud provider, AND select that
@@ -121,7 +135,7 @@ entry: **C4 live transcribe: transport+price only, v3 unchanged, price surfaced 
 - **The ephemeral-processing exemption is NOT claimed.** That exemption is available only when
   the recipient retains the shared data no longer than necessary to service the user's real-time
   request and does not use it for any other purpose. Whichever provider the user configures
-  (OpenAI, Google Gemini, ElevenLabs) sets its own retention and training practices — see the
+  (OpenAI, Google Gemini, ElevenLabs, Soniox) sets its own retention and training practices — see the
   privacy policy for how they differ — and this app has no way to bind, verify, or assert that
   behavior on a third party's behalf. Declare Shared = Yes without applying the exemption.
 - **MediaProjection device audio (the media-transcription feature — podcasts, videos, other
