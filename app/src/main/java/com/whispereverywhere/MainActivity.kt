@@ -25,7 +25,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.ui.screens.BatchTranscribeScreen
-import com.whispereverywhere.ui.screens.CloudProvidersScreen
+import com.whispereverywhere.ui.screens.EnginesAndVoicesScreen
 import com.whispereverywhere.ui.screens.HomeScreen
 import com.whispereverywhere.ui.screens.LegalDocumentScreen
 import com.whispereverywhere.ui.screens.OnboardingModelScreen
@@ -217,8 +217,22 @@ fun WhisperEverywhereNavigation() {
             )
         }
 
+        // Engines & voices hub (transcription engine + read-aloud voice + API keys). The
+        // `cloud_providers` route is kept as a back-compat alias resolving to the SAME composable,
+        // so any retained deep link / back-stack entry still resolves.
+        composable("engines_voices") {
+            EnginesAndVoicesScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToPrivacyPolicy = {
+                    navController.navigate("privacy_policy")
+                }
+            )
+        }
+
         composable("cloud_providers") {
-            CloudProvidersScreen(
+            EnginesAndVoicesScreen(
                 onNavigateBack = {
                     navController.popBackStack()
                 },
