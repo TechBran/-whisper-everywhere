@@ -188,6 +188,30 @@ class EngineSelectionTest {
         assertNull(resolveBatchSttProvider("SONIOX"))
     }
 
+    // --- BatchTranscribeScreen cloud-row eligibility MUST match the service's batch clamp ---
+
+    // The Ready screen computes its cloud-row eligibility exactly this way; pinned here so it can
+    // never drift back to resolveSttProvider (the wider live-mode resolver) and offer an "OpenAI"
+    // cloud row for a Gemini/ElevenLabs/Soniox selection the service would silently clamp to
+    // on-device. Same predicate the screen runs: cloudEligible(resolveBatchSttProvider(id)?.name, ...).
+    private fun batchScreenCloudEligible(sttProviderId: String?): Boolean =
+        com.whispereverywhere.transcription.batch.BatchCloudGate.cloudEligible(
+            providerId = resolveBatchSttProvider(sttProviderId)?.name,
+            key = "a-stored-key",
+            disclosureAccepted = true,
+        )
+
+    @Test fun batch_cloud_row_is_eligible_only_for_openai_even_with_key_and_disclosure() {
+        assertEquals(true, batchScreenCloudEligible("OPENAI"))
+        // A non-OpenAI selection the live resolver accepts must NOT light the cloud row: the batch
+        // service clamps it to on-device, so the screen must too (else the hardcoded OpenAI label
+        // and price mislead, and "Use cloud" silently runs on-device).
+        assertEquals(false, batchScreenCloudEligible("GEMINI"))
+        assertEquals(false, batchScreenCloudEligible("ELEVENLABS"))
+        assertEquals(false, batchScreenCloudEligible("SONIOX"))
+        assertEquals(false, batchScreenCloudEligible(null))
+    }
+
     // --- SttProviderFactory: the ONE ProviderId -> adapter construction point (both services) ---
 
     @Test fun factory_maps_each_provider_id_to_its_own_adapter() {

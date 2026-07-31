@@ -27,7 +27,7 @@ import com.whispereverywhere.recording.BatchStatus
 import com.whispereverywhere.recording.ChunkStatus
 import com.whispereverywhere.recording.RecordingMeta
 import com.whispereverywhere.recording.RecordingStore
-import com.whispereverywhere.service.resolveSttProvider
+import com.whispereverywhere.service.resolveBatchSttProvider
 import com.whispereverywhere.transcription.TranscriptStore
 import com.whispereverywhere.transcription.batch.BatchCloudGate
 import com.whispereverywhere.transcription.batch.BatchCostEstimator
@@ -66,7 +66,13 @@ fun BatchTranscribeScreen(
     // global selection (cloudEligible already encodes "cloud is both selected and usable").
     val cloudEligible = remember {
         val prefs = WhisperEverywhereApp.getInstance().preferencesManager
-        val providerId = resolveSttProvider(prefs.sttProviderId)
+        // Use the OpenAI-only batch clamp, NOT resolveSttProvider: the batch SERVICE resolves cloud
+        // through resolveBatchSttProvider (BatchTranscriptionService.resolveCloud), so a Gemini /
+        // ElevenLabs / Soniox selection that the wider live-mode resolver would accept must NOT make
+        // the cloud row appear here — the service would clamp it to on-device, and the row's
+        // hardcoded "OpenAI" title + OpenAI price would be for a key the user may not even hold.
+        // Matching the predicates keeps the screen and the service in agreement.
+        val providerId = resolveBatchSttProvider(prefs.sttProviderId)
         val key = providerId?.let { prefs.providerAccounts.key(it) }
         BatchCloudGate.cloudEligible(providerId?.name, key, prefs.cloudDisclosureAccepted)
     }
