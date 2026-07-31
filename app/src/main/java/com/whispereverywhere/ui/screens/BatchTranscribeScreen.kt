@@ -73,6 +73,9 @@ fun BatchTranscribeScreen(
     }
     val providerName = batchProvider?.let { ProviderCatalog.byId(it).displayName } ?: ""
     val providerCents = BatchCostEstimator.centsPerMinute(batchProvider)
+    // Gemini's audio price is not published: the number above is only an illustrative floor, so the
+    // copy must SAY so rather than present it as the provider's real rate (finding #2).
+    val priceKnown = BatchCostEstimator.isPriceKnown(batchProvider)
     val cloudEligible = remember {
         val prefs = WhisperEverywhereApp.getInstance().preferencesManager
         val key = batchProvider?.let { prefs.providerAccounts.key(it) }
@@ -135,6 +138,7 @@ fun BatchTranscribeScreen(
                     cloudEligible = cloudEligible,
                     providerName = providerName,
                     providerCents = providerCents,
+                    priceKnown = priceKnown,
                     useCloud = useCloud,
                     onUseCloud = { useCloud = it },
                     onTranscribe = {
@@ -228,7 +232,11 @@ fun BatchTranscribeScreen(
             text = {
                 Text(
                     "Transcribe about ${formatMinutes(pc.minutes)} in the cloud for about " +
-                        "${formatCents(pc.cents)} with your $providerName key?"
+                        "${formatCents(pc.cents)} with your $providerName key?" +
+                        if (!priceKnown) {
+                            "\n\n$providerName's audio price isn't published — this is only an " +
+                                "estimate at another provider's rate, so the real charge may differ."
+                        } else ""
                 )
             },
             confirmButton = { Button(onClick = pc.onCloud) { Text("Use cloud") } },
@@ -252,6 +260,7 @@ private fun ReadyContent(
     cloudEligible: Boolean,
     providerName: String,
     providerCents: Double,
+    priceKnown: Boolean,
     useCloud: Boolean,
     onUseCloud: (Boolean) -> Unit,
     onTranscribe: () -> Unit,
@@ -281,7 +290,10 @@ private fun ReadyContent(
             EngineRow(
                 selected = useCloud,
                 title = providerName,
-                subtitle = "about ¢${providerCents}/min",
+                // Honest copy: a KNOWN rate reads "about ¢X/min"; an UNKNOWN one (Gemini audio) is
+                // labelled as unpublished so the illustrative floor is never shown as a real price.
+                subtitle = if (priceKnown) "about ¢${providerCents}/min"
+                    else "price not published — estimated at ¢${providerCents}/min",
                 onClick = { onUseCloud(true) },
             )
         }

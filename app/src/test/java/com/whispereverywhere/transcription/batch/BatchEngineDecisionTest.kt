@@ -83,6 +83,18 @@ class BatchEngineDecisionTest {
         assertFalse(allowed)
     }
 
+    @Test fun a_sub_threshold_gemini_job_without_cost_confirm_degrades_to_local() {
+        // Finding #2 end-to-end: Gemini's price is unpublished, so even a sub-threshold job (which an
+        // OpenAI job of the same size is allowed to skip, see cloud_pick_..._below_threshold_is_allowed)
+        // must NOT proceed to cloud without the explicit confirm — the force-confirm reaches the floor.
+        val allowed = BatchEngineDecision.cloudAllowed(
+            useCloud = true, providerId = ProviderId.GEMINI, key = "gem-k", disclosureAccepted = true,
+            byteLength = subThreshold, costConfirmed = false,
+            hasValidatedNetwork = { true }, notificationsEnabled = { true },
+        )
+        assertFalse("Gemini's unpublished price forces the confirm even below threshold", allowed)
+    }
+
     @Test fun above_threshold_without_cost_confirm_degrades_to_local() {
         // A large file (well past the confirm threshold) that never got the explicit confirm.
         val huge = 400L * 1024 * 1024

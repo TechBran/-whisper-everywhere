@@ -33,7 +33,8 @@ object BatchEngineDecision {
     ): Boolean {
         if (!useCloud) return false
         // The triad only needs non-null + key + disclosure; the cost step needs the id for the
-        // per-provider rate (UNKNOWN -> most-expensive-known, so it asks sooner, never under-warns).
+        // per-provider rate. A KNOWN rate asks sooner, never under the true rate; an UNKNOWN one
+        // (Gemini audio) always trips needsConfirmation, so the gate can't be skipped on a low estimate.
         if (!BatchCloudGate.cloudEligible(providerId?.name, key, disclosureAccepted)) return false
         if (!hasValidatedNetwork()) return false
         if (!notificationsEnabled()) return false
