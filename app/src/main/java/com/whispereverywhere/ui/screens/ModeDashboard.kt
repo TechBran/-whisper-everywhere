@@ -1,5 +1,7 @@
 package com.whispereverywhere.ui.screens
 
+import com.whispereverywhere.provider.ProviderId
+
 // ---------------------------------------------------------------------------------------------
 // Pure dashboard logic — Compose-free so it is JVM-unit-testable without Robolectric. Every
 // function is a FORMATTER over already-resolved primitives (a provider display name, a model-tier
@@ -56,11 +58,28 @@ internal fun transcriptionEngineChip(engineDisplayName: String?, localModelLabel
  * [transcriptionEngineChip] directly. "word-for-word" is a MODE name, never "faster": measured
  * on-device is a tie at best, so a speed claim would be a lie. The `engineDisplayName != null`
  * guard means an (impossible) on-device liveMode never leaves a dangling suffix.
+ *
+ * [liveMode] is the RESOLVED live state, not the raw persisted flag: the caller must pass
+ * [dictationLiveActive] so the suffix appears only for a genuinely live OpenAI session. word-for-word
+ * live streaming is OpenAI-only, and `sttLiveMode` is deliberately left set after an engine switch,
+ * so passing the raw flag would advertise "Gemini · word-for-word" over a Gemini BATCH session.
  */
 internal fun dictationChip(engineDisplayName: String?, localModelLabel: String?, liveMode: Boolean): String {
     val base = transcriptionEngineChip(engineDisplayName, localModelLabel)
     return if (liveMode && engineDisplayName != null) "$base · word-for-word" else base
 }
+
+/**
+ * Whether word-for-word live streaming is actually active — OpenAI-ONLY, mirroring
+ * [com.whispereverywhere.service.decideEngineChoice], which upgrades a session to CLOUD_LIVE only
+ * when `liveMode && sttProviderId == ProviderId.OPENAI.name`. The persisted `sttLiveMode` flag is
+ * deliberately NOT reset when the engine switches away from OpenAI (it is inert on batch-only
+ * engines — see PreferencesManager), so the Dictation chip MUST re-apply this rule itself; otherwise
+ * a stale flag surfaces "word-for-word" over a Gemini/ElevenLabs BATCH session. [sttProviderIdName]
+ * is the raw persisted id (ProviderId.name) or null for on-device.
+ */
+internal fun dictationLiveActive(sttProviderIdName: String?, sttLiveMode: Boolean): Boolean =
+    sttLiveMode && sttProviderIdName == ProviderId.OPENAI.name
 
 /**
  * The Read-aloud card's chip. On-device Kokoro → "Kokoro" + optional " · <voice>" (the Kokoro

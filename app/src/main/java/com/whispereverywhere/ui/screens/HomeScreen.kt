@@ -238,7 +238,11 @@ fun HomeScreen(
             ModeCard(
                 icon = Icons.Filled.Mic,
                 title = "Dictation",
-                chip = dictationChip(sttEngineName, localModelLabel, sttLiveMode),
+                chip = dictationChip(
+                    sttEngineName,
+                    localModelLabel,
+                    dictationLiveActive(sttProviderId, sttLiveMode),
+                ),
                 onClick = onNavigateToEnginesVoices,
             )
 

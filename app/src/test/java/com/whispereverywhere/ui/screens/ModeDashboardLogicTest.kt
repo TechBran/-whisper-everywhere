@@ -44,6 +44,22 @@ class ModeDashboardLogicTest {
     @Test fun dictation_chip_makes_no_speed_claim() =
         assertFalse(dictationChip("OpenAI", null, liveMode = true).contains("fast"))
 
+    // --- word-for-word is OpenAI-only (mirrors decideEngineChoice); sttLiveMode is left set after
+    //     an engine switch, so the chip must re-apply the OpenAI rule itself ---
+    @Test fun live_active_only_for_openai() {
+        assertTrue(dictationLiveActive("OPENAI", sttLiveMode = true))
+        assertFalse(dictationLiveActive("GEMINI", sttLiveMode = true))
+        assertFalse(dictationLiveActive("ELEVENLABS", sttLiveMode = true))
+        assertFalse(dictationLiveActive(null, sttLiveMode = true))
+        assertFalse(dictationLiveActive("OPENAI", sttLiveMode = false))
+    }
+    @Test fun dictation_chip_no_word_for_word_on_stale_live_after_switch_to_gemini() {
+        // Repro: select OpenAI, enable word-for-word, switch engine to Gemini. sttLiveMode stays true
+        // but is inert (Gemini runs batch). The chip must read "Gemini", never "Gemini · word-for-word".
+        val live = dictationLiveActive("GEMINI", sttLiveMode = true)
+        assertEquals("Gemini", dictationChip("Gemini", null, live))
+    }
+
     // --- read-aloud chip ---
     @Test fun kokoro_chip_with_voice() =
         assertEquals("Kokoro · af_heart", readAloudChip(engineDisplayName = null, voiceDisplayName = "af_heart"))
