@@ -31,6 +31,54 @@ class TextJoinTest {
         assertTrue(TextJoin.needsSpace("Hello", "(note)"))
     }
 
+    // --- non-spacing scripts: the inverse of a melt (a STRAY space) --------------
+
+    @Test fun two_han_characters_need_no_space() {
+        // '你好' + '世界' must stay '你好世界' — CJK is not space-delimited.
+        assertFalse(TextJoin.needsSpace("你好", "世界"))
+        assertEquals("你好世界", TextJoin.join("你好", "世界"))
+        assertEquals("你好世界", TextJoin.assemble(listOf("你好", "世界")))
+    }
+
+    @Test fun japanese_kana_needs_no_space() {
+        assertFalse(TextJoin.needsSpace("こんにち", "は"))       // hiragana
+        assertFalse(TextJoin.needsSpace("カタ", "カナ"))         // katakana
+    }
+
+    @Test fun thai_needs_no_space() {
+        assertFalse(TextJoin.needsSpace("สวัส", "ดี"))
+    }
+
+    @Test fun a_mixed_latin_cjk_boundary_still_spaces() {
+        // Only a BOTH-sides non-spacing boundary is suppressed; Latin↔CJK keeps the space.
+        assertTrue(TextJoin.needsSpace("hello", "世界"))
+        assertTrue(TextJoin.needsSpace("世界", "hello"))
+    }
+
+    // --- pad: the clipboard/paste both-boundary guard ---------------------------
+
+    @Test fun pad_leads_a_space_when_appending_to_an_alnum_field() {
+        // The Facebook/Keep paste melt in miniature: existing "Hello", segment "there".
+        assertEquals(" there", TextJoin.pad("Hello", "there", ""))
+    }
+
+    @Test fun pad_adds_nothing_against_a_trailing_space_or_empty_field() {
+        assertEquals("there", TextJoin.pad("Hello ", "there", ""))
+        assertEquals("there", TextJoin.pad("", "there", ""))
+    }
+
+    @Test fun pad_guards_both_boundaries_for_a_mid_caret_paste() {
+        assertEquals(" big ", TextJoin.pad("Hello", "big", "there"))
+    }
+
+    @Test fun pad_attaches_closing_punctuation_without_a_lead_space() {
+        assertEquals(".", TextJoin.pad("Hello", ".", ""))
+    }
+
+    @Test fun pad_does_not_space_a_cjk_paste_boundary() {
+        assertEquals("世界", TextJoin.pad("你好", "世界", ""))
+    }
+
     @Test fun empty_either_side_needs_no_space() {
         assertFalse(TextJoin.needsSpace("", "world"))
         assertFalse(TextJoin.needsSpace("Hello", ""))
