@@ -117,7 +117,23 @@ class ElevenLabsRealtimeProtocol(
         this.sink = sink
     }
 
-    override fun bootstrap(apiKey: String, language: String?): List<Frame> = emptyList() // no config frame
+    /**
+     * No config frame — but this IS the per-open reset point for held state (parity with
+     * [SonioxRealtimeProtocol.bootstrap]). [reset] fires only on a deliberate [RealtimeTransport.close];
+     * a transient WS drop reconnects WITHOUT it, so without clearing here the pre-drop held-commit state
+     * (heldChunk / the in-flight slot / a deferred commit) would survive onto the fresh socket:
+     * post-reconnect commits would DEFER forever behind a stale inFlightId, and the still-armed stale
+     * timeout could bind a later, unrelated turn. Clearing inFlightId here also neutralizes that stale
+     * timeout — [onTimeout]'s [claimInFlight] then finds a mismatch (or null) and no-ops.
+     */
+    override fun bootstrap(apiKey: String, language: String?): List<Frame> {
+        synchronized(gate) {
+            heldChunk = null
+            inFlightId = null
+            commitDeferred = false
+        }
+        return emptyList()
+    }
 
     override fun onAppend(pcm16k: ByteArray): Boolean {
         val toFlush = synchronized(gate) {

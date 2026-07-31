@@ -229,6 +229,41 @@ class ElevenLabsRealtimeProtocolTest {
         assertTrue(sink.completed.isEmpty())
     }
 
+    // ---- per-open reset on reconnect (bootstrap clears held-commit state) ------------------------
+
+    @Test fun bootstrap_on_reconnect_clears_held_commit_state_so_the_next_commit_is_not_deferred() {
+        val p = protocol()
+        // Turn A committed and in flight; turn B deferred behind it (single-in-flight serialization).
+        p.onAppend(pcm(shortArrayOf(1, 2)))
+        p.onCommit()
+        val idA = sink.committed.single()
+        p.onCommit() // B deferred while A is in flight
+        assertEquals("B is deferred, not bound, while A is in flight", 1, sink.committed.size)
+
+        // A transient WS drop then reopen: the transport reconnects WITHOUT calling reset() (that fires
+        // only on a deliberate close), so bootstrap must itself clear the stale held-commit state.
+        p.bootstrap("el-secret", null)
+
+        // A fresh commit after the reopen must send IMMEDIATELY, not sit deferred behind stale A.
+        val framesBefore = control.frames.size
+        p.onAppend(pcm(shortArrayOf(3, 4)))
+        assertTrue(p.onCommit())
+        assertEquals("post-reconnect commit flushes at once", framesBefore + 1, control.frames.size)
+        assertEquals("the fresh commit binds a new id (not deferred)", 2, sink.committed.size)
+        val idFresh = sink.committed.last()
+        assertTrue("the fresh turn's id differs from the pre-drop one", idFresh != idA)
+
+        // The fresh turn resolves normally.
+        p.onText("""{"message_type":"committed_transcript","text":"fresh"}""")
+        assertEquals(listOf(idFresh to "fresh"), sink.completed)
+
+        // The still-armed pre-drop timeout (for A) and the fresh turn's timeout both fire now: neither
+        // resolves anything — bootstrap neutralized the stale slot and the fresh turn is already done.
+        scheduler.fireAll()
+        assertTrue("the stale pre-drop timeout binds/resolves nothing", sink.failed.isEmpty())
+        assertEquals("no extra completion from a stale timer", 1, sink.completed.size)
+    }
+
     // ---- errors carry length only ---------------------------------------------------------------
 
     @Test fun input_error_dispatches_code_and_length_only_never_content() {
