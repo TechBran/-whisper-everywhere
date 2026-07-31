@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription
 
+import com.whispereverywhere.text.TextJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.BufferedWriter
@@ -24,7 +25,7 @@ class TranscriptSink(
 
     @Synchronized
     fun append(segment: String) {
-        val s = segment.trim()
+        val s = TextJoin.normalize(segment)
         if (s.isEmpty()) return
         writer.write(s)
         writer.write(" ")

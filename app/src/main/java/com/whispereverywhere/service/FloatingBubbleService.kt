@@ -38,6 +38,7 @@ import com.whispereverywhere.net.ConnectivityMonitor
 import com.whispereverywhere.net.OkHttpTransport
 import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
+import com.whispereverywhere.text.TextJoin
 import com.whispereverywhere.transcription.LocalWhisperEngine
 import com.whispereverywhere.transcription.SegmentOutcome
 import com.whispereverywhere.transcription.TranscriptionEngine
@@ -2073,9 +2074,12 @@ class FloatingBubbleService : Service(),
         android.util.Log.i("WE-DIAG", "handleResult: session=$sessionContext live=$currentContext len=${text.length}")
         // History: accumulate every completed segment (both injection and preview contexts);
         // the session persists to TranscriptStore at finalize.
-        if (text.isNotBlank()) {
-            if (sessionTranscript.isNotEmpty()) sessionTranscript.append(' ')
-            sessionTranscript.append(text.trim())
+        val historyTok = TextJoin.normalize(text)
+        if (historyTok.isNotEmpty()) {
+            if (sessionTranscript.isNotEmpty() && TextJoin.needsSpace(sessionTranscript, historyTok)) {
+                sessionTranscript.append(' ')
+            }
+            sessionTranscript.append(historyTok)
         }
         when (sessionContext) {
             BubbleContext.TEXT_FIELD -> {
