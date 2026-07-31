@@ -57,6 +57,15 @@ class BatchTranscriber(
     private val backend: WhisperBackend,
     private val modelPathProvider: ModelPathProvider,
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * Re-checked before EACH cloud chunk so a mid-job revocation of the CHEAP consent/notification
+     * flags degrades the rest of the job to on-device (finding #6). The job's cloud eligibility was
+     * resolved once at start; a long file can run for minutes, during which the user may withdraw
+     * disclosure consent or disable notifications. Reads only the cheap flags — never the network
+     * probe, which the service keeps lazy. Defaults to always-permitted so pure-local jobs and the
+     * existing tests are unaffected.
+     */
+    private val cloudStillPermitted: () -> Boolean = { true },
 ) {
     private val _progress = MutableStateFlow<BatchProgress?>(null)
     val progress: StateFlow<BatchProgress?> = _progress.asStateFlow()
@@ -103,8 +112,12 @@ class BatchTranscriber(
         var meta = store.read(id) ?: return
 
         // (1) The engine was decided UPSTREAM (service: BatchCloudGate + cost confirm +
-        // notifications). Non-null cloud here means "this job is allowed to upload".
-        val effectiveCloud: SttProvider? = cloud
+        // notifications). Non-null cloud here means "this job is allowed to upload". [effectiveCloud]
+        // is mutable so a mid-job flag revocation (finding #6) can degrade it to null for the rest of
+        // the run; [plannedAtCloudCeiling] remembers the plan's ceiling so a degraded chunk — planned
+        // large for cloud — is re-sliced to the local ceiling before it reaches the native model.
+        var effectiveCloud: SttProvider? = cloud
+        val plannedAtCloudCeiling = cloud != null
         val ceiling = if (effectiveCloud != null) testCloudCeiling else testLocalChunk
 
         // (2) Plan (or re-plan on reset). The coarse silence scan STREAMS the file in fixed windows
@@ -132,6 +145,9 @@ class BatchTranscriber(
                 for ((i, chunk) in meta.chunkPlan.withIndex()) {
                     if (chunk.status == ChunkStatus.Done) continue           // (RESUME) never re-run
                     if (cancelled) break
+                    // (RE-CHECK, finding #6) The cheap consent/notification flags may have been
+                    // revoked since the job started; if so, degrade to on-device for the rest of it.
+                    if (effectiveCloud != null && !cloudStillPermitted()) effectiveCloud = null
                     _progress.value = BatchProgress(id, i, meta.chunkPlan.size, BatchStatus.Transcribing)
 
                     val pcm = ByteArray(chunk.endByte - chunk.startByte)
@@ -152,9 +168,14 @@ class BatchTranscriber(
                             }
                         }
                         else -> {
-                            // Planned at the LOCAL ceiling (see (1)) — safe to feed whole.
                             if (ctx == 0L) ctx = loadCtx()
-                            usedLocal = true; runLocal(ctx, pcm, meta.language) to EngineUsed.LOCAL
+                            usedLocal = true
+                            // A chunk planned at the CLOUD ceiling (job started cloud, then degraded
+                            // mid-run) must be re-sliced to the local ceiling before the native model;
+                            // a natively-local job planned small and feeds whole.
+                            val t = if (plannedAtCloudCeiling) runLocalSliced(ctx, pcm, meta.language)
+                                    else runLocal(ctx, pcm, meta.language)
+                            t to EngineUsed.LOCAL
                         }
                     }
 

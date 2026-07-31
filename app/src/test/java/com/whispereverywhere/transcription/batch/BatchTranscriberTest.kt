@@ -105,6 +105,39 @@ class BatchTranscriberTest {
         assertEquals(EngineUsed.LOCAL, m.engineUsed)
     }
 
+    @Test fun a_mid_job_consent_revocation_degrades_the_rest_to_local() = runBlocking {
+        // Finding #6: the cheap consent/notification flags are re-read before EACH cloud chunk. Here
+        // they permit only the first chunk, then flip off — the remaining chunks must degrade to
+        // on-device, and (since they were planned at the CLOUD ceiling) be re-sliced to the local
+        // ceiling before the native model.
+        val (store, id) = storeWith(pcmBytes = 24_000)
+        val fake = FakeHttpTransport { _, _ -> HttpResult.Ok(200, """{"text":"C "}""") }
+        val permittedCalls = AtomicInteger(0)
+        val maxSamplesSeen = AtomicInteger(0)
+        val backend = object : WhisperBackend {
+            override fun load(modelPath: String) = 1L
+            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+                maxSamplesSeen.getAndUpdate { s -> maxOf(s, samples.size) }; return "LOC"
+            }
+            override fun release(ctx: Long) {}
+        }
+        val t = BatchTranscriber(
+            store, cloud = OpenAiStt(fake, "sk-k"), backend = backend, modelPathProvider = modelPath,
+            cloudStillPermitted = { permittedCalls.getAndIncrement() == 0 }, // permit chunk 0 only
+        ).apply { testCloudCeiling = 8000; testLocalChunk = 4000 }
+        t.transcribe(id)
+        val m = store.read(id)!!
+        assertEquals(BatchStatus.Done, m.status)
+        assertTrue("more than one chunk", m.chunkPlan.size >= 2)
+        assertEquals("cloud served exactly the first chunk before consent was revoked", 1, fake.callCount)
+        assertTrue("local rescued the rest of the job", store.assembledText(m).contains("LOC"))
+        assertEquals("a mixed cloud+local job reports LOCAL", EngineUsed.LOCAL, m.engineUsed)
+        assertTrue(
+            "degraded chunks were re-sliced to the local ceiling (${maxSamplesSeen.get()} samples)",
+            maxSamplesSeen.get() <= 4000 / 2,
+        )
+    }
+
     @Test fun a_fatal_cloud_error_latches_stops_and_leaves_finished_chunks_for_resume() = runBlocking {
         val (store, id) = storeWith(pcmBytes = 9000)
         val n = AtomicInteger(0)

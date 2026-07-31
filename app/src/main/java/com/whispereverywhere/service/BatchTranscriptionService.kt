@@ -240,6 +240,13 @@ class BatchTranscriptionService : Service() {
                 cloud = cloud,
                 backend = WhisperNativeBackend,
                 modelPathProvider = app.whisperModelManager,
+                // Re-read the CHEAP consent/notification flags before each cloud chunk so a mid-job
+                // revocation degrades the rest of the job to on-device (finding #6). Deliberately
+                // NOT the network probe — that stays lazy/once. Only meaningful when cloud != null.
+                cloudStillPermitted = {
+                    app.preferencesManager.cloudDisclosureAccepted &&
+                        NotificationManagerCompat.from(this).areNotificationsEnabled()
+                },
             )
             activeTranscriber = transcriber
             BatchJobController.active = transcriber
