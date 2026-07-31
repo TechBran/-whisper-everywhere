@@ -169,6 +169,44 @@ class SonioxSttTest {
         assertEquals(FatalKind.OUT_OF_CREDIT, (r.error as SttError.Fatal).kind)
     }
 
+    @Test fun a_bad_key_body_that_merely_mentions_balance_is_still_invalid_key_not_out_of_credit() = runBlocking {
+        // Marker-tightening (finding #9): the old broad markers ("balance"/"budget"/"exhausted")
+        // mislabeled a plain bad-key 401 as an empty wallet whenever the body incidentally mentioned
+        // an account "balance". Only the specific insufficient-balance class means no credit.
+        val fake = FakeHttpTransport { _, _ ->
+            HttpResult.HttpError(401, """{"error":"invalid api key — see your account balance page"}""")
+        }
+        val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed
+        assertEquals(FatalKind.INVALID_KEY, (r.error as SttError.Fatal).kind)
+    }
+
+    @Test fun the_poll_loop_stops_at_the_wall_clock_deadline_even_with_polls_remaining() = runBlocking {
+        // The documented ~40 s bound made real (finding #9): with a huge maxPolls but a now() that
+        // jumps past the wall-clock deadline after the first poll, the loop must fall Transient (->
+        // local) rather than keep polling, and still clean up the stored file.
+        var pollGets = 0
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+                url.contains("/transcriptions/") -> { pollGets++; HttpResult.Ok(200, """{"status":"processing"}""") }
+                else -> error("unexpected $url")
+            }
+        }
+        // now() calls, in order: deadline-calc (0 -> deadline 40_000), first while-check (10, inside),
+        // second while-check (50_000, past the deadline -> exit).
+        val times = ArrayDeque(listOf(0L, 10L, 50_000L))
+        val stt = SonioxStt(
+            fake, "k", pollIntervalMs = 0L, maxPolls = 100_000,
+            maxPollWallClockMs = 40_000L, now = { times.removeFirstOrNull() ?: 60_000L },
+        )
+        val r = stt.transcribe(pcm, null) as SttResult.Failed
+        assertTrue("past the deadline must fall Transient -> local", r.error is SttError.Transient)
+        assertTrue("the wall clock bounded the loop far under maxPolls (got $pollGets)", pollGets <= 2)
+        assertTrue("the stored file must still be cleaned up",
+            fake.deletedUrls.any { it.endsWith("/files/file-1") })
+    }
+
     @Test fun a_402_is_out_of_credit() = runBlocking {
         val fake = FakeHttpTransport { _, _ -> HttpResult.HttpError(402, "balance exhausted") }
         val r = soniox(fake).transcribe(pcm, null) as SttResult.Failed

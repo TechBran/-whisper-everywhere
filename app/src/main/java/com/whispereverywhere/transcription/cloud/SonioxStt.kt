@@ -52,6 +52,11 @@ class SonioxStt(
     private val model: String = DEFAULT_MODEL,
     private val pollIntervalMs: Long = 1_000L,
     private val maxPolls: Int = 40,
+    // The DOCUMENTED ~40 s bound made real: a wall-clock deadline over the whole poll loop, so a run
+    // whose per-poll GETs are individually slow cannot drift far past 40 s before falling local.
+    // maxPolls alone bounds the ITERATION count, not elapsed time.
+    private val maxPollWallClockMs: Long = 40_000L,
+    private val now: () -> Long = System::currentTimeMillis,
 ) : SttProvider {
 
     override val id = ProviderId.SONIOX
@@ -97,10 +102,13 @@ class SonioxStt(
             }
             transcriptionId = tid
 
-            // 3. Poll to a terminal state, BOUNDED. Not-completed-in-budget -> Transient (falls local).
+            // 3. Poll to a terminal state, BOUNDED by BOTH an iteration budget (maxPolls) AND an
+            //    outer wall-clock deadline (maxPollWallClockMs). Past either -> Transient (falls
+            //    local), so a job whose individual poll GETs are slow still honors the ~40 s bound.
             var completed = false
             var polls = 0
-            while (polls < maxPolls) {
+            val pollDeadline = now() + maxPollWallClockMs
+            while (polls < maxPolls && now() < pollDeadline) {
                 delay(pollIntervalMs)
                 when (val st = transport.get("$TRANSCRIPTIONS_URL/$tid", headers)) {
                     is HttpResult.NetworkError -> return SttResult.Failed(SttError.Offline)
@@ -222,8 +230,12 @@ class SonioxStt(
         private val IN_FLIGHT = setOf("queued", "processing", "downloading", "transcribing")
         private const val COMPLETED = "completed"
         // Balance/credit markers Soniox may put under an ambiguous 401/429 (fact sheet: 402 is the
-        // clean code, but the split is cheap insurance and matches the ElevenLabs lesson).
-        private val BALANCE_MARKERS = listOf("insufficient_balance", "balance", "budget", "exhausted")
+        // clean code, but the split is cheap insurance and matches the ElevenLabs lesson). TIGHTENED
+        // to the specific insufficient-balance class: the old broad "balance"/"budget"/"exhausted"
+        // matched incidental words (a bad-key body that merely mentions an account "balance" page),
+        // mislabeling a plain INVALID_KEY as an empty wallet. These underscored error_type-class
+        // markers only appear when the account genuinely has no credit.
+        private val BALANCE_MARKERS = listOf("insufficient_balance", "insufficient_funds")
         // A job-failure error_type that blames the audio -> this segment's fault (BadSegment).
         private val AUDIO_ERROR_MARKERS = listOf("audio", "decode", "unsupported", "invalid_request")
     }

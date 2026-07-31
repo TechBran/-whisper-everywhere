@@ -173,7 +173,8 @@ class CloudProvidersScreenLogicTest {
     }
 
     @Test fun other_providers_keep_the_plain_rejection_copy() {
-        // OpenAI and Gemini have no per-endpoint key scoping, so the scoping hint would be noise.
+        // OpenAI, Gemini, and Soniox have no per-endpoint key scoping, so the scoping hint would be
+        // noise — only ElevenLabs gets the restricted-key variant.
         assertEquals(
             "That key was rejected. Check you copied all of it.",
             statusMessage(KeyStatus.Invalid, "OpenAI", ProviderId.OPENAI),
@@ -181,6 +182,10 @@ class CloudProvidersScreenLogicTest {
         assertEquals(
             "That key was rejected. Check you copied all of it.",
             statusMessage(KeyStatus.Invalid, "Google Gemini", ProviderId.GEMINI),
+        )
+        assertEquals(
+            "That key was rejected. Check you copied all of it.",
+            statusMessage(KeyStatus.Invalid, "Soniox", ProviderId.SONIOX),
         )
     }
 
