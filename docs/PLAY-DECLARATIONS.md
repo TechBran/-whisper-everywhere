@@ -117,6 +117,14 @@ stores audio + transcript server-side until the adapter DELETEs them after each 
 is disclosed on its own privacy-policy line. Ledger entry: **Soniox STT: fourth audio recipient,
 same Audio-files class, no new class, v3 unchanged; Console Data Safety narrative names all four.**
 
+**Release ledger — Batch all-providers + VAD bypass (2026-07-31):** batch cloud STT widened from
+OpenAI-only to all four providers (identical gates); per-provider chunk ceilings (from each
+adapter's base64-aware maxRequestBytes) and per-provider "about" pricing (UNKNOWN -> most-expensive-
+known for the confirm decision only). The batch on-device path now bypasses the Silero VAD so a
+user-chosen file is transcribed in full; LIVE dictation's VAD is unchanged. No new recipient, no
+disclosure-version change (same audio-to-a-provider meaning under v3). Two audit Minors folded in:
+reconnect-scheduler shutdown; honest 3.3.0 INTERNET manifest comment.
+
 - **Audio files → Voice or sound recordings:** Collected **Yes**, Shared **Yes**, purpose
   **App functionality**, **Optional**. The user must take two independent, deliberate actions
   before any audio is shared: add their own API key for a cloud provider, AND select that
@@ -213,9 +221,12 @@ pre-audit claims:
   new WebSocket transport + price tier only). No re-prompt, no Data Safety change from either.
 - **Home usage-stats footer** no longer claims "runs entirely on-device / no usage limits" to cloud
   users; no storefront "no limits" copy may contradict the honest per-engine footer.
-- **Batch cloud is OpenAI-only** (`resolveBatchSttProvider` clamp). The batch screen's cloud row and
-  price reflect OpenAI, not whatever STT provider is globally selected — do not imply batch runs on
-  Gemini/ElevenLabs/Soniox.
+- **Batch cloud STT now offers all four providers** (OpenAI, Gemini, ElevenLabs, Soniox) — the
+  same set as live dictation, behind the identical triad + disclosure v3 + cost confirm +
+  notifications, per job. The batch screen's cloud row and price reflect the GLOBALLY SELECTED
+  STT provider (not always OpenAI). The §5/§6 recipient narrative already names all four for
+  dictation — batch now uses the same recipients, so no recipient-list change is needed; confirm
+  the batch sentence no longer implies OpenAI-only.
 
 ### Listing-copy step (BOTH copies, one release)
 

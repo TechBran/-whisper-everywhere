@@ -6,7 +6,7 @@ import org.junit.Test
 
 /**
  * Invariant #2 pinned: cloud requires ALL THREE of a selected provider, a stored key, and accepted
- * disclosure v2. The service consults this ONE predicate instead of re-deriving the triad in prose —
+ * disclosure v3. The service consults this ONE predicate instead of re-deriving the triad in prose —
  * FloatingBubbleService.resolveTranscriptionEngine is private and does NOT itself read the
  * disclosure flag (that gating lives upstream in provider setup), so batch needs its own gate.
  */

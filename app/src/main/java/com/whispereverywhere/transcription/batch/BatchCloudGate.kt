@@ -2,7 +2,7 @@ package com.whispereverywhere.transcription.batch
 
 /**
  * Invariant #2 written as code: batch cloud transcription requires ALL of a selected provider, a
- * stored key, and accepted disclosure v2 — the same triad live dictation enforces.
+ * stored key, and accepted disclosure v3 — the same triad live dictation enforces.
  *
  * This exists because the live path's enforcement is not reusable here:
  * FloatingBubbleService.resolveTranscriptionEngine is a private member returning a fully-wired

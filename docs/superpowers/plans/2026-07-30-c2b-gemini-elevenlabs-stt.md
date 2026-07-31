@@ -16,6 +16,7 @@
 - **Provider fatal errors LATCH** (handled in `CloudTranscriptionEngine`, not the adapter). Each adapter only maps its own markers → `FatalKind`. 429-with-quota-body → Fatal `OUT_OF_CREDIT`; plain 429 → Transient.
 - **`unitTests.isReturnDefaultValues = true`** (`app/build.gradle.kts:166`): `android.jar` classes return type defaults in JVM tests. **`org.json` is BANNED** (JSONObject returns `""` for everything); **`android.util.Base64` is BANNED** (returns defaults — this exact trap cost a task in C1). Use `kotlinx.serialization` for JSON and **`java.util.Base64`** for base64.
 - **Do NOT touch** `SegmentOrderer`, the `SourceRouted`/`Fallback`/`Cloud` engines' logic (construction wiring only), `TtsEngine`, or **batch mode's engine — it stays OpenAI-only this wave** (see Task 4; widening `resolveSttProvider` would otherwise silently pull it in).
+> Superseded 2026-07-31 by docs/superpowers/plans/2026-07-31-batch-all-providers.md (batch now all-providers).
 - **No speed claims in any user-facing copy. Consent triad unchanged** — disclosure v2's meaning does not change by adding providers; per-provider training lines already exist (Task 5).
 - **`java` is NOT on PATH.** PowerShell: `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"`; `.\gradlew.bat --no-daemon`. `assembleRelease` must stay green (R8, release-only failure history).
 - **NEVER run `connectedAndroidTest` or `installDebug`** (they uninstall — destroyed user models twice). Instrumented = compile-check only.
