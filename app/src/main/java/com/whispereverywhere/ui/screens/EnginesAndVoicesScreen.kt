@@ -81,6 +81,15 @@ fun EnginesAndVoicesScreen(
     // writes it) always re-shows the disclosure the next time this screen opens.
     var disclosureAccepted by remember { mutableStateOf(app.preferencesManager.cloudDisclosureAccepted) }
 
+    // Whether the cloud disclosure is on screen right now. It auto-shows on first entry when not yet
+    // accepted, but declining it ("Not now") only DISMISSES it — it no longer ejects the whole hub.
+    // Section 2's on-device Kokoro voice picker is a zero-egress feature and must stay reachable
+    // without cloud consent, exactly as it was in Settings before the merge. The cloud sections stay
+    // fully locked (sttSelectableProviders / ttsSelectableProviders filter out cloud rows, and
+    // ProviderCard.editable stays false) until the user re-opens this via the "Enable cloud" affordance
+    // and accepts — the v3 gate's semantics are unchanged; only its scope shrinks back off Section 2.
+    var showDisclosure by remember { mutableStateOf(!app.preferencesManager.cloudDisclosureAccepted) }
+
     // Bumped after every save/remove so provider rows re-read their stored key from SecureStore.
     var refreshKey by remember { mutableStateOf(0) }
 
@@ -143,6 +152,18 @@ fun EnginesAndVoicesScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp)
             )
+
+            // Re-entry point for the cloud disclosure once it has been declined this session: the
+            // cloud sections stay locked until it is accepted, so a user who dismissed it needs a way
+            // back to it without leaving and re-entering. Hidden once accepted.
+            if (!disclosureAccepted) {
+                TextButton(
+                    onClick = { showDisclosure = true },
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                ) {
+                    Text("Enable cloud engines & voices")
+                }
+            }
 
             // Section 1 — Transcription engine (moved verbatim from CloudProvidersScreen).
             HubSectionHeader("Transcription engine")
@@ -250,13 +271,17 @@ fun EnginesAndVoicesScreen(
 
     // Play requires this BEFORE any key field becomes editable — see ProviderCard's `editable`
     // param above, which stays false until this dialog is accepted.
-    if (!disclosureAccepted) {
+    if (showDisclosure && !disclosureAccepted) {
         CloudDisclosureDialog(
             onAccept = {
                 app.preferencesManager.cloudDisclosureAccepted = true
                 disclosureAccepted = true
+                showDisclosure = false
             },
-            onNotNow = onNavigateBack,
+            // "Not now" DISMISSES the disclosure and leaves the user on the hub — it no longer ejects
+            // them, so on-device Kokoro (Section 2) stays usable. It still never writes acceptance:
+            // cloud remains locked until "I understand". Re-openable via "Enable cloud" above.
+            onNotNow = { showDisclosure = false },
             onOpenPrivacyPolicy = onNavigateToPrivacyPolicy,
         )
     }
