@@ -4,7 +4,6 @@ import com.whispereverywhere.transcription.SegmentOutcome
 import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.transcription.cloud.FallbackPolicy
 import com.whispereverywhere.transcription.cloud.FatalKind
-import com.whispereverywhere.tts.cloud.PcmBytes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,7 +14,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Base64
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
@@ -54,7 +52,7 @@ class LiveTranscriptionEngineTest {
      */
     private class FakeTransport(val listener: RealtimeTransport.Listener) :
         LiveTranscriptionEngine.Transport {
-        val appends = Collections.synchronizedList(mutableListOf<String>())
+        val appends = Collections.synchronizedList(mutableListOf<ByteArray>())
         /** Every sendAppend CALL, including refused ones — lets a test await the sender draining. */
         val appendCalls = AtomicInteger(0)
         val commits = AtomicInteger(0)
@@ -70,11 +68,11 @@ class LiveTranscriptionEngineTest {
         fun releaseGate() { gate?.countDown() }
 
         override fun connect(apiKey: String, language: String?) { connects++; open = true }
-        override fun sendAppend(base64: String): Boolean {
+        override fun sendAppend(pcm: ByteArray): Boolean {
             gate?.await()
             appendCalls.incrementAndGet()
             if (!open || refuseAppends) return false
-            appends += base64
+            appends += pcm
             return true
         }
         override fun sendCommit(): Boolean {
@@ -433,31 +431,8 @@ class LiveTranscriptionEngineTest {
         assertEquals("a fresh SegmentOrderer starts at head 0, so seq restarts with it", 0L, h.engine.commit())
     }
 
-    // ---------------------------------------------------------------- the audio pipeline
-
-    @Test fun sender_upsamples_16k_to_24k_and_base64_encodes_the_append() {
-        // input [0,100,200,300] @16k -> [0,66,133,200,266,300] @24k (proven in ElevenLabsTtsTest),
-        // little-endian pcm16, base64. Decodes back to the 24 kHz samples the Realtime API expects.
-        val h = connected()
-        val pcm16 = pcm16LE(shortArrayOf(0, 100, 200, 300))
-        h.engine.sendAudio(pcm16)
-
-        val deadline = System.currentTimeMillis() + 2_000
-        while (h.transport.appends.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(5)
-        assertEquals(1, h.transport.appends.size)
-
-        val decoded = PcmBytes.toShortArrayLE(Base64.getDecoder().decode(h.transport.appends.single()))
-        assertEquals(listOf<Short>(0, 66, 133, 200, 266, 300), decoded.toList())
-    }
-}
-
-/** Little-endian PCM16 encode for the test only (mirrors the engine's inlined seam). */
-private fun pcm16LE(samples: ShortArray): ByteArray {
-    val out = ByteArray(samples.size * 2)
-    for (i in samples.indices) {
-        val v = samples[i].toInt()
-        out[i * 2] = (v and 0xFF).toByte()
-        out[i * 2 + 1] = ((v shr 8) and 0xFF).toByte()
-    }
-    return out
+    // The audio-pipeline encode pin (sender_upsamples_16k_to_24k_and_base64_encodes_the_append)
+    // relocated behind the seam to OpenAiRealtimeProtocolTest.append_upsamples_16k_to_24k_and_base64_encodes
+    // when the engine stopped encoding and began handing raw 16 kHz PCM to the transport's protocol.
+    // Bytes preserved verbatim — the single reviewed relocation (plan 2026-07-31 Task 1, Step 3).
 }

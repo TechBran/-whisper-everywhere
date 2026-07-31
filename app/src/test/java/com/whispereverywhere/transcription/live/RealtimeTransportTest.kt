@@ -1,6 +1,8 @@
 package com.whispereverywhere.transcription.live
 
+import com.whispereverywhere.recording.Resampler
 import com.whispereverywhere.transcription.cloud.FatalKind
+import com.whispereverywhere.tts.cloud.PcmBytes
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
 import okhttp3.Request
@@ -14,6 +16,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.util.Base64
 
 /**
  * The WebSocket lifecycle driven entirely off injected fakes — NO real network. The fake factory
@@ -183,11 +186,16 @@ class RealtimeTransportTest {
         r.transport.connect("sk-x", null)
         r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
 
-        assertTrue(r.transport.sendAppend("QUJD"))
+        // The engine now hands raw 16 kHz PCM down; the default OpenAI protocol frames it (24 k
+        // upsample + base64), so the SAME append+commit JSON reaches the wire — meaning intact.
+        val pcm = pcm16LE(shortArrayOf(0, 100, 200, 300))
+        assertTrue(r.transport.sendAppend(pcm))
         assertTrue(r.transport.sendCommit())
 
+        val expectedB64 = Base64.getEncoder()
+            .encodeToString(pcm16LE(Resampler.upsample16kTo24k(PcmBytes.toShortArrayLE(pcm))))
         assertEquals(
-            listOf(RealtimeEvents.sessionUpdate(), RealtimeEvents.append("QUJD"), RealtimeEvents.commit()),
+            listOf(RealtimeEvents.sessionUpdate(), RealtimeEvents.append(expectedB64), RealtimeEvents.commit()),
             r.factory.lastSocket.sent,
         )
     }
@@ -200,16 +208,16 @@ class RealtimeTransportTest {
         // A live socket whose OkHttp outbound buffer is past the cap must reject the append as
         // backpressure — not silently pile bytes toward OkHttp's 16 MiB hard-cancel.
         r.factory.lastSocket.queued = RealtimeTransport.MAX_OUTBOUND_BYTES + 1
-        assertTrue("over-threshold append is refused", !r.transport.sendAppend("QUJD"))
+        assertTrue("over-threshold append is refused", !r.transport.sendAppend(byteArrayOf(1, 2, 3, 4)))
 
         // Once the buffer drains below the threshold it sends normally again.
         r.factory.lastSocket.queued = 0
-        assertTrue(r.transport.sendAppend("QUJD"))
+        assertTrue(r.transport.sendAppend(byteArrayOf(1, 2, 3, 4)))
     }
 
     @Test fun send_without_a_live_socket_returns_false_and_does_not_throw() {
         val r = Rig() // never connected
-        assertTrue(!r.transport.sendAppend("QUJD"))
+        assertTrue(!r.transport.sendAppend(byteArrayOf(1, 2, 3, 4)))
         assertTrue(!r.transport.sendCommit())
     }
 
@@ -373,4 +381,15 @@ class RealtimeTransportTest {
         assertTrue(r.listener.completed.isEmpty())
         assertNull(RealtimeEventParser.parse("""{"type":"response.done"}"""))
     }
+}
+
+/** Little-endian PCM16 encode for the test only (mirrors the OpenAI protocol's inlined seam). */
+private fun pcm16LE(samples: ShortArray): ByteArray {
+    val out = ByteArray(samples.size * 2)
+    for (i in samples.indices) {
+        val v = samples[i].toInt()
+        out[i * 2] = (v and 0xFF).toByte()
+        out[i * 2 + 1] = ((v shr 8) and 0xFF).toByte()
+    }
+    return out
 }

@@ -1,10 +1,8 @@
 package com.whispereverywhere.transcription.live
 
-import com.whispereverywhere.recording.Resampler
 import com.whispereverywhere.transcription.SegmentOutcome
 import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.transcription.cloud.FatalKind
-import com.whispereverywhere.tts.cloud.PcmBytes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -12,7 +10,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
-import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -27,9 +24,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * ported from a POST to a socket, so the same four properties carry it, plus one the socket forces:
  *
  *  1. **[sendAudio] runs on the audio capture thread every ~32 ms and must never block.** It appends
- *     one op to the send queue under [bufferLock] and returns. The upsample→base64→WS send happens
- *     on a separate sender coroutine ([senderLoop]); if that coroutine is wedged on a saturated
- *     socket, [sendAudio] still returns at once — it never touches the socket.
+ *     one op to the send queue under [bufferLock] and returns. The per-provider framing (upsample /
+ *     base64 / binary, behind the transport's protocol) + WS send happens on a separate sender
+ *     coroutine ([senderLoop]); if that coroutine is wedged on a saturated socket, [sendAudio] still
+ *     returns at once — it never touches the socket.
  *
  *  2. **seq is allocated INSIDE [bufferLock] as the turn is cut**, synchronously, exactly as batch
  *     does. [com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine] wraps this engine
@@ -91,7 +89,8 @@ class LiveTranscriptionEngine(
      */
     interface Transport {
         fun connect(apiKey: String, language: String?)
-        fun sendAppend(base64: String): Boolean
+        /** One append as raw 16 kHz PCM16; the transport's protocol frames it per provider. */
+        fun sendAppend(pcm: ByteArray): Boolean
         fun sendCommit(): Boolean
         fun close()
     }
@@ -233,7 +232,8 @@ class LiveTranscriptionEngine(
         return seq
     }
 
-    /** Drains [sendQueue] off the capture thread: upsample 16k→24k, LE-encode, base64, send. */
+    /** Drains [sendQueue] off the capture thread: hands each raw 16 kHz PCM append to the transport,
+     *  which frames it per provider (OpenAI: upsample 16k→24k, LE-encode, base64), then sends. */
     private suspend fun senderLoop() {
         while (currentScopeIsActive()) {
             val op = synchronized(bufferLock) {
@@ -252,7 +252,7 @@ class LiveTranscriptionEngine(
                     // rather than pretend the audio reached the server. This is the shed the
                     // engine's own maxBacklog cannot see — that only guards a CPU-starved sender,
                     // not a live-but-stalled socket where our queue drains but OkHttp's does not.
-                    if (!transport.sendAppend(encodeAppend(op.pcm))) markTurnShed()
+                    if (!transport.sendAppend(op.pcm)) markTurnShed()
                 is SendOp.Commit ->
                     // A commit that cannot be sent (socket down in the reconnect gap or the pre-onOpen
                     // handshake window) means the server will NEVER raise an item for this turn. Left
@@ -270,12 +270,6 @@ class LiveTranscriptionEngine(
 
     private suspend fun currentScopeIsActive(): Boolean =
         kotlin.coroutines.coroutineContext[Job]?.isActive ?: true
-
-    /** 16 kHz PCM16 bytes -> 24 kHz PCM16 -> base64, the format `gpt-live-transcribe` expects. */
-    private fun encodeAppend(pcm: ByteArray): String {
-        val out24k = Resampler.upsample16kTo24k(PcmBytes.toShortArrayLE(pcm))
-        return Base64.getEncoder().encodeToString(shortsToBytesLE(out24k))
-    }
 
     // -------- inbound (transport callback thread) --------
 
@@ -443,19 +437,6 @@ class LiveTranscriptionEngine(
         } ?: false
     }
 
-    // -------- inlined audio math (upsample lifted to Resampler.upsample16kTo24k — plan Task 1) --------
-
-    /** PCM16 samples -> headerless little-endian bytes (inverse of [PcmBytes.toShortArrayLE]). */
-    private fun shortsToBytesLE(samples: ShortArray): ByteArray {
-        val out = ByteArray(samples.size * 2)
-        for (i in samples.indices) {
-            val v = samples[i].toInt()
-            out[i * 2] = (v and 0xFF).toByte()
-            out[i * 2 + 1] = ((v shr 8) and 0xFF).toByte()
-        }
-        return out
-    }
-
     companion object {
         private const val TAG = "WE-DIAG"
 
@@ -485,7 +466,7 @@ class LiveTranscriptionEngine(
         /** Adapts the concrete [RealtimeTransport] to the engine's [Transport] seam for production wiring. */
         fun realTransport(rt: RealtimeTransport): Transport = object : Transport {
             override fun connect(apiKey: String, language: String?) = rt.connect(apiKey, language)
-            override fun sendAppend(base64: String): Boolean = rt.sendAppend(base64)
+            override fun sendAppend(pcm: ByteArray): Boolean = rt.sendAppend(pcm)
             override fun sendCommit(): Boolean = rt.sendCommit()
             override fun close() = rt.close()
         }

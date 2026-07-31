@@ -1,13 +1,12 @@
 package com.whispereverywhere.transcription.live
 
-import com.whispereverywhere.provider.ProviderCatalog
-import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.transcription.cloud.FatalKind
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -34,23 +33,29 @@ fun interface ReconnectScheduler {
 }
 
 /**
- * Thin OkHttp WebSocket wrapper for the OpenAI Realtime transcription session. It owns exactly four
- * things and NOTHING above them:
+ * Thin OkHttp WebSocket wrapper for the realtime transcription session — the shared socket+reconnect
+ * shell; the per-provider wire (endpoint, headers, bootstrap, frame building, inbound vocabulary,
+ * status→fatal) lives in the injected [RealtimeProtocol]. This class owns exactly four things and
+ * NOTHING above them:
  *
- *  1. connect + session bootstrap (send [RealtimeEvents.sessionUpdate] once per open),
- *  2. outbound send ([sendAppend] / [sendCommit]),
- *  3. typed inbound dispatch to [Listener] (via [RealtimeEventParser]),
+ *  1. connect + per-open bootstrap (send the protocol's [RealtimeProtocol.bootstrap] frames once per open),
+ *  2. outbound send ([sendAppend] / [sendCommit]) — delegated to the protocol, framed via [control],
+ *  3. typed inbound dispatch to [Listener] (via [RealtimeProtocol.onText]),
  *  4. the reconnect-with-backoff policy — which lives HERE and nowhere else.
  *
- * Credential safety is load-bearing: the API key goes into the `Authorization` header of the
- * upgrade request ONLY, and a handshake failure logs the STATUS CODE ONLY — never the body (which
- * can echo request detail), never a header. The [Listener] fatal callback carries a [FatalKind] and
- * an int code, so no body/transcript can reach a consumer through this class by construction.
+ * Credential safety is load-bearing: the API key goes into the upgrade header the protocol returns
+ * ONLY (empty for config-first providers), and a handshake failure logs the STATUS CODE ONLY — never
+ * the body (which can echo request detail), never a header. The [Listener] fatal callback carries a
+ * [FatalKind] and an int code, so no body/transcript can reach a consumer through this class by
+ * construction.
  */
 class RealtimeTransport(
     private val factory: WebSocketFactory,
     private val scheduler: ReconnectScheduler,
     private val listener: Listener,
+    /** Per-provider wire behind the seam. Default = today's OpenAI path, so the 3-arg ctor and every
+     *  existing call site + test compile and behave byte-identically. */
+    private val protocol: RealtimeProtocol = OpenAiRealtimeProtocol(),
     private val backoff: Backoff = Backoff.DEFAULT,
     /**
      * How many consecutive reconnects to attempt before giving up for this session. A dead network,
@@ -139,6 +144,31 @@ class RealtimeTransport(
      */
     private var useBetaHeader = false
 
+    /**
+     * The ONE place `okhttp3.WebSocket.send` is called, now handling both frame types and the
+     * queueSize backpressure that used to sit inline in [sendAppend] — so it is enforced ONCE, for
+     * every provider and both frame types. The protocol drives this; it never touches the socket.
+     */
+    private val control = object : SessionControl {
+        override fun send(frame: Frame): Boolean = synchronized(lock) {
+            val ws = webSocket ?: return false
+            if (ws.queueSize() > MAX_OUTBOUND_BYTES) return false
+            when (frame) {
+                is Frame.Text -> ws.send(frame.json)
+                is Frame.Binary -> ws.send(frame.bytes) // OkHttp 4.12.0 binary send — Soniox audio
+            }
+        }
+
+        override fun rotate() = synchronized(lock) {
+            if (closed) return@synchronized
+            // Empty-frame finalize is the protocol's job before it calls rotate(); here we just cycle
+            // the socket under the SAME reconnect ceiling, so a pathological rotation loop still gives up.
+            webSocket?.close(NORMAL_CLOSURE, null)
+            webSocket = null
+            scheduleReconnect()
+        }
+    }
+
     /** Open the session for [language] (null = auto) using [apiKey]. Resets backoff state. */
     fun connect(apiKey: String, language: String?) {
         synchronized(lock) {
@@ -146,29 +176,32 @@ class RealtimeTransport(
             this.language = language
             closed = false
             reconnectAttempts = 0
+            protocol.bind(control, listener) // once per session: hand the protocol its socket + sink
             openSocket()
         }
     }
 
     /**
-     * Enqueue one `input_audio_buffer.append`. Returns false if there is no live socket OR the
-     * socket's own outbound buffer is over [MAX_OUTBOUND_BYTES] (network backpressure).
+     * Enqueue one append as raw 16 kHz PCM16; the [protocol] frames it (OpenAI: 24 k upsample +
+     * base64). Returns false if there is no live socket OR the socket's own outbound buffer is over
+     * [MAX_OUTBOUND_BYTES] (network backpressure, now enforced in [control]).
      *
      * The threshold is the real fix for a live-but-stalled socket: OkHttp's `send()` is a
      * non-blocking enqueue into its OWN buffer (bounded at 16 MiB, past which it cancels the
      * socket). If the engine only watched its own send queue, that queue would drain to ~0 while
      * bytes piled up invisibly inside OkHttp for minutes before the hard cap fired. Watching
-     * [WebSocket.queueSize] here lets the false return reach the engine as a prompt shed signal.
+     * [WebSocket.queueSize] in [control] lets the false return reach the engine as a prompt shed signal.
      */
-    fun sendAppend(base64: String): Boolean = synchronized(lock) {
-        val ws = webSocket ?: return false
-        if (ws.queueSize() > MAX_OUTBOUND_BYTES) return false
-        ws.send(RealtimeEvents.append(base64))
+    fun sendAppend(pcm: ByteArray): Boolean = synchronized(lock) {
+        if (webSocket == null) return false
+        protocol.onAppend(pcm)
     }
 
-    /** Enqueue one `input_audio_buffer.commit`. Returns false if there is no live socket. */
-    fun sendCommit(): Boolean =
-        synchronized(lock) { webSocket?.send(RealtimeEvents.commit()) ?: false }
+    /** Finalize the current turn per the [protocol] (commit event / commit-flag / client assembly). */
+    fun sendCommit(): Boolean = synchronized(lock) {
+        if (webSocket == null) return false
+        protocol.onCommit()
+    }
 
     /** Clean, idempotent close. A second call no-ops; a pending reconnect is cancelled. */
     fun close() {
@@ -177,19 +210,17 @@ class RealtimeTransport(
             closed = true
             webSocket?.close(NORMAL_CLOSURE, null)
             webSocket = null
+            protocol.reset() // drop any protocol-held state; OpenAI's reset is a no-op
         }
     }
 
     private fun openSocket() {
-        // caller holds [lock]. The key is placed in the Authorization header of the upgrade
-        // request ONLY. OkHttp silently rewrites the wss:// URL to https:// for the upgrade.
-        val provider = ProviderCatalog.byId(ProviderId.OPENAI)
-        val request = Request.Builder()
-            .url(ENDPOINT)
-            .header(provider.authHeaderName, provider.authHeaderValue(apiKey))
-            .apply { if (useBetaHeader) header(BETA_HEADER, BETA_VALUE) }
-            .build()
-        webSocket = factory.newWebSocket(request, InternalListener())
+        // caller holds [lock]. The key is placed ONLY in the upgrade header(s) the protocol returns
+        // (empty for config-first providers). OkHttp silently rewrites the wss:// URL to https://.
+        val builder = Request.Builder().url(protocol.endpoint)
+        protocol.upgradeHeaders(apiKey).forEach { (name, value) -> builder.header(name, value) }
+        if (useBetaHeader && protocol.tolerant4xxRetry) builder.header(BETA_HEADER, BETA_VALUE)
+        webSocket = factory.newWebSocket(builder.build(), InternalListener())
     }
 
     private fun scheduleReconnect() {
@@ -210,18 +241,6 @@ class RealtimeTransport(
         }
     }
 
-    /** Handshake status -> fatal kind, or null for a transient failure that should reconnect. */
-    private fun classifyFatal(code: Int): FatalKind? = when (code) {
-        401 -> FatalKind.INVALID_KEY
-        403 -> FatalKind.FORBIDDEN
-        // The body distinguishes rate-limit from exhausted credit, but the body is OFF-LIMITS on a
-        // handshake (credential safety). A 429 on the upgrade is treated as the wallet being the
-        // problem: fail terminal, latch, and let the local fallback rescue — never hammer the
-        // socket against an empty account. See OpenAiStt.classify for the batch-path analogue.
-        429 -> FatalKind.OUT_OF_CREDIT
-        else -> null // 5xx and network-level drops are transient -> reconnect with backoff
-    }
-
     private inner class InternalListener : WebSocketListener() {
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -230,36 +249,29 @@ class RealtimeTransport(
                 reconnectAttempts = 0
                 this@RealtimeTransport.webSocket = webSocket
             }
-            // Bootstrap exactly once per open. turn_detection:null => WE own turn commits.
-            webSocket.send(RealtimeEvents.sessionUpdate())
+            // Bootstrap exactly once per open, via the protocol (OpenAI: session.update, once).
+            protocol.bootstrap(apiKey, language).forEach { control.send(it) }
             listener.onConnected()
         }
 
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            when (val event = RealtimeEventParser.parse(text)) {
-                is Inbound.Delta -> listener.onDelta(event.itemId, event.text)
-                is Inbound.Completed -> listener.onCompleted(event.itemId, event.transcript)
-                is Inbound.Committed -> listener.onCommitted(event.itemId)
-                is Inbound.Failed -> listener.onTranscriptionFailed(event.itemId)
-                is Inbound.Error -> listener.onErrorEvent(event.code, event.message.length)
-                is Inbound.Ack -> Unit // benign ack — log-and-ignore
-                null -> Unit // unknown/forward-compat type — ignore
-            }
-        }
+        override fun onMessage(webSocket: WebSocket, text: String) = protocol.onText(text)
+
+        // No provider sends inbound BINARY — decline it explicitly rather than inherit a silent no-op.
+        override fun onMessage(webSocket: WebSocket, bytes: ByteString) = Unit
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             val code = response?.code
             // STATUS CODE ONLY. Never touch response.body (it can echo request detail) or headers.
-            android.util.Log.w(TAG, if (code != null) "openai realtime http $code" else "openai realtime dropped")
+            android.util.Log.w(TAG, if (code != null) "realtime http $code" else "realtime dropped")
 
-            // The tolerant connector's one free retry: the FIRST 4xx may be the missing
-            // OpenAI-Beta header rather than a bad key. Retry once with it, silently — no fatal,
-            // no disconnect callback, no reconnect-attempt consumed. If the retry fails too, the
-            // failure falls through here a second time with useBetaHeader already true and takes
-            // the normal classification below.
+            // The tolerant connector's one free retry (OpenAI only, via [protocol.tolerant4xxRetry]):
+            // the FIRST 4xx may be the missing OpenAI-Beta header rather than a bad key. Retry once
+            // with it, silently — no fatal, no disconnect callback, no reconnect-attempt consumed. If
+            // the retry fails too, the failure falls through here a second time with useBetaHeader
+            // already true and takes the normal classification below.
             if (code != null && code in 400..499) {
                 val retried = synchronized(lock) {
-                    if (!closed && !useBetaHeader) {
+                    if (!closed && !useBetaHeader && protocol.tolerant4xxRetry) {
                         useBetaHeader = true
                         this@RealtimeTransport.webSocket = null
                         openSocket()
@@ -269,7 +281,7 @@ class RealtimeTransport(
                 if (retried) return
             }
 
-            val fatal = code?.let { classifyFatal(it) }
+            val fatal = code?.let { protocol.classifyFatal(it) }
             synchronized(lock) {
                 if (closed) return
                 this@RealtimeTransport.webSocket = null
