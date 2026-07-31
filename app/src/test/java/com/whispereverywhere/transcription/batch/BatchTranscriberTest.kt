@@ -30,7 +30,7 @@ class BatchTranscriberTest {
     private class FakeBackend(private val text: String = "L") : WhisperBackend {
         var loads = 0; var releases = 0; var calls = 0
         override fun load(modelPath: String): Long { loads++; return 42L }
-        override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String { calls++; return text }
+        override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String { calls++; return text }
         override fun release(ctx: Long) { releases++ }
     }
     private val modelPath = object : ModelPathProvider { override fun installedModelPath() = "/models/x.bin" }
@@ -116,7 +116,7 @@ class BatchTranscriberTest {
         val maxSamplesSeen = AtomicInteger(0)
         val backend = object : WhisperBackend {
             override fun load(modelPath: String) = 1L
-            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
                 maxSamplesSeen.getAndUpdate { s -> maxOf(s, samples.size) }; return "LOC"
             }
             override fun release(ctx: Long) {}
@@ -196,7 +196,7 @@ class BatchTranscriberTest {
         val backend = object : WhisperBackend {
             var calls = 0
             override fun load(modelPath: String) = 1L
-            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
                 calls++; return "c"
             }
             override fun release(ctx: Long) {}
@@ -235,7 +235,7 @@ class BatchTranscriberTest {
         val maxSamplesSeen = AtomicInteger(0)
         val backend = object : WhisperBackend {
             override fun load(modelPath: String) = 1L
-            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
                 maxSamplesSeen.getAndUpdate { seen -> maxOf(seen, samples.size) }
                 return "s"
             }

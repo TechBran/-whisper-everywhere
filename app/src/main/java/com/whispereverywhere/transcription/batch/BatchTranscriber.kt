@@ -258,7 +258,11 @@ class BatchTranscriber(
     private suspend fun runLocal(ctx: Long, pcm: ByteArray, language: String?): String =
         withContext(nativeDispatcher) {
             val samples = AudioMath.pcm16ToFloat(pcm)
-            TranscriptText.clean(backend.transcribe(ctx, samples, language))
+            // BATCH: transcribe EVERYTHING — a user-chosen file must not be VAD-trimmed (quiet
+            // music / low speech is kept). runLocalSliced routes through here, so both the
+            // small-planned local job AND the cloud-fallback re-slice inherit the bypass. Live
+            // dictation calls backend.transcribe(...) without useVad and keeps the true default.
+            TranscriptText.clean(backend.transcribe(ctx, samples, language, useVad = false))
         }
 
     /**

@@ -79,7 +79,14 @@ interface TranscriptionEngine {
 /** Thin seam over the native layer so the engine can be tested without JNI. */
 interface WhisperBackend {
     fun load(modelPath: String): Long
-    fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String
+    /**
+     * @param useVad true (live default) runs the Silero VAD before the encoder to suppress noise
+     *   hallucination on always-open mic capture. Batch passes FALSE: a user-chosen file is
+     *   transcribed in full (quiet music / low speech included), so the VAD must not trim it.
+     *   Threads to WhisperNative.transcribe as vadModelPath = if (useVad) VadModel.path() else null,
+     *   which short-circuits we_vad_filter natively (whisper_jni.cpp:188). BATCH-ONLY bypass.
+     */
+    fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean = true): String
     fun release(ctx: Long)
 }
 
@@ -125,19 +132,20 @@ object WhisperNativeBackend : WhisperBackend {
         }
     }
 
-    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String =
+    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String =
         NativeComputeGate.serialized {
+            val vad = if (useVad) VadModel.path() else null   // batch passes false -> no native VAD
             val validating = GpuPolicy.needsComputeValidation()
             if (!validating) {
                 return@serialized WhisperNative.transcribe(
-                    ctx, samples, lang, translate = false, vadModelPath = VadModel.path()
+                    ctx, samples, lang, translate = false, vadModelPath = vad
                 )
             }
             GpuPolicy.onGpuComputeStarting()
             var ok = false
             try {
                 val text = WhisperNative.transcribe(
-                    ctx, samples, lang, translate = false, vadModelPath = VadModel.path()
+                    ctx, samples, lang, translate = false, vadModelPath = vad
                 )
                 ok = true
                 text

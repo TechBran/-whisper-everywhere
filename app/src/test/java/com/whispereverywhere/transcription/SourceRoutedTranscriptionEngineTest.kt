@@ -82,7 +82,7 @@ class SourceRoutedTranscriptionEngineTest {
     private class RecordingBackend(private val text: String = "on-device text") : WhisperBackend {
         val transcribes = AtomicInteger(0)
         override fun load(modelPath: String) = 7L
-        override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+        override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
             transcribes.incrementAndGet()
             return text
         }

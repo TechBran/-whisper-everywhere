@@ -590,7 +590,7 @@ class FallbackTranscriptionEngineTest {
         val provider = FakeStt(respond = { SttResult.Failed(SttError.Offline) })
         val backend = object : WhisperBackend {
             override fun load(modelPath: String) = 42L
-            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?) = "rescued locally"
+            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean) = "rescued locally"
             override fun release(ctx: Long) = Unit
         }
         val local = LocalWhisperEngine(
@@ -627,7 +627,7 @@ class FallbackTranscriptionEngineTest {
         })
         val backend = object : WhisperBackend {
             override fun load(modelPath: String) = 42L
-            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?) = "rescued locally"
+            override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean) = "rescued locally"
             override fun release(ctx: Long) = Unit
         }
         val local = LocalWhisperEngine(

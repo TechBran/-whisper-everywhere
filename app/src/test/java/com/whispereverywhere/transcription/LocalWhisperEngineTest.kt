@@ -45,7 +45,7 @@ class FakeWhisperBackend(
     val transcribeCalls = mutableListOf<Triple<Long, FloatArray, String?>>()
     var releaseCalls = 0
     override fun load(modelPath: String): Long { loadCalls.add(modelPath); return loadReturns }
-    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
         transcribeCalls.add(Triple(ctx, samples, lang))
         if (failTimes > 0) { failTimes--; throw RuntimeException("transient transcribe failure") }
         return text
@@ -56,7 +56,7 @@ class FakeWhisperBackend(
 /** Returns a text that identifies WHICH audio snapshot it was given. */
 class SampleCountBackend : WhisperBackend {
     override fun load(modelPath: String): Long = 42L
-    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String = "n${samples.size}"
+    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String = "n${samples.size}"
     override fun release(ctx: Long) = Unit
 }
 
@@ -64,7 +64,7 @@ class SampleCountBackend : WhisperBackend {
 class ScriptedBackend(private val script: List<() -> String>) : WhisperBackend {
     private var i = 0
     override fun load(modelPath: String): Long = 42L
-    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
+    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
         val step = script[i.coerceAtMost(script.size - 1)]
         i++
         return step()
