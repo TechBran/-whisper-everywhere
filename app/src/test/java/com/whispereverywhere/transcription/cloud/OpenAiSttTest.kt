@@ -113,11 +113,13 @@ class OpenAiSttTest {
         assertEquals("must not hit the network", 0, fake.callCount)
     }
 
-    @Test fun a_200_with_an_unparseable_body_is_transient_not_silently_empty() = runBlocking {
-        // Returning "" here would look like silence and suppress fallback.
+    @Test fun a_200_with_an_unparseable_body_is_undecodable_not_silently_empty() = runBlocking {
+        // Returning "" here would look like silence and suppress fallback. And it is Undecodable, NOT
+        // Transient: the 200 was billed, so the batch retry loop must fall to local for this chunk
+        // rather than re-POST (and re-bill) the same unreadable answer.
         val (_, p) = provider(HttpResult.Ok(200, "not json"))
         val r = p.transcribe(pcm, null) as SttResult.Failed
-        assertTrue(r.error is SttError.Transient)
+        assertEquals(SttError.Undecodable, r.error)
     }
 
     @Test fun a_200_with_an_empty_text_field_is_a_legitimate_empty_transcript() = runBlocking {

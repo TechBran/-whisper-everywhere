@@ -85,6 +85,26 @@ class BatchTranscriberTest {
         assertTrue("local rescued the chunk", store.assembledText(m).contains("LOCAL-SAVED"))
     }
 
+    @Test fun an_unparseable_200_is_not_retried_and_falls_local_for_that_chunk() = runBlocking {
+        // Re-bill guard (finding #5): a 200 whose body will not parse (Undecodable) was already
+        // billed, so the retry loop must NOT re-POST it. One clip -> one chunk -> exactly ONE cloud
+        // call, then the chunk is rescued locally. A big retry budget proves the call count is
+        // bounded by non-retry, not by exhausting retries.
+        val (store, id) = storeWith(pcmBytes = 4000)
+        val fake = FakeHttpTransport { _, _ -> HttpResult.Ok(200, "definitely not json") }
+        val backend = FakeBackend("LOCAL-RESCUE")
+        val t = BatchTranscriber(store, cloud = OpenAiStt(fake, "sk-k"), backend = backend,
+            modelPathProvider = modelPath)
+            .apply { testCloudCeiling = 100_000; testLocalChunk = 100_000; testMaxCloudRetries = 5 }
+        t.transcribe(id)
+        val m = store.read(id)!!
+        assertEquals(BatchStatus.Done, m.status)
+        assertEquals("one chunk", 1, m.chunkPlan.size)
+        assertEquals("the undecodable 200 must not be retried (would re-bill)", 1, fake.callCount)
+        assertTrue("local rescued the chunk", store.assembledText(m).contains("LOCAL-RESCUE"))
+        assertEquals(EngineUsed.LOCAL, m.engineUsed)
+    }
+
     @Test fun a_fatal_cloud_error_latches_stops_and_leaves_finished_chunks_for_resume() = runBlocking {
         val (store, id) = storeWith(pcmBytes = 9000)
         val n = AtomicInteger(0)

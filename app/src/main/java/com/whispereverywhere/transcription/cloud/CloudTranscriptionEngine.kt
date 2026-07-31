@@ -232,6 +232,7 @@ class CloudTranscriptionEngine(
         is SttError.Fatal -> error.message
         is SttError.Transient -> "temporary provider error"
         SttError.BadSegment -> "segment rejected"
+        SttError.Undecodable -> "unreadable provider response"
     }
 
     /**

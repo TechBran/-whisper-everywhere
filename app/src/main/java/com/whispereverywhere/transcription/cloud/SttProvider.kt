@@ -12,6 +12,15 @@ sealed interface SttError {
     data class Transient(val retryAfterMs: Long?) : SttError
     /** THIS segment is unacceptable (too large, malformed). Does not disable the provider. */
     data object BadSegment : SttError
+    /**
+     * A SUCCESS response (HTTP 200) whose body could not be decoded — billed but unusable. Distinct
+     * from [Transient] precisely because it must NOT be retried: the request already succeeded and
+     * was charged, so re-POSTing the same segment re-bills for the same undecodable answer. The
+     * batch retry loop treats this as a one-way fall to local for that chunk; live handling still
+     * falls back exactly as it does for any other failure. Not an empty transcript — returning "" for
+     * an unreadable body would look like silence and suppress the fallback.
+     */
+    data object Undecodable : SttError
 }
 
 enum class FatalKind { INVALID_KEY, OUT_OF_CREDIT, FORBIDDEN, MODEL_UNAVAILABLE }

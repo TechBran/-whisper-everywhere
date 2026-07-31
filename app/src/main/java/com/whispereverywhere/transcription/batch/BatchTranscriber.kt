@@ -214,6 +214,9 @@ class BatchTranscriber(
                     is SttError.Fatal -> return CloudChunkResult.Fatal
                     SttError.BadSegment -> return CloudChunkResult.FallBack   // this chunk is cloud's problem
                     SttError.Offline -> return CloudChunkResult.FallBack
+                    // An undecodable 200 was already billed — retrying just re-bills for the same
+                    // unreadable answer, so fall to local for this chunk (never retry).
+                    SttError.Undecodable -> return CloudChunkResult.FallBack
                     is SttError.Transient -> {
                         if (attempt >= testMaxCloudRetries) return CloudChunkResult.FallBack
                         delay(e.retryAfterMs ?: (BASE_BACKOFF_MS * (attempt + 1)))

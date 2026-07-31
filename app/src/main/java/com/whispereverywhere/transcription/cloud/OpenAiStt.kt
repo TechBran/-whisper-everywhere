@@ -75,7 +75,9 @@ class OpenAiStt(
         // silence, suppress fallback, and silently lose the user's sentence.
         SttResult.Text(JSON.decodeFromString<OpenAiTranscription>(body).text)
     } catch (_: Throwable) {
-        SttResult.Failed(SttError.Transient(null))
+        // Undecodable, NOT Transient: the 200 was billed, so a batch retry would just re-bill for
+        // the same unreadable answer. Fall to local for this chunk instead.
+        SttResult.Failed(SttError.Undecodable)
     }
 
     private fun classify(code: Int, body: String): SttError {
