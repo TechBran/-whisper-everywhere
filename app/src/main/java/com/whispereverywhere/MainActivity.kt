@@ -26,10 +26,12 @@ import androidx.navigation.compose.rememberNavController
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.ui.screens.BatchTranscribeScreen
 import com.whispereverywhere.ui.screens.EnginesAndVoicesScreen
+import com.whispereverywhere.ui.screens.FirstRunChooserScreen
 import com.whispereverywhere.ui.screens.HomeScreen
 import com.whispereverywhere.ui.screens.LegalDocumentScreen
 import com.whispereverywhere.ui.screens.OnboardingModelScreen
 import com.whispereverywhere.ui.screens.SettingsScreen
+import com.whispereverywhere.ui.screens.firstRunStartDestination
 import com.whispereverywhere.ui.theme.WhisperEverywhereTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -131,21 +133,50 @@ fun WhisperEverywhereNavigation() {
         }
     }
 
-    // Compute the start destination once, at launch: if there is no installed
-    // speech model, gate the app behind the model-download onboarding wizard.
+    // Compute the start destination once, at launch. A genuine first run (no model AND onboarding
+    // never completed) opens the two-path chooser; everyone else — existing users (who all have a
+    // model) and anyone who already took a path or skipped — lands on Home. See
+    // firstRunStartDestination for the exact rule (pinned by ModeDashboardLogicTest).
     val startDestination = remember {
         val app = WhisperEverywhereApp.getInstance()
-        if (app.whisperModelManager.installedModel() == null) {
-            "onboarding_model"
-        } else {
-            "home"
-        }
+        firstRunStartDestination(
+            hasModel = app.whisperModelManager.installedModel() != null,
+            onboardingCompleted = app.preferencesManager.onboardingCompleted
+        )
     }
 
     NavHost(
         navController = navController,
         startDestination = startDestination
     ) {
+        // Two-path first-run chooser. Every path (and Skip, and back-press = Skip) records
+        // onboardingCompleted so the chooser is shown at most once, then pops "first_run" inclusive
+        // so it leaves no back-stack trap (mirrors the onboarding_model -> home pop below). Never
+        // blocks: Skip is always available.
+        composable("first_run") {
+            val app = WhisperEverywhereApp.getInstance()
+            FirstRunChooserScreen(
+                onFreeAndPrivate = {
+                    app.preferencesManager.onboardingCompleted = true
+                    navController.navigate("onboarding_model") {
+                        popUpTo("first_run") { inclusive = true }
+                    }
+                },
+                onBringYourOwnKey = {
+                    app.preferencesManager.onboardingCompleted = true
+                    navController.navigate("engines_voices") {
+                        popUpTo("first_run") { inclusive = true }
+                    }
+                },
+                onSkip = {
+                    app.preferencesManager.onboardingCompleted = true
+                    navController.navigate("home") {
+                        popUpTo("first_run") { inclusive = true }
+                    }
+                }
+            )
+        }
+
         composable("onboarding_model") {
             OnboardingModelScreen(
                 onModelReady = {
