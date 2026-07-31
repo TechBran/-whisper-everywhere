@@ -15,6 +15,7 @@ import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.InputConnection
+import com.whispereverywhere.text.InjectionAnchor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,6 +39,9 @@ class WhisperAccessibilityService : AccessibilityService() {
     // app/field switch reroutes the text to whatever happens to be focused at delivery time.
     private var sessionTargetEditText: AccessibilityNodeInfo? = null
     private var sessionTargetPackage: String? = null
+    // The cursor state machine for the active dictation session (null outside a session). Captured
+    // at record start from the live field; every segment places against it, ignoring the live caret.
+    private var sessionAnchor: InjectionAnchor? = null
 
     // Apps that use custom editors where we should be more persistent
     private val documentApps = setOf(
@@ -352,11 +356,21 @@ class WhisperAccessibilityService : AccessibilityService() {
         sessionTargetPackage = if (target != null) {
             target.packageName?.toString() ?: currentPackage
         } else null
+        // Pin the cursor anchor from the field as it is RIGHT NOW. A selection range here is the
+        // one legal replace (user selected text then started dictating). No field => no anchor.
+        sessionAnchor = if (target != null) {
+            val raw = target.text?.toString() ?: ""
+            val hint = target.hintText?.toString() ?: ""
+            val isHint = raw.isNotEmpty() && (raw == hint || raw.equals(hint, ignoreCase = true))
+            val current = if (isHint) "" else raw
+            InjectionAnchor().apply { start(current, target.textSelectionStart, target.textSelectionEnd) }
+        } else null
     }
 
     private fun endInjectionSessionInternal() {
         sessionTargetEditText = null
         sessionTargetPackage = null
+        sessionAnchor = null
     }
 
     /**
@@ -623,79 +637,11 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Inject text into the currently focused text field
+     * Inject text into the currently focused text field. Delegates to the unified result path so
+     * there is exactly ONE SET_TEXT implementation (the anchor path); maps the result to Boolean.
      */
     fun injectTextToFocusedField(text: String): Boolean {
-        // Resolve FIRST: a dead session node clears the session (node AND package) so the
-        // strategy checks below classify by the live target, not the dead session's app.
-        val resolvedTarget = resolveInjectionTarget()
-
-        // For document apps, always use clipboard + paste approach
-        if (injectionTargetIsDocumentApp()) {
-            return injectViaClipboardForDocumentApp(text)
-        }
-
-        // For social media apps, use paste to preserve @mentions and other formatted content
-        if (injectionTargetIsSocialMediaApp()) {
-            return injectViaClipboardPreservingContent(text)
-        }
-
-        val targetNode = resolvedTarget
-
-        if (targetNode == null || !targetNode.refresh()) {
-            return injectViaClipboard(text)
-        }
-
-        // Check if node supports SET_TEXT
-        val supportsSetText = targetNode.actionList.any {
-            it.id == AccessibilityNodeInfo.ACTION_SET_TEXT
-        }
-
-        if (!supportsSetText) {
-            return injectViaClipboard(text)
-        }
-
-        return try {
-            val rawText = targetNode.text?.toString() ?: ""
-            val hintText = targetNode.hintText?.toString() ?: ""
-
-            val isHintText = rawText.isNotEmpty() && (
-                rawText == hintText || rawText.equals(hintText, ignoreCase = true)
-            )
-
-            val currentText = if (isHintText) "" else rawText
-            val cursorPosition = if (targetNode.textSelectionStart >= 0 && !isHintText) {
-                targetNode.textSelectionStart
-            } else {
-                currentText.length
-            }
-
-            val textToInject = formatTextForInjection(text, currentText, cursorPosition)
-
-            val newText = StringBuilder(currentText).apply {
-                val selStart = targetNode.textSelectionStart
-                val selEnd = targetNode.textSelectionEnd
-
-                when {
-                    !isHintText && selStart >= 0 && selEnd > selStart -> {
-                        delete(selStart, selEnd)
-                        insert(selStart, textToInject)
-                    }
-                    cursorPosition in 0..length -> insert(cursorPosition, textToInject)
-                    else -> append(textToInject)
-                }
-            }.toString()
-
-            val arguments = Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
-            }
-
-            val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-            if (!success) injectViaClipboard(text) else true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            injectViaClipboard(text)
-        }
+        return injectTextWithResultInternal(text) != InjectionResult.FAILED
     }
 
     /**
@@ -959,26 +905,53 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Helper to prepare text for injection, adding spaces as needed
+     * Pin the caret to [pos] after a successful SET_TEXT: resets the app's cursor games and makes
+     * the next segment's anchor visibly correct. Non-fatal — a rejecting field just keeps its caret.
      */
-    private fun formatTextForInjection(textToInject: String, existingText: String, cursorPosition: Int): String {
-        if (existingText.isEmpty() || textToInject.isEmpty()) {
-            return textToInject
+    private fun pinCursor(node: AccessibilityNodeInfo, pos: Int) {
+        try {
+            val args = Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, pos)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, pos)
+            }
+            val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
+            if (!ok) android.util.Log.d("WE-TTS", "SET_SELECTION rejected (non-fatal)")
+        } catch (e: Exception) {
+            android.util.Log.d("WE-TTS", "SET_SELECTION threw (non-fatal)")
         }
-        
-        // If cursor is at the end or valid position
-        val actualPos = if (cursorPosition in 0..existingText.length) cursorPosition else existingText.length
-        
-        if (actualPos == 0) return textToInject
-        
-        val prevChar = existingText[actualPos - 1]
-        
-        // If the previous character is not whitespace and the new text doesn't start with whitespace
-        if (!prevChar.isWhitespace() && !textToInject.first().isWhitespace()) {
-            return " $textToInject"
+    }
+
+    /**
+     * The unified SET_TEXT injection: read the field, plan the write through the session anchor
+     * (or a transient anchor started from the live caret when there is no session), SET_TEXT the
+     * full string, then pin the caret. The anchor is committed ONLY on a successful write, so a
+     * failed SET_TEXT leaves the machine untouched and the clipboard fallback runs clean.
+     *
+     * The old live-selection read and the delete branch are GONE: the only deletion possible is the
+     * anchor's one-shot start-selection replace.
+     */
+    private fun setTextViaAnchor(targetNode: AccessibilityNodeInfo, text: String): InjectionResult {
+        val rawText = targetNode.text?.toString() ?: ""
+        val hintText = targetNode.hintText?.toString() ?: ""
+        val isHintText = rawText.isNotEmpty() && (rawText == hintText || rawText.equals(hintText, ignoreCase = true))
+        val currentText = if (isHintText) "" else rawText
+
+        val anchor = sessionAnchor ?: InjectionAnchor().apply {
+            start(currentText, targetNode.textSelectionStart, targetNode.textSelectionEnd)
         }
-        
-        return textToInject
+        val placement = anchor.plan(currentText, text)
+
+        val arguments = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, placement.newFieldText)
+        }
+        val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+        return if (success) {
+            anchor.commit(placement)           // adopt only after the write lands
+            pinCursor(targetNode, placement.newSelection)
+            InjectionResult.SUCCESS
+        } else {
+            if (injectViaClipboard(text)) InjectionResult.SUCCESS else InjectionResult.CLIPBOARD_ONLY
+        }
     }
 
     /**
@@ -1069,46 +1042,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         return try {
-            val rawText = targetNode.text?.toString() ?: ""
-            val hintText = targetNode.hintText?.toString() ?: ""
-
-            val isHintText = rawText.isNotEmpty() && (
-                rawText == hintText || rawText.equals(hintText, ignoreCase = true)
-            )
-
-            val currentText = if (isHintText) "" else rawText
-            val cursorPosition = if (targetNode.textSelectionStart >= 0 && !isHintText) {
-                targetNode.textSelectionStart
-            } else {
-                currentText.length
-            }
-
-            val textToInject = formatTextForInjection(text, currentText, cursorPosition)
-
-            val newText = StringBuilder(currentText).apply {
-                val selStart = targetNode.textSelectionStart
-                val selEnd = targetNode.textSelectionEnd
-
-                when {
-                    !isHintText && selStart >= 0 && selEnd > selStart -> {
-                        delete(selStart, selEnd)
-                        insert(selStart, textToInject)
-                    }
-                    cursorPosition in 0..length -> insert(cursorPosition, textToInject)
-                    else -> append(textToInject)
-                }
-            }.toString()
-
-            val arguments = Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
-            }
-
-            val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-            if (success) {
-                InjectionResult.SUCCESS
-            } else {
-                if (injectViaClipboard(text)) InjectionResult.SUCCESS else InjectionResult.CLIPBOARD_ONLY
-            }
+            setTextViaAnchor(targetNode, text)
         } catch (e: Exception) {
             e.printStackTrace()
             try {
