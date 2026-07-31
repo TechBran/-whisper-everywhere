@@ -38,6 +38,22 @@ class SonioxSttTest {
         assertEquals(SttResult.Text("hello world"), soniox(happyFake()).transcribe(pcm, null))
     }
 
+    @Test fun bare_tokens_without_baked_spacing_do_not_melt() = runBlocking {
+        // The brief's UNVERIFIED assumption made safe: if Soniox ever emits adjacent BARE word tokens
+        // (its docs sample shows a bare "Hello"), the defensive TextJoin.join must not glue them.
+        val bare = """{"tokens":[{"text":"Hello"},{"text":"world"}]}"""
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcript") -> HttpResult.Ok(200, bare)
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+                url.contains("/transcriptions/") -> HttpResult.Ok(200, completed)
+                else -> error("unexpected url $url")
+            }
+        }
+        assertEquals(SttResult.Text("Hello world"), soniox(fake).transcribe(pcm, null))
+    }
+
     @Test fun the_upload_is_a_wav_container_in_the_file_part() = runBlocking {
         val fake = happyFake()
         soniox(fake).transcribe(pcm, null)

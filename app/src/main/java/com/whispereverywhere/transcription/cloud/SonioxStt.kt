@@ -5,6 +5,7 @@ import com.whispereverywhere.net.HttpResult
 import com.whispereverywhere.net.HttpTransport
 import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
+import com.whispereverywhere.text.TextJoin
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -143,7 +144,12 @@ class SonioxStt(
                 is HttpResult.Ok -> {
                     val parsed = parse<SonioxTranscript>(tr.body)
                         ?: return SttResult.Failed(SttError.Transient(null)) // unparseable-200
-                    SttResult.Text(parsed.tokens.joinToString("") { it.text })
+                    // Defensive melt-proof join (the brief's "make it melt-proof regardless"): Soniox
+                    // tokens are ASSUMED to carry their own spacing, but the docs sample shows a bare
+                    // "Hello". TextJoin.join is a proven no-op over an already-spaced stream and only
+                    // inserts a space where two alphanumerics would otherwise touch, so it cannot
+                    // regress a spaced stream while closing the melt if a bare token ever arrives.
+                    SttResult.Text(parsed.tokens.fold("") { acc, t -> TextJoin.join(acc, t.text) })
                 }
             }
         } finally {
