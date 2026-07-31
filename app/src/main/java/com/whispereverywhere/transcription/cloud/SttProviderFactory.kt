@@ -18,9 +18,6 @@ object SttProviderFactory {
         ProviderId.OPENAI -> OpenAiStt(transport, apiKey)
         ProviderId.GEMINI -> GeminiStt(transport, apiKey)
         ProviderId.ELEVENLABS -> ElevenLabsStt(transport, apiKey)
-        // Wired to SonioxStt in Task 4. Unreachable until then: SONIOX is in neither
-        // STT_CAPABLE_PROVIDERS nor FloatingBubbleService.STT_PROVIDERS, so resolveSttProvider
-        // never yields it and this branch is never constructed.
-        ProviderId.SONIOX -> error("Soniox STT adapter is wired in Task 4")
+        ProviderId.SONIOX -> SonioxStt(transport, apiKey)
     }
 }

@@ -93,8 +93,9 @@ class EngineSelectionTest {
     }
 
     @Test fun live_flag_with_non_openai_provider_stays_CLOUD_WITH_FALLBACK() {
-        // Only OpenAI streams (BYOK Realtime WS); Gemini and ElevenLabs cannot, so the flag is
-        // inert for them and the batch-POST path is unchanged.
+        // Only OpenAI streams (BYOK Realtime WS); Gemini, ElevenLabs, and Soniox cannot, so the
+        // flag is inert for them and the batch-POST path is unchanged. Soniox's realtime WS is a
+        // recorded follow-up, not v1 — word-for-word live stays OpenAI-only this wave.
         assertEquals(
             EngineChoice.CLOUD_WITH_FALLBACK,
             decideEngineChoice(
@@ -105,6 +106,12 @@ class EngineSelectionTest {
             EngineChoice.CLOUD_WITH_FALLBACK,
             decideEngineChoice(
                 sttProviderId = "ELEVENLABS", hasKey = true, hasValidatedNetwork = true, liveMode = true,
+            ),
+        )
+        assertEquals(
+            EngineChoice.CLOUD_WITH_FALLBACK,
+            decideEngineChoice(
+                sttProviderId = "SONIOX", hasKey = true, hasValidatedNetwork = true, liveMode = true,
             ),
         )
     }
@@ -140,6 +147,10 @@ class EngineSelectionTest {
         assertNull(resolveSttProvider("not-a-real-provider"))
     }
 
+    @Test fun resolves_soniox_now_that_its_adapter_ships() {
+        assertEquals(ProviderId.SONIOX, resolveSttProvider("SONIOX"))
+    }
+
     // --- resolveBatchSttProvider: batch stays OpenAI-only this wave (C2b widens live mode only) ---
 
     @Test fun batch_resolves_openai_but_clamps_gemini_and_elevenlabs_to_null() {
@@ -153,6 +164,12 @@ class EngineSelectionTest {
         assertNull(resolveBatchSttProvider("not-a-real-provider"))
     }
 
+    @Test fun batch_clamps_soniox_to_null_batch_stays_openai_only() {
+        // Live mode gets Soniox; batch's engineUsed decision was NOT widened, so a Soniox selection
+        // degrades to on-device here rather than mis-keying OpenAI with a Soniox key.
+        assertNull(resolveBatchSttProvider("SONIOX"))
+    }
+
     // --- SttProviderFactory: the ONE ProviderId -> adapter construction point (both services) ---
 
     @Test fun factory_maps_each_provider_id_to_its_own_adapter() {
@@ -163,5 +180,6 @@ class EngineSelectionTest {
             ProviderId.ELEVENLABS,
             SttProviderFactory.create(ProviderId.ELEVENLABS, fake, "k").id,
         )
+        assertEquals(ProviderId.SONIOX, SttProviderFactory.create(ProviderId.SONIOX, fake, "k").id)
     }
 }

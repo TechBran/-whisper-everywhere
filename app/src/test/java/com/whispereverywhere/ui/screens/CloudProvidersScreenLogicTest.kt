@@ -212,11 +212,11 @@ class CloudProvidersScreenLogicTest {
         }
     }
 
-    // --- STT_CAPABLE_PROVIDERS: C2b shipped the Gemini + ElevenLabs adapters alongside OpenAI ---
+    // --- STT_CAPABLE_PROVIDERS: C2b shipped Gemini + ElevenLabs; Soniox adds a 4th ---
 
-    @Test fun stt_capable_set_is_openai_gemini_elevenlabs() {
+    @Test fun stt_capable_set_includes_soniox() {
         assertEquals(
-            setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS),
+            setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX),
             STT_CAPABLE_PROVIDERS,
         )
     }
@@ -360,10 +360,10 @@ class CloudProvidersScreenLogicTest {
     }
 
     // (Removed) `a_configured_provider_with_no_stt_adapter_is_not_offered`: C2b shipped the Gemini
-    // and ElevenLabs adapters, so all three catalog providers are now STT-capable — there is no
-    // longer a configured-but-adapter-less provider to exclude. That STT_CAPABLE_PROVIDERS now
-    // equals the full catalog is pinned by stt_capable_set_is_openai_gemini_elevenlabs above, and
-    // that each configured member IS offered is covered by
+    // and ElevenLabs adapters, and Soniox's adapter shipped too — so all four catalog providers are
+    // now STT-capable, leaving no configured-but-adapter-less provider to exclude. That
+    // STT_CAPABLE_PROVIDERS now equals the full catalog is pinned by stt_capable_set_includes_soniox
+    // above, and that each configured member IS offered is covered by
     // a_configured_provider_is_offered_once_the_disclosure_is_accepted.
 
     @Test fun every_provider_can_deselect_itself() {

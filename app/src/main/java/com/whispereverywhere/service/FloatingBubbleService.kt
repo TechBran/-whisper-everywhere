@@ -99,8 +99,9 @@ internal fun decideEngineChoice(
 
 /**
  * The stored preference names a usable provider only when it matches one of the STT adapters this
- * release ships — OpenAI, Gemini, or ElevenLabs (C2b widened the set from OpenAI-only). Anything
- * else — null, a foreign provider name, a stale/corrupt value — resolves to null, which
+ * release ships — OpenAI, Gemini, ElevenLabs, or Soniox (C2b widened the set from OpenAI-only;
+ * Soniox adds a 4th). Anything else — null, a foreign provider name, a stale/corrupt value —
+ * resolves to null, which
  * [decideEngineChoice] then treats exactly like "no key": a build that predates a provider's
  * adapter can never attempt a cloud call for it. [SttProviderFactory] has a mapping for every id in
  * [STT_PROVIDERS], so a non-null result is always constructible.
@@ -109,7 +110,8 @@ internal fun resolveSttProvider(raw: String?): ProviderId? =
     raw?.let { runCatching { ProviderId.valueOf(it) }.getOrNull() }
         ?.takeIf { it in STT_PROVIDERS }
 
-private val STT_PROVIDERS = setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS)
+private val STT_PROVIDERS =
+    setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX)
 
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,

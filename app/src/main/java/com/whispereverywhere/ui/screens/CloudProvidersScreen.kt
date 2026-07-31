@@ -124,7 +124,7 @@ internal fun providerTrainingDisclosure(provider: Provider): String = when (prov
  * set adapter-driven is the honest fix, and it must stay in lockstep with [SttProviderFactory].
  */
 internal val STT_CAPABLE_PROVIDERS: Set<ProviderId> =
-    setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS)
+    setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX)
 
 /**
  * The STT selection that should survive removing [removedProvider]'s key: the same selection,
