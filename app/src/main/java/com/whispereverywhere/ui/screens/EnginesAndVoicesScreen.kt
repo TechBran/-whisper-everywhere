@@ -228,6 +228,17 @@ fun EnginesAndVoicesScreen(
                             app.preferencesManager.ttsProviderId = ttsNext
                         }
                         app.preferencesManager.setTtsCloudVoiceId(provider.id, null)
+                        // Re-sync the read-aloud LOCAL mirrors from prefs. Since the merge, Section 3
+                        // (removal) and the Section 2 voice picker share this remember-state on ONE
+                        // screen — unlike the STT branch above, the TTS branch never updated its
+                        // mirrors, so they went stale. A stale mirror let the picker keep rendering the
+                        // just-deselected cloud engine's voice list with live Select/Preview, which
+                        // re-persist ttsProviderId and resume cloud read-aloud in a SINGLE action —
+                        // defeating the two-deliberate-actions key-removal gate. Recompute exactly as
+                        // the initial `remember` does.
+                        ttsProviderIdState = app.preferencesManager.ttsProviderId
+                        ttsCloudVoiceIdState = resolveTtsProvider(app.preferencesManager.ttsProviderId)
+                            ?.let { app.preferencesManager.ttsCloudVoiceId(it) }
                     },
                 )
                 Spacer(modifier = Modifier.height(12.dp))
