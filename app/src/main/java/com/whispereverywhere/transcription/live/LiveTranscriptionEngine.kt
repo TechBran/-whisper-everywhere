@@ -72,6 +72,14 @@ class LiveTranscriptionEngine(
      */
     private val minCommitBytes: Int = DEFAULT_MIN_COMMIT_BYTES,
     /**
+     * true for the open-mic live modes: the SERVER cuts turns (server VAD / endpoint detection), so
+     * the engine allocates seqs from SERVER turn events and never enqueues a client commit or applies
+     * the too-short gate. false keeps the client-VAD ledger (still a valid mode of this class — its
+     * unit tests exercise it, and it is the documented per-provider fallback for a hypothetical
+     * non-segmenting provider). The client-mode default path is byte-identical to before this flag.
+     */
+    private val serverDriven: Boolean = false,
+    /**
      * Builds the transport wired to the engine's own listener. A factory, not a ready-made transport,
      * because [RealtimeTransport] takes its listener at construction and the listener IS this engine
      * — the two cannot be built in either order otherwise. Production passes
@@ -97,6 +105,19 @@ class LiveTranscriptionEngine(
 
     private val transportListener = TransportListener()
     private val transport: Transport = makeTransport(transportListener)
+
+    /**
+     * In server-driven mode a SERVER turn event must rotate the fallback mirror AND allocate the seq
+     * as ONE operation — the same pairing the client [commit] gives batch. The engine is WRAPPED by
+     * [com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine], so it calls "up"
+     * through this callback (wired by the service to `fallback.commit()`), which snapshots the mirror
+     * and calls back into [commit], returning the allocated seq (or a negative NO_SEGMENT). Null in
+     * client mode.
+     */
+    @Volatile private var serverTurnRotation: (() -> Long)? = null
+
+    /** Wire the server-turn rotation (server-driven mode only). See [serverTurnRotation]. */
+    fun attachServerTurnRotation(cb: () -> Long) { serverTurnRotation = cb }
 
     // -------- capture thread / sender (guarded by bufferLock) --------
 
@@ -203,17 +224,19 @@ class LiveTranscriptionEngine(
             if (!turnHasAudio) return NO_SEGMENT
             seq = nextSeq++
             shed = turnShed
-            // A turn under the server's ~100 ms minimum would be rejected with no item raised,
-            // stranding this seq and mis-binding the next turn. Treat it like a shed turn: resolve
-            // Lost locally, never commit it.
-            tooShort = turnAudioBytes < minCommitBytes
+            // Client mode: a turn under the server's ~100 ms minimum would be rejected with no item
+            // raised, stranding this seq and mis-binding the next turn — treat it like a shed turn and
+            // resolve Lost locally. Server mode: the SERVER already decided this turn is real (it cut
+            // it) and we send no client commit anyway, so the too-short gate does not apply.
+            tooShort = !serverDriven && turnAudioBytes < minCommitBytes
             turnHasAudio = false
             turnShed = false
             turnAudioBytes = 0
             // Only a deliverable turn tells the server to finalize. A shed, fatal, or too-short turn
             // sends no commit — its audio is gone, its session is dead, or the server would reject it
-            // — so the server raises no item, and this turn owns no bindable slot.
-            if (latched == null && !shed && !tooShort) sendQueue.addLast(SendOp.Commit(seq))
+            // — so the server raises no item, and this turn owns no bindable slot. Server mode NEVER
+            // sends a client input_audio_buffer.commit: the server auto-commits under its own VAD.
+            if (latched == null && !shed && !tooShort && !serverDriven) sendQueue.addLast(SendOp.Commit(seq))
         }
         val deliverable = latched == null && !shed && !tooShort
         if (deliverable) wakeups.trySend(Unit)
@@ -286,6 +309,14 @@ class LiveTranscriptionEngine(
         }
 
         override fun onCommitted(itemId: String) {
+            if (serverDriven) {
+                // Server-driven: this event IS the turn boundary. Rotate the fallback mirror + allocate
+                // the seq for the just-cut turn FIRST, THEN bind the server item to it. A NO_SEGMENT
+                // (no audio since the last boundary) binds nothing — otherwise bindItem would attach
+                // this item to a stale earlier seq (permanent off-by-one).
+                val seq = serverTurnRotation?.invoke() ?: NO_SEGMENT
+                if (seq < 0) return
+            }
             // The deterministic, in-commit-order binding point: map this item to the oldest unbound
             // bindable seq. Every later delta/completed for it resolves the RIGHT seq regardless of
             // cross-turn event ordering.
@@ -322,6 +353,12 @@ class LiveTranscriptionEngine(
             // NOT survive to flush onto the reconnected socket. That turn is already being resolved
             // Lost here; a stale Commit crossing over would commit the fresh socket's partial buffer
             // into a phantom item that mis-correlates to a later seq. Same reset connect()/close() do.
+            //
+            // Server mode: no client commit has cut the in-progress audio, so snapshot the tail under a
+            // fresh seq FIRST (rotating the mirror). abandonOutstanding then resolves that seq — and
+            // all pending — Lost, and the fallback rescues the tail from the retained PCM. Client mode
+            // is unchanged (the service's next commit / stop snapshots the tail).
+            if (serverDriven) serverTurnRotation?.invoke()
             clearSendBuffer()
             abandonOutstanding(WS_DROP)
         }

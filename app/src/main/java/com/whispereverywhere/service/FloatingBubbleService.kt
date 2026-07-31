@@ -1679,6 +1679,10 @@ class FloatingBubbleService : Service(),
                 val cloud = com.whispereverywhere.transcription.live.LiveTranscriptionEngine(
                     apiKey = requireNotNull(key),
                     scope = serviceScope,
+                    // Open socket, server VAD: the SERVER cuts turns. The client VAD/commit + wall-cap
+                    // are disabled for this session (see onAudioChunk's LiveTurnPolicy gate); the engine
+                    // allocates seqs from server turn events via the rotation callback wired below.
+                    serverDriven = true,
                     makeTransport = { transportListener ->
                         com.whispereverywhere.transcription.live.LiveTranscriptionEngine.realTransport(
                             com.whispereverywhere.transcription.live.RealtimeTransport(
@@ -1698,8 +1702,14 @@ class FloatingBubbleService : Service(),
                 // locally from the mirrored PCM. The router still decides the ROUTE by capture
                 // source alone, so device (playback) audio remains physically unreachable from this
                 // engine — the same privacy guarantee the batch branch above documents.
+                val fallback = FallbackTranscriptionEngine(cloud, local, serviceScope)
+                // Server turns rotate the SAME fallback that mirrors this engine's PCM — the seq the
+                // callback returns is the paired seq the mirror just retained. Wired here, where both
+                // objects exist, so FallbackTranscriptionEngine stays provider-agnostic and
+                // byte-identical (it never knows about server-driven turns).
+                cloud.attachServerTurnRotation { fallback.commit() }
                 com.whispereverywhere.transcription.SourceRoutedTranscriptionEngine(
-                    micEngine = FallbackTranscriptionEngine(cloud, local, serviceScope),
+                    micEngine = fallback,
                     deviceEngine = local,
                 ).also { sourceRouter = it }
             }
