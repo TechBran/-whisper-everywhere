@@ -183,6 +183,14 @@ Everything that must be set, by hand, in the Play Console for the 3.3.0 rollout.
 SAME release as the AAB (versionCode 73 / versionName 3.3.0) — the Data Safety form, the storefront,
 and the APK are diffed against each other, so a half-applied change is itself a rejection.
 
+### Target API level — ALREADY SATISFIED, no action
+
+The Console banner "App must target Android 16 (API level 36) or higher … from Aug 30, 2026" is
+Google's standing advisory to all developers. This app has targeted API 36 SINCE 3.2.0 (Release B,
+shipped July 2026, done specifically for this deadline); 3.3.0 carries `targetSdk = 36` /
+`compileSdk = 36` (`app/build.gradle.kts:22,39`). Verified again 2026-07-31 against the owner's
+Console notice. Nothing to change — recorded here so the banner is never mistaken for an open item.
+
 ### Data Safety — exact answers to set
 
 Two shared data types are ON this release; both Optional; the ephemeral-processing exemption is NOT
