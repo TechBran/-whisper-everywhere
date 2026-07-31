@@ -215,6 +215,33 @@ class ElevenLabsRealtimeProtocolTest {
         assertTrue("the fresh turn's id differs from the lost one", sink.committed.last() != id1)
     }
 
+    @Test fun a_late_transcript_for_a_timed_out_turn_is_discarded_not_applied_to_the_next_turn() {
+        val p = protocol()
+        // Turn A committed and in flight; turn B deferred behind it.
+        p.onAppend(pcm(shortArrayOf(1, 2)))
+        p.onCommit()
+        val idA = sink.committed.single()
+        p.onCommit() // B deferred while A is in flight
+        assertEquals(1, sink.committed.size)
+
+        // A times out before its (merely LATE, not lost) transcript lands: A -> Lost, and the deferred
+        // B is now sent and becomes the in-flight turn.
+        scheduler.fireAll()
+        assertEquals("A resolves Lost via its timeout", listOf(idA), sink.failed)
+        assertEquals("the deferred B is now bound and in flight", 2, sink.committed.size)
+        val idB = sink.committed.last()
+        assertTrue("A and B are distinct turns", idA != idB)
+
+        // A's real committed_transcript arrives just AFTER the timeout. It must be DISCARDED — it must
+        // NOT resolve B with A's text (the cross-turn shear the item_id ledger exists to prevent).
+        p.onText("""{"message_type":"committed_transcript","text":"A text"}""")
+        assertTrue("A's late transcript resolves nothing — B is not stolen", sink.completed.isEmpty())
+
+        // B's OWN transcript then resolves B correctly, with B's text.
+        p.onText("""{"message_type":"committed_transcript","text":"B text"}""")
+        assertEquals(listOf(idB to "B text"), sink.completed)
+    }
+
     @Test fun a_committed_transcript_after_a_timeout_resolves_nothing() {
         val p = protocol()
         p.onAppend(pcm(shortArrayOf(1, 2)))

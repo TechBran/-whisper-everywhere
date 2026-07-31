@@ -106,6 +106,15 @@ class ElevenLabsRealtimeProtocol(
     private var heldChunk: ByteArray? = null // the not-yet-flushed most-recent append (fold slot)
     private var inFlightId: String? = null   // the synthetic id of the commit awaiting a transcript
     private var commitDeferred = false       // a commit requested while one was in flight
+    /**
+     * Commits already resolved by a TIMEOUT whose `committed_transcript` may still be in transit. A
+     * committed_transcript carries no id, so it can only be FIFO-correlated: while any burned commit is
+     * outstanding it is the OLDEST awaiting turn (it was sent — and timed out — before the current
+     * in-flight one), so an inbound transcript belongs to it and is DISCARDED. Only once this reaches
+     * zero does a transcript claim the live in-flight turn. Without it, a merely-late transcript would
+     * steal the next turn's seq — the exact cross-turn mis-attribution the ledger forbids.
+     */
+    private var burnedCount = 0
 
     override fun upgradeHeaders(apiKey: String): List<Pair<String, String>> {
         val p = ProviderCatalog.byId(ProviderId.ELEVENLABS) // xi-api-key, bare value
@@ -121,16 +130,18 @@ class ElevenLabsRealtimeProtocol(
      * No config frame — but this IS the per-open reset point for held state (parity with
      * [SonioxRealtimeProtocol.bootstrap]). [reset] fires only on a deliberate [RealtimeTransport.close];
      * a transient WS drop reconnects WITHOUT it, so without clearing here the pre-drop held-commit state
-     * (heldChunk / the in-flight slot / a deferred commit) would survive onto the fresh socket:
-     * post-reconnect commits would DEFER forever behind a stale inFlightId, and the still-armed stale
-     * timeout could bind a later, unrelated turn. Clearing inFlightId here also neutralizes that stale
-     * timeout — [onTimeout]'s [claimInFlight] then finds a mismatch (or null) and no-ops.
+     * (heldChunk / the in-flight slot / a deferred commit / the burned count) would survive onto the
+     * fresh socket: post-reconnect commits would DEFER forever behind a stale inFlightId, and the
+     * still-armed stale timeout could bind a later, unrelated turn. Clearing inFlightId here also
+     * neutralizes that stale timeout — [onTimeout]'s [claimTimeout] then finds a mismatch (or null) and
+     * no-ops. burnedCount is cleared too: the pre-drop server's in-transit transcripts are gone.
      */
     override fun bootstrap(apiKey: String, language: String?): List<Frame> {
         synchronized(gate) {
             heldChunk = null
             inFlightId = null
             commitDeferred = false
+            burnedCount = 0
         }
         return emptyList()
     }
@@ -183,8 +194,8 @@ class ElevenLabsRealtimeProtocol(
     }
 
     private fun onTimeout(id: String) {
-        val claim = claimInFlight(expected = id) ?: return // already resolved / a later commit is in flight
-        sink.onTranscriptionFailed(claim.id) // held turn -> the engine's Lost path (rescued locally)
+        val claim = claimTimeout(id) ?: return // already resolved / a later commit is now in flight
+        sink.onTranscriptionFailed(claim.id!!) // held turn -> the engine's Lost path (rescued locally)
         claim.next?.let { executeCommit(it) }
     }
 
@@ -192,8 +203,11 @@ class ElevenLabsRealtimeProtocol(
         when (val e = ElevenLabsEvents.parse(text)) {
             is ElevenLabsEvents.In.Partial -> sink.onDelta("", e.text) // preview only; id irrelevant
             is ElevenLabsEvents.In.Committed -> {
-                val claim = claimInFlight(expected = null) ?: return // no turn in flight -> late/ignore
-                sink.onCompleted(claim.id, e.text) // resolve the bound seq exactly-once (engine path)
+                val claim = claimTranscript() ?: return // no turn in flight -> late/ignore
+                // A null id means the transcript belongs to an already-timed-out (burned) turn — it is
+                // DISCARDED, never applied to the current in-flight turn (no seq theft). A non-null id
+                // resolves its bound seq exactly-once via the engine path.
+                claim.id?.let { sink.onCompleted(it, e.text) }
                 claim.next?.let { executeCommit(it) }
             }
             is ElevenLabsEvents.In.Error ->
@@ -203,14 +217,30 @@ class ElevenLabsRealtimeProtocol(
     }
 
     /**
-     * Atomically leave the in-flight state and, if a commit was deferred, prepare the next one — all
-     * under [gate] so the timeout and the `committed_transcript` cannot both resolve the same turn.
-     * [expected] == null claims whatever is in flight (a `committed_transcript` carries no id);
-     * a non-null [expected] claims only if it still matches (a stale timeout finds a mismatch -> null).
+     * The TIMEOUT leaves the in-flight slot: resolve the held turn Lost, but remember (burn) that its
+     * commit is still outstanding on the server so a merely-late transcript for it is later discarded
+     * rather than stealing the next turn. All under [gate] so the timeout and a racing transcript
+     * cannot both resolve the same turn; [expected] must still match (a stale timeout finds a mismatch,
+     * or a cleared slot, and no-ops).
      */
-    private fun claimInFlight(expected: String?): Claim? = synchronized(gate) {
+    private fun claimTimeout(expected: String): Claim? = synchronized(gate) {
         val cur = inFlightId ?: return null
-        if (expected != null && expected != cur) return null
+        if (expected != cur) return null
+        inFlightId = null
+        burnedCount++ // this commit's server transcript may still land; discard it when it does
+        val next = if (commitDeferred) { commitDeferred = false; prepareCommitLocked() } else null
+        Claim(cur, next)
+    }
+
+    /**
+     * An inbound `committed_transcript` (carries no id) claims the OLDEST awaiting turn. While any
+     * burned commit is outstanding that turn is a timed-out one — return a null-id [Claim] so the caller
+     * discards the transcript. Otherwise it is the live in-flight turn: leave the slot and, if a commit
+     * was deferred, prepare the next. Null result = nothing awaiting -> a stray late frame, ignored.
+     */
+    private fun claimTranscript(): Claim? = synchronized(gate) {
+        if (burnedCount > 0) { burnedCount--; return Claim(id = null, next = null) }
+        val cur = inFlightId ?: return null
         inFlightId = null
         val next = if (commitDeferred) { commitDeferred = false; prepareCommitLocked() } else null
         Claim(cur, next)
@@ -226,10 +256,12 @@ class ElevenLabsRealtimeProtocol(
         heldChunk = null
         inFlightId = null
         commitDeferred = false
+        burnedCount = 0
     }
 
     private class PreparedCommit(val id: String, val last: ByteArray?)
-    private class Claim(val id: String, val next: PreparedCommit?)
+    /** [id] == null marks a discard (a transcript for an already-timed-out, burned turn). */
+    private class Claim(val id: String?, val next: PreparedCommit?)
 
     companion object {
         const val ENDPOINT =
