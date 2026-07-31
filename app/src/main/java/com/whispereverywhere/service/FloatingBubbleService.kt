@@ -1924,6 +1924,16 @@ class FloatingBubbleService : Service(),
         transcriptionEngine?.commit()
         speechSegmenter.reset()
 
+        // Server-driven live only: the stop commit above cut the final open utterance under a tail
+        // seq, but in server-driven mode NO server VAD endpoint can ever resolve it now — the mic is
+        // closed, so no silence frame / `<end>` / committed_transcript will arrive. Resolve that tail
+        // (and any still-in-flight committed turn) HERE, while the fallback's retained PCM is valid,
+        // so the drain below rescues each on-device instead of looping the whole FINALIZE_TIMEOUT_MS
+        // on a pending that can never empty and then dropping the tail as a bare marker at teardown.
+        // No-op for batch/local (finishServerTurns guards on serverDriven, and lastLiveEngine is only
+        // non-null for a CLOUD_LIVE session).
+        if (sessionIsLive) lastLiveEngine?.finishServerTurns()
+
         // Drain the ENTIRE transcription backlog before detaching the listener. A slow model (e.g.
         // the large tier) lags several segments behind real time; those queued transcribes finish
         // after the last utterance, and without waiting they'd complete post-teardown and be dropped

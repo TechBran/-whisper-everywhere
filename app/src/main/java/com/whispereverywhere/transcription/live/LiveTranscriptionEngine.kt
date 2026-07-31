@@ -74,9 +74,15 @@ class LiveTranscriptionEngine(
     /**
      * true for the open-mic live modes: the SERVER cuts turns (server VAD / endpoint detection), so
      * the engine allocates seqs from SERVER turn events and never enqueues a client commit or applies
-     * the too-short gate. false keeps the client-VAD ledger (still a valid mode of this class — its
-     * unit tests exercise it, and it is the documented per-provider fallback for a hypothetical
-     * non-segmenting provider). The client-mode default path is byte-identical to before this flag.
+     * the too-short gate. false keeps the client-VAD ledger (still a valid mode of THIS class — its
+     * unit tests exercise it). The client-mode default path is byte-identical to before this flag.
+     *
+     * Fallback honesty: the client-VAD fallback is only HALF-present. This engine's client ledger is
+     * retained and tested, but each provider's PROTOCOL-layer commit machinery (OpenAI's commit-frame
+     * send, ElevenLabs' fold-slot/timeout, Soniox's grace window) was DELETED with the 2026-07-31
+     * inversion — so re-enabling client-VAD for a genuinely non-segmenting provider would require
+     * rebuilding that protocol path, not just flipping this flag. The seam is a construction flag; the
+     * fallback is documented, not built. All three shipped providers segment server-side.
      */
     private val serverDriven: Boolean = false,
     /**
@@ -462,6 +468,35 @@ class LiveTranscriptionEngine(
     override fun shutdown() = close()
 
     /**
+     * The session is STOPPING (server-driven live only). Resolve every still-outstanding server turn
+     * — the final open utterance the stop-commit just cut, plus any committed turn whose completion
+     * has not yet arrived — Lost RIGHT NOW, while the wrapping
+     * [com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine] still holds each seq's
+     * retained PCM and is still `accepting`. This is the graceful-stop twin of [onDisconnected]'s tail
+     * discipline.
+     *
+     * Without it the tail seq the stop-commit allocated sits in [pending] forever: audio capture has
+     * stopped, so no provider VAD can endpoint the tail (OpenAI server_vad needs silence frames it
+     * will never receive; neither Soniox `<end>` nor ElevenLabs `committed_transcript` fires on a
+     * graceful close). The service's finalize `awaitIdle` then loops the ENTIRE timeout budget on the
+     * non-empty [pending], and when close() finally resolves the tail it has already cleared the
+     * retained PCM — so the tail is dropped as a bare loss marker with NO on-device rescue. Resolving
+     * here instead drives the tail through [abandonOutstanding] while retained/accepting are valid, so
+     * `CloudRelay` rescues each turn from the mirror during the drain and `awaitIdle` sees [pending]
+     * empty at once.
+     *
+     * No-op in client-VAD mode: there the service's own stop commit cuts the tail and the batch drain
+     * finalizes it exactly as before — this path must stay byte-identical.
+     */
+    fun finishServerTurns() {
+        if (!serverDriven) return
+        // Match onDisconnected's order: drop any still-queued appends for the tail (the sender must
+        // not keep pushing to a socket we are about to close), THEN resolve every pending turn Lost.
+        clearSendBuffer()
+        abandonOutstanding(ENDED)
+    }
+
+    /**
      * Blocks the CALLING thread until the sender has drained and every committed turn has resolved,
      * or [timeoutMs] elapses. MUST be called off the main thread. The scope is never cancelled here —
      * a turn that is merely slow keeps running and still resolves.
@@ -489,6 +524,7 @@ class LiveTranscriptionEngine(
         private const val BACKLOG = "network too far behind"
         private const val WS_DROP = "connection dropped"
         private const val CLOSED = "session closed"
+        private const val ENDED = "session ended"
         private const val SUPERSEDED = "session restarted"
         private const val TOO_SHORT = "utterance too short to transcribe"
         private const val TRANSCRIBE_FAILED = "transcription failed"
