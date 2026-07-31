@@ -94,6 +94,17 @@ interface HttpTransport {
         timeoutMs: Long = DEFAULT_TTS_TIMEOUT_MS,
     ): HttpResultBytes
 
+    /**
+     * DELETE a resource. Soniox's async STT stores the uploaded audio + transcript server-side
+     * until the caller deletes them, so every segment MUST delete both on the way out (success,
+     * error, or cancellation). Short-timeout profile like [get] — the body is a tiny 204/ack.
+     */
+    suspend fun delete(
+        url: String,
+        headers: Map<String, String>,
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    ): HttpResult
+
     companion object {
         const val DEFAULT_TIMEOUT_MS = 10_000L
         const val DEFAULT_UPLOAD_TIMEOUT_MS = 60_000L
@@ -258,6 +269,30 @@ class OkHttpTransport(private val client: OkHttpClient = defaultClient()) : Http
             throw c
         } catch (e: Exception) {
             HttpResultBytes.NetworkError(e)
+        }
+    }
+
+    override suspend fun delete(url: String, headers: Map<String, String>, timeoutMs: Long): HttpResult {
+        return try {
+            // Body/request construction stays INSIDE the try for the same credential-leak reason as
+            // every other method here: OkHttp's Headers.checkValue embeds the raw header value in its
+            // IllegalArgumentException for every header except the four it redacts, so an uncaught
+            // throw would put a credential in a crash trace.
+            val request = Request.Builder().url(url).delete().apply {
+                headers.forEach { (k, v) -> header(k, v) }
+            }.build()
+            val call = client.newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+                .newCall(request)
+            val response = call.await()
+            val body = response.use { it.body?.string().orEmpty() }
+            if (response.isSuccessful) HttpResult.Ok(response.code, body)
+            else HttpResult.HttpError(response.code, body)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c   // rethrow FIRST — must unwind, not be reported as a network failure
+        } catch (e: Exception) {
+            HttpResult.NetworkError(e)
         }
     }
 
