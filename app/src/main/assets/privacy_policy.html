@@ -98,7 +98,7 @@
     <div class="highlight">
         <strong>Off by default.</strong> Cloud transcription requires two separate, deliberate steps: adding your own API key for a provider, AND selecting that provider as your transcription engine in the App's Cloud Providers settings. On-device transcription remains fully functional — and the default — until you do both.
     </div>
-    <p><strong>Adding a provider key</strong> (for OpenAI, Google Gemini, or ElevenLabs) sends only that key to the provider's own servers, once, to verify it works with your account — nothing else is sent at that point.</p>
+    <p><strong>Adding a provider key</strong> (for OpenAI, Google Gemini, ElevenLabs, or Soniox) sends only that key to the provider's own servers, once, to verify it works with your account — nothing else is sent at that point.</p>
     <p><strong>When you then select a provider as your transcription engine, the audio you dictate is sent to that provider's own servers, using your own account with them, so it can be transcribed.</strong> This happens only for the provider you have selected, and only while a key is saved for it. Nothing is sent to any provider until both steps are done, and <strong>switching back to on-device or removing the key stops all transmission to that provider immediately.</strong></p>
     <p><strong>If the selected provider fails</strong> — a network error, an outage, a rejected request — <strong>the on-device model transcribes that audio instead</strong>, automatically, so your dictation still completes without you doing anything.</p>
     <p><strong>Cloud read-aloud is off by default.</strong> Read-aloud is produced entirely on-device unless you choose a cloud voice for a provider you have configured. <strong>When you select a cloud voice, the text you choose to have read aloud is sent to that provider's own servers, using your own account with them, to be spoken</strong> — only for the provider whose voice you selected, only while its key is saved, and only after you accept the updated disclosure. The on-device voice remains the default and takes over automatically if the cloud voice fails mid-read, so reading always completes.</p>
@@ -109,6 +109,7 @@
         <li><strong>OpenAI:</strong> Does not train its models on data sent through the API.</li>
         <li><strong>Google Gemini:</strong> On the free tier, Google uses what you send to improve its products, and human reviewers may read it. Paid tiers do not.</li>
         <li><strong>ElevenLabs:</strong> Trains on API data by default; you can opt out in your ElevenLabs account settings.</li>
+        <li><strong>Soniox:</strong> Does not train its models on the audio or transcripts you send; uploaded audio is deleted after each transcription.</li>
     </ul>
     <p>Your provider API key is stored only on your device, encrypted using the Android Keystore. We never see it, log it, or transmit it anywhere except: once, to the provider you added it for, to verify it works, and thereafter — only while that provider is selected as your transcription engine — in the authenticated transcription request to that same provider.</p>
 
