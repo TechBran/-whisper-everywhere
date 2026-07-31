@@ -476,14 +476,15 @@ fun MainControlButton(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        val labels = mainControlLabels(isEnabled = isEnabled, canEnable = canEnable)
         Text(
-            text = if (isEnabled) "Tap to Disable" else if (canEnable) "Tap to Enable" else "Complete Setup First",
+            text = labels.title,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
 
         Text(
-            text = if (isEnabled) "Bubble is active" else if (canEnable) "Bubble is inactive" else "Setup required below",
+            text = labels.subtitle,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

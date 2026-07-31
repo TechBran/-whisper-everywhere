@@ -103,3 +103,19 @@ internal fun readAloudChip(engineDisplayName: String?, voiceDisplayName: String?
  */
 internal fun firstRunStartDestination(hasModel: Boolean, onboardingCompleted: Boolean): String =
     if (hasModel || onboardingCompleted) ROUTE_HOME else ROUTE_FIRST_RUN
+
+/** The main control button's two lines. */
+data class MainControlLabels(val title: String, val subtitle: String)
+
+/**
+ * The bubble control button's title + sub-line. When the bubble can't be enabled yet (a runtime
+ * permission or the model is missing) the sub-line routes the user to Settings. The refresh removed
+ * Home's per-permission SetupChecklist — the mic/overlay/accessibility grants now live behind the
+ * top-right Settings gear, and the setup BANNER only covers model+key — so the old "Setup required
+ * below" copy pointed at furniture that no longer renders. No speed claim ever appears here.
+ */
+internal fun mainControlLabels(isEnabled: Boolean, canEnable: Boolean): MainControlLabels = when {
+    isEnabled -> MainControlLabels("Tap to Disable", "Bubble is active")
+    canEnable -> MainControlLabels("Tap to Enable", "Bubble is inactive")
+    else -> MainControlLabels("Complete setup first", "Grant permissions in Settings")
+}

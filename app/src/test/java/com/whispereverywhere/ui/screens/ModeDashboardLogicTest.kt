@@ -77,4 +77,15 @@ class ModeDashboardLogicTest {
         assertEquals(ROUTE_HOME, firstRunStartDestination(hasModel = true, onboardingCompleted = false))
     @Test fun skipper_or_key_user_goes_home() =
         assertEquals(ROUTE_HOME, firstRunStartDestination(hasModel = false, onboardingCompleted = true))
+
+    // --- main control button copy (permissions live in Settings now, not "below") ---
+    @Test fun main_control_enabled_says_active() =
+        assertEquals("Bubble is active", mainControlLabels(isEnabled = true, canEnable = false).subtitle)
+    @Test fun main_control_ready_says_inactive() =
+        assertEquals("Bubble is inactive", mainControlLabels(isEnabled = false, canEnable = true).subtitle)
+    @Test fun main_control_incomplete_points_to_settings_not_below() {
+        val l = mainControlLabels(isEnabled = false, canEnable = false)
+        assertTrue(l.subtitle, l.subtitle.contains("Settings"))
+        assertFalse(l.subtitle, l.subtitle.contains("below"))
+    }
 }
