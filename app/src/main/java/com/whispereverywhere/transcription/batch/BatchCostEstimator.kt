@@ -1,36 +1,54 @@
 package com.whispereverywhere.transcription.batch
 
+import com.whispereverywhere.provider.ProviderId
+
 /**
- * §6.5's "cloud is never a surprise charge" as math the UI and the service both call.
+ * §6.5's "cloud is never a surprise charge" as math the UI and the service both call. Estimates
+ * derive from byteLength at the PCM16/16 kHz byte rate, priced PER PROVIDER. They are ESTIMATES —
+ * copy always says "about". An UNKNOWN provider price does not block the provider; for the CONFIRM
+ * decision it is priced at the most-expensive-KNOWN rate (conservative — asks sooner, never under).
  *
- * Estimates derive from the recording's byteLength (retained in the manifest) at the PCM16/16 kHz
- * byte rate, priced at gpt-transcribe's published batch rate. They are ESTIMATES shown to the
- * user, never a promise — copy must say "about".
- *
- * needsConfirmation is an OR of a cents threshold and a minutes threshold: with today's price the
- * minutes bound binds first (10¢ ≈ 22 min), but OR-ing both means a future price change cannot
- * silently widen the unconfirmed window.
+ * Rates verified against live docs 2026-07-31 (¢/min):
+ *   OpenAI gpt-transcribe 0.60 ($0.006/min) · ElevenLabs scribe_v2 0.37 ($0.22/hr)
+ *   Soniox stt-async-v5   0.17 ($0.10/hr)   · Gemini gemini-3.6-flash audio input NOT published -> UNKNOWN.
  */
 object BatchCostEstimator {
-    /** 16 kHz × 2 bytes, mono PCM16. */
+    /** 16 kHz x 2 bytes, mono PCM16. */
     const val BYTES_PER_SECOND = 32_000
 
-    /** gpt-transcribe batch: $0.0045/min (verified against live docs 2026-07-29). */
-    const val CENTS_PER_MINUTE = 0.45
+    const val OPENAI_CENTS_PER_MIN = 0.60
+    const val ELEVENLABS_CENTS_PER_MIN = 0.37
+    const val SONIOX_CENTS_PER_MIN = 0.17
+    /** The dearest KNOWN rate; governs any provider whose price we could not pin (Gemini audio). */
+    const val MOST_EXPENSIVE_KNOWN_CENTS_PER_MIN = OPENAI_CENTS_PER_MIN
+
+    /**
+     * Back-compat alias for the flat pre-3.3.0 rate, retained only so callers not yet migrated to
+     * [centsPerMinute] keep compiling across this multi-commit signature migration. Equal to the
+     * OpenAI known rate. Superseded by the per-provider lookup; do not use in new code.
+     */
+    const val CENTS_PER_MINUTE = OPENAI_CENTS_PER_MIN
 
     const val CONFIRM_CENTS = 10.0
     const val CONFIRM_MINUTES = 10.0
 
+    /** ¢/min for [providerId]; null (on-device) is free; an unpriced provider uses the dearest known rate. */
+    fun centsPerMinute(providerId: ProviderId?): Double = when (providerId) {
+        ProviderId.OPENAI -> OPENAI_CENTS_PER_MIN
+        ProviderId.ELEVENLABS -> ELEVENLABS_CENTS_PER_MIN
+        ProviderId.SONIOX -> SONIOX_CENTS_PER_MIN
+        ProviderId.GEMINI -> MOST_EXPENSIVE_KNOWN_CENTS_PER_MIN // UNKNOWN audio-input price -> conservative
+        null -> 0.0
+    }
+
     fun minutes(byteLength: Long): Double = byteLength / (BYTES_PER_SECOND * 60.0)
 
-    fun estimatedCents(byteLength: Long): Double = minutes(byteLength) * CENTS_PER_MINUTE
+    fun estimatedCents(byteLength: Long, providerId: ProviderId? = null): Double =
+        minutes(byteLength) * centsPerMinute(providerId)
 
-    fun needsConfirmation(byteLength: Long): Boolean =
-        estimatedCents(byteLength) >= CONFIRM_CENTS || minutes(byteLength) >= CONFIRM_MINUTES
+    fun needsConfirmation(byteLength: Long, providerId: ProviderId? = null): Boolean =
+        estimatedCents(byteLength, providerId) >= CONFIRM_CENTS || minutes(byteLength) >= CONFIRM_MINUTES
 
-    /**
-     * Pre-flight bridge: the UI knows only MediaMetadataRetriever's duration before any decode
-     * exists. Decoded PCM16 at 16 kHz mono is exactly 32 bytes per millisecond.
-     */
+    /** Pre-flight bridge: decoded PCM16 @16 kHz mono is exactly 32 bytes/ms. */
     fun bytesForDuration(durationMs: Long): Long = durationMs * (BYTES_PER_SECOND / 1000L)
 }
