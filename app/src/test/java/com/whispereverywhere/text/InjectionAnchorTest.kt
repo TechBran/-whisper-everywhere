@@ -105,6 +105,51 @@ class InjectionAnchorTest {
         assertTrue(p.newFieldText.contains("all"))
     }
 
+    @Test fun a_full_field_auto_select_is_not_a_replace_and_never_deletes() {
+        // Browser URL bars / search boxes select-all on focus, reporting 0..length with NO user
+        // gesture. Tapping the mic then dictating must NOT wipe the existing URL. The full-field
+        // range is excluded from the one-shot replace, so segment #1 inserts without deleting.
+        val url = "https://example.com/page"
+        val a = InjectionAnchor()
+        a.start(url, 0, url.length)           // app-originated full-field auto-select
+        val p = place(a, url, "hello")
+        assertTrue("the existing URL must survive", p.newFieldText.contains(url))
+        assertTrue(p.newFieldText.contains("hello"))
+        assertTrue("field only grew — nothing deleted", p.newFieldText.length >= url.length + "hello".length)
+    }
+
+    @Test fun a_genuine_partial_selection_still_replaces_once() {
+        // A strict-subset range is real user replace intent and still fires exactly once.
+        val a = InjectionAnchor()
+        a.start("delete me keep", 0, 9)       // "delete me" selected (subset: selEnd < length)
+        assertEquals("new keep", place(a, "delete me keep", "new").newFieldText)
+    }
+
+    // --- async staleness: an un-propagated SET_TEXT must not be overwritten -------
+
+    @Test fun a_field_lagging_one_write_behind_does_not_drop_the_prior_segment() {
+        // Two finals arrive back-to-back. The first SET_TEXT ("Hello") has NOT yet propagated across
+        // the process boundary, so segment #2 still reads the pre-write "". A naive resync would
+        // insert at 0 and overwrite, yielding just "World" (losing "Hello"). The staleness guard
+        // plans against what we wrote, so the next write carries BOTH.
+        val a = InjectionAnchor()
+        a.start("", -1, -1)
+        val first = place(a, "", "Hello")         // commit -> expected "Hello", previous ""
+        assertEquals("Hello", first.newFieldText)
+        val second = a.plan("", "World")          // field still reads the stale pre-write ""
+        assertEquals("Hello World", second.newFieldText)
+    }
+
+    @Test fun a_settled_write_appends_normally_without_the_staleness_basis() {
+        // Guard scope: once the write has propagated (field == current expected), the basis is the
+        // live field, so a normal append proceeds — the staleness path is confined to the lagged read.
+        val a = InjectionAnchor()
+        a.start("", -1, -1)
+        place(a, "", "Hello")                     // expected "Hello", previous ""
+        val p = place(a, "Hello", "there")        // field genuinely reads "Hello" now
+        assertEquals("Hello there", p.newFieldText)
+    }
+
     // --- re-sync on user edit: NEVER deletes --------------------------------
 
     @Test fun a_user_edit_after_the_anchor_keeps_the_anchor() {

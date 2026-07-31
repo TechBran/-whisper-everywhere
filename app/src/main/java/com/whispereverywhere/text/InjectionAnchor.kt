@@ -23,6 +23,10 @@ class InjectionAnchor {
     var expectedText: String = ""
         private set
     private var pendingReplace: IntRange? = null
+    // The field value we held BEFORE our last committed write. A cross-process SET_TEXT applies
+    // asynchronously, so a rapid next segment can still read this pre-write value; the staleness
+    // guard in [plan] uses it to avoid resyncing (and discarding text) against an un-propagated write.
+    private var previousExpected: String? = null
 
     /** What to write for one segment: the full new field string and the cursor to pin. */
     data class Placement(val newFieldText: String, val newSelection: Int)
@@ -34,8 +38,15 @@ class InjectionAnchor {
     fun start(fieldText: String, selStart: Int, selEnd: Int) {
         anchor = if (selStart in 0..fieldText.length) selStart else fieldText.length
         expectedText = fieldText
+        previousExpected = null
+        // A range is the one legal replace ONLY if it is a strict SUBSET of the field. A range that
+        // spans the WHOLE field (selStart == 0 && selEnd == length) is not user intent — many fields
+        // (browser URL bars, search boxes) auto-select-all the instant they gain focus, and treating
+        // that as replace would silently wipe the user's existing URL/query on the first segment.
+        // Excluding it means the worst case is a harmless prepend, never a deletion.
         pendingReplace =
-            if (selStart in 0..fieldText.length && selEnd in (selStart + 1)..fieldText.length) {
+            if (selStart in 0..fieldText.length && selEnd in (selStart + 1)..fieldText.length &&
+                !(selStart == 0 && selEnd == fieldText.length)) {
                 selStart until selEnd
             } else null
     }
@@ -44,9 +55,22 @@ class InjectionAnchor {
     fun plan(fieldText: String, segment: String): Placement {
         val seg = TextJoin.normalize(segment)
 
+        // Staleness guard: our last SET_TEXT is applied by the target app's process ASYNCHRONOUSLY.
+        // If the field still reads the value we held BEFORE that write (previousExpected) rather than
+        // what we wrote (expectedText), the write simply has not propagated yet. Planning against the
+        // stale read would resync — computing an insert of 0 and overwriting the just-written text,
+        // losing a whole segment. Instead plan against what we wrote, so the next SET_TEXT carries
+        // BOTH segments and the un-propagated write is superseded harmlessly.
+        val basis = if (fieldText != expectedText && previousExpected != null &&
+            fieldText == previousExpected && previousExpected != expectedText) {
+            expectedText
+        } else {
+            fieldText
+        }
+
         // Locate where our text goes. Replace range wins (start-only, unchanged field); else the
         // anchor if the field is still ours; else a non-deleting re-sync.
-        val replace = pendingReplace?.takeIf { fieldText == expectedText }
+        val replace = pendingReplace?.takeIf { basis == expectedText }
         val removeStart: Int
         val removeEnd: Int
         val insertAt: Int
@@ -57,20 +81,20 @@ class InjectionAnchor {
         } else {
             removeStart = -1
             removeEnd = -1
-            insertAt = if (fieldText == expectedText) {
-                anchor.coerceIn(0, fieldText.length)
+            insertAt = if (basis == expectedText) {
+                anchor.coerceIn(0, basis.length)
             } else {
-                resync(fieldText)
+                resync(basis)
             }
         }
 
         if (seg.isEmpty()) {
             // No-op: keep the field, hold the anchor at the resolved point.
-            return Placement(fieldText, insertAt.coerceIn(0, fieldText.length))
+            return Placement(basis, insertAt.coerceIn(0, basis.length))
         }
 
-        val head = if (removeStart >= 0) fieldText.substring(0, removeStart) else fieldText.substring(0, insertAt)
-        val tail = if (removeStart >= 0) fieldText.substring(removeEnd) else fieldText.substring(insertAt)
+        val head = if (removeStart >= 0) basis.substring(0, removeStart) else basis.substring(0, insertAt)
+        val tail = if (removeStart >= 0) basis.substring(removeEnd) else basis.substring(insertAt)
 
         val leftSpace = if (TextJoin.needsSpace(head, seg)) " " else ""
         val rightSpace = if (TextJoin.needsSpace(seg, tail)) " " else ""
@@ -82,6 +106,7 @@ class InjectionAnchor {
 
     /** Adopt [placement] after a successful SET_TEXT: advance the anchor, clear the one-shot replace. */
     fun commit(placement: Placement) {
+        previousExpected = expectedText     // remember the pre-write value for the staleness guard
         anchor = placement.newSelection
         expectedText = placement.newFieldText
         pendingReplace = null
