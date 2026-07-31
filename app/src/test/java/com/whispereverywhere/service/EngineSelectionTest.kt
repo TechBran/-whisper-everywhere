@@ -61,13 +61,35 @@ class EngineSelectionTest {
         )
     }
 
-    // --- decideEngineChoice: the C4 live-streaming branch, gated AFTER the local valve ---
+    // --- decideEngineChoice: the live-streaming branch, gated AFTER the local valve ---
 
     @Test fun live_flag_with_openai_and_key_and_net_gives_CLOUD_LIVE() {
         assertEquals(
             EngineChoice.CLOUD_LIVE,
             decideEngineChoice(
                 sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = true, liveMode = true,
+            ),
+        )
+    }
+
+    @Test fun live_flag_with_elevenlabs_and_key_and_net_gives_CLOUD_LIVE() {
+        // Realtime-all-providers wave: ElevenLabs ships a native BYOK realtime WebSocket
+        // (ElevenLabsRealtimeProtocol), so it reaches CLOUD_LIVE exactly like OpenAI.
+        assertEquals(
+            EngineChoice.CLOUD_LIVE,
+            decideEngineChoice(
+                sttProviderId = "ELEVENLABS", hasKey = true, hasValidatedNetwork = true, liveMode = true,
+            ),
+        )
+    }
+
+    @Test fun live_flag_with_soniox_and_key_and_net_gives_CLOUD_LIVE() {
+        // stt-rt-v5 ships behind SonioxRealtimeProtocol this wave; Soniox flips supportsStreaming
+        // to true and now reaches CLOUD_LIVE too.
+        assertEquals(
+            EngineChoice.CLOUD_LIVE,
+            decideEngineChoice(
+                sttProviderId = "SONIOX", hasKey = true, hasValidatedNetwork = true, liveMode = true,
             ),
         )
     }
@@ -93,26 +115,15 @@ class EngineSelectionTest {
         )
     }
 
-    @Test fun live_flag_with_non_openai_provider_stays_CLOUD_WITH_FALLBACK() {
-        // Only OpenAI streams (BYOK Realtime WS); Gemini, ElevenLabs, and Soniox cannot, so the
-        // flag is inert for them and the batch-POST path is unchanged. Soniox's realtime WS is a
-        // recorded follow-up, not v1 — word-for-word live stays OpenAI-only this wave.
+    @Test fun live_flag_with_non_realtime_provider_stays_CLOUD_WITH_FALLBACK() {
+        // Widened from "non-OpenAI" to "non-realtime": OpenAI, ElevenLabs, and Soniox all stream
+        // now via their own RealtimeProtocol. Only Gemini has no client-usable realtime path (its
+        // Live API wants ephemeral backend-minted tokens this app has no server for), so the flag
+        // stays inert for Gemini alone and its batch-POST path is unchanged.
         assertEquals(
             EngineChoice.CLOUD_WITH_FALLBACK,
             decideEngineChoice(
                 sttProviderId = "GEMINI", hasKey = true, hasValidatedNetwork = true, liveMode = true,
-            ),
-        )
-        assertEquals(
-            EngineChoice.CLOUD_WITH_FALLBACK,
-            decideEngineChoice(
-                sttProviderId = "ELEVENLABS", hasKey = true, hasValidatedNetwork = true, liveMode = true,
-            ),
-        )
-        assertEquals(
-            EngineChoice.CLOUD_WITH_FALLBACK,
-            decideEngineChoice(
-                sttProviderId = "SONIOX", hasKey = true, hasValidatedNetwork = true, liveMode = true,
             ),
         )
     }
@@ -142,6 +153,25 @@ class EngineSelectionTest {
             assertNotEquals(EngineChoice.CLOUD_WITH_FALLBACK, choice)
             assertNotEquals(EngineChoice.CLOUD_LIVE, choice)
         }
+    }
+
+    // --- REALTIME_STT_PROVIDERS / isRealtimeStt: the CLOUD_LIVE gate, kept in lockstep with
+    //     ProviderCatalog.supportsStreaming and ModeDashboard.dictationLiveActive ---
+
+    @Test fun realtime_stt_providers_is_every_catalog_provider_that_streams() {
+        assertEquals(
+            setOf(ProviderId.OPENAI, ProviderId.ELEVENLABS, ProviderId.SONIOX),
+            REALTIME_STT_PROVIDERS,
+        )
+    }
+
+    @Test fun is_realtime_stt_true_for_openai_elevenlabs_soniox_false_for_gemini_and_garbage() {
+        assertEquals(true, isRealtimeStt("OPENAI"))
+        assertEquals(true, isRealtimeStt("ELEVENLABS"))
+        assertEquals(true, isRealtimeStt("SONIOX"))
+        assertEquals(false, isRealtimeStt("GEMINI"))
+        assertEquals(false, isRealtimeStt(null))
+        assertEquals(false, isRealtimeStt("not-a-real-provider"))
     }
 
     // --- resolveSttProvider: C2b widens live mode to OpenAI, Gemini, and ElevenLabs ---

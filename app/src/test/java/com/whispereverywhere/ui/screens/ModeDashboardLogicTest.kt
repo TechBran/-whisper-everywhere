@@ -35,8 +35,14 @@ class ModeDashboardLogicTest {
 
     @Test fun dictation_word_for_word_appends_only_for_cloud() {
         assertEquals("OpenAI · word-for-word", dictationChip("OpenAI", null, liveMode = true))
-        // liveMode can never be true on-device (liveModeRowVisible gates it to OpenAI); the guard
-        // proves it never leaves a dangling suffix on the on-device chip.
+        // dictationChip is provider-generic (off engineDisplayName), so ElevenLabs/Soniox render
+        // the same suffix with no special-casing — the realtime-all-providers widening needs no
+        // edit here, only in dictationLiveActive (below), which decides WHEN liveMode is true.
+        assertEquals("ElevenLabs · word-for-word", dictationChip("ElevenLabs", null, liveMode = true))
+        assertEquals("Soniox · word-for-word", dictationChip("Soniox", null, liveMode = true))
+        // liveMode can never be true on-device (liveModeRowVisible gates it to a selected
+        // streaming-capable provider); the guard proves it never leaves a dangling suffix on the
+        // on-device chip.
         assertEquals("On-device · Eco", dictationChip(null, "Eco", liveMode = true))
     }
     @Test fun dictation_non_live_matches_engine_chip() =
@@ -44,12 +50,13 @@ class ModeDashboardLogicTest {
     @Test fun dictation_chip_makes_no_speed_claim() =
         assertFalse(dictationChip("OpenAI", null, liveMode = true).contains("fast"))
 
-    // --- word-for-word is OpenAI-only (mirrors decideEngineChoice); sttLiveMode is left set after
-    //     an engine switch, so the chip must re-apply the OpenAI rule itself ---
-    @Test fun live_active_only_for_openai() {
+    // --- word-for-word is realtime-capable-provider-only (mirrors decideEngineChoice); sttLiveMode
+    //     is left set after an engine switch, so the chip must re-apply the rule itself ---
+    @Test fun live_active_for_every_realtime_capable_provider_false_for_gemini() {
         assertTrue(dictationLiveActive("OPENAI", sttLiveMode = true))
+        assertTrue(dictationLiveActive("ELEVENLABS", sttLiveMode = true))
+        assertTrue(dictationLiveActive("SONIOX", sttLiveMode = true))
         assertFalse(dictationLiveActive("GEMINI", sttLiveMode = true))
-        assertFalse(dictationLiveActive("ELEVENLABS", sttLiveMode = true))
         assertFalse(dictationLiveActive(null, sttLiveMode = true))
         assertFalse(dictationLiveActive("OPENAI", sttLiveMode = false))
     }

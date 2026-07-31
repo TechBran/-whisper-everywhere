@@ -244,14 +244,18 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
-     * The batch-vs-live axis for cloud STT (C4). false (the default and shipped behaviour) = the
-     * one-shot batch POST; true = word-for-word live streaming over the OpenAI Realtime WebSocket.
+     * The batch-vs-live axis for cloud STT (C4; widened from OpenAI-only by the realtime
+     * all-providers wave). false (the default and shipped behaviour) = the one-shot batch POST;
+     * true = word-for-word live streaming over the selected provider's own Realtime WebSocket
+     * (OpenAI, ElevenLabs, or Soniox — each behind its own RealtimeProtocol).
      *
      * Orthogonal to [sttProviderId], which still names the provider: this only flips HOW the audio
-     * is sent. It is consulted ONLY when the selected provider is OpenAI — the sole provider that
-     * streams — so leaving it true while on Gemini/ElevenLabs is inert (see decideEngineChoice).
-     * Same mic audio, same provider, same v3 disclosure as batch; the ONLY user-visible change is a
-     * new transport and a higher cost tier (~$0.017/min), surfaced on the selector row itself.
+     * is sent. It is consulted only when the selected provider is realtime-capable — so leaving it
+     * true while on Gemini (the one provider with no client-usable realtime path) is inert (see
+     * decideEngineChoice / isRealtimeStt). Same mic audio, same provider, same v3 disclosure as
+     * batch; the ONLY user-visible change is a new transport and a higher, per-provider cost tier
+     * (about $0.017/min OpenAI, $0.007/min ElevenLabs, $0.002/min Soniox), surfaced on the selector
+     * row itself.
      */
     private val _sttLiveMode = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE, false))
     /** Reactive mirror of [sttLiveMode] for the Dictation card's word-for-word chip. Additive. */

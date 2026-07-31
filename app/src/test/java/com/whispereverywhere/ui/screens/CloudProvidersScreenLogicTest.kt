@@ -380,9 +380,9 @@ class CloudProvidersScreenLogicTest {
         }
     }
 
-    // ---- live-mode selector row (C4 Task 5e): OpenAI-only, price-bearing, no speed claim ----
+    // ---- live-mode selector row: per streaming-capable provider, price-bearing, no speed claim ----
 
-    @Test fun live_mode_row_visible_only_for_openai_with_key_and_disclosure() {
+    @Test fun live_mode_row_visible_for_any_streaming_capable_provider_with_key_and_disclosure() {
         assertTrue(
             liveModeRowVisible(
                 selectedProviderId = ProviderId.OPENAI.name,
@@ -390,11 +390,26 @@ class CloudProvidersScreenLogicTest {
                 disclosureAccepted = true,
             ),
         )
+        assertTrue(
+            liveModeRowVisible(
+                selectedProviderId = ProviderId.ELEVENLABS.name,
+                configured = setOf(ProviderId.ELEVENLABS),
+                disclosureAccepted = true,
+            ),
+        )
+        assertTrue(
+            liveModeRowVisible(
+                selectedProviderId = ProviderId.SONIOX.name,
+                configured = setOf(ProviderId.SONIOX),
+                disclosureAccepted = true,
+            ),
+        )
     }
 
-    @Test fun live_mode_row_hidden_for_gemini_and_elevenlabs_which_cannot_stream() {
+    @Test fun live_mode_row_hidden_for_gemini_which_cannot_stream() {
+        // Gemini has no client-usable realtime path (its Live API wants ephemeral backend-minted
+        // tokens this app has no server for) — a provider limitation, not a defect.
         assertFalse(liveModeRowVisible(ProviderId.GEMINI.name, setOf(ProviderId.GEMINI), true))
-        assertFalse(liveModeRowVisible(ProviderId.ELEVENLABS.name, setOf(ProviderId.ELEVENLABS), true))
     }
 
     @Test fun live_mode_row_hidden_without_disclosure_key_or_active_selection() {
@@ -404,21 +419,38 @@ class CloudProvidersScreenLogicTest {
         // Key gone -> hidden: a live toggle must not outlive the credential it would stream with.
         assertFalse(liveModeRowVisible(ProviderId.OPENAI.name, emptySet(), true))
         // OpenAI configured but on-device is the selected engine -> hidden: the row is a
-        // sub-option of transcribing THROUGH OpenAI, not a standalone switch.
+        // sub-option of transcribing THROUGH the selected provider, not a standalone switch.
         assertFalse(liveModeRowVisible(null, setOf(ProviderId.OPENAI), true))
+        // A garbage/unresolvable selection -> hidden, never throws.
+        assertFalse(liveModeRowVisible("not-a-real-provider", setOf(ProviderId.OPENAI), true))
     }
 
     @Test fun live_mode_label_surfaces_the_price_where_the_mode_is_chosen() {
-        assertTrue(liveModeLabel(), liveModeLabel().contains("\$0.017/min"))
+        assertTrue(liveModeLabel(ProviderId.OPENAI), liveModeLabel(ProviderId.OPENAI).contains("\$0.017/min"))
+        assertTrue(
+            liveModeLabel(ProviderId.ELEVENLABS),
+            liveModeLabel(ProviderId.ELEVENLABS).contains("\$0.007/min"),
+        )
+        assertTrue(liveModeLabel(ProviderId.SONIOX), liveModeLabel(ProviderId.SONIOX).contains("\$0.002/min"))
+    }
+
+    @Test fun live_mode_label_names_the_selected_provider() {
+        assertTrue(liveModeLabel(ProviderId.OPENAI).contains("OpenAI"))
+        assertTrue(liveModeLabel(ProviderId.ELEVENLABS).contains("ElevenLabs"))
+        assertTrue(liveModeLabel(ProviderId.SONIOX).contains("Soniox"))
     }
 
     @Test fun live_mode_copy_says_word_for_word_and_never_claims_speed() {
         // The mode is honest about WHAT it does (word-for-word), never that it is faster —
         // measured on-device transcription is a tie at best, so a speed claim would be a lie.
-        val text = liveModeLabel() + " " + liveModeCaption()
-        assertTrue(text, text.contains("word-for-word", ignoreCase = true))
-        listOf("faster", "quicker", "speed", "instant", "quick").forEach { word ->
-            assertFalse(text, text.contains(word, ignoreCase = true))
+        // Pins ALL THREE streaming-capable providers, Soniox included: it is the cheapest of the
+        // three, but the copy never says "fastest"/"cheapest" either.
+        listOf(ProviderId.OPENAI, ProviderId.ELEVENLABS, ProviderId.SONIOX).forEach { id ->
+            val text = liveModeLabel(id) + " " + liveModeCaption()
+            assertTrue(text, text.contains("word-for-word", ignoreCase = true))
+            listOf("faster", "quicker", "speed", "instant", "quick", "fastest", "cheapest").forEach { word ->
+                assertFalse(text, text.contains(word, ignoreCase = true))
+            }
         }
     }
 }

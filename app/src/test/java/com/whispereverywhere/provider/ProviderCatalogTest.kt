@@ -43,17 +43,24 @@ class ProviderCatalogTest {
         assertTrue(ProviderCatalog.byId(ProviderId.ELEVENLABS).supportsStreaming)
     }
 
+    @Test fun soniox_now_supports_streaming_realtime_ships_this_wave() {
+        // stt-rt-v5 shipped behind SonioxRealtimeProtocol (2026-07-31 realtime-all-providers
+        // wave); Soniox is no longer the "recorded follow-up" it was in the C4/soniox-provider
+        // waves — flips from false to true alongside OpenAI and ElevenLabs.
+        assertTrue(ProviderCatalog.byId(ProviderId.SONIOX).supportsStreaming)
+    }
+
     // Replaces every_provider_supports_both_modalities: Soniox is STT-only, so the old
     // "everyone supports TTS" invariant is deliberately no longer true.
     @Test fun every_provider_is_stt_capable() {
         ProviderCatalog.all.forEach { assertTrue("${it.id} STT", it.supportsStt) }
     }
 
-    @Test fun soniox_is_stt_only_no_tts_no_streaming() {
+    @Test fun soniox_is_stt_only_but_streams_now() {
         val s = ProviderCatalog.byId(ProviderId.SONIOX)
         assertTrue(s.supportsStt)
         assertFalse("Soniox ships no TTS adapter this wave", s.supportsTts)
-        assertFalse("Soniox realtime WS is a follow-up, not v1", s.supportsStreaming)
+        assertTrue("Soniox realtime stt-rt-v5 ships this wave", s.supportsStreaming)
     }
 
     @Test fun soniox_uses_a_bearer_authorization_header() {

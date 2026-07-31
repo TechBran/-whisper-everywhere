@@ -27,6 +27,7 @@
 ## Pinned protocol facts (verified against live docs 2026-07-30 — see `c4-realtime-protocol-notes.md`)
 
 - **BYOK streaming is officially supported for native clients.** A phone holding the user's own key is the "server-side" case: `Authorization: Bearer <key>` on the WS upgrade. Ephemeral client secrets are BROWSER-only. **Gemini stays blocked** (its Live API wants ephemeral tokens); this mode is **OpenAI-only**.
+> Superseded 2026-07-31 by docs/superpowers/plans/2026-07-31-realtime-all-providers.md (realtime now all streaming-capable providers).
 - **Connect:** `wss://api.openai.com/v1/realtime?intent=transcription`, then send `session.update`. Omit `OpenAI-Beta: realtime=v1`; add it only if the handshake 4xx's (tolerant connector). No documented duration limit — plan reconnect-on-drop anyway.
 - **Session config:** `{ "type":"session.update", "session":{ "type":"transcription", "audio":{ "input":{ "format":{ "type":"audio/pcm","rate":24000 }, "transcription":{ "model":"gpt-live-transcribe" }, "turn_detection": null } } } }`. `turn_detection:null` = WE commit turns → maps 1:1 onto the existing client VAD; `commit()` sites unchanged (no double-VAD).
 - **Messages:** append `{ "type":"input_audio_buffer.append","audio":"<base64 pcm16>" }`; delta `conversation.item.input_audio_transcription.delta` (`item_id`,`delta`); completed `conversation.item.input_audio_transcription.completed` (`item_id`,`transcript`); error events carry the fatal (401/quota). **"Ordering between completion events from different speech turns isn't guaranteed. Use item_id."**

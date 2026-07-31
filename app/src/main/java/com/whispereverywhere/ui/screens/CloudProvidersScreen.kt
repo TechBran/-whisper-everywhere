@@ -189,10 +189,13 @@ internal fun sttSelectionCaption(providerDisplayName: String): String =
     "Audio is sent to $providerDisplayName. If it fails, the on-device model takes over."
 
 /**
- * Whether the C4 live-mode toggle should be offered. It is a sub-option of transcribing THROUGH
- * OpenAI, so all three must hold: OpenAI is the SELECTED engine (not merely configured), its key is
- * stored, and the v3 disclosure is accepted. OpenAI is the only provider whose BYOK Realtime
- * WebSocket can stream, so no other provider ever shows it.
+ * Whether the live-mode toggle should be offered. It is a sub-option of transcribing THROUGH the
+ * selected provider, so all three must hold: a resolvable provider is the SELECTED engine (not
+ * merely configured), its key is stored, and the v3 disclosure is accepted. Widened from
+ * OpenAI-only: any provider with a native BYOK realtime WebSocket ([Provider.supportsStreaming])
+ * shows the row — currently OpenAI, ElevenLabs, and Soniox. Gemini has no client-usable realtime
+ * path (its Live API wants ephemeral backend-minted tokens this app has no server for), so it never
+ * shows the row — a provider limitation, not a defect, and no apology copy is added for it.
  *
  * Gated on the SAME [disclosureAccepted] v3 flag as selection itself — live adds a cost tier, not a
  * new data class, so it needs no new consent surface. Requiring the stored key too means the toggle
@@ -202,17 +205,29 @@ internal fun liveModeRowVisible(
     selectedProviderId: String?,
     configured: Set<ProviderId>,
     disclosureAccepted: Boolean,
-): Boolean =
-    disclosureAccepted &&
-        selectedProviderId == ProviderId.OPENAI.name &&
-        ProviderId.OPENAI in configured
+): Boolean {
+    val id = selectedProviderId?.let { runCatching { ProviderId.valueOf(it) }.getOrNull() } ?: return false
+    return disclosureAccepted && id in configured && ProviderCatalog.byId(id).supportsStreaming
+}
 
 /**
- * The live-mode row's label. Surfaces the price where the mode is chosen — the ONLY new user-facing
- * cost disclosure this mode adds (~4x batch). Deliberately makes NO speed claim: "word-for-word",
- * never "faster". Measured on-device transcription is a tie at best, so a speed claim would be a lie.
+ * The live-mode row's label for [providerId]: the mode name + that provider's "about" price —
+ * surfaced where the mode is chosen, the ONLY new user-facing cost disclosure this mode adds.
+ * Deliberately makes NO speed claim for ANY provider — not even Soniox, the cheapest of the three:
+ * "word-for-word", never "faster"/"fastest". Measured on-device transcription is a tie at best
+ * against OpenAI, so a speed claim would be a lie. Prices pinned 2026-07-31. [providerId] must be
+ * streaming-capable (OpenAI/ElevenLabs/Soniox); Gemini never reaches this — [liveModeRowVisible]
+ * never lights for it.
  */
-internal fun liveModeLabel(): String = "Cloud word-for-word (OpenAI) · about \$0.017/min"
+internal fun liveModeLabel(providerId: ProviderId): String {
+    val price = when (providerId) {
+        ProviderId.OPENAI -> "about \$0.017/min"
+        ProviderId.ELEVENLABS -> "about \$0.007/min"
+        ProviderId.SONIOX -> "about \$0.002/min"
+        ProviderId.GEMINI -> error("Gemini has no live row — not streaming-capable")
+    }
+    return "Cloud word-for-word (${ProviderCatalog.byId(providerId).displayName}) · $price"
+}
 
 /** Sub-copy under the live-mode toggle. Says WHAT it does, never that it is fast. */
 internal fun liveModeCaption(): String = "Transcribes word-for-word as you speak."

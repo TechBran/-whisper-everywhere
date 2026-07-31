@@ -36,6 +36,7 @@ import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.net.ConnectivityMonitor
 import com.whispereverywhere.net.OkHttpTransport
+import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.transcription.LocalWhisperEngine
 import com.whispereverywhere.transcription.SegmentOutcome
@@ -72,17 +73,20 @@ import kotlinx.coroutines.withContext
 internal enum class EngineChoice { LOCAL_ONLY, LOCAL_NO_KEY, LOCAL_OFFLINE, CLOUD_WITH_FALLBACK, CLOUD_LIVE }
 
 /**
- * Decision table (brief: Release C2a Task 6; C4 adds the live-streaming leaf):
- *  - no provider selected                    -> local only (unchanged, pre-cloud path)
- *  - provider selected, no key               -> local, one-time toast
- *  - provider selected, key, offline         -> local, one-time toast
- *  - provider selected, key, online          -> cloud batch POST, wrapped in the local fallback
- *  - + live flag on AND provider is OpenAI   -> cloud LIVE stream, wrapped in the SAME fallback
+ * Decision table (brief: Release C2a Task 6; C4 added the live-streaming leaf; the realtime
+ * all-providers wave widened it from OpenAI-only to every streaming-capable provider):
+ *  - no provider selected                       -> local only (unchanged, pre-cloud path)
+ *  - provider selected, no key                  -> local, one-time toast
+ *  - provider selected, key, offline             -> local, one-time toast
+ *  - provider selected, key, online              -> cloud batch POST, wrapped in the local fallback
+ *  - + live flag on AND provider is realtime-capable -> cloud LIVE stream, wrapped in the SAME fallback
  *
  * The live leaf sits AFTER the local guards on purpose: the one-way valve is untouched, so no key
  * or no network still resolves to on-device — live never opens a socket the batch path would have
- * refused. Live is OpenAI-only because only OpenAI's BYOK Realtime WebSocket can stream; the flag
- * is inert for every other provider, whose batch path is byte-unchanged.
+ * refused. Live is realtime-capable-provider-only (OpenAI, ElevenLabs, Soniox) because only those
+ * providers have a native BYOK realtime WebSocket behind a [com.whispereverywhere.transcription.live.RealtimeProtocol];
+ * Gemini has no client-usable realtime path (its Live API wants ephemeral backend-minted tokens
+ * this app has no server for), so the flag is inert for it and its batch path is byte-unchanged.
  */
 internal fun decideEngineChoice(
     sttProviderId: String?,
@@ -93,7 +97,7 @@ internal fun decideEngineChoice(
     sttProviderId == null -> EngineChoice.LOCAL_ONLY
     !hasKey -> EngineChoice.LOCAL_NO_KEY
     !hasValidatedNetwork -> EngineChoice.LOCAL_OFFLINE
-    liveMode && sttProviderId == ProviderId.OPENAI.name -> EngineChoice.CLOUD_LIVE
+    liveMode && isRealtimeStt(sttProviderId) -> EngineChoice.CLOUD_LIVE
     else -> EngineChoice.CLOUD_WITH_FALLBACK
 }
 
@@ -112,6 +116,21 @@ internal fun resolveSttProvider(raw: String?): ProviderId? =
 
 private val STT_PROVIDERS =
     setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX)
+
+/**
+ * STT providers with a shipped BYOK realtime adapter — the [EngineChoice.CLOUD_LIVE] gate. Derived
+ * from [ProviderCatalog.supportsStreaming] rather than hand-listed, so it can never drift from the
+ * catalog. Gemini is absent (its Live API needs backend-minted ephemeral tokens this app has no
+ * server for). Kept in lockstep with `ModeDashboard.dictationLiveActive` and the CLOUD_LIVE
+ * construction in [FloatingBubbleService.resolveTranscriptionEngine], which selects the matching
+ * [com.whispereverywhere.transcription.live.RealtimeProtocol] for whichever id is in this set.
+ */
+internal val REALTIME_STT_PROVIDERS: Set<ProviderId> =
+    ProviderCatalog.all.filter { it.supportsStreaming }.map { it.id }.toSet()
+
+/** True when [sttProviderIdName] both resolves to a shipped adapter AND streams in real time. */
+internal fun isRealtimeStt(sttProviderIdName: String?): Boolean =
+    resolveSttProvider(sttProviderIdName)?.let { it in REALTIME_STT_PROVIDERS } == true
 
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
@@ -1639,10 +1658,23 @@ class FloatingBubbleService : Service(),
                 ).also { sourceRouter = it }
             }
             EngineChoice.CLOUD_LIVE -> {
-                // OpenAI-only and key-present, both guaranteed by decideEngineChoice: the live leaf
-                // is reachable ONLY when the selected provider is OPENAI and hasKey was true. Same
-                // mic audio, same provider, same v3 disclosure as batch — this swaps the transport
-                // (Realtime WebSocket) and the cost tier, nothing about what data leaves.
+                // Realtime-capable-and-key-present, both guaranteed by decideEngineChoice: the live
+                // leaf is reachable ONLY when the selected provider is in REALTIME_STT_PROVIDERS and
+                // hasKey was true. Same mic audio, same provider, same v3 disclosure as batch — this
+                // swaps the transport (a per-provider Realtime WebSocket) and the cost tier, nothing
+                // about what data leaves. `protocol` is the ONE place a provider selects its
+                // RealtimeProtocol; OpenAI/ElevenLabs authenticate via the upgrade header (the key
+                // passed below), Soniox rides its key in the first config message instead — see
+                // SonioxRealtimeProtocol's no-log discipline.
+                val liveProviderId = requireNotNull(provider) { "CLOUD_LIVE reached with a null provider" }
+                val protocol: com.whispereverywhere.transcription.live.RealtimeProtocol = when (liveProviderId) {
+                    ProviderId.OPENAI -> com.whispereverywhere.transcription.live.OpenAiRealtimeProtocol()
+                    ProviderId.ELEVENLABS ->
+                        com.whispereverywhere.transcription.live.ElevenLabsRealtimeProtocol(sharedLiveReconnectScheduler())
+                    ProviderId.SONIOX ->
+                        com.whispereverywhere.transcription.live.SonioxRealtimeProtocol(sharedLiveReconnectScheduler())
+                    ProviderId.GEMINI -> error("Gemini is not realtime-capable; decideEngineChoice forbids CLOUD_LIVE for it")
+                }
                 val cloud = com.whispereverywhere.transcription.live.LiveTranscriptionEngine(
                     apiKey = requireNotNull(key),
                     scope = serviceScope,
@@ -1652,6 +1684,7 @@ class FloatingBubbleService : Service(),
                                 factory = sharedLiveWsFactory(),
                                 scheduler = sharedLiveReconnectScheduler(),
                                 listener = transportListener,
+                                protocol = protocol,
                             ),
                         )
                     },

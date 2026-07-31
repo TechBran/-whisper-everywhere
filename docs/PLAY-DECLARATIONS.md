@@ -125,6 +125,16 @@ user-chosen file is transcribed in full; LIVE dictation's VAD is unchanged. No n
 disclosure-version change (same audio-to-a-provider meaning under v3). Two audit Minors folded in:
 reconnect-scheduler shutdown; honest 3.3.0 INTERNET manifest comment.
 
+**Release ledger — Realtime all-providers (2026-07-31):** live word-for-word widened from OpenAI-only
+to every streaming-capable BYOK provider (OpenAI, ElevenLabs, Soniox) via a per-provider
+RealtimeProtocol seam; OpenAI's wire is byte-identical (regression contract held). ElevenLabs =
+xi-api-key header + 16 kHz base64 + commit-on-last-chunk with single-in-flight serialization; Soniox =
+config-message key under the no-log discipline + raw s16le binary + client-assembled turns +
+finalize/rotate under the reconnect ceiling. Gemini stays segment-only (no client realtime path), no
+apology copy. Deltas never inject; mic-only via SourceRouted; Fallback(live, local) preserved. No new
+recipient, no disclosure-version change (same audio-to-a-provider meaning under v3). Per-provider
+"about" prices: OpenAI $0.017/min, ElevenLabs $0.007/min, Soniox $0.002/min. No speed claims.
+
 - **Audio files → Voice or sound recordings:** Collected **Yes**, Shared **Yes**, purpose
   **App functionality**, **Optional**. The user must take two independent, deliberate actions
   before any audio is shared: add their own API key for a cloud provider, AND select that
@@ -227,6 +237,11 @@ pre-audit claims:
 - **No disclosure-version bump for Soniox or for C4 live transcribe.** Both are the same
   audio-to-a-provider meaning already covered by disclosure v3 (Soniox = one more recipient; C4 = a
   new WebSocket transport + price tier only). No re-prompt, no Data Safety change from either.
+- **Live word-for-word is no longer OpenAI-only.** The mode-selector row now offers three providers
+  (OpenAI, ElevenLabs, Soniox) — whichever streaming-capable provider is the globally selected STT
+  engine, each behind its own per-provider price. Gemini still shows no live row (it has no
+  client-usable realtime path — a provider limitation, not a defect) and gets no apology copy. Same
+  audio-to-a-provider meaning already covered by disclosure v3; no re-prompt, no Data Safety change.
 - **Home usage-stats footer** no longer claims "runs entirely on-device / no usage limits" to cloud
   users; no storefront "no limits" copy may contradict the honest per-engine footer.
 - **Batch cloud STT now offers all four providers** (OpenAI, Gemini, ElevenLabs, Soniox) — the

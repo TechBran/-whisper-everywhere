@@ -96,9 +96,9 @@ object ProviderCatalog {
             // STT-only this wave. Soniox has a TTS surface, but no adapter ships here; it stays out
             // of TTS_CAPABLE_PROVIDERS and TtsProviderFactory rejects it.
             supportsTts = false,
-            // v1 is the per-VAD-segment async path (like Gemini/ElevenLabs). The realtime WebSocket
-            // is a recorded follow-up, not this wave.
-            supportsStreaming = false,
+            // v1 async is the segment path (like Gemini/ElevenLabs' batch mode); realtime stt-rt-v5
+            // ships this wave behind SonioxRealtimeProtocol, so Soniox streams now too.
+            supportsStreaming = true,
             // Verify against the live Console at resolve time; the API-keys page lives under the
             // Soniox Console.
             keyHelpUrl = "https://console.soniox.com/",

@@ -97,7 +97,8 @@ fun EnginesAndVoicesScreen(
     var sttProviderId by remember { mutableStateOf(app.preferencesManager.sttProviderId) }
 
     // Local mirror of the batch-vs-live axis (C4). false = one-shot batch POST (the default);
-    // consulted only while OpenAI is the selected engine — see decideEngineChoice.
+    // consulted only while a realtime-capable engine is selected (OpenAI, ElevenLabs, Soniox) —
+    // see decideEngineChoice / isRealtimeStt.
     var sttLiveMode by remember { mutableStateOf(app.preferencesManager.sttLiveMode) }
 
     // Read-aloud voice-picker state (lifted verbatim from SettingsScreen). null engine = on-device
@@ -654,21 +655,26 @@ private fun SttEngineSelector(
             )
         }
 
-        // C4: the word-for-word live toggle, offered only when OpenAI is the selected engine (the
-        // one provider that streams). Same v3 disclosure gate as selection — no new consent surface.
-        if (liveModeRowVisible(selectedProviderId, configured, disclosureAccepted)) {
+        // The word-for-word live toggle, offered for any realtime-capable selected provider
+        // (OpenAI, ElevenLabs, Soniox). Same v3 disclosure gate as selection — no new consent
+        // surface. selectedProvider is guaranteed non-null here: liveModeRowVisible only lights
+        // when selectedProviderId resolves, is configured, and is streaming-capable, and
+        // `selectable` (which selectedProvider is drawn from) already includes every configured
+        // STT-capable provider once disclosureAccepted is true.
+        if (liveModeRowVisible(selectedProviderId, configured, disclosureAccepted) && selectedProvider != null) {
             Spacer(modifier = Modifier.height(8.dp))
-            LiveModeRow(enabled = liveMode, onToggle = onLiveModeChange)
+            LiveModeRow(providerId = selectedProvider.id, enabled = liveMode, onToggle = onLiveModeChange)
         }
     }
 }
 
 /**
- * The live-mode toggle row. Names the mode and its PRICE (the one new cost surface this mode adds)
- * with a "word-for-word" sub-line and NO speed claim — see [liveModeLabel] / [liveModeCaption].
+ * The live-mode toggle row. Names the mode and its PRICE for [providerId] (the one new cost surface
+ * this mode adds) with a "word-for-word" sub-line and NO speed claim — see [liveModeLabel] /
+ * [liveModeCaption].
  */
 @Composable
-private fun LiveModeRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+private fun LiveModeRow(providerId: ProviderId, enabled: Boolean, onToggle: (Boolean) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -677,7 +683,7 @@ private fun LiveModeRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = liveModeLabel(), style = MaterialTheme.typography.bodyMedium)
+            Text(text = liveModeLabel(providerId), style = MaterialTheme.typography.bodyMedium)
             Text(
                 text = liveModeCaption(),
                 style = MaterialTheme.typography.bodySmall,
