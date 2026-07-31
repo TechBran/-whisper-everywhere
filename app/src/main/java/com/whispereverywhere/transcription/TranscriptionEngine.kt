@@ -108,40 +108,45 @@ object WhisperNativeBackend : WhisperBackend {
         }
     }
 
-    override fun load(modelPath: String): Long {
+    // All three native entry points hold the process-global [NativeComputeGate] so the bubble and
+    // batch services (which share THIS singleton) can never run two native whisper calls at once —
+    // see NativeComputeGate for why concurrent GPU submits and the racing GpuPolicy sentinel are
+    // unsafe. The gate is released between calls, so the two paths still interleave per-call.
+    override fun load(modelPath: String): Long = NativeComputeGate.serialized {
         ensureBackendsLoaded()
         val useGpu = GpuPolicy.decideUseGpuForLoad(modelPath)
-        if (!useGpu) return WhisperNative.init(modelPath, false)
+        if (!useGpu) return@serialized WhisperNative.init(modelPath, false)
         // finally (not sequential code): a survivable Java exception between arm and disarm must
         // still disarm — only true process death may leave the sentinel behind.
         try {
-            return WhisperNative.init(modelPath, true)
+            WhisperNative.init(modelPath, true)
         } finally {
             GpuPolicy.onGpuLoadReturned()
         }
     }
 
-    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String {
-        val validating = GpuPolicy.needsComputeValidation()
-        if (!validating) {
-            return WhisperNative.transcribe(
-                ctx, samples, lang, translate = false, vadModelPath = VadModel.path()
-            )
+    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?): String =
+        NativeComputeGate.serialized {
+            val validating = GpuPolicy.needsComputeValidation()
+            if (!validating) {
+                return@serialized WhisperNative.transcribe(
+                    ctx, samples, lang, translate = false, vadModelPath = VadModel.path()
+                )
+            }
+            GpuPolicy.onGpuComputeStarting()
+            var ok = false
+            try {
+                val text = WhisperNative.transcribe(
+                    ctx, samples, lang, translate = false, vadModelPath = VadModel.path()
+                )
+                ok = true
+                text
+            } finally {
+                GpuPolicy.onGpuComputeFinished(ok)
+            }
         }
-        GpuPolicy.onGpuComputeStarting()
-        var ok = false
-        try {
-            val text = WhisperNative.transcribe(
-                ctx, samples, lang, translate = false, vadModelPath = VadModel.path()
-            )
-            ok = true
-            return text
-        } finally {
-            GpuPolicy.onGpuComputeFinished(ok)
-        }
-    }
 
-    override fun release(ctx: Long) = WhisperNative.free(ctx)
+    override fun release(ctx: Long) = NativeComputeGate.serialized { WhisperNative.free(ctx) }
 }
 
 /**

@@ -74,8 +74,18 @@ object GpuPolicy {
     // Model key of the load this process last enabled GPU for (compute validation follows it).
     @Volatile private var activeModelKey: String? = null
 
+    // Serializes the sentinel state machine's read-modify-write transitions (arm load/compute, clear,
+    // mark validated) AND the activeModelKey/gpuActiveInProcess writes that pair with them. In
+    // production every caller reaches these through the gated WhisperNativeBackend, so
+    // NativeComputeGate already admits one native call at a time; this lock is defense-in-depth so
+    // the transitions stay atomic even for a caller that bypasses the backend — a concurrent
+    // onGpuComputeFinished() can never clear the compute sentinel and write validated=true while
+    // another risky-first compute for the same model is still in flight.
+    private val stateLock = Any()
+
     /** Decide once per model load. Also arms the load-phase sentinel when GPU is chosen. */
     fun decideUseGpuForLoad(modelPath: String): Boolean = runCatching {
+      synchronized(stateLock) {
         val p = prefs() ?: return false
         val vc = BuildConfig.VERSION_CODE
         val m = modelKey(modelPath)
@@ -118,6 +128,7 @@ object GpuPolicy {
         activeModelKey = m
         gpuActiveInProcess = true
         true
+      }
     }.getOrDefault(false)
 
     /**
@@ -126,27 +137,33 @@ object GpuPolicy {
      * exceptions (loadLibrary failure, JNI OOM) disarm correctly instead of falsely blocking.
      */
     fun onGpuLoadReturned() = runCatching {
+      synchronized(stateLock) {
         val p = prefs() ?: return@runCatching
         val vc = BuildConfig.VERSION_CODE
         val m = activeModelKey ?: return@runCatching
         if (p.getBoolean(keyInFlight(vc, m, "load"), false)) {
             p.edit().putBoolean(keyInFlight(vc, m, "load"), false).commit()
         }
+      }
     }.let { }
 
     /** True when the next transcribe is this (version, model)'s first on GPU. */
     fun needsComputeValidation(): Boolean = runCatching {
+      synchronized(stateLock) {
         if (!gpuActiveInProcess) return false
         val m = activeModelKey ?: return false
         val p = prefs() ?: return false
         !p.getBoolean(keyValidated(BuildConfig.VERSION_CODE, m), false)
+      }
     }.getOrDefault(false)
 
     /** Arm the compute sentinel just before the first GPU transcribe of this (version, model). */
     fun onGpuComputeStarting() = runCatching {
+      synchronized(stateLock) {
         val p = prefs() ?: return@runCatching
         val m = activeModelKey ?: return@runCatching
         p.edit().putBoolean(keyInFlight(BuildConfig.VERSION_CODE, m, "compute"), true).commit()
+      }
     }.let { }
 
     /**
@@ -154,6 +171,7 @@ object GpuPolicy {
      * (version, model) validated only when the transcribe actually succeeded.
      */
     fun onGpuComputeFinished(success: Boolean) = runCatching {
+      synchronized(stateLock) {
         val p = prefs() ?: return@runCatching
         val vc = BuildConfig.VERSION_CODE
         val m = activeModelKey ?: return@runCatching
@@ -163,6 +181,7 @@ object GpuPolicy {
             Log.i(TAG, "GpuPolicy: GPU validated for v$vc/$m")
         }
         e.commit()
+      }
     }.let { }
 
     // ---------------------------------------------------------------------------------------------
