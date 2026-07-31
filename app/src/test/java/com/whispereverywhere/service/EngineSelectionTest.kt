@@ -5,6 +5,7 @@ import com.whispereverywhere.net.HttpResult
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.transcription.cloud.SttProviderFactory
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -124,6 +125,23 @@ class EngineSelectionTest {
                 sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = true, liveMode = false,
             ),
         )
+    }
+
+    @Test fun the_cloud_branch_is_unreachable_when_the_provider_does_not_resolve() {
+        // The invariant requireNotNull(provider) in the CLOUD_WITH_FALLBACK branch relies on:
+        // FloatingBubbleService looks up the key THROUGH the resolved provider, so an unresolvable id
+        // yields no key -> hasKey=false -> a LOCAL_* choice. The cloud branches (which construct an
+        // adapter from `provider`) can never be reached with a null provider, so the old
+        // `provider ?: OPENAI` default was dead — and would have mis-keyed OPENAI if the gate ever
+        // loosened. Replaced with requireNotNull; this pins why it cannot fire.
+        listOf("not-a-real-provider", "", "OPENAI_TYPO", "gemini").forEach { id ->
+            val provider = resolveSttProvider(id)
+            assertNull("must not resolve: $id", provider)
+            val hasKey = provider != null // the service can only hold a key for a resolved provider
+            val choice = decideEngineChoice(sttProviderId = id, hasKey = hasKey, hasValidatedNetwork = true)
+            assertNotEquals(EngineChoice.CLOUD_WITH_FALLBACK, choice)
+            assertNotEquals(EngineChoice.CLOUD_LIVE, choice)
+        }
     }
 
     // --- resolveSttProvider: C2b widens live mode to OpenAI, Gemini, and ElevenLabs ---

@@ -1613,8 +1613,13 @@ class FloatingBubbleService : Service(),
                 // when hasKey was true above, which in turn required `provider` to be non-null.
                 // Construction goes through the ONE factory both services share — the only line
                 // that widened for C2b; the wrap below is provider-agnostic and unchanged.
+                // requireNotNull, not `?: OPENAI`: decideEngineChoice only returns
+                // CLOUD_WITH_FALLBACK when hasKey was true, and hasKey is false whenever `provider`
+                // failed to resolve (an unresolvable id yields a null key). The Elvis default hid a
+                // future gate-loosening bug — it would silently hand OPENAI another provider's key.
                 val stt = SttProviderFactory.create(
-                    provider ?: ProviderId.OPENAI, sharedTransport(), requireNotNull(key),
+                    requireNotNull(provider) { "CLOUD_WITH_FALLBACK reached with a null provider" },
+                    sharedTransport(), requireNotNull(key),
                 )
                 val cloud = CloudTranscriptionEngine(stt, serviceScope)
                 lastCloudEngine = cloud
