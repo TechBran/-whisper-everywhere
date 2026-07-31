@@ -167,6 +167,9 @@ fun WhisperEverywhereNavigation() {
                 onNavigateToTranscripts = {
                     navController.navigate("transcripts")
                 },
+                onNavigateToEnginesVoices = {
+                    navController.navigate("engines_voices")
+                },
                 onPickAudioFile = {
                     audioPickerLauncher.launch(arrayOf("audio/*"))
                 }

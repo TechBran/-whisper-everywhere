@@ -223,12 +223,21 @@ class PreferencesManager(private val context: Context) {
     /**
      * Which engine transcribes. null = on-device (the default and the shipped behaviour).
      * A ProviderId NAME selects cloud with local as fallback.
+     *
+     * Backed by a [MutableStateFlow] so Home's mode-dashboard chips read it reactively (no polling)
+     * via [sttProviderIdFlow]. The `var` API is unchanged: the getter still returns the current
+     * value and the setter still writes prefs — it now also pushes the mirror, and every write in
+     * the app already goes through this setter, so the flow can never drift from prefs.
      */
+    private val _sttProviderId = MutableStateFlow(prefs.getString(KEY_STT_PROVIDER, null))
+    val sttProviderIdFlow: StateFlow<String?> = _sttProviderId.asStateFlow()
+
     var sttProviderId: String?
-        get() = prefs.getString(KEY_STT_PROVIDER, null)
+        get() = _sttProviderId.value
         set(value) {
             if (value == null) prefs.edit().remove(KEY_STT_PROVIDER).apply()
             else prefs.edit().putString(KEY_STT_PROVIDER, value).apply()
+            _sttProviderId.value = value
         }
 
     /**
@@ -241,9 +250,16 @@ class PreferencesManager(private val context: Context) {
      * Same mic audio, same provider, same v3 disclosure as batch; the ONLY user-visible change is a
      * new transport and a higher cost tier (~$0.017/min), surfaced on the selector row itself.
      */
+    private val _sttLiveMode = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE, false))
+    /** Reactive mirror of [sttLiveMode] for the Dictation card's word-for-word chip. Additive. */
+    val sttLiveModeFlow: StateFlow<Boolean> = _sttLiveMode.asStateFlow()
+
     var sttLiveMode: Boolean
-        get() = prefs.getBoolean(KEY_STT_LIVE_MODE, false)
-        set(value) { prefs.edit().putBoolean(KEY_STT_LIVE_MODE, value).apply() }
+        get() = _sttLiveMode.value
+        set(value) {
+            prefs.edit().putBoolean(KEY_STT_LIVE_MODE, value).apply()
+            _sttLiveMode.value = value
+        }
 
     /**
      * Which engine READS ALOUD. null = on-device Kokoro (the default and the shipped behaviour, the
@@ -251,11 +267,16 @@ class PreferencesManager(private val context: Context) {
      * one-way fallback — parallel to [sttProviderId]. Distinct from [ttsVoiceId], which stays the
      * Kokoro speaker id used for the on-device voice AND the fallback.
      */
+    private val _ttsProviderId = MutableStateFlow(prefs.getString(KEY_TTS_PROVIDER_ID, null))
+    /** Reactive mirror of [ttsProviderId] for the Read-aloud card's voice chip. Additive. */
+    val ttsProviderIdFlow: StateFlow<String?> = _ttsProviderId.asStateFlow()
+
     var ttsProviderId: String?
-        get() = prefs.getString(KEY_TTS_PROVIDER_ID, null)
+        get() = _ttsProviderId.value
         set(value) {
             if (value == null) prefs.edit().remove(KEY_TTS_PROVIDER_ID).apply()
             else prefs.edit().putString(KEY_TTS_PROVIDER_ID, value).apply()
+            _ttsProviderId.value = value
         }
 
     /**

@@ -1,7 +1,5 @@
 package com.whispereverywhere.ui.screens
 
-import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -14,7 +12,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,11 +29,26 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.service.FloatingBubbleService
-import com.whispereverywhere.service.MediaNotificationListener
 import com.whispereverywhere.service.WhisperAccessibilityService
+import com.whispereverywhere.service.resolveSttProvider
+import com.whispereverywhere.tts.TtsVoices
+import com.whispereverywhere.tts.resolveTtsProvider
 import com.whispereverywhere.ui.theme.*
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+// ---------------------------------------------------------------------------------------------
+// Home = mode dashboard. The bubble status control stays at the top, then one card per mode
+// (Dictation / Transcribe-file / Read-aloud), each showing its LIVE configuration as a status chip
+// and tapping into its own settings. Directly under the status area sits the setup guidance derived
+// from setupBannerState(hasModel, hasAnyKey) — a two-path banner when nothing is configured, an
+// honest one-liner when half is, nothing once both are. All chips read reactively from
+// PreferencesManager StateFlows plus an ON_RESUME snapshot for the keystore/disk reads: no polling.
+// Every chip string is a pure formatter from ModeDashboard.kt — no price, no speed claim. The
+// bubble and its service are untouched.
+// ---------------------------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +56,7 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToOnboardingModel: () -> Unit = {},
     onNavigateToTranscripts: () -> Unit = {},
+    onNavigateToEnginesVoices: () -> Unit = {},
     onPickAudioFile: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -53,39 +66,44 @@ fun HomeScreen(
     val bubbleEnabled by app.preferencesManager.bubbleEnabled.collectAsState()
     val usedSecondsToday by app.usageTracker.usedSecondsToday.collectAsState()
 
-    // Permission states - will be updated on lifecycle events
-    var hasMicrophonePermission by remember { 
+    // Reactive engine/voice selections — the chips update the instant these change (e.g. on return
+    // from the hub), with no polling. StateFlows, not a 1000 ms loop.
+    val sttProviderId by app.preferencesManager.sttProviderIdFlow.collectAsState()
+    val sttLiveMode by app.preferencesManager.sttLiveModeFlow.collectAsState()
+    val ttsProviderId by app.preferencesManager.ttsProviderIdFlow.collectAsState()
+
+    // Permission states — refreshed on ON_RESUME. hasSpeechModel doubles as the banner's hasModel.
+    var hasMicrophonePermission by remember {
         mutableStateOf(
             androidx.core.content.ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.RECORD_AUDIO
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) 
+        )
     }
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasAccessibilityEnabled by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
-    var hasNotificationListener by remember { mutableStateOf(MediaNotificationListener.isEnabled()) }
     var hasSpeechModel by remember { mutableStateOf(app.whisperModelManager.installedModel() != null) }
 
-    // Dialog states
-    var showAccessibilityDialog by remember { mutableStateOf(false) }
-    var showNotificationListenerDialog by remember { mutableStateOf(false) }
+    // Bumped on ON_RESUME so the off-main keystore/disk snapshots below re-read when the user comes
+    // back from the hub (where they may have added a key or downloaded a model).
+    var resumeTick by remember { mutableStateOf(0) }
 
-    // Function to refresh all permission states
     fun refreshPermissions() {
         hasMicrophonePermission = androidx.core.content.ContextCompat.checkSelfPermission(
             context, android.Manifest.permission.RECORD_AUDIO
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasOverlayPermission = Settings.canDrawOverlays(context)
         hasAccessibilityEnabled = WhisperAccessibilityService.isEnabled()
-        hasNotificationListener = MediaNotificationListener.isEnabled()
         hasSpeechModel = app.whisperModelManager.installedModel() != null
     }
 
-    // Listen to lifecycle events - refresh when app resumes
+    // Refresh when the app resumes. (The old 1000 ms poll is gone — the chips are reactive and the
+    // permission/keystore reads only need to be fresh on resume.)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshPermissions()
+                resumeTick++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -94,35 +112,41 @@ fun HomeScreen(
         }
     }
 
-    // Also poll periodically while on screen to catch accessibility service changes
-    // (since accessibility service connection doesn't trigger lifecycle events)
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(1000) // Check every second
-            val newAccessibility = WhisperAccessibilityService.isEnabled()
-            val newOverlay = Settings.canDrawOverlays(context)
-            val newMicrophone = androidx.core.content.ContextCompat.checkSelfPermission(
-                context, android.Manifest.permission.RECORD_AUDIO
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    // hasAnyKey — a Keystore lookup per provider, so OFF the main thread; re-read on each resume.
+    // Suppression: the producer DOES assign value (below) — the compose-runtime checker just can't
+    // see an assignment after a suspend call.
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val hasAnyKey by produceState(false, resumeTick) {
+        value = withContext(Dispatchers.IO) {
+            app.preferencesManager.providerAccounts.configured().isNotEmpty()
+        }
+    }
 
-            // Only update if changed (to avoid unnecessary recompositions)
-            if (newMicrophone != hasMicrophonePermission) {
-                hasMicrophonePermission = newMicrophone
-            }
-            if (newAccessibility != hasAccessibilityEnabled) {
-                hasAccessibilityEnabled = newAccessibility
-            }
-            if (newOverlay != hasOverlayPermission) {
-                hasOverlayPermission = newOverlay
-            }
-            val newNotificationListener = MediaNotificationListener.isEnabled()
-            if (newNotificationListener != hasNotificationListener) {
-                hasNotificationListener = newNotificationListener
-            }
-            val newSpeechModel = app.whisperModelManager.installedModel() != null
-            if (newSpeechModel != hasSpeechModel) {
-                hasSpeechModel = newSpeechModel
-            }
+    // The installed model's tier label (e.g. "Eco") for the transcription chips — a small disk read,
+    // taken off-main and refreshed on resume. null when no model is installed.
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val localModelLabel by produceState<String?>(null, resumeTick) {
+        value = withContext(Dispatchers.IO) {
+            app.whisperModelManager.installedModel()?.displayName?.substringBefore(" (")?.trim()
+        }
+    }
+
+    // Resolve the reactive prefs ids into the primitives the pure chip formatters expect.
+    val sttEngineName = remember(sttProviderId) {
+        resolveSttProvider(sttProviderId)?.let { ProviderCatalog.byId(it).displayName }
+    }
+    val readAloudEngineName = remember(ttsProviderId) {
+        resolveTtsProvider(ttsProviderId)?.let { ProviderCatalog.byId(it).displayName }
+    }
+    // The read-aloud voice label: the Kokoro speaker key on-device (e.g. "af_heart"), else the
+    // resolved cloud voice name. Cheap prefs reads, re-taken on resume. ElevenLabs' dynamic catalog
+    // is not fetched here (that lives in the hub), so cloudVoiceDisplayName falls back to the raw id.
+    val readAloudVoiceLabel = remember(ttsProviderId, resumeTick) {
+        val cloudId = resolveTtsProvider(ttsProviderId)
+        if (cloudId == null) {
+            TtsVoices.byId(app.preferencesManager.ttsVoiceId).key
+        } else {
+            cloudVoiceDisplayName(cloudId, app.preferencesManager.ttsCloudVoiceId(cloudId), null)
         }
     }
 
@@ -158,7 +182,7 @@ fun HomeScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Main Control Button
+            // Main Control Button (bubble toggle) — canEnable logic unchanged.
             MainControlButton(
                 isEnabled = bubbleEnabled,
                 canEnable = hasSpeechModel && hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled,
@@ -180,6 +204,60 @@ fun HomeScreen(
                 usedSeconds = usedSecondsToday,
                 totalUsage = app.usageTracker.getTotalUsageAllTime(),
                 totalTranscriptions = app.usageTracker.getTotalTranscriptionCount()
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Setup guidance, directly under the status area. Two-path banner when nothing is
+            // configured; an honest one-liner when exactly one half is; nothing once both are.
+            when (setupBannerState(hasModel = hasSpeechModel, hasAnyKey = hasAnyKey)) {
+                SetupBanner.TWO_PATH -> {
+                    SetupBannerTwoPath(
+                        onDownloadModel = onNavigateToOnboardingModel,
+                        onBringYourOwnKey = onNavigateToEnginesVoices,
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                SetupBanner.PARTIAL_LINE -> {
+                    Text(
+                        text = partialSetupLine(hasModel = hasSpeechModel),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onNavigateToEnginesVoices() }
+                            .padding(vertical = 8.dp),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                SetupBanner.NONE -> Unit
+            }
+
+            // Mode cards — each shows its live configuration as a status chip and taps into settings.
+            ModeCard(
+                icon = Icons.Filled.Mic,
+                title = "Dictation",
+                chip = dictationChip(sttEngineName, localModelLabel, sttLiveMode),
+                onClick = onNavigateToEnginesVoices,
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            ModeCard(
+                icon = Icons.Filled.GraphicEq,
+                title = "Transcribe audio file",
+                chip = transcriptionEngineChip(sttEngineName, localModelLabel),
+                onClick = onPickAudioFile,
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            ModeCard(
+                icon = Icons.Filled.RecordVoiceOver,
+                title = "Read aloud",
+                chip = readAloudChip(readAloudEngineName, readAloudVoiceLabel),
+                onClick = onNavigateToEnginesVoices,
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -226,292 +304,114 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Batch transcription entry — pick an audio file and transcribe it all at once.
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onPickAudioFile() },
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Filled.GraphicEq,
-                        contentDescription = null,
-                        tint = Primary
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Transcribe audio file",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Pick a recording and turn it into text",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        Icons.Filled.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Language Selection Card
+            // Transcription language — the one place this is chosen; stays on the dashboard.
             LanguageSelectionCard()
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Setup Checklist
-            SetupChecklist(
-                hasMicrophonePermission = hasMicrophonePermission,
-                hasOverlayPermission = hasOverlayPermission,
-                hasAccessibilityEnabled = hasAccessibilityEnabled,
-                hasNotificationListener = hasNotificationListener,
-                hasSpeechModel = hasSpeechModel,
-                onRequestMicrophone = {
-                    val intent = Intent(
-                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.parse("package:${context.packageName}")
-                    )
-                    context.startActivity(intent)
-                },
-                onRequestOverlay = {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${context.packageName}")
-                    )
-                    context.startActivity(intent)
-                },
-                onRequestAccessibility = {
-                    showAccessibilityDialog = true
-                },
-                onRequestNotificationListener = {
-                    showNotificationListenerDialog = true
-                },
-                onRequestSpeechModel = onNavigateToOnboardingModel
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // How to Use Card
-            HowToUseCard()
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // BYOK Info Card
-            BYOKInfoCard()
         }
-    }
-
-    // Accessibility Service Instructions Dialog
-    if (showAccessibilityDialog) {
-        AlertDialog(
-            onDismissRequest = { showAccessibilityDialog = false },
-            icon = {
-                Icon(
-                    Icons.Filled.Accessibility,
-                    contentDescription = null,
-                    tint = Primary,
-                    modifier = Modifier.size(48.dp)
-                )
-            },
-            title = {
-                Text(
-                    "Enable Accessibility Service",
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        "Whisper Everywhere uses Android's Accessibility Service to insert your " +
-                            "transcribed speech into the text field you are typing in, and to read " +
-                            "text you highlight aloud when you tap the speaker bubble. It reads only " +
-                            "the focused input field and your highlighted selection — it does not " +
-                            "collect, store, or share the contents of your screen, and no data ever " +
-                            "leaves your device.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        "Follow these steps in Settings:",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    InstructionStep(1, "Find \"Installed apps\" or \"Downloaded apps\"")
-                    InstructionStep(2, "Tap \"Whisper Everywhere Voice Input\"")
-                    InstructionStep(3, "Toggle the switch to ON")
-                    InstructionStep(4, "Tap \"Allow\" on the confirmation dialog")
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Surface(
-                        color = Primary.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Filled.Info,
-                                contentDescription = null,
-                                tint = Primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Your speech is transcribed entirely on your device. This permission is used only to place that text into the field you choose.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showAccessibilityDialog = false
-                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                        context.startActivity(intent)
-                    }
-                ) {
-                    Text("Open Settings")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAccessibilityDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    // Notification Listener Instructions Dialog
-    if (showNotificationListenerDialog) {
-        AlertDialog(
-            onDismissRequest = { showNotificationListenerDialog = false },
-            icon = {
-                Icon(
-                    Icons.Filled.Notifications,
-                    contentDescription = null,
-                    tint = Primary,
-                    modifier = Modifier.size(48.dp)
-                )
-            },
-            title = {
-                Text(
-                    "Enable Media Detection",
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        "Follow these steps in Settings:",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    InstructionStep(1, "Find \"Whisper Everywhere\" in the list")
-                    InstructionStep(2, "Toggle the switch to ON")
-                    InstructionStep(3, "Tap \"Allow\" on the confirmation dialog")
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Surface(
-                        color = Primary.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Filled.Info,
-                                contentDescription = null,
-                                tint = Primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "This allows the app to detect when audio/video is playing so you can transcribe it.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showNotificationListenerDialog = false
-                        val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                        context.startActivity(intent)
-                    }
-                ) {
-                    Text("Open Settings")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showNotificationListenerDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
     }
 }
 
+/**
+ * One mode card in the dashboard: an accent icon, the mode name, a live status chip built by the
+ * pure formatters in ModeDashboard.kt, and a chevron. Taps into that mode's settings.
+ */
 @Composable
-fun InstructionStep(number: Int, text: String) {
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.Top
+private fun ModeCard(
+    icon: ImageVector,
+    title: String,
+    chip: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Surface(
-            color = Primary,
-            shape = CircleShape,
-            modifier = Modifier.size(24.dp)
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = Primary
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = number.toString(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = OnPrimary,
-                    fontWeight = FontWeight.Bold
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                    color = Primary.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = chip,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+            Icon(
+                Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * The prominent two-path setup banner shown when neither a model nor any key is configured. Free &
+ * private goes to the on-device model download; Bring your own key goes to the hub (which shows the
+ * disclosure). No speed claim — a synthesized choice is not sold on being fast.
+ */
+@Composable
+private fun SetupBannerTwoPath(
+    onDownloadModel: () -> Unit,
+    onBringYourOwnKey: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = Primary.copy(alpha = 0.08f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Finish setting up",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Pick how you'd like to transcribe. You can change this any time.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = onDownloadModel,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Free & private — download a model")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onBringYourOwnKey,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Bring your own key")
             }
         }
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(top = 2.dp)
-        )
     }
 }
 
@@ -778,339 +678,6 @@ fun LanguageSelectionCard() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-    }
-}
-
-@Composable
-fun SetupChecklist(
-    hasMicrophonePermission: Boolean,
-    hasOverlayPermission: Boolean,
-    hasAccessibilityEnabled: Boolean,
-    hasNotificationListener: Boolean = false,
-    hasSpeechModel: Boolean = false,
-    onRequestMicrophone: () -> Unit,
-    onRequestOverlay: () -> Unit,
-    onRequestAccessibility: () -> Unit,
-    onRequestNotificationListener: () -> Unit = {},
-    onRequestSpeechModel: () -> Unit = {}
-) {
-    // Core requirements for basic functionality
-    val coreComplete = hasSpeechModel && hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled
-    val allComplete = coreComplete && hasNotificationListener
-
-    // Show success message when core setup is complete
-    if (coreComplete) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = Success.copy(alpha = 0.1f)
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Filled.CheckCircle,
-                        contentDescription = null,
-                        tint = Success
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "All set! You're ready to use Whisper Everywhere.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Success
-                    )
-                }
-
-                // Optional: Media transcription setup
-                if (!hasNotificationListener) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Divider(color = Success.copy(alpha = 0.3f))
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = Primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Optional: Media Transcription",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = "Enable notification access to transcribe audio/video playing in other apps.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = onRequestNotificationListener,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            Icons.Filled.Notifications,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Enable Media Detection")
-                    }
-                } else {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = Success,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Media transcription enabled",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Success
-                        )
-                    }
-                }
-            }
-        }
-        return
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = Warning.copy(alpha = 0.1f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Filled.Checklist,
-                    contentDescription = null,
-                    tint = Warning
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Setup Required",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            SetupItem(
-                title = "Speech Model",
-                description = if (!hasSpeechModel) "Required to transcribe on-device" else null,
-                isComplete = hasSpeechModel,
-                onClick = onRequestSpeechModel
-            )
-
-            SetupItem(
-                title = "Microphone Permission",
-                description = if (!hasMicrophonePermission) "Required to record audio" else null,
-                isComplete = hasMicrophonePermission,
-                onClick = onRequestMicrophone
-            )
-
-            SetupItem(
-                title = "Overlay Permission",
-                description = if (!hasOverlayPermission) "Required for floating bubble" else null,
-                isComplete = hasOverlayPermission,
-                onClick = onRequestOverlay
-            )
-
-            SetupItem(
-                title = "Accessibility Service",
-                description = if (!hasAccessibilityEnabled) "Required for text injection" else null,
-                isComplete = hasAccessibilityEnabled,
-                onClick = onRequestAccessibility
-            )
-        }
-    }
-}
-
-@Composable
-fun SetupItem(
-    title: String,
-    description: String? = null,
-    isComplete: Boolean,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
-        ) {
-            Icon(
-                imageVector = if (isComplete) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
-                contentDescription = null,
-                tint = if (isComplete) Success else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Column {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (isComplete)
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    else
-                        MaterialTheme.colorScheme.onSurface
-                )
-                if (description != null && !isComplete) {
-                    Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        if (!isComplete) {
-            TextButton(onClick = onClick) {
-                Text("Setup")
-            }
-        }
-    }
-}
-
-@Composable
-fun HowToUseCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(
-                text = "How to Use",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            HowToStep(
-                number = 1,
-                text = "Enable the floating bubble above"
-            )
-            HowToStep(
-                number = 2,
-                text = "Open any app with a text field"
-            )
-            HowToStep(
-                number = 3,
-                text = "Tap the bubble to start recording"
-            )
-            HowToStep(
-                number = 4,
-                text = "Speak clearly, then tap again to stop"
-            )
-            HowToStep(
-                number = 5,
-                text = "Your text will appear automatically!"
-            )
-        }
-    }
-}
-
-@Composable
-fun HowToStep(number: Int, text: String) {
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(
-            color = Primary.copy(alpha = 0.1f),
-            shape = CircleShape,
-            modifier = Modifier.size(24.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = number.toString(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Primary,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium
-        )
-    }
-}
-
-@Composable
-fun BYOKInfoCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = Primary.copy(alpha = 0.05f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Filled.PhoneAndroid,
-                    contentDescription = null,
-                    tint = Primary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "100% On-Device",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Transcription runs entirely on your device. No API key or internet connection required — your audio never leaves your phone.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
