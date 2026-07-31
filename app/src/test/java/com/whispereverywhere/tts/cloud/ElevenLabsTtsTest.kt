@@ -30,7 +30,7 @@ class ElevenLabsTtsTest {
 
     private fun el(
         transport: FakeHttpTransport,
-        decode: (ByteArray) -> ShortArray = { decodeMarker },
+        decode: (ByteArray) -> ShortArray? = { decodeMarker },
     ) = ElevenLabsTts(transport, "xi-test", context = null, decodeMp3 = decode)
 
     @Test fun pcm_24000_success_delivers_shorts() = runBlocking {
@@ -65,6 +65,26 @@ class ElevenLabsTtsTest {
         assertEquals(2, fake.callCount) // pcm attempt + mp3 retry
         assertTrue(fake.lastUrl!!, fake.lastUrl!!.contains("output_format=mp3_44100_128"))
         assertEquals(decodeMarker.toList(), collected) // the DECODED mp3 shorts were delivered
+    }
+
+    @Test fun undecodable_mp3_body_fails_the_unit_and_never_delivers_silence() = runBlocking {
+        // The mp3 retry returns 200, but the body will not decode (decode stub returns null). The
+        // unit MUST fail (BadUnit) so the engine's one-way valve re-synthesizes it locally — words
+        // must never silently vanish. Previously an empty ShortArray delivered Done: a silent skip.
+        val fake = bytesFake(
+            HttpResultBytes.HttpError(
+                401,
+                """{"detail":{"status":"invalid_output_format","message":"output_format pcm_24000 unavailable"}}""",
+            ),
+            HttpResultBytes.Ok(200, byteArrayOf(1, 2, 3, 4)), // undecodable "mp3"
+        )
+        val collected = mutableListOf<Short>()
+        val r = el(fake) { null }.synth("hello", "voiceX", 1.0f) { pcm ->
+            collected.addAll(pcm.toList()); true
+        } as TtsResult.Failed
+        assertEquals(TtsError.BadUnit, r.error)
+        assertEquals(2, fake.callCount) // pcm attempt + mp3 retry, then failed (not Done)
+        assertTrue("no PCM must reach the bank on an undecodable body", collected.isEmpty())
     }
 
     @Test fun plain_401_without_format_marker_is_Fatal_INVALID_KEY() = runBlocking {

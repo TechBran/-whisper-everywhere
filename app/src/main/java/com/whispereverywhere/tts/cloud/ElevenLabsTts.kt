@@ -44,8 +44,9 @@ class ElevenLabsTts(
     private val context: Context?,
     private val model: String = DEFAULT_MODEL,
     // The mp3-decode boundary, injectable so the pure-logic tests assert "mp3 path taken" without
-    // running MediaCodec. Defaults to the real framework decode using the app [context].
-    private val decodeMp3: (ByteArray) -> ShortArray = { bytes ->
+    // running MediaCodec. Defaults to the real framework decode using the app [context]. Returns
+    // null when the body is UNDECODABLE — the fallback then fails the unit (never delivers silence).
+    private val decodeMp3: (ByteArray) -> ShortArray? = { bytes ->
         decodeMp3ToPcm24k(requireNotNull(context) { "ElevenLabsTts mp3 fallback needs a Context" }, bytes)
     },
 ) : TtsProvider {
@@ -76,11 +77,17 @@ class ElevenLabsTts(
         }
     }
 
-    // Attempt 2: universal mp3, decoded to 24 kHz shorts through the existing batch decoder.
+    // Attempt 2: universal mp3, decoded to 24 kHz shorts through the existing batch decoder. An
+    // UNDECODABLE body (decode returns null) fails THIS unit as BadUnit so the engine's one-way
+    // valve re-synthesizes the clause on the local voice — words must never silently vanish. A
+    // decode that legitimately yields no samples (empty) still delivers Done.
     private suspend fun mp3Fallback(unit: String, voiceId: String, onPcm: (ShortArray) -> Boolean): TtsResult =
         when (val mp3 = request(unit, voiceId, FORMAT_MP3)) {
             is HttpResultBytes.NetworkError -> TtsResult.Failed(TtsError.Offline)
-            is HttpResultBytes.Ok -> deliver(decodeMp3(mp3.bytes), onPcm)
+            is HttpResultBytes.Ok -> {
+                val shorts = decodeMp3(mp3.bytes)
+                if (shorts == null) TtsResult.Failed(TtsError.BadUnit) else deliver(shorts, onPcm)
+            }
             is HttpResultBytes.HttpError -> TtsResult.Failed(classify(mp3.code, mp3.body, unit.length, "mp3"))
         }
 
@@ -193,9 +200,11 @@ class ElevenLabsTts(
          * path went through the shared 16 kHz whisper decoder first and discarded everything above
          * ~8 kHz before upsampling — audibly band-limited. This is a rate adaptation, NOT a new
          * decoder. Framework end-to-end -> validated on device only (instrumented compile-check);
-         * the pure-logic tests inject a stub for [decodeMp3] and never reach this.
+         * the pure-logic tests inject a stub for [decodeMp3] and never reach this. Returns null on an
+         * UNDECODABLE body so the caller fails the unit and re-synthesizes locally, instead of
+         * delivering silence that would read as a completed clause and lose the user's words.
          */
-        fun decodeMp3ToPcm24k(context: Context, bytes: ByteArray): ShortArray {
+        fun decodeMp3ToPcm24k(context: Context, bytes: ByteArray): ShortArray? {
             val tmpIn = File.createTempFile("el-tts-", ".mp3", context.cacheDir)
             val tmpOut = File.createTempFile("el-tts-", ".pcm", context.cacheDir)
             return try {
@@ -209,8 +218,7 @@ class ElevenLabsTts(
                     sink.close()
                 }
                 when (result) {
-                    is AudioDecoder.DecodeResult.Unsupported ->
-                        ShortArray(0) // a corrupt/undecodable body reads as silence; the seam reports Done
+                    is AudioDecoder.DecodeResult.Unsupported -> null // undecodable: fail the unit
                     is AudioDecoder.DecodeResult.Ok -> Resampler.resampleTo24k(
                         PcmBytes.toShortArrayLE(tmpOut.readBytes()), result.sampleRate,
                     )
