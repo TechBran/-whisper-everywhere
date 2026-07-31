@@ -74,7 +74,11 @@ object SilenceScanner {
  * byte — white noise from that point on).
  */
 object ChunkPlanner {
-    /** 20 MB minus the 44-byte WAV header added at dispatch — a safety margin under OpenAI's 25 MB cap. */
+    /**
+     * Default cloud ceiling; the real per-job ceiling is [BatchChunkCeiling.forProvider] from the
+     * resolved adapter (per-provider, base64-aware). Kept as the harmless fallback for a null-cloud
+     * (local) job, which never dispatches at it. 20 MB minus the 44-byte WAV header added at dispatch.
+     */
     const val CLOUD_CEILING_BYTES = 20 * 1024 * 1024 - 44
     /** ~90 s of 16 kHz PCM16 — bounds native memory to ~2.9 MB/chunk, avoiding the long-feed OOM. */
     const val LOCAL_CHUNK_BYTES = 90 * 16_000 * 2

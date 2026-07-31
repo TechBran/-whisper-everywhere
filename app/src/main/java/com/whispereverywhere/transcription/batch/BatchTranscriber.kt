@@ -102,7 +102,11 @@ class BatchTranscriber(
     fun cancel() { cancelled = true }
 
     // Test seams (production uses the real ceilings / retry budget). Not for production callers.
-    internal var testCloudCeiling: Int = ChunkPlanner.CLOUD_CEILING_BYTES
+    // The cloud ceiling defaults from the RESOLVED adapter's base64-aware maxRequestBytes (Gemini's
+    // 14 MB, ElevenLabs capped to the 20 MB memory bound, etc.); a null cloud (local job) never uses
+    // it — ceiling picks testLocalChunk. Tests still override via testCloudCeiling.
+    internal var testCloudCeiling: Int =
+        cloud?.let { BatchChunkCeiling.forProvider(it) } ?: ChunkPlanner.CLOUD_CEILING_BYTES
     internal var testLocalChunk: Int = ChunkPlanner.LOCAL_CHUNK_BYTES
     internal var testMaxCloudRetries: Int = MAX_CLOUD_RETRIES
     internal var onChunkDone: (BatchTranscriber.() -> Unit)? = null
