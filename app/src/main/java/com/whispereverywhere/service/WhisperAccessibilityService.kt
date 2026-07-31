@@ -654,6 +654,55 @@ class WhisperAccessibilityService : AccessibilityService() {
      * Inject text for social media apps, preserving existing @mentions.
      * For Facebook with mentions, taps at end of field before pasting.
      */
+    /**
+     * Pins the selection (cursor) to the absolute END OF TEXT via ACTION_SET_SELECTION — the
+     * semantic action, deliberately NOT a screen tap. The old gesture heuristic tapped the field's
+     * right-center edge, which in a MULTI-LINE field lands the cursor at the end of whatever LINE
+     * sits mid-field, not the end of the text — the exact "cursor moves around while dictating
+     * into Facebook/email" corruption the owner reported (2026-07-31). Paste inserts at the
+     * cursor, so on the clipboard path this pin is the whole ballgame; it also makes
+     * clipboardPayloadFor's end-append padding assumption actually true.
+     *
+     * Hint-aware: a field showing its hint reports the hint AS text; pinning to hint-length would
+     * be wrong, so the effective length is 0 there. Returns false when the node is dead or the
+     * editor does not support SET_SELECTION (Docs-style canvases) — callers treat that as
+     * "position unknown, paste anyway", which is exactly the pre-fix behavior, not a regression.
+     */
+    private fun pinSelectionToEnd(node: AccessibilityNodeInfo): Boolean {
+        if (!node.refresh()) return false
+        val raw = node.text?.toString() ?: ""
+        val hint = node.hintText?.toString() ?: ""
+        val len = if (raw.isNotEmpty() && raw.equals(hint, ignoreCase = true)) 0 else raw.length
+        val args = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, len)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, len)
+        }
+        return try {
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * The clipboard-path paste discipline, per the owner's 2026-07-31 directive: on paste-driven
+     * editors (Facebook, most email apps) EVERY segment appends at the very end — pin before the
+     * paste so it lands at the end of text, and re-pin after so the next segment (and the user's
+     * eye) starts from the end regardless of what the app's TextWatchers did in between. The
+     * post-paste pin is best-effort on a short delay (paste application is async in some editors).
+     */
+    private fun pasteAtEnd(node: AccessibilityNodeInfo): Boolean {
+        pinSelectionToEnd(node) // best-effort; false = editor won't say where its cursor is
+        val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        if (pasted) {
+            serviceScope.launch {
+                delay(120)
+                try { pinSelectionToEnd(node) } catch (_: Exception) { /* node may be gone */ }
+            }
+        }
+        return pasted
+    }
+
     private fun injectViaClipboardPreservingContent(text: String): Boolean {
         val targetNode = resolveInjectionTarget()
 
@@ -672,12 +721,13 @@ class WhisperAccessibilityService : AccessibilityService() {
         // Check if field has existing content (might be a mention)
         val existingText = targetNode.text?.toString() ?: ""
 
-        if (existingText.isNotEmpty() && isFacebookApp()) {
-            // Facebook with existing content - use gesture to tap at end of field, then paste
+        if (existingText.isNotEmpty() && isFacebookApp() && !pinSelectionToEnd(targetNode)) {
+            // The editor refused SET_SELECTION — LEGACY fallback only: tap the field's right edge
+            // to coax the cursor endward before pasting. Known-imperfect on multi-line fields
+            // (it finds the end of a LINE, not the end of the TEXT), which is why the semantic
+            // pin above is always tried first.
             val rect = Rect()
             targetNode.getBoundsInScreen(rect)
-
-            // Tap near the right side of the field to position cursor at end
             val tapX = rect.right - 20f
             val tapY = rect.centerY().toFloat()
 
@@ -691,10 +741,11 @@ class WhisperAccessibilityService : AccessibilityService() {
 
                 dispatchGesture(gesture, object : GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
-                        // After tap completes, paste
+                        // After tap completes, try the semantic pin once more, then paste.
                         serviceScope.launch {
                             delay(100) // Small delay to let cursor position update
                             targetNode.refresh()
+                            pinSelectionToEnd(targetNode)
                             targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
                         }
                     }
@@ -704,8 +755,8 @@ class WhisperAccessibilityService : AccessibilityService() {
             }
         }
 
-        // No mention or not Facebook - safe to paste directly
-        if (targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+        // Pinned (or pin unsupported): paste at the end, re-pin after.
+        if (pasteAtEnd(targetNode)) {
             return true
         }
 
@@ -757,12 +808,11 @@ class WhisperAccessibilityService : AccessibilityService() {
         // Check if field has existing content (might be a mention)
         val existingText = targetNode.text?.toString() ?: ""
 
-        if (existingText.isNotEmpty() && isFacebookApp()) {
-            // Facebook with existing content - use gesture to tap at end of field, then paste
+        if (existingText.isNotEmpty() && isFacebookApp() && !pinSelectionToEnd(targetNode)) {
+            // Editor refused SET_SELECTION — legacy tap fallback (end-of-LINE imperfection known;
+            // the semantic pin above is always preferred and was already attempted).
             val rect = Rect()
             targetNode.getBoundsInScreen(rect)
-
-            // Tap near the right side of the field to position cursor at end
             val tapX = rect.right - 20f
             val tapY = rect.centerY().toFloat()
 
@@ -776,10 +826,11 @@ class WhisperAccessibilityService : AccessibilityService() {
 
                 dispatchGesture(gesture, object : GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
-                        // After tap completes, paste
+                        // After tap completes, try the semantic pin once more, then paste.
                         serviceScope.launch {
                             delay(100) // Small delay to let cursor position update
                             targetNode.refresh()
+                            pinSelectionToEnd(targetNode)
                             targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
                         }
                     }
@@ -797,8 +848,8 @@ class WhisperAccessibilityService : AccessibilityService() {
             }
         }
 
-        // No mention or not Facebook - safe to paste directly
-        if (targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+        // Pinned (or pin unsupported): paste at the end, re-pin after.
+        if (pasteAtEnd(targetNode)) {
             return InjectionResult.SUCCESS
         }
 
