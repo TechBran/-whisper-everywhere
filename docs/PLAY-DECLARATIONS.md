@@ -168,3 +168,73 @@ same Audio-files class, no new class, v3 unchanged; Console Data Safety narrativ
 - Release builds strip ALL `android.util.Log` calls (R8 `-assumenosideeffects`), so no
   operational logging ships either.
 - Target API 35; edge-to-edge enforced and handled (Material3 Scaffold insets).
+
+## 7. 3.3.0 Console checklist
+
+Everything that must be set, by hand, in the Play Console for the 3.3.0 rollout. Do all of it in the
+SAME release as the AAB (versionCode 73 / versionName 3.3.0) — the Data Safety form, the storefront,
+and the APK are diffed against each other, so a half-applied change is itself a rejection.
+
+### Data Safety — exact answers to set
+
+Two shared data types are ON this release; both Optional; the ephemeral-processing exemption is NOT
+claimed for either (every provider sets its own retention/training and the app cannot bind a third
+party's behavior):
+
+- **Audio files → Voice or sound recordings** — Collected **Yes**, Shared **Yes**, purpose **App
+  functionality**, **Optional (users can use the app without it)**. First true as of C2a cloud STT.
+  Two deliberate user actions gate every upload: add your own provider key AND select that provider
+  as the transcription engine. On-device transcription is the default with neither done.
+- **Other user-generated content → text you select for read-aloud** — Collected **Yes**, Shared
+  **Yes**, purpose **App functionality**, **Optional**. New with the cloud-TTS voice-picker wave —
+  read-aloud text did not leave the device before. Category chosen deliberately as "Other
+  user-generated content" over "Other in-app messages" (selected text is arbitrary user content, not
+  a message to a person). Gated by the same two actions — save a provider key AND pick a cloud voice
+  — after accepting disclosure v3.
+- **Ephemeral-processing exemption: do NOT claim it** on either type. Declare Shared = Yes plainly.
+- **Advertising ID: not used** (removed via `tools:node="remove"`).
+- **On-device transcription history** is text-only, app-private, auto-pruned, never transmitted — it
+  is NOT "collected" in Play's sense; mention it only under the on-device narrative if asked.
+- **Recipient narrative must name all four STT providers** (OpenAI, Google Gemini, ElevenLabs,
+  Soniox) and the three TTS voice providers (OpenAI, Google Gemini, ElevenLabs) — the storefront,
+  privacy policy §6, and this form must enumerate the same set. MediaProjection device audio is
+  never sent to any of them (Section 3); say so if a reviewer probes the media-transcription feature.
+
+### Corrections the release audit's compliance lens made (the Console copy must match these)
+
+Fixed in code/docs during the 3.3.0 sweep; set the Console to the corrected reality, not the
+pre-audit claims:
+- **Soniox** is now enumerated as the fourth cloud STT recipient in privacy §6 (both copies) and in
+  the §5 Data Safety recipient list. It is STT-only this wave (`supportsTts = false`) — do NOT list
+  it as a read-aloud voice. Its retention differs (async path stores audio + transcript server-side
+  until the adapter DELETEs them after each job) and has its own privacy-policy line.
+- **No disclosure-version bump for Soniox or for C4 live transcribe.** Both are the same
+  audio-to-a-provider meaning already covered by disclosure v3 (Soniox = one more recipient; C4 = a
+  new WebSocket transport + price tier only). No re-prompt, no Data Safety change from either.
+- **Home usage-stats footer** no longer claims "runs entirely on-device / no usage limits" to cloud
+  users; no storefront "no limits" copy may contradict the honest per-engine footer.
+- **Batch cloud is OpenAI-only** (`resolveBatchSttProvider` clamp). The batch screen's cloud row and
+  price reflect OpenAI, not whatever STT provider is globally selected — do not imply batch runs on
+  Gemini/ElevenLabs/Soniox.
+
+### Listing-copy step (BOTH copies, one release)
+
+- Pick ONE PLAY-LISTING.md DRAFT variant (A defensive / B feature-forward), reconcile its wording
+  with this doc, then edit the LIVE storefront to match: short description, full-description opener +
+  privacy bullets + read-aloud pillar, and the feature-graphic subline. The live 3.2.0 "100%
+  on-device / no audio ever uploaded" copy is FALSE once 3.3.0 ships and is a standalone false-claim
+  violation — a release blocker, not a nicety.
+- Mirror the same strings back into PLAY-LISTING.md when you set them in the Console (the file and
+  the Console are two copies of one text; keep them in lockstep, same release).
+
+### ⚠️ TWO owner-only manual steps — easy to forget, flagged loudly
+
+1. **⚠️ RECORD & UPLOAD THE FOREGROUND-SERVICE DEMO VIDEO.** The `microphone` (and `mediaProjection`)
+   FGS declarations (Sections 2–3) require a demo video the Console asks for. Only the owner has the
+   device: record the Fold 6 screen — enable bubble → focus a field → tap → dictate → text appears →
+   notification visible while recording — under ~30 s. No automation can produce this.
+2. **⚠️ FLIP THE GITHUB REPO BACK TO PUBLIC.** The GPLv3 source pointer in the storefront
+   (PLAY-LISTING.md full description) and the in-app licenses screen (`oss_licenses.html`) both link
+   the repo URL. The repo went private mid-development, so those are DEAD LINKS for anyone installing
+   from Play — a GPLv3 source-availability problem and a broken-listing-link problem at once. Make it
+   public again before, or with, the rollout.
