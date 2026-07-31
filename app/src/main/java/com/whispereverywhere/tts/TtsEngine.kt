@@ -452,10 +452,13 @@ class TtsEngine(
                         // AHEAD_CAP backpressure + RETAIN_CAP ceiling, shared with the cloud seam.
                         if (!appendWithCaps(pcm)) return 0
                         // Measure callback EXIT -> ENTRY so the AHEAD_CAP backpressure hold above
-                        // never reads as slow synthesis (spec 6A.3). The FIRST burst of an
-                        // utterance is still logged but is excluded from the summary percentiles
-                        // by the seq==0 check, because it carries whole-text espeak phonemisation
-                        // whose cost scales with SELECTION length, not sentence length.
+                        // never reads as slow synthesis (spec 6A.3). The FIRST burst (seq==0) is
+                        // still logged but excluded from the summary percentiles: it carries the
+                        // one-time cold-start cost (model warm-up, first espeak phonemisation) plus
+                        // the ttfw-critical startup, so it is not representative of steady-state RTF.
+                        // (Historical note: this once phonemised the WHOLE selection; post-splitter
+                        // the first unit is clause-bounded at ClauseSplitter.SPLIT_MAX_CHARS (<=80
+                        // chars), so seq==0's cost now scales with that first unit, not the selection.)
                         val prevExit = diagLastCallbackExitMs[0]
                         val synthMs = if (prevExit == 0L) entryMs - diagT0 else entryMs - prevExit
                         val seq = diagSentSeq.getAndIncrement()
