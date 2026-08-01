@@ -348,6 +348,8 @@ class FloatingBubbleService : Service(),
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         audioRecorder = StreamingAudioRecorder(this)
         mediaDetector = MediaSessionDetector(this)
+        // Our read-aloud plays on the music stream; the detector must never count it as media.
+        mediaDetector.selfAudioActive = { isSpeakingNow }
 
         // Foreground FIRST (satisfies the startForegroundService contract), and guarded: on
         // Android 12+/14+ this throws when the start context is disallowed or RECORD_AUDIO was
@@ -872,10 +874,13 @@ class FloatingBubbleService : Service(),
         val bubbleSize = (56 * displayMetrics.density).toInt()
         val padding = (16 * displayMetrics.density).toInt()
 
-        // Position bubble at bottom-right corner for media — unless pinned, in which case honor the
-        // user's pinned spot so it does not jump to the default on re-show.
-        var targetX = screenWidth - bubbleSize - padding
-        var targetY = screenHeight - bubbleSize - padding - getNavigationBarHeight()
+        // The REMEMBERED spot, exactly like the text-field pop-up (owner 2026-08-01: the bubble
+        // appears "right where I placed it last" — the old bottom-right media default was the
+        // final teleporter left after the drag snap was removed). Pinned still wins.
+        var targetX = (app.preferencesManager.bubblePositionX * screenWidth).toInt()
+            .coerceIn(0, screenWidth - bubbleSize)
+        var targetY = (app.preferencesManager.bubblePositionY * screenHeight).toInt()
+            .coerceIn(padding, screenHeight - bubbleSize - padding - getNavigationBarHeight())
         if (isOverlayPinned) {
             val pinned = savedPinnedPosition(bubbleSize)
             targetX = pinned.first

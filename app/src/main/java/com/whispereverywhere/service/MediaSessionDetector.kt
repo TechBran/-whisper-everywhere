@@ -28,6 +28,16 @@ class MediaSessionDetector(private val context: Context) {
     private var mediaSessionManager: MediaSessionManager? = null
     private var listener: MediaPlaybackListener? = null
     private var isMediaPlaying = false
+
+    /**
+     * True while the HOST APP itself is producing audio (the read-aloud AudioTrack plays on the
+     * music stream, so audioManager.isMusicActive counts it like any song). Without this check the
+     * detector announced OUR OWN TTS as media the moment its buffering completed — which yanked
+     * the bubble to the media spot mid-read (owner repro 2026-08-01). Only the audio-POLLING
+     * branch consults it: real media apps are seen via their MediaSessions, which our TTS never
+     * creates.
+     */
+    @Volatile var selfAudioActive: () -> Boolean = { false }
     private var currentMediaPackage: String? = null
     private val handler = Handler(Looper.getMainLooper())
 
@@ -133,7 +143,7 @@ class MediaSessionDetector(private val context: Context) {
 
             // Only use audio polling if MediaSession hasn't detected anything
             // This prevents duplicate notifications
-            if (isAudioActive && !isMediaPlaying) {
+            if (isAudioActive && !selfAudioActive() && !isMediaPlaying) {
                 // Double-check no media session is active
                 val hasActiveSession = controllerCallbacks.keys.any { controller ->
                     val state = controller.playbackState?.state
