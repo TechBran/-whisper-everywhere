@@ -620,7 +620,12 @@ class WhisperAccessibilityService : AccessibilityService() {
         imeWasVisible = imeVisible
         if (falling) {
             // The user dismissed the keyboard they summoned: re-arm dictation-first suppression.
-            if (keyboardSummoned) {
+            // NOT within a beat of a lobe toggle, though — the IME hides ASYNCHRONOUSLY, so a
+            // hide->show double-tap lands the FIRST hide's falling edge after the second toggle
+            // already set summoned=true, and honoring that stale echo silently re-hid a keyboard
+            // the user just asked for. That desync compounded into the owner-reported "after a
+            // few toggles it doesn't come back at all" (2026-08-01).
+            if (keyboardSummoned && System.currentTimeMillis() - lastSummonToggleMs > 1_000) {
                 keyboardSummoned = false
                 applyKeyboardShowMode()
             }
@@ -652,6 +657,9 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     /** True while the user has explicitly summoned the system keyboard for the current field. */
     @Volatile private var keyboardSummoned = false
+
+    /** When the lobe last toggled — the falling-edge re-arm must ignore ITS OWN hide's echo. */
+    @Volatile private var lastSummonToggleMs = 0L
 
     /**
      * Applies the dictation-first preference to the soft-keyboard controller: suppressed while
@@ -1345,7 +1353,17 @@ class WhisperAccessibilityService : AccessibilityService() {
         fun toggleSummonedKeyboard(): Boolean {
             val svc = instance ?: return false
             svc.keyboardSummoned = !svc.keyboardSummoned
+            svc.lastSummonToggleMs = System.currentTimeMillis()
             svc.applyKeyboardShowMode()
+            if (svc.keyboardSummoned) {
+                // Lifting suppression (SHOW_MODE_AUTO) does not SHOW an IME that has settled into
+                // hidden — the field must re-request it. A click on the focused field is the one
+                // cross-app way an accessibility service has to ask; without it only the first
+                // toggle ever worked (the initial mode flip triggers a re-evaluation, later ones
+                // do not — owner repro 2026-08-01).
+                val field = svc.findFocusedEditText() ?: svc.lastFocusedEditText
+                field?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
             return svc.keyboardSummoned
         }
         fun getInstance(): WhisperAccessibilityService? = instance
