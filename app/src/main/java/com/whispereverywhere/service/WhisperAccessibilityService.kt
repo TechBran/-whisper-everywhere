@@ -591,9 +591,18 @@ class WhisperAccessibilityService : AccessibilityService() {
         lastFocusedEditText = null
         lastFieldRect = null
         // A summoned keyboard is per-field: leaving the field re-arms dictation-first suppression.
+        // Same 1 s toggle-echo guard as the falling edge (owner repro 2026-08-01, "three presses
+        // before it starts toggling"): tapping the LOBE itself churns window state, the 300 ms
+        // focus re-check briefly fails while the IME animates, and this reset was silently undoing
+        // the summon the user had JUST made — until the churn died down a few taps later.
         if (keyboardSummoned) {
-            keyboardSummoned = false
-            applyKeyboardShowMode()
+            if (System.currentTimeMillis() - lastSummonToggleMs > 1_000) {
+                android.util.Log.i("WE-DIAG", "kbd re-arm: field unfocused")
+                keyboardSummoned = false
+                applyKeyboardShowMode()
+            } else {
+                android.util.Log.i("WE-DIAG", "kbd re-arm SKIPPED: within toggle echo window")
+            }
         }
         focusListener?.onTextFieldUnfocused()
     }
@@ -626,6 +635,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             // the user just asked for. That desync compounded into the owner-reported "after a
             // few toggles it doesn't come back at all" (2026-08-01).
             if (keyboardSummoned && System.currentTimeMillis() - lastSummonToggleMs > 1_000) {
+                android.util.Log.i("WE-DIAG", "kbd re-arm: IME dismissed")
                 keyboardSummoned = false
                 applyKeyboardShowMode()
             }
@@ -1360,9 +1370,28 @@ class WhisperAccessibilityService : AccessibilityService() {
                 // hidden — the field must re-request it. A click on the focused field is the one
                 // cross-app way an accessibility service has to ask; without it only the first
                 // toggle ever worked (the initial mode flip triggers a re-evaluation, later ones
-                // do not — owner repro 2026-08-01).
-                val field = svc.findFocusedEditText() ?: svc.lastFocusedEditText
-                field?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                // do not — owner repro 2026-08-01). The node is refresh()ed first (a stale node
+                // no-ops the click), the anatomy is logged, and if the IME has not risen shortly
+                // the request is retried once — the lobe tap's own window churn can swallow the
+                // first click.
+                val focused = svc.findFocusedEditText()
+                val field = focused ?: svc.lastFocusedEditText?.takeIf { runCatching { it.refresh() }.getOrDefault(false) }
+                val clicked = field?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "kbd summon: field=" + (if (focused != null) "focused" else if (field != null) "last" else "none") +
+                        " clickOk=" + clicked,
+                )
+                svc.serviceScope.launch {
+                    delay(600)
+                    if (svc.keyboardSummoned && !svc.imeWasVisible) {
+                        val retry = (svc.findFocusedEditText() ?: svc.lastFocusedEditText)
+                            ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+                        android.util.Log.i("WE-DIAG", "kbd summon retry: clickOk=" + retry)
+                    }
+                }
+            } else {
+                android.util.Log.i("WE-DIAG", "kbd toggle -> hidden")
             }
             return svc.keyboardSummoned
         }
