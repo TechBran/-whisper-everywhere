@@ -351,6 +351,17 @@ class FloatingBubbleService : Service(),
         // Our read-aloud plays on the music stream; the detector must never count it as media.
         mediaDetector.selfAudioActive = { isSpeakingNow }
 
+        // The dictation-first toggle applies to the LIVE bubble (owner report 2026-08-01: the
+        // keyboard lobe only appeared after disabling/re-enabling the bubble — its visibility was
+        // evaluated solely in updateBubbleState's IDLE branch, which nothing re-ran on a pref
+        // flip). Re-render the idle chrome whenever the pref changes; other states re-evaluate on
+        // their natural next transition to IDLE.
+        serviceScope.launch(Dispatchers.Main) {
+            app.preferencesManager.dictationFirstKeyboard.collect {
+                if (currentState == BubbleState.IDLE) updateBubbleState(BubbleState.IDLE)
+            }
+        }
+
         // Foreground FIRST (satisfies the startForegroundService contract), and guarded: on
         // Android 12+/14+ this throws when the start context is disallowed or RECORD_AUDIO was
         // revoked (mic-type FGS). Without the guard a START_STICKY service crash-loops forever

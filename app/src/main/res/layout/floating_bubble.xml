@@ -182,10 +182,12 @@
                 android:contentDescription="Lock bubble position" />
         </FrameLayout>
 
+        <!-- 36dp, deliberately larger than the other lobes: it is a frequent-tap TARGET in the
+             dictation-first flow (owner 2026-08-01: 28dp was hard to hit), not an indicator. -->
         <FrameLayout
             android:id="@+id/keyboard_lobe"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:layout_gravity="end|bottom"
             android:background="@drawable/lobe_circle"
             android:elevation="2dp"
@@ -193,8 +195,8 @@
 
             <ImageView
                 android:id="@+id/keyboard_icon"
-                android:layout_width="15dp"
-                android:layout_height="15dp"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_keyboard"
                 android:contentDescription="Show keyboard" />
