@@ -107,13 +107,28 @@ class WhisperAccessibilityService : AccessibilityService() {
         fun onClipboardChanged()
     }
 
-    // Registered from the a11y service context — the privileged holder that keeps clipboard
-    // change events flowing in the background on most OEMs (plain apps lost this in API 29).
+    // LAYER 1 of copy detection, and the weakest: since API 29 the platform suppresses
+    // OnPrimaryClipChangedListener for BACKGROUND apps — accessibility context included, as the
+    // owner's Samsung proved on-device 2026-08-01 (the old comment here claimed otherwise; it was
+    // wrong). This listener now only fires when Whisper Everywhere itself is foreground (e.g. the
+    // in-app transcripts screen). Copies made in OTHER apps are caught by the accessibility-signal
+    // layers in fireCopyDetected's callers: the system clipboard overlay window (Android 13+ shows
+    // one after every copy), OEM "Copied" toasts, and the selection toolbar's Copy button.
     private val clipChangedListener =
         android.content.ClipboardManager.OnPrimaryClipChangedListener {
-            android.util.Log.i("WE-TTS", "clipboard changed event")
-            clipboardListener?.onClipboardChanged()
+            fireCopyDetected("primary-clip listener (foreground)")
         }
+
+    /** Debounce across the detection layers — one copy often trips two or three of them. */
+    @Volatile private var lastCopySignalMs = 0L
+
+    private fun fireCopyDetected(signal: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastCopySignalMs < 1_500) return
+        lastCopySignalMs = now
+        android.util.Log.i("WE-DIAG", "copy detected via: $signal")
+        clipboardListener?.onClipboardChanged()
+    }
 
     private var selectionDebounceJob: kotlinx.coroutines.Job? = null
 
@@ -182,6 +197,8 @@ class WhisperAccessibilityService : AccessibilityService() {
                     AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                     AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED or
                     AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    // Copy detection layer: OEM "Copied to clipboard" toasts surface here.
+                    AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED or
                     // The pop-up CATCH-ALL (owner 2026-08-01: "everywhere a keyboard will pop
                     // up"): the per-view events above are heuristic and some fields never emit
                     // them (WebViews, Compose editors, custom canvases). The IME window itself is
@@ -218,6 +235,16 @@ class WhisperAccessibilityService : AccessibilityService() {
                 // User clicked - check both the source and search for editable field
                 val source = event.source
                 if (source != null) {
+                    // Copy detection layer: the selection toolbar's Copy button is an ordinary
+                    // clickable node. English-labelled UIs only — the overlay/toast layers carry
+                    // other locales.
+                    val clickLabel = source.text?.toString()
+                        ?: source.contentDescription?.toString() ?: ""
+                    if (clickLabel.equals("Copy", ignoreCase = true) ||
+                        clickLabel.equals("Copy to clipboard", ignoreCase = true)
+                    ) {
+                        fireCopyDetected("copy button click")
+                    }
                     // First check if clicked view is editable
                     if (isEditableTextField(source)) {
                         lastFocusedEditText = source
@@ -283,9 +310,30 @@ class WhisperAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
                 handleWindowsChanged()
             }
+            AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED -> {
+                // Copy detection layer: OEM copy confirmations are toasts ("Copied to clipboard",
+                // "Copied"). Only toast-shaped events are considered — real notifications carry
+                // arbitrary text and must never trip this.
+                val cls = event.className?.toString() ?: ""
+                if (cls.contains("Toast", ignoreCase = true)) {
+                    val text = event.text.joinToString(" ")
+                    if (text.contains("copied", ignoreCase = true)) {
+                        fireCopyDetected("copy toast")
+                    }
+                }
+            }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 // Window changed - be more careful about unfocusing
                 val pkg = event.packageName?.toString()
+
+                // Copy detection layer, the strongest on 13+: EVERY copy makes SystemUI show its
+                // clipboard preview overlay; that window's appearance is a copy, unambiguously.
+                if (pkg == "com.android.systemui" &&
+                    (event.className?.toString() ?: "").contains("clipboard", ignoreCase = true)
+                ) {
+                    fireCopyDetected("system clipboard overlay")
+                    return
+                }
 
                 // If switched to a different app entirely, unfocus
                 if (pkg != null && pkg != currentPackage && pkg != "com.whispereverywhere") {
