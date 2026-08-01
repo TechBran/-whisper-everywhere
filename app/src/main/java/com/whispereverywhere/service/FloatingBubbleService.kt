@@ -1189,7 +1189,20 @@ class FloatingBubbleService : Service(),
             if (dm.heightPixels > 0) app.preferencesManager.bubblePositionY = params.y.toFloat() / dm.heightPixels
         }
         applyPinIndicator()
+        flashLockLobe()
         showToast(if (isOverlayPinned) "Bubble locked in place" else "Bubble unlocked")
+    }
+
+    /** The transient pin confirmation: the lock lobe appears for a beat, then leaves. */
+    private var lockFlashJob: kotlinx.coroutines.Job? = null
+
+    private fun flashLockLobe() {
+        lockFlashJob?.cancel()
+        lockLobe.visibility = View.VISIBLE
+        lockFlashJob = serviceScope.launch(Dispatchers.Main) {
+            delay(1_500)
+            lockLobe.visibility = View.GONE
+        }
     }
 
     /**
@@ -2282,7 +2295,10 @@ class FloatingBubbleService : Service(),
                             else -> R.drawable.ic_mic
                         },
                     )
-                    lockLobe.visibility = View.VISIBLE
+                    // Lock lobe is TRANSIENT (owner 2026-08-01): long-press already pins, so a
+                    // permanent lock hanging off the blob was redundant chrome. It flashes for
+                    // ~1.5 s as confirmation whenever the pin state changes — see togglePin.
+                    lockLobe.visibility = View.GONE
                     keyboardLobe.visibility =
                         if (app.preferencesManager.isDictationFirstKeyboard()) View.VISIBLE
                         else View.GONE
