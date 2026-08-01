@@ -298,6 +298,10 @@ class BatchTranscriptionService : Service() {
      * before any prefs/network/notification/cost evaluation — the service must NEVER upgrade to
      * cloud a job the UI showed as local.
      */
+    // The provider resolveCloud last handed a job, for deliver()'s cost credit. Single-job
+    // service (one runJob at a time), so a plain field is race-free here.
+    private var lastCloudJobProviderId: ProviderId? = null
+
     private fun resolveCloud(
         byteLength: Long,
         costConfirmed: Boolean,
@@ -311,6 +315,7 @@ class BatchTranscriptionService : Service() {
         // provider can never be mis-keyed or smuggle past the triad.
         val providerId = resolveBatchSttProvider(requestedProviderId ?: prefs.sttProviderId)
         val key = providerId?.let { prefs.providerAccounts.key(it) }
+        lastCloudJobProviderId = null // set again below only if the gate passes
 
         val allowed = BatchEngineDecision.cloudAllowed(
             useCloud = useCloud,
@@ -324,6 +329,7 @@ class BatchTranscriptionService : Service() {
             notificationsEnabled = { NotificationManagerCompat.from(this).areNotificationsEnabled() },
         )
         if (!allowed) return null
+        lastCloudJobProviderId = providerId
         // The gate guaranteed a non-null providerId with a stored key. Construction goes through the
         // ONE factory both services share — any of the four STT adapters may be built here now.
         return SttProviderFactory.create(providerId!!, transport(), key!!)
@@ -345,6 +351,11 @@ class BatchTranscriptionService : Service() {
             if (audioSeconds > 0) {
                 app.usageTracker.addUsage(audioSeconds)
                 app.usageTracker.addToTotalUsage(audioSeconds)
+                // Month cost estimate: batch jobs always ride the batch rate. Estimate semantics
+                // cover the degrade-to-local-mid-job case (some chunks may not have been billed).
+                lastCloudJobProviderId?.let {
+                    app.cloudCostTracker.recordCloudSeconds(it, live = false, seconds = audioSeconds)
+                }
             }
             app.usageTracker.incrementTranscriptionCount()
             // Save the transcript, then apply the SAME rolling 14-day/10 MB retention every other

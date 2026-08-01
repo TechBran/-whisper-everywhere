@@ -280,10 +280,12 @@ fun HomeScreen(
             // the count re-reads on every resume via the remember key, since the service process
             // writes it outside this composition.
             val totalTranscriptions = remember(resumeTick) { app.usageTracker.getTotalTranscriptionCount() }
+            val monthCostCents = remember(resumeTick) { app.cloudCostTracker.estimatedMonthCents() }
             UsageStatsCard(
                 usedSeconds = usedSecondsToday,
                 configuredEngines = configuredEngineCount,
                 totalTranscriptions = totalTranscriptions,
+                monthCostCents = monthCostCents,
                 sttEngineName = sttEngineName,
             )
 
@@ -667,6 +669,7 @@ fun UsageStatsCard(
     usedSeconds: Int,
     configuredEngines: Int,
     totalTranscriptions: Int,
+    monthCostCents: Double,
     sttEngineName: String?,
 ) {
     val usageTracker = WhisperEverywhereApp.getInstance().usageTracker
@@ -726,6 +729,18 @@ fun UsageStatsCard(
                     icon = Icons.Filled.TextFields,
                     value = totalTranscriptions.toString(),
                     label = "Transcriptions"
+                )
+            }
+
+            // The month's estimated cloud spend — absent entirely for an all-on-device month.
+            com.whispereverywhere.data.local.CloudCostMath.monthCostFooter(monthCostCents)?.let { line ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 
@@ -811,9 +826,14 @@ fun LanguageSelectionCard() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .menuAnchor(),
+                    // Borderless (owner 2026-08-01, with the card-outline removals): the chevron
+                    // and the surfaceVariant fill carry the "tap me" signal; the box outline is
+                    // retired like every other outline on the black ground.
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        focusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
+                        unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
                     )
                 )
 

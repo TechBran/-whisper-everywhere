@@ -363,7 +363,10 @@ class LiveTranscriptionEngineTest {
         assertTrue("a fully-dropped turn resolves Lost, rescued locally — never dangles", outcome is SegmentOutcome.Lost)
 
         // The orphan is gone from `pending`: no tail-stall, no awaitIdle timeout, nothing to mis-bind.
-        assertTrue("no seq dangles after a socket-down commit", h.engine.awaitIdle(2_000))
+        // 10 s, not 2 s: the assertion is about EXISTENCE (a dangling seq fails at any timeout),
+        // so the budget buys only load-tolerance — this test failed twice under a parallel native
+        // build (2026-08-01) with the pool threads starved, and passed alone both times.
+        assertTrue("no seq dangles after a socket-down commit", h.engine.awaitIdle(10_000))
         h.transport.listener.onCompleted("it_orphan", "ignored") // cannot resolve or bind the vanished turn
         assertEquals(1, h.l.all.size)
     }

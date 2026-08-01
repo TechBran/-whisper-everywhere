@@ -273,6 +273,12 @@ class FloatingBubbleService : Service(),
     // "No speech detected" feedback on stop so the user is not left with silent nothing.
     @Volatile private var sessionProducedText = false
 
+    // The cloud provider serving THIS session, or null for on-device sessions. Set by
+    // resolveTranscriptionEngine's cloud branches, read once at finalize to credit the month's
+    // cloud-cost estimate. An estimate, deliberately: segments the fallback rescued locally are
+    // still credited (the audio was sent), and that over-count is within "about".
+    @Volatile private var sessionCloudProviderId: ProviderId? = null
+
     // Releases segment outcomes into the user's text in STRICT seq order. Recreated per session in
     // startRecording, because it starts at head 0 and the engine restarts seq numbering at 0 too.
     // Main-thread confined: every touch below is inside a Dispatchers.Main block.
@@ -1632,6 +1638,7 @@ class FloatingBubbleService : Service(),
         // cleared here; the chosen branch below re-sets exactly one (or neither, for local).
         lastCloudEngine = null
         lastLiveEngine = null
+        sessionCloudProviderId = null
         // Frozen fresh each session and read by the delta surface; default off so batch/on-device
         // sessions keep their exact behavior. Only the CLOUD_LIVE branch flips it on.
         sessionIsLive = false
@@ -1668,6 +1675,7 @@ class FloatingBubbleService : Service(),
                 )
                 val cloud = CloudTranscriptionEngine(stt, serviceScope)
                 lastCloudEngine = cloud
+                sessionCloudProviderId = provider
                 // ONE engine for the whole session, both capture sources. Device (playback) audio
                 // follows the user's provider selection exactly as mic audio does — owner decision
                 // 2026-08-01, and the four statements that used to say device audio never leaves
@@ -1716,6 +1724,7 @@ class FloatingBubbleService : Service(),
                 )
                 lastLiveEngine = cloud
                 sessionIsLive = true
+                sessionCloudProviderId = liveProviderId
                 // Wired IDENTICALLY to batch: one FallbackTranscriptionEngine serves the whole
                 // session, both capture sources (owner decision 2026-08-01 — device audio follows
                 // the provider selection; see the batch branch above for the consent/docs story).
@@ -2000,6 +2009,11 @@ class FloatingBubbleService : Service(),
                 if (sessionSeconds > 0) {
                     app.usageTracker.addUsage(sessionSeconds)
                     app.usageTracker.addToTotalUsage(sessionSeconds)
+                    // Month cost estimate: only cloud sessions cost anything; the rate follows the
+                    // transport the session actually used (live WS vs batch POST).
+                    sessionCloudProviderId?.let {
+                        app.cloudCostTracker.recordCloudSeconds(it, live = sessionIsLive, seconds = sessionSeconds)
+                    }
                 }
                 sessionStartMs = 0L // exactly once per session, even if finalize re-enters
             }

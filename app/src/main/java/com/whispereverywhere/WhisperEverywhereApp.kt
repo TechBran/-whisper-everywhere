@@ -15,6 +15,7 @@ class WhisperEverywhereApp : Application() {
         private set
 
     lateinit var usageTracker: UsageTracker
+    lateinit var cloudCostTracker: com.whispereverywhere.data.local.CloudCostTracker
         private set
 
     /**
@@ -32,6 +33,7 @@ class WhisperEverywhereApp : Application() {
         // Initialize managers
         preferencesManager = PreferencesManager(this)
         usageTracker = UsageTracker(this)
+        cloudCostTracker = com.whispereverywhere.data.local.CloudCostTracker(this)
 
         // Create notification channel for foreground service
         createNotificationChannel()
