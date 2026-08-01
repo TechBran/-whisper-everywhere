@@ -215,6 +215,38 @@ class SonioxTtsTest {
         assertEquals(listOf<Short>(1), collected)
     }
 
+    // --- no-audio 200: never a silent skip / soft-latch reset ---
+
+    @Test fun an_empty_200_body_is_Transient_not_a_silent_Done() = runBlocking {
+        // A no-audio 200 must fail Transient (re-synth on local + counts toward the soft-latch),
+        // NEVER onPcm(empty)→Done — a Done would silently drop the clause AND reset the engine's
+        // money circuit breaker so cloud re-bills every remaining clause.
+        var onPcmCalls = 0
+        val r = SonioxTts(okBytes(ByteArray(0)), "sk-test").synth("hi", "Maya", 1.0f) {
+            onPcmCalls++; true
+        } as TtsResult.Failed
+        assertTrue("empty 200 must be Transient", r.error is TtsError.Transient)
+        assertEquals("words must never silently vanish: onPcm not called with empty audio", 0, onPcmCalls)
+    }
+
+    @Test fun a_sub_sample_200_body_that_decodes_to_nothing_is_Transient() = runBlocking {
+        // One byte is half a sample: toShortArrayLE drops it → empty → a no-audio 200, not a Done.
+        val r = SonioxTts(okBytes(byteArrayOf(0x7F)), "sk-test").synth("hi", "Maya", 1.0f) { true } as TtsResult.Failed
+        assertTrue(r.error is TtsError.Transient)
+    }
+
+    @Test fun an_empty_200_on_the_language_retry_is_also_Transient() = runBlocking {
+        // The retry path shares deliver(), so a no-audio 200 after the "auto"→code fallback fails
+        // Transient too — the second Ok branch cannot silently emit an empty clause either.
+        val fake = bytesFake(
+            HttpResultBytes.HttpError(400, """{"error_code":"invalid_request","message":"language 'auto' is not supported"}"""),
+            HttpResultBytes.Ok(200, ByteArray(0)),
+        )
+        val r = SonioxTts(fake, "sk-test").synth("hola", "Maya", 1.0f) { true } as TtsResult.Failed
+        assertTrue(r.error is TtsError.Transient)
+        assertEquals("exactly two requests: auto then the fallback code", 2, fake.callCount)
+    }
+
     @Test fun a_network_error_is_Offline() = runBlocking {
         val fake = bytesFake(HttpResultBytes.NetworkError(IOException("no route")))
         val r = SonioxTts(fake, "sk-test").synth("hi", "Maya", 1.0f) { true } as TtsResult.Failed

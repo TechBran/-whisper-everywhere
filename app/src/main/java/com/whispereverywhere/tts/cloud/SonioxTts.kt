@@ -93,8 +93,17 @@ class SonioxTts(
         return transport.postForBytes(ENDPOINT, headers, body)
     }
 
-    private fun deliver(shorts: ShortArray, onPcm: (ShortArray) -> Boolean): TtsResult =
-        if (!onPcm(shorts)) TtsResult.Cancelled else TtsResult.Done
+    private fun deliver(shorts: ShortArray, onPcm: (ShortArray) -> Boolean): TtsResult {
+        // A no-audio 200 (empty body, or a truncated sub-sample body that decodes to nothing) must
+        // NOT be onPcm(empty)→Done: that is a SILENT SKIP (the clause's words vanish into a gap) and
+        // it defeats the money circuit breaker — the engine maps Done→Cloud→consecutiveSoft=0,
+        // resetting the soft-latch streak so cloud re-attempts/re-bills every remaining clause. Fail
+        // Transient (not BadUnit) so it counts toward the soft-latch AND re-synthesizes this clause
+        // on the local voice — mirroring Gemini's "a refusal is not silence". Covers both Ok branches
+        // (attempt 1 and the language-retry), so neither can silently emit an empty clause.
+        if (shorts.isEmpty()) return TtsResult.Failed(TtsError.Transient(null))
+        return if (!onPcm(shorts)) TtsResult.Cancelled else TtsResult.Done
+    }
 
     private fun classify(code: Int, body: String, unitLength: Int): TtsError {
         // STATUS CODE + unit LENGTH only — never the body or the unit text (class doc / global rule).
