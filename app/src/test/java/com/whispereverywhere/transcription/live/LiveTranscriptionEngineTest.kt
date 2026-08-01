@@ -106,12 +106,12 @@ class LiveTranscriptionEngineTest {
         }
     }
 
-    private inner class Harness(maxBacklog: Int, minCommitBytes: Int) {
+    private inner class Harness(maxBacklog: Int, minCommitBytes: Int, serverDriven: Boolean = false) {
         lateinit var transport: FakeTransport
         val l = Rec()
-        val engine = LiveTranscriptionEngine("sk-test", scope(), maxBacklog, minCommitBytes) { listener ->
-            FakeTransport(listener).also { transport = it }
-        }
+        val engine = LiveTranscriptionEngine(
+            "sk-test", scope(), maxBacklog, minCommitBytes, serverDriven = serverDriven,
+        ) { listener -> FakeTransport(listener).also { transport = it } }
         init { harnesses += this }
     }
 
@@ -121,6 +121,10 @@ class LiveTranscriptionEngineTest {
     // the sub-minimum test passes the real 3200 B threshold explicitly.
     private fun connected(maxBacklog: Int = 128, minCommitBytes: Int = 0): Harness =
         Harness(maxBacklog, minCommitBytes).also { it.engine.connect(null, it.l) }
+
+    /** finishServerTurns() is a no-op outside server-driven mode, so the stop-path tests need this. */
+    private fun connectedServerDriven(): Harness =
+        Harness(128, 0, serverDriven = true).also { it.engine.connect(null, it.l) }
 
     // ---------------------------------------------------------------- the capture thread
 
@@ -169,6 +173,30 @@ class LiveTranscriptionEngineTest {
         // injection is a full-field read-modify-write that would corrupt the field.
         h.transport.listener.onCompleted("it_1", "hello world")
         assertEquals(1, h.l.all.size)
+    }
+
+    @Test fun the_unbound_tail_turn_at_stop_stays_a_loss_so_the_mirror_can_rescue_it() {
+        // Guards a shortcut that looks right and is not, tried and reverted 2026-07-31 while
+        // chasing the "[…] at the end of every message" report: "the server never opened an item
+        // for this turn, so its audio must have been silence — resolve it EmptyExpected."
+        //
+        // Unbound does NOT mean silent. A user who says one short sentence and taps stop
+        // immediately leaves an unbound tail turn that is FULL of speech; the server simply had
+        // not replied yet. Calling that silence deletes the sentence outright, with no marker and
+        // no rescue — strictly worse than the spurious marker it was meant to remove.
+        //
+        // The engine cannot tell the two apart and must not try. It hands every outstanding turn
+        // over as a loss; whether the audio held speech is whisper's call, made on the retained
+        // PCM during the mirror rescue, and honoured by FallbackPolicy.reconcile. That is where
+        // the marker is actually suppressed — see FallbackPolicyTest.
+        val h = connectedServerDriven()
+        h.engine.sendAudio(byteArrayOf(1)); assertEquals(0L, h.engine.commit())
+        // No onCommitted for this turn: the server never opened an item for it.
+
+        h.engine.finishServerTurns()
+        val (seq, outcome) = h.l.all.single()
+        assertEquals(0L, seq)
+        assertTrue("the tail must reach the mirror as a loss, got $outcome", outcome is SegmentOutcome.Lost)
     }
 
     @Test fun an_empty_server_completion_is_silence_not_a_loss_marker() {

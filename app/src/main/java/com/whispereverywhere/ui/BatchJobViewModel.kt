@@ -33,7 +33,14 @@ class BatchJobViewModel(app: Application) : AndroidViewModel(app) {
      * [useCloud] is the user's per-job engine pick from the Ready screen; it rides the intent as a
      * HARD FLOOR so the service can never upgrade an "On-device" job to a billed cloud upload.
      */
-    fun startNew(uri: Uri, displayName: String, durationMs: Long, costConfirmed: Boolean, useCloud: Boolean) {
+    fun startNew(
+        uri: Uri,
+        displayName: String,
+        durationMs: Long,
+        costConfirmed: Boolean,
+        useCloud: Boolean,
+        providerId: String? = null,
+    ) {
         val app = getApplication<Application>()
         val intent = Intent(app, BatchTranscriptionService::class.java).apply {
             data = uri
@@ -43,6 +50,10 @@ class BatchJobViewModel(app: Application) : AndroidViewModel(app) {
             putExtra(BatchTranscriptionService.EXTRA_DURATION_MS, durationMs)
             putExtra(BatchTranscriptionService.EXTRA_COST_CONFIRMED, costConfirmed)
             putExtra(BatchTranscriptionService.EXTRA_USE_CLOUD, useCloud)
+            // The per-job PROVIDER pick, alongside the on/off floor. Null = fall back to the
+            // globally selected provider (the pre-3.3.0 behaviour, and what a retry with no
+            // explicit pick means). The service re-validates it through the same gate chain.
+            putExtra(BatchTranscriptionService.EXTRA_PROVIDER_ID, providerId)
         }
         ContextCompat.startForegroundService(app, intent)
     }
@@ -52,13 +63,23 @@ class BatchJobViewModel(app: Application) : AndroidViewModel(app) {
      * Retry is safe on a paid API. The cost confirm is re-gated by the caller on the FULL byteLength.
      * [useCloud] carries the same per-job engine floor as [startNew].
      */
-    fun retry(id: String, reset: Boolean, costConfirmed: Boolean, useCloud: Boolean) {
+    fun retry(
+        id: String,
+        reset: Boolean,
+        costConfirmed: Boolean,
+        useCloud: Boolean,
+        providerId: String? = null,
+    ) {
         val app = getApplication<Application>()
         val intent = Intent(app, BatchTranscriptionService::class.java).apply {
             putExtra(BatchTranscriptionService.EXTRA_RECORDING_ID, id)
             putExtra(BatchTranscriptionService.EXTRA_RESET, reset)
             putExtra(BatchTranscriptionService.EXTRA_COST_CONFIRMED, costConfirmed)
             putExtra(BatchTranscriptionService.EXTRA_USE_CLOUD, useCloud)
+            // The per-job PROVIDER pick, alongside the on/off floor. Null = fall back to the
+            // globally selected provider (the pre-3.3.0 behaviour, and what a retry with no
+            // explicit pick means). The service re-validates it through the same gate chain.
+            putExtra(BatchTranscriptionService.EXTRA_PROVIDER_ID, providerId)
         }
         ContextCompat.startForegroundService(app, intent)
     }

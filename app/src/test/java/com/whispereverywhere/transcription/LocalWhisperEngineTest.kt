@@ -216,7 +216,7 @@ class LocalWhisperEngineTest {
     }
 
     @Test
-    fun commit_withPermanentFailure_resolvesEmptyExpectedAndReportsError() {
+    fun commit_withPermanentFailure_resolvesLostAndReportsError() {
         // Fail more times than maxAttempts (3) -> never succeeds.
         val backend = FakeWhisperBackend(text = "never", failTimes = 99)
         val engine = LocalWhisperEngine(
@@ -230,13 +230,14 @@ class LocalWhisperEngineTest {
         engine.sendAudio(pcm)
         val seq = engine.commit()
 
-        // A terminal failure resolves EmptyExpected, NOT Lost — Lost renders as "[…]" in the
-        // user's field, and onError mid-RECORDING is a no-op in the service, so this reproduces
-        // pre-identity-work behaviour byte-for-byte (nothing typed) while still resolving the seq
-        // exactly once. onError still fires so the failure is observable/loggable.
+        // Lost, NOT EmptyExpected. Whisper never produced a verdict about this audio, so the
+        // engine must not claim one. EmptyExpected is reserved for "whisper ran and heard no
+        // speech", and FallbackPolicy.reconcile now TRUSTS that verdict hard enough to erase the
+        // cloud's loss marker with it — a failure branch answering EmptyExpected would silently
+        // delete a real sentence there. onError still fires so the failure stays observable.
         assertEquals(0L, seq)
         assertEquals(
-            listOf(0L to SegmentOutcome.EmptyExpected),
+            listOf(0L to SegmentOutcome.Lost("transcription failed")),
             listener.resolved,
         )
         assertTrue(listener.completed.isEmpty())
@@ -378,9 +379,9 @@ class LocalWhisperEngineTest {
             listOf(
                 0L to SegmentOutcome.Text("one"),
                 1L to SegmentOutcome.EmptyExpected,
-                // A terminal failure resolves EmptyExpected too (never Lost, which would type a
-                // "[…]" marker into the user's field) — see runSegment's KDoc.
-                2L to SegmentOutcome.EmptyExpected,
+                // A terminal failure is Lost — whisper reached no verdict, so the engine claims
+                // none. Only the blank above (1L) is a real "heard no speech". See runSegment.
+                2L to SegmentOutcome.Lost("transcription failed"),
             ),
             listener.resolved,
         )
@@ -392,7 +393,7 @@ class LocalWhisperEngineTest {
     }
 
     @Test
-    fun commit_whenContextIsNotLoaded_resolvesEmptyExpectedAndReportsError() {
+    fun commit_whenContextIsNotLoaded_resolvesLostAndReportsError() {
         // load() returning 0 leaves ctxPtr == 0 with the listener still attached.
         val backend = FakeWhisperBackend(loadReturns = 0L)
         val engine = LocalWhisperEngine(
@@ -409,11 +410,12 @@ class LocalWhisperEngineTest {
         engine.sendAudio(pcm)
         val seq = engine.commit()
 
-        // Not Lost (which renders "[…]" in the user's field) — EmptyExpected, matching
-        // pre-identity-work behaviour (onError mid-RECORDING is a no-op in the service, so
-        // nothing was ever typed for this failure), while still resolving the seq exactly once.
+        // Lost: whisper never ran, so there is no verdict to report. Standalone-local users are
+        // not newly exposed to the "[…]" marker by this — connect() never fires onOpen when the
+        // model cannot load, so recording never starts. Under the cloud engines this is what keeps
+        // a no-model device from having FallbackPolicy.reconcile erase a real loss.
         assertEquals(0L, seq)
-        assertEquals(listOf(0L to SegmentOutcome.EmptyExpected), listener.resolved)
+        assertEquals(listOf(0L to SegmentOutcome.Lost("speech model not loaded")), listener.resolved)
         assertEquals(
             listOf("Failed to load speech model (may be corrupt - re-download)", "Speech model not loaded"),
             listener.errors,

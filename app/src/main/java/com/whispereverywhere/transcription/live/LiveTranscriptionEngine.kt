@@ -458,7 +458,16 @@ class LiveTranscriptionEngine(
         }
     }
 
-    /** Resolves every outstanding turn Lost. Cancelling in-flight work does not resolve — this does. */
+    /**
+     * Resolves every outstanding turn Lost so the mirror rescues each one locally.
+     *
+     * Deliberately NOT conditioned on whether the server had opened an item: unbound does not mean
+     * "no speech". A user who says a short sentence and taps stop immediately leaves an unbound
+     * turn that is FULL of speech — the server simply had not replied yet. Treating unbound as
+     * silence would drop exactly that sentence (the Critical the stop-tail rescue exists to fix).
+     * Whether the audio held speech is whisper's call, made during the rescue; see
+     * [com.whispereverywhere.transcription.cloud.FallbackPolicy.reconcile].
+     */
     private fun abandonOutstanding(reason: String) {
         val turns = synchronized(correlationLock) { ArrayList(pending.values) }
         turns.forEach { resolveOnce(it.seq, SegmentOutcome.Lost(reason)) }

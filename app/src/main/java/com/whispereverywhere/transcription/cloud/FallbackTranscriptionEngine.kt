@@ -26,18 +26,29 @@ object FallbackPolicy {
     /**
      * Which outcome the user actually sees once the local retry has answered.
      *
-     * ONLY a real transcript wins. Everything else keeps the cloud's outcome, and that asymmetry
-     * is deliberate: [com.whispereverywhere.transcription.LocalWhisperEngine] answers BOTH "VAD
-     * proved this was silence" AND "no model is loaded" with [SegmentOutcome.EmptyExpected], and
-     * its own comment records that Kotlin cannot tell those apart from the empty string it gets
-     * back. EmptyExpected types nothing and shows no marker, so letting it overwrite a
-     * [SegmentOutcome.Lost] would turn "the user can see a sentence went missing" into "the
-     * sentence silently vanished" on every device where the safety net has no model installed —
-     * which is exactly the population most likely to be on the cloud engine.
+     * Two local answers win over the cloud's loss, and they are the two the local engine can only
+     * produce by actually having LOOKED at the audio:
+     *
+     *  - a real transcript — the rescue worked;
+     *  - [SegmentOutcome.EmptyExpected] — whisper ran on the very same PCM the cloud lost, its
+     *    Silero VAD found no speech in it, and a segment with no speech in it cannot be a lost
+     *    sentence. Keeping the cloud's [SegmentOutcome.Lost] here is what put a "[…]" marker at
+     *    the end of EVERY live session (owner-reported 2026-07-31): the tail turn between the
+     *    user's last word and the stop tap is trailing room tone, the server never transcribed it,
+     *    and whisper correctly said there was nothing there — so the marker claimed a sentence had
+     *    vanished when none had existed.
+     *
+     * This trust is only sound because
+     * [com.whispereverywhere.transcription.LocalWhisperEngine] reserves EmptyExpected for that one
+     * verdict: its two "whisper never ran" branches (no model loaded, transcribe threw) resolve
+     * Lost, so they fall to the `else` here and the cloud's visible loss survives. Loosening
+     * either side re-opens the silent-vanish hole this asymmetry used to guard.
      */
-    fun reconcile(cloudOutcome: SegmentOutcome, localOutcome: SegmentOutcome): SegmentOutcome =
-        if (localOutcome is SegmentOutcome.Text && localOutcome.text.isNotBlank()) localOutcome
-        else cloudOutcome
+    fun reconcile(cloudOutcome: SegmentOutcome, localOutcome: SegmentOutcome): SegmentOutcome = when {
+        localOutcome is SegmentOutcome.Text && localOutcome.text.isNotBlank() -> localOutcome
+        localOutcome is SegmentOutcome.EmptyExpected -> SegmentOutcome.EmptyExpected
+        else -> cloudOutcome
+    }
 }
 
 /**

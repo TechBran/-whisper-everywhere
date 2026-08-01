@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.provider.ProviderCatalog
+import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.recording.BatchStatus
 import com.whispereverywhere.recording.ChunkStatus
 import com.whispereverywhere.recording.RecordingMeta
@@ -63,25 +64,46 @@ fun BatchTranscribeScreen(
     val context = LocalContext.current
     val progress by viewModel.progress.collectAsState()
 
-    // The per-job engine choice. Cloud is offered ONLY when the triad holds; it then defaults to the
-    // global selection (cloudEligible already encodes "cloud is both selected and usable"). The row
-    // mirrors the GLOBALLY SELECTED STT provider — the service resolves the SAME one through
-    // resolveBatchSttProvider (now the full set, as of 3.3.0), so the screen and the service agree on
-    // which provider's name and price to show. A selection with no key/disclosure just fails the gate.
-    val batchProvider = remember {                       // the resolved batch STT provider, or null
-        resolveBatchSttProvider(WhisperEverywhereApp.getInstance().preferencesManager.sttProviderId)
+    // EVERY eligible provider is offered per job, not just the globally selected one (owner report
+    // 2026-07-31: "we still only have OpenAI and the local pipeline available"). The service was
+    // already widened in 3.3.0 — this screen was the last clamp, mirroring the global selection.
+    // A batch file is a deliberate, one-off choice: the engine that is best for THIS recording
+    // (Soniox for a multilingual interview, say) is often not the one bound to the mic button.
+    //
+    // A row appears only when that provider passes the SAME gate the service enforces — a resolvable
+    // adapter, a stored key, accepted disclosure v3 — so the list is "what will actually work", and
+    // the pick is re-validated service-side regardless (it can never widen access).
+    val prefs = remember { WhisperEverywhereApp.getInstance().preferencesManager }
+    val eligible by produceState(initialValue = emptyList<ProviderId>()) {
+        value = withContext(Dispatchers.IO) {
+            // Keystore reads per provider — never on the main thread.
+            ProviderCatalog.all
+                .map { it.id }
+                .filter { id ->
+                    resolveBatchSttProvider(id.name) != null &&
+                        BatchCloudGate.cloudEligible(
+                            id.name,
+                            prefs.providerAccounts.key(id),
+                            prefs.cloudDisclosureAccepted,
+                        )
+                }
+        }
     }
-    val providerName = batchProvider?.let { ProviderCatalog.byId(it).displayName } ?: ""
+
+    // Default to the globally selected provider when it is itself eligible — the least surprising
+    // pick — else on-device. Re-evaluated once the async eligibility list lands.
+    var chosen by remember { mutableStateOf<ProviderId?>(null) }
+    var defaulted by remember { mutableStateOf(false) }
+    LaunchedEffect(eligible) {
+        if (!defaulted && eligible.isNotEmpty()) {
+            chosen = resolveBatchSttProvider(prefs.sttProviderId)?.takeIf { it in eligible }
+            defaulted = true
+        }
+    }
+
+    val useCloud = chosen != null
+    val batchProvider = chosen
     val providerCents = BatchCostEstimator.centsPerMinute(batchProvider)
-    // Gemini's audio price is not published: the number above is only an illustrative floor, so the
-    // copy must SAY so rather than present it as the provider's real rate (finding #2).
-    val priceKnown = BatchCostEstimator.isPriceKnown(batchProvider)
-    val cloudEligible = remember {
-        val prefs = WhisperEverywhereApp.getInstance().preferencesManager
-        val key = batchProvider?.let { prefs.providerAccounts.key(it) }
-        BatchCloudGate.cloudEligible(batchProvider?.name, key, prefs.cloudDisclosureAccepted)
-    }
-    var useCloud by remember { mutableStateOf(cloudEligible) }
 
     // Screen-state bookkeeping. `jobStarted` gates Ready vs the live states; `sawActive` guards
     // against briefly rendering a PREVIOUS job's terminal progress (which lingers in the global
@@ -135,22 +157,19 @@ fun BatchTranscribeScreen(
                 !jobStarted -> ReadyContent(
                     displayName = displayName,
                     durationMs = durationMs,
-                    cloudEligible = cloudEligible,
-                    providerName = providerName,
-                    providerCents = providerCents,
-                    priceKnown = priceKnown,
-                    useCloud = useCloud,
-                    onUseCloud = { useCloud = it },
+                    eligible = eligible,
+                    chosen = chosen,
+                    onChoose = { chosen = it },
                     onTranscribe = {
                         beginJob(
                             costBytes = BatchCostEstimator.bytesForDuration(durationMs),
                             confirmedStart = {
                                 sawActive = false; jobStarted = true
-                                viewModel.startNew(uri, displayName, durationMs, costConfirmed = true, useCloud = useCloud)
+                                viewModel.startNew(uri, displayName, durationMs, costConfirmed = true, useCloud = useCloud, providerId = chosen?.name)
                             },
                             directStart = {
                                 sawActive = false; jobStarted = true
-                                viewModel.startNew(uri, displayName, durationMs, costConfirmed = false, useCloud = useCloud)
+                                viewModel.startNew(uri, displayName, durationMs, costConfirmed = false, useCloud = useCloud, providerId = chosen?.name)
                             },
                         )
                     },
@@ -192,11 +211,11 @@ fun BatchTranscribeScreen(
                                     costBytes = BatchCostEstimator.bytesForDuration(durationMs),
                                     confirmedStart = {
                                         sawActive = false
-                                        viewModel.startNew(uri, displayName, durationMs, costConfirmed = true, useCloud = useCloud)
+                                        viewModel.startNew(uri, displayName, durationMs, costConfirmed = true, useCloud = useCloud, providerId = chosen?.name)
                                     },
                                     directStart = {
                                         sawActive = false
-                                        viewModel.startNew(uri, displayName, durationMs, costConfirmed = false, useCloud = useCloud)
+                                        viewModel.startNew(uri, displayName, durationMs, costConfirmed = false, useCloud = useCloud, providerId = chosen?.name)
                                     },
                                 )
                             } else {
@@ -206,11 +225,11 @@ fun BatchTranscribeScreen(
                                     costBytes = (m?.byteLength ?: 0).toLong(),
                                     confirmedStart = {
                                         sawActive = false
-                                        viewModel.retry(recordingId, reset = false, costConfirmed = true, useCloud = useCloud)
+                                        viewModel.retry(recordingId, reset = false, costConfirmed = true, useCloud = useCloud, providerId = chosen?.name)
                                     },
                                     directStart = {
                                         sawActive = false
-                                        viewModel.retry(recordingId, reset = false, costConfirmed = false, useCloud = useCloud)
+                                        viewModel.retry(recordingId, reset = false, costConfirmed = false, useCloud = useCloud, providerId = chosen?.name)
                                     },
                                 )
                             }
@@ -230,11 +249,13 @@ fun BatchTranscribeScreen(
             onDismissRequest = { pending = null },
             title = { Text("Use the cloud?") },
             text = {
+                // Names the provider the user PICKED for this job, not the globally selected one.
+                val name = chosen?.let { ProviderCatalog.byId(it).displayName } ?: ""
                 Text(
                     "Transcribe about ${formatMinutes(pc.minutes)} in the cloud for about " +
-                        "${formatCents(pc.cents)} with your $providerName key?" +
-                        if (!priceKnown) {
-                            "\n\n$providerName's audio price isn't published — this is only an " +
+                        "${formatCents(pc.cents)} with your $name key?" +
+                        if (chosen != null && !BatchCostEstimator.isPriceKnown(chosen)) {
+                            "\n\n$name's audio price isn't published — this is only an " +
                                 "estimate at another provider's rate, so the real charge may differ."
                         } else ""
                 )
@@ -257,12 +278,9 @@ private class PendingConfirm(
 private fun ReadyContent(
     displayName: String,
     durationMs: Long,
-    cloudEligible: Boolean,
-    providerName: String,
-    providerCents: Double,
-    priceKnown: Boolean,
-    useCloud: Boolean,
-    onUseCloud: (Boolean) -> Unit,
+    eligible: List<ProviderId>,
+    chosen: ProviderId?,
+    onChoose: (ProviderId?) -> Unit,
     onTranscribe: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
@@ -279,22 +297,25 @@ private fun ReadyContent(
         Spacer(Modifier.height(8.dp))
 
         EngineRow(
-            selected = !useCloud,
+            selected = chosen == null,
             title = "On-device",
             subtitle = "Free and private — no network needed",
-            onClick = { onUseCloud(false) },
+            onClick = { onChoose(null) },
         )
-        // ABSENT (not disabled) unless the BatchCloudGate triad holds.
-        if (cloudEligible) {
+        // One row per ELIGIBLE provider — absent (not disabled) for any that fails the gate, so the
+        // list is exactly "what will work". Empty list = on-device only, which is the correct
+        // display for a user with no keys.
+        eligible.forEach { id ->
+            val cents = BatchCostEstimator.centsPerMinute(id)
             Spacer(Modifier.height(8.dp))
             EngineRow(
-                selected = useCloud,
-                title = providerName,
+                selected = chosen == id,
+                title = ProviderCatalog.byId(id).displayName,
                 // Honest copy: a KNOWN rate reads "about ¢X/min"; an UNKNOWN one (Gemini audio) is
                 // labelled as unpublished so the illustrative floor is never shown as a real price.
-                subtitle = if (priceKnown) "about ¢${providerCents}/min"
-                    else "price not published — estimated at ¢${providerCents}/min",
-                onClick = { onUseCloud(true) },
+                subtitle = if (BatchCostEstimator.isPriceKnown(id)) "about ¢$cents/min"
+                    else "price not published — estimated at ¢$cents/min",
+                onClick = { onChoose(id) },
             )
         }
 

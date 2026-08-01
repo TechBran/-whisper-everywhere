@@ -136,9 +136,14 @@ class BatchTranscriptionService : Service() {
         // The per-job engine pick from the Ready screen. DEFAULTS TO FALSE (on-device): a missing
         // flag must never upgrade a job to cloud — the caller has to ASK for cloud, explicitly.
         val useCloud = intent.getBooleanExtra(EXTRA_USE_CLOUD, false)
+        // The per-job PROVIDER pick. Null means "use the globally selected one" (a retry with
+        // no explicit pick, or any caller predating the picker). Never widens access: it is
+        // re-validated through resolveBatchSttProvider + BatchCloudGate below, exactly as the
+        // global selection is.
+        val providerId = intent.getStringExtra(EXTRA_PROVIDER_ID)
 
         serviceScope.launch(Dispatchers.Default) {
-            runJob(isRetry, uri, retryId, displayName, durationMs, costConfirmed, reset, useCloud)
+            runJob(isRetry, uri, retryId, displayName, durationMs, costConfirmed, reset, useCloud, providerId)
         }
         return START_NOT_STICKY
     }
@@ -156,6 +161,7 @@ class BatchTranscriptionService : Service() {
         costConfirmed: Boolean,
         reset: Boolean,
         useCloud: Boolean,
+        requestedProviderId: String?,
     ) {
         var jobId: String? = null
         var mirror: Job? = null
@@ -230,7 +236,7 @@ class BatchTranscriptionService : Service() {
             }
 
             // ---- the ONE cloud decision, fully gated; degrades to local, never fails the job ----
-            val cloud = resolveCloud(meta.byteLength.toLong(), costConfirmed, useCloud)
+            val cloud = resolveCloud(meta.byteLength.toLong(), costConfirmed, useCloud, requestedProviderId)
 
             val transcriber = BatchTranscriber(
                 store = store,
@@ -292,11 +298,18 @@ class BatchTranscriptionService : Service() {
      * before any prefs/network/notification/cost evaluation — the service must NEVER upgrade to
      * cloud a job the UI showed as local.
      */
-    private fun resolveCloud(byteLength: Long, costConfirmed: Boolean, useCloud: Boolean): SttProvider? {
+    private fun resolveCloud(
+        byteLength: Long,
+        costConfirmed: Boolean,
+        useCloud: Boolean,
+        requestedProviderId: String?,
+    ): SttProvider? {
         val prefs = app.preferencesManager
-        // Batch resolves the same STT set as live (3.3.0). A selection with no adapter/no key still
-        // degrades to on-device via the gate below — never mis-keyed.
-        val providerId = resolveBatchSttProvider(prefs.sttProviderId)      // top-level, this package
+        // Batch resolves the same STT set as live (3.3.0). The per-job pick wins when present,
+        // else the global selection. Either way it goes through the SAME validator, so an
+        // unknown/adapterless/keyless value degrades to on-device via the gate below — a picked
+        // provider can never be mis-keyed or smuggle past the triad.
+        val providerId = resolveBatchSttProvider(requestedProviderId ?: prefs.sttProviderId)
         val key = providerId?.let { prefs.providerAccounts.key(it) }
 
         val allowed = BatchEngineDecision.cloudAllowed(
@@ -423,6 +436,7 @@ class BatchTranscriptionService : Service() {
         /** The Ready screen's per-job engine pick. Absent/false = on-device; the caller must
          *  explicitly set true to permit a cloud upload. Read as a HARD FLOOR by [resolveCloud]. */
         const val EXTRA_USE_CLOUD = "extra_use_cloud"
+        const val EXTRA_PROVIDER_ID = "extra_provider_id"
 
         private const val PREPARING_TEXT = "Preparing audio…"
         private const val DEFAULT_DISPLAY_NAME = "audio"

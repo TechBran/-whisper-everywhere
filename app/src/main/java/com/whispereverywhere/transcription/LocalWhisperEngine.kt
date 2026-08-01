@@ -58,6 +58,10 @@ class LocalWhisperEngine(
 
         /** commit() cut nothing, so no seq was allocated and nothing is owed a resolution. */
         const val NO_SEGMENT = -1L
+
+        /** [SegmentOutcome.Lost] reasons. Fixed strings — a reason must never quote user audio. */
+        const val NO_MODEL = "speech model not loaded"
+        const val TRANSCRIBE_FAILED = "transcription failed"
     }
 
     /**
@@ -193,14 +197,23 @@ class LocalWhisperEngine(
      * catch is deliberately broad: any escape here is an unresolvable seq.
      *
      * The two failure branches (no context loaded, transcribe threw) resolve as
-     * [SegmentOutcome.EmptyExpected] — deliberately NOT the sealed "terminally lost" outcome type
-     * in [SegmentOutcome], which renders as a "[…]" marker the service types into the user's field
-     * — and additionally call [myListener]'s onError, both guarded by the same listener-identity
-     * check as the terminal onSegmentResolved call below. That combination reproduces the
-     * pre-identity-work behaviour exactly (onError while RECORDING is a no-op in the service, so
-     * nothing is typed) while still resolving the seq. That other outcome type stays defined,
-     * unused here, for a future engine (e.g. cloud) that can genuinely lose a segment after every
-     * retry.
+     * [SegmentOutcome.Lost] — NOT [SegmentOutcome.EmptyExpected] — and additionally call
+     * [myListener]'s onError, guarded by the same listener-identity check as the terminal
+     * onSegmentResolved call below.
+     *
+     * That split is load-bearing and was the 2026-07-31 fix for the owner-reported "[…] at the end
+     * of every message". This engine is also the safety net under the cloud engines, and
+     * [com.whispereverywhere.transcription.cloud.FallbackPolicy.reconcile] now TRUSTS an
+     * EmptyExpected from here as a real verdict ("whisper ran on this audio and heard no speech")
+     * so the trailing silence between the user's last word and the stop tap stops being marked as
+     * a lost sentence. That trust is only sound if EmptyExpected means exactly that one thing — so
+     * the branches where whisper never ran, and therefore reached no verdict, must say Lost.
+     *
+     * Standalone-local users are not newly exposed to the marker by this: [connect] reports
+     * onError and never fires onOpen when the model cannot load, so recording never starts and
+     * ctx == 0 here is only reachable through a mid-session unload race. A genuine throw after
+     * [retry] has exhausted its attempts IS a lost sentence, which is precisely what the marker is
+     * for.
      */
     private fun runSegment(
         seq: Long,
@@ -212,12 +225,12 @@ class LocalWhisperEngine(
             val ctx = ctxPtr
             if (ctx == 0L) {
                 android.util.Log.w("WE-DIAG", "commit: ctx==0 (model not loaded)")
-                // Not a Lost segment: Lost renders as "[…]" in the user's field. Pre-release this
-                // path only called onError (which, mid-RECORDING, the service just logs and keeps
-                // going) and typed nothing — EmptyExpected preserves that byte-for-byte while still
-                // resolving the seq exactly once.
+                // Lost, NOT EmptyExpected: whisper never ran, so it reached no verdict about this
+                // audio. Saying "no speech" here would let FallbackPolicy.reconcile swallow the
+                // cloud's loss on every device with no model installed — the sentence would vanish
+                // with nothing to show for it. See the KDoc above.
                 if (listener === myListener) myListener.onError("Speech model not loaded")
-                SegmentOutcome.EmptyExpected
+                SegmentOutcome.Lost(NO_MODEL)
             } else {
                 val samples = AudioMath.pcm16ToFloat(pcm)
                 android.util.Log.i("WE-DIAG", "transcribe START seq=$seq samples=${samples.size} lang=$lang")
@@ -260,10 +273,10 @@ class LocalWhisperEngine(
             }
         } catch (t: Throwable) {
             android.util.Log.w("WE-DIAG", "transcribe THREW", t)
-            // See the ctx==0 branch above: EmptyExpected + onError reproduces pre-release
-            // behaviour (nothing typed) while still resolving the seq exactly once.
+            // See the ctx==0 branch above. The reason string is a fixed constant, never the
+            // exception's message: a native message can quote the input it choked on.
             if (listener === myListener) myListener.onError(t.message ?: "Transcription failed")
-            SegmentOutcome.EmptyExpected
+            SegmentOutcome.Lost(TRANSCRIBE_FAILED)
         }
         // Guard: only fire if the listener hasn't been replaced/nulled since commit().
         if (listener === myListener) myListener.onSegmentResolved(seq, outcome)

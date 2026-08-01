@@ -38,21 +38,38 @@ class FallbackPolicyTest {
         )
     }
 
-    @Test fun a_local_empty_does_not_erase_the_clouds_visible_loss() {
-        // LocalWhisperEngine resolves BOTH "VAD proved silence" and "no model loaded" as
-        // EmptyExpected and documents that Kotlin cannot tell them apart. Letting that outcome
-        // win would turn a loss the user can see ("[…]") into a sentence that silently vanished
-        // every time the safety net has no model installed.
+    @Test fun whispers_silence_verdict_erases_the_clouds_loss_marker() {
+        // THE fix for the owner-reported "[…] at the very end of every message" (2026-07-31). The
+        // tail turn — the trailing room tone between the user's last word and the stop tap — is
+        // resolved Lost by the live engine at stop, because no provider VAD can endpoint it once
+        // the mic is closed. The mirror then hands that exact PCM to whisper, whose Silero VAD
+        // finds no speech and answers EmptyExpected. A segment with no speech in it is not a lost
+        // sentence, so the marker must not survive: the user typed nothing there and should see
+        // nothing there.
         assertEquals(
-            SegmentOutcome.Lost("offline"),
-            FallbackPolicy.reconcile(SegmentOutcome.Lost("offline"), SegmentOutcome.EmptyExpected),
+            SegmentOutcome.EmptyExpected,
+            FallbackPolicy.reconcile(SegmentOutcome.Lost("session ended"), SegmentOutcome.EmptyExpected),
         )
     }
 
-    @Test fun a_local_loss_keeps_the_clouds_reason_rather_than_inventing_one() {
+    @Test fun a_local_engine_that_never_ran_leaves_the_clouds_visible_loss_alone() {
+        // The other half of the rule above, and what keeps trusting EmptyExpected sound.
+        // LocalWhisperEngine reserves EmptyExpected for "whisper ran and heard no speech"; the
+        // branches where it never ran at all — no model installed, transcribe threw — resolve
+        // Lost. Those must NOT erase the cloud's marker, or a real sentence would silently vanish
+        // on exactly the devices with no safety net: cloud users with no model installed.
         assertEquals(
             SegmentOutcome.Lost("offline"),
-            FallbackPolicy.reconcile(SegmentOutcome.Lost("offline"), SegmentOutcome.Lost("model missing")),
+            FallbackPolicy.reconcile(SegmentOutcome.Lost("offline"), SegmentOutcome.Lost("speech model not loaded")),
+        )
+    }
+
+    @Test fun an_unexpected_local_empty_does_not_erase_the_clouds_visible_loss() {
+        // EmptyUnexpected is the "real voiced audio produced no text" verdict — a lost sentence in
+        // its own right, not a silence proof. It has no business overwriting the cloud's marker.
+        assertEquals(
+            SegmentOutcome.Lost("offline"),
+            FallbackPolicy.reconcile(SegmentOutcome.Lost("offline"), SegmentOutcome.EmptyUnexpected),
         )
     }
 

@@ -354,16 +354,33 @@ class FallbackTranscriptionEngineTest {
         assertEquals(0L to SegmentOutcome.Lost("no network"), l.all.single())
     }
 
-    @Test fun a_local_empty_does_not_erase_the_clouds_visible_loss() {
-        // LocalWhisperEngine answers "no model loaded" with EmptyExpected, which types nothing at
-        // all. Letting it win would convert a visible loss into a silently deleted sentence.
+    @Test fun whispers_silence_verdict_reaches_the_user_as_silence_not_a_loss_marker() {
+        // End to end through the decorator: the cloud lost the segment, the mirror handed its PCM
+        // to the local engine, and whisper reported EmptyExpected — "I ran on this and there was
+        // no speech in it". The user must see nothing, not a "[…]" marker claiming a sentence
+        // disappeared. This is the tail turn of every live session (owner-reported 2026-07-31).
+        val cloud = FakeEngine(); val local = FakeEngine()
+        val e = engine(cloud, local)
+        val l = Rec()
+        e.connect(null, l)
+        e.sendAudio(byteArrayOf(1)); e.commit()
+        cloud.resolve(0L, SegmentOutcome.Lost("session ended"))
+        local.resolve(0L, SegmentOutcome.EmptyExpected)
+        assertEquals(0L to SegmentOutcome.EmptyExpected, l.all.single())
+    }
+
+    @Test fun a_local_engine_that_never_ran_does_not_erase_the_clouds_visible_loss() {
+        // The safety net has no model installed, so LocalWhisperEngine resolves Lost rather than
+        // claiming a silence verdict it never reached. The cloud's visible loss must survive —
+        // otherwise a real sentence vanishes with nothing to show for it on exactly the devices
+        // that have no rescue.
         val cloud = FakeEngine(); val local = FakeEngine()
         val e = engine(cloud, local)
         val l = Rec()
         e.connect(null, l)
         e.sendAudio(byteArrayOf(1)); e.commit()
         cloud.resolve(0L, SegmentOutcome.Lost("offline"))
-        local.resolve(0L, SegmentOutcome.EmptyExpected)
+        local.resolve(0L, SegmentOutcome.Lost("speech model not loaded"))
         assertEquals(0L to SegmentOutcome.Lost("offline"), l.all.single())
     }
 
