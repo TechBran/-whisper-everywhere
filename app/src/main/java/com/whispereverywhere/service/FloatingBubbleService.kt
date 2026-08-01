@@ -1350,10 +1350,19 @@ class FloatingBubbleService : Service(),
         blobView.updateAmplitude(amp)
         // Client VAD per audio chunk. Commit on a natural pause, or on the wall-clock cap when
         // the amplitude never dips (continuous media). Live (server-driven) sessions bypass this
-        // ENTIRELY — the SERVER cuts turns via its own VAD, and the stop button / session end is the
-        // outer bound. `sendAudio` above stays UNCONDITIONAL, so the mic is always fed; only the turn
-        // CUT moves to the server. Local + Gemini + batch keep this block byte-identical.
-        if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(sessionIsLive)) {
+        // for MIC audio — the SERVER cuts those turns via its own VAD, and the stop button /
+        // session end is the outer bound. `sendAudio` above stays UNCONDITIONAL, so the engine is
+        // always fed; only the turn CUT moves to the server. Local + Gemini + batch keep this block
+        // byte-identical.
+        //
+        // PLAYBACK audio runs the client VAD even in a live session: it routes to the ON-DEVICE
+        // engine (device audio never reaches the cloud), so no server VAD will ever cut it — this
+        // block is the only committer it has. See LiveTurnPolicy.
+        if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(
+                sessionIsLive,
+                playbackSource = activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK,
+            )
+        ) {
             val now = System.currentTimeMillis()
             if (speechSegmenter.onAmplitude(amp, now)) {
                 android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
@@ -1515,10 +1524,18 @@ class FloatingBubbleService : Service(),
                         com.whispereverywhere.audio.MediaProjectionGate.clear()
                     }
                 }, null)
+                // A grant that arrives AFTER the session ended must not be kept: the session-end
+                // policy is "screen share ends with the session", and a stored token here would
+                // light the system's sharing indicator with nothing capturing — exactly the lie
+                // that policy exists to prevent. Stop it on the spot; the next media session asks
+                // again.
+                if (currentState != BubbleState.RECORDING) {
+                    android.util.Log.i("WE-DIAG", "consent arrived after session end -> stopping projection")
+                    runCatching { projection.stop() }
+                    return@launch
+                }
                 com.whispereverywhere.audio.MediaProjectionGate.storeProjection(projection)
-                if (currentState == BubbleState.RECORDING &&
-                    activeSource != com.whispereverywhere.audio.ActiveSource.PLAYBACK
-                ) {
+                if (activeSource != com.whispereverywhere.audio.ActiveSource.PLAYBACK) {
                     startPlaybackSource()
                 }
             }
@@ -1918,6 +1935,18 @@ class FloatingBubbleService : Service(),
         audioRecorder.stop()
 
         stopPlaybackCapturer()
+        // A finished session ENDS the screen share (owner decision 2026-08-01). The token used to
+        // be retained so the next media session could skip re-consent — but that kept Android's
+        // "sharing screen" indicator alive indefinitely after the capture the user actually wanted,
+        // and a later mic tap looked like it was still screen-sharing. Releasing here is safe for
+        // the drain below: the capturer above has already stopped reading, and transcription runs
+        // on PCM already buffered. Cost: the next device-audio session shows the consent sheet
+        // again — one tap, and the honest trade for the indicator never lying.
+        // clear() is also what the system-side stop path calls, so both exits converge.
+        if (com.whispereverywhere.audio.MediaProjectionGate.hasProjection()) {
+            android.util.Log.i("WE-DIAG", "stopRecording: releasing screen-capture projection")
+            com.whispereverywhere.audio.MediaProjectionGate.clear()
+        }
         // Deliberately the raw field, NOT setActiveSource: the session is ending and the final
         // commit + drain below still belong to the engine that captured it. Re-routing here would
         // close that engine mid-drain and turn the last segment of every device-audio session into
