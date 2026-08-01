@@ -222,6 +222,55 @@ class RealtimeTransportTest {
         assertTrue(!r.transport.sendCommit())
     }
 
+    // ---- THE CONFIG-FIRST GUARANTEE (the Soniox live bug, 2026-07-31) ---------------------------
+
+    @Test fun audio_is_refused_until_the_bootstrap_frames_are_on_the_wire() {
+        // newWebSocket() returns a socket BEFORE the handshake, so connect() leaves a non-null
+        // socket the audio pump can see while onOpen (and the config) is still pending. Soniox
+        // 400s any pre-config frame ("Start request must be a text message." — proven against
+        // their live server); OpenAI/ElevenLabs tolerate it, which is why the ordering bug hid on
+        // two of three providers. The gate makes config-first structural for ALL providers.
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+
+        // Socket exists, handshake has NOT completed: every send must refuse.
+        assertTrue("append before onOpen must be refused", !r.transport.sendAppend(byteArrayOf(1, 2)))
+        assertTrue("commit before onOpen must be refused", !r.transport.sendCommit())
+        assertTrue("nothing may reach the wire before the config", r.factory.lastSocket.sent.isEmpty())
+
+        // Handshake completes -> bootstrap goes out FIRST, then the gate opens.
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+        assertEquals(
+            "the config is the first frame on the wire",
+            listOf(RealtimeEvents.sessionUpdate()),
+            r.factory.lastSocket.sent,
+        )
+        assertTrue("audio flows once bootstrapped", r.transport.sendAppend(byteArrayOf(1, 2)))
+    }
+
+    @Test fun a_drop_shuts_the_gate_until_the_reconnected_socket_re_bootstraps() {
+        // The reconnect gap is the same hazard: a new socket is created (non-null) long before its
+        // onOpen. Audio must not cross into it ahead of the fresh config.
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+        assertTrue(r.transport.sendAppend(byteArrayOf(1, 2)))
+
+        r.factory.lastListener.onFailure(r.factory.lastSocket, IOException("reset"), null)
+        assertTrue("gate shut on drop", !r.transport.sendAppend(byteArrayOf(1, 2)))
+
+        r.scheduler.runNext() // reconnect creates a new pre-handshake socket
+        assertTrue("still shut on the fresh socket", !r.transport.sendAppend(byteArrayOf(1, 2)))
+
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+        assertEquals(
+            "the reconnected socket is re-bootstrapped before any audio",
+            listOf(RealtimeEvents.sessionUpdate()),
+            r.factory.lastSocket.sent,
+        )
+        assertTrue(r.transport.sendAppend(byteArrayOf(1, 2)))
+    }
+
     @Test fun inbound_delta_and_completed_dispatched_to_listener() {
         val r = Rig()
         r.transport.connect("sk-x", null)

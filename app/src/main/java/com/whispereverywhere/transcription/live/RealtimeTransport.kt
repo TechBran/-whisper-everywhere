@@ -145,6 +145,26 @@ class RealtimeTransport(
     private var useBetaHeader = false
 
     /**
+     * False from the moment a socket is created until its bootstrap frames have actually been
+     * sent. THE bug behind Soniox live (proven 2026-07-31 by probing their server with a real
+     * key): `OkHttpClient.newWebSocket()` returns a WebSocket **immediately**, before the HTTP
+     * upgrade completes, and [openSocket] assigns it to [webSocket] — so the socket looked
+     * sendable the instant [connect] returned. The audio pump is already running by then, so its
+     * frames were enqueued into OkHttp AHEAD of the config that [onOpen] sends later, and the
+     * first thing Soniox saw on the wire was audio: `400 invalid_request — "Start request must
+     * be a text message."` (exactly the 37-char body the device logged).
+     *
+     * Providers differ only in tolerance — OpenAI and ElevenLabs accept audio before their
+     * session/config message, which is why the same ordering bug was invisible on two of three
+     * providers and looked like a Soniox schema problem through two wrong fixes.
+     *
+     * Audio dropped in this window is not lost: [sendAppend] returning false sheds the turn, and
+     * the fallback re-transcribes it from the mirror — the behavior [connect]'s KDoc already
+     * documents for the pre-handshake window.
+     */
+    @Volatile private var bootstrapped = false
+
+    /**
      * The ONE place `okhttp3.WebSocket.send` is called, now handling both frame types and the
      * queueSize backpressure that used to sit inline in [sendAppend] — so it is enforced ONCE, for
      * every provider and both frame types. The protocol drives this; it never touches the socket.
@@ -165,6 +185,7 @@ class RealtimeTransport(
             // the socket under the SAME reconnect ceiling, so a pathological rotation loop still gives up.
             webSocket?.close(NORMAL_CLOSURE, null)
             webSocket = null
+            bootstrapped = false // the next socket must re-bootstrap before any audio
             scheduleReconnect()
         }
     }
@@ -193,13 +214,15 @@ class RealtimeTransport(
      * [WebSocket.queueSize] in [control] lets the false return reach the engine as a prompt shed signal.
      */
     fun sendAppend(pcm: ByteArray): Boolean = synchronized(lock) {
-        if (webSocket == null) return false
+        // [bootstrapped], not just a non-null socket: newWebSocket() hands back a socket before the
+        // handshake, so "non-null" is not "ready to receive audio". See the [bootstrapped] KDoc.
+        if (webSocket == null || !bootstrapped) return false
         protocol.onAppend(pcm)
     }
 
     /** Finalize the current turn per the [protocol] (commit event / commit-flag / client assembly). */
     fun sendCommit(): Boolean = synchronized(lock) {
-        if (webSocket == null) return false
+        if (webSocket == null || !bootstrapped) return false
         protocol.onCommit()
     }
 
@@ -210,6 +233,7 @@ class RealtimeTransport(
             closed = true
             webSocket?.close(NORMAL_CLOSURE, null)
             webSocket = null
+            bootstrapped = false // the next socket must re-bootstrap before any audio
             protocol.reset() // drop any protocol-held state; OpenAI's reset is a no-op
         }
     }
@@ -220,6 +244,7 @@ class RealtimeTransport(
         val builder = Request.Builder().url(protocol.endpoint)
         protocol.upgradeHeaders(apiKey).forEach { (name, value) -> builder.header(name, value) }
         if (useBetaHeader && protocol.tolerant4xxRetry) builder.header(BETA_HEADER, BETA_VALUE)
+        bootstrapped = false // newWebSocket returns pre-handshake; gate stays shut until onOpen
         webSocket = factory.newWebSocket(builder.build(), InternalListener())
     }
 
@@ -248,6 +273,9 @@ class RealtimeTransport(
                 if (closed) return
                 reconnectAttempts = 0
                 this@RealtimeTransport.webSocket = webSocket
+                // Bootstrap INSIDE the publish lock, then open the audio gate. Until this line
+                // runs, sendAppend/sendCommit refuse — so the config is provably the first frame
+                // on the wire for every provider.
                 // Bootstrap INSIDE the publish lock, atomically with the socket becoming visible.
                 // [sendAppend] synchronizes on the SAME lock, so no audio frame can interleave
                 // between publication and the protocol's first message(s). The old shape published
@@ -261,6 +289,7 @@ class RealtimeTransport(
                 // config.) send() is a non-blocking enqueue; holding the lock across it is safe,
                 // and control.send's synchronized(lock) is reentrant from this thread.
                 protocol.bootstrap(apiKey, language).forEach { control.send(it) }
+                bootstrapped = true // the gate opens ONLY after the config is on the wire
             }
             listener.onConnected()
         }
@@ -285,6 +314,7 @@ class RealtimeTransport(
                     if (!closed && !useBetaHeader && protocol.tolerant4xxRetry) {
                         useBetaHeader = true
                         this@RealtimeTransport.webSocket = null
+                        bootstrapped = false // the next socket must re-bootstrap before any audio
                         openSocket()
                         true
                     } else false
@@ -296,6 +326,7 @@ class RealtimeTransport(
             synchronized(lock) {
                 if (closed) return
                 this@RealtimeTransport.webSocket = null
+                bootstrapped = false // the next socket must re-bootstrap before any audio
                 if (fatal == null) scheduleReconnect()
             }
             if (fatal != null) listener.onFatal(fatal, code!!) else listener.onDisconnected()
@@ -314,6 +345,7 @@ class RealtimeTransport(
             synchronized(lock) {
                 wasSelfInitiated = closed
                 this@RealtimeTransport.webSocket = null
+                bootstrapped = false // the next socket must re-bootstrap before any audio
             }
             // An unexpected server close surfaces as a disconnect so outstanding turns resolve
             // Lost; our own close() is silent.
