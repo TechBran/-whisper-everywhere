@@ -199,6 +199,31 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // Permission chip: visible ONLY while a bubble-blocking permission is missing (owner
+            // report 2026-08-01 — granted permissions were reported in Settings but a missing one
+            // was named nowhere; the disabled button's generic "Grant permissions in Settings" was
+            // the only clue). Tap goes straight to Settings' Permissions rows. When everything is
+            // granted this renders nothing, keeping the clean dashboard the refresh established.
+            com.whispereverywhere.ui.onboarding.OnboardingLogic.homePermissionChipText(
+                com.whispereverywhere.ui.onboarding.OnboardingLogic.missingBubblePermissions(
+                    mic = hasMicrophonePermission,
+                    overlay = hasOverlayPermission,
+                    accessibility = hasAccessibilityEnabled,
+                )
+            )?.let { chip ->
+                Text(
+                    text = chip,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onNavigateToSettings() }
+                        .padding(vertical = 8.dp),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // Usage Stats Card (shows today's usage - no limits)
             UsageStatsCard(
                 usedSeconds = usedSecondsToday,

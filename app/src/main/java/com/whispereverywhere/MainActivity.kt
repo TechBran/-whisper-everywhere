@@ -26,7 +26,7 @@ import androidx.navigation.compose.rememberNavController
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.ui.screens.BatchTranscribeScreen
 import com.whispereverywhere.ui.screens.EnginesAndVoicesScreen
-import com.whispereverywhere.ui.screens.FirstRunChooserScreen
+import com.whispereverywhere.ui.screens.OnboardingFlowScreen
 import com.whispereverywhere.ui.screens.HomeScreen
 import com.whispereverywhere.ui.screens.LegalDocumentScreen
 import com.whispereverywhere.ui.screens.OnboardingModelScreen
@@ -149,31 +149,27 @@ fun WhisperEverywhereNavigation() {
         navController = navController,
         startDestination = startDestination
     ) {
-        // Two-path first-run chooser. Every path (and Skip, and back-press = Skip) records
-        // onboardingCompleted so the chooser is shown at most once, then pops "first_run" inclusive
-        // so it leaves no back-stack trap (mirrors the onboarding_model -> home pop below). Never
-        // blocks: Skip is always available.
+        // Guided first-run onboarding (2026-08-01; replaced the two-path chooser): permissions ->
+        // automatic engine downloads (Base multilingual + read-aloud voice, no button presses) ->
+        // optional cloud keys. Shown at most once — every exit (Finish, cloud setup, Skip,
+        // back-press on the first step) records onboardingCompleted then pops "first_run"
+        // inclusive, so it leaves no back-stack trap. Never blocks: Skip is always visible, and a
+        // failed download unblocks Continue with a Retry on the row.
         composable("first_run") {
             val app = WhisperEverywhereApp.getInstance()
-            FirstRunChooserScreen(
-                onFreeAndPrivate = {
+            OnboardingFlowScreen(
+                onFinish = {
                     app.preferencesManager.onboardingCompleted = true
-                    navController.navigate("onboarding_model") {
+                    navController.navigate("home") {
                         popUpTo("first_run") { inclusive = true }
                     }
                 },
-                onBringYourOwnKey = {
+                onCloudSetup = {
                     app.preferencesManager.onboardingCompleted = true
                     navController.navigate("engines_voices") {
                         popUpTo("first_run") { inclusive = true }
                     }
                 },
-                onSkip = {
-                    app.preferencesManager.onboardingCompleted = true
-                    navController.navigate("home") {
-                        popUpTo("first_run") { inclusive = true }
-                    }
-                }
             )
         }
 
