@@ -38,10 +38,12 @@ class SonioxSttTest {
         assertEquals(SttResult.Text("hello world"), soniox(happyFake()).transcribe(pcm, null))
     }
 
-    @Test fun bare_tokens_without_baked_spacing_do_not_melt() = runBlocking {
-        // The brief's UNVERIFIED assumption made safe: if Soniox ever emits adjacent BARE word tokens
-        // (its docs sample shows a bare "Hello"), the defensive TextJoin.join must not glue them.
-        val bare = """{"tokens":[{"text":"Hello"},{"text":"world"}]}"""
+    @Test fun sub_word_tokens_assemble_verbatim_without_injected_spaces() = runBlocking {
+        // Matches the live-path fix (2026-07-31): Soniox streams model sub-words carrying their own
+        // spacing. A "defensive" melt join cannot distinguish a sub-word seam from a word boundary
+        // and shatters words ("Hel lo wor ld") — proven on-device via the realtime path, and this
+        // batch adapter had the identical fold. Assembly is verbatim.
+        val bare = """{"tokens":[{"text":"Hel"},{"text":"lo"},{"text":" wor"},{"text":"ld"}]}"""
         val fake = FakeHttpTransport { url, _ ->
             when {
                 url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
@@ -52,6 +54,22 @@ class SonioxSttTest {
             }
         }
         assertEquals(SttResult.Text("Hello world"), soniox(fake).transcribe(pcm, null))
+    }
+
+    @Test fun a_token_stream_that_is_already_spaced_is_not_double_spaced() = runBlocking {
+        // The other direction: word-level tokens with baked leading spaces must pass through
+        // untouched — no space added, none removed.
+        val spaced = """{"tokens":[{"text":"Hello"},{"text":" there"},{"text":" friend"}]}"""
+        val fake = FakeHttpTransport { url, _ ->
+            when {
+                url.endsWith("/files") -> HttpResult.Ok(200, fileOk)
+                url.endsWith("/transcript") -> HttpResult.Ok(200, spaced)
+                url.endsWith("/transcriptions") -> HttpResult.Ok(201, createOk)
+                url.contains("/transcriptions/") -> HttpResult.Ok(200, completed)
+                else -> error("unexpected url $url")
+            }
+        }
+        assertEquals(SttResult.Text("Hello there friend"), soniox(fake).transcribe(pcm, null))
     }
 
     @Test fun the_upload_is_a_wav_container_in_the_file_part() = runBlocking {

@@ -212,13 +212,21 @@ class SonioxRealtimeProtocol : RealtimeProtocol {
                     boundaries.add(Completion(ids.incrementAndGet().toString(), finals.toString()))
                     finals.setLength(0)
                 }
-                // A real finalized word — melt-proof join (a no-op over Soniox's baked spacing, a single
-                // space only where two alphanumerics would otherwise touch).
-                t.isFinal -> appendJoined(finals, t.text)
+                // A finalized TOKEN — appended RAW, never melt-joined. Soniox is a token-level API:
+                // its tokens are model sub-words ("hel" + "lo"), each carrying its own leading
+                // space where a word actually begins. The melt guard sees two letters meeting at a
+                // sub-word seam and wedges a space in, shattering words into fragments — which is
+                // exactly the owner-reported 2026-07-31 split: the PREVIEW (raw-concatenated
+                // non-finals, below) read perfectly while the injected turn came out full of gaps.
+                // The provider owns intra-turn spacing; TextJoin owns only the boundaries BETWEEN
+                // turns (SegmentOrderer) and at injection.
+                t.isFinal -> finals.append(t.text)
                 // Preview only, replaced each message.
                 else -> nonFinal.append(t.text)
             }
-            lastPreview = TextJoin.join(finals.toString(), nonFinal.toString())
+            // Raw concatenation here too, for the same reason: the finals/non-finals seam is a
+            // sub-word seam like any other, and Soniox's own spacing already spans it.
+            lastPreview = finals.toString() + nonFinal.toString()
             preview = lastPreview
         }
         sink.onDelta("", preview) // streams non-final tokens AS SPOKEN — preview strip only, never injected

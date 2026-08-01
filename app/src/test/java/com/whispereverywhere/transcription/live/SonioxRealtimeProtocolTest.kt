@@ -201,14 +201,30 @@ class SonioxRealtimeProtocolTest {
         assertTrue("preview never binds or completes a turn", sink.completed.isEmpty() && sink.committed.isEmpty())
     }
 
-    @Test fun bare_final_tokens_do_not_melt_in_the_assembled_turn() {
+    @Test fun sub_word_final_tokens_assemble_verbatim_without_injected_spaces() {
+        // THE 2026-07-31 owner-reported bug, pinned. Soniox is a TOKEN-level API: finals arrive as
+        // model sub-words carrying their own leading space where a word truly begins. The old
+        // "melt-proof" join could not tell a sub-word seam from a word boundary and wedged a space
+        // into every one — the preview (raw-concatenated non-finals) read perfectly while the
+        // injected turn came out as "Hel lo wor ld". Assembly is verbatim; the provider owns
+        // intra-turn spacing.
         val p = protocol()
-        // Two BARE final tokens (no baked spacing) accumulate across messages, then <end> cuts the turn.
-        // The assembled turn is what gets injected, so it must read "Hello world", not "Helloworld".
-        p.onText("""{"tokens":[{"text":"Hello","is_final":true}]}""")
-        p.onText("""{"tokens":[{"text":"world","is_final":true}]}""")
+        p.onText("""{"tokens":[{"text":"Hel","is_final":true},{"text":"lo","is_final":true}]}""")
+        p.onText("""{"tokens":[{"text":" wor","is_final":true},{"text":"ld","is_final":true}]}""")
         p.onText("""{"tokens":[{"text":"<end>","is_final":true}]}""")
         assertEquals(listOf("1" to "Hello world"), sink.completed)
+    }
+
+    @Test fun the_preview_and_the_committed_turn_agree_character_for_character() {
+        // The bug's signature was the two disagreeing. Same tokens, same text — always.
+        val p = protocol()
+        p.onText("""{"tokens":[{"text":"Hel","is_final":true},{"text":"lo","is_final":true}]}""")
+        p.onText("""{"tokens":[{"text":" there","is_final":false}]}""")
+        val previewBefore = sink.deltas.last().second
+        p.onText("""{"tokens":[{"text":" there","is_final":true}]}""")
+        p.onText("""{"tokens":[{"text":"<end>","is_final":true}]}""")
+        assertEquals("preview and committed turn must not diverge", previewBefore, sink.completed.single().second)
+        assertEquals("Hello there", sink.completed.single().second)
     }
 
     // ---- the <end> token IS the turn boundary ----------------------------------------------------

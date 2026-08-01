@@ -144,12 +144,15 @@ class SonioxStt(
                 is HttpResult.Ok -> {
                     val parsed = parse<SonioxTranscript>(tr.body)
                         ?: return SttResult.Failed(SttError.Transient(null)) // unparseable-200
-                    // Defensive melt-proof join (the brief's "make it melt-proof regardless"): Soniox
-                    // tokens are ASSUMED to carry their own spacing, but the docs sample shows a bare
-                    // "Hello". TextJoin.join is a proven no-op over an already-spaced stream and only
-                    // inserts a space where two alphanumerics would otherwise touch, so it cannot
-                    // regress a spaced stream while closing the melt if a bare token ever arrives.
-                    SttResult.Text(parsed.tokens.fold("") { acc, t -> TextJoin.join(acc, t.text) })
+                    // RAW concatenation — the "defensive melt-proof join" that used to sit here was
+                    // actively wrong, and the live stream proved it (owner report 2026-07-31, fixed
+                    // in SonioxRealtimeProtocol the same day). Soniox is a TOKEN-level API: its
+                    // tokens are model sub-words ("hel" + "lo"), each carrying its own leading space
+                    // where a real word begins. A melt guard cannot tell a sub-word seam from a word
+                    // boundary, so it wedges spaces inside words and shatters them. The provider
+                    // owns intra-transcript spacing; TextJoin owns only the seams BETWEEN chunks
+                    // (SegmentOrderer, BatchTranscriber) and at injection.
+                    SttResult.Text(parsed.tokens.joinToString("") { it.text })
                 }
             }
         } finally {
