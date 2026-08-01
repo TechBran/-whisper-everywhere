@@ -158,6 +158,7 @@ class FloatingBubbleService : Service(),
     private lateinit var speechStopIcon: ImageView
     private lateinit var speakClipIcon: ImageView
     private lateinit var lockLobe: View
+    private lateinit var keyboardLobe: View
     private lateinit var speakerLobe: View
     private lateinit var ttsScrubber: com.whispereverywhere.ui.components.TtsScrubberView
 
@@ -551,6 +552,7 @@ class FloatingBubbleService : Service(),
         bubbleIcon.visibility = View.GONE
         processingRing.visibility = View.GONE
         lockLobe.visibility = View.GONE
+        keyboardLobe.visibility = View.GONE
         speakerLobe.visibility = View.GONE
         setBubbleWidth(160)
         waveformView.visibility = View.VISIBLE
@@ -1072,8 +1074,14 @@ class FloatingBubbleService : Service(),
         speechStopIcon.setOnClickListener { com.whispereverywhere.tts.TtsController.stop() }
         speakClipIcon = bubbleView.findViewById(R.id.speak_clip_icon)
         lockLobe = bubbleView.findViewById(R.id.lock_lobe)
+        keyboardLobe = bubbleView.findViewById(R.id.keyboard_lobe)
         speakerLobe = bubbleView.findViewById(R.id.speaker_lobe)
         lockLobe.setOnClickListener { togglePin() }
+        // Dictation-first: summon (or re-hide) the system keyboard for the current field.
+        keyboardLobe.setOnClickListener {
+            val shown = WhisperAccessibilityService.toggleSummonedKeyboard()
+            android.util.Log.i("WE-DIAG", "keyboard lobe: summoned=$shown")
+        }
         speakerLobe.setOnClickListener { readClipboardAndSpeak() }
         ttsScrubber = bubbleView.findViewById(R.id.tts_scrubber)
         ttsScrubber.onSeek = { fraction ->
@@ -2235,6 +2243,7 @@ class FloatingBubbleService : Service(),
             // Satellite lobes are idle-only; the IDLE branch turns them back on.
             stopClipPulse()
             lockLobe.visibility = View.GONE
+            keyboardLobe.visibility = View.GONE
             speakerLobe.visibility = View.GONE
 
             when (newState) {
@@ -2248,6 +2257,9 @@ class FloatingBubbleService : Service(),
                         },
                     )
                     lockLobe.visibility = View.VISIBLE
+                    keyboardLobe.visibility =
+                        if (app.preferencesManager.isDictationFirstKeyboard()) View.VISIBLE
+                        else View.GONE
                     speakerLobe.visibility = if (!isSpeakingNow &&
                         com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)
                     ) View.VISIBLE else View.GONE

@@ -181,7 +181,13 @@ class WhisperAccessibilityService : AccessibilityService() {
                     AccessibilityEvent.TYPE_VIEW_CLICKED or
                     AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                     AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    // The pop-up CATCH-ALL (owner 2026-08-01: "everywhere a keyboard will pop
+                    // up"): the per-view events above are heuristic and some fields never emit
+                    // them (WebViews, Compose editors, custom canvases). The IME window itself is
+                    // ground truth — when it appears, SOMETHING accepts text, and the bubble
+                    // should be there. See handleWindowsChanged.
+                    AccessibilityEvent.TYPE_WINDOWS_CHANGED
 
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
 
@@ -192,6 +198,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             notificationTimeout = 30 // Faster response
         }
         serviceInfo = info
+        applyKeyboardShowMode()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -255,6 +262,9 @@ class WhisperAccessibilityService : AccessibilityService() {
                         notifyTextFieldFocused(source)
                     }
                 }
+            }
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                handleWindowsChanged()
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 // Window changed - be more careful about unfocusing
@@ -515,7 +525,83 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun notifyTextFieldUnfocused() {
         lastFocusedEditText = null
         lastFieldRect = null
+        // A summoned keyboard is per-field: leaving the field re-arms dictation-first suppression.
+        if (keyboardSummoned) {
+            keyboardSummoned = false
+            applyKeyboardShowMode()
+        }
         focusListener?.onTextFieldUnfocused()
+    }
+
+    // ------------------------------------------------------------------ IME-window catch-all
+
+    /** Whether an input-method window was present at the last TYPE_WINDOWS_CHANGED. */
+    private var imeWasVisible = false
+
+    /**
+     * The catch-all: the keyboard window appearing IS a text field focusing, whatever view
+     * machinery the app uses. On the rising edge, if the per-view heuristics have not already
+     * fired (fresh lastFocusTime), find the input-focused node and surface the bubble for it; if
+     * no node is findable at all, anchor the bubble just above the keyboard itself — the session
+     * re-resolves the real target at record time (startInjectionSession's findFocusedEditText),
+     * so a nodeless anchor only positions UI, it never mis-injects.
+     */
+    private fun handleWindowsChanged() {
+        val imeVisible = runCatching {
+            windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        }.getOrDefault(false)
+        val rising = imeVisible && !imeWasVisible
+        val falling = !imeVisible && imeWasVisible
+        imeWasVisible = imeVisible
+        if (falling) {
+            // The user dismissed the keyboard they summoned: re-arm dictation-first suppression.
+            if (keyboardSummoned) {
+                keyboardSummoned = false
+                applyKeyboardShowMode()
+            }
+            return
+        }
+        if (!rising) return
+        // The ordinary detection already handled this focus moments ago — don't double-fire.
+        if (System.currentTimeMillis() - lastFocusTime < 800) return
+        val node = findFocusedEditText()
+        if (node != null) {
+            lastFocusedEditText = node
+            lastFocusTime = System.currentTimeMillis()
+            notifyTextFieldFocused(node)
+        } else {
+            runCatching {
+                val ime = windows.firstOrNull {
+                    it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                } ?: return
+                val r = Rect()
+                ime.getBoundsInScreen(r)
+                // A thin strip along the keyboard's top edge: the bubble docks right above it.
+                lastFocusTime = System.currentTimeMillis()
+                focusListener?.onTextFieldFocused(Rect(r.left, r.top - 1, r.right, r.top))
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ dictation-first keyboard
+
+    /** True while the user has explicitly summoned the system keyboard for the current field. */
+    @Volatile private var keyboardSummoned = false
+
+    /**
+     * Applies the dictation-first preference to the soft-keyboard controller: suppressed while
+     * the preference is on and the keyboard has not been summoned; AUTO otherwise. Never throws —
+     * an OEM that ignores show modes simply keeps its keyboard, and the feature degrades to the
+     * lobe doing nothing (the preference copy promises no more than this).
+     */
+    fun applyKeyboardShowMode() {
+        runCatching {
+            val prefOn = com.whispereverywhere.WhisperEverywhereApp.getInstance()
+                .preferencesManager.isDictationFirstKeyboard()
+            softKeyboardController.showMode =
+                if (prefOn && !keyboardSummoned) android.accessibilityservice.AccessibilityService.SHOW_MODE_HIDDEN
+                else android.accessibilityservice.AccessibilityService.SHOW_MODE_AUTO
+        }
     }
 
     override fun onInterrupt() {}
@@ -1181,6 +1267,22 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         fun isEnabled(): Boolean = instance != null
+
+        /** Re-read the dictation-first preference (Settings toggle just changed it). */
+        fun applyKeyboardPreference() {
+            instance?.applyKeyboardShowMode()
+        }
+
+        /**
+         * The bubble's keyboard lobe: toggle the summoned system keyboard for the current field.
+         * Returns the NEW summoned state (true = keyboard now allowed to show).
+         */
+        fun toggleSummonedKeyboard(): Boolean {
+            val svc = instance ?: return false
+            svc.keyboardSummoned = !svc.keyboardSummoned
+            svc.applyKeyboardShowMode()
+            return svc.keyboardSummoned
+        }
         fun getInstance(): WhisperAccessibilityService? = instance
 
         fun setFocusListener(listener: OnTextFieldFocusListener?) {

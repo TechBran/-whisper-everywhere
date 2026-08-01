@@ -142,6 +142,7 @@ fun SettingsScreen(
 
     val vibrationEnabled by app.preferencesManager.vibrationEnabled.collectAsState()
     val bubbleAlwaysOn by app.preferencesManager.bubbleAlwaysOn.collectAsState()
+    val dictationFirstKeyboard by app.preferencesManager.dictationFirstKeyboard.collectAsState()
     val preferDeviceAudio by app.preferencesManager.preferDeviceAudio.collectAsState()
 
     // Bump to force a re-read of installed-model / disk-usage after a delete or when
@@ -555,6 +556,20 @@ fun SettingsScreen(
                             com.whispereverywhere.service.FloatingBubbleService.stop(context)
                             com.whispereverywhere.service.FloatingBubbleService.start(context)
                         }
+                    }
+                )
+                SettingsSwitchItem(
+                    icon = Icons.Filled.KeyboardHide,
+                    title = "Dictation-first keyboard",
+                    subtitle = "Hide the on-screen keyboard when a text field focuses — dictate " +
+                        "with the bubble instead, and tap its keyboard button whenever you want " +
+                        "the keyboard back. Needs the accessibility service; some keyboards may " +
+                        "ignore it",
+                    checked = dictationFirstKeyboard,
+                    onCheckedChange = { enabled ->
+                        app.preferencesManager.setDictationFirstKeyboard(enabled)
+                        // Applies live: the service re-reads the pref and flips the show mode now.
+                        com.whispereverywhere.service.WhisperAccessibilityService.applyKeyboardPreference()
                     }
                 )
                 SettingsSwitchItem(

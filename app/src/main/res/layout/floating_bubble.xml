@@ -183,6 +183,24 @@
         </FrameLayout>
 
         <FrameLayout
+            android:id="@+id/keyboard_lobe"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="end|bottom"
+            android:background="@drawable/lobe_circle"
+            android:elevation="2dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/keyboard_icon"
+                android:layout_width="15dp"
+                android:layout_height="15dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_keyboard"
+                android:contentDescription="Show keyboard" />
+        </FrameLayout>
+
+        <FrameLayout
             android:id="@+id/speaker_lobe"
             android:layout_width="30dp"
             android:layout_height="30dp"

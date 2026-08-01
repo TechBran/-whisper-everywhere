@@ -134,6 +134,21 @@ class PreferencesManager(private val context: Context) {
 
     fun isBubbleAlwaysOn(): Boolean = _bubbleAlwaysOn.value
 
+    // Dictation-first keyboard (owner UX 2026-08-01): while the accessibility service runs, the
+    // system keyboard is SUPPRESSED on text-field focus — the bubble is the input method — and a
+    // keyboard lobe on the bubble summons the normal keyboard on demand. Off by default: hiding
+    // someone's keyboard is a choice, never a surprise.
+    private val _dictationFirstKeyboard =
+        MutableStateFlow(prefs.getBoolean(KEY_DICTATION_FIRST_KEYBOARD, false))
+    val dictationFirstKeyboard: StateFlow<Boolean> = _dictationFirstKeyboard.asStateFlow()
+
+    fun setDictationFirstKeyboard(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DICTATION_FIRST_KEYBOARD, enabled).apply()
+        _dictationFirstKeyboard.value = enabled
+    }
+
+    fun isDictationFirstKeyboard(): Boolean = _dictationFirstKeyboard.value
+
     // Media transcription source: true (default) = capture the DEVICE's audio stream while
     // media is playing (mic fully off — no room noise / feedback); false = always microphone.
     private val _preferDeviceAudio = MutableStateFlow(prefs.getBoolean(KEY_PREFER_DEVICE_AUDIO, true))
@@ -315,6 +330,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_BUBBLE_ENABLED = "bubble_enabled"
         private const val KEY_BUBBLE_ALWAYS_ON = "bubble_always_on"
+        private const val KEY_DICTATION_FIRST_KEYBOARD = "dictation_first_keyboard"
         private const val KEY_PREFER_DEVICE_AUDIO = "prefer_device_audio"
         private const val KEY_BUBBLE_X = "bubble_x"
         private const val KEY_BUBBLE_Y = "bubble_y"
