@@ -260,6 +260,23 @@ class WhisperAccessibilityService : AccessibilityService() {
                         lastFocusedEditText = source
                         lastFocusTime = System.currentTimeMillis()
                         notifyTextFieldFocused(source)
+                    } else if (
+                        // CARET tracking, the third catch-all layer (owner 2026-08-01: "track
+                        // every cursor that's on in the app — if we can follow that, that's how
+                        // we know when our bubble needs to pop up"). A selection-changed event
+                        // whose range is EMPTY (from == to, both valid) on a focused node is a
+                        // blinking cursor by definition — whatever the node's class claims. The
+                        // empty-range requirement is what keeps read-only text selection (long-
+                        // press select/copy, which produces RANGES) from false-firing the bubble;
+                        // the read-aloud selection watcher above already consumed those.
+                        event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED &&
+                        event.fromIndex >= 0 && event.fromIndex == event.toIndex &&
+                        source.isFocused &&
+                        event.packageName?.toString() != "com.whispereverywhere"
+                    ) {
+                        lastFocusedEditText = source
+                        lastFocusTime = System.currentTimeMillis()
+                        notifyTextFieldFocused(source)
                     }
                 }
             }

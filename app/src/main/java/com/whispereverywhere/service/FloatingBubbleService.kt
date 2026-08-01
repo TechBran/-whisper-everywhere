@@ -903,17 +903,17 @@ class FloatingBubbleService : Service(),
         val screenHeight = displayMetrics.heightPixels
         val bubbleSize = (56 * displayMetrics.density).toInt()
         val padding = (16 * displayMetrics.density).toInt()
-        val statusBarHeight = getStatusBarHeight()
 
-        var targetX = if (rect.right + bubbleSize + padding < screenWidth) {
-            rect.right + padding
-        } else {
-            rect.left - bubbleSize - padding
-        }
-
-        var targetY = (rect.top - statusBarHeight).coerceIn(padding, screenHeight - bubbleSize - padding)
-
-        // When pinned, honor the user's pinned spot instead of jumping to the text field.
+        // The bubble pops up WHERE IT WAS LAST — the user's dragged/remembered spot — never at a
+        // field-derived position (owner decision 2026-08-01: "it should just pop up where it
+        // popped up last time, or where the user moved the bubble to... a new location can be
+        // annoying — users won't know where their bubble's gonna be"). The rect parameter is now
+        // context-only (what focused, not where to go); bubblePositionX/Y is already written by
+        // every drag, so the spot tracks the user for free. Pinned keeps its own stronger spot.
+        var targetX = (app.preferencesManager.bubblePositionX * screenWidth).toInt()
+            .coerceIn(0, screenWidth - bubbleSize)
+        var targetY = (app.preferencesManager.bubblePositionY * screenHeight).toInt()
+            .coerceIn(padding, screenHeight - bubbleSize - padding)
         if (isOverlayPinned) {
             val pinned = savedPinnedPosition(bubbleSize)
             targetX = pinned.first
