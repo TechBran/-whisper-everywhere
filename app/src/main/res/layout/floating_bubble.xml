@@ -164,19 +164,22 @@
              portions of the blob — same fill color, overlapping the body inside its ripple
              headroom so they fuse into one organism. Lock extends right, speaker bottom-left.
              Both are idle-only; the pill hides them. Drawn last = on top of the body. -->
+        <!-- Corner layout (owner 2026-08-01): lock top-right, keyboard bottom-right, speaker
+             bottom-left — one corner each, every lobe pulled AWAY from the mic so each has a
+             clean hitbox and a mistap hits nothing instead of the wrong control. -->
         <FrameLayout
             android:id="@+id/lock_lobe"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:layout_gravity="end|center_vertical"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="end|top"
             android:background="@drawable/lobe_circle"
             android:elevation="2dp"
             android:visibility="gone">
 
             <ImageView
                 android:id="@+id/pin_icon"
-                android:layout_width="14dp"
-                android:layout_height="14dp"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_lock_open"
                 android:contentDescription="Lock bubble position" />
@@ -204,8 +207,8 @@
 
         <FrameLayout
             android:id="@+id/speaker_lobe"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
             android:layout_gravity="start|bottom"
             android:background="@drawable/lobe_circle"
             android:elevation="2dp"
@@ -213,8 +216,8 @@
 
             <ImageView
                 android:id="@+id/speak_clip_icon"
-                android:layout_width="16dp"
-                android:layout_height="16dp"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_speaker"
                 android:tint="#4FC3F7"
