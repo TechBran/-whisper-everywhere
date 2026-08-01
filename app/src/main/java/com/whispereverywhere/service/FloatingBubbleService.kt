@@ -1989,6 +1989,22 @@ class FloatingBubbleService : Service(),
             teardownRealtime()
             android.util.Log.i("WE-DIAG", "finalize: state=$currentState producedText=$sessionProducedText")
 
+            // Feed the stats the Home screen has been showing since 1.x. The tracker itself has
+            // existed all along, but NOTHING ever called its record methods — the panel sat at
+            // zero forever (owner report 2026-08-01, screenshot: 0:00 / 0 sec / 0 after weeks of
+            // real use). Session seconds are wall-clock from startRecording to here (what a user
+            // means by "time transcribing"), counted once per session at finalize; a session
+            // that produced text counts as one transcription.
+            if (sessionStartMs > 0L) {
+                val sessionSeconds = ((System.currentTimeMillis() - sessionStartMs) / 1000L).toInt()
+                if (sessionSeconds > 0) {
+                    app.usageTracker.addUsage(sessionSeconds)
+                    app.usageTracker.addToTotalUsage(sessionSeconds)
+                }
+                sessionStartMs = 0L // exactly once per session, even if finalize re-enters
+            }
+            if (sessionProducedText) app.usageTracker.incrementTranscriptionCount()
+
             // If the cloud provider latched a fatal this session, SAY SO — once per latch, not per
             // session. Without this the local fallback masks the failure completely: the
             // 2026-07-29 device test ran an entire "cloud" session on latched fatals and the

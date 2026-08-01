@@ -124,6 +124,16 @@ fun HomeScreen(
     // hasAnyKey — a Keystore lookup per provider, so OFF the main thread; re-read on each resume.
     // Suppression: the producer DOES assign value (below) — the compose-runtime checker just can't
     // see an assignment after a suspend call.
+    // Configured engines, live: the installed on-device model (0/1) + every provider with a
+    // stored key. Same off-main keystore/disk snapshot cadence as hasAnyKey below.
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val configuredEngineCount by produceState(0, resumeTick) {
+        value = withContext(Dispatchers.IO) {
+            val keyed = ProviderCatalog.all.count { app.preferencesManager.providerAccounts.key(it.id) != null }
+            keyed + (if (app.whisperModelManager.installedModel() != null) 1 else 0)
+        }
+    }
+
     @Suppress("ProduceStateDoesNotAssignValue")
     val hasAnyKey by produceState(false, resumeTick) {
         value = withContext(Dispatchers.IO) {
@@ -265,11 +275,15 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // Usage Stats Card (shows today's usage - no limits)
+            // Stats panel: Today (live time incl. seconds) / Engines (live configured count) /
+            // Transcriptions. "Total Time" was dropped as redundant with Today (owner 2026-08-01);
+            // the count re-reads on every resume via the remember key, since the service process
+            // writes it outside this composition.
+            val totalTranscriptions = remember(resumeTick) { app.usageTracker.getTotalTranscriptionCount() }
             UsageStatsCard(
                 usedSeconds = usedSecondsToday,
-                totalUsage = app.usageTracker.getTotalUsageAllTime(),
-                totalTranscriptions = app.usageTracker.getTotalTranscriptionCount(),
+                configuredEngines = configuredEngineCount,
+                totalTranscriptions = totalTranscriptions,
                 sttEngineName = sttEngineName,
             )
 
@@ -341,7 +355,6 @@ fun HomeScreen(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Row(
@@ -403,7 +416,6 @@ private fun MissingEngineRow(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -480,7 +492,6 @@ private fun ModeCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
@@ -654,7 +665,7 @@ internal fun usageStatsFooterLabel(sttEngineName: String?): String? =
 @Composable
 fun UsageStatsCard(
     usedSeconds: Int,
-    totalUsage: Long,
+    configuredEngines: Int,
     totalTranscriptions: Int,
     sttEngineName: String?,
 ) {
@@ -665,7 +676,6 @@ fun UsageStatsCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
@@ -708,9 +718,9 @@ fun UsageStatsCard(
                     label = "Today"
                 )
                 StatItem(
-                    icon = Icons.Filled.Timer,
-                    value = usageTracker.formatTimeVerbose(totalUsage.toInt()),
-                    label = "Total Time"
+                    icon = Icons.Filled.Tune,
+                    value = configuredEngines.toString(),
+                    label = "Engines"
                 )
                 StatItem(
                     icon = Icons.Filled.TextFields,
@@ -749,7 +759,6 @@ fun LanguageSelectionCard() {
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(

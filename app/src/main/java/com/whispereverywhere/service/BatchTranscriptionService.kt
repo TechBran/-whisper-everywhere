@@ -339,6 +339,14 @@ class BatchTranscriptionService : Service() {
         val meta = store.read(id) ?: return
         if (meta.status == BatchStatus.Done) {
             val text = store.assembledText(meta)
+            // Stats: a finished batch job is one transcription; its audio length (PCM16 @ 16 kHz,
+            // 32 kB/s) is the time credited. Same tracker the live path feeds at finalize.
+            val audioSeconds = (meta.byteLength / 32_000)
+            if (audioSeconds > 0) {
+                app.usageTracker.addUsage(audioSeconds)
+                app.usageTracker.addToTotalUsage(audioSeconds)
+            }
+            app.usageTracker.incrementTranscriptionCount()
             // Save the transcript, then apply the SAME rolling 14-day/10 MB retention every other
             // writer honors. Batch was the one writer that never swept: a user who only ever batches
             // (never live-dictates) would otherwise grow transcripts/ without bound — and batch
