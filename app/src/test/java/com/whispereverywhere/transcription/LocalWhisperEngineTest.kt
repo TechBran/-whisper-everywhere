@@ -103,6 +103,68 @@ class LocalWhisperEngineTest {
     // 4 bytes PCM16 -> 2 samples; deterministic non-blank audio.
     private val pcm = byteArrayOf(0x10, 0x00, 0x20, 0x00)
 
+    /** Mirrors the engine's private MAX_BUFFER_BYTES: 30 s of PCM16 @ 16 kHz. */
+    private val bufferCapBytes = 30 * 16000 * 2
+
+    private fun engineWith(backend: com.whispereverywhere.transcription.WhisperBackend) =
+        LocalWhisperEngine(
+            modelPathProvider = FakeModelPathProvider("/models/pro.bin"),
+            retry = fastRetry(),
+            backend = backend,
+            executor = SameThreadExecutorService(),
+        )
+
+    // ------------------------------------------------------ the 30 s overflow backstop
+
+    @Test
+    fun aSingleOverCapWriteIsNotCutBehindTheCallersBack() {
+        // THE 2026-07-31 DEVICE BUG (owner-reported, Soniox live; two occurrences on the wire).
+        // The fallback rescues a lost cloud turn with sendAudio(whole segment) + commit(). When the
+        // turn ran long — 56 s and 82 s were measured, because Soniox's endpoint detection never
+        // fired during continuous speech — the backstop cut the audio inside sendAudio, so the
+        // commit() microseconds later found an empty buffer and returned NO_SEGMENT. localRetry
+        // reads that as "local refused" and gave up, stamping the cloud's loss over 586 characters
+        // whisper went on to transcribe perfectly.
+        //
+        // One oversized write is not runaway capture; it is a complete segment being handed over.
+        // The caller's own commit must be the thing that cuts it.
+        val backend = FakeWhisperBackend(text = "rescued")
+        val engine = engineWith(backend)
+        val listener = RecordingListener()
+        engine.connect(language = "en", listener = listener)
+
+        engine.sendAudio(ByteArray(bufferCapBytes + 3200))
+
+        assertTrue("nothing may be cut until the caller commits", backend.transcribeCalls.isEmpty())
+        assertEquals(0L, engine.commit())
+        assertEquals("cut once, as one segment", 1, backend.transcribeCalls.size)
+        assertEquals(listOf(0L to SegmentOutcome.Text("rescued")), listener.resolved)
+    }
+
+    @Test
+    fun accumulatedCaptureStillTripsTheBackstop() {
+        // The other half: the runaway this backstop actually exists for. Many small capture chunks
+        // growing past the cap with no caller-side commit must still be cut, or a session with a
+        // wedged committer grows the buffer without bound.
+        val backend = FakeWhisperBackend(text = "capped")
+        val engine = engineWith(backend)
+        engine.connect(language = "en", listener = RecordingListener())
+
+        val chunk = ByteArray(32_000)                       // ~1 s of PCM16 @ 16 kHz
+        repeat(bufferCapBytes / chunk.size) { engine.sendAudio(chunk) }
+
+        assertEquals("the backstop cut without any caller commit", 1, backend.transcribeCalls.size)
+        assertEquals("and it consumed the buffer", -1L, engine.commit())
+    }
+
+    @Test
+    fun commit_withNoAudio_isNO_SEGMENT() {
+        // The contract FallbackTranscriptionEngine.localRetry keys its give-up on.
+        val engine = engineWith(FakeWhisperBackend())
+        engine.connect(language = "en", listener = RecordingListener())
+        assertEquals(-1L, engine.commit())
+    }
+
     @Test
     fun connect_withNoInstalledModel_reportsError() {
         val backend = FakeWhisperBackend()

@@ -150,17 +150,41 @@ class LocalWhisperEngine(
 
     override fun sendAudio(pcm: ByteArray) {
         val overflow = synchronized(bufferLock) {
+            val hadAudio = buffer.size() > 0
             buffer.write(pcm)
-            buffer.size() >= MAX_BUFFER_BYTES
+            // Trips on ACCUMULATION only — many small capture chunks growing past the cap, which is
+            // the runaway this backstop exists to bound.
+            //
+            // A single write that is ITSELF over the cap is deliberately exempt, and that exemption
+            // is the 2026-07-31 fix for an owner-reported data loss (Soniox live, twice on the
+            // wire). Such a write is never capture; it is a caller handing over one complete
+            // segment and committing it in the same breath — specifically
+            // [com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine.localRetry]
+            // rescuing a long cloud turn (56 s and 82 s were measured). Cutting that behind the
+            // caller's back saved no memory — the bytes are already here, and the fallback's mirror
+            // is holding them anyway — while leaving the commit() that arrived microseconds later
+            // staring at an empty buffer. localRetry reads that NO_SEGMENT as "the local engine
+            // refused this", gives up, and surfaces the cloud's loss: on the wire that cost the
+            // user 586 characters of speech and stamped a "[…]" marker over them, while whisper
+            // was transcribing the very same audio successfully in the background.
+            hadAudio && buffer.size() >= MAX_BUFFER_BYTES
         }
         if (overflow) {
-            // Backstop against unbounded growth if no caller-side commit fires (~32 KB/s of
-            // PCM16@16kHz). Self-commit keeps memory bounded and results incremental.
             android.util.Log.i("WE-DIAG", "sendAudio: buffer cap reached -> forced commit")
             commit()
         }
     }
 
+    /**
+     * Cuts the buffered audio into one segment and returns its seq, or [NO_SEGMENT] if there was
+     * nothing to cut.
+     *
+     * The [NO_SEGMENT] contract is load-bearing beyond this class, and getting a segment cut out
+     * from under it is what caused the 2026-07-31 data loss:
+     * [com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine.localRetry] reads it as
+     * "the local engine refused this rescue" and gives up, surfacing the cloud's loss. Keeping that
+     * reading honest is [sendAudio]'s job — see the accumulation-only condition there.
+     */
     override fun commit(): Long {
         val myListener = this.listener
         if (myListener == null) {

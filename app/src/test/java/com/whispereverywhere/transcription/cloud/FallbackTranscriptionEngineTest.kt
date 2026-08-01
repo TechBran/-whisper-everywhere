@@ -631,6 +631,57 @@ class FallbackTranscriptionEngineTest {
         assertNull("no session error is shown for a fallback that worked", l.errors.firstOrNull())
     }
 
+    @Test fun a_rescue_longer_than_the_local_buffer_cap_still_reaches_the_user() {
+        // THE 2026-07-31 DEVICE BUG (owner-reported on Soniox live, twice on the wire). A provider
+        // whose endpoint detection never fires during continuous speech builds one enormous turn —
+        // 56 s and 82 s were measured — and when that turn is finally lost, the whole thing goes to
+        // the local rescue in a single sendAudio. That trips LocalWhisperEngine's 30 s backstop,
+        // which cuts the audio itself, so the commit() immediately after found an empty buffer and
+        // returned NO_SEGMENT. localRetry read that as "local refused" and gave up, stamping the
+        // cloud's loss over 586 characters whisper went on to transcribe perfectly.
+        //
+        // A REAL executor is the whole point of this test. On the same-thread executor every other
+        // test here uses, the backstop's cut resolves re-entrantly inside sendAudio and `claimed`
+        // covers the give-up — the bug is invisible. It only appears when the transcribe lands on
+        // another thread a few milliseconds later, i.e. only on a device.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val provider = FakeStt(respond = { SttResult.Failed(SttError.Offline) })
+            val backend = object : WhisperBackend {
+                override fun load(modelPath: String) = 42L
+                override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean) =
+                    "the whole minute of speech"
+                override fun release(ctx: Long) = Unit
+            }
+            val local = LocalWhisperEngine(
+                modelPathProvider = object : ModelPathProvider {
+                    override fun installedModelPath() = "/models/tiny.bin"
+                },
+                retry = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+                backend = backend,
+                executor = executor,
+            )
+            val e = engine(CloudTranscriptionEngine(provider, scope()), local)
+            val l = Rec()
+            e.connect(null, l)
+            // One turn past the 30 s cap, as a single commit — exactly what the fallback hands the
+            // local engine when a long cloud turn is lost.
+            e.sendAudio(ByteArray(30 * 16000 * 2 + 3200) { 1 })
+            assertEquals(0L, e.commit())
+            assertTrue(e.awaitIdle(10_000))
+
+            val (seq, outcome) = l.next()
+            assertEquals(0L, seq)
+            assertEquals(
+                "the rescue transcribed this audio; the user must get the words, not a marker",
+                SegmentOutcome.Text("the whole minute of speech"),
+                outcome,
+            )
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
     @Test fun segments_committed_after_a_fatal_latch_are_still_rescued_locally() {
         // THE 2026-07-29 DEVICE BUG. Once the cloud engine latches a fatal, every later commit is
         // resolved near-INSTANTLY (no permit, no network) on a dispatcher thread — fast enough to
