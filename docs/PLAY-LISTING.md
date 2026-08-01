@@ -190,12 +190,8 @@ Remove the key and it all stops — instantly.
 
 ## Draft release notes — 3.3.0 (within 500 chars)
 
-> Cloud is back — on your terms. Bring your own key for OpenAI, Google Gemini, ElevenLabs, or Soniox
-> (strong on other languages) and pick cloud transcription per session; on-device stays the default
-> and the automatic fallback. New: transcribe audio files you already have, real-time streaming live typing
-> on OpenAI, and optional cloud read-aloud voices with a picker. Audio and read-aloud text go only to
-> the provider you choose; audio from other apps never leaves your phone. Keys are stored encrypted.
+> Cloud is back — on your terms. Bring your own key for OpenAI, Google Gemini, ElevenLabs, or Soniox and get real-time streaming transcription as you speak — on-device stays the default and the automatic fallback. New: transcribe audio files you already have, cloud read-aloud voices with a picker, guided first-run setup, and a built-in how-to guide that reads itself aloud. Audio goes only to the provider you choose, only when you choose one. Keys stored encrypted on your device.
 
-(495 chars. No speed claims: measured on-device dictation is not beaten by cloud on latency, so the
+(481 chars. The 3.2-era 'audio from other apps never leaves your phone' line is GONE — false since the 2026-08-01 device-audio policy flip; the honest scope is 'only to the provider you choose, only when you choose one'. No speed claims: measured on-device dictation is not beaten by cloud on latency, so the
 cloud pitch is accuracy and language coverage — never speed. Soniox is positioned on multilingual
 breadth, not throughput; the live mode is "real-time streaming as you speak," not "faster.")
