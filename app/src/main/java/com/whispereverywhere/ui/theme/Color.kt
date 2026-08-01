@@ -8,26 +8,27 @@ val GradientPink = Color(0xFFEC4899)     // Middle pink
 val GradientPurple = Color(0xFF8B5CF6)   // Middle purple
 val GradientBlue = Color(0xFF3B82F6)     // Right side of gradient
 
-// Primary Colors - Using the blue from the gradient
-val Primary = Color(0xFF3B82F6)
-val PrimaryVariant = Color(0xFF2563EB)
-val PrimaryLight = Color(0xFF60A5FA)
+// Primary Colors - the RED end of the gradient (owner restyle 2026-08-01: blue -> red)
+val Primary = Color(0xFFEF4444)
+val PrimaryVariant = Color(0xFFDC2626)
+val PrimaryLight = Color(0xFFF87171)
 val OnPrimary = Color.White
 
-// Secondary Colors - Using the red/coral from gradient
-val Secondary = Color(0xFFEF4444)
-val SecondaryVariant = Color(0xFFDC2626)
+// Secondary Colors - deeper reds (primary took the bright red)
+val Secondary = Color(0xFFB91C1C)
+val SecondaryVariant = Color(0xFF991B1B)
 val OnSecondary = Color.White
 
 // Accent - Purple from gradient
 val Accent = Color(0xFF8B5CF6)
 
-// Background Colors - Dark theme matching logo background
-val Background = Color(0xFF0F172A)        // Dark navy from logo
-val Surface = Color(0xFF1E293B)           // Slightly lighter
+// Background Colors - pure black (owner restyle 2026-08-01: "black dark background" everywhere;
+// buttons/cards share it and stay visible via outline + chevron, not via a lighter surface)
+val Background = Color(0xFF000000)
+val Surface = Color(0xFF000000)
 val OnBackground = Color(0xFFF8FAFC)
 val OnSurface = Color(0xFFF8FAFC)
-val SurfaceVariant = Color(0xFF334155)
+val SurfaceVariant = Color(0xFF1A1A1A)
 
 // Light Theme alternatives
 val BackgroundLight = Color(0xFFF8FAFC)
@@ -42,25 +43,27 @@ val OnError = Color.White
 val Success = Color(0xFF22C55E)
 val Warning = Color(0xFFF59E0B)
 
-// Recording States - Using brand gradient
-val RecordingIdle = Primary               // Blue when idle
-val RecordingActive = GradientRed         // Red when recording
+// Recording States. Idle is a dark ember red, NOT Primary: with primary now red, idle == active
+// would erase the state signal the two colors exist to carry.
+val RecordingIdle = Color(0xFF7F1D1D)
+val RecordingActive = GradientRed
 val RecordingProcessing = GradientPurple  // Purple when processing
 
-// Bubble Colors
-val BubbleIdle = Primary
+// Bubble Colors (in-app preview accents; the overlay bubble owns its own colors in the service)
+val BubbleIdle = RecordingIdle
 val BubbleRecording = GradientRed
 val BubbleProcessing = GradientPurple
 
-// Text Colors
+// Text Colors (neutral grays — the old values carried a blue-slate tint)
 val TextPrimary = Color(0xFFF8FAFC)
-val TextSecondary = Color(0xFF94A3B8)
-val TextTertiary = Color(0xFF64748B)
+val TextSecondary = Color(0xFF9CA3AF)
+val TextTertiary = Color(0xFF6B7280)
 
-// Card Colors
-val CardBackground = Color(0xFF1E293B)
-val CardBorder = Color(0xFF334155)
+// Card Colors: black like everything else; the BORDER is what makes a card read as a button
+// on the all-black ground (plus the chevron the nav cards already carry).
+val CardBackground = Color(0xFF000000)
+val CardBorder = Color(0xFF2E2E2E)
 
-// Gradient for waveform (matches logo exactly)
+// Gradient for waveform — red into pink; the blue end of the logo gradient is retired app-wide.
 val WaveformGradientStart = GradientRed
-val WaveformGradientEnd = GradientBlue
+val WaveformGradientEnd = GradientPink
