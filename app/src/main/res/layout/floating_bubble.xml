@@ -36,14 +36,30 @@
             android:textColorHint="#99FFFFFF"
             android:gravity="top|start" />
 
-        <!-- Live delta text -->
+        <!--
+          Live delta text — the word-for-word preview.
+
+          Scrolls rather than truncating, and grows to ~5 lines before it does: a live turn is a
+          whole spoken utterance, and clipping it to one line was the owner-reported polish gap
+          (2026-07-31) — the panel showed "a word or two" while the words kept coming. maxLines
+          bounds the overlay so a long turn can never grow it off-screen; the scroll (driven from
+          the service) keeps the newest words visible. Rendering only — deltas are NEVER injected;
+          the accessibility layer has no composing-text API, so writing live text into an app's
+          field would mean rewriting the whole field several times a second, which is the exact
+          corruption class Release A's ordering exists to prevent (spec 5.6a/5.6b).
+        -->
         <TextView
             android:id="@+id/transcription_delta_text"
             android:layout_width="280dp"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:textColor="#B3FFFFFF"
-            android:textSize="12sp"
+            android:maxLines="5"
+            android:scrollbars="vertical"
+            android:fadeScrollbars="false"
+            android:scrollbarSize="2dp"
+            android:lineSpacingExtra="2dp"
+            android:textColor="#E6FFFFFF"
+            android:textSize="14sp"
             android:textStyle="italic"
             android:visibility="gone" />
 

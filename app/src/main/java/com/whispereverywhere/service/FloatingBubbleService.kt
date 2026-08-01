@@ -1858,6 +1858,16 @@ class FloatingBubbleService : Service(),
                         if (text.isNotBlank()) {
                             transcriptionDeltaText.visibility = View.VISIBLE
                             transcriptionDeltaText.text = text
+                            // Keep the newest words in view. The panel grows to maxLines then
+                            // scrolls; without this it would hold the TOP of a long utterance and
+                            // the live words would stream out of sight — the opposite of the point.
+                            // Posted so the scroll runs after layout has measured the new text.
+                            transcriptionDeltaText.post {
+                                val overflow = transcriptionDeltaText.layout?.let { l ->
+                                    l.getLineBottom(l.lineCount - 1) - transcriptionDeltaText.height
+                                } ?: 0
+                                transcriptionDeltaText.scrollTo(0, overflow.coerceAtLeast(0))
+                            }
                         } else {
                             transcriptionDeltaText.visibility = View.GONE
                         }
@@ -2088,6 +2098,15 @@ class FloatingBubbleService : Service(),
             // Route through the bounded-memory sink; the preview StateFlow drives
             // transcriptionEditText via collectLatest in onOpen (Task 7).
             transcriptSink?.append(text)
+        } else if (sessionIsLive && currentState != BubbleState.FINALIZING) {
+            // Live TEXT_FIELD: this turn has just been injected into the real field, so the panel's
+            // job for it is done — clear it or the finished words linger UNDER the next utterance
+            // as it streams in, reading as duplicated text. (Held during FINALIZING, where the
+            // panel carries the closing status instead.) Scroll reset too, so the next turn starts
+            // at the top of the panel rather than wherever the last one left it parked.
+            transcriptionDeltaText.text = ""
+            transcriptionDeltaText.scrollTo(0, 0)
+            transcriptionDeltaText.visibility = View.GONE
         }
         handleTranscriptionResult(text)
     }
