@@ -308,6 +308,8 @@ class TtsEngine(
                     // The gate clock: reset whenever gating begins (thread start; each stall), so
                     // CAP_MS bounds each individual hold, not the whole read.
                     var gateSinceMs = System.currentTimeMillis()
+                    var gateLastAvail = -1L
+                    var gateRingShown = false
                     var stallStartMs = 0L
                     var stallHeadStart = 0
                     var stallUnderStart = 0
@@ -356,12 +358,34 @@ class TtsEngine(
                                     (availableSamples - cursor).toInt().coerceAtLeast(0),
                                     localTrack.sampleRate,
                                 )
+                                // GROWTH-AWARE cap clock (on-device 2026-08-01, TTSDIAG gen=3):
+                                // a wall-clock cap fired at 2.53 s with only 1260 ms banked
+                                // against a 3375 ms watermark — overriding the healthy producer
+                                // it was never meant for, straight into a 2568 ms audible stall.
+                                // The cap exists to escape a STUCK producer, so its clock counts
+                                // only no-growth time: any bank growth resets it, and a producer
+                                // that is merely still working gets to reach the watermark.
+                                if (availableSamples != gateLastAvail) {
+                                    gateLastAvail = availableSamples
+                                    gateSinceMs = System.currentTimeMillis()
+                                }
                                 val waitedMs = System.currentTimeMillis() - gateSinceMs
                                 if (!bufferPolicy.shouldProceed(bufferedMs.toInt(), waitedMs, done = false)) {
+                                    // The start hold is BUFFERING and must say so — without this
+                                    // the speaking pill sits silent with a motionless aurora and
+                                    // reads as the bubble vanishing (owner report 2026-08-01).
+                                    if (!started && !gateRingShown) {
+                                        gateRingShown = true
+                                        onBuffering?.invoke(true)
+                                    }
                                     // 20 ms tick (spec WAIT_TICK_MS): fine-grained enough for
                                     // cloud packet cadences, cheap enough to poll.
                                     try { Thread.sleep(20) } catch (_: InterruptedException) {}
                                     continue@loop
+                                }
+                                if (gateRingShown) {
+                                    gateRingShown = false
+                                    onBuffering?.invoke(false)
                                 }
                             }
                             val pcm = readAt(cursor, slice)

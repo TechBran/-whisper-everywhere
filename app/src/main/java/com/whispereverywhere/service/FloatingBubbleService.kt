@@ -1281,10 +1281,12 @@ class FloatingBubbleService : Service(),
                 if (!isDragging) {
                     handleBubbleClick()
                 } else if (!isOverlayPinned) {
-                    // Always-on mode: FREE placement — the bubble stays exactly where the user
-                    // drops it (middle of the screen included). Classic auto mode keeps the
-                    // chat-head edge snap.
-                    if (!alwaysOnMode()) snapToEdge()
+                    // FREE placement in EVERY mode (owner 2026-08-01: the edge snap felt like the
+                    // bubble "wants to lock to certain areas"). The snap also had a real bug: it
+                    // ANIMATED to the edge over 200 ms while the position below saved the
+                    // PRE-animation spot, so the remembered position and the visible bubble
+                    // disagreed — every later hide/show "teleported" it. Where you drop it is
+                    // where it stays, and exactly what pop-up restores.
                     val displayMetrics = resources.displayMetrics
                     app.preferencesManager.bubblePositionX = params.x.toFloat() / displayMetrics.widthPixels
                     app.preferencesManager.bubblePositionY = params.y.toFloat() / displayMetrics.heightPixels
@@ -1320,25 +1322,6 @@ class FloatingBubbleService : Service(),
             }
             start()
         }
-    }
-
-    private fun snapToEdge() {
-        val displayMetrics = resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels
-        val targetX = if (params.x < screenWidth / 2) 0 else screenWidth - bubbleView.width
-
-        val animator = ValueAnimator.ofInt(params.x, targetX)
-        animator.duration = 200
-        animator.interpolator = AccelerateDecelerateInterpolator()
-        animator.addUpdateListener { animation ->
-            params.x = animation.animatedValue as Int
-            try {
-                windowManager.updateViewLayout(bubbleView, params)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        animator.start()
     }
 
     private fun handleBubbleClick() {
