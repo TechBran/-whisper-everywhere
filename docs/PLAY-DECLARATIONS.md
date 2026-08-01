@@ -70,6 +70,21 @@ must be kept true.
   > by that provider exactly like dictated audio, with on-device transcription as the automatic
   > fallback.
 
+## 3b. Foreground service — `dataSync`
+
+- Declared type: `dataSync` on `BatchTranscriptionService` (batch file transcription);
+  permission `FOREGROUND_SERVICE_DATA_SYNC` (Android 14+). Added with the 3.3.0 batch mode —
+  the 3.2.0 declaration predates it, which is why the Console re-prompts on the 73 bundle.
+- Declaration text:
+
+  > The foreground service processes an audio file the user explicitly picked, in a one-shot
+  > batch transcription job the user starts by tapping Transcribe. A long recording takes
+  > minutes to transcribe and must be able to finish while the user switches to another app;
+  > the service shows a progress notification for the whole job and stops itself when the job
+  > completes, fails, or is cancelled. Processing is on-device by default, or via a cloud
+  > provider the user has independently added a key for and selected, with on-device
+  > transcription as the automatic fallback.
+
 ## 4. Notification access (NotificationListenerService)
 
 - `MediaNotificationListener` exists solely because `MediaSessionManager.getActiveSessions()`
