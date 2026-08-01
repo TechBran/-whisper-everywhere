@@ -171,6 +171,34 @@ class LiveTranscriptionEngineTest {
         assertEquals(1, h.l.all.size)
     }
 
+    @Test fun an_empty_server_completion_is_silence_not_a_loss_marker() {
+        // Owner-reported artifact, 2026-07-31: "[…]" appearing in live transcripts now and then.
+        // Under SERVER-driven turns the provider's VAD cuts turns, and a server VAD fires on a
+        // cough, a door, a breath — an empty completion is that non-speech, not a lost sentence.
+        // (The old EmptyUnexpected classification was written when OUR client VAD cut turns, where
+        // an empty transcript really did mean confirmed speech went missing; the 2026-07-31
+        // inversion changed the premise and the line was not revisited.) Silence contributes
+        // nothing, exactly as on every other path.
+        val h = connected()
+        h.engine.sendAudio(byteArrayOf(1)); assertEquals(0L, h.engine.commit())
+
+        h.transport.listener.onCommitted("it_1")
+        h.transport.listener.onCompleted("it_1", "   \n ")
+        assertEquals(0L to SegmentOutcome.EmptyExpected, h.l.all.single())
+    }
+
+    @Test fun a_completion_that_is_only_model_chrome_is_also_silence() {
+        // TranscriptText.clean strips markdown fences and bracketed non-speech markers; a
+        // completion made ENTIRELY of chrome cleans to empty and takes the same silence path
+        // rather than stamping a marker.
+        val h = connected()
+        h.engine.sendAudio(byteArrayOf(1)); assertEquals(0L, h.engine.commit())
+
+        h.transport.listener.onCommitted("it_1")
+        h.transport.listener.onCompleted("it_1", "```\n[BLANK_AUDIO]\n```")
+        assertEquals(0L to SegmentOutcome.EmptyExpected, h.l.all.single())
+    }
+
     @Test fun out_of_order_completions_resolve_correct_seqs() {
         // The documented case: "Ordering between completion events from different speech turns isn't
         // guaranteed. Use item_id." The commit ACKS arrive in commit order (A before B) and are what

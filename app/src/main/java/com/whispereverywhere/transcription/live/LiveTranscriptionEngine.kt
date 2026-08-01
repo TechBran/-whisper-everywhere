@@ -391,9 +391,18 @@ class LiveTranscriptionEngine(
         // the user's field. clean() strips fences, bracketed non-speech markers, and collapses
         // whitespace — the same contract every other injected transcript already gets.
         val cleaned = com.whispereverywhere.transcription.TranscriptText.clean(transcript)
-        // A committed live turn had voiced audio (client VAD cut it), so an empty transcript is a
-        // lost sentence the user must see — EmptyUnexpected, which the fallback re-runs locally.
-        return if (cleaned.isEmpty()) SegmentOutcome.EmptyUnexpected else SegmentOutcome.Text(cleaned)
+        // EmptyExpected — NOT EmptyUnexpected. That classification was written when OUR client VAD
+        // cut live turns: our VAD firing meant confirmed voiced audio, so an empty transcript was a
+        // lost sentence worth a "[…]" marker. The 2026-07-31 server-driven inversion changed the
+        // premise and this line was not revisited: the SERVER's VAD now cuts turns, and a server
+        // VAD is deliberately trigger-happy — it fires on a cough, a door, a breath. An empty
+        // completion is that: the provider heard something speech-shaped and transcribed nothing.
+        // Marking it Unexpected stamped "[…]" into the user's text for ordinary room noise
+        // (owner-reported artifact, 2026-07-31). Silence contributes nothing, exactly as it does on
+        // every other path. A genuine mid-sentence loss is still visible: a dropped socket resolves
+        // Lost (never Empty), the mirror rescues it locally, and only a rescue that also fails
+        // leaves a marker.
+        return if (cleaned.isEmpty()) SegmentOutcome.EmptyExpected else SegmentOutcome.Text(cleaned)
     }
 
     private fun latchFatal(kind: FatalKind) {
