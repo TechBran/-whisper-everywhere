@@ -27,12 +27,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel
+import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.service.FloatingBubbleService
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.service.resolveSttProvider
+import com.whispereverywhere.tts.TtsModelManager
 import com.whispereverywhere.tts.TtsVoices
 import com.whispereverywhere.tts.resolveTtsProvider
 import com.whispereverywhere.ui.theme.*
@@ -83,6 +87,10 @@ fun HomeScreen(
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasAccessibilityEnabled by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
     var hasSpeechModel by remember { mutableStateOf(app.whisperModelManager.installedModel() != null) }
+    // The read-aloud voice's installed state is purely on-disk (marker file + model.onnx) — same
+    // cheap existence checks as installedModel(), refreshed on the same ON_RESUME tick.
+    val ttsModelManager = remember { TtsModelManager(context) }
+    var hasTtsVoice by remember { mutableStateOf(ttsModelManager.isInstalled()) }
 
     // Bumped on ON_RESUME so the off-main keystore/disk snapshots below re-read when the user comes
     // back from the hub (where they may have added a key or downloaded a model).
@@ -95,6 +103,7 @@ fun HomeScreen(
         hasOverlayPermission = Settings.canDrawOverlays(context)
         hasAccessibilityEnabled = WhisperAccessibilityService.isEnabled()
         hasSpeechModel = app.whisperModelManager.installedModel() != null
+        hasTtsVoice = ttsModelManager.isInstalled()
     }
 
     // Refresh when the app resumes. (The old 1000 ms poll is gone — the chips are reactive and the
@@ -224,6 +233,38 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // Missing-engine status rows (owner request 2026-08-01: "a status and download
+            // shortcuts right there, in case someone has maybe deleted them"). Each appears ONLY
+            // while its engine is absent from disk and downloads IN PLACE via the same
+            // activity-scoped OnboardingSetupViewModel onboarding uses — progress started on
+            // either surface shows on both. Rows vanish the moment the engine lands (the Ready
+            // observer below re-reads the disk state).
+            val setupVm: OnboardingSetupViewModel =
+                viewModel(viewModelStoreOwner = context as androidx.activity.ComponentActivity)
+            val speechSetup by setupVm.speechState.collectAsState()
+            val voiceSetup by setupVm.voiceState.collectAsState()
+            LaunchedEffect(speechSetup, voiceSetup) {
+                if (speechSetup is EngineState.Ready || voiceSetup is EngineState.Ready) refreshPermissions()
+            }
+            if (!hasSpeechModel) {
+                MissingEngineRow(
+                    title = "Speech model not installed",
+                    detail = "Dictation and file transcription need it — about 60 MB",
+                    state = speechSetup,
+                    onDownload = { setupVm.ensureSpeech() },
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            if (!hasTtsVoice) {
+                MissingEngineRow(
+                    title = "Read-aloud voice not installed",
+                    detail = "Reading text aloud needs it — about 365 MB",
+                    state = voiceSetup,
+                    onDownload = { setupVm.ensureVoice() },
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // Usage Stats Card (shows today's usage - no limits)
             UsageStatsCard(
                 usedSeconds = usedSecondsToday,
@@ -345,6 +386,86 @@ fun HomeScreen(
  * One mode card in the dashboard: an accent icon, the mode name, a live status chip built by the
  * pure formatters in ModeDashboard.kt, and a chevron. Taps into that mode's settings.
  */
+/**
+ * One absent on-device engine: what is missing, why it matters, and a Download button that fixes
+ * it in place. While the shared setup ViewModel reports Working the button yields to a progress
+ * bar; Failed shows the reason and turns the button into Retry (ensure* re-runs from Failed).
+ */
+@Composable
+private fun MissingEngineRow(
+    title: String,
+    detail: String,
+    state: EngineState,
+    onDownload: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                when (state) {
+                    is EngineState.Working -> Unit // the bar below carries the status
+                    is EngineState.Failed -> OutlinedButton(onClick = onDownload) { Text("Retry") }
+                    else -> OutlinedButton(onClick = onDownload) { Text("Download") }
+                }
+            }
+            when (state) {
+                is EngineState.Working -> {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    if (state.pct >= 0) {
+                        LinearProgressIndicator(
+                            progress = { state.pct / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${state.label} — ${state.pct}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${state.label}\u2026",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                is EngineState.Failed -> {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = state.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                else -> Unit
+            }
+        }
+    }
+}
+
 @Composable
 private fun ModeCard(
     icon: ImageVector,

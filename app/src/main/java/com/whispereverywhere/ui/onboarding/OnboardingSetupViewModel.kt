@@ -54,90 +54,82 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
     private val _voiceState = MutableStateFlow<EngineState>(EngineState.Pending)
     val voiceState: StateFlow<EngineState> = _voiceState.asStateFlow()
 
-    @Volatile private var started = false
+    /** Start both engine downloads (the onboarding engines step). Per-engine idempotent. */
+    fun beginAutoSetup() {
+        ensureSpeech()
+        ensureVoice()
+    }
 
     /**
-     * Start both engine downloads, once. The speech model is the ONBOARDING_MODEL_ID tier —
-     * "Base multilingual" (~60 MB), the owner's chosen default: multilingual out of the box on any
-     * device, no RAM floor. The voice is the pinned Kokoro bundle (~365 MB). Anything already
-     * installed reports Ready immediately without a network touch.
+     * Make the on-device speech model exist, if it is not already installed: the
+     * ONBOARDING_MODEL_ID tier — "Base multilingual" (~60 MB), the owner's chosen default
+     * (multilingual on any device, no RAM floor). Already-installed reports Ready without a
+     * network touch — which also self-heals the "selected tier's file was deleted but base is
+     * still on disk" state by re-selecting base. Idempotent while running; callable again from
+     * Failed, which is what Retry is.
+     *
+     * Serves BOTH onboarding's automatic step and Home's missing-engine status row (owner request
+     * 2026-08-01: "a status and download shortcuts right there, in case someone has deleted them")
+     * — one activity-scoped instance, so progress started on either surface shows on both.
      */
-    fun beginAutoSetup() {
-        if (started) return
-        started = true
-
-        // ---- speech model ----
+    fun ensureSpeech() {
+        // Only Working blocks re-entry. A Ready deliberately does NOT: Ready can go stale — the
+        // activity-scoped VM outlives a trip to Settings where the user deletes the model file —
+        // and the disk check below is the truth. A still-installed engine just re-reports Ready.
+        if (_speechState.value is EngineState.Working) return
         val model = WhisperCatalog.byId(ONBOARDING_MODEL_ID)
         if (model == null || whisperManager.isInstalled(model)) {
-            // Also Ready when the catalog somehow lacks the id (defensive): the engines step must
-            // never wedge onboarding — Home's setup banner remains the manual path.
+            // Also Ready when the catalog somehow lacks the id (defensive): this path must never
+            // wedge onboarding — the manual tier picker remains the fallback.
             if (model != null) prefs.selectedModelId = model.id
             _speechState.value = EngineState.Ready
-        } else {
-            _speechState.value = EngineState.Working(0, DOWNLOADING)
-            viewModelScope.launch(Dispatchers.IO) {
-                try {
-                    whisperManager.download(
-                        model,
-                        onProgress = { soFar, total ->
-                            val safeTotal = if (total > 0L) total else model.approxBytes
-                            val pct = ((soFar * 100.0) / safeTotal).toInt().coerceIn(0, 100)
-                            _speechState.value = EngineState.Working(pct, DOWNLOADING)
-                        },
-                        onVerifying = { _speechState.value = EngineState.Working(INDETERMINATE, VERIFYING) },
-                    )
-                    // Same persistence as the manual picker: the tier is selected and the
-                    // first-run gate cleared the moment dictation is actually possible.
-                    prefs.selectedModelId = model.id
-                    prefs.onboardingCompleted = true
-                    _speechState.value = EngineState.Ready
-                } catch (e: Exception) {
-                    _speechState.value = EngineState.Failed(e.message ?: "Download failed")
-                }
+            return
+        }
+        _speechState.value = EngineState.Working(0, DOWNLOADING)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                whisperManager.download(
+                    model,
+                    onProgress = { soFar, total ->
+                        val safeTotal = if (total > 0L) total else model.approxBytes
+                        val pct = ((soFar * 100.0) / safeTotal).toInt().coerceIn(0, 100)
+                        _speechState.value = EngineState.Working(pct, DOWNLOADING)
+                    },
+                    onVerifying = { _speechState.value = EngineState.Working(INDETERMINATE, VERIFYING) },
+                )
+                // Same persistence as the manual picker: the tier is selected and the first-run
+                // gate cleared the moment dictation is actually possible.
+                prefs.selectedModelId = model.id
+                prefs.onboardingCompleted = true
+                _speechState.value = EngineState.Ready
+            } catch (e: Exception) {
+                _speechState.value = EngineState.Failed(e.message ?: "Download failed")
             }
         }
+    }
 
-        // ---- read-aloud voice ----
+    /** Make the on-device read-aloud voice exist, if it is not already. Same contract as [ensureSpeech]. */
+    fun ensureVoice() {
+        if (_voiceState.value is EngineState.Working) return // Ready can be stale; disk decides
         if (ttsManager.isInstalled()) {
             _voiceState.value = EngineState.Ready
-        } else {
-            _voiceState.value = EngineState.Working(0, DOWNLOADING)
-            viewModelScope.launch(Dispatchers.IO) {
-                try {
-                    ttsManager.download(
-                        onProgress = { soFar, total ->
-                            val safeTotal = if (total > 0L) total else TtsModelManager.TAR_BYTES
-                            val pct = ((soFar * 100.0) / safeTotal).toInt().coerceIn(0, 100)
-                            _voiceState.value = EngineState.Working(pct, DOWNLOADING)
-                        },
-                        onExtracting = { _voiceState.value = EngineState.Working(INDETERMINATE, EXTRACTING) },
-                    )
-                    _voiceState.value = EngineState.Ready
-                } catch (e: Exception) {
-                    _voiceState.value = EngineState.Failed(e.message ?: "Download failed")
-                }
+            return
+        }
+        _voiceState.value = EngineState.Working(0, DOWNLOADING)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                ttsManager.download(
+                    onProgress = { soFar, total ->
+                        val safeTotal = if (total > 0L) total else TtsModelManager.TAR_BYTES
+                        val pct = ((soFar * 100.0) / safeTotal).toInt().coerceIn(0, 100)
+                        _voiceState.value = EngineState.Working(pct, DOWNLOADING)
+                    },
+                    onExtracting = { _voiceState.value = EngineState.Working(INDETERMINATE, EXTRACTING) },
+                )
+                _voiceState.value = EngineState.Ready
+            } catch (e: Exception) {
+                _voiceState.value = EngineState.Failed(e.message ?: "Download failed")
             }
-        }
-    }
-
-    /** Retry ONE failed engine (the other keeps whatever state it has). */
-    fun retrySpeech() {
-        if (_speechState.value !is EngineState.Failed) return
-        started = false
-        _voiceState.value.let { voice ->
-            beginAutoSetup()
-            // beginAutoSetup restarts only what is not installed; a Ready/Working voice re-enters
-            // its installed/running short-circuit, so this cannot double-download it.
-            if (voice is EngineState.Failed) _voiceState.value = voice
-        }
-    }
-
-    fun retryVoice() {
-        if (_voiceState.value !is EngineState.Failed) return
-        started = false
-        _speechState.value.let { speech ->
-            beginAutoSetup()
-            if (speech is EngineState.Failed) _speechState.value = speech
         }
     }
 

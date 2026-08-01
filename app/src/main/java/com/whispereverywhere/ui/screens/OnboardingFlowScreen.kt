@@ -293,14 +293,14 @@ private fun EnginesStep(vm: OnboardingSetupViewModel) {
         title = "Speech model — Base multilingual",
         subtitle = "Transcribes your dictation on-device (about 60 MB)",
         state = speech,
-        onRetry = { vm.retrySpeech() },
+        onRetry = { vm.ensureSpeech() },
     )
     Spacer(Modifier.height(12.dp))
     EngineRow(
         title = "Read-aloud voice",
         subtitle = "Speaks text aloud on-device (about 365 MB)",
         state = voice,
-        onRetry = { vm.retryVoice() },
+        onRetry = { vm.ensureVoice() },
     )
 }
 
