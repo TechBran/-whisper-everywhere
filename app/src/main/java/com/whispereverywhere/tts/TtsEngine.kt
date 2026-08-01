@@ -287,12 +287,27 @@ class TtsEngine(
                     return true
                 }
 
+                // The §6A.3 prebuffer gate (built 2026-08-01). dMax is the duration estimate of
+                // the LONGEST unit this read can plan — the underrun law's d in rtf*d — from the
+                // same chars-to-ms constant the splitter's own caps were derived with. Cloud reads
+                // plan bigger units, so they gate on a bigger (ceiling-clamped) watermark.
+                val bufferPolicy = TtsBufferPolicy(
+                    dMaxMs = ((if (cloudSnap != null) ClauseSplitter.CLOUD_SPLIT_MAX_CHARS
+                    else ClauseSplitter.SPLIT_MAX_CHARS) * ClauseSplitter.MS_PER_CHAR).toInt(),
+                )
+
                 playbackThread = Thread({
+                    // Spec §6A.3: the render thread must outrank ordinary background threads or a
+                    // busy device deschedules exactly the writer the 400 ms track buffer insures.
+                    android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
                     val localTrack = newTrack(engine.sampleRate())
                     val slice = localTrack.sampleRate / 10
                     var cursor = 0L
                     var started = false
                     var stalled = false
+                    // The gate clock: reset whenever gating begins (thread start; each stall), so
+                    // CAP_MS bounds each individual hold, not the whole read.
+                    var gateSinceMs = System.currentTimeMillis()
                     var stallStartMs = 0L
                     var stallHeadStart = 0
                     var stallUnderStart = 0
@@ -332,17 +347,39 @@ class TtsEngine(
                                 if (started) runCatching { localTrack.play() }
                                 continue@loop
                             }
+                            // THE prebuffer gate (§6A.3, owner's hold-until-smooth directive):
+                            // both START and RESUME wait for the watermark, not the first slice.
+                            // A finished producer bypasses it entirely — the bank is all there
+                            // will ever be, and the doneFlag+null exit below must stay reachable.
+                            if ((!started || stalled) && !doneFlag.get()) {
+                                val bufferedMs = TtsDiagMath.audioMs(
+                                    (availableSamples - cursor).toInt().coerceAtLeast(0),
+                                    localTrack.sampleRate,
+                                )
+                                val waitedMs = System.currentTimeMillis() - gateSinceMs
+                                if (!bufferPolicy.shouldProceed(bufferedMs.toInt(), waitedMs, done = false)) {
+                                    // 20 ms tick (spec WAIT_TICK_MS): fine-grained enough for
+                                    // cloud packet cadences, cheap enough to poll.
+                                    try { Thread.sleep(20) } catch (_: InterruptedException) {}
+                                    continue@loop
+                                }
+                            }
                             val pcm = readAt(cursor, slice)
                             if (pcm == null) {
                                 if (doneFlag.get()) break@loop
                                 if (started && !stalled) {
                                     stalled = true
                                     stallStartMs = System.currentTimeMillis()
+                                    gateSinceMs = stallStartMs
+                                    // Hysteresis: every stall raises the resume watermark, so the
+                                    // read rebuilds a BIGGER lead instead of resuming on the first
+                                    // slice and re-stalling at the next long unit.
+                                    bufferPolicy.onStall()
                                     stallHeadStart = localTrack.playbackHeadPosition
                                     stallUnderStart = localTrack.underrunCount
                                     onBuffering?.invoke(true)
                                 }
-                                try { Thread.sleep(50) } catch (_: InterruptedException) {}
+                                try { Thread.sleep(20) } catch (_: InterruptedException) {}
                                 continue@loop
                             }
                             if (stalled) {
@@ -468,6 +505,10 @@ class TtsEngine(
                             diagRtfs.add(TtsDiagMath.rtf(synthMs, audMs))
                             diagTotalSynthMs.addAndGet(synthMs)
                             diagTotalAudMs.addAndGet(audMs)
+                            // Same exclusions the diag already enforces (first burst skipped via
+                            // seq > 0; synthMs measured exit->entry) — exactly the two RTF
+                            // contaminants §6A.3 requires the gate's EWMA to avoid.
+                            bufferPolicy.recordRtf(synthMs, audMs.toInt())
                         }
                         diagLastCallbackExitMs[0] = System.currentTimeMillis()
                         return 1
@@ -715,6 +756,10 @@ class TtsEngine(
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
         )
+        // Sized in MILLISECONDS (spec §6A.2): `minBuf * 4` silently ranged 161-403 ms across
+        // devices. 400 ms of mono PCM16 = rate * 2 bytes * 0.4 s; minBuf stays the floor. This
+        // buffer is writer-deschedule insurance only — producer stalls are the gate's job.
+        val bufferBytes = maxOf(minBuf, sampleRate * 2 * TRACK_BUFFER_MS / 1000)
         return AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -729,7 +774,7 @@ class TtsEngine(
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .build(),
             )
-            .setBufferSizeInBytes(minBuf * 4)
+            .setBufferSizeInBytes(bufferBytes)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             .build()
@@ -786,6 +831,8 @@ class TtsEngine(
     }
 
     companion object {
+        /** AudioTrack buffer, in ms (spec §6A.2): writer-deschedule insurance, not stall cover. */
+        private const val TRACK_BUFFER_MS = 400
         private const val IDLE_UNLOAD_MS = 5 * 60_000L
 
         // Scrubber pipeline (24 kHz mono): synthesis holds when > 5 min is buffered ahead of
