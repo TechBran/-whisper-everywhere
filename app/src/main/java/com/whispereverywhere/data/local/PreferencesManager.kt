@@ -245,19 +245,29 @@ class PreferencesManager(private val context: Context) {
 
     /**
      * The batch-vs-live axis for cloud STT (C4; widened from OpenAI-only by the realtime
-     * all-providers wave). false (the default and shipped behaviour) = the one-shot batch POST;
-     * true = word-for-word live streaming over the selected provider's own Realtime WebSocket
-     * (OpenAI, ElevenLabs, or Soniox — each behind its own RealtimeProtocol).
+     * all-providers wave). true = word-for-word live streaming over the selected provider's own
+     * Realtime WebSocket (OpenAI, ElevenLabs, or Soniox — each behind its own RealtimeProtocol);
+     * false = the one-shot batch POST.
+     *
+     * **Defaults to true** (owner decision 2026-07-31): a streaming provider should stream the
+     * moment its key is in, with no second switch to find. Word-for-word is the reason to pick one
+     * of these three over on-device at all, and the previous false default meant every user paid
+     * for a cloud provider and silently got the batch transport until they went looking for a
+     * toggle. Safe to flip rather than migrate: this preference has never shipped — 3.2.0
+     * (versionCode 72, the released build) has no cloud STT at all, and cloud arrives with 3.3.0.
+     * Anyone who DOES set it keeps their choice, since a stored value always beats this default.
      *
      * Orthogonal to [sttProviderId], which still names the provider: this only flips HOW the audio
-     * is sent. It is consulted only when the selected provider is realtime-capable — so leaving it
-     * true while on Gemini (the one provider with no client-usable realtime path) is inert (see
-     * decideEngineChoice / isRealtimeStt). Same mic audio, same provider, same v3 disclosure as
-     * batch; the ONLY user-visible change is a new transport and a higher, per-provider cost tier
-     * (about $0.0045/min OpenAI gpt-transcribe, $0.007/min ElevenLabs, $0.002/min Soniox), surfaced on the selector
-     * row itself.
+     * is sent. It is consulted only when the selected provider is realtime-capable — so it is inert
+     * on Gemini, the one provider with no client-usable realtime path, whose batch path is
+     * byte-unchanged by this default (see decideEngineChoice / isRealtimeStt). It is equally inert
+     * with no provider selected, no key, or no network: the live leaf sits AFTER those local
+     * guards, so an on-device user is untouched. Same mic audio, same provider, same v3 disclosure
+     * as batch; the ONLY user-visible change is a new transport and a per-provider cost tier
+     * (about $0.0045/min OpenAI gpt-transcribe, $0.007/min ElevenLabs, $0.002/min Soniox), surfaced
+     * on the selector row itself — which is why the row stays visible and switchable.
      */
-    private val _sttLiveMode = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE, false))
+    private val _sttLiveMode = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE, true))
     /** Reactive mirror of [sttLiveMode] for the Dictation card's word-for-word chip. Additive. */
     val sttLiveModeFlow: StateFlow<Boolean> = _sttLiveMode.asStateFlow()
 

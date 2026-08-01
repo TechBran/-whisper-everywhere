@@ -82,9 +82,14 @@ internal enum class EngineChoice { LOCAL_ONLY, LOCAL_NO_KEY, LOCAL_OFFLINE, CLOU
  *  - provider selected, key, online              -> cloud batch POST, wrapped in the local fallback
  *  - + live flag on AND provider is realtime-capable -> cloud LIVE stream, wrapped in the SAME fallback
  *
+ * That last leaf is now the ORDINARY path, not the exception: `sttLiveMode` defaults to true, so a
+ * user who picks OpenAI, ElevenLabs or Soniox and pastes a key streams word-for-word immediately.
+ * Batch remains one toggle away and stays the only path for Gemini.
+ *
  * The live leaf sits AFTER the local guards on purpose: the one-way valve is untouched, so no key
  * or no network still resolves to on-device — live never opens a socket the batch path would have
- * refused. Live is realtime-capable-provider-only (OpenAI, ElevenLabs, Soniox) because only those
+ * refused. That ordering is what makes the true default safe, and EngineSelectionTest now passes
+ * `liveMode = true` through every local-guard case to pin it. Live is realtime-capable-provider-only (OpenAI, ElevenLabs, Soniox) because only those
  * providers have a native BYOK realtime WebSocket behind a [com.whispereverywhere.transcription.live.RealtimeProtocol];
  * Gemini has no client-usable realtime path (its Live API wants ephemeral backend-minted tokens
  * this app has no server for), so the flag is inert for it and its batch path is byte-unchanged.
@@ -93,7 +98,12 @@ internal fun decideEngineChoice(
     sttProviderId: String?,
     hasKey: Boolean,
     hasValidatedNetwork: Boolean,
-    liveMode: Boolean = false,
+    /**
+     * No default, deliberately. It used to default to false, which stopped being truthful when
+     * `sttLiveMode` began defaulting to TRUE: a caller that omitted the axis would silently decide
+     * batch for a user whose preference says stream. Every caller must state it.
+     */
+    liveMode: Boolean,
 ): EngineChoice = when {
     sttProviderId == null -> EngineChoice.LOCAL_ONLY
     !hasKey -> EngineChoice.LOCAL_NO_KEY

@@ -23,32 +23,35 @@ class EngineSelectionTest {
     @Test fun no_provider_selected_is_always_local_regardless_of_key_or_network() {
         assertEquals(
             EngineChoice.LOCAL_ONLY,
-            decideEngineChoice(sttProviderId = null, hasKey = true, hasValidatedNetwork = true),
+            decideEngineChoice(sttProviderId = null, hasKey = true, hasValidatedNetwork = true, liveMode = true),
         )
         assertEquals(
             EngineChoice.LOCAL_ONLY,
-            decideEngineChoice(sttProviderId = null, hasKey = false, hasValidatedNetwork = false),
+            decideEngineChoice(sttProviderId = null, hasKey = false, hasValidatedNetwork = false, liveMode = true),
         )
     }
 
     @Test fun provider_selected_but_no_key_falls_back_local() {
         assertEquals(
             EngineChoice.LOCAL_NO_KEY,
-            decideEngineChoice(sttProviderId = "OPENAI", hasKey = false, hasValidatedNetwork = true),
+            decideEngineChoice(sttProviderId = "OPENAI", hasKey = false, hasValidatedNetwork = true, liveMode = true),
         )
     }
 
     @Test fun provider_and_key_but_no_validated_network_falls_back_local() {
         assertEquals(
             EngineChoice.LOCAL_OFFLINE,
-            decideEngineChoice(sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = false),
+            decideEngineChoice(sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = false, liveMode = true),
         )
     }
 
-    @Test fun provider_key_and_validated_network_selects_cloud_with_fallback() {
+    @Test fun provider_key_and_validated_network_with_live_OFF_selects_cloud_batch() {
+        // liveMode is stated, never defaulted: sttLiveMode now defaults to TRUE, so a call that
+        // omitted the axis would be testing a configuration no user is in. This is the deliberate
+        // opt-OUT — the user turned word-for-word off and gets the one-shot batch POST.
         assertEquals(
             EngineChoice.CLOUD_WITH_FALLBACK,
-            decideEngineChoice(sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = true),
+            decideEngineChoice(sttProviderId = "OPENAI", hasKey = true, hasValidatedNetwork = true, liveMode = false),
         )
     }
 
@@ -57,7 +60,7 @@ class EngineSelectionTest {
         // are false the more actionable "no key" message is what the user sees, not "offline".
         assertEquals(
             EngineChoice.LOCAL_NO_KEY,
-            decideEngineChoice(sttProviderId = "OPENAI", hasKey = false, hasValidatedNetwork = false),
+            decideEngineChoice(sttProviderId = "OPENAI", hasKey = false, hasValidatedNetwork = false, liveMode = true),
         )
     }
 
@@ -149,7 +152,7 @@ class EngineSelectionTest {
             val provider = resolveSttProvider(id)
             assertNull("must not resolve: $id", provider)
             val hasKey = provider != null // the service can only hold a key for a resolved provider
-            val choice = decideEngineChoice(sttProviderId = id, hasKey = hasKey, hasValidatedNetwork = true)
+            val choice = decideEngineChoice(sttProviderId = id, hasKey = hasKey, hasValidatedNetwork = true, liveMode = true)
             assertNotEquals(EngineChoice.CLOUD_WITH_FALLBACK, choice)
             assertNotEquals(EngineChoice.CLOUD_LIVE, choice)
         }
