@@ -254,15 +254,25 @@ internal fun liveModeCaption(): String =
  * `_v3` (the MF3 rule — bump only on meaning change; v2 stays in the store; an unset v3
  * re-prompts everyone, including users who already accepted the audio-only v2 text). Present
  * tense, no speed claim, matching the rest of this copy.
+ *
+ * "audio you transcribe — dictated through the microphone or captured from another app's
+ * playback" (owner decision 2026-08-01): device-capture audio follows the engine selection
+ * exactly like mic audio, and the disclosure names both sources in the same breath. Edited
+ * WITHIN v3, no version bump, because v3 has never shipped — 3.2.0 (the released build) has no
+ * cloud STT at all, so no user has ever accepted the narrower wording. The MF3 bump-on-meaning
+ * rule protects shipped acceptances; there are none. First shipped text IS this text. (A v4
+ * bump would also require threading disclosure into decideEngineChoice first — the documented
+ * landmine.)
  */
 internal fun cloudDisclosureMainText(): String =
     "Whisper Everywhere works entirely on your device by default. Adding a provider key below " +
         "sends that key to the provider once, to verify it works. Selecting that provider as " +
-        "your transcription engine is what turns cloud on: from then on, the audio you dictate " +
-        "is sent to that company's servers to be transcribed, with the on-device model taking " +
-        "over automatically if that provider fails. When you choose a cloud voice for " +
-        "read-aloud, the text you select to be read aloud is also sent to that same provider " +
-        "to be spoken."
+        "your transcription engine is what turns cloud on: from then on, the audio you " +
+        "transcribe — dictated through the microphone, or captured from another app's playback " +
+        "when you start a screen-capture session — is sent to that company's servers to be " +
+        "transcribed, with the on-device model taking over automatically if that provider " +
+        "fails. When you choose a cloud voice for read-aloud, the text you select to be read " +
+        "aloud is also sent to that same provider to be spoken."
 
 /** Reiterates both gating steps from [cloudDisclosureMainText] so "off until" isn't read as "off until a key is added" alone. */
 internal fun cloudDisclosureOffUntilText(): String =

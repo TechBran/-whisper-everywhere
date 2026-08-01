@@ -183,13 +183,13 @@ class FloatingBubbleService : Service(),
     private var transcriptionEngine: TranscriptionEngine? = null
 
     // The on-device engine, ALWAYS reachable independently of whatever composite engine the user's
-    // provider choice produced. MediaProjection audio belongs to third parties who never consented
-    // to anything, so it is transcribed here and nowhere else — see SourceRoutedTranscriptionEngine.
+    // provider choice produced.
     private var localEngine: LocalWhisperEngine? = null
 
-    // Non-null ONLY when this service's engine can reach the network, i.e. exactly when the routing
-    // gate has something to gate. On-device-only users keep the pre-cloud path untouched.
-    private var sourceRouter: com.whispereverywhere.transcription.SourceRoutedTranscriptionEngine? = null
+    // The cloud wrapper (FallbackTranscriptionEngine) of the CURRENT/previous session, held so it
+    // can be close()d — resolving everything it still owes — without shutting down the local engine
+    // it wraps. Non-null only for cloud sessions; on-device-only users keep the pre-cloud path.
+    private var cloudWrapper: FallbackTranscriptionEngine? = null
 
     // ONE HTTP client for the service's whole life. OkHttpTransport's default constructor builds a
     // fresh OkHttpClient — each with its own dispatcher threads and connection pool — so building a
@@ -665,8 +665,8 @@ class FloatingBubbleService : Service(),
         // the sole owner of the native context — is SHUT DOWN exactly once. Going through
         // `transcriptionEngine` instead would leak the context whenever the service is destroyed
         // after prewarm but before any recording, because that field is still null at that point.
-        sourceRouter?.close()
-        sourceRouter = null
+        cloudWrapper?.close()
+        cloudWrapper = null
         transcriptionEngine = null
         localEngine?.shutdown()
         localEngine = null
@@ -1327,14 +1327,14 @@ class FloatingBubbleService : Service(),
     private fun onAudioChunk(chunk: ByteArray, amp: Int) {
         // Route by SOURCE, never by preference. Playback capture is OTHER APPS' audio — the person
         // on the other end of the call, the podcast host — so the only engines allowed to receive
-        // it are the source-aware router (which hands it to the on-device engine and closes the
-        // cloud one for the duration) and the on-device engine itself. Microphone audio, which is
-        // the user's own voice, follows the user's own provider choice.
-        val engine = if (activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK) {
-            sourceRouter ?: localEngine ?: return
-        } else {
-            transcriptionEngine ?: return
-        }
+        // ONE engine serves the whole session, whatever the capture source. Device audio follows
+        // the user's provider selection exactly as mic audio does (owner decision 2026-08-01):
+        // selecting a cloud engine IS the consent that audio you transcribe goes to that provider,
+        // and the disclosure + privacy policy say so for both sources in the same sentence. The
+        // per-session MediaProjection consent sheet marks each capture. Cost is the user's own key,
+        // knowingly. The old source-router (which forced device audio on-device regardless of
+        // settings) was retired with this decision — see the 2026-08-01 commit for its rationale.
+        val engine = transcriptionEngine ?: return
         engine.sendAudio(chunk)
         // 4-band spectral drive for the visuals (microseconds per 32ms frame): each aurora
         // sheet + rim region follows its own slice of the audio. Silence gate: below the noise
@@ -1350,19 +1350,13 @@ class FloatingBubbleService : Service(),
         blobView.updateAmplitude(amp)
         // Client VAD per audio chunk. Commit on a natural pause, or on the wall-clock cap when
         // the amplitude never dips (continuous media). Live (server-driven) sessions bypass this
-        // for MIC audio — the SERVER cuts those turns via its own VAD, and the stop button /
-        // session end is the outer bound. `sendAudio` above stays UNCONDITIONAL, so the engine is
-        // always fed; only the turn CUT moves to the server. Local + Gemini + batch keep this block
-        // byte-identical.
-        //
-        // PLAYBACK audio runs the client VAD even in a live session: it routes to the ON-DEVICE
-        // engine (device audio never reaches the cloud), so no server VAD will ever cut it — this
-        // block is the only committer it has. See LiveTurnPolicy.
-        if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(
-                sessionIsLive,
-                playbackSource = activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK,
-            )
-        ) {
+        // ENTIRELY — the SERVER cuts turns via its own VAD for every capture source (device audio
+        // rides the same socket as mic audio since 2026-08-01), and the stop button / session end
+        // is the outer bound. `sendAudio` above stays UNCONDITIONAL, so the engine is always fed;
+        // only the turn CUT moves to the server. Local + Gemini + batch keep this block
+        // byte-identical — including device-audio capture in those sessions, whose segments this
+        // VAD is what cuts.
+        if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(sessionIsLive)) {
             val now = System.currentTimeMillis()
             if (speechSegmenter.onAmplitude(amp, now)) {
                 android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
@@ -1423,7 +1417,6 @@ class FloatingBubbleService : Service(),
      */
     private fun setActiveSource(source: com.whispereverywhere.audio.ActiveSource) {
         activeSource = source
-        sourceRouter?.onSourceChanged(source)
     }
 
     private fun startMicSource(): Result<Unit> {
@@ -1466,13 +1459,10 @@ class FloatingBubbleService : Service(),
     private fun switchSource(to: com.whispereverywhere.audio.ActiveSource) {
         if (activeSource == to || currentState != BubbleState.RECORDING) return
         android.util.Log.i("WE-DIAG", "switchSource: $activeSource -> $to")
-        // On-device-only: one engine serves both sources, so this commit is what keeps mic and
-        // device audio in SEPARATE segments. Unchanged from before the routing gate existed.
-        // With a router the boundary belongs to it: it decides per direction whether the
-        // uncommitted tail may follow the user into the next engine (mic audio may; device audio
-        // never may), and committing here would instead cut that tail into the engine we are about
-        // to close. See SourceRoutedTranscriptionEngine.onSourceChanged.
-        if (sourceRouter == null) transcriptionEngine?.commit()
+        // One engine serves both sources, so this commit is what keeps mic and device audio in
+        // SEPARATE segments at the boundary. In a live (server-driven) session it cuts a client
+        // turn mid-stream — the same mechanism stopRecording's tail commit uses.
+        transcriptionEngine?.commit()
         speechSegmenter.reset()
         lastCommitWallMs = System.currentTimeMillis()
         when (activeSource) {
@@ -1635,8 +1625,8 @@ class FloatingBubbleService : Service(),
         // everything the wrapper still owes and detaches it, whereas shutdown() cascades to
         // LocalWhisperEngine.shutdown() and releases the native context — the one thing that must
         // survive between sessions.
-        sourceRouter?.close()
-        sourceRouter = null
+        cloudWrapper?.close()
+        cloudWrapper = null
         // A stale latch must not outlive its engine: after switching to on-device, finalize must
         // not toast about a fatal from a previous session's cloud engine. Both cloud references are
         // cleared here; the chosen branch below re-sets exactly one (or neither, for local).
@@ -1678,17 +1668,15 @@ class FloatingBubbleService : Service(),
                 )
                 val cloud = CloudTranscriptionEngine(stt, serviceScope)
                 lastCloudEngine = cloud
-                // The cloud engine may serve the MICROPHONE, which is the user's own voice and the
-                // user's own choice. It may NEVER serve MediaProjection playback capture: that is
-                // other people's audio, and the four shipped statements that say device audio stays
-                // on the device (privacy_policy.html / docs/privacy.html §6-§7,
-                // docs/PLAY-DECLARATIONS.md §3 and §5) are only true because of this router. The
-                // ROUTE is decided by the capture source alone — never by the provider, the key or
-                // the network, none of which can make third-party audio shippable.
-                com.whispereverywhere.transcription.SourceRoutedTranscriptionEngine(
-                    micEngine = FallbackTranscriptionEngine(cloud, local, serviceScope),
-                    deviceEngine = local,
-                ).also { sourceRouter = it }
+                // ONE engine for the whole session, both capture sources. Device (playback) audio
+                // follows the user's provider selection exactly as mic audio does — owner decision
+                // 2026-08-01, and the four statements that used to say device audio never leaves
+                // the phone (assets/privacy_policy.html, docs/privacy.html §6,
+                // docs/PLAY-DECLARATIONS.md §3/§5) were rewritten IN THE SAME COMMIT to disclose
+                // it. Consent is the same triad as mic audio (key + selection + disclosure) plus
+                // the per-session MediaProjection sheet, and the local fallback rescues failures
+                // for both sources alike.
+                FallbackTranscriptionEngine(cloud, local, serviceScope).also { cloudWrapper = it }
             }
             EngineChoice.CLOUD_LIVE -> {
                 // Realtime-capable-and-key-present, both guaranteed by decideEngineChoice: the live
@@ -1728,22 +1716,19 @@ class FloatingBubbleService : Service(),
                 )
                 lastLiveEngine = cloud
                 sessionIsLive = true
-                // Wired IDENTICALLY to batch: the live engine is the `cloud` member of the SAME
-                // FallbackTranscriptionEngine behind the SAME SourceRoutedTranscriptionEngine. A
-                // dropped socket resolves its turn Lost and the untouched fallback rescues it
-                // locally from the mirrored PCM. The router still decides the ROUTE by capture
-                // source alone, so device (playback) audio remains physically unreachable from this
-                // engine — the same privacy guarantee the batch branch above documents.
+                // Wired IDENTICALLY to batch: one FallbackTranscriptionEngine serves the whole
+                // session, both capture sources (owner decision 2026-08-01 — device audio follows
+                // the provider selection; see the batch branch above for the consent/docs story).
+                // A dropped socket resolves its turn Lost and the fallback rescues it locally from
+                // the mirrored PCM, mic and device audio alike. In live mode the SERVER cuts
+                // device-audio turns exactly as it cuts mic turns — same socket, same VAD.
                 val fallback = FallbackTranscriptionEngine(cloud, local, serviceScope)
                 // Server turns rotate the SAME fallback that mirrors this engine's PCM — the seq the
                 // callback returns is the paired seq the mirror just retained. Wired here, where both
                 // objects exist, so FallbackTranscriptionEngine stays provider-agnostic and
                 // byte-identical (it never knows about server-driven turns).
                 cloud.attachServerTurnRotation { fallback.commit() }
-                com.whispereverywhere.transcription.SourceRoutedTranscriptionEngine(
-                    micEngine = fallback,
-                    deviceEngine = local,
-                ).also { sourceRouter = it }
+                fallback.also { cloudWrapper = it }
             }
         }
         notifiedChoice = choice
@@ -1947,10 +1932,9 @@ class FloatingBubbleService : Service(),
             android.util.Log.i("WE-DIAG", "stopRecording: releasing screen-capture projection")
             com.whispereverywhere.audio.MediaProjectionGate.clear()
         }
-        // Deliberately the raw field, NOT setActiveSource: the session is ending and the final
-        // commit + drain below still belong to the engine that captured it. Re-routing here would
-        // close that engine mid-drain and turn the last segment of every device-audio session into
-        // a lost-segment marker. The router starts every new session on the mic by construction.
+        // Deliberately the raw field: the session is ending and the final commit + drain below
+        // still belong to this session's engine. Every new session starts on the mic — connect()
+        // runs before startAudioInput() picks a capturer.
         activeSource = com.whispereverywhere.audio.ActiveSource.MIC
 
         updateBubbleState(BubbleState.FINALIZING)

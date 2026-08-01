@@ -61,10 +61,14 @@ must be kept true.
   playback capture. Consent is the system MediaProjection dialog, requested lazily per grant.
 - Declaration text:
 
-  > With the user's explicit consent via the system screen-capture dialog, the service
-  > captures the device's media audio output (AudioPlaybackCapture) to transcribe videos or
-  > podcasts the user is playing. No video/screen content is captured — audio only — and the
-  > microphone is switched off for the duration. Transcription is entirely on-device.
+  > With the user's explicit consent via the system screen-capture dialog (requested each
+  > session), the service captures the device's media audio output (AudioPlaybackCapture) to
+  > transcribe videos or podcasts the user is playing. No video/screen content is captured —
+  > audio only — and the microphone is switched off for the duration. Transcription is
+  > on-device by default; if the user has independently added a cloud provider key and selected
+  > that provider as their transcription engine (Section 5), the captured audio is transcribed
+  > by that provider exactly like dictated audio, with on-device transcription as the automatic
+  > fallback.
 
 ## 4. Notification access (NotificationListenerService)
 
@@ -170,8 +174,11 @@ v3 unchanged; Console narrative names four TTS providers.**
   privacy policy for how they differ — and this app has no way to bind, verify, or assert that
   behavior on a third party's behalf. Declare Shared = Yes without applying the exemption.
 - **MediaProjection device audio (the media-transcription feature — podcasts, videos, other
-  apps' playback) is never sent to a cloud provider, under any configuration.** It is
-  transcribed on-device only; see Section 3.
+  apps' playback) follows the user's engine selection** — on-device by default, and sent to the
+  user's selected cloud provider when one is configured, under the same key + selection +
+  disclosure consent as dictated audio plus the per-session system screen-capture dialog; see
+  Section 3. It is therefore covered by the SAME "Audio → Shared" declaration as microphone
+  audio — no separate data type, one honest answer.
 - **On-device transcription remains the default.** No key, no account, and no network (beyond
   the one-time model download) are required to use the app; cloud transcription is strictly
   additive and opt-in.
@@ -236,8 +243,10 @@ party's behavior):
   is NOT "collected" in Play's sense; mention it only under the on-device narrative if asked.
 - **Recipient narrative must name all four STT providers** (OpenAI, Google Gemini, ElevenLabs,
   Soniox) and the four TTS voice providers (OpenAI, Google Gemini, ElevenLabs, Soniox) — the storefront,
-  privacy policy §6, and this form must enumerate the same set. MediaProjection device audio is
-  never sent to any of them (Section 3); say so if a reviewer probes the media-transcription feature.
+  privacy policy §6, and this form must enumerate the same set. MediaProjection device audio
+  follows the same engine selection and the same recipient list (Section 3); if a reviewer probes
+  the media-transcription feature, point at the §6 device-audio paragraph — same consent triad,
+  same recipients, plus the per-session screen-capture dialog.
 
 ### Corrections the release audit's compliance lens made (the Console copy must match these)
 
