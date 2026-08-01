@@ -432,11 +432,38 @@ class FloatingBubbleService : Service(),
     // 2026-07-18): alternating red/blue with a breathing scale — "tap me to hear this".
     private var clipPulseAnimator: android.animation.ValueAnimator? = null
 
+    /** The auto-hide for a clipboard-summoned bubble; re-copying restarts it. */
+    private var clipboardAutoHideJob: kotlinx.coroutines.Job? = null
+
     override fun onClipboardChanged() {
         serviceScope.launch(Dispatchers.Main) {
             if (currentState != BubbleState.IDLE || isSpeakingNow) return@launch
             if (!com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)) return@launch
+            // Auto pop-up mode with the bubble hidden: a copy is a read-aloud OPPORTUNITY the user
+            // cannot take on an invisible bubble (owner gap report 2026-08-01). Summon it at the
+            // remembered spot for long enough to tap the pulsing speaker lobe, then leave. The
+            // Rect is context-only — positioning is the user's own remembered spot.
+            val summoned = !alwaysOnMode() && !isBubbleVisible
+            if (summoned) showBubbleNearTextField(Rect())
             pulseSpeakerLobe()
+            if (summoned) {
+                clipboardAutoHideJob?.cancel()
+                clipboardAutoHideJob = serviceScope.launch(Dispatchers.Main) {
+                    // The pulse runs ~7 s; give the full window plus a beat to decide.
+                    delay(8_000)
+                    // A read the user DID start keeps the bubble through the whole job.
+                    while (isSpeakingNow) delay(500)
+                    // Leave quietly — unless the user meanwhile put the bubble to real use
+                    // (recording, a focused field, playing media), in which case it is theirs now.
+                    if (currentState == BubbleState.IDLE &&
+                        currentContext == BubbleContext.NONE &&
+                        !alwaysOnMode()
+                    ) {
+                        stopClipPulse()
+                        hideBubble()
+                    }
+                }
+            }
         }
     }
 
