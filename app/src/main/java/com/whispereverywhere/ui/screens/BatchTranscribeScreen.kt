@@ -283,43 +283,58 @@ private fun ReadyContent(
     onChoose: (ProviderId?) -> Unit,
     onTranscribe: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(displayName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            formatDuration(durationMs),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Spacer(Modifier.height(24.dp))
-        Text("Transcribe with", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-
-        EngineRow(
-            selected = chosen == null,
-            title = "On-device",
-            subtitle = "Free and private — no network needed",
-            onClick = { onChoose(null) },
-        )
-        // One row per ELIGIBLE provider — absent (not disabled) for any that fails the gate, so the
-        // list is exactly "what will work". Empty list = on-device only, which is the correct
-        // display for a user with no keys.
-        eligible.forEach { id ->
-            val cents = BatchCostEstimator.centsPerMinute(id)
-            Spacer(Modifier.height(8.dp))
-            EngineRow(
-                selected = chosen == id,
-                title = ProviderCatalog.byId(id).displayName,
-                // Honest copy: a KNOWN rate reads "about ¢X/min"; an UNKNOWN one (Gemini audio) is
-                // labelled as unpublished so the illustrative floor is never shown as a real price.
-                subtitle = if (BatchCostEstimator.isPriceKnown(id)) "about ¢$cents/min"
-                    else "price not published — estimated at ¢$cents/min",
-                onClick = { onChoose(id) },
+    // The engine list SCROLLS and the Transcribe button is PINNED below it — the same split
+    // DoneContent uses. Owner-reported 2026-07-31: with four providers keyed, the list ran past the
+    // bottom of the screen and pushed the button out of reach, so a file could be picked and an
+    // engine chosen but the job could never be started. A fixed-height column cannot hold a list
+    // that grows with the user's keys; pinning the primary action means it stays reachable no
+    // matter how many providers are eligible, on any screen size.
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text(displayName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                formatDuration(durationMs),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            Spacer(Modifier.height(24.dp))
+            Text("Transcribe with", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+
+            EngineRow(
+                selected = chosen == null,
+                title = "On-device",
+                subtitle = "Free and private — no network needed",
+                onClick = { onChoose(null) },
+            )
+            // One row per ELIGIBLE provider — absent (not disabled) for any that fails the gate, so
+            // the list is exactly "what will work". Empty list = on-device only, which is the
+            // correct display for a user with no keys.
+            eligible.forEach { id ->
+                val cents = BatchCostEstimator.centsPerMinute(id)
+                Spacer(Modifier.height(8.dp))
+                EngineRow(
+                    selected = chosen == id,
+                    title = ProviderCatalog.byId(id).displayName,
+                    // Honest copy: a KNOWN rate reads "about ¢X/min"; an UNKNOWN one (Gemini audio)
+                    // is labelled as unpublished so the illustrative floor is never a real price.
+                    subtitle = if (BatchCostEstimator.isPriceKnown(id)) "about ¢$cents/min"
+                        else "price not published — estimated at ¢$cents/min",
+                    onClick = { onChoose(id) },
+                )
+            }
+            // Breathing room so the last card never sits flush against the pinned button.
+            Spacer(Modifier.height(16.dp))
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(12.dp))
         Button(
             onClick = onTranscribe,
             modifier = Modifier.fillMaxWidth(),
