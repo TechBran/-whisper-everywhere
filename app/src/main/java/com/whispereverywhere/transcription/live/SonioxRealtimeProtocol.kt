@@ -38,8 +38,18 @@ object SonioxEvents {
      * The key-bearing first message. This is the SOLE carrier of the key on Soniox; it exists only
      * as the returned String and is never held by the protocol. No log line belongs here, ever.
      */
-    fun config(apiKey: String, language: String?): String =
-        OUT.encodeToString(Config(apiKey = apiKey, languageHints = language?.let { listOf(it) }))
+    fun config(apiKey: String, language: String?, includeEndpointDetection: Boolean = true): String =
+        OUT.encodeToString(
+            Config(
+                apiKey = apiKey,
+                // null (not false) when excluded — explicitNulls=false omits the field entirely,
+                // which is the point of the reduced config: the live server 400'd the FULL config
+                // (2026-07-31, on-device) despite the field being documented; the cascade retries
+                // without it so streaming still works while the docs/server disagreement stands.
+                enableEndpointDetection = if (includeEndpointDetection) true else null,
+                languageHints = language?.let { listOf(it) },
+            ),
+        )
 
     class Token(val text: String, val isFinal: Boolean)
     class Result(
@@ -82,8 +92,10 @@ object SonioxEvents {
         @SerialName("sample_rate") val sampleRate: Int = 16000,
         @SerialName("num_channels") val numChannels: Int = 1,
         // Server endpoint detection: Soniox emits an `<end>` token at each speech boundary, which is
-        // the SERVER turn signal driving the engine's server-turn allocation (the 2026-07-31 inversion).
-        @SerialName("enable_endpoint_detection") val enableEndpointDetection: Boolean = true,
+        // the SERVER turn signal driving the engine's server-turn allocation (the 2026-07-31
+        // inversion). Nullable: null OMITS the field (explicitNulls=false) — the reduced-config
+        // cascade level after the live server rejected the full config.
+        @SerialName("enable_endpoint_detection") val enableEndpointDetection: Boolean? = true,
         @SerialName("language_hints") val languageHints: List<String>? = null,
     ) {
         override fun toString(): String = "Config(api_key=<redacted>, model=$model)"
@@ -142,6 +154,20 @@ class SonioxRealtimeProtocol : RealtimeProtocol {
     private var lastPreview = ""          // last computed preview (finals + current non-finals)
     private var sessionExpiredRetries = 0 // 403 -> rotate once per session, then fatal
 
+    /**
+     * The tolerant-config cascade (the OpenAI beta-header pattern, applied to Soniox's config
+     * message). Live evidence 2026-07-31: the server answers 400 to the FULL config even though
+     * `enable_endpoint_detection` is documented — docs and server disagree, and the server wins.
+     * On the FIRST pre-token 400 we flip to the REDUCED config (field omitted) and rotate once,
+     * silently. Reduced mode still streams deltas word-for-word; without `<end>` boundaries the
+     * open turn resolves at session stop (the existing stop-path drain), a degraded-but-working
+     * cadence. A 400 on the reduced config latches MODEL_UNAVAILABLE — visible, never silent.
+     * Once flipped, reduced sticks for the protocol's lifetime. [tokensSeen] distinguishes a
+     * config rejection (pre-token) from a mid-session 400 (left benign, forward-compatible).
+     */
+    @Volatile private var reducedConfig = false
+    @Volatile private var tokensSeen = false
+
     private class Completion(val id: String, val text: String)
 
     override fun upgradeHeaders(apiKey: String): List<Pair<String, String>> = emptyList() // key rides config
@@ -161,7 +187,8 @@ class SonioxRealtimeProtocol : RealtimeProtocol {
             finals.setLength(0)
             lastPreview = ""
         }
-        return listOf(Frame.Text(SonioxEvents.config(apiKey, language)))
+        tokensSeen = false
+        return listOf(Frame.Text(SonioxEvents.config(apiKey, language, includeEndpointDetection = !reducedConfig)))
     }
 
     override fun onAppend(pcm16k: ByteArray): Boolean =
@@ -173,6 +200,7 @@ class SonioxRealtimeProtocol : RealtimeProtocol {
     override fun onText(text: String) {
         val r = SonioxEvents.parse(text) ?: return
         r.errorCode?.let { handleError(it, r.errorLen); return }
+        if (r.tokens.isNotEmpty()) tokensSeen = true
 
         var preview = ""
         val boundaries = ArrayList<Completion>() // built under gate, fired outside it (deadlock discipline)
@@ -217,7 +245,21 @@ class SonioxRealtimeProtocol : RealtimeProtocol {
                 control.rotate()                                        // …then reopen under the ceiling
             }
             429, in 500..599 -> Unit // transient: the socket drop/close drives reconnect (existing path)
-            else -> Unit             // 400/408 and unknowns: benign, forward-compatible
+            400 -> when {
+                // Pre-token 400 = the server rejected our CONFIG (live-proven 2026-07-31 against
+                // the documented enable_endpoint_detection). One silent cascade to the reduced
+                // config; a second pre-token 400 is believed and latches VISIBLY — a config the
+                // server rejects cannot self-heal, and silent degradation is the failure mode
+                // this whole codebase exists to prevent.
+                !tokensSeen && !reducedConfig -> {
+                    reducedConfig = true
+                    android.util.Log.w(TAG, "soniox config rejected -> reduced config, rotating")
+                    control.rotate()
+                }
+                !tokensSeen -> sink.onFatal(FatalKind.MODEL_UNAVAILABLE, code)
+                else -> Unit // mid-session 400: unknown cause on a working stream — leave it alone
+            }
+            else -> Unit             // 408 and unknowns: benign, forward-compatible
         }
     }
 
@@ -248,6 +290,7 @@ class SonioxRealtimeProtocol : RealtimeProtocol {
     }
 
     companion object {
+        private const val TAG = "WE-DIAG"
         const val ENDPOINT = "wss://stt-rt.soniox.com/transcribe-websocket"
 
         /** The server's endpoint-detection boundary token; always final, once per segment. Never injected. */

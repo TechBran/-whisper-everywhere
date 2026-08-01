@@ -119,8 +119,17 @@ object RealtimeEvents {
         val rate: Int = 24000,
     )
 
+    /**
+     * gpt-transcribe, NOT gpt-live-transcribe — the live server proved the difference
+     * (2026-07-31, on-device): gpt-live-transcribe is the continuous/turn-free streaming model
+     * and REJECTS `turn_detection: server_vad` with an in-band `invalid_value`, silently
+     * degrading every session to the local fallback. gpt-transcribe is the turn-based realtime
+     * model ("transcription after committed turns") — server_vad cuts turns, items are created
+     * mid-speech, deltas stream per item: exactly the server-driven engine contract. Same alias
+     * as the batch path, and ~4x cheaper than gpt-live-transcribe ($0.0045 vs $0.017/min).
+     */
     @Serializable
-    private data class Transcription(val model: String = "gpt-live-transcribe")
+    private data class Transcription(val model: String = "gpt-transcribe")
 
     @Serializable
     private data class AppendEvent(

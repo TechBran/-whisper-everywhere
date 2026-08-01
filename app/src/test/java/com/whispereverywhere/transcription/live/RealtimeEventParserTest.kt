@@ -70,14 +70,16 @@ class RealtimeEventParserTest {
     }
 
     @Test fun outbound_session_update_shape_is_exact() {
-        // Pinned VERBATIM against live docs: pcm @ 24000, model gpt-live-transcribe, and — the
-        // 2026-07-31 inversion — turn_detection:server_vad so the SERVER cuts turns and creates the
-        // item mid-speech, streaming transcription deltas AS SPOKEN. (Was null, which created no item
-        // until our client commit — the field bug this wave fixes.)
+        // Pinned VERBATIM: pcm @ 24000, turn_detection:server_vad (the 2026-07-31 inversion), and
+        // model **gpt-transcribe** — the turn-based realtime model. The live server proved
+        // (on-device 2026-07-31) that gpt-live-transcribe is the continuous/turn-free model and
+        // REJECTS server_vad with an in-band `invalid_value`, silently degrading every session to
+        // the local fallback. gpt-transcribe accepts server_vad, creates items mid-speech, and
+        // streams deltas per item — and is ~4x cheaper ($0.0045 vs $0.017/min).
         val expected =
             """{"type":"session.update","session":{"type":"transcription","audio":{"input":""" +
                 """{"format":{"type":"audio/pcm","rate":24000},"transcription":""" +
-                """{"model":"gpt-live-transcribe"},"turn_detection":""" +
+                """{"model":"gpt-transcribe"},"turn_detection":""" +
                 """{"type":"server_vad","threshold":0.5,"prefix_padding_ms":300,"silence_duration_ms":500}}}}}"""
         assertEquals(expected, RealtimeEvents.sessionUpdate())
     }

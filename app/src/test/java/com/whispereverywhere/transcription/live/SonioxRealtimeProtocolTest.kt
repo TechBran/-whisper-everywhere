@@ -68,6 +68,53 @@ class SonioxRealtimeProtocolTest {
         assertFalse(protocol().tolerant4xxRetry)
     }
 
+    // ---- the tolerant-CONFIG cascade (live server 400'd the documented full config, 2026-07-31) ----
+
+    @Test fun a_pre_token_400_cascades_once_to_the_reduced_config_then_latches_visibly() {
+        val p = protocol()
+        p.bootstrap("sx-secret", null)
+
+        // The live server rejects the FULL config before any tokens: one SILENT rotate, no fatal.
+        p.onText("""{"error_code":400,"error_message":"bad config"}""")
+        assertEquals("one silent rotation", 1, control.rotates)
+        assertTrue("no fatal on the first config rejection", sink.fatals.isEmpty())
+
+        // The reopened session's config OMITS enable_endpoint_detection entirely.
+        val reduced = (p.bootstrap("sx-secret", null).single() as Frame.Text).json
+        assertEquals(
+            """{"api_key":"sx-secret","model":"stt-rt-v5","audio_format":"s16le","sample_rate":16000,"num_channels":1}""",
+            reduced,
+        )
+
+        // A second pre-token 400 is believed: VISIBLE latch, never silent degradation.
+        p.onText("""{"error_code":400,"error_message":"still bad"}""")
+        assertEquals(listOf(FatalKind.MODEL_UNAVAILABLE to 400), sink.fatals)
+        assertEquals("no further rotation", 1, control.rotates)
+    }
+
+    @Test fun a_mid_session_400_after_tokens_stays_benign() {
+        // A working stream that hiccups a 400 must not be killed or cascaded — only PRE-token
+        // 400s are config rejections.
+        val p = protocol()
+        p.bootstrap("sx-secret", null)
+        p.onText("""{"tokens":[{"text":"hello","is_final":false}]}""")
+        p.onText("""{"error_code":400,"error_message":"odd"}""")
+        assertEquals(0, control.rotates)
+        assertTrue(sink.fatals.isEmpty())
+    }
+
+    @Test fun reduced_config_sticks_across_reopens() {
+        val p = protocol()
+        p.bootstrap("sx-secret", null)
+        p.onText("""{"error_code":400,"error_message":"bad config"}""")
+        // Every later open (reconnects, rotations) keeps the reduced shape — a server that
+        // rejected the field once will reject it again.
+        repeat(2) {
+            val json = (p.bootstrap("sx-secret", "en").single() as Frame.Text).json
+            assertFalse("endpoint field must stay omitted", json.contains("enable_endpoint_detection"))
+        }
+    }
+
     @Test fun no_reachable_toString_can_render_the_key() {
         // The Config holder is deliberately NOT a data class: a synthesized toString() would
         // render api_key in cleartext, one debug interpolation away from a leak. The wire frame

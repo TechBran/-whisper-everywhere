@@ -412,6 +412,15 @@ class LiveTranscriptionEngine(
             code.contains("billing", true) -> FatalKind.OUT_OF_CREDIT
         code.contains("forbidden", true) || code.contains("permission", true) -> FatalKind.FORBIDDEN
         code.contains("model", true) -> FatalKind.MODEL_UNAVAILABLE
+        // Session-CONFIG rejections (invalid_value, unknown_parameter, invalid_request_error,
+        // missing_required_parameter, invalid_type…). A config the server rejects will be rejected
+        // on every retry — it cannot self-heal, so it must LATCH (one toast, local fallback for the
+        // session) rather than fall through to null. Proven on-device 2026-07-31: an unmapped
+        // `invalid_value` left the whole session silently degrading turn-by-turn to local with the
+        // user none the wiser — the exact silent-degradation failure the latch toast exists for.
+        code.contains("invalid", true) || code.contains("unknown_parameter", true) ||
+            code.contains("missing", true) || code.contains("unsupported", true) ->
+            FatalKind.MODEL_UNAVAILABLE
         else -> null
     }
 

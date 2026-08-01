@@ -254,7 +254,7 @@ class PreferencesManager(private val context: Context) {
      * true while on Gemini (the one provider with no client-usable realtime path) is inert (see
      * decideEngineChoice / isRealtimeStt). Same mic audio, same provider, same v3 disclosure as
      * batch; the ONLY user-visible change is a new transport and a higher, per-provider cost tier
-     * (about $0.017/min OpenAI, $0.007/min ElevenLabs, $0.002/min Soniox), surfaced on the selector
+     * (about $0.0045/min OpenAI gpt-transcribe, $0.007/min ElevenLabs, $0.002/min Soniox), surfaced on the selector
      * row itself.
      */
     private val _sttLiveMode = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE, false))

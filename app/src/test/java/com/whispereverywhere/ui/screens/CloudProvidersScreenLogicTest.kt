@@ -426,7 +426,7 @@ class CloudProvidersScreenLogicTest {
     }
 
     @Test fun live_mode_label_surfaces_the_price_where_the_mode_is_chosen() {
-        assertTrue(liveModeLabel(ProviderId.OPENAI), liveModeLabel(ProviderId.OPENAI).contains("\$0.017/min"))
+        assertTrue(liveModeLabel(ProviderId.OPENAI), liveModeLabel(ProviderId.OPENAI).contains("\$0.0045/min"))
         assertTrue(
             liveModeLabel(ProviderId.ELEVENLABS),
             liveModeLabel(ProviderId.ELEVENLABS).contains("\$0.007/min"),

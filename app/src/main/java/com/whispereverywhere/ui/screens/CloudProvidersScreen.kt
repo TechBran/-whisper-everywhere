@@ -221,7 +221,7 @@ internal fun liveModeRowVisible(
  */
 internal fun liveModeLabel(providerId: ProviderId): String {
     val price = when (providerId) {
-        ProviderId.OPENAI -> "about \$0.017/min"
+        ProviderId.OPENAI -> "about \$0.0045/min"
         ProviderId.ELEVENLABS -> "about \$0.007/min"
         ProviderId.SONIOX -> "about \$0.002/min"
         ProviderId.GEMINI -> error("Gemini has no live row — not streaming-capable")
