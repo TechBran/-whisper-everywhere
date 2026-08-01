@@ -34,12 +34,12 @@ class ModeDashboardLogicTest {
         assertEquals("OpenAI", transcriptionEngineChip(engineDisplayName = "OpenAI", localModelLabel = "Eco"))
 
     @Test fun dictation_word_for_word_appends_only_for_cloud() {
-        assertEquals("OpenAI · word-for-word", dictationChip("OpenAI", null, liveMode = true))
+        assertEquals("OpenAI · real-time streaming", dictationChip("OpenAI", null, liveMode = true))
         // dictationChip is provider-generic (off engineDisplayName), so ElevenLabs/Soniox render
         // the same suffix with no special-casing — the realtime-all-providers widening needs no
         // edit here, only in dictationLiveActive (below), which decides WHEN liveMode is true.
-        assertEquals("ElevenLabs · word-for-word", dictationChip("ElevenLabs", null, liveMode = true))
-        assertEquals("Soniox · word-for-word", dictationChip("Soniox", null, liveMode = true))
+        assertEquals("ElevenLabs · real-time streaming", dictationChip("ElevenLabs", null, liveMode = true))
+        assertEquals("Soniox · real-time streaming", dictationChip("Soniox", null, liveMode = true))
         // liveMode can never be true on-device (liveModeRowVisible gates it to a selected
         // streaming-capable provider); the guard proves it never leaves a dangling suffix on the
         // on-device chip.
@@ -62,7 +62,7 @@ class ModeDashboardLogicTest {
     }
     @Test fun dictation_chip_no_word_for_word_on_stale_live_after_switch_to_gemini() {
         // Repro: select OpenAI, enable word-for-word, switch engine to Gemini. sttLiveMode stays true
-        // but is inert (Gemini runs batch). The chip must read "Gemini", never "Gemini · word-for-word".
+        // but is inert (Gemini runs batch). The chip must read "Gemini", never "Gemini · real-time streaming".
         val live = dictationLiveActive("GEMINI", sttLiveMode = true)
         assertEquals("Gemini", dictationChip("Gemini", null, live))
     }

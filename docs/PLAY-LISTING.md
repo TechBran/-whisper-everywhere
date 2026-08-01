@@ -114,7 +114,7 @@ decreasing isn't. versionCode 72 (3.2.0) — Play only requires higher-than-last
 > **Why this draft exists:** 3.3.0 turns the app into a multi-provider product. It adds optional
 > cloud transcription across FOUR providers the user keys themselves (OpenAI, Google Gemini,
 > ElevenLabs, and Soniox — a multilingual specialist), optional cloud read-aloud voices chosen from
-> an in-app picker, batch transcription of audio files the user already has, and a word-for-word
+> an in-app picker, batch transcription of audio files the user already has, and a real-time streaming
 > live-typing mode (OpenAI). With any of those enabled the Data Safety form flips to voice
 > recordings Collected=Yes / Shared=Yes / Optional AND adds "text you select for read-aloud"
 > Collected=Yes / Shared=Yes / Optional (see PLAY-DECLARATIONS.md §5 and the §7 Console checklist).
@@ -178,7 +178,7 @@ and switch anytime; your audio then goes only to the provider you chose, under y
 **Adds a pillar block (bringing back BYOK was the #1 review request after it was removed):**
 <b>🔑 Optional: bring your own cloud</b>
 Add your own key for OpenAI, Google Gemini, ElevenLabs, or Soniox — a multilingual specialist — and
-choose cloud transcription per session, including a word-for-word live-typing mode on OpenAI. Prefer
+choose cloud transcription per session, including a real-time streaming live-typing mode on OpenAI. Prefer
 a cloud voice for read-aloud? Pick one from the built-in voice picker. You can also transcribe audio
 files you already have. Your keys stay encrypted on your phone, your audio and selected text go only
 to the provider you chose, and the on-device engine takes over automatically if the network drops.
@@ -192,10 +192,10 @@ Remove the key and it all stops — instantly.
 
 > Cloud is back — on your terms. Bring your own key for OpenAI, Google Gemini, ElevenLabs, or Soniox
 > (strong on other languages) and pick cloud transcription per session; on-device stays the default
-> and the automatic fallback. New: transcribe audio files you already have, word-for-word live typing
+> and the automatic fallback. New: transcribe audio files you already have, real-time streaming live typing
 > on OpenAI, and optional cloud read-aloud voices with a picker. Audio and read-aloud text go only to
 > the provider you choose; audio from other apps never leaves your phone. Keys are stored encrypted.
 
 (495 chars. No speed claims: measured on-device dictation is not beaten by cloud on latency, so the
 cloud pitch is accuracy and language coverage — never speed. Soniox is positioned on multilingual
-breadth, not throughput; the live mode is "word-for-word as you speak," not "faster.")
+breadth, not throughput; the live mode is "real-time streaming as you speak," not "faster.")

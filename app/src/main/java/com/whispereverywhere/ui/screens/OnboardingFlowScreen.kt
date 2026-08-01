@@ -374,7 +374,7 @@ private fun EngineRow(
 @Composable
 private fun CloudStep(onCloudSetup: () -> Unit, onFinish: () -> Unit) {
     Text(
-        "Want word-for-word cloud transcription or cloud voices? Add your own provider keys now — " +
+        "Want real-time streaming transcription or cloud voices? Add your own provider keys now — " +
             "any or all of OpenAI, Gemini, ElevenLabs, and Soniox. You can always do this later " +
             "in Engines & voices.",
         style = MaterialTheme.typography.bodyMedium,

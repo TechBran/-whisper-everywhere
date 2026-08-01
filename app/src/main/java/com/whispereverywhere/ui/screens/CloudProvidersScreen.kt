@@ -214,7 +214,7 @@ internal fun liveModeRowVisible(
  * The live-mode row's label for [providerId]: the mode name + that provider's "about" price —
  * surfaced where the mode is chosen, the ONLY new user-facing cost disclosure this mode adds.
  * Deliberately makes NO speed claim for ANY provider — not even Soniox, the cheapest of the three:
- * "word-for-word", never "faster"/"fastest". Measured on-device transcription is a tie at best
+ * "real-time streaming", never "faster"/"fastest". Measured on-device transcription is a tie at best
  * against OpenAI, so a speed claim would be a lie. Prices pinned 2026-07-31. [providerId] must be
  * streaming-capable (OpenAI/ElevenLabs/Soniox); Gemini never reaches this — [liveModeRowVisible]
  * never lights for it.
@@ -226,7 +226,7 @@ internal fun liveModeLabel(providerId: ProviderId): String {
         ProviderId.SONIOX -> "about \$0.002/min"
         ProviderId.GEMINI -> error("Gemini has no live row — not streaming-capable")
     }
-    return "Cloud word-for-word (${ProviderCatalog.byId(providerId).displayName}) · $price"
+    return "Real-time streaming (${ProviderCatalog.byId(providerId).displayName}) · $price"
 }
 
 /**
@@ -235,7 +235,7 @@ internal fun liveModeLabel(providerId: ProviderId): String {
  * so the copy states that plainly ("billed per minute while the mic is open") — no speed claim.
  */
 internal fun liveModeCaption(): String =
-    "Transcribes word-for-word as you speak — billed per minute while the mic is open."
+    "Streams your transcription in real time as you speak — billed per minute while the mic is open."
 
 /**
  * Body of the one-time cloud disclosure dialog (Release C2a Task 7; extended Task 7 of the cloud

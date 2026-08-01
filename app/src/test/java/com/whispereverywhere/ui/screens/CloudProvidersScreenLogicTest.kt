@@ -447,7 +447,7 @@ class CloudProvidersScreenLogicTest {
         // three, but the copy never says "fastest"/"cheapest" either.
         listOf(ProviderId.OPENAI, ProviderId.ELEVENLABS, ProviderId.SONIOX).forEach { id ->
             val text = liveModeLabel(id) + " " + liveModeCaption()
-            assertTrue(text, text.contains("word-for-word", ignoreCase = true))
+            assertTrue(text, text.contains("real-time streaming", ignoreCase = true))
             listOf("faster", "quicker", "speed", "instant", "quick", "fastest", "cheapest").forEach { word ->
                 assertFalse(text, text.contains(word, ignoreCase = true))
             }

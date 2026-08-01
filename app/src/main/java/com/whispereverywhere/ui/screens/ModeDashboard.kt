@@ -52,8 +52,8 @@ internal fun transcriptionEngineChip(engineDisplayName: String?, localModelLabel
 /**
  * The Dictation card's chip. Identical to [transcriptionEngineChip] except that when live
  * word-for-word is active — only possible with a realtime-capable provider selected (see
- * [liveModeRowVisible]) — it appends " · word-for-word". Batch never streams, so the
- * Transcribe-file card uses [transcriptionEngineChip] directly. "word-for-word" is a MODE name,
+ * [liveModeRowVisible]) — it appends " · real-time streaming". Batch never streams, so the
+ * Transcribe-file card uses [transcriptionEngineChip] directly. "real-time streaming" is a MODE name (owner rename 2026-08-01, from "word-for-word"),
  * never "faster": measured on-device is a tie at best, so a speed claim would be a lie. The
  * `engineDisplayName != null` guard means an (impossible) on-device liveMode never leaves a
  * dangling suffix. Already provider-generic (off `engineDisplayName`), so "ElevenLabs ·
@@ -67,7 +67,7 @@ internal fun transcriptionEngineChip(engineDisplayName: String?, localModelLabel
  */
 internal fun dictationChip(engineDisplayName: String?, localModelLabel: String?, liveMode: Boolean): String {
     val base = transcriptionEngineChip(engineDisplayName, localModelLabel)
-    return if (liveMode && engineDisplayName != null) "$base · word-for-word" else base
+    return if (liveMode && engineDisplayName != null) "$base · real-time streaming" else base
 }
 
 /**
