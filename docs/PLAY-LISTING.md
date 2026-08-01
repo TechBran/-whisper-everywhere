@@ -109,7 +109,60 @@ decreasing isn't. versionCode 72 (3.2.0) — Play only requires higher-than-last
 
 ---
 
-# DRAFT — 3.3.0 listing revisions (NOT LIVE — owner decision required)
+# FINAL — 3.3.0 listing copy (owner-directed 2026-08-01, Variant B frame)
+
+Set in the Console the same day, in the SAME rollout as the 73 AAB. The device-audio pillar and
+privacy bullets are the post-policy-flip HONEST versions — the draft variants below still carried
+"captured audio never leaves your phone, in any configuration", which the 2026-08-01 decision made
+false; do not resurrect them.
+
+## Short description (72 chars)
+
+> Voice typing, transcription & read-aloud — on-device, or your own cloud.
+
+## Full description (3907 chars)
+
+Your voice, your phone, your words. Whisper Everywhere types what you say into any app, transcribes what your phone is playing, and reads anything on your screen aloud. All of it happens on your device by default — no account, no subscription, works in airplane mode. Want the big cloud models or deeper language coverage? Bring your own key and switch anytime; your audio then goes only to the provider you chose, under your own account.
+
+<b>🎙️ Speak into any app</b>
+A floating bubble follows you everywhere. Tap it and talk — your words are typed straight into whatever field you're in: messages, email, notes, search bars, any app. No switching keyboards, no special phone required. Recognition runs on YOUR phone's graphics chip using OpenAI's Whisper models, so it's fast, accurate, and completely private.
+
+<b>🔑 Optional: bring your own cloud</b>
+Add your own key for OpenAI, Google Gemini, ElevenLabs, or Soniox — a multilingual specialist — and cloud transcription streams your words in real time as you speak. Prefer a cloud voice for read-aloud? Pick one from the built-in voice picker. Your keys stay encrypted on your phone, your audio and selected text go only to the provider you chose, and the on-device engine takes over automatically if the provider fails. Remove the key and it all stops — instantly.
+
+<b>📺 Transcribe what your phone is playing</b>
+A video, a podcast, a voice note in another app — press the bubble while media plays and Whisper Everywhere captures the audio stream directly, microphone off. No room noise, no holding your phone up to a speaker. Watch the transcript build live, then get the whole thing on your clipboard — or drop it straight into any text field. Transcribed on-device by default — or by the cloud provider you selected, exactly like your dictation — and the screen share ends itself when the session is done.
+
+<b>🎧 Transcribe audio files you already have</b>
+Pick any recording on your phone and get a full transcript. Choose the engine per file — on-device is always free, and cloud prices are shown up front before anything starts.
+
+<b>🔊 Have anything read aloud</b>
+Highlight text and the bubble becomes a speaker — or copy text anywhere and the bubble appears with one; tap it to listen. 53 natural voices speak on your device, or choose a cloud voice from the picker. Pause with a tap, scrub back and forward, pick your voice and speed. On the on-device voice there's no per-word pricing and no reading limits. Even the built-in how-to guide can read itself to you.
+
+<b>🔒 Private by architecture, not by promise</b>
+• Speech recognition, voices, transcription: on-device by default
+• Your audio — dictated, played, or a file you pick — leaves your phone ONLY if you add your own provider key and select that provider; it's open source, so you can verify it
+• No account, no ads, no analytics, no tracking
+• Internet used for a one-time model download — and nothing else unless you turn on a cloud provider
+
+<b>⚡ Built for speed</b>
+• GPU-accelerated Whisper on Snapdragon (Adreno) — with a fast CPU path for every other phone
+• Model tiers from light-and-quick to maximum accuracy, including multilingual
+• Voice activity detection: silence costs nothing
+• Guided first-run setup — permissions, models, and keys in one pass
+
+<b>📋 Everything stays yours</b>
+• Rolling transcription history on your device — copy, share, delete
+• One-time model download, yours offline forever
+• Works on any Android 8.0+ phone, foldables included
+
+Whisper Everywhere is free software (GPLv3). Source code: github.com/TechBran/-whisper-everywhere
+
+Permissions, plainly: microphone (dictation you start), display over apps (the bubble), accessibility service (typing into fields and reading your selection aloud — used only for those actions, disclosed in-app), media capture (only when you transcribe playing media), notification access (detecting when media plays).
+
+---
+
+# SUPERSEDED DRAFT — 3.3.0 listing revisions (kept for history)
 
 > **Why this draft exists:** 3.3.0 turns the app into a multi-provider product. It adds optional
 > cloud transcription across FOUR providers the user keys themselves (OpenAI, Google Gemini,
