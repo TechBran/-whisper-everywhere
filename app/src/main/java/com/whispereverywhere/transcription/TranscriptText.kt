@@ -21,12 +21,22 @@ object TranscriptText {
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * Markdown code-fence marks (``` runs, optionally with an info string like ```text). GPT-based
+     * transcription models (gpt-transcribe live/batch) sometimes wrap their output in markdown
+     * fencing — observed on-device 2026-07-31 with fence marks landing verbatim in the user's
+     * dictated text. Nobody SPEAKS a code fence: any 3+-backtick run in a transcript is model
+     * chrome, not content. Single/double backticks are left alone (conceivably legitimate).
+     */
+    private val CODE_FENCE = Regex("```+[a-zA-Z0-9_-]*")
+
     private val WHITESPACE = Regex("\\s+")
 
     /** Returns [raw] with whisper non-speech markers removed and whitespace collapsed/trimmed. */
     fun clean(raw: String): String {
         var s = SQUARE.replace(raw, " ")
         s = PAREN_NONSPEECH.replace(s, " ")
+        s = CODE_FENCE.replace(s, " ")
         return WHITESPACE.replace(s, " ").trim()
     }
 }

@@ -248,9 +248,20 @@ class RealtimeTransport(
                 if (closed) return
                 reconnectAttempts = 0
                 this@RealtimeTransport.webSocket = webSocket
+                // Bootstrap INSIDE the publish lock, atomically with the socket becoming visible.
+                // [sendAppend] synchronizes on the SAME lock, so no audio frame can interleave
+                // between publication and the protocol's first message(s). The old shape published
+                // the socket, released the lock, THEN bootstrapped — and the engine's audio pump,
+                // already running, could slip a binary frame out first. Proven on-device
+                // 2026-07-31: Soniox strictly 400s any pre-config frame (config must be message
+                // #1), while ElevenLabs and OpenAI tolerate the same race — the per-provider skew
+                // that made a transport ordering bug masquerade as a config-schema bug through TWO
+                // fix rounds. (The PC probe with a fake key was the tell: every config variant
+                // passed schema and drew a clean 401, so the rejected 'config' was never the
+                // config.) send() is a non-blocking enqueue; holding the lock across it is safe,
+                // and control.send's synchronized(lock) is reentrant from this thread.
+                protocol.bootstrap(apiKey, language).forEach { control.send(it) }
             }
-            // Bootstrap exactly once per open, via the protocol (OpenAI: session.update, once).
-            protocol.bootstrap(apiKey, language).forEach { control.send(it) }
             listener.onConnected()
         }
 

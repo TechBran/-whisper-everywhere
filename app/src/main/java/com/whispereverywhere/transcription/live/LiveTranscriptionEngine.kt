@@ -385,10 +385,15 @@ class LiveTranscriptionEngine(
     }
 
     private fun outcomeFor(transcript: String): SegmentOutcome {
-        val trimmed = transcript.trim()
+        // Live was the ONE completion path not routed through TranscriptText.clean — batch and
+        // segment cloud both clean. Found on-device 2026-07-31: gpt-transcribe (a GPT-family
+        // model) sometimes wraps live output in markdown code fences, which landed verbatim in
+        // the user's field. clean() strips fences, bracketed non-speech markers, and collapses
+        // whitespace — the same contract every other injected transcript already gets.
+        val cleaned = com.whispereverywhere.transcription.TranscriptText.clean(transcript)
         // A committed live turn had voiced audio (client VAD cut it), so an empty transcript is a
         // lost sentence the user must see — EmptyUnexpected, which the fallback re-runs locally.
-        return if (trimmed.isEmpty()) SegmentOutcome.EmptyUnexpected else SegmentOutcome.Text(trimmed)
+        return if (cleaned.isEmpty()) SegmentOutcome.EmptyUnexpected else SegmentOutcome.Text(cleaned)
     }
 
     private fun latchFatal(kind: FatalKind) {
