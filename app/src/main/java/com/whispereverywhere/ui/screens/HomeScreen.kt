@@ -291,6 +291,13 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // The how-to guide (owner 2026-08-01): comprehensive, DIRECTLY below the stats, with
+            // read-aloud pinned to it — the app reading its own manual is the fastest demo of
+            // read-aloud there is. Collapsed by default so the dashboard stays a dashboard.
+            HowToGuideCard()
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Setup guidance, directly under the status area. Two-path banner when nothing is
             // configured; an honest one-liner when exactly one half is; nothing once both are.
             when (setupBannerState(hasModel = hasSpeechModel, hasAnyKey = hasAnyKey)) {
@@ -401,6 +408,74 @@ fun HomeScreen(
  * One mode card in the dashboard: an accent icon, the mode name, a live status chip built by the
  * pure formatters in ModeDashboard.kt, and a chevron. Taps into that mode's settings.
  */
+@Composable
+private fun HowToGuideCard() {
+    val context = LocalContext.current
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Filled.HelpOutline, contentDescription = null, tint = Primary)
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "How to use Whisper Everywhere",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                // Read-aloud, pinned to the guide (owner: "more interactive") — tap to hear the
+                // whole guide through whichever voice is configured; tapping again restarts, and
+                // the bubble's stop/scrubber controls work on it like any read.
+                IconButton(onClick = {
+                    com.whispereverywhere.tts.TtsController.stop()
+                    com.whispereverywhere.tts.TtsController.speakFromTrigger(
+                        context, com.whispereverywhere.ui.HowToGuide.plainText()
+                    )
+                }) {
+                    Icon(
+                        Icons.Filled.VolumeUp,
+                        contentDescription = "Read this guide aloud",
+                        tint = Primary
+                    )
+                }
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (expanded) {
+                com.whispereverywhere.ui.HowToGuide.sections.forEach { section ->
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = section.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = section.body,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
 /**
  * One absent on-device engine: what is missing, why it matters, and a Download button that fixes
  * it in place. While the shared setup ViewModel reports Working the button yields to a progress
