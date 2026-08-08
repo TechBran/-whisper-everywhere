@@ -147,4 +147,34 @@ class TextJoinTest {
             assertTrue(boundary >= 0)
         }
     }
+
+    // --- accumulation equivalence (W2 final-only commit) ------------------------
+    // The accumulating window joins segments ONE AT A TIME as they resolve; the final delivery
+    // reads the whole thing at once. These pin that the two shapes produce the same string —
+    // N segments folded through join() == assemble() of the whole list — so final-only commit
+    // delivers character-for-character what per-segment injection used to type.
+
+    private fun incrementalJoin(segments: List<String>): String =
+        segments.fold("") { acc, seg ->
+            val n = TextJoin.normalize(seg)
+            if (n.isEmpty()) acc else TextJoin.join(acc, n)
+        }
+
+    @Test fun incremental_join_equals_assemble_at_once() {
+        val segments = listOf("Hello world", "this is a test", ".", "Right", "?", "OK then")
+        assertEquals(TextJoin.assemble(segments), incrementalJoin(segments))
+    }
+
+    @Test fun incremental_join_equals_assemble_with_blanks_and_cjk() {
+        val segments = listOf("你好", "世界", "  ", "hello", "", "world", "!")
+        assertEquals(TextJoin.assemble(segments), incrementalJoin(segments))
+    }
+
+    @Test fun accumulation_equivalence_holds_across_generated_segment_lists() {
+        val shapes = listOf("word", "two words", ".", ",", ")", "(", "你好", " padded ", "a")
+        for (a in shapes) for (b in shapes) for (c in shapes) {
+            val segs = listOf(a, b, c)
+            assertEquals("segments=$segs", TextJoin.assemble(segs), incrementalJoin(segs))
+        }
+    }
 }

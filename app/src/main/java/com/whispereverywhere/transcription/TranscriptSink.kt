@@ -27,10 +27,18 @@ class TranscriptSink(
     fun append(segment: String) {
         val s = TextJoin.normalize(segment)
         if (s.isEmpty()) return
+        // TextJoin governs the join (W2 final-only commit): this file IS the transcript the
+        // final delivery ships, so 'Hello'+'.' must read 'Hello.' — exactly what sequential
+        // per-segment injection used to produce — and a CJK boundary must not grow a stray
+        // space. [tail]'s last char is always the last char written to the file (truncation
+        // only eats the FRONT), so it is the left side of every boundary decision.
+        if (tail.isNotEmpty() && TextJoin.needsSpace(tail, s)) {
+            writer.write(" ")
+            tail.append(' ')
+        }
         writer.write(s)
-        writer.write(" ")
         writer.flush()
-        tail.append(s).append(' ')
+        tail.append(s)
         if (tail.length > previewCapChars) {
             tail.delete(0, tail.length - previewCapChars)
         }
