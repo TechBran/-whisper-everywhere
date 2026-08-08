@@ -248,3 +248,13 @@ Remove the key and it all stops — instantly.
 (481 chars. The 3.2-era 'audio from other apps never leaves your phone' line is GONE — false since the 2026-08-01 device-audio policy flip; the honest scope is 'only to the provider you choose, only when you choose one'. No speed claims: measured on-device dictation is not beaten by cloud on latency, so the
 cloud pitch is accuracy and language coverage — never speed. Soniox is positioned on multilingual
 breadth, not throughput; the live mode is "real-time streaming as you speak," not "faster.")
+
+## Release notes — 3.4.0 (within 500 chars)
+
+> The two most-requested changes from your reviews. The transcript window is now resizable — drag the double-arrow handle at its top right; the size sticks, and press-and-hold resets it. Dictation now types into your field once, complete, when you stop — your words build live in the bubble window as you speak, nothing lands half-finished, and your clipboard stays yours. Also: the bubble always stays a microphone (read-aloud lives on the speaker button), and the window now stays fully on screen.
+
+(Credits the Play review that asked for resize + final-only commit, per the 3.4.0 spec ship notes.
+Owns the biggest behavior change existing users will feel — live-cloud turns no longer type into the
+field word-by-word; "your words build live in the bubble window" is the reassurance, "once, complete,
+when you stop" is the pitch. No speed claims, no absolute privacy claims — nothing here touches the
+post-flip rules. Reply to the requesting review after rollout reaches them.)
