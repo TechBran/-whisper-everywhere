@@ -872,18 +872,21 @@ class FloatingBubbleService : Service(),
         val displayMetrics = resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
-        val bubbleSize = (56 * displayMetrics.density).toInt()
-        val padding = (16 * displayMetrics.density).toInt()
-
         // The REMEMBERED spot, exactly like the text-field pop-up (owner 2026-08-01: the bubble
         // appears "right where I placed it last" — the old bottom-right media default was the
-        // final teleporter left after the drag snap was removed). Pinned still wins.
-        var targetX = (app.preferencesManager.bubblePositionX * screenWidth).toInt()
-            .coerceIn(0, screenWidth - bubbleSize)
-        var targetY = (app.preferencesManager.bubblePositionY * screenHeight).toInt()
-            .coerceIn(padding, screenHeight - bubbleSize - padding - getNavigationBarHeight())
+        // final teleporter left after the drag snap was removed). Pinned still wins. Clamped
+        // through THE clamp against the window's REAL size (W3), not the old 56dp pill guess.
+        val (winW, winH) = currentWindowSize()
+        val restored = clampToBounds(
+            (app.preferencesManager.bubblePositionX * screenWidth).toInt(),
+            (app.preferencesManager.bubblePositionY * screenHeight).toInt(),
+            winW,
+            winH,
+        )
+        var targetX = restored.first
+        var targetY = restored.second
         if (isOverlayPinned) {
-            val pinned = savedPinnedPosition(bubbleSize)
+            val pinned = savedPinnedPosition()
             targetX = pinned.first
             targetY = pinned.second
         }
@@ -934,21 +937,25 @@ class FloatingBubbleService : Service(),
         val displayMetrics = resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
-        val bubbleSize = (56 * displayMetrics.density).toInt()
-        val padding = (16 * displayMetrics.density).toInt()
-
         // The bubble pops up WHERE IT WAS LAST — the user's dragged/remembered spot — never at a
         // field-derived position (owner decision 2026-08-01: "it should just pop up where it
         // popped up last time, or where the user moved the bubble to... a new location can be
         // annoying — users won't know where their bubble's gonna be"). The rect parameter is now
         // context-only (what focused, not where to go); bubblePositionX/Y is already written by
         // every drag, so the spot tracks the user for free. Pinned keeps its own stronger spot.
-        var targetX = (app.preferencesManager.bubblePositionX * screenWidth).toInt()
-            .coerceIn(0, screenWidth - bubbleSize)
-        var targetY = (app.preferencesManager.bubblePositionY * screenHeight).toInt()
-            .coerceIn(padding, screenHeight - bubbleSize - padding)
+        // Clamped through THE clamp against the window's REAL size (W3) — this site used to skip
+        // the navbar term the media site subtracted; the shared clamp ends that disagreement.
+        val (winW, winH) = currentWindowSize()
+        val restored = clampToBounds(
+            (app.preferencesManager.bubblePositionX * screenWidth).toInt(),
+            (app.preferencesManager.bubblePositionY * screenHeight).toInt(),
+            winW,
+            winH,
+        )
+        var targetX = restored.first
+        var targetY = restored.second
         if (isOverlayPinned) {
-            val pinned = savedPinnedPosition(bubbleSize)
+            val pinned = savedPinnedPosition()
             targetX = pinned.first
             targetY = pinned.second
         }
@@ -994,8 +1001,7 @@ class FloatingBubbleService : Service(),
         if (isBubbleVisible) return
         hideAnimator?.cancel()
 
-        val bubbleSize = (56 * resources.displayMetrics.density).toInt()
-        val pos = savedPinnedPosition(bubbleSize)
+        val pos = savedPinnedPosition()
         params.x = pos.first
         params.y = pos.second
         bubbleView.alpha = 0f
@@ -1140,10 +1146,11 @@ class FloatingBubbleService : Service(),
         val displayMetrics = resources.displayMetrics
         val rawX = (app.preferencesManager.bubblePositionX * displayMetrics.widthPixels).toInt()
         val rawY = (app.preferencesManager.bubblePositionY * displayMetrics.heightPixels).toInt()
-        // Use a reasonable bubble size estimate for clamping before the view is measured.
-        // The actual measured size is used in onConfigurationChanged after layout.
-        val estimatedSize = (64 * displayMetrics.density).toInt()
-        val clamped = clampToBounds(rawX, rawY, estimatedSize, estimatedSize)
+        // Size-aware estimate for clamping before the view is measured (the preview is GONE at
+        // inflate, so this resolves to the same 64dp pill estimate as before); the measured size
+        // takes over at the next reclamp (config change / preview show).
+        val (estW, estH) = currentWindowSize()
+        val clamped = clampToBounds(rawX, rawY, estW, estH)
         params.x = clamped.first
         params.y = clamped.second
 
@@ -1395,28 +1402,36 @@ class FloatingBubbleService : Service(),
     // ========== Drift hardening helpers ==========
 
     /**
-     * Clamp (x, y) so the bubble view (viewW x viewH) stays fully on screen.
-     * Falls back gracefully when screen size is not yet determined.
+     * THE clamp: (x, y) coerced so a viewW x viewH window stays fully on the USABLE screen.
+     * The navbar term lives HERE now, so every caller agrees on the bottom edge — the two
+     * show-site y-clamps used to disagree on it. Falls back gracefully (0..0) when the screen
+     * size is not yet determined.
      */
     private fun clampToBounds(x: Int, y: Int, viewW: Int, viewH: Int): Pair<Int, Int> {
         val dm = resources.displayMetrics
         val maxX = (dm.widthPixels - viewW).coerceAtLeast(0)
-        val maxY = (dm.heightPixels - viewH).coerceAtLeast(0)
+        val maxY = (dm.heightPixels - viewH - getNavigationBarHeight()).coerceAtLeast(0)
         return Pair(x.coerceIn(0, maxX), y.coerceIn(0, maxY))
     }
 
-    /** The user's pinned bubble position from prefs (stored as screen fractions), in px, clamped. */
-    private fun savedPinnedPosition(size: Int): Pair<Int, Int> {
+    /** The user's pinned bubble position from prefs (stored as screen fractions), in px, clamped
+     *  against the window's REAL current size — not the old 56dp pill guess. */
+    private fun savedPinnedPosition(): Pair<Int, Int> {
         val dm = resources.displayMetrics
         val x = (app.preferencesManager.bubblePositionX * dm.widthPixels).toInt()
         val y = (app.preferencesManager.bubblePositionY * dm.heightPixels).toInt()
-        return clampToBounds(x, y, size, size)
+        val (winW, winH) = currentWindowSize()
+        return clampToBounds(x, y, winW, winH)
     }
 
-    /** Re-clamp and persist after a configuration change (rotation / fold). */
+    /**
+     * Re-clamp after a configuration change (rotation / fold). Deliberately does NOT persist:
+     * the saved fractions are written only by user drag-end, resize-end, and pin — a rotation
+     * mid-session must never rewrite the user's spot using transient preview-inflated
+     * dimensions. Restores clamp anyway, so nothing is lost by not writing here.
+     */
     private fun reclampAfterConfigChange() {
-        val viewW = if (bubbleView.width > 0) bubbleView.width else (64 * resources.displayMetrics.density).toInt()
-        val viewH = if (bubbleView.height > 0) bubbleView.height else viewW
+        val (viewW, viewH) = currentWindowSize()
         val clamped = clampToBounds(params.x, params.y, viewW, viewH)
         params.x = clamped.first
         params.y = clamped.second
@@ -1424,13 +1439,6 @@ class FloatingBubbleService : Service(),
             windowManager.updateViewLayout(bubbleView, params)
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-        val dm = resources.displayMetrics
-        if (dm.widthPixels > 0) {
-            app.preferencesManager.bubblePositionX = params.x.toFloat() / dm.widthPixels
-        }
-        if (dm.heightPixels > 0) {
-            app.preferencesManager.bubblePositionY = params.y.toFloat() / dm.heightPixels
         }
     }
 
@@ -1465,10 +1473,14 @@ class FloatingBubbleService : Service(),
                     longPressJob?.cancel()   // Real drag — cancel long-press
                 }
 
-                // When pinned, suppress all drag movement; only taps (and long-press) register
+                // When pinned, suppress all drag movement; only taps (and long-press) register.
+                // Clamped per step against the REAL window size, so a drag can no longer park
+                // the preview-widened window partly off-screen (drag-end persists params as-is).
                 if (!isOverlayPinned && isDragging) {
-                    params.x = (initialX + dx).toInt()
-                    params.y = (initialY + dy).toInt()
+                    val (winW, winH) = currentWindowSize()
+                    val clamped = clampToBounds((initialX + dx).toInt(), (initialY + dy).toInt(), winW, winH)
+                    params.x = clamped.first
+                    params.y = clamped.second
                     windowManager.updateViewLayout(bubbleView, params)
                 }
                 lastAction = event.action
@@ -1972,6 +1984,9 @@ class FloatingBubbleService : Service(),
      */
     private fun showSessionPreview(live: Boolean) {
         applyPreviewSize()
+        // The preview appearing is a geometry change: the window just grew upward/rightward.
+        // Posted so the measure pass has run and currentWindowSize() sees the REAL new dims.
+        bubbleView.post { reclampNow() }
         android.util.Log.i("WE-DIAG", "showSessionPreview: live=$live context=$sessionContext")
         transcriptionEditText.visibility = View.VISIBLE
         transcriptionEditText.text = ""
@@ -2318,6 +2333,9 @@ class FloatingBubbleService : Service(),
         // path — normal drain end, error, start-failure, destroy — brings it down here.
         transcriptionDeltaText.visibility = View.GONE
         transcriptionPreviewContainer.visibility = View.GONE
+        // Geometry change in the other direction (window shrinks back to the pill) — posted so
+        // the re-measure has run. Harmless when nothing moved: reclampNow() no-ops on equality.
+        bubbleView.post { reclampNow() }
         transcriptSink?.close(); transcriptSink = null
         WhisperAccessibilityService.endInjectionSession()
         // Detach the session listener but KEEP the engine + its loaded native context so the next
