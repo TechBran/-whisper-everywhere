@@ -47,7 +47,7 @@ object TtsController {
     fun isVoiceInstalled(context: Context): Boolean =
         TtsModelManager(context.applicationContext).isInstalled()
 
-    /** Warm the model (e.g. when the bubble morphs to a speaker). No-op if not installed. */
+    /** Warm the model (e.g. when a clipboard copy makes a read-aloud likely). No-op if not installed. */
     fun preload(context: Context) {
         engine(context).preload()
     }

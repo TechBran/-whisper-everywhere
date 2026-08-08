@@ -448,6 +448,10 @@ class FloatingBubbleService : Service(),
         serviceScope.launch(Dispatchers.Main) {
             if (currentState != BubbleState.IDLE || isSpeakingNow) return@launch
             if (!com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)) return@launch
+            // Warm the ~2 s voice-model load inside the copy -> lobe-tap think-time (this
+            // preload used to ride the deleted selection morph; the copy that pulses the
+            // speaker lobe below is the new warm signal). No-op if already loaded.
+            com.whispereverywhere.tts.TtsController.preload(this@FloatingBubbleService)
             // Auto pop-up mode with the bubble hidden: a copy is a read-aloud OPPORTUNITY the user
             // cannot take on an invisible bubble (owner gap report 2026-08-01). Summon it at the
             // remembered spot for long enough to tap the pulsing speaker lobe, then leave. The
