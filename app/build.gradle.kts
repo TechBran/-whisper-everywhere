@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 73
-        versionName = "3.3.0"  // multi-provider cloud release: optional user-key STT (OpenAI/Gemini/ElevenLabs/Soniox), cloud read-aloud, batch file transcription, OpenAI live word-for-word
+        versionCode = 74
+        versionName = "3.4.0"  // the Play-review release: resizable transcript window, final-only commit into the field, the bubble is always a mic
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
