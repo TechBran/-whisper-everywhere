@@ -666,6 +666,23 @@ class FloatingBubbleService : Service(),
         stopPlaybackCapturer()
         com.whispereverywhere.audio.MediaProjectionGate.listener = null
         com.whispereverywhere.audio.MediaProjectionGate.clear()
+        // W2 best-effort: a service destroyed mid-session (system kill, mode toggle) still
+        // delivers what it accumulated, through the SAME single-delivery policy as a normal
+        // stop — and it must run BEFORE teardownRealtime, which ends the injection-session
+        // binding the SESSION_BOUND write needs. Deliberately synchronous (serviceScope is
+        // already cancelled, so there is nothing to post to; toasts inside no-op harmlessly)
+        // and failure-swallowed: destroy must never block or throw. finalDelivered (set by a
+        // finalize that already delivered, then IDLE) keeps the write once-only.
+        if (currentState == BubbleState.RECORDING || currentState == BubbleState.FINALIZING) {
+            runCatching {
+                deliverReleasedText(segmentOrderer.flush().text)
+                transcriptSink?.close()
+                val full = transcriptSink?.fullTextFile()?.readText()?.trim() ?: ""
+                // Empty ⇒ either nothing was said or the finalize coroutine already detached the
+                // sink mid-read — either way, never claim finalDelivered with nothing delivered.
+                if (full.isNotEmpty()) deliverFinalTranscript(full)
+            }
+        }
         teardownRealtime()
         // Fully release on service end: free the native context and stop its worker thread
         // (teardownRealtime only detaches the session listener, for reuse).
@@ -1920,6 +1937,18 @@ class FloatingBubbleService : Service(),
                 // connect-time / fatal (e.g. no model installed)
                 serviceScope.launch(Dispatchers.Main) {
                     updateBubbleState(BubbleState.ERROR)
+                    // W2: deliver best-effort BEFORE teardown nulls the sink and ends the
+                    // session binding — a fatal error mid-FINALIZING must not eat the
+                    // transcript. Connect-time fatals have an empty/absent sink, so the
+                    // isNotEmpty gate keeps them delivery-free. finalDelivered keeps this
+                    // once-only against the finalize coroutine, which skips its own delivery
+                    // when it wakes in ERROR state (its FINALIZING guard fails).
+                    runCatching {
+                        deliverReleasedText(segmentOrderer.flush().text)
+                        transcriptSink?.close()
+                        val full = transcriptSink?.fullTextFile()?.readText()?.trim() ?: ""
+                        if (full.isNotEmpty()) deliverFinalTranscript(full)
+                    }
                     teardownRealtime()
                 }
             }
