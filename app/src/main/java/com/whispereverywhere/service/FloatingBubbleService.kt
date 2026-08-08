@@ -310,9 +310,16 @@ class FloatingBubbleService : Service(),
     // where the user aimed it; history accumulates via sessionTranscript in both modes.
     private var sessionContext: BubbleContext = BubbleContext.NONE
 
-    // TEXT_FIELD session whose delivery degraded to clipboard (document apps, dead targets):
-    // per-segment toasts are suppressed and the FULL transcript is copied once at finalize.
+    // TEXT_FIELD session whose FINAL write degraded to clipboard (document apps, dead targets):
+    // set by deliverFinalTranscript when the one stop-time write can't type. Records the
+    // OUTCOME (for the degraded toast wording); the decide() degraded row it could feed is
+    // future-proofing only — finalDelivered makes a second decide() impossible in production.
     @Volatile private var sessionClipboardFallback = false
+
+    // The final write fires EXACTLY once per session — stopRecording's finalize normally, or
+    // onDestroy's best-effort if the service dies mid-session. This flag closes the race
+    // between those two paths (destroy can cancel the finalize coroutine at any point).
+    @Volatile private var finalDelivered = false
 
     // Bounded-memory sink for non-text-field sessions (Task 7)
     private var transcriptSink: com.whispereverywhere.transcription.TranscriptSink? = null
@@ -1817,6 +1824,7 @@ class FloatingBubbleService : Service(),
             sessionContext = BubbleContext.NONE
         }
         sessionClipboardFallback = false
+        finalDelivered = false
         WhisperAccessibilityService.beginInjectionSession()
         android.util.Log.i("WE-DIAG", "startRecording: sessionContext=$sessionContext")
 
@@ -1987,12 +1995,25 @@ class FloatingBubbleService : Service(),
             if (!drained) {
                 android.util.Log.w("WE-DIAG", "finalize: drain timed out after ${FINALIZE_TIMEOUT_MS}ms")
             }
-            // Release anything the orderer is still holding, BEFORE teardown closes the sink —
-            // held text's only exit is flush(), and the pile is largest exactly here, at the end
-            // of a session. (Provably empty for the on-device engine, which resolves in order.)
+            // Release anything the orderer is still holding, BEFORE the final delivery reads
+            // the sink — held text's only exit is flush(), and the pile is largest exactly
+            // here, at the end of a session. (Provably empty for the on-device engine, which
+            // resolves in order.)
             deliverReleasedText(segmentOrderer.flush().text)
-            // Capture the sink before teardown nulls it, so the full transcript can still be read.
-            val finalizingSink = transcriptSink
+
+            // ---- W2 single delivery: the ONE external write of the session. Runs BEFORE
+            // teardownRealtime, because teardown ends the injection-session binding captured
+            // at beginInjectionSession and the SESSION_BOUND write must resolve against it.
+            // The sink is closed first (full flush; teardown's later close is a swallowed
+            // no-op), then its file is read back as the one transcript source every session
+            // kind shares. Preview hide / sink close / endInjectionSession all FOLLOW delivery.
+            transcriptSink?.close()
+            val fullTranscript = transcriptSink?.let { sink ->
+                withContext(Dispatchers.IO) { sink.fullTextFile().readText().trim() }
+            } ?: ""
+            if (currentState == BubbleState.FINALIZING) {
+                deliverFinalTranscript(fullTranscript)
+            }
             teardownRealtime()
             android.util.Log.i("WE-DIAG", "finalize: state=$currentState producedText=$sessionProducedText")
 
@@ -2051,39 +2072,7 @@ class FloatingBubbleService : Service(),
                 }
             }
             if (currentState == BubbleState.FINALIZING) {
-                // If we were transcribing without injecting, read the full text from the sink's
-                // session file (bounded memory; Task 7) and copy it to the clipboard.
-                if (sessionContext != BubbleContext.TEXT_FIELD) {
-                    previewJob?.cancel(); previewJob = null
-                    finalizingSink?.let { sink ->
-                        // teardownRealtime already closed the sink; just read its flushed file.
-                        val full = withContext(Dispatchers.IO) { sink.fullTextFile().readText().trim() }
-                        if (full.isNotEmpty()) {
-                            val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
-                            // User decision 2026-07-18: a preview session whose user has moved
-                            // into a text field by the END delivers there too — the whole
-                            // transcript in one block (clipboard stays set either way). Covers
-                            // the capture-video-then-tap-into-prompt flow end to end.
-                            val injected = WhisperAccessibilityService.hasLiveInputTarget() &&
-                                WhisperAccessibilityService.injectTextWithResult(full) ==
-                                WhisperAccessibilityService.InjectionResult.SUCCESS
-                            showToast(
-                                if (injected) "Transcription inserted — also on your clipboard"
-                                else "Transcription copied to clipboard",
-                            )
-                        }
-                    }
-                } else if (sessionClipboardFallback && sessionTranscript.isNotBlank()) {
-                    // Field session that degraded to clipboard delivery: replace the per-segment
-                    // scraps with ONE copy of the whole transcript (user decision 2026-07-18).
-                    val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clip.setPrimaryClip(
-                        android.content.ClipData.newPlainText("Transcript", sessionTranscript.toString()),
-                    )
-                    showToast("Full transcription copied to clipboard")
-                }
-
+                // Delivery already happened above, pre-teardown, through FinalDeliveryPolicy.
                 if (!sessionProducedText) {
                     showToast("No speech detected — try again a bit louder or closer to the mic.")
                 }
@@ -2171,6 +2160,84 @@ class FloatingBubbleService : Service(),
         }
         sessionTranscript.append(historyTok)
         transcriptSink?.append(text)
+    }
+
+    /**
+     * The ONE external write of the session (W2 final-only commit). Called from stopRecording's
+     * finalize block BEFORE teardownRealtime — teardown ends the injection-session binding, and
+     * the SESSION_BOUND write must resolve the field captured at beginInjectionSession — or
+     * best-effort from onDestroy. [finalDelivered] makes once-only hold even if destroy races
+     * the finalize coroutine. Main thread.
+     */
+    private fun deliverFinalTranscript(full: String) {
+        if (finalDelivered) return
+        finalDelivered = true
+        val plan = com.whispereverywhere.transcription.FinalDeliveryPolicy.decide(
+            isTextFieldSession = sessionContext == BubbleContext.TEXT_FIELD,
+            degradedToClipboard = sessionClipboardFallback,
+            hasLiveInputTarget = WhisperAccessibilityService.hasLiveInputTarget(),
+            transcriptBlank = full.isEmpty(),
+        )
+        android.util.Log.i(
+            "WE-DIAG",
+            "finalDelivery: inject=${plan.inject} copy=${plan.copyWholeToClipboard} len=${full.length}",
+        )
+        when (plan.inject) {
+            com.whispereverywhere.transcription.InjectTarget.SESSION_BOUND -> {
+                // Field session: one write through the session-bound target. Document/social
+                // apps run their paste strategy exactly once; a dead node falls back to the
+                // focused field INSIDE injectTextWithResult. Result handling mirrors the old
+                // per-segment handler, adapted to stop-time copy.
+                when (WhisperAccessibilityService.injectTextWithResult(full)) {
+                    WhisperAccessibilityService.InjectionResult.SUCCESS -> {
+                        // Typed where the user aimed it — no toast needed.
+                    }
+                    WhisperAccessibilityService.InjectionResult.CLIPBOARD_ONLY -> {
+                        // The strategy already left the FULL transcript on the clipboard.
+                        sessionClipboardFallback = true
+                        showToast("Can't type here — full transcript copied to clipboard")
+                    }
+                    WhisperAccessibilityService.InjectionResult.FAILED -> {
+                        sessionClipboardFallback = true
+                        runCatching {
+                            val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                        }
+                        showToast("Can't type here — full transcript copied to clipboard")
+                    }
+                }
+            }
+            com.whispereverywhere.transcription.InjectTarget.FINALIZE_FOCUS -> {
+                // Preview session that ends with a live field focused: clipboard once, plus the
+                // opportunistic finalize-time inject (targeting the CURRENT focus is BY DESIGN
+                // here — covers capture-video-then-tap-into-prompt end to end; clipboard stays
+                // set either way). Delivery now runs BEFORE teardown, so the record-start
+                // session binding is still alive and would win inside resolveInjectionTarget —
+                // end it first (idempotent; teardown's later call no-ops) so this write
+                // resolves the field focused NOW, not the one focused when recording began.
+                WhisperAccessibilityService.endInjectionSession()
+                val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                val injected = WhisperAccessibilityService.injectTextWithResult(full) ==
+                    WhisperAccessibilityService.InjectionResult.SUCCESS
+                showToast(
+                    if (injected) "Transcription inserted — also on your clipboard"
+                    else "Transcription copied to clipboard",
+                )
+            }
+            null -> if (plan.copyWholeToClipboard) {
+                // Target-less preview session: ONE consolidated copy — genuinely the only
+                // clipboard write of the session now. (The TEXT_FIELD wording below is
+                // future-proofing: the degraded decide() row can't fire before delivery today,
+                // because sessionClipboardFallback is only ever set BY deliverFinalTranscript.)
+                val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                showToast(
+                    if (sessionContext == BubbleContext.TEXT_FIELD) "Full transcription copied to clipboard"
+                    else "Transcription copied to clipboard",
+                )
+            }
+        }
     }
 
     private fun copyToClipboard(text: String) {
