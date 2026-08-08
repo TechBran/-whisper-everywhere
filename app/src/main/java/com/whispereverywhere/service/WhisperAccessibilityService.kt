@@ -130,59 +130,6 @@ class WhisperAccessibilityService : AccessibilityService() {
         clipboardListener?.onClipboardChanged()
     }
 
-    private var selectionDebounceJob: kotlinx.coroutines.Job? = null
-
-    /**
-     * Selection watching is OPPORTUNISTIC (Chromium page text, old-Compose apps and PDF viewers
-     * never emit these events — the PROCESS_TEXT toolbar entry covers those). Debounced 400 ms
-     * because events fire on every selection-handle drag.
-     */
-    private fun handleSelectionChanged(event: AccessibilityEvent) {
-        val source = event.source
-        val pkg = (event.packageName ?: source?.packageName)?.toString()
-        // Never react to our own overlay/app windows.
-        if (pkg == packageName) return
-        // The EVENT carries the selection for TYPE_VIEW_TEXT_SELECTION_CHANGED — the source
-        // node's textSelectionStart/End is often -1/stale (proven on-device 2026-07-18:
-        // Messages delivered -1/-1 on the node while fromIndex/toIndex were correct).
-        var start = event.fromIndex
-        var end = event.toIndex
-        var text = event.text?.firstOrNull()?.toString() ?: source?.text?.toString()
-        if ((start < 0 || end < 0) && source != null) {
-            start = source.textSelectionStart
-            end = source.textSelectionEnd
-            text = source.text?.toString() ?: text
-        }
-        if (start > end) {
-            val t = start; start = end; end = t // dragging the start handle inverts the range
-        }
-        val valid = text != null && start in 0 until end && end <= text.length
-        android.util.Log.i(
-            "WE-TTS",
-            "selection event: pkg=$pkg start=$start end=$end " +
-                "textLen=${text?.length ?: -1} valid=$valid listener=${selectionListener != null}",
-        )
-        selectionDebounceJob?.cancel()
-        if (valid) {
-            val selected = text!!.substring(start, end).take(MAX_SELECTION_CHARS)
-            if (selected.isBlank()) return
-            selectionDebounceJob = serviceScope.launch {
-                delay(SELECTION_DEBOUNCE_MS)
-                android.util.Log.i("WE-TTS", "selection notify: len=${selected.length}")
-                selectionListener?.onTextSelected(selected)
-            }
-        } else {
-            // Debounce the CLEAR too: fields fire start==end selection events for cursor
-            // blinks/IME updates while text is still visually selected — an instant clear made
-            // the speaker icon flicker away (user-reported). A valid selection arriving within
-            // the grace window cancels the pending clear above.
-            selectionDebounceJob = serviceScope.launch {
-                delay(CLEAR_DEBOUNCE_MS)
-                selectionListener?.onSelectionCleared()
-            }
-        }
-    }
-
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -266,10 +213,6 @@ class WhisperAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED -> {
-                // Read-aloud: selection watching rides the same event (Track F).
-                if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) {
-                    handleSelectionChanged(event)
-                }
                 // Text activity - this confirms we have an active input
                 val source = event.source
                 if (source != null) {
@@ -294,8 +237,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         // whose range is EMPTY (from == to, both valid) on a focused node is a
                         // blinking cursor by definition — whatever the node's class claims. The
                         // empty-range requirement is what keeps read-only text selection (long-
-                        // press select/copy, which produces RANGES) from false-firing the bubble;
-                        // the read-aloud selection watcher above already consumed those.
+                        // press select/copy, which produces RANGES) from false-firing the bubble.
                         event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED &&
                         event.fromIndex >= 0 && event.fromIndex == event.toIndex &&
                         source.isFocused &&
@@ -1332,12 +1274,6 @@ class WhisperAccessibilityService : AccessibilityService() {
         @Volatile private var instance: WhisperAccessibilityService? = null
         @Volatile private var focusListener: OnTextFieldFocusListener? = null
         @Volatile private var selectionListener: OnTextSelectionListener? = null
-
-        private const val SELECTION_DEBOUNCE_MS = 400L
-        private const val CLEAR_DEBOUNCE_MS = 800L
-        // Whole-page reads are chunked sentence-by-sentence inside the engine, so a large cap
-        // streams instead of overloading anything (user decision 2026-07-18).
-        private const val MAX_SELECTION_CHARS = 100_000
 
         fun setSelectionListener(listener: OnTextSelectionListener?) {
             selectionListener = listener
