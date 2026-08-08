@@ -343,7 +343,10 @@ class FloatingBubbleService : Service(),
         audioRecorder = StreamingAudioRecorder(this)
         mediaDetector = MediaSessionDetector(this)
         // Our read-aloud plays on the music stream; the detector must never count it as media.
-        mediaDetector.selfAudioActive = { isSpeakingNow }
+        // TtsController is the ONE authority: it covers every trigger, including
+        // SpeakTextActivity's toolbar reads, which the service-local isSpeakingNow never saw —
+        // those were classified as transcribable media over our own voice.
+        mediaDetector.selfAudioActive = { com.whispereverywhere.tts.TtsController.isSpeechActive() }
 
         // The dictation-first toggle applies to the LIVE bubble (owner report 2026-08-01: the
         // keyboard lobe only appeared after disabling/re-enabling the bubble — its visibility was

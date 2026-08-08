@@ -143,7 +143,7 @@ class MediaSessionDetector(private val context: Context) {
 
             // Only use audio polling if MediaSession hasn't detected anything
             // This prevents duplicate notifications
-            if (isAudioActive && !selfAudioActive() && !isMediaPlaying) {
+            if (isPolledAudioMedia(isAudioActive, selfAudioActive(), isMediaPlaying)) {
                 // Double-check no media session is active
                 val hasActiveSession = controllerCallbacks.keys.any { controller ->
                     val state = controller.playbackState?.state
@@ -348,6 +348,20 @@ class MediaSessionDetector(private val context: Context) {
         )
     }
 }
+
+/**
+ * The audio-polling branch's media classification, extracted PURE for JVM tests (the detector
+ * itself needs AudioManager + a main-looper Handler — see MediaPollPolicyTest). Polled device
+ * audio counts as transcribable media only when something is audible, it is NOT our own
+ * read-aloud voice (selfAudioActive — TtsController.isSpeechActive via the service-injected
+ * [MediaSessionDetector.selfAudioActive] lambda), and a media episode is not already running
+ * (the duplicate-notification guard).
+ */
+fun isPolledAudioMedia(
+    isAudioActive: Boolean,
+    selfAudioActive: Boolean,
+    alreadyPlaying: Boolean,
+): Boolean = isAudioActive && !selfAudioActive && !alreadyPlaying
 
 /**
  * NotificationListenerService required to access MediaSessionManager.

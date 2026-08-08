@@ -53,6 +53,21 @@ object TtsController {
     }
 
     /**
+     * The single "our TTS is audible" authority: true while OUR read-aloud is playing (or
+     * synthesizing toward playback), whatever the trigger — bubble tap, speaker lobe, or the
+     * PROCESS_TEXT toolbar ([SpeakTextActivity]). Media detection consults this so a read is
+     * never classified as transcribable media; pre-fix only service-driven reads were covered
+     * and a toolbar read summoned the bubble with a transcribe prompt over its own voice.
+     *
+     * Delegates to the engine's generation-guarded speaking flag, which EVERY entry point
+     * funnels through: [speakFromTrigger] → [TtsEngine.speak] sets it synchronously before
+     * returning; it clears on completion and on error (the speak task's finally), and instantly
+     * on [stop] — so media detection can never be permanently suppressed. A null engine (no
+     * read ever started in this process) is simply "not speaking".
+     */
+    fun isSpeechActive(): Boolean = engine?.isSpeaking() == true
+
+    /**
      * Speak [text] from any trigger. Handles the not-installed and capture-in-progress cases
      * with user-visible feedback instead of silence.
      */
