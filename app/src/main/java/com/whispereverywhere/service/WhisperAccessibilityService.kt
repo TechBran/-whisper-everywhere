@@ -96,12 +96,6 @@ class WhisperAccessibilityService : AccessibilityService() {
         fun onTextFieldUnfocused()
     }
 
-    /** Read-aloud (Track F): cross-app text-selection events for the speaker-bubble morph. */
-    interface OnTextSelectionListener {
-        fun onTextSelected(text: String)
-        fun onSelectionCleared()
-    }
-
     /** Fires when ANY app puts something on the clipboard (best-effort; OEM-dependent). */
     interface OnClipboardChangedListener {
         fun onClipboardChanged()
@@ -1273,12 +1267,6 @@ class WhisperAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile private var instance: WhisperAccessibilityService? = null
         @Volatile private var focusListener: OnTextFieldFocusListener? = null
-        @Volatile private var selectionListener: OnTextSelectionListener? = null
-
-        fun setSelectionListener(listener: OnTextSelectionListener?) {
-            selectionListener = listener
-        }
-
         @Volatile private var clipboardListener: OnClipboardChangedListener? = null
 
         fun setClipboardListener(listener: OnClipboardChangedListener?) {

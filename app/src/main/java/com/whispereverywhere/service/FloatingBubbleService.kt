@@ -145,16 +145,13 @@ internal fun isRealtimeStt(sttProviderIdName: String?): Boolean =
 
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
-    WhisperAccessibilityService.OnTextSelectionListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
     MediaSessionDetector.MediaPlaybackListener {
 
-    // Read-aloud (Track F): the text captured by the live selection watcher. Non-null = the
-    // idle bubble shows a speaker and a tap SPEAKS instead of recording. Cleared when the
-    // selection collapses; never set while a session is active.
-    @Volatile private var speakModeText: String? = null
+    // Read-aloud (Track F): true while OUR read-aloud audio is playing (speaker lobe, clipboard
+    // copy, or PROCESS_TEXT toolbar). The idle bubble is ALWAYS a mic (owner rule 2026-08-08);
+    // speaker behavior never arrives via text selection.
     @Volatile private var isSpeakingNow = false
-    private var morphRevertJob: Job? = null
     private lateinit var speechStopIcon: ImageView
     private lateinit var speakClipIcon: ImageView
     private lateinit var lockLobe: View
@@ -260,9 +257,6 @@ class FloatingBubbleService : Service(),
     // session. Generous because a slow model (e.g. the large tier) can lag several segments behind
     // real time; bounded so a pathological run can't hang the bubble in FINALIZING forever.
     private val FINALIZE_TIMEOUT_MS = 300_000L
-
-    // Untapped speaker morph reverts to the mic after this window (Track F).
-    private val MORPH_REVERT_MS = 20_000L
 
     // Wall-clock cap per uncommitted stretch. Continuous loud audio (media playback, music) never
     // dips below the segmenter's silence floor, so its pause-based commit never fires — without
@@ -437,7 +431,6 @@ class FloatingBubbleService : Service(),
      */
     private fun registerFocusListener() {
         WhisperAccessibilityService.setFocusListener(this)
-        WhisperAccessibilityService.setSelectionListener(this)
         WhisperAccessibilityService.setClipboardListener(this)
     }
 
@@ -518,49 +511,7 @@ class FloatingBubbleService : Service(),
         speakClipIcon.setColorFilter(0xFF4FC3F7.toInt())
     }
 
-    // ========== Read-aloud (Track F): selection -> speaker morph -> speak/stop ==========
-
-    override fun onTextSelected(text: String) {
-        serviceScope.launch(Dispatchers.Main) {
-            // Never morph mid-session; selection during capture follows the session rules.
-            val installed = com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)
-            android.util.Log.i(
-                "WE-TTS",
-                "morph check: state=$currentState speaking=$isSpeakingNow installed=$installed",
-            )
-            if (currentState != BubbleState.IDLE || isSpeakingNow) return@launch
-            if (!installed) return@launch
-            speakModeText = text
-            bubbleIcon.setImageResource(R.drawable.ic_speaker)
-            scheduleMorphRevert()
-            // Hide the ~2 s model load inside the user's think-time between select and tap.
-            com.whispereverywhere.tts.TtsController.preload(this@FloatingBubbleService)
-        }
-    }
-
-    override fun onSelectionCleared() {
-        serviceScope.launch(Dispatchers.Main) {
-            if (isSpeakingNow) return@launch // keep the speaking pill while audio plays
-            morphRevertJob?.cancel()
-            speakModeText = null
-            if (currentState == BubbleState.IDLE) bubbleIcon.setImageResource(R.drawable.ic_mic)
-        }
-    }
-
-    /**
-     * The morph EXPIRES (user decision 2026-07-18): an untapped speaker reverts to the mic
-     * after a grace window, so the bubble never sticks in speak mode from an old selection.
-     */
-    private fun scheduleMorphRevert() {
-        morphRevertJob?.cancel()
-        morphRevertJob = serviceScope.launch(Dispatchers.Main) {
-            delay(MORPH_REVERT_MS)
-            if (!isSpeakingNow && currentState == BubbleState.IDLE) {
-                speakModeText = null
-                bubbleIcon.setImageResource(R.drawable.ic_mic)
-            }
-        }
-    }
+    // ========== Read-aloud (Track F): speaker lobe / clipboard copy -> speak/stop ==========
 
     /**
      * Read whatever is on the clipboard aloud. Android 10+ blocks background clipboard reads,
@@ -610,12 +561,11 @@ class FloatingBubbleService : Service(),
         processingRing.visibility = View.GONE
         processingRing.clearAnimation()
         waveformView.stop()
-        // The IDLE branch restores icon/width/blob for the current morph state.
+        // The IDLE branch restores icon/width/blob for the current speaking state.
         if (currentState == BubbleState.IDLE) updateBubbleState(BubbleState.IDLE)
     }
 
     private fun startSpeaking(text: String) {
-        morphRevertJob?.cancel()
         isSpeakingNow = true
         val engine = com.whispereverywhere.tts.TtsController.engine(this)
         // Feed the pill's aurora from the synthesized slices (same contract as mic chunks:
@@ -653,7 +603,6 @@ class FloatingBubbleService : Service(),
             engine.onBuffering = null
             engine.onProgress = null
             exitSpeakingVisuals()
-            if (speakModeText != null) scheduleMorphRevert()
         }
     }
 
@@ -688,7 +637,6 @@ class FloatingBubbleService : Service(),
         // nulling the listeners, or it can re-install this dying service as the listener.
         connectionMonitorJob?.cancel()
         WhisperAccessibilityService.setFocusListener(null)
-        WhisperAccessibilityService.setSelectionListener(null)
         WhisperAccessibilityService.setClipboardListener(null)
         // Detach the arbiter's capture side — its lambdas close over this dying instance.
         com.whispereverywhere.audio.AudioArbiter.isCapturing = { false }
@@ -1363,7 +1311,6 @@ class FloatingBubbleService : Service(),
                     bubbleIcon.visibility = if (nowPaused) View.VISIBLE else View.GONE
                     if (nowPaused) bubbleIcon.setImageResource(R.drawable.ic_speaker)
                 }
-                speakModeText != null -> startSpeaking(speakModeText!!)
                 else -> startRecording()
             }
             BubbleState.RECORDING -> stopRecording()
@@ -1799,10 +1746,8 @@ class FloatingBubbleService : Service(),
 
         updateBubbleState(BubbleState.CONNECTING)
         vibrateStart()
-        // Capture wins instantly over read-aloud (Track F exclusivity rule); any selection
-        // made before dictation is stale by definition once a session starts (review fix I2).
+        // Capture wins instantly over read-aloud (Track F exclusivity rule).
         com.whispereverywhere.audio.AudioArbiter.requestCapture()
-        speakModeText = null
         isSpeakingNow = false
         sessionProducedText = false
         sessionTranscript.setLength(0)
@@ -2289,11 +2234,7 @@ class FloatingBubbleService : Service(),
                 BubbleState.IDLE -> {
                     bubbleIcon.visibility = View.VISIBLE
                     bubbleIcon.setImageResource(
-                        when {
-                            isSpeakingNow -> R.drawable.ic_stop_speech
-                            speakModeText != null -> R.drawable.ic_speaker
-                            else -> R.drawable.ic_mic
-                        },
+                        if (isSpeakingNow) R.drawable.ic_stop_speech else R.drawable.ic_mic,
                     )
                     // Lock lobe is TRANSIENT (owner 2026-08-01): long-press already pins, so a
                     // permanent lock hanging off the blob was redundant chrome. It flashes for
