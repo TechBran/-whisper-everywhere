@@ -33,6 +33,14 @@ class HowToGuideTest {
         assertTrue(text.contains("unless you set up a cloud provider"))
     }
 
+    @Test fun the_dictation_flow_is_final_only_and_the_window_resizable() {
+        // 3.4.0: text lands once, at stop — and the transcript window has a resize handle.
+        val text = HowToGuide.plainText().lowercase()
+        assertTrue(text.contains("when you tap the bubble again to stop"))
+        assertTrue(text.contains("typed at the cursor in one go"))
+        assertTrue(text.contains("double arrow"))
+    }
+
     @Test fun the_spoken_guide_carries_every_section() {
         val text = HowToGuide.plainText()
         HowToGuide.sections.forEach { s ->

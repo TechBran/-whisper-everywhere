@@ -19,15 +19,20 @@ object HowToGuide {
             "The floating bubble is the heart of the app. Tap it to start dictating and tap " +
                 "again to stop. Drag it anywhere — it remembers your spot. Press and hold to " +
                 "lock it in place (a lock flashes to confirm), and press and hold again to " +
-                "unlock. In Settings you can keep it always on screen, or let it pop up on its " +
-                "own whenever a text field or keyboard appears and hide when idle.",
+                "unlock. While you dictate, your words collect in a text window above the " +
+                "bubble — drag the double arrow at its top right corner to make it any size " +
+                "you like, and it stays that size; press and hold the arrow to go back to the " +
+                "standard size. In Settings you can keep it always on screen, or let it pop " +
+                "up on its own whenever a text field or keyboard appears and hide when idle.",
         ),
         Section(
             "Dictating into any app",
-            "Tap into any text field, then tap the bubble and speak. Your words are " +
-                "transcribed and typed at the cursor, in over 90 languages. Everything runs on " +
-                "your phone by default — audio never leaves your device unless you set up a " +
-                "cloud provider yourself.",
+            "Tap into any text field, then tap the bubble and speak. Your words collect in " +
+                "the bubble's text window as you talk, and when you tap the bubble again to " +
+                "stop, the whole transcription is typed at the cursor in one go — no " +
+                "half-finished chunks landing while you think. Dictation works in over 90 " +
+                "languages. Everything runs on your phone by default — audio never leaves " +
+                "your device unless you set up a cloud provider yourself.",
         ),
         Section(
             "Cloud providers and real-time streaming",
