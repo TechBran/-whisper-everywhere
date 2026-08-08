@@ -1143,6 +1143,7 @@ class FloatingBubbleService : Service(),
         }
 
         transcriptionEditText.movementMethod = android.text.method.ScrollingMovementMethod()
+        applyPreviewSize()
 
         windowManager.addView(bubbleView, params)
 
@@ -1151,6 +1152,31 @@ class FloatingBubbleService : Service(),
         isBubbleVisible = false
 
         updateBubbleState(BubbleState.IDLE)
+    }
+
+    // ========== Transcript preview sizing (W3) ==========
+
+    /**
+     * Apply the persisted (or, mid-resize, the in-flight) preview panel size to both transcript
+     * views. dp -> px against the CURRENT displayMetrics and re-clamped to the CURRENT screen on
+     * every call, so a stale/corrupt pref or a rotation can never produce an off-screen or
+     * zero-size panel. Runtime owns the panel's width and max height; the XML 280dp width is only
+     * the pre-first-apply default and android:maxHeight was removed from the layout entirely.
+     */
+    private fun applyPreviewSize(
+        widthDp: Float = app.preferencesManager.bubbleTextWidthDp,
+        heightDp: Float = app.preferencesManager.bubbleTextHeightDp,
+    ) {
+        val dm = resources.displayMetrics
+        val maxW = ResizeMath.maxWidthDp(dm.widthPixels, dm.density)
+            .coerceAtLeast(ResizeMath.MIN_WIDTH_DP)
+        val maxH = ResizeMath.maxHeightDp(dm.heightPixels, dm.density)
+            .coerceAtLeast(ResizeMath.MIN_HEIGHT_DP)
+        val widthPx = (widthDp.coerceIn(ResizeMath.MIN_WIDTH_DP, maxW) * dm.density).toInt()
+        val heightPx = (heightDp.coerceIn(ResizeMath.MIN_HEIGHT_DP, maxH) * dm.density).toInt()
+        transcriptionEditText.layoutParams = transcriptionEditText.layoutParams.apply { width = widthPx }
+        transcriptionEditText.maxHeight = heightPx
+        transcriptionDeltaText.layoutParams = transcriptionDeltaText.layoutParams.apply { width = widthPx }
     }
 
     // ========== Pin / Lock ==========
@@ -1778,7 +1804,7 @@ class FloatingBubbleService : Service(),
      * onDelta; here the strip is only reset so the last session's text never flashes back.
      */
     private fun showSessionPreview(live: Boolean) {
-        // W3: applyPreviewSize() call lands here
+        applyPreviewSize()
         android.util.Log.i("WE-DIAG", "showSessionPreview: live=$live context=$sessionContext")
         transcriptionEditText.visibility = View.VISIBLE
         transcriptionEditText.text = ""

@@ -3,6 +3,7 @@ package com.whispereverywhere.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import com.whispereverywhere.provider.ProviderId
+import com.whispereverywhere.service.ResizeMath
 import com.whispereverywhere.tts.ttsCloudVoiceKey
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -188,6 +189,21 @@ class PreferencesManager(private val context: Context) {
             prefs.edit().putFloat(KEY_BUBBLE_Y, value).apply()
         }
 
+    // Transcript preview panel size in dp (W3 resize handle). Written only by resize drag-end
+    // and long-press reset; every read is applied through FloatingBubbleService.applyPreviewSize,
+    // which re-clamps against the LIVE screen — a stale/corrupt value can't wedge the panel.
+    var bubbleTextWidthDp: Float
+        get() = prefs.getFloat(KEY_BUBBLE_TEXT_WIDTH_DP, ResizeMath.DEFAULT_WIDTH_DP)
+        set(value) {
+            prefs.edit().putFloat(KEY_BUBBLE_TEXT_WIDTH_DP, value).apply()
+        }
+
+    var bubbleTextHeightDp: Float
+        get() = prefs.getFloat(KEY_BUBBLE_TEXT_HEIGHT_DP, ResizeMath.DEFAULT_HEIGHT_DP)
+        set(value) {
+            prefs.edit().putFloat(KEY_BUBBLE_TEXT_HEIGHT_DP, value).apply()
+        }
+
     // Onboarding completed
     var onboardingCompleted: Boolean
         get() = prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
@@ -334,6 +350,8 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_PREFER_DEVICE_AUDIO = "prefer_device_audio"
         private const val KEY_BUBBLE_X = "bubble_x"
         private const val KEY_BUBBLE_Y = "bubble_y"
+        private const val KEY_BUBBLE_TEXT_WIDTH_DP = "bubble_text_width_dp"
+        private const val KEY_BUBBLE_TEXT_HEIGHT_DP = "bubble_text_height_dp"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
         private const val KEY_SELECTED_MODEL_ID = "selected_model_id"
         private const val KEY_SELECTED_LANGUAGE = "selected_language"

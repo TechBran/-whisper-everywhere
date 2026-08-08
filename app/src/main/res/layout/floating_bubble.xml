@@ -27,7 +27,6 @@
             android:id="@+id/transcription_edit_text"
             android:layout_width="280dp"
             android:layout_height="wrap_content"
-            android:maxHeight="120dp"
             android:scrollbars="vertical"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
