@@ -464,7 +464,9 @@ class FloatingBubbleService : Service(),
 
     override fun onClipboardChanged() {
         serviceScope.launch(Dispatchers.Main) {
-            if (currentState != BubbleState.IDLE || isSpeakingNow) return@launch
+            if (currentState != BubbleState.IDLE || isSpeakingNow ||
+                com.whispereverywhere.tts.TtsController.isSpeechActive()
+            ) return@launch
             if (!com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)) return@launch
             // Warm the ~2 s voice-model load inside the copy -> lobe-tap think-time (this
             // preload used to ride the deleted selection morph; the copy that pulses the
@@ -734,7 +736,15 @@ class FloatingBubbleService : Service(),
         super.onConfigurationChanged(newConfig)
         // Re-clamp bubble position to the updated screen bounds after a rotation or fold event.
         // Post to the next layout pass so displayMetrics already reflects the new orientation.
-        bubbleView.post { reclampAfterConfigChange() }
+        bubbleView.post {
+            // Re-apply the panel size FIRST: the size clamps re-derive from the new
+            // orientation's metrics (a landscape-max panel must shrink for portrait,
+            // or its top-right handle lands off-screen with no way to grab it).
+            if (transcriptionPreviewContainer.visibility == View.VISIBLE) {
+                applyPreviewSize()
+            }
+            reclampAfterConfigChange()
+        }
     }
 
     // ========== Bubble display mode ==========
@@ -2107,7 +2117,12 @@ class FloatingBubbleService : Service(),
                 // window below it.
                 serviceScope.launch(Dispatchers.Main) {
                     if (text.isNotBlank()) {
+                        val wasGone = transcriptionDeltaText.visibility != View.VISIBLE
                         transcriptionDeltaText.visibility = View.VISIBLE
+                        if (wasGone) {
+                            // the strip just grew the window downward — keep it on-screen
+                            bubbleView.post { reclampNow() }
+                        }
                         transcriptionDeltaText.text = text
                         // Keep the newest words in view. The panel grows to maxLines then
                         // scrolls; without this it would hold the TOP of a long utterance and
@@ -2251,7 +2266,10 @@ class FloatingBubbleService : Service(),
                 withContext(Dispatchers.IO) { sink.fullTextFile().readText().trim() }
             } ?: ""
             if (currentState == BubbleState.FINALIZING) {
-                deliverFinalTranscript(fullTranscript)
+                // Guarded like its two sibling callers (onDestroy, fatal onError): a delivery
+                // failure must never wedge the session in FINALIZING — teardown always runs.
+                runCatching { deliverFinalTranscript(fullTranscript) }
+                    .onFailure { android.util.Log.e("WE-DIAG", "final delivery threw", it) }
             }
             teardownRealtime()
             android.util.Log.i("WE-DIAG", "finalize: state=$currentState producedText=$sessionProducedText")
@@ -2461,8 +2479,10 @@ class FloatingBubbleService : Service(),
                 // end it first (idempotent; teardown's later call no-ops) so this write
                 // resolves the field focused NOW, not the one focused when recording began.
                 WhisperAccessibilityService.endInjectionSession()
-                val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                runCatching {
+                    val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                }
                 val injected = WhisperAccessibilityService.injectTextWithResult(full) ==
                     WhisperAccessibilityService.InjectionResult.SUCCESS
                 showToast(
@@ -2475,8 +2495,10 @@ class FloatingBubbleService : Service(),
                 // clipboard write of the session now. (The TEXT_FIELD wording below is
                 // future-proofing: the degraded decide() row can't fire before delivery today,
                 // because sessionClipboardFallback is only ever set BY deliverFinalTranscript.)
-                val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                runCatching {
+                    val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                }
                 showToast(
                     if (sessionContext == BubbleContext.TEXT_FIELD) "Full transcription copied to clipboard"
                     else "Transcription copied to clipboard",

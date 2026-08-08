@@ -37,9 +37,10 @@ class TranscriptSink(
             if (needsSpace) writer.write(" ")
             writer.write(s)
             writer.flush()
-        } catch (_: Exception) {
-            // A closed sink must never crash the session that outlived it — a late segment
-            // landing after close() (or the writer otherwise failing) is a safe no-op here.
+        } catch (e: Exception) {
+            // Post-close appends land here by design (benign); real I/O failures (disk full)
+            // do too — log so a delivered-file-vs-history divergence is diagnosable.
+            android.util.Log.w("WE-DIAG", "sink append dropped (${s.length} chars): $e")
             return
         }
         if (needsSpace) tail.append(' ')
