@@ -2134,27 +2134,19 @@ class FloatingBubbleService : Service(),
     /**
      * The ONE routing point for text the [segmentOrderer] releases — used by onSegmentResolved and
      * by every flush() site, so text that was held and released late is delivered exactly like an
-     * in-order segment (preview sink + history + injection) rather than a subset of that. Main
+     * in-order segment (preview sink + history) rather than a subset of that. Main
      * thread only.
      */
     private fun deliverReleasedText(text: String) {
         if (text.isBlank()) return
         sessionProducedText = true
-        if (sessionContext != BubbleContext.TEXT_FIELD) {
-            // During FINALIZING the delta line carries the "finishing…" status — keep it up
-            // between drain segments instead of blanking it.
-            if (currentState != BubbleState.FINALIZING) {
-                transcriptionDeltaText.visibility = View.GONE
-            }
-            // Route through the bounded-memory sink; the preview StateFlow drives
-            // transcriptionEditText via collectLatest in onOpen (Task 7).
-            transcriptSink?.append(text)
-        } else if (sessionIsLive && currentState != BubbleState.FINALIZING) {
-            // Live TEXT_FIELD: this turn has just been injected into the real field, so the panel's
-            // job for it is done — clear it or the finished words linger UNDER the next utterance
-            // as it streams in, reading as duplicated text. (Held during FINALIZING, where the
-            // panel carries the closing status instead.) Scroll reset too, so the next turn starts
-            // at the top of the panel rather than wherever the last one left it parked.
+        // The strip carried this utterance while it was in flight (live deltas); its resolved
+        // text moves into the accumulating window via the sink below, so reset the strip for
+        // the next one — or the finished words linger UNDER the next utterance as it streams
+        // in, reading as duplicated text. Held during FINALIZING, where the strip carries the
+        // "finishing transcript" status instead. Scroll reset too, so the next turn starts at
+        // the top of the panel rather than wherever the last one left it parked.
+        if (currentState != BubbleState.FINALIZING) {
             transcriptionDeltaText.text = ""
             transcriptionDeltaText.scrollTo(0, 0)
             transcriptionDeltaText.visibility = View.GONE
@@ -2163,50 +2155,22 @@ class FloatingBubbleService : Service(),
     }
 
     /**
-     * Handle the transcription result based on current context
+     * Mid-session accumulation — and ONLY accumulation (W2 final-only commit). Every resolved
+     * segment lands in exactly two places, for EVERY session context: the bounded-memory sink
+     * (whose file is the transcript the final delivery reads) and sessionTranscript (history's
+     * source, persisted at finalize). NOTHING leaves the app until stopRecording's
+     * deliverFinalTranscript — no injection, no clipboard write, no caret pinning. FINALIZING
+     * counts as in-session: drain-released segments and orderer flushes land here too.
      */
     private fun handleTranscriptionResult(text: String) {
         android.util.Log.i("WE-DIAG", "handleResult: session=$sessionContext live=$currentContext len=${text.length}")
-        // History: accumulate every completed segment (both injection and preview contexts);
-        // the session persists to TranscriptStore at finalize.
         val historyTok = TextJoin.normalize(text)
-        if (historyTok.isNotEmpty()) {
-            if (sessionTranscript.isNotEmpty() && TextJoin.needsSpace(sessionTranscript, historyTok)) {
-                sessionTranscript.append(' ')
-            }
-            sessionTranscript.append(historyTok)
+        if (historyTok.isEmpty()) return
+        if (sessionTranscript.isNotEmpty() && TextJoin.needsSpace(sessionTranscript, historyTok)) {
+            sessionTranscript.append(' ')
         }
-        when (sessionContext) {
-            BubbleContext.TEXT_FIELD -> {
-                // Use the new injection method with detailed result
-                val result = WhisperAccessibilityService.injectTextWithResult(text)
-                android.util.Log.i("WE-DIAG", "inject result=$result")
-                when (result) {
-                    WhisperAccessibilityService.InjectionResult.SUCCESS -> {
-                        // Text was successfully injected - no toast needed
-                    }
-                    WhisperAccessibilityService.InjectionResult.CLIPBOARD_ONLY -> {
-                        // Delivery degraded to clipboard: suppress the per-utterance toast
-                        // spam — finalize copies the WHOLE transcript once (user feedback
-                        // 2026-07-18). The first occurrence gets one heads-up toast.
-                        if (!sessionClipboardFallback) {
-                            sessionClipboardFallback = true
-                            showToast("Can't type here — full transcript will be copied when you stop")
-                        }
-                    }
-                    WhisperAccessibilityService.InjectionResult.FAILED -> {
-                        if (!sessionClipboardFallback) {
-                            sessionClipboardFallback = true
-                            showToast("Can't type here — full transcript will be copied when you stop")
-                        }
-                    }
-                }
-            }
-            BubbleContext.MEDIA_PLAYBACK, BubbleContext.NONE -> {
-                // Finalized segments flow exclusively through transcriptSink?.append() in onCompleted;
-                // no unbounded accumulation here.
-            }
-        }
+        sessionTranscript.append(historyTok)
+        transcriptSink?.append(text)
     }
 
     private fun copyToClipboard(text: String) {
