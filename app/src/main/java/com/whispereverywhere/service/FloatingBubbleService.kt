@@ -4,8 +4,6 @@ import android.animation.ValueAnimator
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -2273,16 +2271,6 @@ class FloatingBubbleService : Service(),
                     else "Transcription copied to clipboard",
                 )
             }
-        }
-    }
-
-    private fun copyToClipboard(text: String) {
-        try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Whisper Transcription", text)
-            clipboard.setPrimaryClip(clip)
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
 

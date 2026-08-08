@@ -748,18 +748,6 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Inject text into the currently focused text field. Delegates to the unified result path so
-     * there is exactly ONE SET_TEXT implementation (the anchor path); maps the result to Boolean.
-     */
-    fun injectTextToFocusedField(text: String): Boolean {
-        return injectTextWithResultInternal(text) != InjectionResult.FAILED
-    }
-
-    /**
-     * Inject text for social media apps, preserving existing @mentions.
-     * For Facebook with mentions, taps at end of field before pasting.
-     */
-    /**
      * Pins the selection (cursor) to the absolute END OF TEXT via ACTION_SET_SELECTION — the
      * semantic action, deliberately NOT a screen tap. The old gesture heuristic tapped the field's
      * right-center edge, which in a MULTI-LINE field lands the cursor at the end of whatever LINE
@@ -806,67 +794,6 @@ class WhisperAccessibilityService : AccessibilityService() {
             }
         }
         return pasted
-    }
-
-    private fun injectViaClipboardPreservingContent(text: String): Boolean {
-        val targetNode = resolveInjectionTarget()
-
-        // Always copy to clipboard first
-        try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
-        } catch (e: Exception) {
-            return false
-        }
-
-        if (targetNode?.refresh() != true) {
-            return true // Text in clipboard, no target to paste to
-        }
-
-        // Check if field has existing content (might be a mention)
-        val existingText = targetNode.text?.toString() ?: ""
-
-        if (existingText.isNotEmpty() && isFacebookApp() && !pinSelectionToEnd(targetNode)) {
-            // The editor refused SET_SELECTION — LEGACY fallback only: tap the field's right edge
-            // to coax the cursor endward before pasting. Known-imperfect on multi-line fields
-            // (it finds the end of a LINE, not the end of the TEXT), which is why the semantic
-            // pin above is always tried first.
-            val rect = Rect()
-            targetNode.getBoundsInScreen(rect)
-            val tapX = rect.right - 20f
-            val tapY = rect.centerY().toFloat()
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val path = Path()
-                path.moveTo(tapX, tapY)
-
-                val gesture = GestureDescription.Builder()
-                    .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
-                    .build()
-
-                dispatchGesture(gesture, object : GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        // After tap completes, try the semantic pin once more, then paste.
-                        serviceScope.launch {
-                            delay(100) // Small delay to let cursor position update
-                            targetNode.refresh()
-                            pinSelectionToEnd(targetNode)
-                            targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                        }
-                    }
-                }, null)
-
-                return true
-            }
-        }
-
-        // Pinned (or pin unsupported): paste at the end, re-pin after.
-        if (pasteAtEnd(targetNode)) {
-            return true
-        }
-
-        // Paste failed but text is in clipboard
-        return true
     }
 
     /**
@@ -960,65 +887,6 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         // Paste failed but text is in clipboard
         return InjectionResult.CLIPBOARD_ONLY
-    }
-
-    /**
-     * Special injection for document apps - uses clipboard and gesture-based paste
-     */
-    private fun injectViaClipboardForDocumentApp(text: String): Boolean {
-        return try {
-            // Step 1: Copy text to clipboard, padded against the target field so a pasted segment
-            // never melts against existing content.
-            val targetNode = resolveInjectionTarget()
-            val refreshed = targetNode?.refresh() == true
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(
-                ClipData.newPlainText("Whisper", if (refreshed) clipboardPayloadFor(text, targetNode) else text),
-            )
-
-            // Step 2: Try multiple paste methods
-            var success = false
-
-            // Method 1: Try ACTION_PASTE on the target node
-            if (refreshed) {
-                success = targetNode!!.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-            }
-
-            // Method 2: Try ACTION_PASTE on focused input
-            if (!success) {
-                val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                if (focusedNode != null) {
-                    success = focusedNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                }
-            }
-
-            // Method 3: Try ACTION_PASTE on accessibility focused node
-            if (!success) {
-                val accessibilityFocused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
-                if (accessibilityFocused != null) {
-                    success = accessibilityFocused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                }
-            }
-
-            // Method 4: Search for any node that supports paste and try it
-            if (!success) {
-                success = tryPasteOnAnyNode(rootInActiveWindow)
-            }
-
-            // If all paste attempts failed, at least the text is in clipboard
-            // Return true so user knows to manually paste
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            // Even on error, try to at least get it to clipboard
-            try {
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Whisper", text))
-                true
-            } catch (e2: Exception) {
-                false
-            }
-        }
     }
 
     /**
@@ -1350,10 +1218,6 @@ class WhisperAccessibilityService : AccessibilityService() {
             if (svc.isImeVisible()) return true
             if (hasActiveFocusedField()) return true
             return runCatching { svc.findFocusedEditText() != null }.getOrDefault(false)
-        }
-
-        fun injectText(text: String): Boolean {
-            return instance?.injectTextToFocusedField(text) ?: false
         }
 
         /**
