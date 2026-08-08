@@ -43,6 +43,16 @@ class TranscriptSinkTest {
         assertEquals("", f.readText().trim())
     }
 
+    @Test
+    fun append_after_close_is_a_safe_no_op() {
+        val f = tmp()
+        val sink = TranscriptSink(f)
+        sink.append("hello")
+        sink.close()
+        sink.append("late segment")  // must not throw
+        assertEquals("hello", sink.fullTextFile().readText().trim())
+    }
+
     // --- TextJoin-governed joins (W2 final-only commit) -------------------------
     // The sink file IS the transcript the final delivery ships, so its joins must follow the
     // same melt policy sequential injection followed: punctuation attaches, CJK grows no stray

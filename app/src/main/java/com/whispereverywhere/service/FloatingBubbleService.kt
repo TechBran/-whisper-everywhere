@@ -2007,8 +2007,12 @@ class FloatingBubbleService : Service(),
             // The sink is closed first (full flush; teardown's later close is a swallowed
             // no-op), then its file is read back as the one transcript source every session
             // kind shares. Preview hide / sink close / endInjectionSession all FOLLOW delivery.
-            transcriptSink?.close()
-            val fullTranscript = transcriptSink?.let { sink ->
+            // Detach the sink FIRST so a late segment's append no-ops on null (the pre-reorder
+            // contract: close+null were one statement). Then close (full flush) and read back.
+            val finishedSink = transcriptSink
+            transcriptSink = null
+            finishedSink?.close()
+            val fullTranscript = finishedSink?.let { sink ->
                 withContext(Dispatchers.IO) { sink.fullTextFile().readText().trim() }
             } ?: ""
             if (currentState == BubbleState.FINALIZING) {
@@ -2160,6 +2164,9 @@ class FloatingBubbleService : Service(),
         }
         sessionTranscript.append(historyTok)
         transcriptSink?.append(text)
+        if (transcriptSink == null) {
+            android.util.Log.i("WE-DIAG", "late segment after final read — kept in history only (${text.length} chars)")
+        }
     }
 
     /**

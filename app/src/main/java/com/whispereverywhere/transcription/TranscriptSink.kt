@@ -32,12 +32,17 @@ class TranscriptSink(
         // per-segment injection used to produce — and a CJK boundary must not grow a stray
         // space. [tail]'s last char is always the last char written to the file (truncation
         // only eats the FRONT), so it is the left side of every boundary decision.
-        if (tail.isNotEmpty() && TextJoin.needsSpace(tail, s)) {
-            writer.write(" ")
-            tail.append(' ')
+        val needsSpace = tail.isNotEmpty() && TextJoin.needsSpace(tail, s)
+        try {
+            if (needsSpace) writer.write(" ")
+            writer.write(s)
+            writer.flush()
+        } catch (_: Exception) {
+            // A closed sink must never crash the session that outlived it — a late segment
+            // landing after close() (or the writer otherwise failing) is a safe no-op here.
+            return
         }
-        writer.write(s)
-        writer.flush()
+        if (needsSpace) tail.append(' ')
         tail.append(s)
         if (tail.length > previewCapChars) {
             tail.delete(0, tail.length - previewCapChars)
