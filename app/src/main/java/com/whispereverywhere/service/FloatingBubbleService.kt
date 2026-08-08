@@ -251,6 +251,19 @@ class FloatingBubbleService : Service(),
     private var longPressJob: kotlinx.coroutines.Job? = null
     private val LONG_PRESS_MS = 500L
 
+    // Resize-handle gesture state (W3). Deliberately separate from the root-drag fields
+    // (initialX/initialTouchX/...): the handle consumes its own gesture stream so the two never
+    // interleave, but sharing fields would make that invariant load-bearing and invisible.
+    private lateinit var resizeHandle: ImageView
+    private var resizeStartWidthDp = 0f
+    private var resizeStartHeightDp = 0f
+    private var resizeStartTouchX = 0f
+    private var resizeStartTouchY = 0f
+    private var resizeStartWindowY = 0
+    private var isResizing = false
+    private var lastResizeResult: ResizeMath.Result? = null
+    private var resizeLongPressJob: kotlinx.coroutines.Job? = null
+
     // Max time finalize waits for the transcription backlog to drain before force-ending the
     // session. Generous because a slow model (e.g. the large tier) can lag several segments behind
     // real time; bounded so a pathological run can't hang the bubble in FINALIZING forever.
@@ -1089,6 +1102,8 @@ class FloatingBubbleService : Service(),
         transcriptionPreviewContainer = bubbleView.findViewById(R.id.transcription_preview_container)
         transcriptionEditText = bubbleView.findViewById(R.id.transcription_edit_text)
         transcriptionDeltaText = bubbleView.findViewById(R.id.transcription_delta_text)
+        resizeHandle = bubbleView.findViewById(R.id.resize_handle)
+        resizeHandle.setOnTouchListener { _, event -> handleResizeTouch(event) }
         pinIcon = bubbleView.findViewById(R.id.pin_icon)
         speechStopIcon = bubbleView.findViewById(R.id.speech_stop_icon)
         speechStopIcon.setOnClickListener { com.whispereverywhere.tts.TtsController.stop() }
@@ -1177,6 +1192,158 @@ class FloatingBubbleService : Service(),
         transcriptionEditText.layoutParams = transcriptionEditText.layoutParams.apply { width = widthPx }
         transcriptionEditText.maxHeight = heightPx
         transcriptionDeltaText.layoutParams = transcriptionDeltaText.layoutParams.apply { width = widthPx }
+    }
+
+    /**
+     * Estimated full-window dims (px) for a GIVEN panel size — used when the view isn't laid out
+     * yet or mid-resize when the measured size lags a frame. Base: the 64dp pill estimate the old
+     * clamps used. When the preview is visible: width = panel + 48dp chrome (16dp container
+     * padding per side + 8dp root padding per side); height stacks panel + 48dp chrome (12dp
+     * container padding top/bottom + 8dp bottom margin + 8dp root padding top/bottom) on the
+     * pill; the live-mode delta strip, when visible, gets its own ~100dp allowance (it is not
+     * part of heightDp). A slight OVER-estimate by design: clamping with a too-big window only
+     * keeps it further from the screen edge — the safe direction.
+     */
+    private fun estimatedWindowSize(widthDp: Float, heightDp: Float): Pair<Int, Int> {
+        val density = resources.displayMetrics.density
+        val pillEstimate = (64 * density).toInt()
+        if (transcriptionPreviewContainer.visibility != View.VISIBLE) {
+            return Pair(pillEstimate, pillEstimate)
+        }
+        val panelW = ((widthDp + 48f) * density).toInt()
+        // Live sessions stack the delta strip (maxLines=5, italic) below the main panel —
+        // without this allowance the estimate UNDER-shoots in live mode and a mid-resize
+        // clamp could leave the window bottom off-screen.
+        val stripAllowance =
+            if (transcriptionDeltaText.visibility == View.VISIBLE) (100 * density).toInt() else 0
+        val panelH = ((heightDp + 48f) * density).toInt() + stripAllowance
+        return Pair(maxOf(pillEstimate, panelW), pillEstimate + panelH)
+    }
+
+    /** The window's REAL current dims for clamping: measured when laid out, estimated otherwise. */
+    private fun currentWindowSize(): Pair<Int, Int> {
+        if (bubbleView.width > 0 && bubbleView.height > 0) {
+            return Pair(bubbleView.width, bubbleView.height)
+        }
+        return estimatedWindowSize(
+            app.preferencesManager.bubbleTextWidthDp,
+            app.preferencesManager.bubbleTextHeightDp,
+        )
+    }
+
+    /** Re-clamp params to bounds for the window's CURRENT size (preview shown/hidden, resize,
+     *  reset). Post from a geometry-changing site so the measure pass has run first. */
+    private fun reclampNow() {
+        val (winW, winH) = currentWindowSize()
+        val clamped = clampToBounds(params.x, params.y, winW, winH)
+        if (clamped.first == params.x && clamped.second == params.y) return
+        params.x = clamped.first
+        params.y = clamped.second
+        try {
+            windowManager.updateViewLayout(bubbleView, params)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * The resize-handle gesture (W3). The handle CONSUMES its stream (child-first dispatch), so
+     * the root drag / long-press-to-pin listener never sees these events. Width follows the
+     * finger; height grows when dragging UP, and params.y compensates by the clamped growth so
+     * the TOP edge follows the finger while the mic pill below stays put. Live-apply per move;
+     * persist on ACTION_UP (size AND the moved y, exactly like the root drag-end persists
+     * position); long-press without a drag resets to the 280x120dp defaults. Pin locks POSITION,
+     * not size — resizing while pinned is allowed, and its y-compensation is part of resizing.
+     */
+    private fun handleResizeTouch(event: MotionEvent): Boolean {
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                resizeStartWidthDp = app.preferencesManager.bubbleTextWidthDp
+                resizeStartHeightDp = app.preferencesManager.bubbleTextHeightDp
+                resizeStartTouchX = event.rawX
+                resizeStartTouchY = event.rawY
+                resizeStartWindowY = params.y
+                isResizing = false
+                lastResizeResult = null
+                // Same 500 ms threshold as the pin gesture; cancelled the moment a drag starts.
+                resizeLongPressJob?.cancel()
+                resizeLongPressJob = serviceScope.launch {
+                    delay(LONG_PRESS_MS)
+                    if (!isResizing) resetPreviewSize()
+                }
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.rawX - resizeStartTouchX
+                val dy = event.rawY - resizeStartTouchY
+                if (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10) {
+                    isResizing = true
+                    resizeLongPressJob?.cancel()
+                }
+                if (!isResizing) return true
+                val dm = resources.displayMetrics
+                val result = ResizeMath.resize(
+                    startWidthDp = resizeStartWidthDp,
+                    startHeightDp = resizeStartHeightDp,
+                    dragDxPx = dx,
+                    dragDyPx = dy,
+                    density = dm.density,
+                    screenWidthPx = dm.widthPixels,
+                    screenHeightPx = dm.heightPixels,
+                )
+                // Live-apply through the SAME code path the persisted size uses, then move the
+                // window's top edge with the finger and re-clamp against the NEW estimated dims.
+                applyPreviewSize(result.widthDp, result.heightDp)
+                val est = estimatedWindowSize(result.widthDp, result.heightDp)
+                val clamped = clampToBounds(
+                    params.x, resizeStartWindowY + result.windowDyPx, est.first, est.second,
+                )
+                params.x = clamped.first
+                params.y = clamped.second
+                try {
+                    windowManager.updateViewLayout(bubbleView, params)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                lastResizeResult = result
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                resizeLongPressJob?.cancel(); resizeLongPressJob = null
+                val result = lastResizeResult
+                if (isResizing && result != null) {
+                    app.preferencesManager.bubbleTextWidthDp = result.widthDp
+                    app.preferencesManager.bubbleTextHeightDp = result.heightDp
+                    // Persist the compensated spot exactly like the root drag-end does: the
+                    // window's y moved with the resize, and pop-up restore reads these fractions.
+                    val dm = resources.displayMetrics
+                    if (dm.widthPixels > 0) {
+                        app.preferencesManager.bubblePositionX = params.x.toFloat() / dm.widthPixels
+                    }
+                    if (dm.heightPixels > 0) {
+                        app.preferencesManager.bubblePositionY = params.y.toFloat() / dm.heightPixels
+                    }
+                }
+                isResizing = false
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                resizeLongPressJob?.cancel(); resizeLongPressJob = null
+                isResizing = false
+                return true
+            }
+        }
+        return false
+    }
+
+    /** Long-press on the handle: back to the stock 280x120dp panel, persisted immediately —
+     *  insurance against wedging the window tiny. */
+    private fun resetPreviewSize() {
+        app.preferencesManager.bubbleTextWidthDp = ResizeMath.DEFAULT_WIDTH_DP
+        app.preferencesManager.bubbleTextHeightDp = ResizeMath.DEFAULT_HEIGHT_DP
+        applyPreviewSize()
+        bubbleView.post { reclampNow() }
+        showToast("Preview size reset")
     }
 
     // ========== Pin / Lock ==========

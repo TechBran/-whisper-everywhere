@@ -22,18 +22,41 @@
         android:paddingBottom="12dp"
         android:visibility="gone">
 
-        <!-- Read-only text for finalized transcription chunks -->
-        <TextView
-            android:id="@+id/transcription_edit_text"
-            android:layout_width="280dp"
-            android:layout_height="wrap_content"
-            android:scrollbars="vertical"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:minHeight="20dp"
-            android:hint="Listening..."
-            android:textColorHint="#99FFFFFF"
-            android:gravity="top|start" />
+        <!-- Wrapper so the resize handle can OVERLAY the transcript's top-right corner: the
+             container is a vertical LinearLayout, which can't stack children. The transcript
+             view defines the panel width, so the wrapper's top-right is the panel's top-right. -->
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content">
+
+            <!-- Read-only text for finalized transcription chunks. Width + max height are
+                 RUNTIME-OWNED (applyPreviewSize); 280dp is only the pre-first-apply default. -->
+            <TextView
+                android:id="@+id/transcription_edit_text"
+                android:layout_width="280dp"
+                android:layout_height="wrap_content"
+                android:scrollbars="vertical"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:minHeight="20dp"
+                android:hint="Listening..."
+                android:textColorHint="#99FFFFFF"
+                android:gravity="top|start" />
+
+            <!-- W3 resize handle: 28dp touch target, 45-degree double-arrow, visible whenever
+                 the container is (resizing mid-dictation is the intended flow). Drag = resize,
+                 long-press = reset to 280x120dp. It consumes its own gesture — child-first
+                 dispatch beats the root drag listener and its long-press-to-pin arming. -->
+            <ImageView
+                android:id="@+id/resize_handle"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_gravity="top|end"
+                android:padding="6dp"
+                android:alpha="0.7"
+                android:src="@drawable/ic_resize_handle"
+                android:contentDescription="Resize transcript window" />
+        </FrameLayout>
 
         <!--
           Live delta text — the word-for-word preview.
