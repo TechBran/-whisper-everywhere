@@ -1746,6 +1746,45 @@ class FloatingBubbleService : Service(),
         return engine
     }
 
+    /**
+     * The ONE preview pipeline (W2 unified preview): EVERY session — TEXT_FIELD, MEDIA_PLAYBACK,
+     * NONE, live or batch — shows the accumulating transcript window and gets a bounded-memory
+     * TranscriptSink. Mid-session text goes here and NOWHERE else; the single external write
+     * happens at stop (deliverFinalTranscript). For a TEXT_FIELD session this window is the
+     * user's only live feedback now, since segments no longer inject as they resolve.
+     * [live] sessions additionally stream the in-flight utterance onto the delta strip via
+     * onDelta; here the strip is only reset so the last session's text never flashes back.
+     */
+    private fun showSessionPreview(live: Boolean) {
+        // W3: applyPreviewSize() call lands here
+        android.util.Log.i("WE-DIAG", "showSessionPreview: live=$live context=$sessionContext")
+        transcriptionEditText.visibility = View.VISIBLE
+        transcriptionEditText.text = ""
+        transcriptionDeltaText.text = ""
+        transcriptionDeltaText.visibility = View.GONE
+        transcriptionPreviewContainer.visibility = View.VISIBLE
+
+        // Bounded-memory sink for the session; the file on disk is the full transcript.
+        val sessionFile = java.io.File(filesDir, "transcript_session.txt").apply { if (exists()) delete() }
+        val sink = com.whispereverywhere.transcription.TranscriptSink(sessionFile)
+        transcriptSink = sink
+        previewJob?.cancel()
+        previewJob = serviceScope.launch(Dispatchers.Main) {
+            sink.preview.collectLatest { text ->
+                transcriptionEditText.text = text
+                // TextView has no setSelection; scroll to reveal the newest text.
+                transcriptionEditText.post {
+                    val lc = transcriptionEditText.lineCount
+                    val layout = transcriptionEditText.layout
+                    if (lc > 0 && layout != null) {
+                        val dy = layout.getLineBottom(lc - 1) - transcriptionEditText.height
+                        transcriptionEditText.scrollTo(0, dy.coerceAtLeast(0))
+                    }
+                }
+            }
+        }
+    }
+
     private fun startRecording() {
         if (!audioRecorder.hasPermission()) {
             vibrateError(); showToast("Microphone permission required"); return
@@ -1815,47 +1854,9 @@ class FloatingBubbleService : Service(),
                         return@launch
                     }
 
-                    // Show preview text bubble if we are not injecting into a text field
-                    if (sessionContext != BubbleContext.TEXT_FIELD) {
-                        // Restore the full-transcript view a prior live session may have hidden.
-                        transcriptionEditText.visibility = View.VISIBLE
-                        transcriptionEditText.text = ""
-                        transcriptionDeltaText.text = ""
-                        transcriptionDeltaText.visibility = View.GONE
-                        transcriptionPreviewContainer.visibility = View.VISIBLE
-
-                        // Create a bounded-memory sink for this session (Task 7)
-                        val sessionFile = java.io.File(filesDir, "transcript_session.txt").apply { if (exists()) delete() }
-                        val sink = com.whispereverywhere.transcription.TranscriptSink(sessionFile)
-                        transcriptSink = sink
-                        previewJob?.cancel()
-                        previewJob = serviceScope.launch(Dispatchers.Main) {
-                            sink.preview.collectLatest { text ->
-                                transcriptionEditText.text = text
-                                // TextView has no setSelection; scroll to reveal the newest text.
-                                transcriptionEditText.post {
-                                    val lc = transcriptionEditText.lineCount
-                                    val layout = transcriptionEditText.layout
-                                    if (lc > 0 && layout != null) {
-                                        val dy = layout.getLineBottom(lc - 1) - transcriptionEditText.height
-                                        transcriptionEditText.scrollTo(0, dy.coerceAtLeast(0))
-                                    }
-                                }
-                            }
-                        }
-                    } else if (sessionIsLive) {
-                        // A live TEXT_FIELD session injects each finished turn into the real field,
-                        // but the field has no affordance for the word-for-word partials — so lift
-                        // the preview STRIP (the delta line only) for live mode. The full-transcript
-                        // editText stays hidden: deltas render on this strip and NEVER inject.
-                        // Completions still flow through the unchanged orderer -> full-field RMW path.
-                        transcriptionEditText.visibility = View.GONE
-                        transcriptionDeltaText.text = ""
-                        transcriptionDeltaText.visibility = View.GONE
-                        transcriptionPreviewContainer.visibility = View.VISIBLE
-                    } else {
-                        transcriptionPreviewContainer.visibility = View.GONE
-                    }
+                    // One preview pipeline for every session context (W2): the accumulating
+                    // window + sink, always. Live sessions additionally stream onto the strip.
+                    showSessionPreview(live = sessionIsLive)
 
                     updateBubbleState(BubbleState.RECORDING)
                     amplitudeJob = serviceScope.launch {
@@ -1869,28 +1870,26 @@ class FloatingBubbleService : Service(),
                 }
             }
             override fun onDelta(text: String) {
-                // On-device and batch engines emit no intra-segment deltas; only the live engine
-                // does. The strip already renders for NONE/MEDIA_PLAYBACK preview sessions; the
-                // `|| sessionIsLive` clause lifts it into a live TEXT_FIELD session too, where the
-                // onOpen branch above made the container (delta line only) visible for exactly this.
-                if (sessionContext != BubbleContext.TEXT_FIELD || sessionIsLive) {
-                    serviceScope.launch(Dispatchers.Main) {
-                        if (text.isNotBlank()) {
-                            transcriptionDeltaText.visibility = View.VISIBLE
-                            transcriptionDeltaText.text = text
-                            // Keep the newest words in view. The panel grows to maxLines then
-                            // scrolls; without this it would hold the TOP of a long utterance and
-                            // the live words would stream out of sight — the opposite of the point.
-                            // Posted so the scroll runs after layout has measured the new text.
-                            transcriptionDeltaText.post {
-                                val overflow = transcriptionDeltaText.layout?.let { l ->
-                                    l.getLineBottom(l.lineCount - 1) - transcriptionDeltaText.height
-                                } ?: 0
-                                transcriptionDeltaText.scrollTo(0, overflow.coerceAtLeast(0))
-                            }
-                        } else {
-                            transcriptionDeltaText.visibility = View.GONE
+                // Only the live engine emits intra-segment deltas. The unified preview (W2)
+                // keeps the container up for EVERY session context, so the strip renders
+                // wherever deltas exist — no context gate. Resolved turns accumulate into the
+                // window below it.
+                serviceScope.launch(Dispatchers.Main) {
+                    if (text.isNotBlank()) {
+                        transcriptionDeltaText.visibility = View.VISIBLE
+                        transcriptionDeltaText.text = text
+                        // Keep the newest words in view. The panel grows to maxLines then
+                        // scrolls; without this it would hold the TOP of a long utterance and
+                        // the live words would stream out of sight — the opposite of the point.
+                        // Posted so the scroll runs after layout has measured the new text.
+                        transcriptionDeltaText.post {
+                            val overflow = transcriptionDeltaText.layout?.let { l ->
+                                l.getLineBottom(l.lineCount - 1) - transcriptionDeltaText.height
+                            } ?: 0
+                            transcriptionDeltaText.scrollTo(0, overflow.coerceAtLeast(0))
                         }
+                    } else {
+                        transcriptionDeltaText.visibility = View.GONE
                     }
                 }
             }
@@ -1952,10 +1951,10 @@ class FloatingBubbleService : Service(),
         // only the spinner, and after a long capture users read that as a hang (user feedback
         // 2026-07-18, 25-min video). The status line below names what's happening; the preview
         // and the line come down together when the drain completes.
-        if (sessionContext != BubbleContext.TEXT_FIELD) {
-            transcriptionDeltaText.text = "Finishing transcript — last segments coming in…"
-            transcriptionDeltaText.visibility = View.VISIBLE
-        }
+        // Every session shows the closing status now (W2 unified preview) — the accumulating
+        // window is up for TEXT_FIELD sessions too, and this line is its "still working" signal.
+        transcriptionDeltaText.text = "Finishing transcript — last segments coming in…"
+        transcriptionDeltaText.visibility = View.VISIBLE
         
         // Flush whatever is buffered, UNCONDITIONALLY. The amplitude segmenter misses quiet
         // speech below its fixed thresholds — gating this flush on hasPendingSpeech() silently
