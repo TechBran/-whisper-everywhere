@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 74
-        versionName = "3.4.0"  // the Play-review release: resizable transcript window, final-only commit into the field, the bubble is always a mic
+        versionCode = 75
+        versionName = "3.4.1"  // hotfix: transcription history no longer self-deletes at finalize (stats block zeroed the save stamp)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
