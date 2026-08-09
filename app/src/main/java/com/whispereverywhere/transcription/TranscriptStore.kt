@@ -25,7 +25,12 @@ class TranscriptStore(
     init { dir.mkdirs() }
 
     fun save(startedAtMs: Long, text: String): File {
-        val f = File(dir, "$startedAtMs.txt")
+        // A non-positive stamp names the file "0.txt" — which the next sweep() deletes as
+        // decades stale, silently erasing the session (shipped bug: the service's stats
+        // block zeroed sessionStartMs before the history persist read it). History must
+        // outlive its caller's bookkeeping: fall back to the clock rather than self-destruct.
+        val stamp = if (startedAtMs > 0) startedAtMs else clock()
+        val f = File(dir, "$stamp.txt")
         f.writeText(text)
         return f
     }

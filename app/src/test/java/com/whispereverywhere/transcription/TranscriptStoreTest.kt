@@ -55,6 +55,21 @@ class TranscriptStoreTest {
         assertEquals(4000L, entries[0].startedAtMs)
     }
 
+    @Test fun `save with a dead timestamp falls back to the clock so sweep cannot instantly evict it`() {
+        // Regression pin for the 3.3.0/3.4.0 vanishing-history bug: the service zeroed
+        // sessionStartMs (stats bookkeeping) BEFORE the history persist, so every session
+        // saved as "0.txt" — which the very next sweep() deleted as 56 years stale. The
+        // store must never accept a timestamp that self-destructs on the next sweep.
+        val now = TranscriptStore.MAX_AGE_MS * 4
+        val store = TranscriptStore(tmp.root) { now }
+        store.save(0L, "the session the stats block tried to erase")
+        store.sweep()
+        val entries = store.list()
+        assertEquals(1, entries.size)
+        assertEquals(now, entries[0].startedAtMs)
+        assertEquals("the session the stats block tried to erase", store.read(entries[0]))
+    }
+
     @Test fun `delete removes exactly one entry`() {
         var now = 0L
         val store = TranscriptStore(tmp.root) { now }

@@ -2280,6 +2280,11 @@ class FloatingBubbleService : Service(),
             // real use). Session seconds are wall-clock from startRecording to here (what a user
             // means by "time transcribing"), counted once per session at finalize; a session
             // that produced text counts as one transcription.
+            // Capture the session stamp BEFORE the stats block zeroes it — the history persist
+            // below names its file by this value, and saving with 0 meant "0.txt", which the
+            // sweep on the next line deleted as decades stale (the vanishing-history bug:
+            // every transcription silently erased at finalize since the stats fix landed).
+            val sessionStamp = sessionStartMs
             if (sessionStartMs > 0L) {
                 val sessionSeconds = ((System.currentTimeMillis() - sessionStartMs) / 1000L).toInt()
                 if (sessionSeconds > 0) {
@@ -2324,7 +2329,7 @@ class FloatingBubbleService : Service(),
             // that completes in time IS in sessionTranscript before this persist).
             if (sessionTranscript.isNotBlank()) {
                 withContext(Dispatchers.IO) {
-                    transcriptStore.save(sessionStartMs, sessionTranscript.toString())
+                    transcriptStore.save(sessionStamp, sessionTranscript.toString())
                     transcriptStore.sweep()
                 }
             }
