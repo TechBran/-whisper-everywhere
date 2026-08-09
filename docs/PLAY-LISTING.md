@@ -258,3 +258,11 @@ Owns the biggest behavior change existing users will feel — live-cloud turns n
 field word-by-word; "your words build live in the bubble window" is the reassurance, "once, complete,
 when you stop" is the pitch. No speed claims, no absolute privacy claims — nothing here touches the
 post-flip rules. Reply to the requesting review after rollout reaches them.)
+
+## Release notes — 3.4.1 (within 500 chars; supersedes the 74 notes — most users jump 73→75)
+
+> The two most-requested changes from your reviews, plus an important fix. The transcript window is now resizable — drag the double-arrow at its top right; the size sticks. Dictation now types into your field once, complete, when you stop — your words build live in the bubble window, and your clipboard stays yours. The bubble always stays a microphone. Fixed: saved sessions were vanishing from the Transcriptions list right after finishing — your history now keeps every session again.
+
+(486 chars. Keeps the full 3.4.0 story since 74 was live for under a day — most updaters skip it —
+and adds the history hotfix honestly ("were vanishing"). The bug shipped in 73's stats fix, rode
+into 74, fixed in 75/fd9fe75. Same claim discipline as always.)
