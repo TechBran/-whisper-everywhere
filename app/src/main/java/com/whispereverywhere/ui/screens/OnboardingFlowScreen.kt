@@ -7,9 +7,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -27,9 +29,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.model.ModelTierCopy
+import com.whispereverywhere.model.WhisperCatalog
+import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.service.MediaNotificationListener
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.ui.onboarding.OnboardingLogic
+import com.whispereverywhere.util.formatBytes
 import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
@@ -38,9 +45,10 @@ import com.whispereverywhere.ui.theme.Primary
 // ---------------------------------------------------------------------------------------------
 // Guided first-run onboarding (owner decision 2026-08-01): everything the app needs, configured
 // in one pass on first startup. Three steps — permissions (all four, granted in place), engines
-// (the Base multilingual model + the read-aloud voice, downloaded AUTOMATICALLY with no button
-// presses), and optional cloud provider keys. Replaces the two-path chooser: the chooser made
-// setup a fork; this makes it a walk, and the cloud fork is simply the last step.
+// (3.5.0: the user PICKS one of four speech tiers from honest cards — no preselection — and that
+// single confirmed pick starts BOTH downloads, chosen tier + read-aloud voice, with no further
+// button presses), and the cloud-keys teaching step. Replaces the two-path chooser: the chooser
+// made setup a fork; this makes it a walk, and the cloud fork is simply the last step.
 //
 // It NEVER blocks: Skip is always present, back-press on the first step is a skip, a failed
 // download unblocks Continue (with a Retry on the row), and Home's setup banner + Settings remain
@@ -62,6 +70,10 @@ fun OnboardingFlowScreen(
         viewModel(viewModelStoreOwner = context as ComponentActivity)
 
     var step by remember { mutableStateOf(Step.PERMISSIONS) }
+
+    // The chooser's transient pick (3.5.0). Deliberately NOT persisted until the confirm tap:
+    // prefs.selectedModelId is written the moment Download is pressed, never before.
+    var pickedTierId by remember { mutableStateOf<String?>(null) }
 
     // Back walks the flow backwards; on the first step it is a skip, mirroring the old chooser's
     // never-block contract.
@@ -103,7 +115,11 @@ fun OnboardingFlowScreen(
             ) {
                 when (step) {
                     Step.PERMISSIONS -> PermissionsStep(lifecycleOwner = lifecycleOwner)
-                    Step.ENGINES -> EnginesStep(setupVm)
+                    Step.ENGINES -> EnginesStep(
+                        vm = setupVm,
+                        pickedTierId = pickedTierId,
+                        onPick = { pickedTierId = it },
+                    )
                     Step.CLOUD -> CloudStep(onCloudSetup = onCloudSetup, onFinish = onFinish)
                 }
             }
@@ -114,32 +130,54 @@ fun OnboardingFlowScreen(
             if (step != Step.CLOUD) {
                 val speech by setupVm.speechState.collectAsState()
                 val voice by setupVm.voiceState.collectAsState()
-                val continueEnabled = when (step) {
-                    Step.PERMISSIONS -> true
-                    else -> OnboardingLogic.enginesContinueEnabled(
+                if (step == Step.PERMISSIONS) {
+                    Button(
+                        onClick = { OnboardingLogic.next(step)?.let { step = it } },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Continue")
+                    }
+                } else {
+                    // ENGINES: one primary action — "Download" (gated on a pick) until downloads
+                    // begin, then the old "Continue" with its unchanged never-wedge gating.
+                    val action = OnboardingLogic.enginesPrimaryAction(
+                        downloadsBegun = speech !is EngineState.Pending,
+                        tierPicked = pickedTierId != null,
                         speechReady = speech is EngineState.Ready,
                         speechFailed = speech is EngineState.Failed,
                     )
-                }
-                if (step == Step.ENGINES) {
-                    OnboardingLogic.enginesContinueHint(
-                        speechReady = speech is EngineState.Ready,
-                        voiceReady = voice is EngineState.Ready,
-                    )?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
+                    if (!action.startsDownloads) {
+                        OnboardingLogic.enginesContinueHint(
+                            speechReady = speech is EngineState.Ready,
+                            voiceReady = voice is EngineState.Ready,
+                        )?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
                     }
-                }
-                Button(
-                    onClick = { OnboardingLogic.next(step)?.let { step = it } },
-                    enabled = continueEnabled,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Continue")
+                    Button(
+                        onClick = {
+                            if (action.startsDownloads) {
+                                pickedTierId?.let { picked ->
+                                    // Contract: the pick is persisted BEFORE beginAutoSetup so
+                                    // ensureSpeech resolves it as the one source of truth.
+                                    WhisperEverywhereApp.getInstance()
+                                        .preferencesManager.selectedModelId = picked
+                                    setupVm.beginAutoSetup()
+                                }
+                            } else {
+                                OnboardingLogic.next(step)?.let { step = it }
+                            }
+                        },
+                        enabled = action.enabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(action.label)
+                    }
                 }
             }
             TextButton(
@@ -269,38 +307,141 @@ private fun hasMic(context: android.content.Context): Boolean =
 // ------------------------------------------------------------------------------- engines
 
 /**
- * The automatic step: entering it IS the action. Both downloads start themselves (idempotently),
- * the user just watches two progress rows fill. Sizes are stated plainly since nobody tapped a
- * download button.
+ * The model-choice step (3.5.0): four tier cards from [ModelTierCopy], no preselection, one pick.
+ * Until downloads begin it renders the chooser; from the first beginAutoSetup() the SAME step
+ * renders the two progress rows and nothing further needs pressing. Re-entering the step after
+ * the confirm shows progress, never the chooser again — the activity-scoped VM's speechState
+ * (Pending = not yet begun) is the phase truth.
  */
 @Composable
-private fun EnginesStep(vm: OnboardingSetupViewModel) {
-    LaunchedEffect(Unit) { vm.beginAutoSetup() }
-
+private fun EnginesStep(
+    vm: OnboardingSetupViewModel,
+    pickedTierId: String?,
+    onPick: (String) -> Unit,
+) {
     val speech by vm.speechState.collectAsState()
     val voice by vm.voiceState.collectAsState()
 
-    Text(
-        "Downloading everything the app needs to work fully on-device, in any language — " +
-            "nothing to press. Both stay on your phone; audio never has to leave it.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Spacer(Modifier.height(16.dp))
+    if (speech is EngineState.Pending) {
+        // ---- choose phase: nothing downloads until the user has made an informed pick.
+        Text(
+            "Pick your speech model — dictation runs on your phone, and audio never has to " +
+                "leave it. The read-aloud voice (about 365 MB) downloads alongside whichever " +
+                "model you choose.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(16.dp))
+        WhisperCatalog.pickable.forEach { model ->
+            TierChoiceCard(
+                model = model,
+                copy = ModelTierCopy.forId(model.id),
+                selected = pickedTierId == model.id,
+                onClick = { onPick(model.id) },
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+        Text(
+            OnboardingLogic.TIER_SWITCH_HINT,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        // ---- download phase: entered by the one confirmed pick; nothing further to press.
+        val chosen = WhisperCatalog.byId(
+            WhisperEverywhereApp.getInstance().preferencesManager.selectedModelId
+        ) ?: WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!
+        Text(
+            "Downloading your engines — nothing to press. Both stay on your phone; audio " +
+                "never has to leave it.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(16.dp))
+        EngineRow(
+            title = "Speech model — ${chosen.displayName}",
+            subtitle = "Transcribes your dictation on-device (${formatBytes(chosen.approxBytes)})",
+            state = speech,
+            onRetry = { vm.ensureSpeech() },
+        )
+        Spacer(Modifier.height(12.dp))
+        EngineRow(
+            title = "Read-aloud voice",
+            subtitle = "Speaks text aloud on-device (about 365 MB)",
+            state = voice,
+            onRetry = { vm.ensureVoice() },
+        )
+    }
+}
 
-    EngineRow(
-        title = "Speech model — Base multilingual",
-        subtitle = "Transcribes your dictation on-device (about 60 MB)",
-        state = speech,
-        onRetry = { vm.ensureSpeech() },
-    )
-    Spacer(Modifier.height(12.dp))
-    EngineRow(
-        title = "Read-aloud voice",
-        subtitle = "Speaks text aloud on-device (about 365 MB)",
-        state = voice,
-        onRetry = { vm.ensureVoice() },
-    )
+/** One selectable tier card rendering [ModelTierCopy] — the same copy Settings' picker shows. */
+@Composable
+private fun TierChoiceCard(
+    model: WhisperModel,
+    copy: ModelTierCopy.TierCopy?,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) Primary.copy(alpha = 0.08f)
+            else MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(
+            if (selected) 2.dp else 1.dp,
+            if (selected) Primary else MaterialTheme.colorScheme.outline,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (selected) 2.dp else 1.dp),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        copy?.headline ?: model.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        model.displayName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                if (selected) {
+                    Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = Primary)
+                }
+            }
+            copy?.let { c ->
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    c.badges.forEach { badge ->
+                        Surface(
+                            color = Primary.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text(
+                                badge,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Primary,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    c.body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
 
 @Composable
