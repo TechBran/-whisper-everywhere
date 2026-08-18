@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.model.ModelScope
+import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel
@@ -122,6 +123,11 @@ private fun ModelTierCard(
     onSelect: () -> Unit,
     onRetry: () -> Unit
 ) {
+    // 3.5.0: same source of truth as the onboarding chooser (ModelTierCopy) — the headline takes
+    // the speed-vs-accuracy position, the badges make language coverage impossible to miss, the
+    // body is the honest one-liner. Null only for a tier without copy (ModelTierCopyTest pins
+    // that every pickable tier has some), which falls back to the old catalog-scope row.
+    val copy = ModelTierCopy.forId(model.id)
     val downloading = state as? DownloadState.Downloading
     val verifying = state is DownloadState.Verifying
     val error = state as? DownloadState.Error
@@ -175,23 +181,41 @@ private fun ModelTierCard(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Scope row
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Language,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
+            if (copy != null) {
                 Text(
-                    text = when (model.scope) {
-                        ModelScope.ENGLISH -> "English only"
-                        ModelScope.MULTILINGUAL -> "Multilingual (99 languages)"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = copy.headline,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Primary,
                 )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    copy.badges.forEach { badge -> CopyBadge(text = badge) }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = copy.body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Language,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = when (model.scope) {
+                            ModelScope.ENGLISH -> "English only"
+                            ModelScope.MULTILINGUAL -> "Multilingual (99 languages)"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             // Badges
@@ -350,5 +374,22 @@ private fun TierBadge(text: String, color: androidx.compose.ui.graphics.Color) {
                 fontWeight = FontWeight.Bold
             )
         }
+    }
+}
+
+/** A plain copy chip (no icon) for ModelTierCopy badges — language coverage and size. */
+@Composable
+private fun CopyBadge(text: String) {
+    Surface(
+        color = Primary.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = Primary,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
