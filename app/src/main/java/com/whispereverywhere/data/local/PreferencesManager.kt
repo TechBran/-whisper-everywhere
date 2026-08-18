@@ -218,6 +218,15 @@ class PreferencesManager(private val context: Context) {
             prefs.edit().putBoolean(KEY_OVERLAY_PINNED, value).apply()
         }
 
+    // Home's cloud-key note (Workstream B): set true by the card's X, never unset in-app. The
+    // note ALSO hides permanently once any provider key is configured — that gate lives in the
+    // visibility predicate (CloudKeyNote.shouldShow), independent of this flag.
+    var cloudNoteDismissed: Boolean
+        get() = prefs.getBoolean(KEY_CLOUD_NOTE_DISMISSED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_CLOUD_NOTE_DISMISSED, value).apply()
+        }
+
     // Selected on-device whisper model tier id (see WhisperCatalog); null = none chosen yet
     var selectedModelId: String?
         get() = prefs.getString(KEY_SELECTED_MODEL_ID, null)
@@ -356,6 +365,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_SELECTED_MODEL_ID = "selected_model_id"
         private const val KEY_SELECTED_LANGUAGE = "selected_language"
         private const val KEY_OVERLAY_PINNED = "overlay_pinned"
+        private const val KEY_CLOUD_NOTE_DISMISSED = "cloud_note_dismissed"
         private const val KEY_TTS_SPEED = "tts_speed"
         private const val KEY_TTS_VOICE_ID = "tts_voice_id"
         /**
