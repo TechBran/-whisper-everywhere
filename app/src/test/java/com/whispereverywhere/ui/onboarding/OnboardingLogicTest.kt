@@ -66,4 +66,54 @@ class OnboardingLogicTest {
         assertEquals("1 permission still needed — tap to review", OnboardingLogic.homePermissionChipText(1))
         assertEquals("3 permissions still needed — tap to review", OnboardingLogic.homePermissionChipText(3))
     }
+
+    // ---------------------------------------------------------------- engines chooser (3.5.0)
+
+    @Test fun no_preselection_means_the_download_action_starts_disabled() {
+        // Owner decision: the user must make an informed pick — the disabled Download button is
+        // what forces it.
+        val action = OnboardingLogic.enginesPrimaryAction(
+            downloadsBegun = false, tierPicked = false, speechReady = false, speechFailed = false,
+        )
+        assertEquals("Download", action.label)
+        assertFalse(action.enabled)
+        assertTrue(action.startsDownloads)
+    }
+
+    @Test fun picking_a_tier_is_all_it_takes_to_unlock_download() {
+        val action = OnboardingLogic.enginesPrimaryAction(
+            downloadsBegun = false, tierPicked = true, speechReady = false, speechFailed = false,
+        )
+        assertTrue(action.enabled)
+        assertTrue(action.startsDownloads)
+    }
+
+    @Test fun once_downloads_begin_the_action_is_continue_with_the_unchanged_gating() {
+        // One pick, then no buttons: after the confirm the footer is the OLD Continue — gated
+        // while speech works, unlocked by Ready or Failed (never wedge), never by the voice.
+        val working = OnboardingLogic.enginesPrimaryAction(
+            downloadsBegun = true, tierPicked = true, speechReady = false, speechFailed = false,
+        )
+        assertEquals("Continue", working.label)
+        assertFalse(working.enabled)
+        assertFalse(working.startsDownloads)
+        assertTrue(
+            OnboardingLogic.enginesPrimaryAction(
+                downloadsBegun = true, tierPicked = true, speechReady = true, speechFailed = false,
+            ).enabled
+        )
+        assertTrue(
+            OnboardingLogic.enginesPrimaryAction(
+                downloadsBegun = true, tierPicked = true, speechReady = false, speechFailed = true,
+            ).enabled
+        )
+    }
+
+    @Test fun the_switch_anytime_hint_is_pinned_exactly() {
+        // Spec A3: plants the switching habit and lowers the stakes of the forced choice.
+        assertEquals(
+            "Not sure? Pick one — you can switch models anytime in Settings.",
+            OnboardingLogic.TIER_SWITCH_HINT,
+        )
+    }
 }

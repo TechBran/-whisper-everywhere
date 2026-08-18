@@ -38,6 +38,36 @@ object OnboardingLogic {
         else -> null
     }
 
+    /** The chooser hint under the model cards (spec A3) — plants the switching habit. */
+    const val TIER_SWITCH_HINT = "Not sure? Pick one — you can switch models anytime in Settings."
+
+    /** The engines step's single primary action: Download until downloads begin, then Continue. */
+    data class EnginesAction(val label: String, val enabled: Boolean, val startsDownloads: Boolean)
+
+    /**
+     * One pick, then no buttons (3.5.0 evolution of the 2026-08-01 owner decision): before any
+     * download exists the primary action is "Download", enabled ONLY once a tier card is picked —
+     * there is deliberately no preselection, so the disabled button is what forces the informed
+     * choice. From the moment downloads begin the action is the old "Continue" with its
+     * unchanged never-wedge gating ([enginesContinueEnabled]): speech Ready or Failed unlocks
+     * it; the background voice never blocks.
+     */
+    fun enginesPrimaryAction(
+        downloadsBegun: Boolean,
+        tierPicked: Boolean,
+        speechReady: Boolean,
+        speechFailed: Boolean,
+    ): EnginesAction =
+        if (!downloadsBegun) {
+            EnginesAction(label = "Download", enabled = tierPicked, startsDownloads = true)
+        } else {
+            EnginesAction(
+                label = "Continue",
+                enabled = enginesContinueEnabled(speechReady, speechFailed),
+                startsDownloads = false,
+            )
+        }
+
     /**
      * How many of the three permissions the BUBBLE needs (mic, overlay, accessibility) are
      * missing. Notification access is deliberately not counted: media detection degrades
