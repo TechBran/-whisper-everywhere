@@ -509,13 +509,21 @@ private fun EngineRow(
 
 // ------------------------------------------------------------------------------- cloud
 
-/** The final fork, as two full cards — the same idiom as the old chooser, in its rightful place. */
+/**
+ * The teaching card (3.5.0, spec A3): before this step existed a user could finish onboarding
+ * never learning cloud keys exist. Copy contract — own API key, the four providers by name, top
+ * accuracy + widest language coverage, billed to the USER's provider account, entirely optional,
+ * on-device always works and remains the default. NO speed claims: the old copy's "real-time
+ * streaming" hook was retired with it.
+ */
 @Composable
 private fun CloudStep(onCloudSetup: () -> Unit, onFinish: () -> Unit) {
     Text(
-        "Want real-time streaming transcription or cloud voices? Add your own provider keys now — " +
-            "any or all of OpenAI, Gemini, ElevenLabs, and Soniox. You can always do this later " +
-            "in Engines & voices.",
+        "One more thing worth knowing: you can plug in your own API key from OpenAI, " +
+            "Google Gemini, ElevenLabs, or Soniox. The big cloud models offer top accuracy " +
+            "and the widest language coverage, and usage is billed to your own provider " +
+            "account at the provider's rates. It's entirely optional — the on-device model " +
+            "always works and remains the default.",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -524,14 +532,16 @@ private fun CloudStep(onCloudSetup: () -> Unit, onFinish: () -> Unit) {
     ChoiceCard(
         icon = Icons.Filled.CloudQueue,
         title = "Set up cloud providers",
-        subtitle = "Bring your own keys — billed to your own accounts, only when you use them.",
+        subtitle = "Bring your own keys — top accuracy and the widest language coverage, " +
+            "billed to your own accounts.",
         onClick = onCloudSetup,
     )
     Spacer(Modifier.height(16.dp))
     ChoiceCard(
         icon = Icons.Filled.PhoneAndroid,
         title = "Finish — on-device only",
-        subtitle = "Free and private. Everything runs on your phone.",
+        subtitle = "Free and private. Everything runs on your phone; add keys anytime in " +
+            "Engines & voices.",
         onClick = onFinish,
     )
 }
