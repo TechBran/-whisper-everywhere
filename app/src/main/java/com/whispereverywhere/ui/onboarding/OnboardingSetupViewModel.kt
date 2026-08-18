@@ -14,11 +14,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * Drives the guided-onboarding AUTOMATIC engine setup: the Base multilingual speech model and the
- * on-device read-aloud voice, downloaded side by side with no button presses (owner decision
- * 2026-08-01 — "the user just doesn't have to press the buttons and they just automatically
- * happen"). Distinct from [ModelDownloadViewModel], which stays the manual per-tier picker behind
- * Home's setup banner.
+ * Drives the guided-onboarding engine setup: the USER-PICKED speech tier and the on-device
+ * read-aloud voice, downloaded side by side. Contract since 3.5.0: ONE PICK, THEN NO BUTTONS —
+ * the engines step shows the four tier cards with no preselection, the pick writes
+ * prefs.selectedModelId, and [beginAutoSetup] then drives both downloads to completion with
+ * nothing further to press (evolving the 2026-08-01 "no button presses" owner decision: the
+ * no-buttons promise now starts one informed tap later). Distinct from [ModelDownloadViewModel],
+ * which stays the manual per-tier picker behind Home's setup banner.
  *
  * MUST be scoped to the ACTIVITY (`viewModel(viewModelStoreOwner = activity)`), not the onboarding
  * destination: the voice bundle is ~365 MB and the user is explicitly allowed to continue to the
@@ -29,9 +31,10 @@ import kotlinx.coroutines.launch
  * on-disk `.installed` marker only appears after a COMPLETE extract, so a torn one re-downloads
  * rather than half-working.)
  *
- * Idempotence: [beginAutoSetup] is called from a LaunchedEffect on the engines step and does
- * nothing when already running or already installed — re-entering the step (back/forward, process
- * of granting permissions in Settings and returning) never restarts a download.
+ * Idempotence: [beginAutoSetup] is called from the engines step's single confirm action — never
+ * before the pick has been persisted — and does nothing when already running or already
+ * installed; re-entering the step (back/forward, granting permissions in Settings and
+ * returning) never restarts a download.
  */
 class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -54,34 +57,38 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
     private val _voiceState = MutableStateFlow<EngineState>(EngineState.Pending)
     val voiceState: StateFlow<EngineState> = _voiceState.asStateFlow()
 
-    /** Start both engine downloads (the onboarding engines step). Per-engine idempotent. */
+    /** Start both engine downloads — the engines step's confirm, after the pick is persisted. Per-engine idempotent. */
     fun beginAutoSetup() {
         ensureSpeech()
         ensureVoice()
     }
 
     /**
-     * Make the on-device speech model exist, if it is not already installed: the
-     * ONBOARDING_MODEL_ID tier — "Base multilingual" (~60 MB), the owner's chosen default
-     * (multilingual on any device, no RAM floor). Already-installed reports Ready without a
-     * network touch — which also self-heals the "selected tier's file was deleted but base is
-     * still on disk" state by re-selecting base. Idempotent while running; callable again from
-     * Failed, which is what Retry is.
+     * Make the on-device speech model exist, if it is not already installed: the CURRENTLY
+     * SELECTED tier — prefs.selectedModelId, which the onboarding pick persists BEFORE calling
+     * [beginAutoSetup] — falling back to [WhisperCatalog.DEFAULT_MODEL_ID] when nothing was ever
+     * selected. Already-installed reports Ready without a network touch. Idempotent while
+     * running; callable again from Failed, which is what Retry is.
      *
-     * Serves BOTH onboarding's automatic step and Home's missing-engine status row (owner request
-     * 2026-08-01: "a status and download shortcuts right there, in case someone has deleted them")
-     * — one activity-scoped instance, so progress started on either surface shows on both.
+     * Serves BOTH onboarding's engines step and Home's missing-engine status row (owner request
+     * 2026-08-01: "a status and download shortcuts right there, in case someone has deleted
+     * them") — one activity-scoped instance, so progress started on either surface shows on
+     * both, and the Home row's re-download automatically uses the user's OWN tier.
      */
     fun ensureSpeech() {
         // Only Working blocks re-entry. A Ready deliberately does NOT: Ready can go stale — the
         // activity-scoped VM outlives a trip to Settings where the user deletes the model file —
         // and the disk check below is the truth. A still-installed engine just re-reports Ready.
         if (_speechState.value is EngineState.Working) return
-        val model = WhisperCatalog.byId(ONBOARDING_MODEL_ID)
-        if (model == null || whisperManager.isInstalled(model)) {
-            // Also Ready when the catalog somehow lacks the id (defensive): this path must never
-            // wedge onboarding — the manual tier picker remains the fallback.
-            if (model != null) prefs.selectedModelId = model.id
+        // ONE source of truth: the selected tier (written by the onboarding pick before
+        // beginAutoSetup, or by any later Settings switch). The fallback covers Home's
+        // missing-engine row tapped on a profile with no selection on record; DEFAULT_MODEL_ID
+        // is a catalog invariant (never retired), so the !! cannot fire.
+        val model = WhisperCatalog.byId(prefs.selectedModelId)
+            ?: WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!
+        if (whisperManager.isInstalled(model)) {
+            // Re-assert the selection so a dangling prefs state self-heals to the installed tier.
+            prefs.selectedModelId = model.id
             _speechState.value = EngineState.Ready
             return
         }
@@ -134,9 +141,6 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
-        /** The auto-setup speech tier: multilingual on every device, ~60 MB, no RAM floor. */
-        const val ONBOARDING_MODEL_ID = "base"
-
         const val INDETERMINATE = -1
         const val DOWNLOADING = "Downloading"
         const val VERIFYING = "Verifying"
