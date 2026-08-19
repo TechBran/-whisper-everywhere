@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.*
@@ -50,9 +51,12 @@ import com.whispereverywhere.util.formatBytes
 // button presses), and the cloud-keys teaching step. Replaces the two-path chooser: the chooser
 // made setup a fork; this makes it a walk, and the cloud fork is simply the last step.
 //
-// It NEVER blocks: Skip is always present, back-press on the first step is a skip, a failed
-// download unblocks Continue (with a Retry on the row), and Home's setup banner + Settings remain
-// the manual paths for anything skipped. No speed claims anywhere.
+// MANDATORY except the cloud step (owner decision 2026-08-18, reversing the earlier never-block
+// contract): Continue on the permissions step is gated on the bubble's three permissions, the
+// engines step releases only once the speech model is Ready (a failed download shows Retry and
+// holds), and "Skip setup" exists ONLY on the cloud step — cloud is the one genuinely optional
+// part. Back walks backwards; on the first step it leaves the activity WITHOUT recording
+// completion, so onboarding returns on next launch. No speed claims anywhere.
 // ---------------------------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,10 +79,37 @@ fun OnboardingFlowScreen(
     // prefs.selectedModelId is written the moment Download is pressed, never before.
     var pickedTierId by remember { mutableStateOf<String?>(null) }
 
-    // Back walks the flow backwards; on the first step it is a skip, mirroring the old chooser's
-    // never-block contract.
+    // Permission state lives at flow level (3.5.x): the pinned footer gates Continue on the
+    // bubble's three permissions, so the step and the footer read the same truth. Re-checked on
+    // every ON_RESUME because overlay, accessibility, and notification access are granted in
+    // system Settings and the user bounces there and back per row.
+    var mic by remember { mutableStateOf(hasMic(context)) }
+    var overlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var accessibility by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
+    var notifListener by remember { mutableStateOf(MediaNotificationListener.isEnabled()) }
+
+    fun refreshPermissions() {
+        mic = hasMic(context)
+        overlay = Settings.canDrawOverlays(context)
+        accessibility = WhisperAccessibilityService.isEnabled()
+        notifListener = MediaNotificationListener.isEnabled()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshPermissions()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     BackHandler {
-        step = OnboardingLogic.previous(step) ?: run { onFinish(); return@BackHandler }
+        step = OnboardingLogic.previous(step) ?: run {
+            // First step: leave the app WITHOUT recording completion — onboarding is mandatory
+            // (owner decision 2026-08-18) and returns on next launch.
+            (context as ComponentActivity).finish()
+            return@BackHandler
+        }
     }
 
     Scaffold(
@@ -114,7 +145,13 @@ fun OnboardingFlowScreen(
                     .verticalScroll(rememberScrollState()),
             ) {
                 when (step) {
-                    Step.PERMISSIONS -> PermissionsStep(lifecycleOwner = lifecycleOwner)
+                    Step.PERMISSIONS -> PermissionsStep(
+                        mic = mic,
+                        overlay = overlay,
+                        accessibility = accessibility,
+                        notifListener = notifListener,
+                        onMicGranted = { mic = it },
+                    )
                     Step.ENGINES -> EnginesStep(
                         vm = setupVm,
                         pickedTierId = pickedTierId,
@@ -124,27 +161,37 @@ fun OnboardingFlowScreen(
                 }
             }
 
-            // Pinned footer: primary action + always-available skip. The CLOUD step carries its
-            // own two full-size choices, so its footer is skip-only.
+            // Pinned footer: primary action; Skip exists only on the CLOUD step (its own two
+            // full-size choices + skip).
             Spacer(Modifier.height(12.dp))
             if (step != Step.CLOUD) {
                 val speech by setupVm.speechState.collectAsState()
                 val voice by setupVm.voiceState.collectAsState()
                 if (step == Step.PERMISSIONS) {
+                    val missing = OnboardingLogic.missingBubblePermissions(mic, overlay, accessibility)
+                    OnboardingLogic.permissionsContinueHint(missing)?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
                     Button(
-                        onClick = { OnboardingLogic.next(step)?.let { step = it } },
+                        onClick = { OnboardingLogic.next(step)?.let { next -> step = next } },
+                        enabled = OnboardingLogic.permissionsContinueEnabled(mic, overlay, accessibility),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Continue")
                     }
                 } else {
                     // ENGINES: one primary action — "Download" (gated on a pick) until downloads
-                    // begin, then the old "Continue" with its unchanged never-wedge gating.
+                    // begin, then mandatory-model gating (owner decision 2026-08-18): Continue
+                    // only once the speech model is Ready — Failed shows Retry and holds.
                     val action = OnboardingLogic.enginesPrimaryAction(
                         downloadsBegun = speech !is EngineState.Pending,
                         tierPicked = pickedTierId != null,
                         speechReady = speech is EngineState.Ready,
-                        speechFailed = speech is EngineState.Failed,
                     )
                     if (!action.startsDownloads) {
                         OnboardingLogic.enginesContinueHint(
@@ -180,11 +227,13 @@ fun OnboardingFlowScreen(
                     }
                 }
             }
-            TextButton(
-                onClick = onFinish,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            ) {
-                Text("Skip setup")
+            if (step == Step.CLOUD) {
+                TextButton(
+                    onClick = onFinish,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) {
+                    Text("Skip setup")
+                }
             }
         }
     }
@@ -193,39 +242,25 @@ fun OnboardingFlowScreen(
 // ------------------------------------------------------------------------------- permissions
 
 /**
- * All four permission rows with live state and an in-place grant action each — the same set, same
- * checks, and same intents as Settings' Permissions section, so what the user grants here is
- * exactly what Settings later reports. Re-checked on every ON_RESUME because overlay,
- * accessibility, and notification access are granted in system Settings and the user bounces
- * there and back per row.
+ * Four grantable permission rows plus one informational row, with live state and an in-place
+ * grant action each on the grantable four — the same set, same checks, and same intents as
+ * Settings' Permissions section, so what the user grants here is exactly what Settings later
+ * reports. Live state is hoisted to the flow (3.5.x): the pinned footer gates Continue on it, so
+ * the step and the footer read the same truth.
  */
 @Composable
-private fun PermissionsStep(lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
+private fun PermissionsStep(
+    mic: Boolean,
+    overlay: Boolean,
+    accessibility: Boolean,
+    notifListener: Boolean,
+    onMicGranted: (Boolean) -> Unit,
+) {
     val context = LocalContext.current
-
-    var mic by remember { mutableStateOf(hasMic(context)) }
-    var overlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    var accessibility by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
-    var notifListener by remember { mutableStateOf(MediaNotificationListener.isEnabled()) }
-
-    fun refresh() {
-        mic = hasMic(context)
-        overlay = Settings.canDrawOverlays(context)
-        accessibility = WhisperAccessibilityService.isEnabled()
-        notifListener = MediaNotificationListener.isEnabled()
-    }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) refresh()
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
 
     val micLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> mic = granted }
+    ) { granted -> onMicGranted(granted) }
 
     Text(
         "Whisper Everywhere types wherever you are, so it needs a few permissions up front. " +
@@ -268,6 +303,11 @@ private fun PermissionsStep(lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
             context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
         },
     )
+    PermissionInfoRow(
+        title = "Device audio",
+        why = "For media transcription — Android asks for this the first time you transcribe " +
+            "playing media. It can't be granted in advance.",
+    )
 }
 
 @Composable
@@ -295,6 +335,30 @@ private fun PermissionRow(
             } else {
                 OutlinedButton(onClick = onGrant) { Text("Grant") }
             }
+        }
+    }
+}
+
+@Composable
+private fun PermissionInfoRow(title: String, why: String) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(12.dp))
+            Icon(
+                Icons.Filled.Info,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

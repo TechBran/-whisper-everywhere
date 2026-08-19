@@ -149,12 +149,12 @@ fun WhisperEverywhereNavigation() {
         navController = navController,
         startDestination = startDestination
     ) {
-        // Guided first-run onboarding (2026-08-01; replaced the two-path chooser): permissions ->
-        // engines (four-tier chooser; one pick starts both model and voice downloads, no further taps) ->
-        // optional cloud keys. Shown at most once — every exit (Finish, cloud setup, Skip,
-        // back-press on the first step) records onboardingCompleted then pops "first_run"
-        // inclusive, so it leaves no back-stack trap. Never blocks: Skip is always visible, and a
-        // failed download unblocks Continue with a Retry on the row.
+        // Guided first-run onboarding (2026-08-01; mandatory since 2026-08-18): permissions ->
+        // engines (four-tier chooser; one pick starts both downloads) -> optional cloud keys.
+        // The only exits are on the CLOUD step (Finish / cloud setup / Skip setup) — each records
+        // onboardingCompleted then pops "first_run" inclusive. Back on the first step leaves the
+        // activity WITHOUT recording completion, so the flow returns on next launch; a failed
+        // model download holds the engines step with Retry (the app cannot work without a model).
         composable("first_run") {
             val app = WhisperEverywhereApp.getInstance()
             OnboardingFlowScreen(

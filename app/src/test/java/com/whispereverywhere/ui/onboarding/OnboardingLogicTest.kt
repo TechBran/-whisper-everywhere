@@ -25,17 +25,23 @@ class OnboardingLogicTest {
 
     // ---------------------------------------------------------------- engines gating
 
-    @Test fun continue_unlocks_when_dictation_is_possible_not_when_everything_is() {
-        // The ~365 MB voice keeps downloading behind the flow; holding the user for it would
-        // punish exactly the slow connections that need the escape most.
-        assertTrue(OnboardingLogic.enginesContinueEnabled(speechReady = true, speechFailed = false))
-        assertFalse(OnboardingLogic.enginesContinueEnabled(speechReady = false, speechFailed = false))
+    @Test fun continue_unlocks_only_once_the_speech_model_is_ready() {
+        // Owner decision 2026-08-18 (mandatory model): rewritten from the earlier never-wedge
+        // pinning — dictation needs the local model, so Continue now tracks speechReady alone.
+        assertTrue(OnboardingLogic.enginesContinueEnabled(speechReady = true))
+        assertFalse(OnboardingLogic.enginesContinueEnabled(speechReady = false))
     }
 
-    @Test fun a_failed_speech_download_still_unblocks_continue() {
-        // Onboarding must never wedge: the row shows Retry, and Home's setup banner remains the
-        // manual path for a user who moves on.
-        assertTrue(OnboardingLogic.enginesContinueEnabled(speechReady = false, speechFailed = true))
+    @Test fun a_failed_download_holds_the_step_instead_of_unlocking_continue() {
+        // Owner decision 2026-08-18 (mandatory model): the deliberate reversal of the old
+        // never-wedge rule — a failed download now HOLDS the step; the row's Retry is the way
+        // forward, not a bypass. (speechFailed is gone from the signature entirely.)
+        val action = OnboardingLogic.enginesPrimaryAction(
+            downloadsBegun = true, tierPicked = true, speechReady = false,
+        )
+        assertEquals("Continue", action.label)
+        assertFalse(action.enabled)
+        assertFalse(action.startsDownloads)
     }
 
     @Test fun the_background_voice_hint_shows_exactly_while_speech_is_ready_and_voice_is_not() {
@@ -73,7 +79,7 @@ class OnboardingLogicTest {
         // Owner decision: the user must make an informed pick — the disabled Download button is
         // what forces it.
         val action = OnboardingLogic.enginesPrimaryAction(
-            downloadsBegun = false, tierPicked = false, speechReady = false, speechFailed = false,
+            downloadsBegun = false, tierPicked = false, speechReady = false,
         )
         assertEquals("Download", action.label)
         assertFalse(action.enabled)
@@ -82,29 +88,26 @@ class OnboardingLogicTest {
 
     @Test fun picking_a_tier_is_all_it_takes_to_unlock_download() {
         val action = OnboardingLogic.enginesPrimaryAction(
-            downloadsBegun = false, tierPicked = true, speechReady = false, speechFailed = false,
+            downloadsBegun = false, tierPicked = true, speechReady = false,
         )
         assertTrue(action.enabled)
         assertTrue(action.startsDownloads)
     }
 
-    @Test fun once_downloads_begin_the_action_is_continue_with_the_unchanged_gating() {
-        // One pick, then no buttons: after the confirm the footer is the OLD Continue — gated
-        // while speech works, unlocked by Ready or Failed (never wedge), never by the voice.
+    @Test fun once_downloads_begin_the_action_is_continue_gated_on_speech_ready() {
+        // One pick, then no buttons: after the confirm the footer is Continue, gated on the
+        // speech model reaching Ready (owner decision 2026-08-18: mandatory model). The Failed
+        // case is pinned separately in
+        // a_failed_download_holds_the_step_instead_of_unlocking_continue.
         val working = OnboardingLogic.enginesPrimaryAction(
-            downloadsBegun = true, tierPicked = true, speechReady = false, speechFailed = false,
+            downloadsBegun = true, tierPicked = true, speechReady = false,
         )
         assertEquals("Continue", working.label)
         assertFalse(working.enabled)
         assertFalse(working.startsDownloads)
         assertTrue(
             OnboardingLogic.enginesPrimaryAction(
-                downloadsBegun = true, tierPicked = true, speechReady = true, speechFailed = false,
-            ).enabled
-        )
-        assertTrue(
-            OnboardingLogic.enginesPrimaryAction(
-                downloadsBegun = true, tierPicked = true, speechReady = false, speechFailed = true,
+                downloadsBegun = true, tierPicked = true, speechReady = true,
             ).enabled
         )
     }
@@ -114,6 +117,27 @@ class OnboardingLogicTest {
         assertEquals(
             "Not sure? Pick one — you can switch models anytime in Settings.",
             OnboardingLogic.TIER_SWITCH_HINT,
+        )
+    }
+
+    // ---------------------------------------------------------------- permissions gate (3.5.x)
+
+    @Test fun permissions_continue_unlocks_only_when_all_three_bubble_permissions_are_granted() {
+        assertTrue(OnboardingLogic.permissionsContinueEnabled(mic = true, overlay = true, accessibility = true))
+        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = false, overlay = true, accessibility = true))
+        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = true, overlay = false, accessibility = true))
+        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = true, overlay = true, accessibility = false))
+    }
+
+    @Test fun permissions_hint_counts_whats_missing_and_stays_silent_when_nothing_is() {
+        assertNull(OnboardingLogic.permissionsContinueHint(0))
+        assertEquals(
+            "1 required permission still needed — notification access is optional.",
+            OnboardingLogic.permissionsContinueHint(1),
+        )
+        assertEquals(
+            "3 required permissions still needed — notification access is optional.",
+            OnboardingLogic.permissionsContinueHint(3),
         )
     }
 }
