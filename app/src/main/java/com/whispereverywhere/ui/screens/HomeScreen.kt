@@ -324,6 +324,30 @@ fun HomeScreen(
                 SetupBanner.NONE -> Unit
             }
 
+            // Cloud-key note (3.5.0, Workstream B): a dismissible nudge that better accuracy and
+            // wider language coverage exist behind the user's own API key. Visibility is the pure
+            // CloudKeyNote.shouldShow truth table: any configured provider key OR a selected cloud
+            // STT engine hides it permanently, independent of the persisted X. The local mirror of
+            // cloudNoteDismissed follows house convention for plain-var prefs read in composition
+            // (see EnginesAndVoicesScreen's sttProviderId remember).
+            var cloudNoteDismissed by remember {
+                mutableStateOf(app.preferencesManager.cloudNoteDismissed)
+            }
+            if (com.whispereverywhere.ui.CloudKeyNote.shouldShow(
+                    cloudProviderConfigured = hasAnyKey || sttProviderId != null,
+                    dismissed = cloudNoteDismissed,
+                )
+            ) {
+                CloudKeyNoteCard(
+                    onOpenEnginesVoices = onNavigateToEnginesVoices,
+                    onDismiss = {
+                        app.preferencesManager.cloudNoteDismissed = true
+                        cloudNoteDismissed = true
+                    },
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             // Mode cards — each shows its live configuration as a status chip and taps into settings.
             ModeCard(
                 icon = Icons.Filled.Mic,
@@ -651,6 +675,56 @@ private fun SetupBannerTwoPath(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Bring your own key")
+            }
+        }
+    }
+}
+
+/**
+ * The dismissible cloud-key note. All copy comes verbatim from [com.whispereverywhere.ui.CloudKeyNote]
+ * (the JVM-pinned discipline surface); this shell only lays it out. The X persists dismissal via
+ * [onDismiss]; the button rides Home's existing Engines & voices route. Untested UI by house
+ * convention — the visibility logic lives in CloudKeyNote.shouldShow, which is.
+ */
+@Composable
+private fun CloudKeyNoteCard(
+    onOpenEnginesVoices: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = Primary.copy(alpha = 0.08f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = com.whispereverywhere.ui.CloudKeyNote.HEADLINE,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Dismiss",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = com.whispereverywhere.ui.CloudKeyNote.BODY,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = onOpenEnginesVoices,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(com.whispereverywhere.ui.CloudKeyNote.BUTTON)
             }
         }
     }
