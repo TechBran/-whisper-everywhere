@@ -375,18 +375,26 @@ class LocalWhisperEngine(
      * native-access contract (it never touches ctxPtr).
      */
     override fun awaitIdle(timeoutMs: Long): Boolean {
+        val startNs = System.nanoTime()
         val latch = java.util.concurrent.CountDownLatch(1)
         try {
             executor.execute { latch.countDown() }
         } catch (t: java.util.concurrent.RejectedExecutionException) {
             return true  // executor already shut down — nothing is in flight
         }
-        return try {
+        val drained = try {
             latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (t: InterruptedException) {
             Thread.currentThread().interrupt()
             false
         }
+        // C1 finalize-timing: everything queued on the native executor ahead of the fence —
+        // retries, or (first session) the safety-net model load — is paid for inside this number.
+        android.util.Log.i(
+            "WE-DIAG",
+            "finalize-timing: local-drain=${(System.nanoTime() - startNs) / 1_000_000}ms",
+        )
+        return drained
     }
 
     /**

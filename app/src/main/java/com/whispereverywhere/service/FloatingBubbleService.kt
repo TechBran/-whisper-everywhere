@@ -2178,6 +2178,9 @@ class FloatingBubbleService : Service(),
     }
 
     private fun stopRecording() {
+        // C1 finalize-timing: every phase of the stop path is measured from this instant.
+        // Permanent diagnosis capability (spec 2026-08-18 C1) — grep "finalize-timing:".
+        val stopTapNs = System.nanoTime()
         android.util.Log.i("WE-DIAG", "stopRecording: state=$currentState")
         vibrateStop()
         amplitudeJob?.cancel(); amplitudeJob = null
@@ -2220,6 +2223,10 @@ class FloatingBubbleService : Service(),
         // The native Silero VAD inside whisper_full now makes the unconditional flush safe: a
         // silence-only tail is trimmed to nothing and returns empty, fast, with no junk tokens.
         transcriptionEngine?.commit()
+        android.util.Log.i(
+            "WE-DIAG",
+            "finalize-timing: commit-dispatch=${(System.nanoTime() - stopTapNs) / 1_000_000}ms",
+        )
         speechSegmenter.reset()
 
         // Server-driven live only: the stop commit above cut the final open utterance under a tail
@@ -2249,7 +2256,12 @@ class FloatingBubbleService : Service(),
             // the sink — held text's only exit is flush(), and the pile is largest exactly
             // here, at the end of a session. (Provably empty for the on-device engine, which
             // resolves in order.)
+            val flushStartNs = System.nanoTime()
             deliverReleasedText(segmentOrderer.flush().text)
+            android.util.Log.i(
+                "WE-DIAG",
+                "finalize-timing: orderer-flush=${(System.nanoTime() - flushStartNs) / 1_000_000}ms",
+            )
 
             // ---- W2 single delivery: the ONE external write of the session. Runs BEFORE
             // teardownRealtime, because teardown ends the injection-session binding captured
@@ -2259,6 +2271,7 @@ class FloatingBubbleService : Service(),
             // kind shares. Preview hide / sink close / endInjectionSession all FOLLOW delivery.
             // Detach the sink FIRST so a late segment's append no-ops on null (the pre-reorder
             // contract: close+null were one statement). Then close (full flush) and read back.
+            val deliveryStartNs = System.nanoTime()
             val finishedSink = transcriptSink
             transcriptSink = null
             finishedSink?.close()
@@ -2271,6 +2284,10 @@ class FloatingBubbleService : Service(),
                 runCatching { deliverFinalTranscript(fullTranscript) }
                     .onFailure { android.util.Log.e("WE-DIAG", "final delivery threw", it) }
             }
+            android.util.Log.i(
+                "WE-DIAG",
+                "finalize-timing: delivery=${(System.nanoTime() - deliveryStartNs) / 1_000_000}ms",
+            )
             teardownRealtime()
             android.util.Log.i("WE-DIAG", "finalize: state=$currentState producedText=$sessionProducedText")
 
@@ -2333,6 +2350,14 @@ class FloatingBubbleService : Service(),
                     transcriptStore.sweep()
                 }
             }
+            // C1 finalize-timing: total spans stop-tap → teardown/stats/history done. Logged
+            // OUTSIDE the FINALIZING guard so every exit of the finalize coroutine reports it;
+            // total minus (commit-dispatch + drains + orderer-flush + delivery) exposes the
+            // teardown/stats/history span without needing its own phase name.
+            android.util.Log.i(
+                "WE-DIAG",
+                "finalize-timing: total=${(System.nanoTime() - stopTapNs) / 1_000_000}ms",
+            )
             if (currentState == BubbleState.FINALIZING) {
                 // Delivery already happened above, pre-teardown, through FinalDeliveryPolicy.
                 if (!sessionProducedText) {

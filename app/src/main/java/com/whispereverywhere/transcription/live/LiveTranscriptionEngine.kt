@@ -534,11 +534,16 @@ class LiveTranscriptionEngine(
      * a turn that is merely slow keeps running and still resolves.
      */
     override fun awaitIdle(timeoutMs: Long): Boolean = runBlocking {
-        withTimeoutOrNull(timeoutMs) {
+        val startNs = System.nanoTime()
+        val drained = withTimeoutOrNull(timeoutMs) {
             while (synchronized(bufferLock) { sendQueue.isNotEmpty() }) yield()
             while (synchronized(correlationLock) { pending.isNotEmpty() }) yield()
             true
         } ?: false
+        // C1 finalize-timing: after finishServerTurns this should be near-zero — a large value
+        // here convicts the live drain (spec C2 "live path" candidate).
+        android.util.Log.i(TAG, "finalize-timing: cloud-drain=${(System.nanoTime() - startNs) / 1_000_000}ms")
+        drained
     }
 
     companion object {

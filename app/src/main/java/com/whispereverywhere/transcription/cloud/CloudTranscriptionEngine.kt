@@ -306,7 +306,8 @@ class CloudTranscriptionEngine(
      * is merely slow keeps running and still resolves.
      */
     override fun awaitIdle(timeoutMs: Long): Boolean = runBlocking {
-        withTimeoutOrNull(timeoutMs) {
+        val startNs = System.nanoTime()
+        val drained = withTimeoutOrNull(timeoutMs) {
             while (pending.isNotEmpty()) {
                 pendingSeqs().forEach { pending[it]?.job?.join() }
                 // A job whose seq is resolved by the completion handler rather than by its own
@@ -316,6 +317,10 @@ class CloudTranscriptionEngine(
             }
             true
         } ?: false
+        // C1 finalize-timing: awaitIdle is only called from the service's finalize path, so this
+        // is the stop path's cloud-drain phase (the tail segment's provider round-trip lives here).
+        android.util.Log.i(TAG, "finalize-timing: cloud-drain=${(System.nanoTime() - startNs) / 1_000_000}ms")
+        drained
     }
 
     /**
