@@ -277,7 +277,15 @@ class FallbackTranscriptionEngine(
             // orderer and detaches the sink while the rescued text is mid-delivery. Removing a
             // key that was never registered (the synchronous [submitting] arrival) is a no-op,
             // and a concurrent abandon's double resolve is already absorbed by `claimed`.
-            synchronized(retryLock) { retries.remove(seq) }
+            //
+            // Identity-checked, not just keyed: local seq resets to 0 every session, and every
+            // LocalRelay shares one [retries] map, so an abandoned session's straggler can carry a
+            // seq that COLLIDES with a brand-new session's freshly-registered entry. A plain
+            // `retries.remove(seq)` would delete the new session's entry out from under it here;
+            // checking identity first means this delivery only ever removes the entry it owns. The
+            // re-entrant [submitting] arrival is unaffected — its retry was never registered under
+            // seq, so `retries[seq] === retry` is false and this correctly no-ops.
+            synchronized(retryLock) { if (retries[seq] === retry) retries.remove(seq) }
         }
     }
 
