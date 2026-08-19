@@ -78,12 +78,18 @@ class ModeDashboardLogicTest {
         assertEquals("OpenAI · choose a voice", readAloudChip(engineDisplayName = "OpenAI", voiceDisplayName = null))
 
     // --- first-run routing ---
+    // The model is the only thing that matters: it's the only proof setup actually happened.
     @Test fun fresh_install_goes_to_chooser() =
-        assertEquals(ROUTE_FIRST_RUN, firstRunStartDestination(hasModel = false, onboardingCompleted = false))
+        assertEquals(ROUTE_FIRST_RUN, firstRunStartDestination(hasModel = false))
     @Test fun existing_user_with_model_goes_home() =
-        assertEquals(ROUTE_HOME, firstRunStartDestination(hasModel = true, onboardingCompleted = false))
-    @Test fun skipper_or_key_user_goes_home() =
-        assertEquals(ROUTE_HOME, firstRunStartDestination(hasModel = false, onboardingCompleted = true))
+        assertEquals(ROUTE_HOME, firstRunStartDestination(hasModel = true))
+    @Test fun a_backup_restored_completed_flag_without_a_model_still_lands_in_onboarding() {
+        // Auto Backup restores prefs but never models — owner decision 2026-08-19. A user
+        // reinstalling onto a fresh device gets onboardingCompleted = true back via backup,
+        // but no model file exists yet, so they must still be routed to onboarding rather
+        // than stranded on a Home screen that can't transcribe.
+        assertEquals(ROUTE_FIRST_RUN, firstRunStartDestination(hasModel = false))
+    }
 
     // --- main control button copy (permissions live in Settings now, not "below") ---
     @Test fun main_control_enabled_says_active() =

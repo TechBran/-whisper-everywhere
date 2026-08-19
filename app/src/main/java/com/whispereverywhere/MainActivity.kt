@@ -133,15 +133,14 @@ fun WhisperEverywhereNavigation() {
         }
     }
 
-    // Compute the start destination once, at launch. A genuine first run (no model AND onboarding
-    // never completed) opens the two-path chooser; everyone else — existing users (who all have a
-    // model) and anyone who already took a path or skipped — lands on Home. See
-    // firstRunStartDestination for the exact rule (pinned by ModeDashboardLogicTest).
+    // Compute the start destination once, at launch. Onboarding is mandatory: no installed model
+    // always opens the two-path chooser, even if onboardingCompleted was restored by Auto Backup
+    // (backup never restores the model file). See firstRunStartDestination for the exact rule
+    // (pinned by ModeDashboardLogicTest).
     val startDestination = remember {
         val app = WhisperEverywhereApp.getInstance()
         firstRunStartDestination(
-            hasModel = app.whisperModelManager.installedModel() != null,
-            onboardingCompleted = app.preferencesManager.onboardingCompleted
+            hasModel = app.whisperModelManager.installedModel() != null
         )
     }
 

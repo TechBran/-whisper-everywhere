@@ -96,15 +96,17 @@ internal fun readAloudChip(engineDisplayName: String?, voiceDisplayName: String?
         voiceDisplayName?.let { "$it ($engineDisplayName)" } ?: "$engineDisplayName · choose a voice"
 
 /**
- * MainActivity's start destination. First run (no model AND onboarding never completed) → the
- * two-path chooser; otherwise Home. Existing users all have a model, so [hasModel] short-circuits
- * them to Home — they NEVER see the chooser. A user who took the key path or SKIPPED has
- * onboardingCompleted set, so they land on Home (with the setup banner) and are never forced back
- * into the chooser despite having no model. This is the ONLY consumer of the formerly-vestigial
- * onboardingCompleted flag (recon §5), repurposed as the honest skip flag.
+ * MainActivity's start destination. Onboarding is mandatory (owner decisions 2026-08-18/19): a
+ * user with no installed model always lands on the two-path chooser, full stop. [hasModel] is the
+ * ONLY signal consulted, because it is the only honest proof that setup actually happened — Google
+ * Auto Backup restores app preferences (including `onboardingCompleted`) on a fresh install but
+ * NEVER restores the model file, so a flag-only check would strand a modelless restored user on a
+ * Home screen that can't transcribe: exactly the dead-end mandatory onboarding exists to prevent.
+ * `onboardingCompleted` is still written elsewhere (e.g. on ensureSpeech success) for other
+ * consumers, but routing no longer reads it.
  */
-internal fun firstRunStartDestination(hasModel: Boolean, onboardingCompleted: Boolean): String =
-    if (hasModel || onboardingCompleted) ROUTE_HOME else ROUTE_FIRST_RUN
+internal fun firstRunStartDestination(hasModel: Boolean): String =
+    if (hasModel) ROUTE_HOME else ROUTE_FIRST_RUN
 
 /** The main control button's two lines. */
 data class MainControlLabels(val title: String, val subtitle: String)
