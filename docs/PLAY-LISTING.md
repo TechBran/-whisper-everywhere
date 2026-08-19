@@ -266,3 +266,15 @@ post-flip rules. Reply to the requesting review after rollout reaches them.)
 (486 chars. Keeps the full 3.4.0 story since 74 was live for under a day — most updaters skip it —
 and adds the history hotfix honestly ("were vanishing"). The bug shipped in 73's stats fix, rode
 into 74, fixed in 75/fd9fe75. Same claim discipline as always.)
+
+## Release notes — 3.5.0 (within 500 chars)
+
+> You're in charge of your speech model now. Setup lets you pick your tier with plain-language descriptions — fastest, most accurate, English-only or 90+ languages — and you can switch anytime in Settings. Prefer the big cloud models? Add your own API key (OpenAI, Gemini, ElevenLabs, Soniox), billed to your account. Also: ending a session now finishes faster, and the app says what it's waiting on while it wraps up.
+
+(Verify ≤500 chars in Step 2. Claim rules: no cloud speed claims — "finishes faster" refers to our
+own fix vs our own previous version, which is factual and allowed. CONTINGENCY: that clause is
+backed by the D2 before/after timings, which run AFTER this commit. If the before-build logs
+falsify the C3 conviction — `local-drain` ≈ 0 everywhere — edit the notes BEFORE Play submission:
+replace "Also: ending a session now finishes faster, and the app says what it's waiting on while
+it wraps up." with "Also: the app now says what it's waiting on while a session wraps up." and
+re-verify the count.)

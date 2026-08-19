@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 75
-        versionName = "3.4.1"  // hotfix: transcription history no longer self-deletes at finalize (stats block zeroed the save stamp)
+        versionCode = 76
+        versionName = "3.5.0"  // pick-your-model onboarding + cloud-key education; finalize no longer over-waits at stop
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
