@@ -707,6 +707,58 @@ class FallbackTranscriptionEngineTest {
         }
     }
 
+    @Test fun awaitIdle_still_drains_every_outstanding_retry_before_returning() {
+        // The C3 skip's boundary: it must NEVER fire while a retry is outstanding. Real
+        // background executor on purpose (house rule): the retries resolve on local's executor
+        // thread a beat after cloud's callbacks armed them — the interleaving a same-thread
+        // executor hides. Even seqs succeed on cloud; odd seqs are lost and must be rescued
+        // locally, with every resolution delivered by the time awaitIdle returns true.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val backend = object : WhisperBackend {
+                override fun load(modelPath: String) = 42L
+                override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
+                    Thread.sleep(100) // a real transcribe takes time; the drain must cover it
+                    return "rescued locally"
+                }
+                override fun release(ctx: Long) = Unit
+            }
+            val local = LocalWhisperEngine(
+                modelPathProvider = object : ModelPathProvider {
+                    override fun installedModelPath() = "/models/tiny.bin"
+                },
+                retry = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+                backend = backend,
+                executor = executor,
+            )
+            val provider = FakeStt(respond = { pcm ->
+                if (pcm[0].toInt() % 2 == 0) SttResult.Text("cloud ${pcm[0]}")
+                else SttResult.Failed(SttError.Offline)
+            })
+            val e = engine(CloudTranscriptionEngine(provider, scope()), local)
+            val l = Rec()
+            e.connect(null, l)
+            val total = 8
+            repeat(total) { i ->
+                e.sendAudio(ByteArray(3200) { i.toByte() })
+                assertEquals(i.toLong(), e.commit())
+            }
+
+            assertTrue(e.awaitIdle(20_000))
+            // Asserted IMMEDIATELY, no polling: the drain contract is that everything committed
+            // has been DELIVERED, not merely scheduled, when awaitIdle returns.
+            assertEquals("every seq resolved before awaitIdle returned", total, l.all.size)
+            val bySeq = l.all.sortedBy { it.first }
+            assertEquals("no seq lost, none duplicated", (0L until total.toLong()).toList(), bySeq.map { it.first })
+            bySeq.forEach { (seq, outcome) ->
+                if (seq % 2 == 0L) assertEquals(SegmentOutcome.Text("cloud $seq"), outcome)
+                else assertEquals("seq $seq must be rescued, not lost", SegmentOutcome.Text("rescued locally"), outcome)
+            }
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
     @Test fun prewarm_and_releaseContext_and_shutdown_reach_both_engines() {
         val cloud = FakeEngine(); val local = FakeEngine()
         val e = engine(cloud, local)
