@@ -572,6 +572,141 @@ class FallbackTranscriptionEngineTest {
         assertEquals(1, local.awaitIdleCalls.size)
     }
 
+    @Test fun awaitIdle_does_not_wait_on_local_when_no_retry_is_outstanding() {
+        // THE FINALIZE HOLD (owner report, spec 2026-08-18 C2): on the happy path every cloud
+        // segment resolved Text/EmptyExpected, so local's queue holds NO retry — only the
+        // safety-net model load connect() enqueued. Fencing behind that load is waiting on
+        // work whose result nothing pending needs.
+        val provider = FakeStt(respond = { SttResult.Text("all good") })
+        val local = FakeEngine()
+        val e = engine(CloudTranscriptionEngine(provider, scope()), local)
+        val l = Rec()
+        e.connect(null, l)
+        e.sendAudio(byteArrayOf(2)); e.commit()
+
+        assertTrue(e.awaitIdle(5_000))
+        assertEquals(0L to SegmentOutcome.Text("all good"), l.next())
+        assertEquals("local owes nothing — the fence must be skipped", 0, local.awaitIdleCalls.size)
+    }
+
+    @Test fun a_happy_path_stop_does_not_pay_for_the_safety_nets_model_load() {
+        // The convicted hold, reproduced: a REAL LocalWhisperEngine on a REAL single-thread
+        // executor whose model load is still running at stop — exactly the first cloud session
+        // after service start / a memory trim / a model switch. The load must keep running
+        // (the net stays warm) but the stop must not wait for it.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val releaseLoad = CountDownLatch(1)
+        try {
+            val loadStarted = CountDownLatch(1)
+            val backend = object : WhisperBackend {
+                override fun load(modelPath: String): Long {
+                    loadStarted.countDown()
+                    releaseLoad.await(10, TimeUnit.SECONDS) // the ~7 s Adreno load, held by the test
+                    return 42L
+                }
+                override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean) = ""
+                override fun release(ctx: Long) = Unit
+            }
+            val local = LocalWhisperEngine(
+                modelPathProvider = object : ModelPathProvider {
+                    override fun installedModelPath() = "/models/tiny.bin"
+                },
+                retry = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+                backend = backend,
+                executor = executor,
+            )
+            val provider = FakeStt(respond = { SttResult.Text("all good") })
+            val e = engine(CloudTranscriptionEngine(provider, scope()), local)
+            val l = Rec()
+            e.connect(null, l)
+            assertTrue(loadStarted.await(5_000, TimeUnit.MILLISECONDS))
+            e.sendAudio(ByteArray(3200) { 1 })
+            assertEquals(0L, e.commit())
+
+            val startNs = System.nanoTime()
+            assertTrue(e.awaitIdle(20_000))
+            val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+            assertEquals(0L to SegmentOutcome.Text("all good"), l.next())
+            assertTrue(
+                "stop waited ${elapsedMs}ms on a model load no pending segment needs",
+                elapsedMs < 2_000,
+            )
+        } finally {
+            releaseLoad.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test fun the_skip_cannot_fire_while_a_rescues_delivery_is_still_in_flight() {
+        // The remove-before-resolve window: LocalRelay removed the ledger entry BEFORE delivering
+        // the resolution (resolve runs outside the lock). A stop landing in that window saw an
+        // empty ledger, skipped the fence, and the finalize path then flushed the orderer and
+        // detached the sink while the rescued text was still mid-delivery — silent segment loss.
+        // Held open deterministically here: the listener blocks INSIDE the delivery callback,
+        // which runs on local's real executor thread.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val deliveryEntered = CountDownLatch(1)
+        val releaseDelivery = CountDownLatch(1)
+        try {
+            val backend = object : WhisperBackend {
+                override fun load(modelPath: String) = 42L
+                override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean) = "rescued locally"
+                override fun release(ctx: Long) = Unit
+            }
+            val local = LocalWhisperEngine(
+                modelPathProvider = object : ModelPathProvider {
+                    override fun installedModelPath() = "/models/tiny.bin"
+                },
+                retry = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+                backend = backend,
+                executor = executor,
+            )
+            // The one segment fails on cloud, so it is rescued locally — the session's only
+            // delivery goes through LocalRelay.
+            val provider = FakeStt(respond = { SttResult.Failed(SttError.Offline) })
+            val e = engine(CloudTranscriptionEngine(provider, scope()), local)
+            val delivered = java.util.concurrent.CopyOnWriteArrayList<Pair<Long, SegmentOutcome>>()
+            val l = object : TranscriptionEngine.Listener {
+                override fun onOpen() = Unit
+                override fun onDelta(text: String) = Unit
+                override fun onError(message: String) = Unit
+                override fun onClosed() = Unit
+                override fun onSegmentResolved(seq: Long, outcome: SegmentOutcome) {
+                    deliveryEntered.countDown()
+                    releaseDelivery.await(10, TimeUnit.SECONDS)
+                    delivered.add(seq to outcome)
+                }
+            }
+            e.connect(null, l)
+            e.sendAudio(ByteArray(3200) { 1 })
+            assertEquals(0L, e.commit())
+            // The rescue has entered delivery and is now HELD there, mid-flight.
+            assertTrue(deliveryEntered.await(5, TimeUnit.SECONDS))
+
+            val done = java.util.concurrent.atomic.AtomicBoolean(false)
+            val drained = java.util.concurrent.atomic.AtomicBoolean(false)
+            val waiter = Thread {
+                drained.set(e.awaitIdle(20_000))
+                done.set(true)
+            }
+            waiter.start()
+            waiter.join(1_500)
+            assertTrue(
+                "awaitIdle returned while a rescue's delivery was still in flight",
+                !done.get(),
+            )
+
+            releaseDelivery.countDown()
+            waiter.join(20_000)
+            assertTrue(done.get())
+            assertTrue(drained.get())
+            assertEquals(listOf(0L to SegmentOutcome.Text("rescued locally")), delivered.toList())
+        } finally {
+            releaseDelivery.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     @Test fun prewarm_and_releaseContext_and_shutdown_reach_both_engines() {
         val cloud = FakeEngine(); val local = FakeEngine()
         val e = engine(cloud, local)

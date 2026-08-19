@@ -265,11 +265,19 @@ class FallbackTranscriptionEngine(
                 //    submitting thread, which still holds this lock. [submitting] is that retry.
                 //    Missing it would leave the ORIGINAL seq unresolved and stall the orderer head
                 //    forever, holding every later segment with it.
-                retries.remove(seq) ?: submitting
+                retries[seq] ?: submitting
             }
             // Not ours: a straggler from a session that has already been abandoned, and one that
             // was resolved at abandon time. `claimed` makes a double delivery a no-op regardless.
             retry?.resolve(outcome)
+            // Removed only AFTER resolve() returns: the ledger is a DELIVERY fence, not a
+            // scheduling fence — the same discipline as CloudTranscriptionEngine.resolveOnce, for
+            // the same reason. awaitIdle's happy-path skip consults retriesOutstanding(), and
+            // "left the ledger" must imply "delivered", or a stop landing in the gap flushes the
+            // orderer and detaches the sink while the rescued text is mid-delivery. Removing a
+            // key that was never registered (the synchronous [submitting] arrival) is a no-op,
+            // and a concurrent abandon's double resolve is already absorbed by `claimed`.
+            synchronized(retryLock) { retries.remove(seq) }
         }
     }
 
@@ -372,6 +380,18 @@ class FallbackTranscriptionEngine(
      * cloud reports drained, every retry this session will ever start is already queued on local.
      * Draining local first would race the work it is supposed to wait for.
      *
+     * That same property makes the happy-path skip sound: cloud drained means the retry ledger can
+     * only shrink from here. If it is EMPTY, local owes this session nothing — every seq the
+     * session handed out has already resolved AND been delivered ([LocalRelay.onSegmentResolved]
+     * removes a ledger entry only after its resolve() returns: the same delivery-fence discipline
+     * as CloudTranscriptionEngine.resolveOnce, and load-bearing for this skip) — and the only work
+     * its executor can still be running is the safety-net model (re)load connect()/prewarm() enqueued. Fencing behind that
+     * load made a short cloud session's stop pay up to the whole load (~7 s on Adreno OpenCL) for
+     * a result nothing pending needed (owner-reported finalize lag, spec 2026-08-18 C2). Nothing
+     * is cancelled — the load keeps running and the net stays warm — we just stop waiting for it.
+     * FallbackPolicy.reconcile and the SegmentOrderer contracts are untouched: no outcome changes,
+     * only a wait on an executor that owes no resolutions is dropped.
+     *
      * The two drains share ONE budget by deadline rather than splitting it in half, so a fast cloud
      * drain leaves the local retry almost all of the time. If cloud consumes the whole budget the
      * result is false regardless of what local reports.
@@ -380,10 +400,24 @@ class FallbackTranscriptionEngine(
         val budget = timeoutMs.coerceIn(0L, MAX_DRAIN_MS)
         val deadlineNs = System.nanoTime() + budget * NANOS_PER_MS
         val cloudDrained = cloud.awaitIdle(budget)
+        if (cloudDrained && !retriesOutstanding()) {
+            // Same phase name as LocalWhisperEngine.awaitIdle's C1 line, so the owner's
+            // finalize-timing log always shows all six phases.
+            android.util.Log.i(TAG, "finalize-timing: local-drain=0ms (skipped: no outstanding retries)")
+            return true
+        }
         val remainingMs = ((deadlineNs - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0L)
         val localDrained = local.awaitIdle(remainingMs)
         return cloudDrained && localDrained
     }
+
+    /**
+     * True while local still owes this session a resolution: an armed retry not yet answered, or a
+     * [localRetry] whose local.commit() has not returned. Meaningful as a skip guard ONLY after a
+     * full cloud drain — before that, cloud callbacks can still arm new retries.
+     */
+    private fun retriesOutstanding(): Boolean =
+        synchronized(retryLock) { retries.isNotEmpty() || submitting != null }
 
     private companion object {
         const val TAG = "WE-DIAG"
