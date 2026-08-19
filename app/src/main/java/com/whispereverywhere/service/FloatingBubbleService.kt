@@ -2214,7 +2214,14 @@ class FloatingBubbleService : Service(),
         // and the line come down together when the drain completes.
         // Every session shows the closing status now (W2 unified preview) — the accumulating
         // window is up for TEXT_FIELD sessions too, and this line is its "still working" signal.
-        transcriptionDeltaText.text = "Finishing transcript — last segments coming in…"
+        // Cloud/live sessions name the actual wait (the tail segment's provider round-trip) so an
+        // honest two-second drain never reads as a hang; cloudWrapper is non-null exactly for
+        // CLOUD_WITH_FALLBACK / CLOUD_LIVE sessions and is not retired until the next session.
+        transcriptionDeltaText.text = if (cloudWrapper != null) {
+            "Finishing… (waiting on provider)"
+        } else {
+            "Finishing transcript…"
+        }
         transcriptionDeltaText.visibility = View.VISIBLE
         
         // Flush whatever is buffered, UNCONDITIONALLY. The amplitude segmenter misses quiet
