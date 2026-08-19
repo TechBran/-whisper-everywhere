@@ -36,11 +36,11 @@ import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.service.MediaNotificationListener
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.ui.onboarding.OnboardingLogic
-import com.whispereverywhere.util.formatBytes
 import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import com.whispereverywhere.ui.theme.Primary
+import com.whispereverywhere.util.formatBytes
 
 // ---------------------------------------------------------------------------------------------
 // Guided first-run onboarding (owner decision 2026-08-01): everything the app needs, configured

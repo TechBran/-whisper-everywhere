@@ -393,9 +393,10 @@ class FallbackTranscriptionEngine(
      * session handed out has already resolved AND been delivered ([LocalRelay.onSegmentResolved]
      * removes a ledger entry only after its resolve() returns: the same delivery-fence discipline
      * as CloudTranscriptionEngine.resolveOnce, and load-bearing for this skip) — and the only work
-     * its executor can still be running is the safety-net model (re)load connect()/prewarm() enqueued. Fencing behind that
-     * load made a short cloud session's stop pay up to the whole load (~7 s on Adreno OpenCL) for
-     * a result nothing pending needed (owner-reported finalize lag, spec 2026-08-18 C2). Nothing
+     * its executor can still be running is the safety-net model (re)load connect()/prewarm()
+     * enqueued. Fencing behind that load made a short cloud session's stop pay up to the
+     * whole load (~7 s on Adreno OpenCL) for a result nothing pending needed (owner-reported
+     * finalize lag, spec 2026-08-18 C2). Nothing
      * is cancelled — the load keeps running and the net stays warm — we just stop waiting for it.
      * FallbackPolicy.reconcile and the SegmentOrderer contracts are untouched: no outcome changes,
      * only a wait on an executor that owes no resolutions is dropped.

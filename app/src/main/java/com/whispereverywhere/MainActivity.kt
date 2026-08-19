@@ -150,7 +150,7 @@ fun WhisperEverywhereNavigation() {
         startDestination = startDestination
     ) {
         // Guided first-run onboarding (2026-08-01; replaced the two-path chooser): permissions ->
-        // automatic engine downloads (Base multilingual + read-aloud voice, no button presses) ->
+        // engines (four-tier chooser; one pick starts both model and voice downloads, no further taps) ->
         // optional cloud keys. Shown at most once — every exit (Finish, cloud setup, Skip,
         // back-press on the first step) records onboardingCompleted then pops "first_run"
         // inclusive, so it leaves no back-stack trap. Never blocks: Skip is always visible, and a
