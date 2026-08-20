@@ -330,33 +330,56 @@ class WhisperBenchTest {
 
     /**
      * Workstream C (3.6.0): per-tier GPU/CPU A-B for the owner's decision gate ("GPU default for
-     * multi flips only on canary + bench + owner-device evidence"). Bypasses GpuPolicy
-     * DELIBERATELY — both arms are forced via WhisperNative.init(useGpu) — because this measures
-     * the hardware, not the gate; no GpuPolicy sentinel is armed, and a GPU-arm crash kills only
-     * this instrument run. Every native call holds NativeComputeGate: the instrument shares the
-     * app process with the bubble/batch services.
+     * multi flips only on canary + bench + owner-device evidence").
+     *
+     * THE TWO ARMS bypass GpuPolicy DELIBERATELY — each is forced through a raw
+     * WhisperNative.init(modelPath, useGpu) — because they measure the hardware, not the gate: no
+     * sentinel is armed around them, they read no latch and write none, and a standing
+     * gpu_canary=false latch does NOT deny the GPU arm (that is the point — the ban is exactly
+     * what is being re-measured). A GPU-arm crash therefore kills only this instrument run. Every
+     * native call holds NativeComputeGate: the instrument shares the app process with the
+     * bubble/batch services.
+     *
+     * THE WARM LOAD IS THE EXCEPTION AND IT HAS PRODUCTION SIDE EFFECTS. It deliberately goes
+     * through WhisperNativeBackend.load for backend-registration parity, and that seam calls
+     * GpuPolicy.decideUseGpuForLoad. So with the experimental multilingual-GPU toggle ON, a
+     * multilingual first installed tier, and no recorded verdict for this (versionCode, model),
+     * that single load runs the FULL production canary and GpuPolicy.onCanaryResult writes a
+     * PERMANENT per-(versionCode, model) latch — including a PASS latch decided by the ~1 s digit
+     * clip ALONE, before this bench's WER arms have said anything. None of it appears in the
+     * WE-BENCH grep: the canary logs under WE-DIAG as "gpu-canary: passed=". Capture WE-DIAG
+     * FIRST and run in the documented order — docs/superpowers/specs/2026-08-19-gpu-ab-bench.md.
+     *
+     * And read a latch the other way too: a number from this bench is EVIDENCE, not a production
+     * decision. A good gpuVsCpuWer here does not make production use the GPU while a
+     * gpu_canary=false latch stands — latches are keyed per (versionCode, model), so only a
+     * versionCode bump clears one.
      *
      * NOTE: on devices without OpenCL, ggml silently falls back to CPU inside the "GPU" arm —
      * the two arms then measure the same backend (visible in the log via matching loadMs/rtf).
      *
-     * One assertion beyond load success: the CPU arm must pass GpuCanaryPolicy.canaryPasses on
+     * Two assertions beyond load success: the CPU arm must pass GpuCanaryPolicy.canaryPasses on
      * the bundled clip — CPU is the trusted ground truth, so a failure there means the clip or
-     * the match rule is broken, and the production canary gate would be meaningless.
+     * the match rule is broken, and the production canary gate would be meaningless — and its
+     * 8 s transcription must be non-blank, or there is no reference to score the GPU against.
      *
-     * RECORDING THE RESULT (spec Decision Gate 2): read `canaryGpu=true` only ALONGSIDE
+     * RECORDING THE RESULT (spec Decision Gate 2, record file
+     * docs/superpowers/specs/2026-08-19-gpu-ab-bench.md): read `canaryGpu=true` only ALONGSIDE
      * `gpuVsCpuWer` from the same line — the canary is a ~1 s corruption SCREEN, not an accuracy
      * measurement, and only the WER against the CPU arm shows the GPU decodes real speech the same
      * way. `canaryGpu=false` is equally a result: it reproduces the documented corruption and
-     * closes the question for that model+driver. Both arms' numbers go in the decision record.
+     * closes the question for that model+driver. Both arms' numbers go in the record.
      *
-     * One narrow PRODUCTION failure mode to know when reading a device's prefs next to these
-     * numbers — it cannot happen in this harness, which arms no sentinel: in TranscriptionEngine
-     * the canary's transcribe RETURNS (its finally has already written gpu_validated=true, meaning
-     * "a GPU compute completed without killing us") a moment before GpuPolicy.onCanaryResult
-     * records the verdict. A load-time GPU crash inside that window leaves keyValidated=true with
-     * NO canary verdict recorded. That gap is inherent to two separate commits and is benign: the
-     * missing verdict keeps needsCanary() true, so the next launch re-runs the canary and the
-     * verdict it records clears the stale flag either way.
+     * One narrow PRODUCTION window to know when reading a device's prefs next to these numbers.
+     * The ARMS cannot reach it — they arm nothing — but the warm load above can, because it is a
+     * real production load: in TranscriptionEngine the canary's transcribe RETURNS (its finally
+     * has already written gpu_validated=true, meaning "a GPU compute completed without killing
+     * us") a moment before GpuPolicy.onCanaryResult records the verdict. A process death from ANY
+     * cause inside that window — nothing GPU is in flight there — leaves keyValidated=true with NO
+     * canary verdict recorded. The gap is inherent to two separate commits and is benign, and not
+     * because anything in memory survives: decideUseGpuForLoad re-derives canaryPending from the
+     * PERSISTED verdict at the top of every load, finds none, and re-runs the canary on the next
+     * launch — whose verdict resolves the stale flag either way.
      */
     @Test
     fun bench_gpu_vs_cpu_ab() {
@@ -389,6 +412,9 @@ class WhisperBenchTest {
 
         // One production-seam load/release first so ggml backends are registered exactly the way
         // production registers them (ensureBackendsLoaded); the A-B arms then force init() flags.
+        // NOT side-effect-free: this goes through GpuPolicy.decideUseGpuForLoad and, with the
+        // experimental toggle on and no verdict yet, runs the production canary and writes a
+        // permanent latch (WE-DIAG "gpu-canary: passed="). See the KDoc and the record file.
         run {
             val warm = WhisperNativeBackend.load(
                 File(modelsDir, installed.first().fileName).absolutePath,
@@ -400,6 +426,15 @@ class WhisperBenchTest {
         for (model in installed) {
             val path = File(modelsDir, model.fileName).absolutePath
             val cpu = benchArm(model.id, path, useGpu = false, jfk = jfk, canaryPcm = canaryPcm)
+            // The CPU arm is the REFERENCE half of every WER below, and WerMath.wer scores an
+            // empty reference against an empty hypothesis as 0.000 — so a totally broken run
+            // (both arms silent) would print the BEST possible number. Both sibling benches in
+            // this class already assert their reference is non-blank; this one must too.
+            assertTrue(
+                "tier=${model.id}: CPU arm produced a blank 8 s transcription — cannot score " +
+                    "the GPU against nothing",
+                cpu.sliceText.isNotBlank(),
+            )
             val gpu = benchArm(model.id, path, useGpu = true, jfk = jfk, canaryPcm = canaryPcm)
             val wer = WerMath.wer(cpu.sliceText, gpu.sliceText)
             // Locale.US: these numbers are read back off logcat and compared, and a
@@ -493,6 +528,12 @@ class WhisperBenchTest {
         while (i + 8 <= bytes.size) {
             val id = String(bytes, i, 4, Charsets.US_ASCII)
             val chunkSize = ByteBuffer.wrap(bytes, i + 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
+            // Same guard, same position, as CanaryAudio.dataChunk: a negative declared size
+            // (corrupt file, or a >2 GB size that overflowed the signed int) would invert the
+            // copyOfRange range below — which the minOf clamp cannot save — and would make the
+            // advance at the bottom of this loop walk BACKWARDS. Bail with no samples; the
+            // caller's isNotEmpty assertion turns that into a clear failure.
+            if (chunkSize < 0) return ByteArray(0)
             if (id == "data") {
                 // Clamped like CanaryAudio.dataChunk: an over-declared data size (real encoders
                 // emit them) must truncate, not throw — jfk.wav is ours, but the canary clip is
