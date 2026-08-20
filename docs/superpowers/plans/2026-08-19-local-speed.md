@@ -3886,12 +3886,24 @@ if (-not (Test-Path "app/src/main/assets/canary_digits.wav")) {
     'STOP: canary_digits.wav not supplied by owner — C5/C7/C8 blocked. Land Steps 3-7 (loader + tests) and stop; do NOT run Step 8.'
 } else {
     $b = [System.IO.File]::ReadAllBytes((Resolve-Path "app/src/main/assets/canary_digits.wav"))
-    "riff=$([System.Text.Encoding]::ASCII.GetString($b,0,4)) wave=$([System.Text.Encoding]::ASCII.GetString($b,8,4)) channels=$([BitConverter]::ToUInt16($b,22)) rate=$([BitConverter]::ToUInt32($b,24)) bits=$([BitConverter]::ToUInt16($b,34)) totalBytes=$($b.Length)"
+    # Walk the RIFF chunks the same way CanaryAudio does — fixed offsets 22/24/34 assume the
+    # canonical 44-byte header and FALSE-STOP on files whose export tool writes LIST/INFO
+    # metadata before fmt (C4-review fix). Duration is derived from the data chunk, not file size.
+    $riff = [System.Text.Encoding]::ASCII.GetString($b,0,4); $wave = [System.Text.Encoding]::ASCII.GetString($b,8,4)
+    $i = 12; $fmtLine = 'fmt=MISSING'; $dataBytes = -1
+    while ($i + 8 -le $b.Length) {
+        $id = [System.Text.Encoding]::ASCII.GetString($b,$i,4); $sz = [BitConverter]::ToInt32($b,$i+4)
+        if ($sz -lt 0) { break }
+        if ($id -eq 'fmt ') { $fmtLine = "channels=$([BitConverter]::ToUInt16($b,$i+10)) rate=$([BitConverter]::ToUInt32($b,$i+12)) bits=$([BitConverter]::ToUInt16($b,$i+22))" }
+        if ($id -eq 'data') { $dataBytes = [Math]::Min($sz, $b.Length - $i - 8); break }
+        $i += 8 + $sz + ($sz -band 1)
+    }
+    "riff=$riff wave=$wave $fmtLine dataBytes=$dataBytes durationSec=$([Math]::Round($dataBytes / 32000.0, 2))"
 }
 ```
 Two outcomes, both defined:
   - **`STOP: …` printed** → the asset is absent. Continue with Steps 3-7 (they do not touch the asset), then STOP. Record in the run log that C5/C7/C8 are blocked on the owner's clip.
-  - **A field line printed** → expect `riff=RIFF wave=WAVE channels=1 rate=16000 bits=16 totalBytes=` a number between roughly 32 100 and 64 200. If any field differs, STOP and re-export the clip — do not adapt the code to a different format, and do not commit the bad file.
+  - **A field line printed** → expect `riff=RIFF wave=WAVE channels=1 rate=16000 bits=16` and `durationSec=` between **1.0 and 2.0** (data bytes ÷ 32,000/s — duration comes from the data chunk, so metadata chunks cannot skew it). If any field differs, STOP and re-export the clip — do not adapt the code to a different format, and do not commit the bad file.
 
 - [ ] **Step 3 — write the failing test.** Create `app/src/test/java/com/whispereverywhere/transcription/CanaryAudioTest.kt`:
 ```kotlin
