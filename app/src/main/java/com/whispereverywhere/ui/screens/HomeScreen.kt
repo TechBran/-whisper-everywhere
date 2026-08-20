@@ -437,6 +437,15 @@ private fun HowToGuideCard() {
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
 
+    // Warm path (3.6.0, Workstream E2): expanding the guide is the think-time signal that a
+    // read-aloud tap may follow — start the ~2 s Kokoro load then, not on the tap. Deliberately
+    // NOT on plain Home composition: that would allocate the TTS context on every app open for
+    // users who never read. No-op when the voice isn't installed or is already loaded, and the
+    // engine's idle-unload reclaims the context if the tap never comes.
+    LaunchedEffect(expanded) {
+        if (expanded) com.whispereverywhere.tts.TtsController.preload(context)
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -461,7 +470,11 @@ private fun HowToGuideCard() {
                 // Read-aloud, pinned to the guide (owner: "more interactive") — tap to hear the
                 // whole guide through whichever voice is configured; tapping again restarts, and
                 // the bubble's stop/scrubber controls work on it like any read.
+                // preload first (3.6.0 E2): covers the collapsed-header tap the expansion
+                // preload above never saw; the load overlaps speakFromTrigger's main-thread
+                // prefs/Keystore resolution. No-op when already loaded.
                 IconButton(onClick = {
+                    com.whispereverywhere.tts.TtsController.preload(context)
                     com.whispereverywhere.tts.TtsController.stop()
                     com.whispereverywhere.tts.TtsController.speakFromTrigger(
                         context, com.whispereverywhere.ui.HowToGuide.plainText()

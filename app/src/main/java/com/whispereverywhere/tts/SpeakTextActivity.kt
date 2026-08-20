@@ -19,6 +19,12 @@ class SpeakTextActivity : Activity() {
         super.onCreate(savedInstanceState)
         val text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
         if (!text.isNullOrBlank()) {
+            // Warm path (3.6.0, Workstream E2): start the ~2 s Kokoro model load on the synthesis
+            // thread NOW, so it overlaps speakFromTrigger's main-thread resolution (voice-installed
+            // disk check, arbiter, prefs + Keystore reads in applyCloudVoice) instead of starting
+            // after them — the toolbar read was a guaranteed-cold call site; only the clipboard
+            // path preloaded. No-op when the voice isn't installed or is already loaded.
+            TtsController.preload(this)
             // Cap pathological selections; spans are dropped by toString above.
             TtsController.speakFromTrigger(this, text.take(MAX_CHARS))
         }
