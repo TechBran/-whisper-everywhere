@@ -43,9 +43,67 @@ object GpuPolicy {
     private fun keyValidated(vc: Int, m: String) = "gpu_validated_v${vc}_$m"
     private fun keyInFlight(vc: Int, m: String, phase: String) = "gpu_inflight_${phase}_v${vc}_$m"
 
+    /**
+     * The CANARY verdict for a multilingual model on this device (3.6.0 Workstream C). Absent =
+     * never run. Keyed by app version AND model like every other flag here, so a new app version
+     * (possibly a new driver/backend) re-trials once instead of inheriting a stale verdict.
+     */
+    private fun keyCanary(vc: Int, m: String) = "gpu_canary_v${vc}_$m"
+
     /** Stable per-model key from the model path (file name, sanitized for prefs keys). */
     private fun modelKey(modelPath: String): String =
         modelPath.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+    /** true = canary passed, false = permanent CPU latch, null = never run for this version+model. */
+    private fun canaryVerdict(p: SharedPreferences, vc: Int, m: String): Boolean? =
+        if (!p.contains(keyCanary(vc, m))) null else p.getBoolean(keyCanary(vc, m), false)
+
+    /**
+     * Set while a GPU load was allowed for a model whose canary has NOT run yet — the signal
+     * WhisperNativeBackend.load reads to run the canary immediately after the load returns.
+     * Written under [stateLock] together with [activeModelKey]. Cleared by [onCanaryResult] when
+     * a verdict is recorded, and re-decided from scratch at the top of every
+     * [decideUseGpuForLoad] — so an exit that records no verdict (C5's `ctx == 0L` and
+     * "canary asset unavailable" paths) can never leave a stale `true` behind.
+     */
+    @Volatile private var canaryPending = false
+
+    /** True when the load just decided needs its canary run before any user audio touches it. */
+    fun needsCanary(): Boolean = canaryPending
+
+    /**
+     * Records the canary verdict for the model of the load that set [needsCanary]. A FAIL is a
+     * permanent per-(version, model) CPU latch: the corruption is silent and reproducible, so
+     * one demonstration is enough. commit() (not apply()) — the verdict must survive a process
+     * death that a later GPU call might cause.
+     *
+     * A FAIL also CLEARS `gpu_validated` for that (version, model), in the same edit. The canary
+     * runs through the same compute path a user segment does, so its non-throwing transcribe has
+     * already set `keyValidated(vc, m) = true` — that flag means "a GPU compute completed without
+     * killing us", and leaving it set while latching the model to CPU would disarm the crash
+     * sentinel for a model whose GPU output is known garbage. Two prefs flags in direct
+     * contradiction is worse than either. Never called when the canary could not be RUN (see
+     * CanaryAudio.samples): an absent asset must leave the verdict unrecorded, not latch.
+     */
+    fun onCanaryResult(passed: Boolean) = runCatching {
+      synchronized(stateLock) {
+        canaryPending = false
+        val p = prefs() ?: return@runCatching
+        val vc = BuildConfig.VERSION_CODE
+        val m = activeModelKey ?: return@runCatching
+        if (passed) {
+            p.edit().putBoolean(keyCanary(vc, m), true).commit()
+            Log.i(TAG, "GpuPolicy: canary PASSED for v$vc/$m — GPU allowed for this model+device")
+        } else {
+            p.edit()
+                .putBoolean(keyCanary(vc, m), false)
+                .putBoolean(keyValidated(vc, m), false)
+                .commit()
+            Log.w(TAG, "GpuPolicy: canary FAILED for v$vc/$m — permanent CPU latch, session continues on CPU")
+            gpuActiveInProcess = false
+        }
+      }
+    }.let { }
 
     /** Adreno 7xx / 8xx / X-series (X1E, X2 …) — the officially supported set. */
     private val ALLOWED_RENDERERS = Regex("""Adreno \(TM\) (7\d\d|8\d\d|X\d)""")
@@ -86,13 +144,37 @@ object GpuPolicy {
     /** Decide once per model load. Also arms the load-phase sentinel when GPU is chosen. */
     fun decideUseGpuForLoad(modelPath: String): Boolean = runCatching {
       synchronized(stateLock) {
+        // 3.6.0 C, stale-flag hygiene: this function is the ONLY place canaryPending is armed,
+        // so it decides the flag afresh on every call — cleared here, set at the tail (Step 3)
+        // only when a multilingual model still needs validating. Without this, an exit that
+        // never reaches the tail (any early return here, or either of C5's no-verdict exits —
+        // `ctx == 0L` and "canary asset unavailable", both of which deliberately record
+        // nothing) could leave a stale `true` paired with a freshly written activeModelKey.
+        canaryPending = false
         val p = prefs() ?: return false
         val vc = BuildConfig.VERSION_CODE
         val m = modelKey(modelPath)
 
         if (!isGpuSafeModel(m)) {
-            Log.i(TAG, "GpuPolicy: $m is multilingual — silent GPU corruption on Adreno -> CPU")
-            return false
+            // 3.6.0 Workstream C: multilingual models are no longer banned outright — they are
+            // CANARY-GATED, and only when the owner has enabled the experimental developer
+            // toggle. Default (toggle off) behavior is byte-identical to 3.5.0.
+            val experiment = runCatching {
+                com.whispereverywhere.WhisperEverywhereApp.getInstance()
+                    .preferencesManager.isGpuMultilingualExperimentEnabled()
+            }.getOrDefault(false)
+            if (!experiment) {
+                Log.i(TAG, "GpuPolicy: $m is multilingual — silent GPU corruption on Adreno -> CPU")
+                return false
+            }
+            when (canaryVerdict(p, vc, m)) {
+                false -> {
+                    Log.i(TAG, "GpuPolicy: $m failed the canary on this device (latched) -> CPU")
+                    return false
+                }
+                true -> Log.i(TAG, "GpuPolicy: $m passed the canary on this device -> GPU allowed")
+                null -> Log.i(TAG, "GpuPolicy: $m canary not yet run -> GPU load armed for validation")
+            }
         }
         if (p.getBoolean(keyBlocked(vc, m), false)) {
             Log.i(TAG, "GpuPolicy: blocked for v$vc/$m (previous GPU crash) -> CPU")
@@ -127,6 +209,10 @@ object GpuPolicy {
         }
         activeModelKey = m
         gpuActiveInProcess = true
+        // 3.6.0 C: a multilingual model with no recorded verdict must transcribe the canary
+        // before any user audio reaches it. Written with activeModelKey under stateLock so
+        // onCanaryResult always latches the model this decision was about.
+        canaryPending = !isGpuSafeModel(m) && canaryVerdict(p, vc, m) == null
         true
       }
     }.getOrDefault(false)
