@@ -149,10 +149,9 @@ When filled, replace `RESULT: PENDING` with exactly one of:
 
 ## Decision
 
-DECISION: PENDING — RESULT: PASS floor=512 satisfies Task G4's gate; the change is RECOMMENDED
-and ready to execute as a post-3.6.0 commit (owner go/no-go): `whisper_jni.cpp`
-`g_audio_ctx_floor` default 768 → 512, `WhisperBenchTest.PRODUCTION_FLOOR` 768 → 512 in the
-SAME commit (per its KDoc), and prune `FLOOR_CANDIDATES` to below-512 values (384, 256) before
-any post-change re-run. Measured payoff at 512: multi-CPU F 3.5 → 2.3 s on every short commit
-and stop-tail; pro-GPU F 0.96 → 0.77 s. Accuracy: maxWer 0.000 on both tiers, 4/4 binding
-slices each.
+DECISION: EXECUTED 2026-08-20 (owner go given same day). `whisper_jni.cpp` `g_audio_ctx_floor`
+default 768 → 512, `WhisperBenchTest.PRODUCTION_FLOOR` 768 → 512, `FLOOR_CANDIDATES` pruned to
+(384, 256) — one commit, per the KDoc rule. Measured payoff at 512: multi-CPU F 3.5 → 2.3 s on
+every short commit and stop-tail; pro-GPU F 0.96 → 0.77 s. Accuracy: maxWer 0.000 on both
+tiers, 4/4 binding slices each. Any future floor change re-runs the sweep against the new
+512 reference (the record's comparability rule applies — replace the whole Results block).

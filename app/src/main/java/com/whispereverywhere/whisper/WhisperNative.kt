@@ -104,7 +104,7 @@ object WhisperNative {
 
     /**
      * BENCH-ONLY override of the encoder audio_ctx floor (whisper_jni.cpp; the production
-     * default is 768). Deliberately absent from this object's 1:1 KDoc list above — it maps to
+     * default is 512). Deliberately absent from this object's 1:1 KDoc list above — it maps to
      * no production behavior. Clamped natively to 64..1500 and process-global — it affects EVERY
      * subsequent transcribe in this process, which is why production code must never call it.
      * WhisperBenchTest's floor A-B is the sole caller and restores the production value in a

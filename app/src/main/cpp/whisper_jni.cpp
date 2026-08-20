@@ -35,14 +35,18 @@ static void we_install_native_logging() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Encoder audio_ctx floor (3.6.0 Workstream G). 768 is the SHIPPED production value — raised
-// 256 -> 768 for a documented accuracy regression (see the audio_ctx block in transcribeRaw).
+// Encoder audio_ctx floor (3.6.0 Workstream G; lowered per Task G4). History: raised 256 -> 768
+// for a documented accuracy regression, then 768 -> 512 on 2026-08-20 after the G3 on-device
+// sweep PASSED 512 on BOTH 190 MB tiers (maxWer 0.000, 4/4 binding slices each, production
+// backends) while 384/256 FAILED multi — see the audio_ctx block in transcribeRaw and
+// docs/superpowers/specs/2026-08-19-audio-ctx-floor-bench.md (RESULT: PASS floor=512).
+// Measured payoff: multi-CPU fixed per-commit cost 3.5 s -> 2.3 s; pro-GPU 0.96 s -> 0.77 s.
 // The setter exists ONLY for the WhisperBenchTest A-B harness: it lets an instrumented bench
-// measure lower floors against 768 on the SAME device/model WITHOUT changing production
-// behavior. Production code never calls it. Lowering the DEFAULT is gated on that bench's
+// measure lower floors against the default on the SAME device/model WITHOUT changing production
+// behavior. Production code never calls it. Changing the DEFAULT is gated on that bench's
 // recorded per-tier accuracy verdict (WerMath.floorQualifies) — never done blind.
 // ---------------------------------------------------------------------------------------------
-static std::atomic<int> g_audio_ctx_floor{768};
+static std::atomic<int> g_audio_ctx_floor{512};
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_setAudioCtxFloor(
@@ -51,7 +55,7 @@ Java_com_whispereverywhere_whisper_WhisperNative_setAudioCtxFloor(
     if (f < 64)   f = 64;    // below the +64 headroom would be self-defeating
     if (f > 1500) f = 1500;  // the model maximum
     g_audio_ctx_floor.store(f, std::memory_order_relaxed);
-    LOGI("audio_ctx floor set to %d (bench override; production default 768)", f);
+    LOGI("audio_ctx floor set to %d (bench override; production default 512)", f);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -365,12 +369,13 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
     // we simply skip encoding the empty tail padding. Big latency cut for short dictation segments.
     {
         int neededFrames = static_cast<int>(pcm.size() / 320) + 64;
-        // Floor raised 256 -> 768: STOCK whisper models lose accuracy under aggressive audio_ctx
-        // reduction (positional-embedding mismatch; FUTO's ACFT models are fine-tuned to tolerate
-        // it, ours are not) — user-visible as garbled short phrases. 768 halves the encoder cost
-        // vs full context while keeping a wide safety margin; the GPU makes the rest cheap.
-        // The literal now lives in g_audio_ctx_floor (same default, 768) so the bench harness
-        // can A-B lower floors — see setAudioCtxFloor above. Production behavior: unchanged.
+        // Floor history: raised 256 -> 768 because STOCK whisper models lose accuracy under
+        // aggressive audio_ctx reduction (positional-embedding mismatch; FUTO's ACFT models are
+        // fine-tuned to tolerate it, ours are not) — user-visible as garbled short phrases.
+        // Lowered 768 -> 512 (Task G4, 2026-08-20) after the on-device G3 sweep proved 512 holds
+        // maxWer 0.000 on both 190 MB tiers while 384/256 garble short multi fragments
+        // (wer 0.500 at the 1 s slice) — the cliff sits between 512 and 384. The value lives in
+        // g_audio_ctx_floor so the bench harness can A-B floors — see setAudioCtxFloor above.
         const int floorFrames = g_audio_ctx_floor.load(std::memory_order_relaxed);
         if (neededFrames < floorFrames) neededFrames = floorFrames;
         if (neededFrames > 1500) neededFrames = 1500;

@@ -57,13 +57,14 @@ class WhisperBenchTest {
 
         /**
          * The production audio_ctx floor (whisper_jni.cpp g_audio_ctx_floor default). If Task G4
-         * ever lowers the native default, bump THIS in the same commit — the floor sweep uses it
-         * as the A-B reference arm AND restores it in its finally.
+         * ever changes the native default, bump THIS in the same commit — the floor sweep uses it
+         * as the A-B reference arm AND restores it in its finally. (G4 executed 2026-08-20:
+         * 768 -> 512 per the recorded RESULT: PASS floor=512; candidates pruned to below-512.)
          */
-        const val PRODUCTION_FLOOR = 768
+        const val PRODUCTION_FLOOR = 512
 
         /** Candidate floors below production; each is A-B'd against [PRODUCTION_FLOOR]. */
-        val FLOOR_CANDIDATES = listOf(512, 384, 256)
+        val FLOOR_CANDIDATES = listOf(384, 256)
 
         /**
          * Tail-fragment-sized slices for the floor sweep, in whole seconds.
@@ -73,11 +74,12 @@ class WhisperBenchTest {
          * binds only while `floor > neededFrames` — strictly greater, since equality changes
          * nothing. Per slice, neededFrames is:
          *   1 s -> 114, 2 s -> 164, 3 s -> 214, 8 s -> 464 frames.
-         * So 1/2/3 s bind every candidate, and the 8 s slice binds 512 ONLY: at floors 384 and 256
-         * the encoder runs at its natural 464 frames — not at the candidate — which is a
-         * structural no-op that must never be read as "the low floor was safe". Every result line
-         * therefore carries binding=true|false and only binding slices feed the verdict; see
-         * [floorBinds]. 15 s (neededFrames 814) escapes every floor and would measure nothing.
+         * So 1/2/3 s bind every candidate, while the 8 s slice binds NO current candidate: at
+         * floors 384 and 256 the encoder runs at its natural 464 frames — not at the candidate —
+         * which is a structural no-op that must never be read as "the low floor was safe". Every
+         * result line therefore carries binding=true|false and only binding slices feed the
+         * verdict; see [floorBinds]. 15 s (neededFrames 814) escapes every floor and would
+         * measure nothing.
          */
         val FLOOR_SLICE_SECONDS = listOf(1, 2, 3, 8)
     }
@@ -113,8 +115,8 @@ class WhisperBenchTest {
 
     /**
      * Workstream G (3.6.0): A-B the production audio_ctx floor against lower candidates, per
-     * installed tier, with accuracy scoring. The stop-tail fragment pays a 768-frame minimum for
-     * ~119 frames of audio; the floor was raised 256 -> 768 for a REAL accuracy regression, so
+     * installed tier, with accuracy scoring. The stop-tail fragment pays the floor as a minimum
+     * for ~119 frames of audio; the floor was once raised 256 -> 768 for a REAL regression, so
      * "no candidate qualifies" is a fully expected, shippable answer.
      *
      * MEASUREMENT, not a gate: the only assertions are that the swept floors are inside the

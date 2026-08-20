@@ -3,12 +3,13 @@ package com.whispereverywhere.util
 /**
  * Token-level Word Error Rate and the audio_ctx floor's accuracy gate (3.6.0 Workstream G).
  *
- * The stop-tail fragment pays a 768-frame minimum audio_ctx for ~119 frames of audio — a 6.45x
- * overshoot on the finalize critical path. The floor was raised 256 -> 768 for a REAL, documented
- * accuracy regression (stock whisper models garble short phrases under aggressive audio_ctx
- * reduction), so it is lowered ONLY if a per-tier bench proves accuracy holds. That proof is
- * arithmetic, and arithmetic belongs in a pure, tested object rather than in an instrumented
- * test nobody can run on CI.
+ * The stop-tail fragment pays the floor as a minimum audio_ctx for ~119 frames of audio — a
+ * multi-x overshoot on the finalize critical path. The floor was raised 256 -> 768 for a REAL,
+ * documented accuracy regression (stock whisper models garble short phrases under aggressive
+ * audio_ctx reduction), then lowered 768 -> 512 (Task G4, 2026-08-20) when the on-device bench
+ * proved 512 holds maxWer 0.000 on both 190 MB tiers while 384/256 fail — the floor changes
+ * ONLY on such a per-tier proof. That proof is arithmetic, and arithmetic belongs in a pure,
+ * tested object rather than in an instrumented test nobody can run on CI.
  *
  * WER = edit distance between token sequences / reference token count. Tokens are lowercased and
  * stripped of punctuation: two decodes of the same audio differ in casing and punctuation
