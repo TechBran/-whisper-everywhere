@@ -2163,6 +2163,33 @@ class FloatingBubbleService : Service(),
         // (onTrimMemory) or on service destroy (onDestroy), not at the end of each recording.
         val engine: TranscriptionEngine = resolveTranscriptionEngine()
 
+        // Honest CONNECTING (3.6.0, Workstream E3): a cold local engine is about to pay the ~7 s
+        // model load inside CONNECTING — name the wait. The engine itself reports which branch
+        // its connect() will take (isWarm(), the same check connect() runs — a surfaced flag,
+        // never log parsing); cloud sessions (cloudWrapper != null) are excluded because their
+        // CONNECTING wait is the socket/handshake. The strip is the label surface, exactly like
+        // the FINALIZING status line: onOpen's showSessionPreview() resets it, and every failure
+        // exit (recorder start failure, connect-time fatal) runs teardownRealtime(), which
+        // brings the container down.
+        connectingStatusLabel(
+            isCloudSession = cloudWrapper != null,
+            localEngineWarm = localEngine?.isWarm() == true,
+        )?.let { label ->
+            // Size BEFORE showing, exactly like showSessionPreview() does (applyPreviewSize is
+            // its first call): the container's width/height come from bubbleTextWidthDp/HeightDp
+            // clamped against the live screen, and without this the first session after a service
+            // start renders the panel at whatever geometry was left over, then jumps when
+            // showSessionPreview runs at onOpen.
+            applyPreviewSize()
+            transcriptionEditText.visibility = View.GONE
+            transcriptionDeltaText.text = label
+            transcriptionDeltaText.scrollTo(0, 0)
+            transcriptionDeltaText.visibility = View.VISIBLE
+            transcriptionPreviewContainer.visibility = View.VISIBLE
+            // The strip appearing is a geometry change — posted so the measure pass ran first.
+            bubbleView.post { reclampNow() }
+        }
+
         // Resolve the transcription language. English-only (.en) models must NOT use auto-detect:
         // whisper's language auto-detect is unreliable on non-multilingual models. Force "en" for
         // ENGLISH-scope tiers; honor the user's setting (auto / specific) only for multilingual.
