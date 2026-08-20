@@ -87,6 +87,17 @@ interface WhisperBackend {
      *   which short-circuits we_vad_filter natively (whisper_jni.cpp:188). BATCH-ONLY bypass.
      */
     fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean = true): String
+
+    /**
+     * ISO code whisper auto-detected during the LAST completed transcribe on [ctx], or null
+     * when unavailable (never ran / unknown id / a backend with no detection). Meaningful
+     * ONLY right after a transcribe(...) that returned non-blank text on an auto-language
+     * call — the native early-return paths (VAD-empty, energy gate) never reach whisper_full
+     * and would leave a stale id behind (see WhisperNative.detectedLanguage). Default null:
+     * every existing fake keeps compiling, and a detection-less backend can never pin.
+     */
+    fun detectedLanguage(ctx: Long): String? = null
+
     fun release(ctx: Long)
 }
 
@@ -153,6 +164,14 @@ object WhisperNativeBackend : WhisperBackend {
                 GpuPolicy.onGpuComputeFinished(ok)
             }
         }
+
+    // A single native field read, but still a native-ctx touch: it follows the house rule that
+    // EVERY native entry point in this backend holds the process-global gate (see the comment
+    // above load()). The engine calls it on its single native-executor thread, right after the
+    // transcribe whose detection it reads — the gate wait is at most one interleaved batch call,
+    // the same wait the next transcribe would pay anyway.
+    override fun detectedLanguage(ctx: Long): String? =
+        NativeComputeGate.serialized { WhisperNative.detectedLanguage(ctx) }
 
     override fun release(ctx: Long) = NativeComputeGate.serialized { WhisperNative.free(ctx) }
 }
