@@ -154,6 +154,18 @@ internal fun isRealtimeStt(sttProviderIdName: String?): Boolean =
 internal fun connectingStatusLabel(isCloudSession: Boolean, localEngineWarm: Boolean): String? =
     if (!isCloudSession && !localEngineWarm) "Loading speech model…" else null
 
+/**
+ * The states whose elapsed ticker runs (3.6.0, Workstream E4). PROCESSING kept for the legacy
+ * branch that has always owned the ticker UI; FINALIZING added so the stop-tap drain counts up
+ * visibly alongside the "Finishing…" status line instead of an unchanging spinner. The ticker's
+ * while-loop re-reads the live state through this each tick, so BOTH FINALIZING exits (IDLE,
+ * ERROR — each of which also hides the text and cancels the job) terminate it. Pure and
+ * JVM-pinned (ProcessingTimerPolicyTest).
+ */
+internal fun processingTimerRunsIn(state: FloatingBubbleService.BubbleState): Boolean =
+    state == FloatingBubbleService.BubbleState.PROCESSING ||
+        state == FloatingBubbleService.BubbleState.FINALIZING
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
@@ -2781,6 +2793,14 @@ class FloatingBubbleService : Service(),
                     blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_processing)
                     blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.PROCESSING)
                     startRotationAnimation()
+                    // 3.6.0 (Workstream E4): the previously-dead elapsed ticker now counts the
+                    // drain up next to the "Finishing…" status line — a long drain visibly makes
+                    // progress. Both exits (IDLE, ERROR) hide the text and cancel the job.
+                    // The mic glyph goes with it, mirroring the PROCESSING branch: the pill is
+                    // 56 dp wide here, so the elapsed text would otherwise render over the icon.
+                    bubbleIcon.visibility = View.GONE
+                    processingTimeText.visibility = View.VISIBLE
+                    startProcessingTimer()
                 }
                 BubbleState.PROCESSING -> {
                     bubbleIcon.visibility = View.GONE
@@ -2850,7 +2870,7 @@ class FloatingBubbleService : Service(),
 
         processingTimerJob?.cancel()
         processingTimerJob = serviceScope.launch {
-            while (isActive && currentState == BubbleState.PROCESSING) {
+            while (isActive && processingTimerRunsIn(currentState)) {
                 val elapsed = (System.currentTimeMillis() - processingStartTime) / 1000
                 processingTimeText.text = "${elapsed}s"
                 delay(100) // Update every 100ms for smooth display
