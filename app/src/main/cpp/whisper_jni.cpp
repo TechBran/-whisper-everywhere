@@ -304,6 +304,28 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
     return out;
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_detectedLanguage(
+        JNIEnv *env, jobject /* this */, jlong ctxPtr) {
+    auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
+    if (ctx == nullptr) {
+        return nullptr;
+    }
+    // state->lang_id from the LAST completed whisper_full on this ctx. It PERSISTS across calls —
+    // even across sessions — so the Kotlin side must only trust it right after a transcribe that
+    // demonstrably ran: the early-return paths in transcribeRaw above (VAD found zero speech,
+    // the no-VAD energy gate, empty input) never touch whisper_full and would leave a stale id.
+    // Threading: a plain field read, but it reads the ctx — call it only on the single thread
+    // that runs transcribe for this ctx (LocalWhisperEngine's native executor).
+    const int langId = whisper_full_lang_id(ctx);
+    const char *code = whisper_lang_str(langId);   // nullptr for an unknown id (whisper logs it)
+    if (code == nullptr) {
+        return nullptr;
+    }
+    // ISO 639-1 codes are plain ASCII — safe for NewStringUTF (no 4-byte UTF-8 here).
+    return env->NewStringUTF(code);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_free(
         JNIEnv *env, jobject /* this */, jlong ctxPtr) {

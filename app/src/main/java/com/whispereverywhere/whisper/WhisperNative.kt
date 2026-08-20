@@ -3,10 +3,11 @@ package com.whispereverywhere.whisper
 /**
  * JNI bridge to the native whisper.cpp engine (libwhisper_jni.so).
  *
- * All three functions map 1:1 to whisper_jni.cpp:
- *   - init()       -> whisper_init_from_file_with_params(); returns whisper_context* as Long (0 = failure)
- *   - transcribe() -> whisper_full() with WHISPER_SAMPLING_GREEDY; returns concatenated segment text
- *   - free()       -> whisper_free()
+ * The functions map 1:1 to whisper_jni.cpp:
+ *   - init()             -> whisper_init_from_file_with_params(); returns whisper_context* as Long (0 = failure)
+ *   - transcribe()       -> whisper_full() with WHISPER_SAMPLING_GREEDY; returns concatenated segment text
+ *   - detectedLanguage() -> whisper_lang_str(whisper_full_lang_id()): the LAST completed transcribe's detection
+ *   - free()             -> whisper_free()
  *
  * The returned Long is an opaque native pointer handle owned by the caller
  * (LocalWhisperEngine caches it). Never dereference it in Kotlin.
@@ -59,6 +60,17 @@ object WhisperNative {
         translate: Boolean,
         vadModelPath: String?,
     ): String = String(transcribeRaw(ctxPtr, samples, lang, translate, vadModelPath), Charsets.UTF_8)
+
+    /**
+     * ISO code (e.g. "de") whisper auto-detected during the LAST completed whisper_full on
+     * [ctxPtr], or null when unavailable. Only meaningful IMMEDIATELY after a transcribe that
+     * actually ran whisper on an auto-language call: the native early-return paths (VAD found
+     * zero speech, the energy gate, empty input) never reach whisper_full, and the underlying
+     * state->lang_id then still holds a PREVIOUS call's detection — possibly a previous
+     * session's. Callers guard this by querying only after a non-blank transcribe (see
+     * LocalWhisperEngine.runSegment). Call on the same single thread that runs transcribe.
+     */
+    external fun detectedLanguage(ctxPtr: Long): String?
 
     /** Frees the native whisper_context. Safe to call once per non-zero handle. */
     external fun free(ctxPtr: Long)
