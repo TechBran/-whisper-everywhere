@@ -258,9 +258,22 @@ class LocalWhisperEngine(
             } else {
                 val samples = AudioMath.pcm16ToFloat(pcm)
                 android.util.Log.i("WE-DIAG", "transcribe START seq=$seq samples=${samples.size} lang=$lang")
+                val transcribeStartNs = System.nanoTime()
                 val text = runBlocking {
                     retry.retry { backend.transcribe(ctx, samples, lang) }
                 }
+                // Permanent per-segment RTF instrumentation (3.6.0, Workstream A3): the number
+                // the tier-consolidation and GPU decision gates read, measured on the owner's
+                // device instead of estimated. Includes retry time deliberately — it is the wall
+                // cost the user actually paid for this segment. Numbers only, never transcript
+                // content. Grep "segment-timing:".
+                android.util.Log.i(
+                    "WE-DIAG",
+                    SegmentTiming.line(
+                        audioMs = SegmentTiming.audioMs(samples.size),
+                        transcribeMs = (System.nanoTime() - transcribeStartNs) / 1_000_000,
+                    ),
+                )
                 // Strip whisper's non-speech markers ([BLANK_AUDIO], [ Silence ], (music), …) so
                 // they are never typed into the user's field.
                 val cleaned = TranscriptText.clean(text)
