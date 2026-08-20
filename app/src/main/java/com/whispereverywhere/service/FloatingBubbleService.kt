@@ -1617,7 +1617,18 @@ class FloatingBubbleService : Service(),
                     "WE-DIAG",
                     "wall-clock cap -> commit (cap=${segmentCapPolicy.currentCapMs()}ms)",
                 )
-                segmentCapPolicy.onCommit(now)
+                // A cap cut on SILENCE-ONLY audio still commits the buffer (bounded, and whisper's
+                // VAD returns empty fast) but must NOT spend the first-cap window: a user who
+                // pauses to think before speaking would otherwise burn the 4 s window on silence
+                // and get first text ~4 s LATER than 3.5.0 (silent 5 s then continuous speech:
+                // T+19 instead of T+15). Re-arming keeps the next 4 s window ready for the first
+                // real speech. Read BEFORE speechSegmenter.reset() below, which clears the flag.
+                // Soft-talker interaction is intended: a below-threshold speaker reads as "no
+                // pending speech" and so keeps getting 4 s cuts — more responsive than the old 15 s.
+                // The policy contract is unchanged (any onCommit consumes the window); the
+                // silence exception lives here at the call site.
+                if (speechSegmenter.hasPendingSpeech()) segmentCapPolicy.onCommit(now)
+                else segmentCapPolicy.onSessionStart(now)
                 engine.commit()
                 speechSegmenter.reset()
             }
@@ -2096,8 +2107,8 @@ class FloatingBubbleService : Service(),
                     if (currentState != BubbleState.CONNECTING) return@launch
                     speechSegmenter.reset()
                     // Per-session reset: the FIRST-segment 4 s cap applies again from here.
-                    val sessionStartMs = System.currentTimeMillis()
-                    segmentCapPolicy.onSessionStart(sessionStartMs)
+                    val sessionOpenMs = System.currentTimeMillis()
+                    segmentCapPolicy.onSessionStart(sessionOpenMs)
                     // 3.6.0 (Workstream A) — the 4 s first cap is LOCAL-ONLY. This VAD/cap path
                     // also runs for CLOUD_WITH_FALLBACK (runClientVad is true for it; only
                     // CLOUD_LIVE sets sessionIsLive), and there an extra first segment means an
@@ -2108,7 +2119,7 @@ class FloatingBubbleService : Service(),
                     // 15 s cap for every segment: byte-identical to 3.5.0. cloudWrapper is
                     // already resolved here — resolveTranscriptionEngine() ran in startRecording,
                     // and it is the same cloud predicate stopRecording uses.
-                    if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionStartMs)
+                    if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionOpenMs)
                     val started = startAudioInput()
                     android.util.Log.i("WE-DIAG", "recorder start success=${started.isSuccess}")
                     if (started.isFailure) {
