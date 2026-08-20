@@ -271,6 +271,26 @@ class PreferencesManager(private val context: Context) {
         _modelInstalled.tryEmit(Unit)
     }
 
+    /**
+     * Developer toggle: allow the canary-validated GPU path for MULTILINGUAL whisper models
+     * (3.6.0 Workstream C). **Defaults to false and ships false.** The multilingual GPU ban is
+     * empirical (silent garbage-token / empty-output corruption on Adreno OpenCL,
+     * GpuPolicy.kt:53-64); this release adds the canary MECHANISM and the owner's measurement,
+     * not a default change. Flipping the default is a separate, data-driven decision (spec
+     * Decision Gate 2). Even when ON, a model only reaches the GPU after passing the bundled
+     * canary once on this device — and a failure latches that model to CPU permanently.
+     */
+    private val _gpuMultilingualExperiment =
+        MutableStateFlow(prefs.getBoolean(KEY_GPU_MULTI_EXPERIMENT, false))
+    val gpuMultilingualExperiment: StateFlow<Boolean> = _gpuMultilingualExperiment.asStateFlow()
+
+    fun setGpuMultilingualExperiment(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GPU_MULTI_EXPERIMENT, enabled).apply()
+        _gpuMultilingualExperiment.value = enabled
+    }
+
+    fun isGpuMultilingualExperimentEnabled(): Boolean = _gpuMultilingualExperiment.value
+
     // Read-aloud speech rate (Track F); 1.0 = the voice's natural pace.
     var ttsSpeed: Float
         get() = prefs.getFloat(KEY_TTS_SPEED, 1.0f)
@@ -405,6 +425,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_CLOUD_NOTE_DISMISSED = "cloud_note_dismissed"
         private const val KEY_TTS_SPEED = "tts_speed"
         private const val KEY_TTS_VOICE_ID = "tts_voice_id"
+        private const val KEY_GPU_MULTI_EXPERIMENT = "gpu_multilingual_experiment"
         /**
          * VERSIONED, and the version must be bumped whenever the disclosure's MEANING changes —
          * not merely its wording.
