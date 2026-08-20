@@ -60,6 +60,14 @@
 # --- Native whisper.cpp JNI bridge (Task 1) ---
 -keepclasseswithmembernames class * { native <methods>; }
 -keep class com.whispereverywhere.whisper.WhisperNative { *; }
+# 3.6.0 partial streaming: whisper_jni resolves onRunningText via GetMethodID BY NAME on
+# whatever class implements NewSegmentCallback (usually a Kotlin lambda class). R8 renaming or
+# stripping it makes preview deltas silently vanish in RELEASE builds only — the class of
+# failure this project has been bitten by twice (see the sherpa-onnx and OkHttp sections).
+-keep interface com.whispereverywhere.whisper.WhisperNative$NewSegmentCallback { *; }
+-keepclassmembers class * implements com.whispereverywhere.whisper.WhisperNative$NewSegmentCallback {
+    public void onRunningText(byte[]);
+}
 
 # --- sherpa-onnx (Track F read-aloud) ---
 # The native side reflectively reads the config classes' fields and calls the specialized

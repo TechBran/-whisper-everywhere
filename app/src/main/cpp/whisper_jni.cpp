@@ -156,11 +156,69 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
     return true;
 }
 
+// ---------------------------------------------------------------------------------------------
+// 3.6.0 Workstream D: incremental new-segment delivery. whisper_full invokes
+// new_segment_callback ON THE CALLING THREAD (the engine's single native-executor thread) after
+// each accepted segment; we forward the FULL running text of THIS call to Kotlin — the same
+// "replace the whole preview" shape the cloud-live protocols use — as raw UTF-8 bytes
+// (NewStringUTF aborts on 4-byte UTF-8; multilingual segments contain it). Global ref +
+// CallVoidMethod; no native lock is held here (g_vad_mutex lives entirely inside we_vad_filter,
+// which finished before whisper_full started).
+// ---------------------------------------------------------------------------------------------
+
+struct we_segment_cb_ctx {
+    JavaVM   *vm       = nullptr;
+    jobject   callback = nullptr;   // global ref to the Kotlin NewSegmentCallback
+    jmethodID method   = nullptr;   // onRunningText([B)V
+};
+
+static void we_on_new_segment(struct whisper_context * /*ctx*/, struct whisper_state *state,
+                              int /*n_new*/, void *user_data) {
+    auto *cb = static_cast<we_segment_cb_ctx *>(user_data);
+    if (cb == nullptr || cb->callback == nullptr || state == nullptr) {
+        return;
+    }
+    JNIEnv *env = nullptr;
+    bool attachedHere = false;
+    if (cb->vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        // Defensive only: whisper_full calls this on the thread that entered transcribeRaw,
+        // which is already attached — GetEnv succeeds there. This fallback keeps a future
+        // whisper.cpp worker-thread callback from crashing instead of degrading.
+        if (cb->vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+            return;
+        }
+        attachedHere = true;
+    }
+    std::string running;
+    const int nSeg = whisper_full_n_segments_from_state(state);
+    for (int i = 0; i < nSeg; ++i) {
+        const char *seg = whisper_full_get_segment_text_from_state(state, i);
+        if (seg != nullptr) {
+            running += seg;
+        }
+    }
+    const jsize len = static_cast<jsize>(running.size());
+    jbyteArray arr = env->NewByteArray(len);
+    if (arr != nullptr) {
+        if (len > 0) {
+            env->SetByteArrayRegion(arr, 0, len, reinterpret_cast<const jbyte *>(running.data()));
+        }
+        env->CallVoidMethod(cb->callback, cb->method, arr);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();   // a preview callback must never abort the transcribe
+        }
+        env->DeleteLocalRef(arr);
+    }
+    if (attachedHere) {
+        cb->vm->DetachCurrentThread();
+    }
+}
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
         JNIEnv *env, jobject /* this */,
         jlong ctxPtr, jfloatArray samples, jstring lang, jboolean translate,
-        jstring vadModelPath) {
+        jstring vadModelPath, jobject segmentCallback) {
     auto emptyResult = [env]() { return env->NewByteArray(0); };
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
     if (ctx == nullptr) {
@@ -277,7 +335,35 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
         params.audio_ctx = neededFrames;
     }
 
-    if (whisper_full(ctx, params, pcm.data(), static_cast<int>(pcm.size())) != 0) {
+    // D (3.6.0): arm the new-segment trampoline. cbCtx is stack-local — whisper_full is
+    // synchronous and no callback can fire after it returns, which is also why the global ref
+    // is deleted immediately after, on every path.
+    we_segment_cb_ctx cbCtx;
+    if (segmentCallback != nullptr) {
+        env->GetJavaVM(&cbCtx.vm);
+        jclass cbClass = env->GetObjectClass(segmentCallback);
+        cbCtx.method = env->GetMethodID(cbClass, "onRunningText", "([B)V");
+        env->DeleteLocalRef(cbClass);
+        if (cbCtx.vm != nullptr && cbCtx.method != nullptr) {
+            cbCtx.callback = env->NewGlobalRef(segmentCallback);
+            params.new_segment_callback           = we_on_new_segment;
+            params.new_segment_callback_user_data = &cbCtx;
+        } else {
+            LOGE("new-segment callback wiring failed (no vm/method) — transcribing without preview");
+            // GetMethodID raised (NoSuchMethodError) — degrade, never abort. Leaving it pending
+            // makes the NewByteArray/SetByteArrayRegion below run with an exception in flight,
+            // which CheckJNI turns into a process abort: the wrong failure direction for a
+            // preview-only feature, and exactly the release-only R8 slip the proguard keeps
+            // in Step 3 exist to prevent.
+            if (env->ExceptionCheck()) env->ExceptionClear();
+        }
+    }
+
+    const int fullRc = whisper_full(ctx, params, pcm.data(), static_cast<int>(pcm.size()));
+    if (cbCtx.callback != nullptr) {
+        env->DeleteGlobalRef(cbCtx.callback);
+    }
+    if (fullRc != 0) {
         LOGE("whisper_full failed");
         return emptyResult();
     }

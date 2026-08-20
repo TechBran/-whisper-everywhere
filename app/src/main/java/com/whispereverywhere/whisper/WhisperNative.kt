@@ -34,9 +34,27 @@ object WhisperNative {
     external fun init(modelPath: String, useGpu: Boolean): Long
 
     /**
+     * Receives the in-flight transcribe's FULL running text after each newly decoded native
+     * segment. Invoked by whisper_jni's new-segment trampoline (CallVoidMethod on a global
+     * ref) ON THE THREAD THAT CALLED [transcribeRaw], while whisper_full is still executing.
+     * Raw UTF-8 bytes for the same reason [transcribeRaw] returns them: NewStringUTF aborts
+     * on 4-byte UTF-8. Implementations must be fast and lock-free (they run inside the native
+     * decode loop, and the process-global NativeComputeGate is held by this thread) and must
+     * never call back into [WhisperNative].
+     *
+     * RELEASE builds: onRunningText is resolved via JNI GetMethodID BY NAME — the matching
+     * keep rules in app/proguard-rules.pro must stay, or R8 renames it and deltas silently
+     * vanish in release only.
+     */
+    fun interface NewSegmentCallback {
+        fun onRunningText(textUtf8: ByteArray)
+    }
+
+    /**
      * Runs whisper_full on float32 PCM (mono, 16 kHz, [-1,1]). Returns raw UTF-8 bytes:
      * NewStringUTF in JNI aborts on 4-byte UTF-8 (emoji / rare CJK from multilingual models),
      * so the native side hands bytes across and [transcribe] decodes them safely here.
+     * [callback] (nullable) streams incremental running text — see [NewSegmentCallback].
      */
     external fun transcribeRaw(
         ctxPtr: Long,
@@ -44,6 +62,7 @@ object WhisperNative {
         lang: String?,
         translate: Boolean,
         vadModelPath: String?,
+        callback: NewSegmentCallback?,
     ): ByteArray
 
     /**
@@ -52,6 +71,8 @@ object WhisperNative {
      * @param translate true to translate to English; false for transcribe-in-language
      * @param vadModelPath path to a ggml Silero VAD model, or null to run without VAD.
      *        With VAD, silence/non-speech is trimmed natively before the encoder runs.
+     * @param onNewSegment optional preview stream: the full text decoded so far in THIS call,
+     *        delivered on the calling thread mid-inference (see [NewSegmentCallback]); null = off.
      */
     fun transcribe(
         ctxPtr: Long,
@@ -59,7 +80,13 @@ object WhisperNative {
         lang: String?,
         translate: Boolean,
         vadModelPath: String?,
-    ): String = String(transcribeRaw(ctxPtr, samples, lang, translate, vadModelPath), Charsets.UTF_8)
+        onNewSegment: ((String) -> Unit)? = null,
+    ): String {
+        val callback = onNewSegment?.let { emit ->
+            NewSegmentCallback { bytes -> emit(String(bytes, Charsets.UTF_8)) }
+        }
+        return String(transcribeRaw(ctxPtr, samples, lang, translate, vadModelPath, callback), Charsets.UTF_8)
+    }
 
     /**
      * ISO code (e.g. "de") whisper auto-detected during the LAST completed whisper_full on
