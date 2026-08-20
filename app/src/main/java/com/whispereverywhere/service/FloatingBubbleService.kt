@@ -1618,17 +1618,23 @@ class FloatingBubbleService : Service(),
                     "wall-clock cap -> commit (cap=${segmentCapPolicy.currentCapMs()}ms)",
                 )
                 // A cap cut on SILENCE-ONLY audio still commits the buffer (bounded, and whisper's
-                // VAD returns empty fast) but must NOT spend the first-cap window: a user who
-                // pauses to think before speaking would otherwise burn the 4 s window on silence
-                // and get first text ~4 s LATER than 3.5.0 (silent 5 s then continuous speech:
-                // T+19 instead of T+15). Re-arming keeps the next 4 s window ready for the first
-                // real speech. Read BEFORE speechSegmenter.reset() below, which clears the flag.
-                // Soft-talker interaction is intended: a below-threshold speaker reads as "no
-                // pending speech" and so keeps getting 4 s cuts — more responsive than the old 15 s.
-                // The policy contract is unchanged (any onCommit consumes the window); the
-                // silence exception lives here at the call site.
-                if (speechSegmenter.hasPendingSpeech()) segmentCapPolicy.onCommit(now)
-                else segmentCapPolicy.onSessionStart(now)
+                // VAD returns empty fast); only the policy bookkeeping below is conditional.
+                // hasPendingSpeech() is read BEFORE speechSegmenter.reset(), which clears the flag.
+                // The SegmentCapPolicy contract is unchanged (any onCommit consumes the window);
+                // the silence exception lives here at the call site.
+                //
+                // Cap-cut policy bookkeeping:
+                //  - real speech (any session): consume the first-cap window and restart the clock;
+                //  - CLOUD silence: also consume/restart — the 4s window must NEVER re-open on cloud
+                //    (a 4s cloud cut = an extra billable provider request; cap=4000ms in a cloud
+                //    session is the bug signature);
+                //  - LOCAL silence: re-arm the window so a user who pauses to think still gets the
+                //    4s first cut on their first real speech (3.5.0 parity guarantee).
+                if (speechSegmenter.hasPendingSpeech() || cloudWrapper != null) {
+                    segmentCapPolicy.onCommit(now)
+                } else {
+                    segmentCapPolicy.onSessionStart(now)
+                }
                 engine.commit()
                 speechSegmenter.reset()
             }
