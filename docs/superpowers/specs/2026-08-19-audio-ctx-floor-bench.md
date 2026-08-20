@@ -29,6 +29,17 @@ says nothing about a low floor being safe. The bench excludes those lines from
   The binding flag is computed from the PRE-VAD sample count, which is an upper bound on the
   frames the native side actually counts, so a heavily VAD-trimmed slice could have hit the floor
   after all. jfk.wav is continuous speech, so this should not happen — flag it if it does.
+- The 8 s `binding=false` rows at floors 384 and 256 are the ONLY measurement of what lowering
+  the floor does to 8 s audio: that slice encodes at 768 frames today and at its natural 464
+  under any floor <= 464. They are excluded from `floorQualifies` because they do not exercise
+  the candidate VALUE — not because they are irrelevant. **Before recording `RESULT: PASS
+  floor=384` or `floor=256`, read those two rows: if either `wer` is > 0.100, lowering the floor
+  hurts 8 s tails — record `RESULT: FAIL`.** `floorQualifies` is `all { it <= gate }`, so
+  excluding a slice can only make a floor MORE likely to qualify — this eyeball check closes the
+  bench's one optimistic direction.
+- Tier scope: the bench prints rows for EVERY installed tier, but the `RESULT:` line is decided
+  on pro + multi only (the table's rows). Rows from any other installed tier (eco/base/retired)
+  are informational — do not let them move the verdict either way.
 
 **WERs are comparable only WITHIN a single run of this bench version.** The scoring tokenizer
 changed during Workstream G (curly-apostrophe normalization, commit `6223591`), and every number
