@@ -3890,20 +3890,26 @@ if (-not (Test-Path "app/src/main/assets/canary_digits.wav")) {
     # canonical 44-byte header and FALSE-STOP on files whose export tool writes LIST/INFO
     # metadata before fmt (C4-review fix). Duration is derived from the data chunk, not file size.
     $riff = [System.Text.Encoding]::ASCII.GetString($b,0,4); $wave = [System.Text.Encoding]::ASCII.GetString($b,8,4)
-    $i = 12; $fmtLine = 'fmt=MISSING'; $dataBytes = -1
+    $i = 12; $fmtLine = 'fmt=MISSING'; $dataBytes = -1; $dataStart = -1
     while ($i + 8 -le $b.Length) {
         $id = [System.Text.Encoding]::ASCII.GetString($b,$i,4); $sz = [BitConverter]::ToInt32($b,$i+4)
         if ($sz -lt 0) { break }
         if ($id -eq 'fmt ') { $fmtLine = "channels=$([BitConverter]::ToUInt16($b,$i+10)) rate=$([BitConverter]::ToUInt32($b,$i+12)) bits=$([BitConverter]::ToUInt16($b,$i+22))" }
-        if ($id -eq 'data') { $dataBytes = [Math]::Min($sz, $b.Length - $i - 8); break }
+        if ($id -eq 'data') { $dataBytes = [Math]::Min($sz, $b.Length - $i - 8); $dataStart = $i + 8; break }
         $i += 8 + $sz + ($sz -band 1)
     }
-    "riff=$riff wave=$wave $fmtLine dataBytes=$dataBytes durationSec=$([Math]::Round($dataBytes / 32000.0, 2))"
+    $peak = 0
+    if ($dataStart -ge 0) {
+        for ($s = $dataStart; $s + 1 -lt $dataStart + $dataBytes; $s += 2) {
+            $v = [Math]::Abs([BitConverter]::ToInt16($b,$s)); if ($v -gt $peak) { $peak = $v }
+        }
+    }
+    "riff=$riff wave=$wave $fmtLine dataBytes=$dataBytes durationSec=$([Math]::Round($dataBytes / 32000.0, 2)) peak=$([Math]::Round($peak / 32767.0, 3))"
 }
 ```
 Two outcomes, both defined:
   - **`STOP: …` printed** → the asset is absent. Continue with Steps 3-7 (they do not touch the asset), then STOP. Record in the run log that C5/C7/C8 are blocked on the owner's clip.
-  - **A field line printed** → expect `riff=RIFF wave=WAVE channels=1 rate=16000 bits=16` and `durationSec=` between **1.0 and 2.0** (data bytes ÷ 32,000/s — duration comes from the data chunk, so metadata chunks cannot skew it). If any field differs, STOP and re-export the clip — do not adapt the code to a different format, and do not commit the bad file.
+  - **A field line printed** → expect `riff=RIFF wave=WAVE channels=1 rate=16000 bits=16`, `durationSec=` between **1.0 and 2.0** (data bytes ÷ 32,000/s — duration comes from the data chunk, so metadata chunks cannot skew it), and `peak=` **≥ 0.1** (the native no-VAD energy gate rejects audio peaking under 0.005 BEFORE whisper_full ever runs — a quiet/over-normalized clip would return blank and write a FALSE permanent CPU latch on a healthy GPU; C5 review Finding 4. If peak < 0.1, re-record louder or amplify, don't ship it). If any field differs, STOP and re-export the clip — do not adapt the code to a different format, and do not commit the bad file.
 
 - [ ] **Step 3 — write the failing test.** Create `app/src/test/java/com/whispereverywhere/transcription/CanaryAudioTest.kt`:
 ```kotlin
@@ -4249,7 +4255,9 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 Both `BUILD SUCCESSFUL`.
 
-- [ ] **Check 6 — record the owner acceptance item this feeds** (H2): enable the toggle, force a cold multilingual load, grep `WE-DIAG` for `gpu-canary: passed=` and the following `GpuPolicy: canary PASSED|FAILED` line. Both verdicts are results; the default flip is a follow-up decision, not this release.
+- [ ] **Check 6 — record the owner acceptance item this feeds** (H2, ASSET-DEPENDENT): with `canary_digits.wav` bundled, enable the toggle, force a cold multilingual load, grep `WE-DIAG` for `gpu-canary: passed=` and the following `GpuPolicy: canary PASSED|FAILED` line. Both verdicts are results; the default flip is a follow-up decision, not this release. Expected log shape on a FAIL: the canary's own compute-finish prints `GpuPolicy: GPU validated` immediately BEFORE `canary FAILED … permanent CPU latch` — that adjacent pair is correct behavior, not a contradiction (C5 review F5). WITHOUT the asset, the only producible line is `gpu-canary: asset unavailable — no verdict recorded`, and this check cannot run.
+
+- [ ] **Check 7 — the no-verdict path never validates CPU work as GPU (C5 review Finding 1's on-device signature).** Re-assert the C4 asset gate first (`Test-Path app/src/main/assets/canary_digits.wav`). If ABSENT: enable the toggle on a device/emulator build, force a cold multilingual load (canary skips with `gpu-canary: asset unavailable`), dictate one local segment, then grep `WE-DIAG`: there must be NO `GpuPolicy: GPU validated` line — the session is on CPU and `onCanaryUnavailable` must have cleared `gpuActiveInProcess` before any user segment ran. A `GPU validated` line here means the crash sentinel just blessed CPU work and the C5b fix regressed.
 
 ---
 
