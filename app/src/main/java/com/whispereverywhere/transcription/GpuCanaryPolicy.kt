@@ -25,10 +25,10 @@ object GpuCanaryPolicy {
      * contains the WORDS one-through-five (that is the C4 asset contract and it does not change),
      * but whisper renders spoken digits as numerals routinely — the JNI decodes with
      * no_context=true and suppress_nst=true, and on a ~1 s clip "1, 2, 3, 4, 5." is a common and
-     * entirely CORRECT output. [normalize] keeps digits, so matching word forms only would score
-     * that perfect transcription zero and latch a working GPU to CPU for the whole app version
-     * on a formatting coin-flip. The aliases are about whisper's RENDERING, never about what the
-     * owner records.
+     * entirely CORRECT output. Whisper also renders them run-together: "12345" is observed.
+     * [normalize] keeps digits, so matching word forms only would score that perfect transcription
+     * zero and latch a working GPU to CPU for the whole app version on a formatting coin-flip.
+     * The aliases are about whisper's RENDERING, never about what the owner records.
      */
     val EXPECTED_TOKENS: List<Set<String>> = listOf(
         setOf("one", "1"),
@@ -55,7 +55,17 @@ object GpuCanaryPolicy {
         val tokens = normalize(text)
         if (tokens.isEmpty()) return false
         if (tokens.size > MAX_TOKENS) return false
-        val seen = tokens.toSet()
+        val seen = tokens.toSet().toMutableSet()
+        // Widen seen to include individual digit chars from all-digit tokens (length >= 2).
+        // Whisper renders "one two three four five" as "12345" on this clip, which normalizes
+        // to one token; decomposing it restores the five positions that are actually present.
+        for (token in tokens) {
+            if (token.all { it.isDigit() } && token.length >= 2) {
+                for (char in token) {
+                    seen.add(char.toString())
+                }
+            }
+        }
         // A position counts as matched when ANY of its aliases is present.
         return EXPECTED_TOKENS.count { aliases -> aliases.any { it in seen } } >= MIN_MATCHES
     }

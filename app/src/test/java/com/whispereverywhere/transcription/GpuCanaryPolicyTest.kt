@@ -75,4 +75,27 @@ class GpuCanaryPolicyTest {
     fun normalizeStripsPunctuationAndLowercases() {
         assertEquals(listOf("one", "two"), GpuCanaryPolicy.normalize("  One, TWO! "))
     }
+
+    @Test
+    fun runTogetherNumeralsPassToo() {
+        // Whisper renders "one two three four five" as "12345" on this clip.
+        assertTrue(GpuCanaryPolicy.canaryPasses("12345."))
+    }
+
+    @Test
+    fun digitCharWideningCannotGameTheCount() {
+        // The digit decomposition is a rendering aid, not a shortcut to the count.
+        // "11111" decomposes to only "1", match=1, which is < MIN_MATCHES.
+        assertFalse(GpuCanaryPolicy.canaryPasses("11111"))
+    }
+
+    @Test
+    fun theRunawayCapSitsExactlyAtTwentyTokens() {
+        // MAX_TOKENS = 20 is the boundary: 20 passes, 21 fails.
+        val twentyTokens = listOf("one", "two", "three", "four", "five") + (6..20).map { "token$it" }
+        assertTrue(GpuCanaryPolicy.canaryPasses(twentyTokens.joinToString(" ")))
+
+        val twentyOneTokens = twentyTokens + "token21"
+        assertFalse(GpuCanaryPolicy.canaryPasses(twentyOneTokens.joinToString(" ")))
+    }
 }
