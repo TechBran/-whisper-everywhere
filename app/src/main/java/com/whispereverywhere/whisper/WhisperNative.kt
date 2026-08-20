@@ -102,6 +102,16 @@ object WhisperNative {
      */
     external fun detectedLanguage(ctxPtr: Long): String?
 
+    /**
+     * BENCH-ONLY override of the encoder audio_ctx floor (whisper_jni.cpp; the production
+     * default is 768). Deliberately absent from this object's 1:1 KDoc list above — it maps to
+     * no production behavior. Clamped natively to 64..1500 and process-global — it affects EVERY
+     * subsequent transcribe in this process, which is why production code must never call it.
+     * WhisperBenchTest's floor A-B is the sole caller and restores the production value in a
+     * finally block.
+     */
+    external fun setAudioCtxFloor(floor: Int)
+
     /** Frees the native whisper_context. Safe to call once per non-zero handle. */
     external fun free(ctxPtr: Long)
 }

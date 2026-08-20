@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,26 @@ static void we_install_native_logging() {
     done = true;
     ggml_log_set(we_native_log, nullptr);
     whisper_log_set(we_native_log, nullptr);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Encoder audio_ctx floor (3.6.0 Workstream G). 768 is the SHIPPED production value — raised
+// 256 -> 768 for a documented accuracy regression (see the audio_ctx block in transcribeRaw).
+// The setter exists ONLY for the WhisperBenchTest A-B harness: it lets an instrumented bench
+// measure lower floors against 768 on the SAME device/model WITHOUT changing production
+// behavior. Production code never calls it. Lowering the DEFAULT is gated on that bench's
+// recorded per-tier accuracy verdict (WerMath.floorQualifies) — never done blind.
+// ---------------------------------------------------------------------------------------------
+static std::atomic<int> g_audio_ctx_floor{768};
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_setAudioCtxFloor(
+        JNIEnv * /*env*/, jobject /* this */, jint floor) {
+    int f = static_cast<int>(floor);
+    if (f < 64)   f = 64;    // below the +64 headroom would be self-defeating
+    if (f > 1500) f = 1500;  // the model maximum
+    g_audio_ctx_floor.store(f, std::memory_order_relaxed);
+    LOGI("audio_ctx floor set to %d (bench override; production default 768)", f);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -348,7 +369,10 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
         // reduction (positional-embedding mismatch; FUTO's ACFT models are fine-tuned to tolerate
         // it, ours are not) — user-visible as garbled short phrases. 768 halves the encoder cost
         // vs full context while keeping a wide safety margin; the GPU makes the rest cheap.
-        if (neededFrames < 768)  neededFrames = 768;
+        // The literal now lives in g_audio_ctx_floor (same default, 768) so the bench harness
+        // can A-B lower floors — see setAudioCtxFloor above. Production behavior: unchanged.
+        const int floorFrames = g_audio_ctx_floor.load(std::memory_order_relaxed);
+        if (neededFrames < floorFrames) neededFrames = floorFrames;
         if (neededFrames > 1500) neededFrames = 1500;
         params.audio_ctx = neededFrames;
     }
