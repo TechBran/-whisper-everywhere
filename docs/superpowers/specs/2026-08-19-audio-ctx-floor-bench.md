@@ -68,60 +68,80 @@ concurrent transcribe both corrupts the measurement and runs your own audio at a
 
 ## Results
 
-RESULT: PENDING
+RESULT: PASS floor=512
 
-**Partial run 2026-08-20 (Fold6, versionCode 77): MULTI ONLY.** Pro was not installed on the
-device, so no pro rows exist and the RESULT line cannot be filled — the rule above requires a
-qualifying floor on BOTH 190 MB tiers. Multi's half is complete and unambiguous: **512 PASS
-(4/4 binding slices, maxWer 0.000), 384 FAIL, 256 FAIL** (both on the 1 s slice, wer=0.500).
-Install pro in-app and re-run to finish the record — and per the comparability rule, that re-run
-replaces this whole block (both tiers measured in one run).
+**Definitive run 2026-08-20 17:14 local (Fold6, versionCode 77, both tiers, one run, 75.0 s,
+`am instrument` OK). Backends are the PRODUCTION defaults** — the bench goes through
+`WhisperNativeBackend.load`, so pro (.en) ran on **GPU** (allowlisted Adreno 750) and multi ran
+on **CPU** (GPU-multilingual experiment toggle OFF, the shipped default). **512 qualifies on
+BOTH tiers with maxWer 0.000 and 4/4 binding slices each; 384 and 256 fail on multi** (1 s
+slice, wer=0.500 — the same cliff on CPU as on GPU, so the cliff is a property of the encoder
+context, not the backend). Per the rule above, the default may change 768 → 512 (Task G4).
 
-Multi logcat paste (run of 14:47–14:54 local, `am instrument` OK, 469.8 s):
-
-    BENCH audioctx tier=multi floor=768 slice=1s wallMs=2995 wer=0.000 binding=true (reference)
-    BENCH audioctx tier=multi floor=768 slice=2s wallMs=3003 wer=0.000 binding=true (reference)
-    BENCH audioctx tier=multi floor=768 slice=3s wallMs=27439 wer=0.000 binding=true (reference)
-    BENCH audioctx tier=multi floor=768 slice=8s wallMs=31838 wer=0.000 binding=true (reference)
-    BENCH audioctx tier=multi floor=512 slice=1s wallMs=30725 wer=0.000 binding=true
-    BENCH audioctx tier=multi floor=512 slice=2s wallMs=3084 wer=0.000 binding=true
-    BENCH audioctx tier=multi floor=512 slice=3s wallMs=18303 wer=0.000 binding=true
-    BENCH audioctx tier=multi floor=512 slice=8s wallMs=40806 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=768 slice=1s wallMs=960 wer=0.000 binding=true (reference)
+    BENCH audioctx tier=pro floor=768 slice=2s wallMs=1479 wer=0.000 binding=true (reference)
+    BENCH audioctx tier=pro floor=768 slice=3s wallMs=1500 wer=0.000 binding=true (reference)
+    BENCH audioctx tier=pro floor=768 slice=8s wallMs=2498 wer=0.000 binding=true (reference)
+    BENCH audioctx tier=pro floor=512 slice=1s wallMs=771 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=512 slice=2s wallMs=1077 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=512 slice=3s wallMs=1256 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=512 slice=8s wallMs=2379 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=512 verdict=PASS maxWer=0.000 gate=0.10 bindingSlices=4
+    BENCH audioctx tier=pro floor=384 slice=1s wallMs=1694 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=384 slice=2s wallMs=1109 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=384 slice=3s wallMs=1238 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=384 slice=8s wallMs=2302 wer=0.000 binding=false
+    BENCH audioctx tier=pro floor=384 verdict=PASS maxWer=0.000 gate=0.10 bindingSlices=3
+    BENCH audioctx tier=pro floor=256 slice=1s wallMs=1601 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=256 slice=2s wallMs=1050 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=256 slice=3s wallMs=1165 wer=0.000 binding=true
+    BENCH audioctx tier=pro floor=256 slice=8s wallMs=2382 wer=0.000 binding=false
+    BENCH audioctx tier=pro floor=256 verdict=PASS maxWer=0.000 gate=0.10 bindingSlices=3
+    BENCH audioctx tier=multi floor=768 slice=1s wallMs=3674 wer=0.000 binding=true (reference)
+    BENCH audioctx tier=multi floor=768 slice=2s wallMs=3445 wer=0.000 binding=true (reference)
+    BENCH audioctx tier=multi floor=768 slice=3s wallMs=3557 wer=0.000 binding=true (reference)
+    BENCH audioctx tier=multi floor=768 slice=8s wallMs=3884 wer=0.000 binding=true (reference)
+    BENCH audioctx tier=multi floor=512 slice=1s wallMs=2323 wer=0.000 binding=true
+    BENCH audioctx tier=multi floor=512 slice=2s wallMs=2257 wer=0.000 binding=true
+    BENCH audioctx tier=multi floor=512 slice=3s wallMs=2376 wer=0.000 binding=true
+    BENCH audioctx tier=multi floor=512 slice=8s wallMs=2542 wer=0.000 binding=true
     BENCH audioctx tier=multi floor=512 verdict=PASS maxWer=0.000 gate=0.10 bindingSlices=4
-    BENCH audioctx tier=multi floor=384 slice=1s wallMs=38276 wer=0.500 binding=true
-    BENCH audioctx tier=multi floor=384 slice=2s wallMs=5333 wer=0.000 binding=true
-    BENCH audioctx tier=multi floor=384 slice=3s wallMs=20766 wer=0.000 binding=true
-    BENCH audioctx tier=multi floor=384 slice=8s wallMs=32563 wer=0.000 binding=false
+    BENCH audioctx tier=multi floor=384 slice=1s wallMs=1822 wer=0.500 binding=true
+    BENCH audioctx tier=multi floor=384 slice=2s wallMs=1655 wer=0.000 binding=true
+    BENCH audioctx tier=multi floor=384 slice=3s wallMs=1792 wer=0.000 binding=true
+    BENCH audioctx tier=multi floor=384 slice=8s wallMs=2151 wer=0.000 binding=false
     BENCH audioctx tier=multi floor=384 verdict=FAIL maxWer=0.500 gate=0.10 bindingSlices=3
-    BENCH audioctx tier=multi floor=256 slice=1s wallMs=45753 wer=0.500 binding=true
-    BENCH audioctx tier=multi floor=256 slice=2s wallMs=37514 wer=0.000 binding=true
-    BENCH audioctx tier=multi floor=256 slice=3s wallMs=60405 wer=0.000 binding=true
-    BENCH audioctx tier=multi floor=256 slice=8s wallMs=31793 wer=0.000 binding=false
+    BENCH audioctx tier=multi floor=256 slice=1s wallMs=1316 wer=0.500 binding=true
+    BENCH audioctx tier=multi floor=256 slice=2s wallMs=1165 wer=0.000 binding=true
+    BENCH audioctx tier=multi floor=256 slice=3s wallMs=1267 wer=0.000 binding=true
+    BENCH audioctx tier=multi floor=256 slice=8s wallMs=2381 wer=0.000 binding=false
     BENCH audioctx tier=multi floor=256 verdict=FAIL maxWer=0.500 gate=0.10 bindingSlices=3
 
-Eyeball checks per the rules above: the 8 s `binding=false` rows at 384 and 256 both scored
-wer=0.000 (no hidden 8 s-tail harm), and no `binding=false` row scored badly.
+Eyeball checks per the rules above: every `binding=false` 8 s row (pro and multi, 384 and 256)
+scored wer=0.000 — no hidden 8 s-tail harm; no `binding=false` row scored badly.
 
 | tier  | floor | maxWer | bindingSlices | verdict (from the bench's own verdict line) |
 |-------|-------|--------|---------------|---------------------------------------------|
-| pro   | 512   |        |               | not run — tier not installed                |
-| pro   | 384   |        |               | not run — tier not installed                |
-| pro   | 256   |        |               | not run — tier not installed                |
+| pro   | 512   | 0.000  | 4             | PASS                                        |
+| pro   | 384   | 0.000  | 3             | PASS                                        |
+| pro   | 256   | 0.000  | 3             | PASS                                        |
 | multi | 512   | 0.000  | 4             | PASS                                        |
 | multi | 384   | 0.500  | 3             | FAIL                                        |
 | multi | 256   | 0.500  | 3             | FAIL                                        |
 
-**Timing observation (informational — the verdict above is WER-only, but this is
-decision-relevant for 3.7's Gate 0):** lowering the floor bought NO wall-time on this device and
-frequently cost an order of magnitude. The clean (no-fallback) measurements put the fixed
-per-commit cost F at ~3.0 s regardless of floor (768/1s = 2995 ms, 768/2s = 3003 ms,
-512/2s = 3084 ms), while every lowered floor triggered whisper.cpp's anti-repetition temperature
-cascade on the 1 s slice (512 → 30.7 s, 384 → 38.3 s, 256 → 45.8 s vs 768 → 3.0 s clean). A
-smaller encoder context makes short-fragment decoding UNSTABLE even where final accuracy
-survives (512). The 3 s/8 s storms at every floor including the 768 reference are a bench
-artifact of mid-word-truncated tiled audio, not floor evidence. Read: the floor is not a lever
-for making short commits cheaper on multi; F reduction has to come from somewhere else (GPU —
-see the gpu-ab record).
+**Timing (informational; decision-relevant for 3.7 Gate 0):** on the production backends the
+floor IS a real lever. Multi-CPU fixed per-commit cost F: **768 → ~3.5 s, 512 → ~2.3 s**
+(-35 % on every short commit and stop-tail). Pro-GPU: 768 → ~0.96 s, 512 → ~0.77 s. No decoder
+instability anywhere in this run — all 32 transcribes clean.
+
+**Superseded same-day GPU-backend runs (14:47 and 15:22 local), kept as a caution:** two earlier
+sweeps unknowingly ran multi on the **GPU** (the experiment toggle was ON and the canary latch
+armed the GPU inside the bench's production-seam load). Their WER verdicts MATCHED this run
+(512 PASS / 384 FAIL / 256 FAIL — the cliff is backend-independent), but their timing was
+poisoned: multi-GPU is ~9× slower than CPU (see the gpu-ab record) and every lowered floor
+triggered 27–45 s anti-repetition temperature cascades on short slices — a GPU-decode
+pathology that does NOT occur on CPU. Any future re-run of this bench must state the toggle
+position and check WE-DIAG for which backend each tier's load actually took.
 
 When filled, replace `RESULT: PENDING` with exactly one of:
 - `RESULT: PASS floor=<512|384|256>` — the lowest floor with verdict=PASS on EVERY benched tier
@@ -129,4 +149,10 @@ When filled, replace `RESULT: PENDING` with exactly one of:
 
 ## Decision
 
-DECISION: PENDING (filled by Task G4)
+DECISION: PENDING — RESULT: PASS floor=512 satisfies Task G4's gate; the change is RECOMMENDED
+and ready to execute as a post-3.6.0 commit (owner go/no-go): `whisper_jni.cpp`
+`g_audio_ctx_floor` default 768 → 512, `WhisperBenchTest.PRODUCTION_FLOOR` 768 → 512 in the
+SAME commit (per its KDoc), and prune `FLOOR_CANDIDATES` to below-512 values (384, 256) before
+any post-change re-run. Measured payoff at 512: multi-CPU F 3.5 → 2.3 s on every short commit
+and stop-tail; pro-GPU F 0.96 → 0.77 s. Accuracy: maxWer 0.000 on both tiers, 4/4 binding
+slices each.
