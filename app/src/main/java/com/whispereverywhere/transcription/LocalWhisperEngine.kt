@@ -374,16 +374,20 @@ class LocalWhisperEngine(
      * would resolve every later segment Lost. The bubble's debounced collector gates on IDLE.
      */
     fun prewarmModelSwitch() {
-        val modelPath = modelPathProvider.installedModelPath() ?: return
         executor.execute {
+            // A live session owns this ctx: freeing it here resolves every later segment Lost.
+            // Dropping the switch is safe — connect() runs the same release-then-load itself.
+            if (listener != null) return@execute
+            val modelPath = modelPathProvider.installedModelPath() ?: return@execute
             if (ctxPtr != 0L && modelPath == loadedModelPath) return@execute
-            if (ctxPtr != 0L) {
+            val ctx = ctxPtr
+            if (ctx != 0L) {
                 android.util.Log.i(
                     "WE-DIAG",
                     "prewarmModelSwitch: releasing stale ctx ($loadedModelPath -> $modelPath)",
                 )
                 try {
-                    backend.release(ctxPtr)
+                    backend.release(ctx)
                 } catch (t: Throwable) {
                     Log.w("LocalWhisperEngine", "prewarmModelSwitch release failed", t)
                 }

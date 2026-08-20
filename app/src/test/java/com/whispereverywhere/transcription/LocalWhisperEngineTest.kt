@@ -556,4 +556,98 @@ class LocalWhisperEngineTest {
         local.releaseContext()
         local.shutdown()
     }
+
+    // ===== prewarmModelSwitch: live-session guards and switch coalescing (Workstream E1) =====
+
+    @Test
+    fun aSwitchDuringALiveSessionIsDropped() {
+        // A live session owns the context. Releasing it mid-session would resolve every later
+        // segment Lost. The switch is dropped entirely — connect() is responsible for any model
+        // reload on the next session.
+        val backend = FakeWhisperBackend(text = "one")
+        val engine = engineWith(backend)
+        val listener = RecordingListener()
+
+        engine.connect(language = "en", listener = listener)
+        assertTrue(listener.opened)
+        assertEquals(1, backend.loadCalls.size)   // ctx loaded for the session
+
+        // While that session is live, attempt a model switch (this is the guard breach).
+        engine.prewarmModelSwitch()
+
+        // The switch must NOT release or reload.
+        assertEquals("no release during a live session", 0, backend.releaseCalls)
+        assertEquals("no new load during a live session", 1, backend.loadCalls.size)
+        // The ctx is still live and ready to transcribe.
+        assertEquals(true, listener.opened)
+    }
+
+    @Test
+    fun queuedSwitchesCoalesceOntoTheLatestSelection() {
+        // Queued switches snapshot the latest installed model at execution time (not at call time),
+        // so A→B→C queued without draining results in just one release and one load of C.
+        class SwitchableProvider(var path: String?) : ModelPathProvider {
+            override fun installedModelPath(): String? = path
+        }
+
+        val backend = FakeWhisperBackend(text = "ok")
+        val executor = QueueingExecutorService()
+        val provider = SwitchableProvider("/models/a.bin")
+        val engine = LocalWhisperEngine(
+            modelPathProvider = provider,
+            retry = fastRetry(),
+            backend = backend,
+            executor = executor,
+        )
+
+        // Prewarm A first (no session live, slot empty).
+        engine.prewarm()
+        assertEquals(1, executor.tasks.size)
+        executor.tasks[0].run()   // drain the prewarm task
+        executor.tasks.clear()
+        assertEquals(listOf("/models/a.bin"), backend.loadCalls)
+
+        // Queue two switches: A→B→C. With the fix, the path is read inside the task,
+        // so both queued tasks will see the LATEST path at execution time.
+        provider.path = "/models/b.bin"
+        engine.prewarmModelSwitch()
+        provider.path = "/models/c.bin"
+        engine.prewarmModelSwitch()
+        // Now we have two tasks queued. Run them both.
+        executor.tasks.forEach { it.run() }
+
+        // The result should be: one release (of A) and one load (of C), because the tasks
+        // snapshot the path at execution time. If the path were snapshotted at call time,
+        // we'd load B then C. With the fix, we load only C (and one release of A).
+        assertEquals("coalesced to one release", 1, backend.releaseCalls)
+        assertEquals("coalesced to one load of the final model", listOf("/models/a.bin", "/models/c.bin"), backend.loadCalls)
+    }
+
+    @Test
+    fun aFailedSwitchLeavesTheSlotCleanlyEmpty() {
+        // When a switch load fails (returns 0L), ctxPtr must be left at 0 (clean), so a
+        // subsequent prewarm() will attempt the load again (proving it's not dangling).
+        class SwitchableProvider(var path: String?) : ModelPathProvider {
+            override fun installedModelPath(): String? = path
+        }
+
+        val backend = FakeWhisperBackend(loadReturns = 0L)   // all loads fail
+        val provider = SwitchableProvider("/models/a.bin")
+        val engine = LocalWhisperEngine(
+            modelPathProvider = provider,
+            retry = fastRetry(),
+            backend = backend,
+            executor = SameThreadExecutorService(),
+        )
+
+        // First prewarmModelSwitch attempt fails to load.
+        engine.prewarmModelSwitch()
+        assertEquals("failed switch called load", 1, backend.loadCalls.size)
+        // ctxPtr should be 0 (clean, not dangling) because the load returned 0L.
+
+        // Try prewarm again — it should attempt another load (proving ctxPtr is clean).
+        engine.prewarm()
+        assertEquals("prewarm after failed switch retries the load", 2, backend.loadCalls.size)
+    }
 }
+
