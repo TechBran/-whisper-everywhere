@@ -144,6 +144,7 @@ fun SettingsScreen(
     val bubbleAlwaysOn by app.preferencesManager.bubbleAlwaysOn.collectAsState()
     val dictationFirstKeyboard by app.preferencesManager.dictationFirstKeyboard.collectAsState()
     val preferDeviceAudio by app.preferencesManager.preferDeviceAudio.collectAsState()
+    val gpuMultiExperiment by app.preferencesManager.gpuMultilingualExperiment.collectAsState()
 
     // Bump to force a re-read of installed-model / disk-usage after a delete or when
     // returning from the model-onboarding flow.
@@ -587,6 +588,19 @@ fun SettingsScreen(
                     subtitle = "Vibrate on recording start/stop",
                     checked = vibrationEnabled,
                     onCheckedChange = { app.preferencesManager.setVibrationEnabled(it) }
+                )
+                // 3.6.0 Workstream C — developer toggle, OFF by default and shipping off. The
+                // multilingual GPU path is gated behind a bundled-clip canary that must pass on
+                // THIS device before any real audio uses it; a failure latches the model to CPU
+                // permanently. Naming it "experimental" is the honest description, not a hedge.
+                SettingsSwitchItem(
+                    icon = Icons.Filled.Memory,
+                    title = "Try GPU for multilingual (experimental)",
+                    subtitle = "Multilingual models normally run on the CPU because some phones " +
+                        "decode them incorrectly on the GPU. With this on, the app tests the GPU " +
+                        "once with a built-in clip and only uses it if the result is correct.",
+                    checked = gpuMultiExperiment,
+                    onCheckedChange = { app.preferencesManager.setGpuMultilingualExperiment(it) }
                 )
             }
 
