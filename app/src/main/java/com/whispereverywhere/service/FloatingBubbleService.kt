@@ -465,20 +465,28 @@ class FloatingBubbleService : Service(),
         //  (b) modelInstalled — emitted once per VERIFIED download. This is the case (a) cannot
         //      see: onboarding writes the id before the file exists (a re-prewarm then finds no
         //      installed path and no-ops) and rewrites the same id after, which the StateFlow
-        //      conflates away. Undebounced: one emission per completed download, and the file is
-        //      already on disk when it arrives.
+        //      conflates away.
         //
-        // collectLatest over the merged flow means an install signal cancels a still-pending id
-        // debounce — correct, because both arms do the identical thing. Mid-session triggers are
-        // skipped, never deferred: releasing a context a live session is using would Lost every
-        // later segment, and connect() at the next session start reloads exactly as it always
-        // has. A null id (model deleted) no-ops inside prewarmModelSwitch. Main-dispatched, so
-        // the currentState read is main-confined.
+        // Both arms carry the SAME 750 ms debounce, because the install signal LEADS the id write
+        // on the download-then-select path: WhisperModelManager emits from verifyDest, and only
+        // once download() has returned does ModelDownloadViewModel persist the new id. Firing the
+        // install arm immediately would therefore prewarm the tier being switched AWAY from —
+        // wasting a full ~7 s load on a cold slot (fresh start, or after onTrimMemory released
+        // the context) and delaying the switch that actually matters. Debounced, collectLatest
+        // coalesces the install signal into the id write that lands milliseconds later, so the
+        // switch path does exactly one load, of the right tier. Onboarding is unaffected: there
+        // the post-download write is the SAME id, the StateFlow conflates it away, and the
+        // install signal is the sole trigger — it simply waits 750 ms first.
+        //
+        // Mid-session triggers are skipped, never deferred: releasing a context a live session is
+        // using would Lost every later segment, and connect() at the next session start reloads
+        // exactly as it always has. A null id (model deleted) no-ops inside prewarmModelSwitch.
+        // Main-dispatched, so the currentState read is main-confined.
         serviceScope.launch {
             merge(
                 app.preferencesManager.selectedModelIdFlow.drop(1)
                     .map { id -> 750L to "selectedModelId -> $id" },
-                app.preferencesManager.modelInstalled.map { 0L to "model installed" },
+                app.preferencesManager.modelInstalled.map { 750L to "model installed" },
             ).collectLatest { (debounceMs, reason) ->
                 delay(debounceMs)
                 if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) {
@@ -486,13 +494,15 @@ class FloatingBubbleService : Service(),
                     return@collectLatest
                 }
                 android.util.Log.i("WE-DIAG", "$reason: re-prewarming engine")
-                // prewarmModelSwitch queues onto the engine's executor, which is shut down (and
-                // the field nulled) in onDestroy — a trigger landing in that window would take a
-                // RejectedExecutionException all the way out through the collector and kill this
-                // coroutine for good. Swallowed: the re-prewarm is pure optimisation, and a
-                // service being torn down has nothing left to warm.
-                runCatching { warmLocalEngine().prewarmModelSwitch() }.onFailure { t ->
-                    android.util.Log.i("WE-DIAG", "$reason: re-prewarm skipped (${t.javaClass.simpleName})")
+                // prewarmModelSwitch queues onto the engine's executor, which onDestroy shuts
+                // down — a rejection escaping here would kill this collector for good. Belt and
+                // braces only: onDestroy cancels serviceScope BEFORE it touches the engine, so
+                // this body cannot run against a shut-down executor. Caught narrowly, never as a
+                // blanket Throwable, so a CancellationException is always free to propagate.
+                try {
+                    warmLocalEngine().prewarmModelSwitch()
+                } catch (e: java.util.concurrent.RejectedExecutionException) {
+                    android.util.Log.i("WE-DIAG", "$reason: re-prewarm skipped (engine shut down)")
                 }
             }
         }
