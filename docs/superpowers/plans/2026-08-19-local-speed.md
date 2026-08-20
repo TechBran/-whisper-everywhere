@@ -3877,7 +3877,7 @@ git commit -m "feat(gpu): persisted canary latch + experiment gate for multiling
 - [ ] **Step 1 — the owner supplies the clip.** Requirements, non-negotiable because the whole latch rests on them:
   - Contents: the WORDS **"one two three four five"**, clearly spoken, in English, no music/noise. (Spoken words, not a recording of numerals being read differently — C1's numeral aliases cover how whisper may TRANSCRIBE them, and change nothing about what is recorded.)
   - Format: **RIFF/WAVE, PCM16, mono, 16 000 Hz** (whisper's native rate — no resampling path exists here).
-  - Length: **1.0-2.0 s** (~32 000-64 000 data bytes). Longer wastes a cold load; shorter risks whisper's sub-1.1 s zero-pad path.
+  - Length: **1.0-3.0 s** (~32 000-96 000 data bytes). The lower bound is CORRECTNESS (whisper's sub-1.1 s zero-pad path); the upper is cost-only (a longer canary just lengthens one cold load per version+model by the extra inference) — raised 2.0→3.0 at asset-commit time because the owner's natural-pace digits span 2.46 s and editing ground-truth audio for a permanent-latch check is worse than one extra second of once-per-version inference.
   - Save as `app/src/main/assets/canary_digits.wav`.
 
 - [ ] **Step 2 — is the asset there, and is it the right shape?** (Run before writing any code against it. The existence check comes first: `ReadAllBytes` on a missing path throws a raw `FileNotFoundException`, which is not a decision.)
@@ -3909,7 +3909,7 @@ if (-not (Test-Path "app/src/main/assets/canary_digits.wav")) {
 ```
 Two outcomes, both defined:
   - **`STOP: …` printed** → the asset is absent. Continue with Steps 3-7 (they do not touch the asset), then STOP. Record in the run log that C5/C7/C8 are blocked on the owner's clip.
-  - **A field line printed** → expect `riff=RIFF wave=WAVE channels=1 rate=16000 bits=16`, `durationSec=` between **1.0 and 2.0** (data bytes ÷ 32,000/s — duration comes from the data chunk, so metadata chunks cannot skew it), and `peak=` **≥ 0.1** (the native no-VAD energy gate rejects audio peaking under 0.005 BEFORE whisper_full ever runs — a quiet/over-normalized clip would return blank and write a FALSE permanent CPU latch on a healthy GPU; C5 review Finding 4. If peak < 0.1, re-record louder or amplify, don't ship it). If any field differs, STOP and re-export the clip — do not adapt the code to a different format, and do not commit the bad file.
+  - **A field line printed** → expect `riff=RIFF wave=WAVE channels=1 rate=16000 bits=16`, `durationSec=` between **1.0 and 3.0** (data bytes ÷ 32,000/s — duration comes from the data chunk, so metadata chunks cannot skew it; ceiling raised 2.0→3.0 at asset-commit, cost-only bound), and `peak=` **≥ 0.1** (the native no-VAD energy gate rejects audio peaking under 0.005 BEFORE whisper_full ever runs — a quiet/over-normalized clip would return blank and write a FALSE permanent CPU latch on a healthy GPU; C5 review Finding 4. If peak < 0.1, re-record louder or amplify, don't ship it). If any field differs, STOP and re-export the clip — do not adapt the code to a different format, and do not commit the bad file.
 
 - [ ] **Step 3 — write the failing test.** Create `app/src/test/java/com/whispereverywhere/transcription/CanaryAudioTest.kt`:
 ```kotlin
