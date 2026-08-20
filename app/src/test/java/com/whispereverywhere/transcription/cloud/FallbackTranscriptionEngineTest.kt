@@ -75,6 +75,12 @@ class FallbackTranscriptionEngineTest {
         var commitThrow: Throwable? = null
         /** When set, commit() resolves the segment SYNCHRONOUSLY, before it returns a seq. */
         var resolveInline: ((ByteArray) -> SegmentOutcome)? = null
+        /** What awaitIdle reports. False models a drain that never finished inside its share. */
+        var awaitIdleResult = true
+        /** When true, awaitIdle burns the WHOLE timeout it was handed, as a timing-out drain does. */
+        var awaitIdleBurnsItsTimeout = false
+        /** Runs inside awaitIdle before it returns: lets a fake deliver the work its fence covers. */
+        var onAwaitIdle: (() -> Unit)? = null
 
         override fun connect(language: String?, listener: TranscriptionEngine.Listener) {
             connects++
@@ -128,7 +134,9 @@ class FallbackTranscriptionEngineTest {
         override fun awaitIdle(timeoutMs: Long): Boolean {
             awaitIdleCalls += timeoutMs
             commitsWhenAwaitIdleCalled = commits.size
-            return true
+            if (awaitIdleBurnsItsTimeout) Thread.sleep(timeoutMs)
+            onAwaitIdle?.invoke()
+            return awaitIdleResult
         }
     }
 
@@ -929,6 +937,10 @@ class FallbackTranscriptionEngineTest {
         // Floor division, pinned: the reserve rounds DOWN, so it can never exceed budget/5.
         assertEquals(1L, localDrainReserveMs(7L))
         assertEquals("a zero budget reserves nothing", 0L, localDrainReserveMs(0L))
+        // Self-defending: a negative budget must never produce a NEGATIVE reserve. That would
+        // invert both uses at once — the floor would stop flooring, and cloud's `budget - reserve`
+        // share would grow past the shared budget rather than shrink inside it.
+        assertEquals("a negative budget can never invert the floor", 0L, localDrainReserveMs(-10L))
     }
 
     @Test fun a_rescue_armed_near_the_deadline_still_gets_the_local_reserve() {
@@ -991,5 +1003,139 @@ class FallbackTranscriptionEngineTest {
             releaseCloud.complete(Unit)
             executor.shutdownNow()
         }
+    }
+
+    @Test fun a_stuck_cloud_is_capped_so_an_owed_rescue_keeps_its_reserve_inside_the_budget() {
+        // WORKSTREAM F, the cap half: when local is ALREADY owed a rescue at stop time, cloud's
+        // wait is capped at budget - reserve so floor + cap still fit the shared deadline. With
+        // an 8 s budget the cap is 6_400 ms: a cloud segment that never resolves must stop being
+        // waited on there, not at 8_000 ms — the reserve is spent fencing local's owed delivery,
+        // not burned watching a dead upload.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val neverResolves = CompletableDeferred<Unit>()
+        try {
+            val transcribeStarted = CountDownLatch(1)
+            val provider = FakeStt(
+                gate = { pcm -> if (pcm[0].toInt() == 9) neverResolves.await() },
+                respond = { SttResult.Failed(SttError.Offline) },
+            )
+            val backend = object : WhisperBackend {
+                override fun load(modelPath: String) = 42L
+                override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
+                    transcribeStarted.countDown()
+                    Thread.sleep(700)
+                    return "rescued locally"
+                }
+                override fun release(ctx: Long) = Unit
+            }
+            val local = LocalWhisperEngine(
+                modelPathProvider = object : ModelPathProvider {
+                    override fun installedModelPath() = "/models/tiny.bin"
+                },
+                retry = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+                backend = backend,
+                executor = executor,
+            )
+            val e = engine(CloudTranscriptionEngine(provider, scope()), local)
+            val l = Rec()
+            e.connect(null, l)
+            // Segment 0 fails on cloud immediately; its rescue is mid-transcribe (700 ms) when
+            // awaitIdle is called below — local is provably owed work at call time.
+            e.sendAudio(ByteArray(3200) { 1 })
+            assertEquals(0L, e.commit())
+            assertTrue(transcribeStarted.await(5, TimeUnit.SECONDS))
+            // Segment 1's upload never resolves: cloud can never drain.
+            e.sendAudio(ByteArray(3200) { 9 })
+            assertEquals(1L, e.commit())
+
+            val startNs = System.nanoTime()
+            val drained = e.awaitIdle(8_000)
+            val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+
+            assertTrue("cloud never drained, so the composite result must be false", !drained)
+            assertEquals(
+                "the owed rescue delivered inside the shared budget",
+                0L to SegmentOutcome.Text("rescued locally"), l.all.single(),
+            )
+            assertTrue(
+                "cloud's wait must stop at the 6_400 ms cap, not burn the full 8_000 ms (took ${elapsedMs}ms)",
+                elapsedMs < 7_200,
+            )
+        } finally {
+            neverResolves.complete(Unit)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test fun a_cloud_timeout_with_no_retries_keeps_locals_fence_instant() {
+        // THE M-1 GUARD, pinned. The floor is CONDITIONAL on retriesOutstanding() and that
+        // condition is load-bearing: a cloud that TIMES OUT never reaches the 3.5.0 skip (which
+        // needs cloudDrained), so control falls through to the fence with ~0 ms of the budget
+        // left. An UNCONDITIONAL floor would then hand a local engine that owes this session
+        // nothing a whole reserve to wait on — and LocalWhisperEngine.awaitIdle fences behind its
+        // WHOLE queue, which can still hold the safety-net model load: exactly the multi-second
+        // dead wait the 3.5.0 skip was written to delete.
+        //
+        // Deterministic rather than timing-sensitive: the cloud fake burns its entire share, so
+        // the remaining budget is exactly 0 and the fence is handed exactly 0. Drop the guard and
+        // it is handed exactly localDrainReserveMs(500) = 100. A small budget on purpose — the
+        // guard is scale-free, and the fake has to burn 4/5 of whatever budget it is given before
+        // the two versions differ at all.
+        val cloud = FakeEngine()
+        cloud.awaitIdleResult = false
+        cloud.awaitIdleBurnsItsTimeout = true
+        val local = FakeEngine()
+        val e = engine(cloud, local)
+        e.connect(null, Rec())
+        // A segment cloud never resolves: nothing was lost, so local owes this session nothing.
+        e.sendAudio(byteArrayOf(1)); assertEquals(0L, e.commit())
+
+        val drained = e.awaitIdle(500)
+
+        assertEquals(
+            "a timed-out cloud must not buy an unowed local fence a reserve to wait on",
+            0L, local.awaitIdleCalls.single(),
+        )
+        assertEquals(
+            "with local owed nothing, cloud keeps the whole budget",
+            500L, cloud.awaitIdleCalls.single(),
+        )
+        assertTrue("cloud never drained, so the composite result is false", !drained)
+    }
+
+    @Test fun a_capped_cloud_that_timed_out_reports_false_even_though_the_rescue_landed() {
+        // The cap's fourth case: cloud timed out AND local was owed a rescue, which the reserve
+        // then covered. The rescue is DELIVERED — and awaitIdle still returns false, because
+        // cloud never drained. That is exactly the situation the WE-DIAG cloud-budget line exists
+        // to explain: FloatingBubbleService logs "drain timed out" for a session in which every
+        // segment actually arrived, and a cloud-budget SMALLER than the full budget beside that
+        // warning is what tells the owner the cap fired rather than anything being lost.
+        val cloud = FakeEngine()
+        cloud.awaitIdleResult = false
+        val local = FakeEngine(seqBase = 700L)
+        val e = engine(cloud, local)
+        val l = Rec()
+        e.connect(null, l)
+        e.sendAudio(byteArrayOf(1)); assertEquals(0L, e.commit())
+        // The loss arms the rescue, so local is provably owed work at awaitIdle's call time.
+        cloud.resolve(0L, SegmentOutcome.Lost("offline"))
+        assertEquals("the rescue is queued and unanswered", 1, local.commits.size)
+        // ...and it answers INSIDE local's fence, i.e. within the reserve the cap paid for.
+        local.onAwaitIdle = { local.resolve(700L, SegmentOutcome.Text("rescued locally")) }
+
+        val drained = e.awaitIdle(10_000)
+
+        assertEquals(
+            "an owed rescue caps cloud's wait at budget - reserve",
+            10_000L - localDrainReserveMs(10_000L), cloud.awaitIdleCalls.single(),
+        )
+        assertEquals(
+            "the rescue was delivered by the reserve the cap protected",
+            0L to SegmentOutcome.Text("rescued locally"), l.all.single(),
+        )
+        assertTrue(
+            "a cloud that never drained reports false even when every segment arrived",
+            !drained,
+        )
     }
 }

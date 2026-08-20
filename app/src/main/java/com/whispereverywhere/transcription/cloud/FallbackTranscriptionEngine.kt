@@ -58,7 +58,13 @@ object FallbackPolicy {
  * they keep (spec 2026-08-19 Workstream F). Top-level and pure so the arithmetic is testable
  * without an engine.
  */
-internal fun localDrainReserveMs(budgetMs: Long): Long = minOf(60_000L, budgetMs / 5L)
+internal fun localDrainReserveMs(budgetMs: Long): Long =
+    // The coerce is a guard, not arithmetic. [FallbackTranscriptionEngine.awaitIdle] only ever
+    // passes a budget it has already clamped to >= 0, but this function is top-level and its
+    // precondition should defend itself: Long division of a NEGATIVE budget yields a negative
+    // reserve, which inverts both of the reserve's uses at once — maxOf() stops being a floor,
+    // and `budget - reserve` GROWS cloud's share past the shared budget instead of capping it.
+    minOf(60_000L, budgetMs / 5L).coerceAtLeast(0L)
 
 /**
  * Runs [cloud] first and retries failed segments on [local], preserving seq so the orderer still
@@ -410,15 +416,42 @@ class FallbackTranscriptionEngine(
      * FallbackPolicy.reconcile and the SegmentOrderer contracts are untouched: no outcome changes,
      * only a wait on an executor that owes no resolutions is dropped.
      *
-     * The two drains share ONE budget by deadline rather than splitting it in half, so a fast cloud
-     * drain leaves the local retry almost all of the time. If cloud consumes the whole budget the
-     * result is false regardless of what local reports.
+     * The two drains share ONE budget by deadline rather than splitting it in half, so a fast
+     * cloud drain still leaves the local retry almost all of the time. Since 3.6.0 (spec
+     * 2026-08-19 Workstream F) local is additionally guaranteed a floor of [localDrainReserveMs]
+     * — min(60 s, budget/5) — because a cloud tail that resolved near the end of the deadline
+     * used to arm a rescue and bequeath it a zero-width fence: awaitIdle returned while whisper
+     * was mid-transcribe and the finalize flush dropped the rescued text silently (batch-mode
+     * worst case). Two consequences, both deliberate:
+     *
+     *  - retries outstanding at CALL time cap cloud's wait at budget - reserve, so floor + cap
+     *    total exactly the shared budget;
+     *  - a rescue armed only DURING cloud's drain may push the floor past the caller's deadline
+     *    by up to the reserve (worst case budget + 60 s — still bounded, and an idle local queue
+     *    completes its fence task immediately, so the floor costs nothing when local owes
+     *    nothing).
+     *
+     * If cloud consumes its whole share the result is false regardless of what local reports.
      */
     override fun awaitIdle(timeoutMs: Long): Boolean {
         val budget = timeoutMs.coerceIn(0L, MAX_DRAIN_MS)
         val reserve = localDrainReserveMs(budget)
         val deadlineNs = System.nanoTime() + budget * NANOS_PER_MS
-        val cloudDrained = cloud.awaitIdle(budget)
+        // The cap (3.6.0 Workstream F): retries outstanding at stop time mean local is ALREADY
+        // owed work, so cloud's wait is capped at budget - reserve and the floor below fits
+        // inside the shared deadline. Before a full cloud drain retriesOutstanding() can only
+        // prove "work exists", never "no work will come" — exactly the direction a cap needs,
+        // and the opposite of what the happy-path skip needs (that one still runs only AFTER a
+        // full cloud drain, unchanged below).
+        val cloudBudget = if (retriesOutstanding()) budget - reserve else budget
+        // Makes a CAPPED stop distinguishable from a TIMED-OUT one in the logs the owner saves
+        // (H2). With retries outstanding, a cloud drain that would have finished inside the last
+        // `reserve` ms of the budget now returns false, so FloatingBubbleService logs
+        // "finalize: drain timed out after ${FINALIZE_TIMEOUT_MS}ms" on a session where every
+        // segment actually delivered. A cloud-budget line SMALLER than the full budget beside
+        // that warning means the cap fired — not that anything was lost.
+        android.util.Log.i(TAG, "finalize-timing: cloud-budget=${cloudBudget}ms (reserve=${reserve}ms)")
+        val cloudDrained = cloud.awaitIdle(cloudBudget)
         if (cloudDrained && !retriesOutstanding()) {
             // Same phase name as LocalWhisperEngine.awaitIdle's C1 line, so the owner's
             // finalize-timing log always shows all six phases.
