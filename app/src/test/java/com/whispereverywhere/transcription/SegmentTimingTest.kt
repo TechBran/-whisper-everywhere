@@ -44,4 +44,25 @@ class SegmentTimingTest {
         assertEquals(1_000L, SegmentTiming.audioMs(sampleCount = 16_000))
         assertEquals(0L, SegmentTiming.audioMs(sampleCount = 0))
     }
+
+    @Test fun formatIsLocaleIndependent() {
+        val prior = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMANY) // comma decimal separator
+            assertEquals(
+                "segment-timing: audio=4000 transcribe=6000 rtf=1.50",
+                SegmentTiming.line(audioMs = 4_000L, transcribeMs = 6_000L),
+            )
+        } finally {
+            java.util.Locale.setDefault(prior)
+        }
+    }
+
+    @Test fun rtfRoundsHalfUpNotTruncated() {
+        // 2000/3000 = 0.666... -> 0.67 under HALF_UP; 0.66 under truncation.
+        assertEquals(
+            "segment-timing: audio=3000 transcribe=2000 rtf=0.67",
+            SegmentTiming.line(audioMs = 3_000L, transcribeMs = 2_000L),
+        )
+    }
 }
