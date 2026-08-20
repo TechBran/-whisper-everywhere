@@ -48,6 +48,9 @@ class LanguagePinTest {
         pin.onDetected(sessionLanguage = "en", detected = "de")   // explicit sessions never pin
         assertNull(pin.languageFor(null))
         assertEquals("en", pin.languageFor("en"))
+        pin.onDetected(sessionLanguage = null, detected = "de")  // a genuine auto pin now exists
+        assertEquals("de", pin.languageFor(null))
+        assertEquals("en", pin.languageFor("en"))                // explicit still beats the pin
     }
 
     @Test

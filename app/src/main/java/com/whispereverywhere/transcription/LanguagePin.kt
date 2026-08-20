@@ -21,7 +21,9 @@ package com.whispereverywhere.transcription
  * Threading: [onDetected] runs on the engine's single native-executor thread; [reset] on the
  * connect() caller thread; [languageFor] on the executor thread. A single @Volatile reference
  * suffices — there is no compound invariant across fields, and the engine only calls
- * [onDetected] behind its stale-listener guard, so a dead session's late segment never writes.
+ * [onDetected] behind its stale-listener guard, which narrows (rather than eliminates) the race;
+ * the residual window spans one JNI call, only exposes auto→auto transitions, and self-corrects
+ * at the next connect().
  */
 class LanguagePin {
     @Volatile private var pinned: String? = null
