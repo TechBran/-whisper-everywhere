@@ -926,6 +926,70 @@ class FallbackTranscriptionEngineTest {
         assertEquals(2_000L, localDrainReserveMs(10_000L))
         assertEquals(1_600L, localDrainReserveMs(8_000L))
         assertEquals("beyond 300 s the cap holds", 60_000L, localDrainReserveMs(3_600_000L))
+        // Floor division, pinned: the reserve rounds DOWN, so it can never exceed budget/5.
+        assertEquals(1L, localDrainReserveMs(7L))
         assertEquals("a zero budget reserves nothing", 0L, localDrainReserveMs(0L))
+    }
+
+    @Test fun a_rescue_armed_near_the_deadline_still_gets_the_local_reserve() {
+        // WORKSTREAM F: the starvation itself. Cloud's tail segment resolves as a loss ~500 ms
+        // before the 8 s shared deadline; the rescue it arms (synchronously, inside cloud's own
+        // resolution callback) needs ~1 s of transcribe. Under the old deadline arithmetic local
+        // inherited the ~500 ms sliver, awaitIdle returned mid-transcribe, and the finalize flush
+        // dropped the rescued text silently. With the floor, local gets
+        // localDrainReserveMs(8_000) = 1_600 ms and the delivery is fenced.
+        //
+        // Real executor + real wall time on purpose: the bug IS the deadline arithmetic.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val releaseCloud = CompletableDeferred<Unit>()
+        try {
+            val provider = FakeStt(
+                gate = { releaseCloud.await() },
+                respond = { SttResult.Failed(SttError.Offline) },
+            )
+            val backend = object : WhisperBackend {
+                override fun load(modelPath: String) = 42L
+                override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
+                    Thread.sleep(1_000) // the tail transcribe the old sliver could never cover
+                    return "rescued locally"
+                }
+                override fun release(ctx: Long) = Unit
+            }
+            val local = LocalWhisperEngine(
+                modelPathProvider = object : ModelPathProvider {
+                    override fun installedModelPath() = "/models/tiny.bin"
+                },
+                retry = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+                backend = backend,
+                executor = executor,
+            )
+            val e = engine(CloudTranscriptionEngine(provider, scope()), local)
+            val l = Rec()
+            e.connect(null, l)
+            e.sendAudio(ByteArray(3200) { 1 })
+            assertEquals(0L, e.commit())
+
+            val drained = java.util.concurrent.atomic.AtomicBoolean(false)
+            val waiter = Thread { drained.set(e.awaitIdle(8_000)) }
+            waiter.start()
+            // Let cloud burn most of the shared deadline, then hand it the loss.
+            Thread.sleep(7_500)
+            releaseCloud.complete(Unit)
+            waiter.join(15_000)
+            assertTrue("awaitIdle never returned", !waiter.isAlive)
+
+            // Asserted IMMEDIATELY at return, no polling: the drain contract is DELIVERED, not
+            // merely scheduled. Under the old arithmetic the delivery lands ~500 ms after this
+            // assertion runs — exactly the window the finalize flush used to strike in.
+            assertEquals(
+                "the rescued text must be DELIVERED before awaitIdle returns (the reserve floor)",
+                1, l.all.size,
+            )
+            assertEquals(0L to SegmentOutcome.Text("rescued locally"), l.all.single())
+            assertTrue("the drain must report success once every owed rescue delivered", drained.get())
+        } finally {
+            releaseCloud.complete(Unit)
+            executor.shutdownNow()
+        }
     }
 }

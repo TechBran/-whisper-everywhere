@@ -416,6 +416,7 @@ class FallbackTranscriptionEngine(
      */
     override fun awaitIdle(timeoutMs: Long): Boolean {
         val budget = timeoutMs.coerceIn(0L, MAX_DRAIN_MS)
+        val reserve = localDrainReserveMs(budget)
         val deadlineNs = System.nanoTime() + budget * NANOS_PER_MS
         val cloudDrained = cloud.awaitIdle(budget)
         if (cloudDrained && !retriesOutstanding()) {
@@ -425,7 +426,22 @@ class FallbackTranscriptionEngine(
             return true
         }
         val remainingMs = ((deadlineNs - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0L)
-        val localDrained = local.awaitIdle(remainingMs)
+        // The drain floor (3.6.0 Workstream F): a rescue armed near the END of cloud's drain used
+        // to inherit whatever sliver of the shared deadline was left — near zero in the batch
+        // worst case — and its delivery was then cut off by the finalize flush. Local now gets at
+        // least [reserve] WHENEVER IT IS OWED SOMETHING. Every rescue armed before cloud's fence
+        // returned is queued ahead of local's fence task, so it is covered.
+        //
+        // The floor is CONDITIONAL on retriesOutstanding() deliberately. The 3.5.0 skip above
+        // requires cloudDrained, so on a cloud TIMEOUT it never fires and control reaches here
+        // with remainingMs ~= 0. An unconditional floor would then make a timed-out cloud
+        // session wait up to [reserve] on a local executor that owes nothing — and
+        // LocalWhisperEngine.awaitIdle fences behind its WHOLE queue, which can still hold the
+        // safety-net model load: exactly the multi-second dead wait the 3.5.0 skip was written
+        // to delete. Guarded, "cloud timed out and local owes nothing" keeps 3.5.0's ~0 ms
+        // behavior byte for byte, and the owed case still gets its full reserve.
+        val localDrained =
+            local.awaitIdle(if (retriesOutstanding()) maxOf(remainingMs, reserve) else remainingMs)
         return cloudDrained && localDrained
     }
 
