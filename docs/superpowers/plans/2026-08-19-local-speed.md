@@ -4214,7 +4214,7 @@ git commit -m "feat(settings): 'Try GPU for multilingual (experimental)' develop
 ```powershell
 Select-String -Path "app/src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt" -Pattern "KEY_GPU_MULTI_EXPERIMENT"
 ```
-Expect two hits: the `MutableStateFlow(prefs.getBoolean(KEY_GPU_MULTI_EXPERIMENT, false))` construction and the key constant. The default literal must be `false`.
+Expect THREE hits: the `MutableStateFlow(prefs.getBoolean(KEY_GPU_MULTI_EXPERIMENT, false))` construction, the setter's `putBoolean`, and the key constant. (Corrected from "two" by C2's review — the mandated code yields three; a two-hit expectation would false-STOP this gate.) The default literal must be `false`.
 
 - [ ] **Check 2 — nothing enables the toggle in code.** Run (`Select-String` has no `-Recurse`, and `-Path <directory>` matches no files — the file list must come from `Get-ChildItem`, or this check errors out / reads as a vacuous pass):
 ```powershell
