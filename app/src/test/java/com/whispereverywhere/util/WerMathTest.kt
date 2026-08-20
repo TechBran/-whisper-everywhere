@@ -54,4 +54,12 @@ class WerMathTest {
         assertFalse("one bad slice disqualifies the floor", WerMath.floorQualifies(listOf(0.0, 0.11)))
         assertFalse("no measurements is not a pass", WerMath.floorQualifies(emptyList()))
     }
+
+    @Test fun leadingInsertionsCostFullPrice_andWerCanExceedOne() {
+        assertEquals(3.0, WerMath.wer("hello", "blah blah blah hello"), eps)
+    }
+
+    @Test fun curlyAndAsciiApostrophesTokenizeIdentically() {
+        assertEquals(0.0, WerMath.wer("don't stop", "don't stop"), eps)
+    }
 }

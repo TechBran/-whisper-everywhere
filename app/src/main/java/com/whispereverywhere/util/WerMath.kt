@@ -29,7 +29,7 @@ object WerMath {
 
     /** Lowercased word tokens, punctuation stripped. */
     fun tokens(text: String): List<String> =
-        text.lowercase().split(NON_WORD).filter { it.isNotEmpty() }
+        text.lowercase().replace('’', '\'').split(NON_WORD).filter { it.isNotEmpty() }
 
     /**
      * Word Error Rate of [hypothesis] against [reference], in [0, ∞) — values above 1 are
