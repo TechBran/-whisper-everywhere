@@ -360,6 +360,50 @@ class LocalWhisperEngine(
     }
 
     /**
+     * Prewarm that also handles a MODEL SWITCH (3.6.0, Workstream E1). [prewarm] deliberately
+     * fills only an EMPTY slot, so after the user switched tiers the STALE context sat loaded and
+     * the next session paid the release+load (~7 s on the GPU path) inline in CONNECTING. This
+     * runs the same release-then-load sequence connect() would — ahead of time, on the native
+     * executor, so it serializes with any queued work and the next connect() takes its fast path.
+     *
+     * Same-model and empty-slot calls converge on the right thing (no-op / plain load); a null
+     * installed path (model deleted) no-ops entirely, exactly like [prewarm]. Silent on failure,
+     * also like [prewarm]: connect() retries the load with full error reporting.
+     *
+     * Callers must NOT invoke this while a session is live: releasing the context mid-session
+     * would resolve every later segment Lost. The bubble's debounced collector gates on IDLE.
+     */
+    fun prewarmModelSwitch() {
+        val modelPath = modelPathProvider.installedModelPath() ?: return
+        executor.execute {
+            if (ctxPtr != 0L && modelPath == loadedModelPath) return@execute
+            if (ctxPtr != 0L) {
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "prewarmModelSwitch: releasing stale ctx ($loadedModelPath -> $modelPath)",
+                )
+                try {
+                    backend.release(ctxPtr)
+                } catch (t: Throwable) {
+                    Log.w("LocalWhisperEngine", "prewarmModelSwitch release failed", t)
+                }
+                ctxPtr = 0L
+                loadedModelPath = null
+            }
+            try {
+                val loaded = runBlocking { loadRetry.retry { backend.load(modelPath) } }
+                if (loaded != 0L) {
+                    ctxPtr = loaded
+                    loadedModelPath = modelPath
+                    android.util.Log.i("WE-DIAG", "prewarmModelSwitch: ctx loaded")
+                }
+            } catch (t: Throwable) {
+                Log.w("LocalWhisperEngine", "prewarmModelSwitch load failed (connect() will retry)", t)
+            }
+        }
+    }
+
+    /**
      * Frees the cached native context (e.g. from onTrimMemory under memory pressure).
      * The context reloads lazily on the next connect(). Runs on the executor so it never
      * races an in-flight transcription.
