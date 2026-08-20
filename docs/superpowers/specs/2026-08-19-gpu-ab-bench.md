@@ -105,23 +105,55 @@ can be recorded.
 
 ## Results
 
-GPU-VERDICT: PENDING
+GPU-VERDICT: BAN reason=slower
 
-(paste EVERY `BENCH gpu-ab` line from BOTH cold runs here, plus the `WE-DIAG gpu-canary` line
-captured in step 2, then fill the table)
+**Scope: MULTI only (Fold6, Adreno 750, versionCode 77, 2026-08-20).** Pro was not installed, so
+its rows are empty — but the multi answer is unambiguous and consistent across both cold runs:
+the GPU decodes **identically** to the CPU (gpuVsCpuWer=0.000, both canaries pass — the
+documented Adreno corruption does NOT reproduce on this device/driver) and is **~8.5–9× slower**
+(rtf8s 0.41 CPU vs 3.48–3.67 GPU). This is not thermal noise: the protocol's 10–20 % band is two
+orders of magnitude below the observed gap, the CPU arm ran first both times, and the arms
+demonstrably measured different backends (loadMs 201/206 CPU vs 1777/1933 GPU). The empirical
+ban stands for multi on this device — for speed, not corruption.
 
-Run 1 (cold):
+Run 1 (cold, 5-min idle before):
 
-Run 2 (cold):
+    BENCH gpu-ab tier=multi arm=cpu loadMs=201
+    BENCH gpu-ab tier=multi arm=cpu slice=3s wallMs=3241 rtf=1.080
+    BENCH gpu-ab tier=multi arm=cpu slice=8s wallMs=3315 rtf=0.414
+    BENCH gpu-ab tier=multi arm=gpu loadMs=1777
+    BENCH gpu-ab tier=multi arm=gpu slice=3s wallMs=12106 rtf=4.035
+    BENCH gpu-ab tier=multi arm=gpu slice=8s wallMs=29380 rtf=3.673
+    BENCH gpu-ab tier=multi gpuVsCpuWer=0.000 canaryCpu=true canaryGpu=true cpuRtf8s=0.414 gpuRtf8s=3.673
+
+Run 2 (cold, 5-min idle before):
+
+    BENCH gpu-ab tier=multi arm=cpu loadMs=206
+    BENCH gpu-ab tier=multi arm=cpu slice=3s wallMs=3171 rtf=1.057
+    BENCH gpu-ab tier=multi arm=cpu slice=8s wallMs=3274 rtf=0.409
+    BENCH gpu-ab tier=multi arm=gpu loadMs=1933
+    BENCH gpu-ab tier=multi arm=gpu slice=3s wallMs=11346 rtf=3.782
+    BENCH gpu-ab tier=multi arm=gpu slice=8s wallMs=27831 rtf=3.479
+    BENCH gpu-ab tier=multi gpuVsCpuWer=0.000 canaryCpu=true canaryGpu=true cpuRtf8s=0.409 gpuRtf8s=3.479
 
 | tier  | run | cpuRtf8s | gpuRtf8s | gpuVsCpuWer | canaryCpu | canaryGpu |
 |-------|-----|----------|----------|-------------|-----------|-----------|
-| pro   | 1   |          |          |             |           |           |
-| pro   | 2   |          |          |             |           |           |
-| multi | 1   |          |          |             |           |           |
-| multi | 2   |          |          |             |           |           |
+| pro   | 1   |    —     |    —     |      —      |     —     | not run — tier not installed |
+| pro   | 2   |    —     |    —     |      —      |     —     | not run — tier not installed |
+| multi | 1   | 0.414    | 3.673    | 0.000       | true      | true      |
+| multi | 2   | 0.409    | 3.479    | 0.000       | true      | true      |
 
-Production canary captured in step 2 (WE-DIAG): `gpu-canary: passed=____`, latch line: ____
+Production canary captured in step 2 (WE-DIAG, cold app relaunch 14:56 local):
+`GpuPolicy: ggml-small-q5_1.bin passed the canary on this device -> GPU allowed`, and the
+persisted latch (shared_prefs/gpu_policy.xml) after it:
+`gpu_canary_v77_ggml-small-q5_1.bin=true`, `gpu_validated_v77_ggml-small-q5_1.bin=true`,
+both inflight flags false, `renderer=Adreno (TM) 750`.
+
+**Consequence the canary cannot see (flagged for Decision Gate 2):** the canary is a CORRUPTION
+screen and it correctly passed — so with the experimental toggle ON, production now routes multi
+to a GPU that is 9× slower than the CPU it replaced. "Correct but slower" latches as allowed by
+design. Until the gate decides (pull the toggle row, add a speed term to the canary, or leave it
+as an informed-consent experiment), the owner guidance is simply: keep the toggle OFF.
 
 When filled, replace `GPU-VERDICT: PENDING` with exactly one of:
 
