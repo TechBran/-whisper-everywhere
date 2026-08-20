@@ -292,6 +292,9 @@ class FloatingBubbleService : Service(),
     // Max time finalize waits for the transcription backlog to drain before force-ending the
     // session. Generous because a slow model (e.g. the large tier) can lag several segments behind
     // real time; bounded so a pathological run can't hang the bubble in FINALIZING forever.
+    // Since 3.6.0 the fallback engine may run up to 60 s past this when a rescue was armed only
+    // during the cloud drain — its local reserve floor (FallbackTranscriptionEngine.awaitIdle,
+    // localDrainReserveMs). Still bounded: worst case is this value + 60 s.
     private val FINALIZE_TIMEOUT_MS = 300_000L
 
     // Wall-clock cap per uncommitted stretch. Continuous loud audio (media playback, music) never
@@ -2404,7 +2407,7 @@ class FloatingBubbleService : Service(),
         // after the last utterance, and without waiting they'd complete post-teardown and be dropped
         // by the stale-listener guard (the user saw "No speech detected" despite valid audio). Each
         // result injects live as it finishes, so the earlier chunks keep appearing during the
-        // finalize wait. Bounded by FINALIZE_TIMEOUT_MS. The blocking await runs on IO; UI on Main.
+        // finalize wait. Bounded by FINALIZE_TIMEOUT_MS + the local drain reserve (see FallbackTranscriptionEngine.awaitIdle). The blocking await runs on IO; UI on Main.
         serviceScope.launch(Dispatchers.Main) {
             val drained = withContext(Dispatchers.IO) {
                 transcriptionEngine?.awaitIdle(FINALIZE_TIMEOUT_MS) ?: true
