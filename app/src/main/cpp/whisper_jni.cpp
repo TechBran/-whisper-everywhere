@@ -170,12 +170,19 @@ struct we_segment_cb_ctx {
     JavaVM   *vm       = nullptr;
     jobject   callback = nullptr;   // global ref to the Kotlin NewSegmentCallback
     jmethodID method   = nullptr;   // onRunningText([B)V
+    bool      disabled = false;     // latched true after a throwing callback (see below)
 };
 
 static void we_on_new_segment(struct whisper_context * /*ctx*/, struct whisper_state *state,
                               int /*n_new*/, void *user_data) {
     auto *cb = static_cast<we_segment_cb_ctx *>(user_data);
     if (cb == nullptr || cb->callback == nullptr || state == nullptr) {
+        return;
+    }
+    // Latched off by an earlier failure in THIS whisper_full — a callback that threw once will
+    // almost certainly throw on every remaining segment, so stop paying for it (and stop
+    // spamming ExceptionDescribe) instead of retrying silently per segment.
+    if (cb->disabled) {
         return;
     }
     JNIEnv *env = nullptr;
@@ -204,10 +211,21 @@ static void we_on_new_segment(struct whisper_context * /*ctx*/, struct whisper_s
             env->SetByteArrayRegion(arr, 0, len, reinterpret_cast<const jbyte *>(running.data()));
         }
         env->CallVoidMethod(cb->callback, cb->method, arr);
-        if (env->ExceptionCheck()) {
-            env->ExceptionClear();   // a preview callback must never abort the transcribe
-        }
         env->DeleteLocalRef(arr);
+    }
+    // UNCONDITIONAL — must sit OUTSIDE the block above. A failed NewByteArray (OOM) leaves an
+    // OutOfMemoryError pending and SKIPS that block, so a check nested inside it would never run:
+    // the error would still be in flight on the NEXT segment's JNI calls, which CheckJNI turns
+    // into a process abort. This one check covers both that path and a throwing Kotlin callback.
+    // A preview must never abort the transcribe.
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();   // survives R8 (JNI, not android.util.Log) — the only
+                                    // diagnostic a broken callback ever gets
+        env->ExceptionClear();
+        // Latch streaming off for the remainder of this whisper_full. Deliberately NOT done by
+        // nulling cb->callback: transcribeRaw's DeleteGlobalRef gates on exactly that field, so
+        // clearing it here would leak the global ref.
+        cb->disabled = true;
     }
     if (attachedHere) {
         cb->vm->DetachCurrentThread();
@@ -338,6 +356,10 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
     // D (3.6.0): arm the new-segment trampoline. cbCtx is stack-local — whisper_full is
     // synchronous and no callback can fire after it returns, which is also why the global ref
     // is deleted immediately after, on every path.
+    // LANDMINE: whisper.cpp gates this callback on !dtw_token_timestamps (whisper.cpp:7678,
+    // :7726), so enabling DTW token timestamps in the context params SILENTLY turns streaming
+    // off — and the DTW branch's own callback loop is buggy upstream. We never set it; keep it
+    // that way, or partial previews die with no error anywhere.
     we_segment_cb_ctx cbCtx;
     if (segmentCallback != nullptr) {
         env->GetJavaVM(&cbCtx.vm);
