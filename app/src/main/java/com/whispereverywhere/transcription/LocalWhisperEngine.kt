@@ -408,6 +408,20 @@ class LocalWhisperEngine(
     }
 
     /**
+     * True when the NEXT connect() will take its fast path: a context is loaded AND it is for the
+     * currently installed model — the exact condition connect() checks before skipping the load.
+     * Surfaced as a flag (3.6.0, Workstream E3) so the bubble can show the honest
+     * "Loading speech model…" CONNECTING label on cold starts instead of parsing which branch
+     * the engine logged. Cheap volatile reads plus one path lookup; callable from any thread.
+     * A race with an in-flight load only UNDER-promises (label shows, connect lands warm) —
+     * the safe direction.
+     */
+    fun isWarm(): Boolean {
+        val modelPath = modelPathProvider.installedModelPath() ?: return false
+        return ctxPtr != 0L && modelPath == loadedModelPath
+    }
+
+    /**
      * Frees the cached native context (e.g. from onTrimMemory under memory pressure).
      * The context reloads lazily on the next connect(). Runs on the executor so it never
      * races an in-flight transcription.

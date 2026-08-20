@@ -144,6 +144,16 @@ internal val REALTIME_STT_PROVIDERS: Set<ProviderId> =
 internal fun isRealtimeStt(sttProviderIdName: String?): Boolean =
     resolveSttProvider(sttProviderIdName)?.let { it in REALTIME_STT_PROVIDERS } == true
 
+/**
+ * The CONNECTING status label (3.6.0, Workstream E3). A LOCAL session whose engine still has to
+ * load the model gets the honest "Loading speech model…" — naming the ~7 s cold wait — instead
+ * of a bare spinner. A warm local engine, or ANY cloud session (whose CONNECTING wait is the
+ * socket/handshake, not a model load), gets null: spinner only, exactly as before. Pure so the
+ * branch is JVM-pinned (ConnectingLabelTest); the warm flag comes from LocalWhisperEngine.isWarm.
+ */
+internal fun connectingStatusLabel(isCloudSession: Boolean, localEngineWarm: Boolean): String? =
+    if (!isCloudSession && !localEngineWarm) "Loading speech model…" else null
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,

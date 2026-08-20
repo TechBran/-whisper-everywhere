@@ -112,4 +112,44 @@ class LocalWhisperEngineWarmPathTest {
             executor.shutdownNow()
         }
     }
+
+    // ===== isWarm(): the CONNECTING-label flag (Workstream E3) =====
+
+    @Test
+    fun isWarm_isFalseBeforeAnyLoad() {
+        val engine = engineWith(SwitchableModelPathProvider("/models/pro.bin"), FakeWhisperBackend())
+        org.junit.Assert.assertFalse(engine.isWarm())
+    }
+
+    @Test
+    fun isWarm_isTrueOnceTheInstalledModelIsLoaded() {
+        val engine = engineWith(SwitchableModelPathProvider("/models/pro.bin"), FakeWhisperBackend())
+        engine.prewarm()
+        assertTrue(engine.isWarm())
+    }
+
+    @Test
+    fun isWarm_isFalseAfterReleaseContext() {
+        // onTrimMemory freed the context: the next connect() is cold and the label must say so.
+        val engine = engineWith(SwitchableModelPathProvider("/models/pro.bin"), FakeWhisperBackend())
+        engine.prewarm()
+        engine.releaseContext()
+        org.junit.Assert.assertFalse(engine.isWarm())
+    }
+
+    @Test
+    fun isWarm_isFalseWhenTheInstalledModelChangedSinceTheLoad() {
+        // The same condition connect() checks: a loaded-but-stale context is a COLD start.
+        val provider = SwitchableModelPathProvider("/models/pro.bin")
+        val engine = engineWith(provider, FakeWhisperBackend())
+        engine.prewarm()
+        provider.path = "/models/multi.bin"
+        org.junit.Assert.assertFalse(engine.isWarm())
+    }
+
+    @Test
+    fun isWarm_isFalseWithNoInstalledModel() {
+        val engine = engineWith(SwitchableModelPathProvider(null), FakeWhisperBackend())
+        org.junit.Assert.assertFalse(engine.isWarm())
+    }
 }
