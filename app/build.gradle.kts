@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 76
-        versionName = "3.5.0"  // pick-your-model onboarding + cloud-key education; finalize no longer over-waits at stop
+        versionCode = 77
+        versionName = "3.6.0"  // local speed: streaming deltas, first-segment cap, session language pin, drain floor
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

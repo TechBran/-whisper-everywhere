@@ -278,3 +278,9 @@ falsify the C3 conviction — `local-drain` ≈ 0 everywhere — edit the notes 
 replace "Also: ending a session now finishes faster, and the app says what it's waiting on while
 it wraps up." with "Also: the app now says what it's waiting on while a session wraps up." and
 re-verify the count.)
+
+## Release notes — 3.6.0 (within 500 chars)
+
+> Our biggest on-device speed release. Words now appear in the bubble while the model is still transcribing — no more silent wait. The first line of a session lands sooner, multilingual mode no longer re-detects your language every segment, and switching models warms the new one in the background. Stopping now counts up while it finishes. Every claim is against our own previous version, measured on the same phone.
+
+(415 chars)
