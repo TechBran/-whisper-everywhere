@@ -562,22 +562,37 @@ class LocalWhisperEngineTest {
     @Test
     fun aSwitchDuringALiveSessionIsDropped() {
         // A live session owns the context. Releasing it mid-session would resolve every later
-        // segment Lost. The switch is dropped entirely — connect() is responsible for any model
-        // reload on the next session.
+        // segment Lost. The switch is dropped entirely by the listener guard, even if the model
+        // path changes. This test verifies the guard blocks release, not the same-path shortcut.
+        class SwitchableProvider(var path: String?) : ModelPathProvider {
+            override fun installedModelPath(): String? = path
+        }
+
         val backend = FakeWhisperBackend(text = "one")
-        val engine = engineWith(backend)
+        val provider = SwitchableProvider("/models/a.bin")
+        val engine = LocalWhisperEngine(
+            modelPathProvider = provider,
+            retry = fastRetry(),
+            backend = backend,
+            executor = SameThreadExecutorService(),
+        )
         val listener = RecordingListener()
 
+        // Connect on model A.
         engine.connect(language = "en", listener = listener)
         assertTrue(listener.opened)
-        assertEquals(1, backend.loadCalls.size)   // ctx loaded for the session
+        assertEquals(listOf("/models/a.bin"), backend.loadCalls)   // ctx loaded for the session
 
-        // While that session is live, attempt a model switch (this is the guard breach).
+        // Switch the provider to model B (so same-path shortcut won't trigger).
+        provider.path = "/models/b.bin"
+
+        // While that session is live, attempt a model switch to B.
+        // The listener guard must block it, even though modelPath != loadedModelPath.
         engine.prewarmModelSwitch()
 
-        // The switch must NOT release or reload.
-        assertEquals("no release during a live session", 0, backend.releaseCalls)
-        assertEquals("no new load during a live session", 1, backend.loadCalls.size)
+        // The switch must NOT release or reload (blocked by listener guard).
+        assertEquals("guard prevents release during live session", 0, backend.releaseCalls)
+        assertEquals("guard prevents reload during live session", 1, backend.loadCalls.size)
         // The ctx is still live and ready to transcribe.
         assertEquals(true, listener.opened)
     }
