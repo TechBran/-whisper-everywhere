@@ -167,7 +167,19 @@ object WhisperNativeBackend : WhisperBackend {
         } finally {
             GpuPolicy.onGpuLoadReturned()
         }
-        if (ctx == 0L || !GpuPolicy.needsCanary()) return@serialized ctx
+        if (ctx == 0L) {
+            // The GPU load produced no context, so no canary is possible. If one was pending,
+            // this is a NO-VERDICT exit like the two below and must clear the GPU-active state:
+            // the caller will retry/fall back on CPU with activeModelKey still naming this model,
+            // and an armed gpuActiveInProcess would let that CPU work write gpu_validated=true.
+            if (GpuPolicy.needsCanary()) GpuPolicy.onCanaryUnavailable()
+            return@serialized ctx
+        }
+        // KEEP: GpuPolicy.onCanaryResult has no internal guard, so this early return is the only
+        // thing standing between a .en (or already-adjudicated) model and a spurious verdict.
+        // It must NOT call onCanaryUnavailable — those loads are real GPU loads and legitimately
+        // stay armed so their first transcribe still runs inside the compute sentinel.
+        if (!GpuPolicy.needsCanary()) return@serialized ctx
 
         // GPU CANARY (3.6.0 Workstream C). A multilingual model reached the GPU for the first
         // time on this device: prove it decodes correctly BEFORE any user audio touches it. The
@@ -199,28 +211,59 @@ object WhisperNativeBackend : WhisperBackend {
             // CPU latch with no in-app recovery. Fall back to CPU for this load and record
             // nothing: canaryPending is re-decided at the top of the next decideUseGpuForLoad,
             // so the next launch simply retries once the asset is really there.
+            //
+            // onCanaryUnavailable (not merely "record nothing"): this call returns a CPU context
+            // while GpuPolicy still has gpuActiveInProcess=true and activeModelKey set to this
+            // multilingual model, so without it the session's first user segment would satisfy
+            // needsComputeValidation() and write gpu_validated=true for a GPU that never ran —
+            // disarming both sentinels for the next launch's real GPU attempt.
             android.util.Log.w("WE-DIAG", "gpu-canary: asset unavailable — no verdict recorded")
+            GpuPolicy.onCanaryUnavailable()
             runCatching { WhisperNative.free(ctx) }
             return@serialized WhisperNative.init(modelPath, false)
         }
-        val text = runCatching {
+        // fold, not getOrDefault(""): only a RETURNED string is evidence about this GPU's decode
+        // quality. A THROWN transcribe (JNI error, allocation failure) says nothing about decode
+        // and must not be scored — collapsing it to "" would score it as the empty-output
+        // corruption signature and write the permanent latch on a GPU that was never measured.
+        // A blank string that was actually RETURNED still FAILS: that is C1's pinned
+        // large-v3-turbo signature, and it is a real measurement.
+        return@serialized runCatching {
             transcribeInternal(ctx, samples, "en", useVad = false, onNewSegment = null)
-        }.getOrDefault("")
-        val passed = GpuCanaryPolicy.canaryPasses(text)
-        // Length only — the canary text is known audio, but the no-transcript-logging rule is
-        // absolute so the habit never erodes.
-        android.util.Log.i(
-            "WE-DIAG",
-            "gpu-canary: passed=$passed outLen=${text.length}",
+        }.fold(
+            onSuccess = { text ->
+                val passed = GpuCanaryPolicy.canaryPasses(text)
+                // Length only — the canary text is known audio, but the no-transcript-logging
+                // rule is absolute so the habit never erodes.
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "gpu-canary: passed=$passed outLen=${text.length}",
+                )
+                // After transcribeInternal has fully RETURNED (its finally already ran): a
+                // compute-finished finally landing after onCanaryResult would resurrect
+                // keyValidated=true on the model onCanaryResult(false) just banned.
+                GpuPolicy.onCanaryResult(passed)
+                if (passed) {
+                    ctx
+                } else {
+                    // Failed: drop the GPU context and reload on CPU inside this same call, so
+                    // the caller gets a working context and the session proceeds exactly as it
+                    // does today. The latch GpuPolicy just wrote means no later load for this
+                    // model even attempts the GPU.
+                    runCatching { WhisperNative.free(ctx) }
+                    WhisperNative.init(modelPath, false)
+                }
+            },
+            onFailure = {
+                // NO VERDICT, same shape as the asset-unavailable branch above: the canary could
+                // not be MEASURED, so nothing permanent may be written and the GPU-active state
+                // must be cleared before the CPU context goes back to the caller.
+                android.util.Log.w("WE-DIAG", "gpu-canary: transcribe threw — no verdict recorded")
+                GpuPolicy.onCanaryUnavailable()
+                runCatching { WhisperNative.free(ctx) }
+                WhisperNative.init(modelPath, false)
+            },
         )
-        GpuPolicy.onCanaryResult(passed)
-        if (passed) return@serialized ctx
-
-        // Failed: drop the GPU context and reload on CPU inside this same call, so the caller
-        // gets a working context and the session proceeds exactly as it does today. The latch
-        // GpuPolicy just wrote means no later load for this model even attempts the GPU.
-        runCatching { WhisperNative.free(ctx) }
-        WhisperNative.init(modelPath, false)
     }
 
     override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String =

@@ -63,8 +63,15 @@ object GpuPolicy {
      * WhisperNativeBackend.load reads to run the canary immediately after the load returns.
      * Written under [stateLock] together with [activeModelKey]. Cleared by [onCanaryResult] when
      * a verdict is recorded, and re-decided from scratch at the top of every
-     * [decideUseGpuForLoad] — so an exit that records no verdict (C5's `ctx == 0L` and
-     * "canary asset unavailable" paths) can never leave a stale `true` behind.
+     * [decideUseGpuForLoad] — so an exit that records no verdict (C5's `ctx == 0L`, "canary asset
+     * unavailable", and "transcribe threw" paths) can never leave a stale `true` behind.
+     *
+     * Those no-verdict exits clear it via [onCanaryUnavailable], which clears a SECOND field in
+     * the same critical section: [gpuActiveInProcess]. Clearing this flag alone is not enough —
+     * the exit hands back a CPU context while [activeModelKey] still names the multilingual model
+     * and `gpu_validated` is still false, so the first user segment would satisfy
+     * [needsComputeValidation] and its finally would write `gpu_validated=true` for a GPU that
+     * never computed, disarming BOTH sentinels for the next launch's real GPU attempt.
      */
     @Volatile private var canaryPending = false
 
@@ -83,7 +90,9 @@ object GpuPolicy {
      * killing us", and leaving it set while latching the model to CPU would disarm the crash
      * sentinel for a model whose GPU output is known garbage. Two prefs flags in direct
      * contradiction is worse than either. Never called when the canary could not be RUN (see
-     * CanaryAudio.samples): an absent asset must leave the verdict unrecorded, not latch.
+     * CanaryAudio.samples, and a transcribe that THREW rather than returning a string): those
+     * paths take [onCanaryUnavailable] instead — no evidence about this GPU's decode quality
+     * means the verdict stays unrecorded, never latched.
      */
     fun onCanaryResult(passed: Boolean) = runCatching {
       synchronized(stateLock) {
@@ -104,6 +113,28 @@ object GpuPolicy {
         }
       }
     }.let { }
+
+    /**
+     * No verdict was possible (asset missing/unreadable, or the load never produced a ctx):
+     * clear the GPU-active state WITHOUT writing any latch — the sentinel must not treat the
+     * upcoming CPU work as GPU compute, and no permanent flag may move. Next launch retries.
+     *
+     * The pair is deliberate. [canaryPending] alone stops a second canary; [gpuActiveInProcess]
+     * is what [needsComputeValidation] reads, and leaving it armed while the call returns a CPU
+     * context makes the first user segment run as a "risky first GPU compute" — its finally then
+     * writes `gpu_validated=true` for a GPU that never executed a single kernel, so the next
+     * launch arms neither the load nor the compute sentinel and a native GPU crash leaves no
+     * stale flag behind: exactly the crash loop this object exists to prevent.
+     *
+     * Touches no SharedPreferences by design — a build/packaging problem must never move a
+     * permanent per-(versionCode, model) flag.
+     */
+    fun onCanaryUnavailable() {
+        synchronized(stateLock) {
+            canaryPending = false
+            gpuActiveInProcess = false
+        }
+    }
 
     /** Adreno 7xx / 8xx / X-series (X1E, X2 …) — the officially supported set. */
     private val ALLOWED_RENDERERS = Regex("""Adreno \(TM\) (7\d\d|8\d\d|X\d)""")
@@ -147,9 +178,11 @@ object GpuPolicy {
         // 3.6.0 C, stale-flag hygiene: this function is the ONLY place canaryPending is armed,
         // so it decides the flag afresh on every call — cleared here, set at the tail (Step 3)
         // only when a multilingual model still needs validating. Without this, an exit that
-        // never reaches the tail (any early return here, or either of C5's no-verdict exits —
-        // `ctx == 0L` and "canary asset unavailable", both of which deliberately record
-        // nothing) could leave a stale `true` paired with a freshly written activeModelKey.
+        // never reaches the tail (any early return here, or any of C5's no-verdict exits —
+        // `ctx == 0L`, "canary asset unavailable", "transcribe threw", all of which deliberately
+        // record nothing) could leave a stale `true` paired with a freshly written activeModelKey.
+        // Those C5 exits also call onCanaryUnavailable, which clears gpuActiveInProcess so the
+        // CPU fallback they return is never mistaken for the model's first GPU compute.
         canaryPending = false
         val p = prefs() ?: return false
         val vc = BuildConfig.VERSION_CODE
