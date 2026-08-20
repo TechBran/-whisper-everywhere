@@ -162,11 +162,65 @@ object WhisperNativeBackend : WhisperBackend {
         if (!useGpu) return@serialized WhisperNative.init(modelPath, false)
         // finally (not sequential code): a survivable Java exception between arm and disarm must
         // still disarm — only true process death may leave the sentinel behind.
-        try {
+        val ctx = try {
             WhisperNative.init(modelPath, true)
         } finally {
             GpuPolicy.onGpuLoadReturned()
         }
+        if (ctx == 0L || !GpuPolicy.needsCanary()) return@serialized ctx
+
+        // GPU CANARY (3.6.0 Workstream C). A multilingual model reached the GPU for the first
+        // time on this device: prove it decodes correctly BEFORE any user audio touches it. The
+        // multilingual GPU failure mode is silent corruption, which no crash sentinel can catch
+        // (GpuPolicy.isGpuSafeModel's empirical-corruption docblock) — so one bundled ~1 s clip
+        // of spoken digits is transcribed and matched by the pure rule in GpuCanaryPolicy.
+        //
+        // WHERE THIS RUNS: load() is reached from BOTH native executors — LocalWhisperEngine's
+        // (prewarm / prewarmModelSwitch / connect) AND BatchTranscriber.loadCtx — but in NEITHER
+        // case from inside a transcribe of user audio, and NativeComputeGate serializes the two,
+        // so the ~1 s cost can never land mid-session. At most ONCE per device+model per app
+        // version.
+        //
+        // Routed through transcribeInternal so the canary pays the same GpuPolicy compute
+        // sentinel a real segment does; useVad=false because the clip is already speech-only.
+        // lang="en" is pinned for CORRECTNESS, not speed: GpuCanaryPolicy.EXPECTED_TOKENS are
+        // ASCII-only, and auto-detect on a 1 s clip can pick a locale whose numerals render
+        // non-ASCII — a working GPU would then false-FAIL into the permanent CPU latch.
+        // Sentinel interaction, handled in GpuPolicy.onCanaryResult: that wrapper writes
+        // gpu_validated=true for any transcribe that merely did not THROW, which a garbage-
+        // decoding GPU does — so a failing canary would otherwise leave "validated" set on the
+        // very model it latches to CPU, disarming the crash sentinel. onCanaryResult(false)
+        // clears keyValidated in the same edit.
+        val samples = CanaryAudio.samples()
+        if (samples == null) {
+            // NO VERDICT — not a failure. A missing or unreadable asset (omitted from the
+            // package, wrong format, asset shrink) is evidence about the BUILD, not about this
+            // GPU, and onCanaryResult(false) would write a permanent per-(versionCode, model)
+            // CPU latch with no in-app recovery. Fall back to CPU for this load and record
+            // nothing: canaryPending is re-decided at the top of the next decideUseGpuForLoad,
+            // so the next launch simply retries once the asset is really there.
+            android.util.Log.w("WE-DIAG", "gpu-canary: asset unavailable — no verdict recorded")
+            runCatching { WhisperNative.free(ctx) }
+            return@serialized WhisperNative.init(modelPath, false)
+        }
+        val text = runCatching {
+            transcribeInternal(ctx, samples, "en", useVad = false, onNewSegment = null)
+        }.getOrDefault("")
+        val passed = GpuCanaryPolicy.canaryPasses(text)
+        // Length only — the canary text is known audio, but the no-transcript-logging rule is
+        // absolute so the habit never erodes.
+        android.util.Log.i(
+            "WE-DIAG",
+            "gpu-canary: passed=$passed outLen=${text.length}",
+        )
+        GpuPolicy.onCanaryResult(passed)
+        if (passed) return@serialized ctx
+
+        // Failed: drop the GPU context and reload on CPU inside this same call, so the caller
+        // gets a working context and the session proceeds exactly as it does today. The latch
+        // GpuPolicy just wrote means no later load for this model even attempts the GPU.
+        runCatching { WhisperNative.free(ctx) }
+        WhisperNative.init(modelPath, false)
     }
 
     override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String =
