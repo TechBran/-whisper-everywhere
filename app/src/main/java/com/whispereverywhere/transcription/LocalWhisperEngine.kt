@@ -11,7 +11,9 @@ import java.util.concurrent.Executors
 /**
  * On-device whisper.cpp engine. Buffers PCM16 audio, and on commit runs one batch
  * transcription of the buffered segment on a single-thread executor (segments serialize).
- * No intra-segment deltas are emitted — exactly one onSegmentResolved per committed segment.
+ * Intra-segment deltas (3.6.0) are PREVIEW-ONLY: the native new-segment callback streams the
+ * in-flight text to onDelta, throttled (~150 ms), but committed text still comes exclusively
+ * from the exactly-one onSegmentResolved per committed segment — the final-only commit contract.
  *
  * Because [executor] is single-threaded, segments resolve in the order they were committed, so a
  * downstream [SegmentOrderer] is a provable pass-through here: results always arrive with
@@ -32,6 +34,11 @@ class LocalWhisperEngine(
      * multi-threaded executor will cause data races on the native context pointer.
      */
     private val executor: ExecutorService = Executors.newSingleThreadExecutor(),
+    /**
+     * Clock feeding the preview-delta throttle (3.6.0 Workstream D). Injectable so JVM tests
+     * drive throttling deterministically. Milliseconds; only differences are used.
+     */
+    private val deltaClock: () -> Long = System::currentTimeMillis,
 ) : TranscriptionEngine {
 
     // Model load is retried once (transient FS/mmap) using the injected policy's timing.
@@ -83,6 +90,13 @@ class LocalWhisperEngine(
      * late segment can never pin the new session.
      */
     private val languagePin = LanguagePin()
+
+    /**
+     * Preview-delta rate limiter (3.6.0 Workstream D). Touched only on the native executor
+     * thread: reset at segment start, checked inside the native new-segment callback, which
+     * whisper_full invokes on that same thread.
+     */
+    private val deltaThrottle = DeltaThrottle(now = deltaClock)
 
     // Process-lifetime cached native context (0 = not loaded).
     @Volatile private var ctxPtr: Long = 0L
@@ -257,6 +271,9 @@ class LocalWhisperEngine(
         lang: String?,
         myListener: TranscriptionEngine.Listener,
     ) {
+        // D (3.6.0): true once at least one preview delta was forwarded for THIS segment, so
+        // the strip is cleared exactly when something was put on it — and never otherwise.
+        var streamedPreview = false
         val outcome: SegmentOutcome = try {
             val ctx = ctxPtr
             if (ctx == 0L) {
@@ -276,9 +293,30 @@ class LocalWhisperEngine(
                     "WE-DIAG",
                     "transcribe START seq=$seq samples=${samples.size} lang=$lang effective=$effectiveLang",
                 )
+                // D (3.6.0 partial streaming): whisper.cpp's new-segment callback arrives HERE,
+                // on this same executor thread, WHILE backend.transcribeStreaming is still
+                // executing — and while WhisperNativeBackend holds the process-global
+                // NativeComputeGate — so this closure stays strictly lock-free: throttle check
+                // + listener forward, nothing else. Never bufferLock, never a backend re-entry,
+                // never logging (delta text IS user speech). Deltas are PREVIEW-ONLY: committed
+                // text comes exclusively from the returned String via segment resolution below
+                // (the final-only commit contract, untouched). Stale sessions are dropped by
+                // the exact guard resolutions use: `listener === myListener`.
                 val transcribeStartNs = System.nanoTime()
                 val text = runBlocking {
-                    retry.retry { backend.transcribe(ctx, samples, effectiveLang) }
+                    retry.retry {
+                        // INSIDE the retry lambda, not above it: a retried attempt re-decodes
+                        // this segment from scratch, so its first delta must render immediately
+                        // too. Resetting once per segment would leave the retry's opening words
+                        // inside the previous attempt's throttle window and swallow them.
+                        deltaThrottle.reset()
+                        backend.transcribeStreaming(ctx, samples, effectiveLang) { running ->
+                            if (listener === myListener && deltaThrottle.shouldEmit()) {
+                                streamedPreview = true
+                                myListener.onDelta(running)
+                            }
+                        }
+                    }
                 }
                 // Permanent per-segment RTF instrumentation (3.6.0, Workstream A3): the number
                 // the tier-consolidation and GPU decision gates read, measured on the owner's
@@ -346,6 +384,12 @@ class LocalWhisperEngine(
             if (listener === myListener) myListener.onError(t.message ?: "Transcription failed")
             SegmentOutcome.Lost(TRANSCRIBE_FAILED)
         }
+        // D (3.6.0): the segment reached a terminal outcome, so the in-flight preview is stale —
+        // a blank delta clears the strip (the service's onDelta hides it on blank) before the
+        // resolution lands in the accumulating window; both hop to Main via the same FIFO, so
+        // the clear always renders first. Emitted only when this segment actually streamed, so
+        // non-streaming backends keep the exact 3.5.0 callback sequence.
+        if (streamedPreview && listener === myListener) myListener.onDelta("")
         // Guard: only fire if the listener hasn't been replaced/nulled since commit().
         if (listener === myListener) myListener.onSegmentResolved(seq, outcome)
     }

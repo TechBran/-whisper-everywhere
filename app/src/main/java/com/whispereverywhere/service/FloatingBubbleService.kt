@@ -2257,11 +2257,18 @@ class FloatingBubbleService : Service(),
                 }
             }
             override fun onDelta(text: String) {
-                // Only the live engine emits intra-segment deltas. The unified preview (W2)
-                // keeps the container up for EVERY session context, so the strip renders
+                // Local partial streaming (3.6.0 D) joined cloud-live here. The unified preview
+                // (W2) keeps the container up for EVERY session context, so the strip renders
                 // wherever deltas exist — no context gate. Resolved turns accumulate into the
                 // window below it.
                 serviceScope.launch(Dispatchers.Main) {
+                    // 3.6.0 D: the strip carries the FINALIZING status line; local tail deltas must not clobber it.
+                    // The stop tap writes "Finishing… (waiting on provider)" / "Finishing
+                    // transcript…" here and THEN flushes the tail segment, which now streams —
+                    // ungated, its deltas would replace that line and its terminal blank would
+                    // hide the strip for the whole drain, next to E6's counting-up ticker. Same
+                    // guard deliverReleasedText already uses for its sibling reset.
+                    if (currentState == BubbleState.FINALIZING) return@launch
                     if (text.isNotBlank()) {
                         val wasGone = transcriptionDeltaText.visibility != View.VISIBLE
                         transcriptionDeltaText.visibility = View.VISIBLE

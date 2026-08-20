@@ -206,7 +206,7 @@ class LocalWhisperEngineTest {
         assertEquals(listOf(0L to SegmentOutcome.Text("hello world")), listener.resolved) // trimmed
         assertEquals(listOf("hello world"), listener.completed)
         assertTrue(listener.errors.isEmpty())
-        assertTrue(listener.deltas.isEmpty())                     // never onDelta
+        assertTrue(listener.deltas.isEmpty())   // a non-streaming backend emits no deltas (streaming pinned in LocalWhisperEngineStreamingTest)
         assertEquals(1, backend.transcribeCalls.size)
         // 8 PCM bytes buffered -> 4 float samples in one snapshot
         assertEquals(4, backend.transcribeCalls[0].second.size)

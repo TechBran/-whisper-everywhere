@@ -61,7 +61,12 @@ interface TranscriptionEngine {
      */
     interface Listener {
         fun onOpen()
-        fun onDelta(text: String)     // unused on-device; kept for interface compatibility
+        /**
+         * PREVIEW-ONLY running text of the in-flight segment/turn (cloud-live partials; local
+         * partial streaming since 3.6.0). Blank means "clear the preview". Never committed —
+         * committed text arrives exclusively via [onSegmentResolved].
+         */
+        fun onDelta(text: String)
 
         /**
          * Terminal result for exactly one committed segment. EVERY seq returned by [commit] MUST
