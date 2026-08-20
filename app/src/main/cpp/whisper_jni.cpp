@@ -318,6 +318,10 @@ Java_com_whispereverywhere_whisper_WhisperNative_detectedLanguage(
     // Threading: a plain field read, but it reads the ctx — call it only on the single thread
     // that runs transcribe for this ctx (LocalWhisperEngine's native executor).
     const int langId = whisper_full_lang_id(ctx);
+    // NOT a "has it run yet" signal: state->lang_id starts at 0 (whisper.cpp:894, "english by
+    // default"), so a ctx that never completed whisper_full reports "en", NOT nullptr — nullptr
+    // means only an id outside g_lang, which auto-detect cannot produce. The caller's non-blank
+    // transcribe guard is the only thing separating a real detection from that English default.
     const char *code = whisper_lang_str(langId);   // nullptr for an unknown id (whisper logs it)
     if (code == nullptr) {
         return nullptr;

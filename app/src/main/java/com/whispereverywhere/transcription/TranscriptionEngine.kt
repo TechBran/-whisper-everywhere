@@ -89,8 +89,11 @@ interface WhisperBackend {
     fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean = true): String
 
     /**
-     * ISO code whisper auto-detected during the LAST completed transcribe on [ctx], or null
-     * when unavailable (never ran / unknown id / a backend with no detection). Meaningful
+     * ISO code whisper auto-detected during the LAST completed transcribe on [ctx]. From the
+     * native backend null means ONLY an id outside whisper's language table (unreachable via
+     * auto-detect) — a ctx that never ran returns "en", the lang_id 0 default, so there is NO
+     * in-band "no detection yet" signal and the caller's non-blank-transcribe guard is the only
+     * thing separating a real detection from that English default. Meaningful
      * ONLY right after a transcribe(...) that returned non-blank text on an auto-language
      * call — the native early-return paths (VAD-empty, energy gate) never reach whisper_full
      * and would leave a stale id behind (see WhisperNative.detectedLanguage). Default null:

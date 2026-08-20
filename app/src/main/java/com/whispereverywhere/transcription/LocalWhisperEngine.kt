@@ -75,6 +75,15 @@ class LocalWhisperEngine(
     @Volatile private var listener: TranscriptionEngine.Listener? = null
     @Volatile private var language: String? = null
 
+    /**
+     * Session-scoped language pin (3.6.0 Workstream B). Auto-language sessions only: once the
+     * first speech-producing segment's detection lands, later segments pass the concrete code
+     * and skip multilingual whisper's per-segment detect-encode pass. Reset in [connect];
+     * written only behind the stale-listener guard in [runSegment], so a previous session's
+     * late segment can never pin the new session.
+     */
+    private val languagePin = LanguagePin()
+
     // Process-lifetime cached native context (0 = not loaded).
     @Volatile private var ctxPtr: Long = 0L
 
@@ -89,6 +98,9 @@ class LocalWhisperEngine(
         // restart with it — otherwise the new session's first segment looks like a late duplicate
         // of the old session's and is dropped. Under bufferLock because commit() reads it there.
         synchronized(bufferLock) { nextSeq = 0L }
+        // Per-session language detection (spec Workstream B): the pin never outlives a session,
+        // so a user switching languages BETWEEN sessions always re-detects.
+        languagePin.reset()
 
         val modelPath = modelPathProvider.installedModelPath()
         android.util.Log.i("WE-DIAG", "connect: modelPath=$modelPath ctxPtr=$ctxPtr loaded=$loadedModelPath")
@@ -257,10 +269,16 @@ class LocalWhisperEngine(
                 SegmentOutcome.Lost(NO_MODEL)
             } else {
                 val samples = AudioMath.pcm16ToFloat(pcm)
-                android.util.Log.i("WE-DIAG", "transcribe START seq=$seq samples=${samples.size} lang=$lang")
+                // B (3.6.0): an explicit language passes through untouched; an auto session
+                // (lang == null) rides the session pin once the first speech segment detected it.
+                val effectiveLang = languagePin.languageFor(lang)
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "transcribe START seq=$seq samples=${samples.size} lang=$lang effective=$effectiveLang",
+                )
                 val transcribeStartNs = System.nanoTime()
                 val text = runBlocking {
-                    retry.retry { backend.transcribe(ctx, samples, lang) }
+                    retry.retry { backend.transcribe(ctx, samples, effectiveLang) }
                 }
                 // Permanent per-segment RTF instrumentation (3.6.0, Workstream A3): the number
                 // the tier-consolidation and GPU decision gates read, measured on the owner's
@@ -283,6 +301,19 @@ class LocalWhisperEngine(
                     "WE-DIAG",
                     "transcribe DONE seq=$seq rawLen=${text.length} cleanLen=${cleaned.length}",
                 )
+                // B (3.6.0 language pinning): query the detection only for segments that PAID the
+                // native detect pass (auto session, nothing pinned yet) and only when whisper
+                // demonstrably ran on THIS audio — a non-blank result. Every native early return
+                // (VAD-empty, energy gate) yields a blank, and whisper_full_lang_id would then be
+                // STALE (it persists on the ctx across calls, even across sessions). The stale-
+                // listener guard — the exact `listener === myListener` identity check resolutions
+                // use — keeps a dead session's late segment from pinning the new session.
+                if (lang == null && effectiveLang == null && cleaned.isNotBlank() && listener === myListener) {
+                    val detected = backend.detectedLanguage(ctx)
+                    languagePin.onDetected(sessionLanguage = lang, detected = detected)
+                    // Language code only — never transcript content.
+                    android.util.Log.i("WE-DIAG", "language-pin: detected=$detected")
+                }
                 if (cleaned.isBlank()) {
                     // EmptyExpected, NEVER EmptyUnexpected, for the on-device engine.
                     //

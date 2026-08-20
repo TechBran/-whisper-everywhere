@@ -63,9 +63,12 @@ object WhisperNative {
 
     /**
      * ISO code (e.g. "de") whisper auto-detected during the LAST completed whisper_full on
-     * [ctxPtr], or null when unavailable. Only meaningful IMMEDIATELY after a transcribe that
-     * actually ran whisper on an auto-language call: the native early-return paths (VAD found
-     * zero speech, the energy gate, empty input) never reach whisper_full, and the underlying
+     * [ctxPtr]. Null is NOT a "nothing detected yet" signal: state->lang_id starts at 0, so a
+     * ctx that never completed whisper_full returns "en" — null covers only an id outside
+     * whisper's language table, which auto-detect cannot produce. Only meaningful IMMEDIATELY
+     * after a transcribe that actually ran whisper on an auto-language call: the native
+     * early-return paths (VAD found zero speech, the energy gate,
+     * empty input) never reach whisper_full, and the underlying
      * state->lang_id then still holds a PREVIOUS call's detection — possibly a previous
      * session's. Callers guard this by querying only after a non-blank transcribe (see
      * LocalWhisperEngine.runSegment). Call on the same single thread that runs transcribe.
