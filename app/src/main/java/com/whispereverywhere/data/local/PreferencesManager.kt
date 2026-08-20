@@ -6,8 +6,11 @@ import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.ResizeMath
 import com.whispereverywhere.tts.ttsCloudVoiceKey
 import java.io.File
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class PreferencesManager(private val context: Context) {
@@ -227,12 +230,46 @@ class PreferencesManager(private val context: Context) {
             prefs.edit().putBoolean(KEY_CLOUD_NOTE_DISMISSED, value).apply()
         }
 
-    // Selected on-device whisper model tier id (see WhisperCatalog); null = none chosen yet
+    // Selected on-device whisper model tier id (see WhisperCatalog); null = none chosen yet.
+    //
+    // Backed by a MutableStateFlow (3.6.0, Workstream E1) so the bubble service can re-prewarm
+    // the native context the moment the user switches tiers — prewarm() fills only an EMPTY slot,
+    // so before this the first session after a switch paid the ~7 s release+load inline in
+    // CONNECTING. The `var` API is unchanged, and EVERY writer in the app already goes through
+    // this setter (ModelDownloadViewModel, OnboardingSetupViewModel x2, OnboardingFlowScreen,
+    // SettingsScreen x3), so the flow can never drift from prefs — the same one-mirror pattern
+    // as sttProviderId below. One mechanism instead of seven per-writer hooks.
+    private val _selectedModelId = MutableStateFlow(prefs.getString(KEY_SELECTED_MODEL_ID, null))
+    val selectedModelIdFlow: StateFlow<String?> = _selectedModelId.asStateFlow()
+
     var selectedModelId: String?
-        get() = prefs.getString(KEY_SELECTED_MODEL_ID, null)
+        get() = _selectedModelId.value
         set(value) {
             prefs.edit().putString(KEY_SELECTED_MODEL_ID, value).apply()
+            _selectedModelId.value = value
         }
+
+    /**
+     * "A model finished downloading and passed verification" (3.6.0, Workstream E1). The
+     * companion trigger to [selectedModelIdFlow], and NOT redundant with it: the onboarding flow
+     * writes the picked id BEFORE the download starts (nothing is on disk yet, so a re-prewarm
+     * then no-ops) and rewrites the SAME id afterwards, which a StateFlow conflates into no
+     * emission at all. That is precisely the case whose context is stale, so it needs a signal
+     * that carries "on disk now" instead of "selected now".
+     *
+     * SharedFlow, not StateFlow: consecutive installs must each emit, and there is no meaningful
+     * "current value". extraBufferCapacity = 1 with the default suspend-free [tryEmit] path so
+     * the emitter (a Dispatchers.IO download coroutine) never blocks and never needs a scope; a
+     * dropped duplicate while the collector is mid-prewarm is harmless — the prewarm it is
+     * already running loads the same file.
+     */
+    private val _modelInstalled = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val modelInstalled: SharedFlow<Unit> = _modelInstalled.asSharedFlow()
+
+    /** Called by WhisperModelManager once a downloaded model is verified on disk. */
+    fun notifyModelInstalled() {
+        _modelInstalled.tryEmit(Unit)
+    }
 
     // Read-aloud speech rate (Track F); 1.0 = the voice's natural pace.
     var ttsSpeed: Float

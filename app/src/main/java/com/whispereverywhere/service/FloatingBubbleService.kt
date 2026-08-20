@@ -53,6 +53,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -447,6 +450,51 @@ class FloatingBubbleService : Service(),
         serviceScope.launch {
             delay(1500)
             warmLocalEngine().prewarm()
+        }
+
+        // Re-prewarm on model switch OR first install (3.6.0, Workstream E1). TWO triggers, ONE
+        // collector, both ending in the same prewarmModelSwitch():
+        //
+        //  (a) every selectedModelId write — onboarding pick, Home's missing-engine row,
+        //      Settings' migration/switch/delete — through the ONE prefs mirror, zero per-writer
+        //      wiring. Debounced 750 ms: rapid successive writes (the migration's swap,
+        //      onboarding's double write) restart the wait and only the final selection loads;
+        //      the StateFlow additionally conflates same-value rewrites into no emission at all.
+        //      drop(1) skips the replay of the current value at collect time — the prewarm above
+        //      already covers service start.
+        //  (b) modelInstalled — emitted once per VERIFIED download. This is the case (a) cannot
+        //      see: onboarding writes the id before the file exists (a re-prewarm then finds no
+        //      installed path and no-ops) and rewrites the same id after, which the StateFlow
+        //      conflates away. Undebounced: one emission per completed download, and the file is
+        //      already on disk when it arrives.
+        //
+        // collectLatest over the merged flow means an install signal cancels a still-pending id
+        // debounce — correct, because both arms do the identical thing. Mid-session triggers are
+        // skipped, never deferred: releasing a context a live session is using would Lost every
+        // later segment, and connect() at the next session start reloads exactly as it always
+        // has. A null id (model deleted) no-ops inside prewarmModelSwitch. Main-dispatched, so
+        // the currentState read is main-confined.
+        serviceScope.launch {
+            merge(
+                app.preferencesManager.selectedModelIdFlow.drop(1)
+                    .map { id -> 750L to "selectedModelId -> $id" },
+                app.preferencesManager.modelInstalled.map { 0L to "model installed" },
+            ).collectLatest { (debounceMs, reason) ->
+                delay(debounceMs)
+                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) {
+                    android.util.Log.i("WE-DIAG", "$reason mid-session — connect() will reload")
+                    return@collectLatest
+                }
+                android.util.Log.i("WE-DIAG", "$reason: re-prewarming engine")
+                // prewarmModelSwitch queues onto the engine's executor, which is shut down (and
+                // the field nulled) in onDestroy — a trigger landing in that window would take a
+                // RejectedExecutionException all the way out through the collector and kill this
+                // coroutine for good. Swallowed: the re-prewarm is pure optimisation, and a
+                // service being torn down has nothing left to warm.
+                runCatching { warmLocalEngine().prewarmModelSwitch() }.onFailure { t ->
+                    android.util.Log.i("WE-DIAG", "$reason: re-prewarm skipped (${t.javaClass.simpleName})")
+                }
+            }
         }
     }
 

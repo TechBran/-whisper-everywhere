@@ -258,6 +258,14 @@ class WhisperModelManager(
             dest.delete()            // unexpected IO or other error — clean up partial file
             throw e
         }
+        // 3.6.0 (Workstream E1): the model is now verifiably ON DISK, which is the moment the
+        // bubble's native context became stale. Emitted here — the one point both download paths
+        // funnel through (the poll loop's STATUS_SUCCESSFUL branch calls verifyDest directly, the
+        // reuse-a-completed-file fast path reaches it through moveVerified) — and AFTER the size
+        // and sha256 gates, so a signal is never sent for a file that gets deleted a line later.
+        // The selectedModelId flow cannot cover this: onboarding writes the id BEFORE the file
+        // exists and rewrites the SAME id after, which a StateFlow conflates away entirely.
+        prefs.notifyModelInstalled()
     }
 
     private fun moveToModelsDir(localUri: String?, dest: File) {
