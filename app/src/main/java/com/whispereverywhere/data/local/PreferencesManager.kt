@@ -275,7 +275,7 @@ class PreferencesManager(private val context: Context) {
      * Developer toggle: allow the canary-validated GPU path for MULTILINGUAL whisper models
      * (3.6.0 Workstream C). **Defaults to false and ships false.** The multilingual GPU ban is
      * empirical (silent garbage-token / empty-output corruption on Adreno OpenCL,
-     * GpuPolicy.kt:53-64); this release adds the canary MECHANISM and the owner's measurement,
+     * the empirical-corruption docblock above GpuPolicy.isGpuSafeModel); this release adds the canary MECHANISM and the owner's measurement,
      * not a default change. Flipping the default is a separate, data-driven decision (spec
      * Decision Gate 2). Even when ON, a model only reaches the GPU after passing the bundled
      * canary once on this device — and a failure latches that model to CPU permanently.

@@ -3423,7 +3423,7 @@ Both `BUILD SUCCESSFUL`. NEVER `:app:installDebug` / `:app:connectedDebugAndroid
 > `whisper_jni.cpp`**, and no native C edit could be reconstructed; if the original C1-C7 do
 > touch it, their anchors must be re-cross-checked against B1's, D1's and G2's edits to that file.
 
-The current ban is EMPIRICAL (garbage-token corruption on multilingual models via OpenCL, `GpuPolicy.kt:53-64`) — it is not lifted blind. Design: **canary-validated enablement**, shipped OFF behind a developer toggle.
+The current ban is EMPIRICAL (garbage-token corruption on multilingual models via OpenCL, `the empirical-corruption docblock above GpuPolicy.isGpuSafeModel`) — it is not lifted blind. Design: **canary-validated enablement**, shipped OFF behind a developer toggle.
 
 ### Task C1: `GpuCanaryPolicy` — the pure canary match rule (TDD)
 
@@ -3492,7 +3492,7 @@ class GpuCanaryPolicyTest {
 
     @Test
     fun emptyOutputFails() {
-        // The ggml-large-v3-turbo-q5_0 GPU signature (GpuPolicy.kt:53-64): empty transcriptions.
+        // The ggml-large-v3-turbo-q5_0 GPU signature (the empirical-corruption docblock above GpuPolicy.isGpuSafeModel): empty transcriptions.
         assertFalse(GpuCanaryPolicy.canaryPasses(""))
         assertFalse(GpuCanaryPolicy.canaryPasses("   "))
     }
@@ -3532,7 +3532,7 @@ package com.whispereverywhere.transcription
  *
  * The multilingual GPU ban is EMPIRICAL, not theoretical: on the Fold 6 the Adreno OpenCL
  * backend decoded ggml-small-q5_1 to garbage tokens and ggml-large-v3-turbo-q5_0 to empty
- * transcriptions, with no crash to catch (GpuPolicy.kt:53-64). Crash sentinels cannot see
+ * transcriptions, with no crash to catch (the empirical-corruption docblock above GpuPolicy.isGpuSafeModel). Crash sentinels cannot see
  * silent corruption — so before a non-".en" model is allowed on the GPU, it transcribes a
  * bundled ~1 s clip of spoken digits and its output is checked HERE.
  *
@@ -3623,7 +3623,7 @@ with:
      * Developer toggle: allow the canary-validated GPU path for MULTILINGUAL whisper models
      * (3.6.0 Workstream C). **Defaults to false and ships false.** The multilingual GPU ban is
      * empirical (silent garbage-token / empty-output corruption on Adreno OpenCL,
-     * GpuPolicy.kt:53-64); this release adds the canary MECHANISM and the owner's measurement,
+     * the empirical-corruption docblock above GpuPolicy.isGpuSafeModel); this release adds the canary MECHANISM and the owner's measurement,
      * not a default change. Flipping the default is a separate, data-driven decision (spec
      * Decision Gate 2). Even when ON, a model only reaches the GPU after passing the bundled
      * canary once on this device — and a failure latches that model to CPU permanently.
@@ -4065,7 +4065,7 @@ with:
         // GPU CANARY (3.6.0 Workstream C). A multilingual model reached the GPU for the first
         // time on this device: prove it decodes correctly BEFORE any user audio touches it. The
         // multilingual GPU failure mode is silent corruption, which no crash sentinel can catch
-        // (GpuPolicy.kt:53-64) — so one bundled ~1 s clip of spoken digits is transcribed and
+        // (the empirical-corruption docblock above GpuPolicy.isGpuSafeModel) — so one bundled ~1 s clip of spoken digits is transcribed and
         // matched by the pure rule in GpuCanaryPolicy.
         //
         // WHERE THIS RUNS: load() is reached from BOTH native executors — LocalWhisperEngine's

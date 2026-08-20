@@ -5,7 +5,7 @@ package com.whispereverywhere.transcription
  *
  * The multilingual GPU ban is EMPIRICAL, not theoretical: on the Fold 6 the Adreno OpenCL
  * backend decoded ggml-small-q5_1 to garbage tokens and ggml-large-v3-turbo-q5_0 to empty
- * transcriptions, with no crash to catch (GpuPolicy.kt:53-64). Crash sentinels cannot see
+ * transcriptions, with no crash to catch (the empirical-corruption docblock above GpuPolicy.isGpuSafeModel). Crash sentinels cannot see
  * silent corruption — so before a non-".en" model is allowed on the GPU, it transcribes a
  * bundled ~1 s clip of spoken digits and its output is checked HERE.
  *

@@ -53,7 +53,7 @@ class GpuCanaryPolicyTest {
 
     @Test
     fun emptyOutputFails() {
-        // The ggml-large-v3-turbo-q5_0 GPU signature (GpuPolicy.kt:53-64): empty transcriptions.
+        // The ggml-large-v3-turbo-q5_0 GPU signature (the empirical-corruption docblock above GpuPolicy.isGpuSafeModel): empty transcriptions.
         assertFalse(GpuCanaryPolicy.canaryPasses(""))
         assertFalse(GpuCanaryPolicy.canaryPasses("   "))
     }

@@ -16,8 +16,8 @@ one-download-no-choices UX (explicitly deferred, see Decision Gates).
   pause cut (`SpeechSegmenter.kt:47`) never fires without a clean pause below 250 RMS.
 - Multi pays a throwaway language-detect encoder pass EVERY segment when language = auto
   (`whisper_jni.cpp:251-257`, `whisper.cpp:6833-6836` + `:7041`), and is CPU-only ≤4 threads
-  forever (`GpuPolicy.isGpuSafeModel` requires ".en", `GpuPolicy.kt:65`, empirical corruption
-  gate documented at `:53-64`). Pro forces "en" (`FloatingBubbleService.kt:2076-2077`) and rides
+  forever (`GpuPolicy.isGpuSafeModel` requires ".en" — the empirical corruption gate documented
+  in its docblock). Pro forces "en" (`FloatingBubbleService.kt:2076-2077`) and rides
   the GPU.
 - Model switch never re-prewarms (`prewarm()` fills only an empty slot,
   `LocalWhisperEngine.kt:333`), so the first session after a switch pays the ~7 s load inline.
@@ -63,8 +63,9 @@ one-download-no-choices UX (explicitly deferred, see Decision Gates).
 
 ## Workstream C — GPU re-evaluation for multi (validation-gated, corruption-safe)
 
-The current ban is EMPIRICAL (garbage-token corruption on multilingual models via OpenCL,
-`GpuPolicy.kt:53-64`) — it is not lifted blind. Design: **canary-validated enablement**.
+The current ban is EMPIRICAL (garbage-token corruption on multilingual models via OpenCL — the
+empirical-corruption docblock above `GpuPolicy.isGpuSafeModel`) — it is not lifted blind. Design:
+**canary-validated enablement**.
 
 1. Ship a tiny bundled known-audio sample (~1 s, spoken digits) + its expected token set.
 2. First time a non-".en" model would use the GPU on this device: load on GPU, transcribe the
