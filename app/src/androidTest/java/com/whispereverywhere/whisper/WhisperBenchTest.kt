@@ -3,6 +3,8 @@ package com.whispereverywhere.whisper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.whispereverywhere.model.WhisperCatalog
+import com.whispereverywhere.transcription.GpuCanaryPolicy
+import com.whispereverywhere.transcription.NativeComputeGate
 import com.whispereverywhere.transcription.WhisperNativeBackend
 import com.whispereverywhere.util.AudioMath
 import com.whispereverywhere.util.WerMath
@@ -289,10 +291,17 @@ class WhisperBenchTest {
                 val rtf = wallMs.toDouble() / audioMs.toDouble()
                 rtfs += rtf
 
+                // Locale.US, like every other number this class prints: the default-locale
+                // .format() here would emit rtf=0,123 on a comma-decimal device and break the
+                // logcat read-back these lines exist for.
                 android.util.Log.i(
                     TAG,
-                    "BENCH stt tier=$tier slice=${seconds}s audioMs=$audioMs wallMs=$wallMs rtf=%.3f"
-                        .format(rtf),
+                    String.format(
+                        java.util.Locale.US,
+                        "BENCH stt tier=$tier slice=${seconds}s audioMs=$audioMs wallMs=$wallMs " +
+                            "rtf=%.3f",
+                        rtf,
+                    ),
                 )
 
                 // Only that text came back is asserted -- a bench that fails on a slow device is
@@ -306,7 +315,9 @@ class WhisperBenchTest {
             val sorted = rtfs.sorted()
             android.util.Log.i(
                 TAG,
-                "BENCH stt tier=$tier summary p50Rtf=%.3f p95Rtf=%.3f maxRtf=%.3f".format(
+                String.format(
+                    java.util.Locale.US,
+                    "BENCH stt tier=$tier summary p50Rtf=%.3f p95Rtf=%.3f maxRtf=%.3f",
                     percentile(sorted, 0.50),
                     percentile(sorted, 0.95),
                     sorted.last(),
@@ -314,6 +325,160 @@ class WhisperBenchTest {
             )
         } finally {
             WhisperNativeBackend.release(ctx)
+        }
+    }
+
+    /**
+     * Workstream C (3.6.0): per-tier GPU/CPU A-B for the owner's decision gate ("GPU default for
+     * multi flips only on canary + bench + owner-device evidence"). Bypasses GpuPolicy
+     * DELIBERATELY — both arms are forced via WhisperNative.init(useGpu) — because this measures
+     * the hardware, not the gate; no GpuPolicy sentinel is armed, and a GPU-arm crash kills only
+     * this instrument run. Every native call holds NativeComputeGate: the instrument shares the
+     * app process with the bubble/batch services.
+     *
+     * NOTE: on devices without OpenCL, ggml silently falls back to CPU inside the "GPU" arm —
+     * the two arms then measure the same backend (visible in the log via matching loadMs/rtf).
+     *
+     * One assertion beyond load success: the CPU arm must pass GpuCanaryPolicy.canaryPasses on
+     * the bundled clip — CPU is the trusted ground truth, so a failure there means the clip or
+     * the match rule is broken, and the production canary gate would be meaningless.
+     *
+     * RECORDING THE RESULT (spec Decision Gate 2): read `canaryGpu=true` only ALONGSIDE
+     * `gpuVsCpuWer` from the same line — the canary is a ~1 s corruption SCREEN, not an accuracy
+     * measurement, and only the WER against the CPU arm shows the GPU decodes real speech the same
+     * way. `canaryGpu=false` is equally a result: it reproduces the documented corruption and
+     * closes the question for that model+driver. Both arms' numbers go in the decision record.
+     *
+     * One narrow PRODUCTION failure mode to know when reading a device's prefs next to these
+     * numbers — it cannot happen in this harness, which arms no sentinel: in TranscriptionEngine
+     * the canary's transcribe RETURNS (its finally has already written gpu_validated=true, meaning
+     * "a GPU compute completed without killing us") a moment before GpuPolicy.onCanaryResult
+     * records the verdict. A load-time GPU crash inside that window leaves keyValidated=true with
+     * NO canary verdict recorded. That gap is inherent to two separate commits and is benign: the
+     * missing verdict keeps needsCanary() true, so the next launch re-runs the canary and the
+     * verdict it records clears the stale flag either way.
+     */
+    @Test
+    fun bench_gpu_vs_cpu_ab() {
+        val inst = InstrumentationRegistry.getInstrumentation()
+        val context = inst.targetContext
+        val modelsDir = File(context.filesDir, "models")
+        val installed = WhisperCatalog.entries.filter { model ->
+            val f = File(modelsDir, model.fileName)
+            f.exists() && WhisperCatalog.sizeWithinTolerance(f.length(), model.approxBytes)
+        }
+        assumeTrue(
+            "No installed whisper model found under ${modelsDir.absolutePath}; " +
+                "download one in-app first, then rerun this test",
+            installed.isNotEmpty(),
+        )
+
+        val jfk = wavDataChunk(inst.context.assets.open("jfk.wav").use { it.readBytes() })
+        assertTrue("jfk.wav decoded to no PCM samples", jfk.isNotEmpty())
+        // The PRODUCTION canary clip (main assets, Workstream C) — targetContext, not inst.context.
+        // SKIP rather than error when it is absent: the clip is an owner-supplied binary (C4) and
+        // assets.open would throw a bare FileNotFoundException outside any assumption, turning
+        // "the owner has not delivered the clip yet" into a red bench. Same assumeTrue idiom the
+        // installed-model check above uses.
+        val canaryBytes = runCatching {
+            context.assets.open("canary_digits.wav").use { it.readBytes() }
+        }.getOrNull()
+        assumeTrue("canary_digits.wav not bundled", canaryBytes != null)
+        val canaryPcm = wavDataChunk(canaryBytes!!)
+        assertTrue("canary_digits.wav decoded to no PCM samples", canaryPcm.isNotEmpty())
+
+        // One production-seam load/release first so ggml backends are registered exactly the way
+        // production registers them (ensureBackendsLoaded); the A-B arms then force init() flags.
+        run {
+            val warm = WhisperNativeBackend.load(
+                File(modelsDir, installed.first().fileName).absolutePath,
+            )
+            assertNotEquals("backend warm load failed", 0L, warm)
+            WhisperNativeBackend.release(warm)
+        }
+
+        for (model in installed) {
+            val path = File(modelsDir, model.fileName).absolutePath
+            val cpu = benchArm(model.id, path, useGpu = false, jfk = jfk, canaryPcm = canaryPcm)
+            val gpu = benchArm(model.id, path, useGpu = true, jfk = jfk, canaryPcm = canaryPcm)
+            val wer = WerMath.wer(cpu.sliceText, gpu.sliceText)
+            // Locale.US: these numbers are read back off logcat and compared, and a
+            // comma-decimal device locale would emit gpuVsCpuWer=0,123.
+            // canaryGpu rides on the SAME line as gpuVsCpuWer on purpose — the two are only
+            // meaningful together (see the RECORDING note above).
+            android.util.Log.i(
+                TAG,
+                String.format(
+                    java.util.Locale.US,
+                    "BENCH gpu-ab tier=${model.id} gpuVsCpuWer=%.3f canaryCpu=${cpu.canaryPassed} " +
+                        "canaryGpu=${gpu.canaryPassed} cpuRtf8s=%.3f gpuRtf8s=%.3f",
+                    wer, cpu.rtf8s, gpu.rtf8s,
+                ),
+            )
+            // The CPU arm's canary is a GATE, not a measurement, and that is deliberate: CPU is
+            // the trusted ground truth (the empirical ban is about the GPU only), and with the
+            // alias-tolerant match rule and the verified bundled clip in place, a CPU-arm canary
+            // failure means the HARNESS is broken — wrong clip, wrong asset, wrong rule. Every
+            // number this bench prints would then be meaningless, and the production canary gate
+            // it validates would be meaningless too. Failing loudly here is the correct outcome.
+            assertTrue(
+                "tier=${model.id}: CPU arm failed the canary — clip or match rule is broken",
+                cpu.canaryPassed,
+            )
+            // The GPU arm is a MEASUREMENT: pass and fail are both valid, recordable results.
+        }
+    }
+
+    private class ArmResult(val sliceText: String, val canaryPassed: Boolean, val rtf8s: Double)
+
+    private fun benchArm(
+        tier: String,
+        modelPath: String,
+        useGpu: Boolean,
+        jfk: ByteArray,
+        canaryPcm: ByteArray,
+    ): ArmResult {
+        val arm = if (useGpu) "gpu" else "cpu"
+        val t0 = System.currentTimeMillis()
+        val ctx = NativeComputeGate.serialized {
+            com.whispereverywhere.whisper.WhisperNative.init(modelPath, useGpu)
+        }
+        val loadMs = System.currentTimeMillis() - t0
+        assertNotEquals("init(useGpu=$useGpu) failed for tier=$tier", 0L, ctx)
+        android.util.Log.i(TAG, "BENCH gpu-ab tier=$tier arm=$arm loadMs=$loadMs")
+        try {
+            var rtf8s = 0.0
+            var text8s = ""
+            for (seconds in listOf(3, 8)) {
+                val samples = AudioMath.pcm16ToFloat(tileToDuration(jfk, seconds, SAMPLE_RATE))
+                val audioMs = samples.size.toLong() * 1000L / SAMPLE_RATE
+                val w0 = System.currentTimeMillis()
+                val text = NativeComputeGate.serialized {
+                    com.whispereverywhere.whisper.WhisperNative.transcribe(
+                        ctx, samples, "en", translate = false, vadModelPath = null,
+                    )
+                }
+                val wallMs = System.currentTimeMillis() - w0
+                val rtf = wallMs.toDouble() / audioMs
+                android.util.Log.i(
+                    TAG,
+                    String.format(
+                        java.util.Locale.US,
+                        "BENCH gpu-ab tier=$tier arm=$arm slice=${seconds}s wallMs=$wallMs rtf=%.3f",
+                        rtf,
+                    ),
+                )
+                if (seconds == 8) { rtf8s = rtf; text8s = text }
+            }
+            val canaryText = NativeComputeGate.serialized {
+                com.whispereverywhere.whisper.WhisperNative.transcribe(
+                    ctx, AudioMath.pcm16ToFloat(canaryPcm), "en",
+                    translate = false, vadModelPath = null,
+                )
+            }
+            return ArmResult(text8s, GpuCanaryPolicy.canaryPasses(canaryText), rtf8s)
+        } finally {
+            NativeComputeGate.serialized { com.whispereverywhere.whisper.WhisperNative.free(ctx) }
         }
     }
 
@@ -329,7 +494,10 @@ class WhisperBenchTest {
             val id = String(bytes, i, 4, Charsets.US_ASCII)
             val chunkSize = ByteBuffer.wrap(bytes, i + 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
             if (id == "data") {
-                return bytes.copyOfRange(i + 8, i + 8 + chunkSize)
+                // Clamped like CanaryAudio.dataChunk: an over-declared data size (real encoders
+                // emit them) must truncate, not throw — jfk.wav is ours, but the canary clip is
+                // an owner-supplied binary.
+                return bytes.copyOfRange(i + 8, minOf(i + 8 + chunkSize, bytes.size))
             }
             i += 8 + chunkSize + (chunkSize and 1)
         }
