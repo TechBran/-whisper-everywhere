@@ -916,4 +916,16 @@ class FallbackTranscriptionEngineTest {
         }
         assertEquals("one fatal costs ONE request — the latch held", 1, provider.payloads.size)
     }
+
+    // ---------------------------------------------------------------- the drain budget floor
+
+    @Test fun the_local_reserve_is_a_fifth_of_the_budget_capped_at_sixty_seconds() {
+        // WORKSTREAM F (spec 2026-08-19): the share of one shared awaitIdle budget reserved for
+        // the LOCAL drain — min(60 s, budget/5). FINALIZE_TIMEOUT_MS (300 s) hits the cap exactly.
+        assertEquals(60_000L, localDrainReserveMs(300_000L))
+        assertEquals(2_000L, localDrainReserveMs(10_000L))
+        assertEquals(1_600L, localDrainReserveMs(8_000L))
+        assertEquals("beyond 300 s the cap holds", 60_000L, localDrainReserveMs(3_600_000L))
+        assertEquals("a zero budget reserves nothing", 0L, localDrainReserveMs(0L))
+    }
 }

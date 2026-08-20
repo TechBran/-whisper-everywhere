@@ -52,6 +52,15 @@ object FallbackPolicy {
 }
 
 /**
+ * The minimum share of one [FallbackTranscriptionEngine.awaitIdle] budget reserved for the LOCAL
+ * drain: min(60 s, budget / 5). Rescued segments run on the local executor, and a cloud tail that
+ * consumed the whole shared deadline used to leave them a zero-width fence — this floor is what
+ * they keep (spec 2026-08-19 Workstream F). Top-level and pure so the arithmetic is testable
+ * without an engine.
+ */
+internal fun localDrainReserveMs(budgetMs: Long): Long = minOf(60_000L, budgetMs / 5L)
+
+/**
  * Runs [cloud] first and retries failed segments on [local], preserving seq so the orderer still
  * releases in order.
  *
