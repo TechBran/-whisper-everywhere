@@ -101,6 +101,24 @@ interface WhisperBackend {
      */
     fun detectedLanguage(ctx: Long): String? = null
 
+    /**
+     * Like [transcribe], additionally delivering the in-flight call's running text after each
+     * newly decoded native segment (3.6.0 Workstream D). [onNewSegment] receives the FULL text
+     * decoded so far in THIS call, on the SAME thread that invoked transcribeStreaming, while
+     * the native call is still executing — and, for the production backend, while this thread
+     * holds the process-global [NativeComputeGate]. Callers must therefore keep the closure
+     * lock-free and must never re-enter the backend from inside it. PREVIEW-ONLY: the returned
+     * String remains the only authoritative result. Default: plain [transcribe], zero deltas —
+     * every existing fake keeps 3.5.0 behavior untouched.
+     */
+    fun transcribeStreaming(
+        ctx: Long,
+        samples: FloatArray,
+        lang: String?,
+        useVad: Boolean = true,
+        onNewSegment: (String) -> Unit,
+    ): String = transcribe(ctx, samples, lang, useVad)
+
     fun release(ctx: Long)
 }
 
@@ -147,26 +165,45 @@ object WhisperNativeBackend : WhisperBackend {
     }
 
     override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String =
-        NativeComputeGate.serialized {
-            val vad = if (useVad) VadModel.path() else null   // batch passes false -> no native VAD
-            val validating = GpuPolicy.needsComputeValidation()
-            if (!validating) {
-                return@serialized WhisperNative.transcribe(
-                    ctx, samples, lang, translate = false, vadModelPath = vad
-                )
-            }
-            GpuPolicy.onGpuComputeStarting()
-            var ok = false
-            try {
-                val text = WhisperNative.transcribe(
-                    ctx, samples, lang, translate = false, vadModelPath = vad
-                )
-                ok = true
-                text
-            } finally {
-                GpuPolicy.onGpuComputeFinished(ok)
-            }
+        transcribeInternal(ctx, samples, lang, useVad, onNewSegment = null)
+
+    override fun transcribeStreaming(
+        ctx: Long,
+        samples: FloatArray,
+        lang: String?,
+        useVad: Boolean,
+        onNewSegment: (String) -> Unit,
+    ): String = transcribeInternal(ctx, samples, lang, useVad, onNewSegment)
+
+    // The one place the gate + GpuPolicy sentinel wrap a native whisper_full. [onNewSegment]
+    // (nullable) is invoked by the JNI trampoline on THIS thread while the gate is held —
+    // see WhisperBackend.transcribeStreaming's contract for why the closure must stay lock-free.
+    private fun transcribeInternal(
+        ctx: Long,
+        samples: FloatArray,
+        lang: String?,
+        useVad: Boolean,
+        onNewSegment: ((String) -> Unit)?,
+    ): String = NativeComputeGate.serialized {
+        val vad = if (useVad) VadModel.path() else null   // batch passes false -> no native VAD
+        val validating = GpuPolicy.needsComputeValidation()
+        if (!validating) {
+            return@serialized WhisperNative.transcribe(
+                ctx, samples, lang, translate = false, vadModelPath = vad, onNewSegment = onNewSegment
+            )
         }
+        GpuPolicy.onGpuComputeStarting()
+        var ok = false
+        try {
+            val text = WhisperNative.transcribe(
+                ctx, samples, lang, translate = false, vadModelPath = vad, onNewSegment = onNewSegment
+            )
+            ok = true
+            text
+        } finally {
+            GpuPolicy.onGpuComputeFinished(ok)
+        }
+    }
 
     // A single native field read, but still a native-ctx touch: it follows the house rule that
     // EVERY native entry point in this backend holds the process-global gate (see the comment

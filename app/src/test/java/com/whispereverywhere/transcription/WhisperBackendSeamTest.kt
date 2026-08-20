@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -20,5 +21,13 @@ class WhisperBackendSeamTest {
     @Test
     fun detectedLanguage_defaultsToNull_soNothingPinsAccidentally() {
         assertNull(MinimalBackend().detectedLanguage(1L))
+    }
+
+    @Test
+    fun transcribeStreaming_defaultsToPlainTranscribe_withNoDeltas() {
+        var callbacks = 0
+        val text = MinimalBackend().transcribeStreaming(1L, FloatArray(4), lang = null) { callbacks++ }
+        assertEquals("text", text)
+        assertEquals(0, callbacks)   // the default streams nothing: byte-for-byte 3.5.0 behavior
     }
 }
