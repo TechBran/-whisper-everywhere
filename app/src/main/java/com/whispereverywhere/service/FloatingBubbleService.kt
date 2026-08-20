@@ -272,8 +272,11 @@ class FloatingBubbleService : Service(),
     // Wall-clock cap per uncommitted stretch. Continuous loud audio (media playback, music) never
     // dips below the segmenter's silence floor, so its pause-based commit never fires — without
     // this cap the engine buffer grows unbounded and produces one giant end-of-session segment.
-    private val MAX_SEGMENT_WALL_MS = 15_000L
-    private var lastCommitWallMs = 0L
+    // 3.6.0 (Workstream A): the cap is first-commit-aware — the session's FIRST stretch cuts at
+    // 4 s so first visible text lands fast under continuous speech; every later stretch keeps the
+    // old 15 s. The 800 ms pause cut is untouched and still wins when a real pause happens.
+    // First-vs-later rule and per-session reset are JVM-pinned in SegmentCapPolicyTest.
+    private val segmentCapPolicy = SegmentCapPolicy()
 
     // Set true when any transcription text is produced during a recording session; drives the
     // "No speech detected" feedback on stop so the user is not left with silent nothing.
@@ -1604,11 +1607,17 @@ class FloatingBubbleService : Service(),
             val now = System.currentTimeMillis()
             if (speechSegmenter.onAmplitude(amp, now)) {
                 android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
-                lastCommitWallMs = now
+                segmentCapPolicy.onCommit(now)
                 engine.commit()
-            } else if (now - lastCommitWallMs >= MAX_SEGMENT_WALL_MS) {
-                android.util.Log.i("WE-DIAG", "wall-clock cap -> commit")
-                lastCommitWallMs = now
+            } else if (segmentCapPolicy.capExceeded(now)) {
+                // currentCapMs() is read BEFORE onCommit flips first->later, so the line names
+                // the cap that actually fired (4000ms for the session's first LOCAL stretch;
+                // cloud sessions closed the first-cap window at onOpen and always read 15000ms).
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "wall-clock cap -> commit (cap=${segmentCapPolicy.currentCapMs()}ms)",
+                )
+                segmentCapPolicy.onCommit(now)
                 engine.commit()
                 speechSegmenter.reset()
             }
@@ -1708,7 +1717,7 @@ class FloatingBubbleService : Service(),
         // turn mid-stream — the same mechanism stopRecording's tail commit uses.
         transcriptionEngine?.commit()
         speechSegmenter.reset()
-        lastCommitWallMs = System.currentTimeMillis()
+        segmentCapPolicy.onCommit(System.currentTimeMillis())
         when (activeSource) {
             com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()
             com.whispereverywhere.audio.ActiveSource.PLAYBACK -> stopPlaybackCapturer()
@@ -2086,7 +2095,20 @@ class FloatingBubbleService : Service(),
                 serviceScope.launch(Dispatchers.Main) {
                     if (currentState != BubbleState.CONNECTING) return@launch
                     speechSegmenter.reset()
-                    lastCommitWallMs = System.currentTimeMillis()
+                    // Per-session reset: the FIRST-segment 4 s cap applies again from here.
+                    val sessionStartMs = System.currentTimeMillis()
+                    segmentCapPolicy.onSessionStart(sessionStartMs)
+                    // 3.6.0 (Workstream A) — the 4 s first cap is LOCAL-ONLY. This VAD/cap path
+                    // also runs for CLOUD_WITH_FALLBACK (runClientVad is true for it; only
+                    // CLOUD_LIVE sets sessionIsLive), and there an extra first segment means an
+                    // extra provider round-trip, an extra fallback mirror and an extra BILLABLE
+                    // request — while the user's first-text wait is the network, not inference.
+                    // Closing the first-cap window immediately (the same "any commit ends it"
+                    // rule SegmentCapPolicyTest pins) leaves cloud sessions on the pre-existing
+                    // 15 s cap for every segment: byte-identical to 3.5.0. cloudWrapper is
+                    // already resolved here — resolveTranscriptionEngine() ran in startRecording,
+                    // and it is the same cloud predicate stopRecording uses.
+                    if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionStartMs)
                     val started = startAudioInput()
                     android.util.Log.i("WE-DIAG", "recorder start success=${started.isSuccess}")
                     if (started.isFailure) {
