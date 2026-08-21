@@ -318,17 +318,42 @@ class LocalWhisperEngine(
                         }
                     }
                 }
-                // Permanent per-segment RTF instrumentation (3.6.0, Workstream A3): the number
-                // the tier-consolidation and GPU decision gates read, measured on the owner's
+                // Permanent per-segment RTF instrumentation (3.6.0, Workstream A3; extended by
+                // 3.7 Workstream F with seq and the native cost counters): the number the
+                // tier-consolidation, GPU and cadence decision gates read, measured on the owner's
                 // device instead of estimated. Includes retry time deliberately — it is the wall
                 // cost the user actually paid for this segment. Numbers only, never transcript
                 // content. Grep "segment-timing:".
+                //
+                // transcribeMs is taken BEFORE the counters are read, so the diagnostic query can
+                // never inflate the number it is annotating. lastSegmentStats describes the call
+                // that just returned and is null for any backend without native counters, in
+                // which case the line degrades to the seq-only form rather than forging zeros.
+                //
+                // READ ONCE, HERE, AND NOWHERE ELSE. The position is the whole correctness
+                // argument, on three axes:
+                //   - AFTER the retry returns, on this same executor thread: the counters are a
+                //     one-slot snapshot tagged with the ctx that last ran, so they describe the
+                //     LAST attempt (see SegmentTiming.line's retry paragraph). A read hoisted
+                //     above or inside retry.retry{} would report a previous segment's encoder
+                //     cost with nothing about the numbers looking wrong.
+                //   - On the SUCCESS path only, never in a finally. A transcribe that threw is
+                //     handled below as Lost, and its counters are — correctly — invalidated by
+                //     the backend seam; emitting there would pair a timing line with a segment
+                //     that produced no transcript.
+                //   - A NULL answer after a SUCCESSFUL transcribe is NORMAL, not an anomaly: the
+                //     native counters are process-global, so an interleaved batch chunk can
+                //     re-tag the slot between the two calls. The line simply omits the fields.
+                //     Never warn, never assert, never re-read — a second read is a second answer.
+                val transcribeMs = (System.nanoTime() - transcribeStartNs) / 1_000_000
+                val nativeStats = backend.lastSegmentStats(ctx)
                 android.util.Log.i(
                     "WE-DIAG",
                     SegmentTiming.line(
                         seq = seq,
                         audioMs = SegmentTiming.audioMs(samples.size),
-                        transcribeMs = (System.nanoTime() - transcribeStartNs) / 1_000_000,
+                        transcribeMs = transcribeMs,
+                        stats = nativeStats,
                     ),
                 )
                 // Strip whisper's non-speech markers ([BLANK_AUDIO], [ Silence ], (music), …) so
