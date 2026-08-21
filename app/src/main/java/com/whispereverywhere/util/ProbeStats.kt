@@ -4,7 +4,8 @@ package com.whispereverywhere.util
  * Per-frame cost and overrun accounting for the inline Silero probe (3.7 Workstream E3; surfaced
  * by Workstream F's `probe:` line).
  *
- * The probe runs INLINE on the capture thread, 31.25 times a second, against a 32 ms budget.
+ * The probe runs INLINE on the capture thread, 31.25 times a second, inside a 32 ms frame period —
+ * of which the probe's own cost budget is 8 ms ([budgetUs]), and `overruns` counts against THAT.
  * The decision to keep it there instead of handing frames to a dedicated thread was explicitly
  * conditional on measuring whether it ever misses — this is that measurement, and
  * `overruns` is the number the promotion decision reads. Owner acceptance: overruns = 0 on the
@@ -24,8 +25,28 @@ package com.whispereverywhere.util
  * ~31 times a second, uncontended.
  */
 class ProbeStats(
-    /** [PROBE_BUDGET_MS] from the tuning object, in microseconds. A frame strictly ABOVE it overruns. */
+    /**
+     * The probe's own cost budget, in microseconds. A frame strictly ABOVE it counts as an
+     * overrun; a frame exactly at it does not.
+     *
+     * This is `EndpointerTuning.PROBE_BUDGET_MS` (8 ms) converted at the wiring site — Task C10
+     * passes it. Named in plain text rather than as a KDoc link on purpose: C10 binds the two
+     * without ever touching this file, which takes the budget as a parameter precisely so that it
+     * carries no dependency on Workstream C. A KDoc link to that symbol would name something this
+     * file cannot see, and would stay unresolvable for good rather than only until C1 lands.
+     */
     private val budgetUs: Long,
+    /**
+     * How often [record] may signal that a `probe:` line is due. MUST be positive: at zero or
+     * negative, every frame after the arming one reports a line as due, which is a log write at
+     * 31.25 Hz on the capture thread — precisely the cost this class exists to measure, inflicted
+     * by the measurement itself.
+     *
+     * Not validated, because it is not reachable today: the only production construction is Task
+     * C10's, and it takes this default. If it ever becomes configurable — a debug toggle, a
+     * remote-config value, a per-tier override — add `require(emitIntervalMs > 0L)` here. The
+     * constructor is the last point at which a bad value is still cheap to reject.
+     */
     private val emitIntervalMs: Long = EMIT_INTERVAL_MS,
 ) {
     // Index i counts frames in [i*16, (i+1)*16) us; index BUCKETS is the overflow bucket.
@@ -39,6 +60,12 @@ class ProbeStats(
      * Records one probe call and returns true when a `probe:` line is due (at most one per
      * [emitIntervalMs]). The first frame only ARMS the clock — a line on frame one would report
      * a one-sample distribution.
+     *
+     * @param nowMs a WALL clock (`System.currentTimeMillis()` at the call site), read only to pace
+     *   the emit cadence and never to measure cost. A wall clock can step — NTP, a manual clock
+     *   change — and the worst a step does here is emit one line early or hold one back by the size
+     *   of the step. The counters and the histogram are driven entirely by [elapsedUs], so no clock
+     *   movement can corrupt the numbers the line reports.
      */
     @Synchronized
     fun record(elapsedUs: Long, nowMs: Long): Boolean {
@@ -65,8 +92,8 @@ class ProbeStats(
 
     /**
      * The lower edge of the bucket holding the [q]-quantile, in microseconds; 0 when no frame was
-     * ever recorded. Quantisation is 16 us against an expected 200-1500 us cost — three orders of
-     * magnitude below the 8 ms budget the number is read against.
+     * ever recorded. Quantisation is 16 us against an expected 200-1500 us cost — a factor of 500
+     * below the 8 ms budget the number is read against.
      */
     @Synchronized
     fun percentileUs(q: Double): Long {
