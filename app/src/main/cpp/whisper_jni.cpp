@@ -138,6 +138,18 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
             g_vad_ctx = nullptr;
         }
         whisper_vad_context_params vcp = whisper_vad_default_context_params();
+        // n_threads = 1 is a straight latency win, not a tuning preference.
+        // ggml_backend_cpu_set_threadpool is never called for a VAD context, so cpu_ctx->threadpool
+        // is NULL and ggml_graph_compute takes the disposable path: it spawns + joins n_threads-1
+        // real pthreads on EVERY graph compute (ggml-cpu.c:3319-3324) — and that compute is inside
+        // the per-window frame loop (whisper.cpp:5164), once per 512 samples. At the default 4 this
+        // costs 375 create/join cycles per 4 s commit and 1,407 per 15 s commit, for a ~74-node /
+        // ~1.36 MFLOP graph with a ggml_barrier between every node, which cannot benefit from 4-way
+        // splitting anyway. whisper_jni.cpp already encodes the softer version of this lesson for
+        // whisper itself below ("extra efficiency-core threads a NET LOSS"); VAD needs the hard one.
+        // FIELD NAME: n_threads (whisper.h:683). The initializer comment at whisper.cpp:4445 says
+        // ".n_thread" — that is the comment, not the field, and it does not compile.
+        vcp.n_threads = 1;
         g_vad_ctx = whisper_vad_init_from_file_with_params(vadPath.c_str(), vcp);
         g_vad_path = vadPath;
         if (g_vad_ctx == nullptr) {
