@@ -295,7 +295,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 ### Task N2: B — demote the five per-call streaming-VAD logs in the fork
 
 **Files:**
-- Modify `C:/Users/bastr/OneDrive/Desktop/whisper Everywhere/app/src/main/cpp/whisper.cpp/src/whisper.cpp` (git **submodule** `TechBran/whisper.cpp` @ branch `we/v1.9.1-android`) — five lines inside `whisper_vad_detect_speech_no_reset`, currently `:5113`, `:5114`, `:5117`, `:5143`, `:5176`
+- Modify `C:/Users/bastr/OneDrive/Desktop/whisper Everywhere/app/src/main/cpp/whisper.cpp/src/whisper.cpp` (git **submodule** `TechBran/whisper.cpp` @ branch `we/v1.9.1-android`) — five lines inside `whisper_vad_detect_speech_no_reset`, currently `:5119`, `:5120`, `:5123`, `:5149`, `:5182`
 - Modify `C:/Users/bastr/OneDrive/Desktop/whisper Everywhere/app/src/test/java/com/whispereverywhere/whisper/NativeVadSourceContractTest.kt` — add the `fork` helper and one `@Test`
 
 **Interfaces:**
@@ -459,7 +459,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 - Consumes: `whisper_vad_free(whisper_vad_context*)` (whisper.h:729). `LOGI` (whisper_jni.cpp:16). Existing statics `g_vad_mutex` / `g_vad_ctx` (`:126-127`) — referenced only to be kept at arm's length.
 - Produces (C++ file scope, consumed by Tasks N4 and N5): `static std::mutex g_probe_mutex;` · `static whisper_vad_context * g_probe_ctx = nullptr;`
 - Produces (JNI export, consumed by Task N6): `Java_com_whispereverywhere_whisper_WhisperNative_vadProbeFree(JNIEnv*, jobject) -> void`
-- Produces (test helper, consumed by Tasks N4 and N5): `NativeVadSourceContractTest.jniFunctionBody(name: String): String`
+- Produces (test helpers, consumed by Tasks N4 and N5): `NativeVadSourceContractTest.jniFunctionBody(name: String): String` · `NativeVadSourceContractTest.containsLiveLine(scope: String, needle: String): Boolean` (a presence check that a commented-out line cannot satisfy)
 
 **This is the A.4 task.** Its primary deliverable is the recorded safety argument for the one whisper call in the process that is **not** wrapped by `NativeComputeGate`; the state declarations and `vadProbeFree` land with it so the intermediate tree compiles with every declared symbol used (no `-Wunused-variable`; `app/src/main/cpp/CMakeLists.txt` sets no `-Werror`, but leaving a clean tree at every task boundary is cheaper than arguing about it).
 
@@ -472,21 +472,72 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
     private fun jniFunctionBody(name: String): String {
         val marker = "Java_com_whispereverywhere_whisper_WhisperNative_$name("
         val start = jni.indexOf(marker)
-        if (start < 0) throw AssertionError("JNI export $name is not declared in whisper_jni.cpp")
-        return jni.substring(start).substringBefore("\n}\n")
+        assertTrue(
+            "JNI export $name is not declared in whisper_jni.cpp. indexOf() returns -1 when the " +
+                "marker is absent, so substring(start) would silently rebase the scope to the top " +
+                "of the file, and every claim about $name's body would then be answered by " +
+                "unrelated code hundreds of lines away instead of failing here.",
+            start >= 0
+        )
+        val body = jni.substring(start)
+        assertTrue(
+            "no column-0 \"\\n}\\n\" follows \"$marker\". substringBefore() returns its RECEIVER " +
+                "when the delimiter is absent, so a mangled or re-indented closing brace silently " +
+                "widens the scope past $name into the FOLLOWING function (and onward until some " +
+                "later brace does sit at column 0). Presence checks then pass on a neighbour's " +
+                "code, and \"must not touch g_vad_ctx\" fails for a reason unrelated to $name.",
+            body.contains("\n}\n")
+        )
+        return body.substringBefore("\n}\n")
     }
+
+    /**
+     * True when [needle] appears on a line of LIVE code inside [scope]; a commented-out line does
+     * not count. Same lesson as the log-demotion guard: `// g_probe_ctx = nullptr;` left behind by
+     * a refactor would keep a plain contains() green while the dangling pointer it describes is
+     * real. Available to Tasks N4 and N5.
+     */
+    private fun containsLiveLine(scope: String, needle: String): Boolean =
+        scope.lineSequence().any { line ->
+            val trimmed = line.trimStart()
+            line.contains(needle) &&
+                !trimmed.startsWith("//") &&
+                !trimmed.startsWith("/*") &&
+                !trimmed.startsWith("*")
+        }
 ```
 
 ```kotlin
     @Test
     fun probeSurface_recordsTheComputeGateBypassArgument_whereTheBypassActuallyLives() {
-        val header = jni.substringAfter("3.7 Workstream A").substringBefore("g_probe_mutex")
+        val banner = "3.7 Workstream A"
+        val terminator = "g_probe_mutex"
+        assertTrue(
+            "the section banner \"$banner\" is missing from whisper_jni.cpp. substringAfter() " +
+                "returns its RECEIVER when the delimiter is absent, so the scope below would " +
+                "silently become everything from the top of the file up to the first " +
+                "\"$terminator\" — and the whole point of this test is that the argument lives AT " +
+                "the probe surface, not merely somewhere in the translation unit.",
+            jni.contains(banner)
+        )
+        val afterBanner = jni.substringAfter(banner)
+        assertTrue(
+            "\"$terminator\" does not follow \"$banner\". substringBefore() returns its receiver " +
+                "when the delimiter is absent, so the scope would silently widen to end-of-file " +
+                "and the claims below could be satisfied by prose written anywhere at all.",
+            afterBanner.contains(terminator)
+        )
+        val header = afterBanner.substringBefore(terminator)
         listOf(
             "OUTSIDE NativeComputeGate",
             "whisper.cpp:4671-4674",
             "own CPU backend",
             "FAIR ReentrantLock",
             "2.6 MB",
+            // "2.6 MB" alone is satisfied by the RSS sentence higher up in the banner, so deleting
+            // the memory REASON from the bypass argument leaves the figure — and the test — intact.
+            // This pins the argument the figure is doing work in, not just the figure.
+            "is not an OOM risk",
         ).forEach { claim ->
             assertTrue(
                 "NativeComputeGate wraps EVERY whisper call in this process; the probe alone " +
@@ -516,9 +567,12 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
             Regex("""static\s+std::mutex\s+g_probe_mutex;""").containsMatchIn(jni)
         )
         val free = jniFunctionBody("vadProbeFree")
-        assertTrue("vadProbeFree must take g_probe_mutex", free.contains("g_probe_mutex"))
+        assertTrue("vadProbeFree must take g_probe_mutex", containsLiveLine(free, "g_probe_mutex"))
         assertTrue("vadProbeFree must not touch g_vad_ctx", !free.contains("g_vad_ctx"))
-        assertTrue("vadProbeFree must be null-safe and idempotent", free.contains("g_probe_ctx = nullptr;"))
+        assertTrue(
+            "vadProbeFree must be null-safe and idempotent",
+            containsLiveLine(free, "g_probe_ctx = nullptr;")
+        )
     }
 ```
 
@@ -663,17 +717,20 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
     @Test
     fun probeContext_pinsOneThread_soFrameRateProbingDoesNotForkPthreadsThirtyTimesASecond() {
         val init = jniFunctionBody("vadProbeInit")
+        val pin = Regex("""(?m)^[ \t]*vcp\.n_threads = 1;""").find(init)
         assertTrue(
             "vadProbeInit must set vcp.n_threads = 1. This is the highest-leverage single line " +
                 "in Workstream A: at 31.25 frames/second the default 4 means 93.75 pthread " +
                 "create/join cycles per second, continuously, for a ~74-node / ~1.36 MFLOP graph " +
                 "with a ggml_barrier between every node that cannot be split 4 ways at all.",
-            init.contains("vcp.n_threads = 1;")
+            pin != null
         )
         assertTrue(
-            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises",
-            init.indexOf("vcp.n_threads = 1;") <
-                init.indexOf("whisper_vad_init_from_file_with_params")
+            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises. The index comes " +
+                "from the line-anchored regex match, not indexOf(\"vcp.n_threads = 1;\"): a literal " +
+                "search would happily measure the position of a COMMENTED-OUT pin and report the " +
+                "ordering of a line that never executes.",
+            pin!!.range.first < init.indexOf("whisper_vad_init_from_file_with_params")
         )
         assertTrue(
             "the field is n_threads (whisper.h:683), not the .n_thread of the initializer comment",
@@ -684,7 +741,13 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
     @Test
     fun probeInit_isIdempotent_soARestartedSessionCannotLeakTheEarlierContext() {
         val init = jniFunctionBody("vadProbeInit")
-        val freeAt = init.indexOf("whisper_vad_free(g_probe_ctx);")
+        val free = Regex("""(?m)^[ \t]*whisper_vad_free\(g_probe_ctx\);""").find(init)
+        assertTrue(
+            "vadProbeInit must call whisper_vad_free(g_probe_ctx) on a LIVE line: a commented-out " +
+                "free satisfies indexOf() while leaking the context it claims to release.",
+            free != null
+        )
+        val freeAt = free!!.range.first
         val createAt = init.indexOf("whisper_vad_init_from_file_with_params")
         assertTrue(
             "vadProbeInit must free any existing probe context BEFORE creating a new one — it is " +
@@ -3457,7 +3520,7 @@ class EndpointerTuningTest {
     }
 
     @Test fun the_release_threshold_is_the_native_schmitt_hysteresis() {
-        // whisper.cpp:5252 -> neg_threshold = threshold - 0.15f
+        // whisper.cpp:5258 -> neg_threshold = threshold - 0.15f
         assertEquals(0.15f, EndpointerTuning.ONSET_THRESHOLD - EndpointerTuning.RELEASE_THRESHOLD, 1e-6f)
     }
 
@@ -3499,7 +3562,7 @@ package com.whispereverywhere.audio
  * token layer, and endpointing has no token layer.
  *
  * There is deliberately NO smoothing/EMA constant. The reference implementation does not smooth
- * (`whisper.cpp:5211-5346`): the Schmitt trigger, the minimum speech duration and the hangover
+ * (`whisper.cpp:5217-5352`): the Schmitt trigger, the minimum speech duration and the hangover
  * already low-pass the sequence. An EMA would add lag and a second thing to tune.
  */
 object EndpointerTuning {
@@ -3535,7 +3598,7 @@ object EndpointerTuning {
     const val ONSET_THRESHOLD = 0.50f
 
     /**
-     * Schmitt hysteresis, native `neg_threshold = threshold - 0.15f` (`whisper.cpp:5252`). This is
+     * Schmitt hysteresis, native `neg_threshold = threshold - 0.15f` (`whisper.cpp:5258`). This is
      * the exact mechanism whose absence causes today's 251-499 RMS dead band
      * (`SpeechSegmenter.kt:18-26`). Widen to 0.30 if mid-word splits appear in A/B.
      */
@@ -3558,7 +3621,7 @@ object EndpointerTuning {
 
     /**
      * A dip below [RELEASE_THRESHOLD] lasting longer than this is remembered as a cut point for the
-     * wall-cap path (native `min_silence_samples_at_max_speech`, `whisper.cpp:5249`). At the 32 ms
+     * wall-cap path (native `min_silence_samples_at_max_speech`, `whisper.cpp:5255`). At the 32 ms
      * frame cadence the first qualifying frame is the 4th of the dip (128 ms > 98 ms).
      */
     const val MICRO_PAUSE_MS = 98L
@@ -3783,7 +3846,7 @@ package com.whispereverywhere.audio
  * never fire, session behaviour is byte-identical to 3.6.0 — that is the whole de-risking argument.
  *
  * ## The state machine
- * Ported from `whisper.cpp:5270-5340` (the vendored Silero post-processor), including two details
+ * Ported from `whisper.cpp:5276-5346` (the vendored Silero post-processor), including two details
  * that are easy to lose:
  *  - **The dead band.** A frame with `RELEASE <= p < ONSET` neither clears the pending end nor
  *    counts as silence. Only a frame at or above `ONSET` resets the hangover clock. That is what
@@ -4035,7 +4098,7 @@ replace the `onProb` body (keeping its KDoc):
     private fun onProb(p: Float, nowMs: Long): Boolean {
         if (p < 0f) return false
 
-        // whisper.cpp:5277-5290. A frame at or above ONSET opens the gate if it is closed. (The
+        // whisper.cpp:5283-5296. A frame at or above ONSET opens the gate if it is closed. (The
         // pending-end clear this branch also performs lands with the hangover.)
         if (p >= EndpointerTuning.ONSET_THRESHOLD) {
             if (!speaking) {
@@ -4047,7 +4110,7 @@ replace the `onProb` body (keeping its KDoc):
         }
 
         // THE DEAD BAND (RELEASE <= p < ONSET) is deliberately inert: it is neither an onset nor a
-        // silence. The native guards at :5277 and :5316 use DIFFERENT thresholds and the gap
+        // silence. The native guards at :5283 and :5322 use DIFFERENT thresholds and the gap
         // between them falls through both — that is the Schmitt hysteresis, and its absence is
         // exactly what strands today's amplitude segmenter in the 251-499 RMS band.
         if (p >= EndpointerTuning.RELEASE_THRESHOLD) return false
@@ -4083,7 +4146,7 @@ git add app/src/main/java/com/whispereverywhere/audio/SileroEndpointer.kt app/sr
 feat(vad): Schmitt trigger + the inert dead band + an honest hasPendingSpeech()
 
 0.50 opens the gate, 0.35 is the release, and the band between them is deliberately
-inert — neither onset nor silence, exactly as whisper.cpp:5277/5316 guard it with
+inert — neither onset nor silence, exactly as whisper.cpp:5283/5322 guard it with
 two different thresholds. That hysteresis is the mechanism whose absence strands
 today's segmenter in the 251-499 RMS dead band.
 
@@ -4165,7 +4228,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
     }
 
     @Test fun a_burst_under_MIN_SPEECH_MS_is_discarded_without_a_commit() {
-        // whisper.cpp:5331 — too short to be an utterance: drop it and re-arm, no segment emitted.
+        // whisper.cpp:5337 — too short to be an utterance: drop it and re-arm, no segment emitted.
         // The native filter would drop it before whisper_full anyway; agreeing here saves the call.
         val probe = FakeProbe()
         val ep = SileroEndpointer(probe = probe)
@@ -4249,7 +4312,7 @@ replace the `onProb` body (keeping its KDoc):
     private fun onProb(p: Float, nowMs: Long): Boolean {
         if (p < 0f) return false
 
-        // whisper.cpp:5277-5290. A frame at or above ONSET clears the pending end — the HARD reset
+        // whisper.cpp:5283-5296. A frame at or above ONSET clears the pending end — the HARD reset
         // that makes the hangover a timer rather than a decay — and opens the gate if it is closed.
         if (p >= EndpointerTuning.ONSET_THRESHOLD) {
             tempEndMs = 0L
@@ -4262,20 +4325,20 @@ replace the `onProb` body (keeping its KDoc):
         }
 
         // THE DEAD BAND (RELEASE <= p < ONSET) is deliberately inert: it is neither an onset nor a
-        // silence. The native guards at :5277 and :5316 use DIFFERENT thresholds and the gap
+        // silence. The native guards at :5283 and :5322 use DIFFERENT thresholds and the gap
         // between them falls through both — that is the Schmitt hysteresis, and its absence is
         // exactly what strands today's amplitude segmenter in the 251-499 RMS band. Because it does
         // not clear the pending end, the hangover keeps counting straight through a mumble.
         if (p >= EndpointerTuning.RELEASE_THRESHOLD) return false
 
-        // whisper.cpp:5316-5339 — silence after speech.
+        // whisper.cpp:5322-5345 — silence after speech.
         if (!speaking) return false
         if (tempEndMs == 0L) tempEndMs = nowMs
         if (nowMs - tempEndMs < EndpointerTuning.HANGOVER_MS) return false
 
         val speechMs = tempEndMs - speechStartMs
         if (speechMs <= EndpointerTuning.MIN_SPEECH_MS) {
-            // whisper.cpp:5331 — too short to be an utterance. Drop it and re-arm; the native VAD
+            // whisper.cpp:5337 — too short to be an utterance. Drop it and re-arm; the native VAD
             // filter would drop it before whisper_full anyway, so committing would buy an
             // EmptyExpected round trip and nothing else. pendingSpeech is NOT cleared: the audio is
             // still in the engine's buffer, and the cap-policy branch needs to know that.
@@ -4326,7 +4389,7 @@ feat(vad): the hangover hard timer, min-speech, and the endpoint commit
 500 ms of trailing silence below RELEASE ends an utterance — measured from the
 FIRST sub-RELEASE frame and reset only by a frame back at or above ONSET, so a
 mumble in the dead band cannot stall it. That is the hard-timer behaviour ported
-verbatim from whisper.cpp:5316-5339, and it is why the dead band had to be inert.
+verbatim from whisper.cpp:5322-5345, and it is why the dead band had to be inert.
 
 A burst under 300 ms is discarded rather than committed: the native filter drops
 <250 ms before whisper_full, so committing would buy an empty round trip. A commit
@@ -4366,7 +4429,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
         assertEquals(Endpointer.NO_CUT_POINT, ep.pendingCutPointMs())
         pump.run(0.1f, 3)                    // 32, 64, 96 ms old — 96 is not > 98
         assertEquals(
-            "the 98 ms floor is exclusive, as in whisper.cpp:5322",
+            "the 98 ms floor is exclusive, as in whisper.cpp:5328",
             Endpointer.NO_CUT_POINT,
             ep.pendingCutPointMs(),
         )
@@ -4411,7 +4474,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
     }
 
     @Test fun a_discarded_short_burst_keeps_the_remembered_pause() {
-        // Deliberate deviation from whisper.cpp:5335, which clears prev_end here as bookkeeping for
+        // Deliberate deviation from whisper.cpp:5341, which clears prev_end here as bookkeeping for
         // its own max-speech split. We keep it: this field exists ONLY to give the wall cap a real
         // cut point, and a 200 ms cough after a good pause must not erase it.
         val probe = FakeProbe()
@@ -4452,7 +4515,7 @@ hangover check, so that block reads:
 ```kotlin
         if (!speaking) return false
         if (tempEndMs == 0L) tempEndMs = nowMs
-        // MICRO-PAUSE MEMORY (whisper.cpp:5322-5324). Once this dip has outlived the native 98 ms
+        // MICRO-PAUSE MEMORY (whisper.cpp:5328-5330). Once this dip has outlived the native 98 ms
         // floor, remember where it STARTED. Silero's own answer to "speech forever" never cuts
         // blind — it cuts at the last such point — and with no_context = true that is a strictly
         // better boundary than an arbitrary millisecond, at the same latency bound. Kept across a
@@ -4504,7 +4567,7 @@ arbitrary millisecond the cap landed on. With no_context = true a mid-word cut i
 permanently unrepairable, so this is free quality at the same latency bound.
 
 Kept across a re-onset (the only boundary a continuous stretch has) and across a
-discarded short burst — a deliberate deviation from whisper.cpp:5335, which clears
+discarded short burst — a deliberate deviation from whisper.cpp:5341, which clears
 it there as bookkeeping for its own split path. Cleared by a commit or a reset.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>

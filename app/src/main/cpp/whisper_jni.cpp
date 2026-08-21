@@ -244,15 +244,16 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
 //
 // Thread-safety here is g_probe_mutex, which guards ONLY these four functions and the probe
 // context. It is never taken while g_vad_mutex is held and never the reverse, so the two VAD
-// paths cannot deadlock against each other.
+// paths cannot deadlock against each other - and it is a plain std::mutex: no probe function may
+// call another while holding it.
 // ---------------------------------------------------------------------------------------------
 
 static std::mutex             g_probe_mutex;
 static whisper_vad_context  * g_probe_ctx = nullptr;
 
 // Releases the probe context (~2.6 MB). Idempotent, and safe after a failed vadProbeInit.
-// Blocks briefly if a frame is in flight, which is why the caller runs it on the capture-thread
-// teardown path rather than on Main.
+// Blocks briefly if a frame is in flight, so it MUST be called on the capture-thread teardown
+// path, never Main.
 extern "C" JNIEXPORT void JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_vadProbeFree(
         JNIEnv * /*env*/, jobject /* this */) {

@@ -84,9 +84,10 @@ class NativeVadSourceContractTest {
         val body = jni.substring(start)
         assertTrue(
             "no column-0 \"\\n}\\n\" follows \"$marker\". substringBefore() returns its RECEIVER " +
-                "when the delimiter is absent, so the scope would silently widen to everything " +
-                "from $name to end-of-file — which would turn a \"must not touch g_vad_ctx\" " +
-                "assertion into a whole-file search that fails for a reason unrelated to $name.",
+                "when the delimiter is absent, so a mangled or re-indented closing brace silently " +
+                "widens the scope past $name into the FOLLOWING function (and onward until some " +
+                "later brace does sit at column 0). Presence checks then pass on a neighbour's " +
+                "code, and \"must not touch g_vad_ctx\" fails for a reason unrelated to $name.",
             body.contains("\n}\n")
         )
         return body.substringBefore("\n}\n")
@@ -243,6 +244,10 @@ class NativeVadSourceContractTest {
             "own CPU backend",
             "FAIR ReentrantLock",
             "2.6 MB",
+            // "2.6 MB" alone is satisfied by the RSS sentence higher up in the banner, so deleting
+            // the memory REASON from the bypass argument leaves the figure — and the test — intact.
+            // This pins the argument the figure is doing work in, not just the figure.
+            "is not an OOM risk",
         ).forEach { claim ->
             assertTrue(
                 "NativeComputeGate wraps EVERY whisper call in this process; the probe alone " +
