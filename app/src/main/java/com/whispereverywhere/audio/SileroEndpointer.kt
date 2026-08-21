@@ -77,6 +77,16 @@ class SileroEndpointer(
     @Volatile private var pendingSpeech = false
 
     /**
+     * The PENDING END: `nowMs` of the FIRST sub-RELEASE frame of the current dip, 0 when the gate
+     * is not in one. Native `temp_end` (`whisper.cpp:5323-5324`).
+     *
+     * Stamped ONCE per dip and cleared by exactly one thing — a frame back at or above ONSET. That
+     * is the whole hard-timer mechanism: the hangover is `nowMs - tempEndMs`, wall time, so neither
+     * a dead-band mumble nor a run of no-verdict frames can push it back.
+     */
+    @Volatile private var tempEndMs = 0L
+
+    /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
      * @param amp the chunk's RMS, ignored here — it exists for the amplitude fallback that shares
      *        this call shape.
@@ -113,7 +123,8 @@ class SileroEndpointer(
 
     /**
      * True when speech has been seen since the last commit/reset: at least
-     * [EndpointerTuning.MIN_SPEECH_MS] of frames at or above [EndpointerTuning.ONSET_THRESHOLD].
+     * [EndpointerTuning.MIN_SPEECH_MS] has elapsed since a frame at or above
+     * [EndpointerTuning.ONSET_THRESHOLD] opened the gate.
      *
      * It describes the UNCOMMITTED BUFFER, not the gate: a merged or discarded utterance leaves it
      * true, because that audio really is still sitting there. Only a commit or a [reset] clears it
@@ -151,9 +162,10 @@ class SileroEndpointer(
         if (p < 0f) return false
 
         // whisper.cpp:5283-5296 — the two native blocks this one branch merges. A frame at or
-        // above ONSET opens the gate if it is closed (`:5291`). (The pending-end clear the native
-        // side also performs here, `:5283`, lands with the hangover in Task C4.)
+        // above ONSET clears the pending end (`:5283`) — the HARD reset that makes the hangover a
+        // timer rather than a decay — and opens the gate if it is closed (`:5291`).
         if (p >= EndpointerTuning.ONSET_THRESHOLD) {
+            tempEndMs = 0L
             if (!speaking) {
                 speaking = true
                 speechStartMs = nowMs
@@ -165,19 +177,66 @@ class SileroEndpointer(
         // THE DEAD BAND (RELEASE <= p < ONSET) is deliberately inert: it is neither an onset nor a
         // silence. The native guards at :5283 and :5322 use DIFFERENT thresholds and the gap
         // between them falls through both — that is the Schmitt hysteresis, and its absence is
-        // exactly what strands today's amplitude segmenter in the 251-499 RMS band.
+        // exactly what strands today's amplitude segmenter in the 251-499 RMS band. And because it
+        // does not clear the pending end either, the hangover below counts straight THROUGH a
+        // mumble — a dead-band frame is not silence, but it does not buy the speaker any time.
         if (p >= EndpointerTuning.RELEASE_THRESHOLD) return false
 
-        // Below RELEASE is SILENCE, and Task C4 gives it its behaviour (`whisper.cpp:5322`): the
-        // pending end, the micro-pause memory and the hangover that commits. Until then it is a
-        // fall-through — and note what it does NOT do even then: clearing `pendingSpeech` is a
-        // COMMIT's job, never a silent frame's.
-        return false
+        // Below RELEASE is SILENCE, and only after speech: with the gate shut there is no
+        // utterance to end (`whisper.cpp:5322`, whose `&& is_speech_segment` this guard is).
+        if (!speaking) return false
+
+        // The pending end is stamped ONCE, at the FIRST frame of the dip (`:5323-5324`), and the
+        // hangover then elapses on wall time from it (`:5333`). Nothing in this branch re-stamps
+        // it: that is the difference between a hard timer and a decaying one, and it is what lets
+        // a 500 ms hangover survive a talker whose pauses are full of breath and paper noise.
+        if (tempEndMs == 0L) tempEndMs = nowMs
+        if (nowMs - tempEndMs < EndpointerTuning.HANGOVER_MS) return false
+
+        // The utterance is measured to the PENDING END, not to now: the hangover's own 500 ms is
+        // silence, not speech (native `temp_end - curr_speech_start`, `:5337`).
+        val speechMs = tempEndMs - speechStartMs
+        if (speechMs <= EndpointerTuning.MIN_SPEECH_MS) {
+            // whisper.cpp:5337 — too short to be an utterance. Drop it and re-arm; the native VAD
+            // filter would drop it before whisper_full anyway, so committing would buy an
+            // EmptyExpected round trip and nothing else. STRICT, as the native comparison is:
+            // exactly MIN_SPEECH_MS is discarded. `pendingSpeech` is NOT cleared — the audio is
+            // still in the engine's buffer, and the cap-policy branch above needs to know that.
+            // The inclusive latch in the onset branch is the same asymmetry seen from the other
+            // side, and it is deliberate in both directions: err toward "there IS speech".
+            closeGate()
+            return false
+        }
+        commitAt(nowMs)
+        return true
+    }
+
+    /**
+     * The utterance gate only — the pending buffer's bookkeeping survives.
+     *
+     * The discarded-burst path comes through here, and a discard is NOT a commit: `pendingSpeech`
+     * is left exactly as it was, because that audio really is still sitting in the caller's
+     * buffer. Only [clearForNextSegment] speaks for the buffer.
+     */
+    private fun closeGate() {
+        speaking = false
+        speechStartMs = 0L
+        tempEndMs = 0L
+    }
+
+    /**
+     * A real endpoint, taken: the caller is about to send the buffer, so everything about it goes.
+     *
+     * Separate from [clearForNextSegment] because Task C6 hangs the per-tier cadence governor's
+     * bookkeeping here — the commit instant `nowMs` is what it will pace against — while [reset]
+     * keeps calling the clear directly.
+     */
+    private fun commitAt(nowMs: Long) {
+        clearForNextSegment()
     }
 
     private fun clearForNextSegment() {
-        speaking = false
-        speechStartMs = 0L
+        closeGate()
         pendingSpeech = false
         fill = 0
         probeReset()

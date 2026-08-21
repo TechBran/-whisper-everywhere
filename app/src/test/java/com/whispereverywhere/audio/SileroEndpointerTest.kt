@@ -238,9 +238,10 @@ class SileroEndpointerTest {
      * arbitrary milliseconds, which is the same premise the class KDoc's burst-delivery paragraph
      * rests on. So this one test drives `onFrame` directly rather than through the pump.
      *
-     * There is no native counterpart to diverge from: `whisper.cpp:5337` compares a FINISHED
-     * segment's length at the moment it is emitted, while this is a running latch on an open gate.
-     * The inclusive boundary is a JVM-side choice, and this is where it is written down.
+     * The native comparison at `whisper.cpp:5337` is STRICT (`>`) and Task C4 ports it strictly —
+     * but it governs a DIFFERENT decision: whether a FINISHED segment is emitted. This is a running
+     * latch on an open gate. The asymmetry (strict commit gate, inclusive buffer latch) is
+     * deliberate and errs toward "there IS speech in the buffer".
      */
     @Test fun the_latch_fires_at_exactly_MIN_SPEECH_MS() {
         val probe = FakeProbe()
@@ -324,6 +325,163 @@ class SileroEndpointerTest {
         assertFalse(
             "reset closes the gate too, so the next onset frame starts a fresh clock",
             ep.hasPendingSpeech(),
+        )
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The hangover hard timer, min-speech and the commit (Task C4): the silence branch stamps
+    // the pending end ONCE, the hangover elapses on WALL TIME from it, and only a frame at or
+    // above ONSET clears it. This is where `onFrame` first returns true.
+    //
+    // The rule the block above states in the other direction, kept: a test asserting a
+    // NON-COMMIT property uses audio SHORTER than HANGOVER_MS, because a longer clip starts
+    // failing once commits exist and the tempting fix is to weaken the assertion. The tests
+    // below deliberately run PAST the hangover — the commit decision is exactly what they are
+    // about.
+    // ---------------------------------------------------------------------------------------
+
+    @Test fun the_hangover_cuts_at_exactly_500ms_of_trailing_silence() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)                       // speech BASE..BASE+608, gate open at BASE
+        assertFalse("16 silent frames is 480 ms — under the hangover", pump.run(0.1f, 16))
+        assertTrue("the 17th silent frame is 512 ms in", pump.run(0.1f, 1))
+        assertEquals(1, pump.commits)
+        assertEquals(BASE + 640 + 512, pump.lastCommitMs)
+    }
+
+    /**
+     * The same off-grid problem as [the_latch_fires_at_exactly_MIN_SPEECH_MS], one threshold later.
+     * [Pump] steps the elapsed silence 480 -> 512 ms, so it can never land ON
+     * [EndpointerTuning.HANGOVER_MS] and `<` versus `<=` is invisible to every pump-driven test in
+     * this class — a mutation battery proved it, by surviving one. The boundary is REACHABLE in
+     * production for the reason the class KDoc gives: `nowMs` is stamped on the CHUNK, and bursts
+     * and short reads put frames at arbitrary milliseconds. So this test drives `onFrame` directly
+     * too.
+     *
+     * Unlike the MIN_SPEECH_MS latch, this boundary is NOT a JVM-side choice. Native continues
+     * while `(curr_sample - temp_end) < min_silence_samples` (`whisper.cpp:5333`) and cuts
+     * otherwise, so exactly HANGOVER_MS CUTS. Inclusive here means "ported", not "decided".
+     */
+    @Test fun the_hangover_fires_at_exactly_HANGOVER_MS() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        // Comfortably clear of the min-speech gate, so the only decision under test is the
+        // hangover's own boundary and not the commit gate sitting behind it.
+        val speech = EndpointerTuning.MIN_SPEECH_MS + 100
+        probe.next = 0.9f
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE))
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + speech))
+        probe.next = 0.1f
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + speech))   // pending end == BASE + speech
+        assertFalse(
+            "one millisecond under the hangover is not the hangover",
+            ep.onFrame(ByteArray(B), 0, BASE + speech + EndpointerTuning.HANGOVER_MS - 1),
+        )
+        assertTrue(
+            "the boundary is inclusive: HANGOVER_MS of silence IS the hangover",
+            ep.onFrame(ByteArray(B), 0, BASE + speech + EndpointerTuning.HANGOVER_MS),
+        )
+    }
+
+    @Test fun dead_band_frames_do_not_stall_the_hangover_hard_timer() {
+        // THE point of the dead-band port: the clock runs on wall time from the pending end, so a
+        // long mumble in the 0.35-0.49 band cannot hold the gate open. Only a frame at or above
+        // ONSET resets it.
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)                       // gate opens at BASE, speech ends at BASE+640
+        assertFalse(pump.run(0.1f, 1))           // pending end stamped at BASE+640
+        assertFalse("dead-band frames never commit themselves", pump.run(0.42f, 10))
+        assertFalse(pump.run(0.1f, 5))           // BASE+992..1120 -> 352..480 ms elapsed
+        assertTrue("the timer counted the dead band", pump.run(0.1f, 1))
+        assertEquals(BASE + 640 + 512, pump.lastCommitMs)
+    }
+
+    @Test fun a_frame_back_above_ONSET_resets_the_hangover_clock() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)                       // gate opens at BASE
+        assertFalse(pump.run(0.1f, 10))          // pending end at BASE+640, 288 ms elapsed
+        assertFalse(pump.run(0.9f, 1))           // BASE+960: back to speech, clock cleared
+        assertFalse("the clock restarts from BASE+992, not BASE+640", pump.run(0.1f, 16))
+        assertTrue(pump.run(0.1f, 1))
+        assertEquals(BASE + 992 + 512, pump.lastCommitMs)
+    }
+
+    @Test fun no_verdict_frames_do_not_short_circuit_the_hangover() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertFalse(pump.run(EndpointerTuning.NO_VERDICT, 30))   // 960 ms of nothing at all
+        assertFalse("the pending end is stamped by the first REAL silence", pump.run(0.1f, 16))
+        assertTrue(pump.run(0.1f, 1))
+        assertEquals(BASE + 1600 + 512, pump.lastCommitMs)
+    }
+
+    @Test fun a_burst_under_MIN_SPEECH_MS_is_discarded_without_a_commit() {
+        // whisper.cpp:5337 — too short to be an utterance: drop it and re-arm, no segment emitted.
+        // The native filter would drop it before whisper_full anyway; agreeing here saves the call.
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 8)                        // 256 ms of speech
+        assertFalse("256 ms is under MIN_SPEECH_MS", pump.run(0.1f, 40))
+        assertEquals(0, pump.commits)
+        assertFalse(ep.hasPendingSpeech())
+    }
+
+    @Test fun exactly_MIN_SPEECH_MS_does_not_cut_but_does_count_as_pending_speech() {
+        // The native gate is strict (`>`), the pending-speech latch is inclusive (`>=`), and they
+        // differ only at exactly 300 ms. The asymmetry is deliberate and errs toward "there IS
+        // speech in the buffer", which is the safe direction for the cap-policy branch above it.
+        var resets = 0
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(
+            probe = probe,
+            probeReset = { resets++ },
+        )
+        probe.next = 0.9f
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE))
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 300))
+        assertTrue(ep.hasPendingSpeech())
+        probe.next = 0.1f
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 300))    // pending end == speechStart + 300
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 900))    // 600 ms of silence: hangover done
+        assertEquals("no commit at exactly MIN_SPEECH_MS", 0, resets)
+        assertTrue("but the buffer is not empty", ep.hasPendingSpeech())
+    }
+
+    @Test fun a_commit_resets_the_probe_and_clears_the_accumulator() {
+        var resets = 0
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(
+            probe = probe,
+            probeReset = { resets++ },
+        )
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertFalse(pump.run(0.1f, 16))
+        // 452 bytes of the NEXT frame are already in the accumulator when the cut fires.
+        probe.next = 0.1f
+        assertFalse(ep.onFrame(ByteArray(452) { 7 }, 0, pump.t))
+        val before = probe.frames.size
+        assertTrue(ep.onFrame(ByteArray(B) { 8 }, 0, pump.t))
+        assertEquals(
+            "the rest of the committing chunk is dropped, not probed",
+            before + 1,
+            probe.frames.size,
+        )
+        assertEquals(1, resets)
+        assertFalse(ep.hasPendingSpeech())
+        assertFalse(ep.onFrame(ByteArray(B) { 9 }, 0, pump.t + 32))
+        assertTrue(
+            "the accumulator restarts on a boundary aligned with the fresh LSTM",
+            probe.frames.last().all { it == 9.toByte() },
         )
     }
 
