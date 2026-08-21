@@ -34,7 +34,17 @@ class NativeVadSourceContractTest {
         )
     }
 
-    private val jni: String by lazy { repoFile("src/main/cpp/whisper_jni.cpp").readText() }
+    /**
+     * Line endings are normalized to LF at the single read site so every helper below can anchor on
+     * "\n" regardless of how the file is checked out. whisper_jni.cpp is CRLF in this repo, and
+     * Kotlin's readText() does not normalize: before this, substringBefore("\n}\n") never matched
+     * (the real byte sequence at a column-0 brace is "\r\n}\r\n") and silently fell through to
+     * returning the WHOLE FILE, so every "body" assertion was really a whole-file assertion.
+     */
+    private fun readNormalized(relative: String): String =
+        repoFile(relative).readText().replace("\r\n", "\n")
+
+    private val jni: String by lazy { readNormalized("src/main/cpp/whisper_jni.cpp") }
 
     /** we_vad_filter's body: the only column-0 `}` in that function is its closing brace. */
     private fun weVadFilterBody(): String =
