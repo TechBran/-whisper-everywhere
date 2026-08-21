@@ -627,7 +627,13 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))
+        // The offer is shown to EXIST before the commit is asked to consume it. Without this the
+        // test asserts an absence that a never-offering implementation satisfies for free — it
+        // passed vacuously against the interface default at RED, which is exactly the shape of
+        // test that reports success while the feature is missing.
+        pump.run(0.1f, 5)
+        assertEquals(BASE + 640, ep.pendingCutPointMs())
+        assertTrue(pump.run(0.1f, 12))       // the 17th silent frame overall: the hangover cuts
         assertEquals(
             "the remembered pause was consumed by the cut",
             Endpointer.NO_CUT_POINT,
@@ -659,6 +665,17 @@ class SileroEndpointerTest {
         assertFalse(pump.run(0.1f, 17))      // discarded, no commit
         assertEquals(1, pump.commits)
         assertEquals(BASE + 1344, ep.pendingCutPointMs())
+        // And it must survive the silence AFTER the discard, which is the half that actually
+        // happens in production: the cough ends, the gate shuts, and the speaker stays quiet until
+        // the 15 s cap fires. Every frame in that stretch takes the `!speaking` early return, so
+        // an implementation that cleared the offer there would pass the assertion above and still
+        // hand the cap nothing at the only moment the cap ever asks.
+        pump.run(0.1f, 20)
+        assertEquals(
+            "silence with the gate SHUT must not erase the offer either",
+            BASE + 1344,
+            ep.pendingCutPointMs(),
+        )
     }
 
     /**

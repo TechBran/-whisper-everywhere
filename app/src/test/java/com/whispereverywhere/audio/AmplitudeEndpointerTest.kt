@@ -77,9 +77,9 @@ class AmplitudeEndpointerTest {
         assertEquals("a cadence floor must not reach the amplitude path", a, b)
         // ABSOLUTE, and it must come first: every cut-point assertion below is DIFFERENTIAL
         // against the constant, so re-defining the sentinel moves both sides and they all still
-        // pass. The wall-cap branch (D6) tests `!= NO_CUT_POINT`, and an implementation that
-        // initialises its own cut-point field to a literal 0L — as SileroEndpointer will — is
-        // only correct while the sentinel IS 0L.
+        // pass. The wall-cap branch (D6) tests `!= NO_CUT_POINT`, and SileroEndpointer (C5) names
+        // the sentinel rather than the literal, with a pin of its own AGAINST the literal — so
+        // this assertion is what guards the value all of those differential pins ride on.
         assertEquals("the NO_CUT_POINT sentinel is 0L", 0L, Endpointer.NO_CUT_POINT)
         // No micro-pause memory exists here, so the cap cut can never be offered a cut point —
         // which is what makes the 15 s backstop byte-identical to 3.6.0 on this path.
