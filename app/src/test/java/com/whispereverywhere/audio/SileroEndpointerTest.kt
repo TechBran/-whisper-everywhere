@@ -517,6 +517,150 @@ class SileroEndpointerTest {
         )
     }
 
+    // ---------------------------------------------------------------------------------------
+    // The micro-pause memory (Task C5): the most recent dip below RELEASE that OUTLIVED
+    // MICRO_PAUSE_MS is remembered as a real cut point for the 15 s wall cap
+    // (native prev_end, whisper.cpp:5328-5330).
+    //
+    // It is BUFFER knowledge, not gate state, and the tests below pin that distinction from both
+    // sides: it survives a re-onset and a discarded short burst, and only a commit or a reset
+    // takes it away. The discard case is a deliberate divergence from whisper.cpp:5341 and the
+    // test that states it is the one a "tidy-up" refactor into closeGate() would break.
+    // ---------------------------------------------------------------------------------------
+
+    @Test fun no_micro_pause_is_offered_until_a_dip_outlives_98ms() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertEquals(
+            "continuous speech has no remembered pause",
+            Endpointer.NO_CUT_POINT,
+            ep.pendingCutPointMs(),
+        )
+        pump.run(0.1f, 1)                    // dip starts at BASE+640, 0 ms old
+        assertEquals(Endpointer.NO_CUT_POINT, ep.pendingCutPointMs())
+        pump.run(0.1f, 3)                    // 32, 64, 96 ms old — 96 is not > 98
+        assertEquals(
+            "the 98 ms floor is exclusive, as in whisper.cpp:5328",
+            Endpointer.NO_CUT_POINT,
+            ep.pendingCutPointMs(),
+        )
+        pump.run(0.1f, 1)                    // 128 ms old
+        assertEquals(BASE + 640, ep.pendingCutPointMs())
+    }
+
+    /**
+     * The fourth instance of this class's off-grid pattern, and the first one PREDICTED rather
+     * than discovered by a surviving mutation: [Pump] steps a dip's age 96 -> 128 ms, so it can
+     * never land ON [EndpointerTuning.MICRO_PAUSE_MS] and `>` versus `>=` is invisible to every
+     * pump-driven test in this class — including all five the plan wrote for this task. The
+     * boundary is REACHABLE in production for the reason the class KDoc gives: `nowMs` is stamped
+     * on the CHUNK, and bursts and short reads put frames at arbitrary milliseconds. So this test
+     * drives `onFrame` directly, as [the_latch_fires_at_exactly_MIN_SPEECH_MS] and
+     * [the_hangover_fires_at_exactly_HANGOVER_MS] do.
+     *
+     * Like the hangover's and unlike the buffer latch's, this boundary is NOT a JVM-side choice.
+     * Native compares `(curr_sample - temp_end) > min_silence_samples_at_max_speech` STRICTLY
+     * (`whisper.cpp:5328`), so exactly MICRO_PAUSE_MS does NOT promote. Exclusive here means
+     * "ported", not "decided" — and it is the same strictness [EndpointerTuning.MICRO_PAUSE_MS]'s
+     * own KDoc reasons from to reach its 5th-frame truth.
+     */
+    @Test fun the_micro_pause_floor_is_exclusive_at_exactly_MICRO_PAUSE_MS() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        // The dip opens with the gate up and a long enough utterance behind it to be committable,
+        // and ends far inside HANGOVER_MS: the only decision under test is the micro-pause floor.
+        val dipStart = BASE + EndpointerTuning.MIN_SPEECH_MS + 100
+        probe.next = 0.9f
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE))
+        probe.next = 0.1f
+        assertFalse(ep.onFrame(ByteArray(B), 0, dipStart))         // pending end == dipStart
+        assertEquals(
+            "the frame that starts a dip is 0 ms old, and 0 is not more than 98",
+            Endpointer.NO_CUT_POINT,
+            ep.pendingCutPointMs(),
+        )
+        assertFalse(ep.onFrame(ByteArray(B), 0, dipStart + EndpointerTuning.MICRO_PAUSE_MS))
+        assertEquals(
+            "the floor is exclusive: exactly MICRO_PAUSE_MS is not MORE than MICRO_PAUSE_MS",
+            Endpointer.NO_CUT_POINT,
+            ep.pendingCutPointMs(),
+        )
+        assertFalse(ep.onFrame(ByteArray(B), 0, dipStart + EndpointerTuning.MICRO_PAUSE_MS + 1))
+        assertEquals(
+            "one millisecond past the floor promotes the dip's START, not the current frame",
+            dipStart,
+            ep.pendingCutPointMs(),
+        )
+    }
+
+    @Test fun the_micro_pause_survives_a_re_onset_within_the_same_stretch() {
+        // This is the whole point: during a 15 s continuous stretch the endpointer keeps the most
+        // recent real boundary, so a cap cut lands there instead of mid-word. no_context = true
+        // makes a mid-word cut permanently unrepairable.
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        pump.run(0.1f, 5)                    // dip at BASE+640 remembered
+        assertEquals(BASE + 640, ep.pendingCutPointMs())
+        pump.run(0.9f, 10)                   // speech resumes: pending end clears, memory does not
+        assertEquals(BASE + 640, ep.pendingCutPointMs())
+        // The offer only ever moves FORWARD, never back to "none". A newer dip that has not yet
+        // outlived the floor is not a replacement for the older one, and must not be allowed to
+        // erase it either: a cap cut landing in these four frames still needs the best boundary
+        // known. Stated because it is invisible from the far side of the dip — where both a
+        // correct implementation and one that clears on every dip's first frame read BASE+1120.
+        pump.run(0.1f, 4)                    // the new dip is 0/32/64/96 ms old — too young
+        assertEquals(
+            "a dip too young to qualify must not erase the older boundary it cannot yet replace",
+            BASE + 640,
+            ep.pendingCutPointMs(),
+        )
+        pump.run(0.1f, 1)                    // 128 ms: the NEWER dip at BASE+1120 replaces it
+        assertEquals(BASE + 1120, ep.pendingCutPointMs())
+    }
+
+    @Test fun a_commit_clears_the_micro_pause_memory() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))
+        assertEquals(
+            "the remembered pause was consumed by the cut",
+            Endpointer.NO_CUT_POINT,
+            ep.pendingCutPointMs(),
+        )
+    }
+
+    @Test fun reset_clears_the_micro_pause_memory() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        pump.run(0.1f, 5)
+        assertEquals(BASE + 640, ep.pendingCutPointMs())
+        ep.reset()
+        assertEquals(Endpointer.NO_CUT_POINT, ep.pendingCutPointMs())
+    }
+
+    @Test fun a_discarded_short_burst_keeps_the_remembered_pause() {
+        // Deliberate deviation from whisper.cpp:5341, which clears prev_end here as bookkeeping for
+        // its own max-speech split. We keep it: this field exists ONLY to give the wall cap a real
+        // cut point, and a 200 ms cough after a good pause must not erase it.
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))       // commit at BASE+1152; t is now BASE+1184
+        pump.run(0.9f, 5)                    // 160 ms burst — under MIN_SPEECH_MS
+        assertFalse(pump.run(0.1f, 17))      // discarded, no commit
+        assertEquals(1, pump.commits)
+        assertEquals(BASE + 1344, ep.pendingCutPointMs())
+    }
+
     /**
      * The obligations this file places on LATER tasks and on other files are pinned as WHOLE
      * SENTENCES, each scoped to the member that states it.
@@ -661,6 +805,45 @@ class SileroEndpointerTest {
                 hits,
             )
         }
+    }
+
+    /**
+     * The micro-pause offer's "none" value is NAMED, never re-literalised.
+     *
+     * `prevEndMs` carries WALL-CLOCK milliseconds and its zero LEAVES the class, through
+     * [SileroEndpointer.pendingCutPointMs], as [Endpointer.NO_CUT_POINT] — a sentinel whose own
+     * KDoc warns that 0 is a legal reading of that clock, merely unreachable in practice, and that
+     * a switch to a monotonic or session-relative clock must change the sentinel FIRST. A bare
+     * `0L` written here is correct today and silently wrong the day the clock changes: the
+     * endpointer would report "no micro-pause observed" for its first frame, the wall cap would
+     * fall back to cutting blind, and nothing at the call site would look wrong. Prose cannot hold
+     * that line across the seven tasks still to touch this class, so this does.
+     *
+     * Scoped to `prevEndMs` ALONE, deliberately, in both directions. [SileroEndpointer]'s
+     * `tempEndMs` keeps its bare `0L`: that zero is private "not in a dip" bookkeeping published
+     * to nobody, and dragging it under the interface's clock ruling would be a false claim about
+     * what the sentinel governs. And Task C6 assigns `prevEndMs = tempEndMs` on the merge path —
+     * a wall-clock instant, not a sentinel — which this scan must not forbid.
+     */
+    @Test fun the_wall_clock_sentinel_is_never_re_literalised_as_a_bare_zero() {
+        val bareZero = Regex("""(?<![\w.])0L?(?![\w.])""")
+        val hits = code().filter { it.contains("prevEndMs") && bareZero.containsMatchIn(it) }
+        assertEquals(
+            "SileroEndpointer.kt writes a bare zero on a prevEndMs line instead of naming " +
+                "Endpointer.NO_CUT_POINT: $hits. That field's zero is the sentinel the interface " +
+                "OWNS and documents, not an arithmetic zero this class may spell for itself: the " +
+                "companion's KDoc says to change the sentinel before changing the clock, and a " +
+                "literal here is exactly the site that would not be changed. tempEndMs's bare 0L " +
+                "is deliberately none of this test's business.",
+            emptyList<String>(),
+            hits,
+        )
+        assertTrue(
+            "SileroEndpointer.kt no longer initialises prevEndMs to Endpointer.NO_CUT_POINT — so " +
+                "the scan above is passing because the field it guards has been renamed or " +
+                "deleted, not because the discipline held.",
+            code().any { it.contains("var prevEndMs = Endpointer.NO_CUT_POINT") },
+        )
     }
 
     // ---------------------------------------------------------------------------------------

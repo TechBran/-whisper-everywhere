@@ -5515,7 +5515,7 @@ and extend `clearForNextSegment()` with one line (after `closeGate()`):
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `33 tests / 0 failures / 0 errors`.
+Expected: `35 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -5755,7 +5755,7 @@ replace `commitAt()` and `reset()`, and add `onSessionStart()`:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `38 tests / 0 failures / 0 errors`.
+Expected: `40 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6016,7 +6016,7 @@ and extend `onSessionStart()` with the re-arm (before `clearForNextSegment()`):
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `42 tests / 0 failures / 0 errors`.
+Expected: `44 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6161,7 +6161,7 @@ and one line in `onSessionStart()` beside the other counter resets:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `45 tests / 0 failures / 0 errors`.
+Expected: `47 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6337,7 +6337,7 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Expected: `failures=0 errors=0`. This task's own delta is +2 (`SileroEndpointerConcurrencyTest`);
-the section's running delta after Task C10 is +56. No absolute total is asserted here — Task S5
+the section's running delta after Task C10 is +58. No absolute total is asserted here — Task S5
 computes the branch's totals once, from a purged results directory.
 
 - [ ] **Step 5: Commit.**
@@ -6584,12 +6584,12 @@ MAIN (Workstream D wires `onSessionStart` from `onOpen`), which is the other hal
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.*" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `48 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
-this is the section's evidence: `failures=0 errors=0` and the **+56 delta** this section adds
-(`EndpointerTuningTest` 6, `SileroEndpointerTest` 48, `SileroEndpointerConcurrencyTest` 2). The
+Expected: `50 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
+this is the section's evidence: `failures=0 errors=0` and the **+58 delta** this section adds
+(`EndpointerTuningTest` 6, `SileroEndpointerTest` 50, `SileroEndpointerConcurrencyTest` 2). The
 absolute total is computed once, in Task S5.
 
-Fifty-six, not the forty-five this section was planned at: ALL FOUR shipped deviations are in it.
+Fifty-eight, not the forty-five this section was planned at: ALL FIVE shipped deviations are in it.
 C1 shipped `EndpointerTuningTest` with 6 tests rather than 4 (its KDoc-derivation and scope-ruling
 tests — the C1 section above was rebased to say so at its own Step 4); C2 shipped
 `SileroEndpointerTest` with 11 rather than 6, carrying every later expectation in this section up
@@ -6602,11 +6602,20 @@ grid steps 480 → 512, so `<` versus `<=` on the hangover survived C4's mutatio
 direct-`onFrame` test pinned it — and, in its fix round,
 `a_second_utterance_is_measured_from_its_OWN_start`, the property C4 created the path for: a commit
 that forgot to re-anchor the clock would read the next 256 ms burst as 1440 ms and cut where there
-is no boundary. All but the last of those extras was the SOLE killer of a mutation that would
-otherwise have survived; the second-utterance test is a property test rather than a sole killer,
-and kills across four of the battery's mutations. Arithmetic against the suite, which is the check
-that catches a half-applied rebase: 1121 after D2, 1127 after C1, 1138 after C2, 1146 after C3,
-1155 after C4.
+is no boundary; and C5 shipped 35 rather than 33, adding
+`the_micro_pause_floor_is_exclusive_at_exactly_MICRO_PAUSE_MS` — the grid-blindness pattern's
+FOURTH instance and the first one PREDICTED in a handoff rather than discovered by a survivor: the
+pump steps a dip's age 96 → 128, so `>` versus `>=` at the 98 ms floor was invisible to all five
+tests this section planned for that task — and
+`the_wall_clock_sentinel_is_never_re_literalised_as_a_bare_zero`, which holds the half of C5's
+disclosed sentinel discipline that prose alone cannot: a bare `0L` for `prevEndMs` is correct today
+and silently wrong the day the endpointer's clock stops being wall clock, and it fails as "no
+micro-pause was ever observed" rather than as anything that looks like a bug. All of those extras
+except the second-utterance test were the SOLE killer of a mutation that would otherwise have
+survived — C5's two account for three such mutations between them; the second-utterance test is a
+property test rather than a sole killer, and kills across four of C4's battery's mutations.
+Arithmetic against the suite, which is the check that catches a half-applied rebase: 1121 after D2,
+1127 after C1, 1138 after C2, 1146 after C3, 1155 after C4, 1162 after C5.
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --no-daemon

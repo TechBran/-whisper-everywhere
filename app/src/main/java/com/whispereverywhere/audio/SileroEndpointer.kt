@@ -91,6 +91,27 @@ class SileroEndpointer(
     @Volatile private var tempEndMs = 0L
 
     /**
+     * The MICRO-PAUSE MEMORY: the `nowMs` at which the most recent dip below
+     * [EndpointerTuning.RELEASE_THRESHOLD] that OUTLIVED [EndpointerTuning.MICRO_PAUSE_MS] began,
+     * or [Endpointer.NO_CUT_POINT] when none has been seen since the last commit or [reset].
+     * Native `prev_end` (`whisper.cpp:5273`, assigned at `:5329`).
+     *
+     * SENTINEL, not arithmetic zero — and that is why the initialiser above and the clear in
+     * [clearForNextSegment] both spell [Endpointer.NO_CUT_POINT] instead of a bare `0L`. This
+     * field is the only one in this class whose zero LEAVES the class, and what it means outside
+     * is fixed by the companion's own warning: 0 is a legal wall-clock reading, merely unreachable
+     * in practice, so a move to a monotonic or session-relative clock must change the sentinel
+     * first. [tempEndMs] above keeps its bare `0L` deliberately — that zero is private
+     * "not in a dip" bookkeeping, published to nobody, and conflating the two would put this
+     * class's internals under the interface's clock ruling.
+     *
+     * BUFFER knowledge, not gate state: it therefore dies in [clearForNextSegment] beside
+     * [pendingSpeech] and NOT in [closeGate]. That placement IS the divergence from
+     * `whisper.cpp:5341` — see [pendingCutPointMs].
+     */
+    @Volatile private var prevEndMs = Endpointer.NO_CUT_POINT
+
+    /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
      * @param amp the chunk's RMS, ignored here — it exists for the amplitude fallback that shares
      *        this call shape.
@@ -142,6 +163,25 @@ class SileroEndpointer(
      * is unchanged — only the predicate gets honest.
      */
     override fun hasPendingSpeech(): Boolean = pendingSpeech
+
+    /**
+     * The wall-clock ms at which the most recent qualifying micro-pause BEGAN, or
+     * [Endpointer.NO_CUT_POINT] when none has been seen since the last commit/reset. Offered to
+     * the wall-cap cut path: when the 15 s cap fires with the gate open, this is a real speech
+     * boundary to cut at instead of the arbitrary millisecond the cap happened to land on.
+     *
+     * The offer SURVIVES a discarded short burst. That is a deliberate divergence from
+     * `whisper.cpp:5341`, which clears `prev_end` on the discard path too as bookkeeping for its
+     * own max-speech split; here the field exists ONLY to give the wall cap a real cut point, and
+     * a 200 ms cough arriving after a good pause must not erase the pause. Mechanically the
+     * divergence is one line's ADDRESS: [clearForNextSegment] runs on the commit path only, while
+     * [closeGate] runs on both.
+     *
+     * 0L doubles as "no offer" rather than a nullable Long because the ONE consumer,
+     * [com.whispereverywhere.service.CommitCadencePolicy.capCutRetainMs], already treats every
+     * non-positive value as "commit everything, exactly as 3.6.0 did".
+     */
+    override fun pendingCutPointMs(): Long = prevEndMs
 
     /** A commit happened elsewhere (cap cut, source switch, session open, stop). */
     override fun reset() {
@@ -195,6 +235,19 @@ class SileroEndpointer(
         // it: that is the difference between a hard timer and a decaying one, and it is what lets
         // a 500 ms hangover survive a talker whose pauses are full of breath and paper noise.
         if (tempEndMs == 0L) tempEndMs = nowMs
+
+        // THE MICRO-PAUSE MEMORY (`whisper.cpp:5328-5330`). Once THIS dip has outlived the native
+        // floor, remember where it STARTED. Silero's own answer to "speech forever" never cuts
+        // blind — it cuts at the last such point — and with `no_context = true` that is a strictly
+        // better boundary than an arbitrary millisecond, at the same latency bound. STRICT, as the
+        // native comparison is: at the 32 ms cadence the FIFTH frame of a dip is the first to
+        // qualify (128 > 98), because the fourth is only 96 ms old.
+        //
+        // It sits ABOVE the hangover check, as native does, so the frame that ends an utterance
+        // promotes before it decides — which is what leaves a good boundary standing when that
+        // decision turns out to be a DISCARD.
+        if (nowMs - tempEndMs > EndpointerTuning.MICRO_PAUSE_MS) prevEndMs = tempEndMs
+
         if (nowMs - tempEndMs < EndpointerTuning.HANGOVER_MS) return false
 
         // The utterance is measured to the PENDING END, not to now: the hangover's own 500 ms is
@@ -242,6 +295,12 @@ class SileroEndpointer(
     private fun clearForNextSegment() {
         closeGate()
         pendingSpeech = false
+        // SENTINEL, not arithmetic zero (see [prevEndMs]). This line's ADDRESS is load-bearing: the
+        // micro-pause is buffer knowledge, so it dies HERE beside pendingSpeech and not inside
+        // closeGate(). closeGate() runs on the discard path as well, so moving this line into it
+        // would let a 200 ms cough erase a good boundary — and would silently re-converge on
+        // whisper.cpp:5341, which we diverge from on purpose.
+        prevEndMs = Endpointer.NO_CUT_POINT
         fill = 0
         probeReset()
     }
