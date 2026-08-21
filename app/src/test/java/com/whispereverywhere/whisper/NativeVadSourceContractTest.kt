@@ -371,13 +371,27 @@ class NativeVadSourceContractTest {
             "vadProbeInit must take g_probe_mutex",
             containsLiveLine(init, "g_probe_mutex")
         )
+        val postLoadNullCheck = Regex("""(?m)^[ \t]*if \(g_probe_ctx == nullptr\)""").find(init)
+        assertTrue(
+            "vadProbeInit must test g_probe_ctx == nullptr on a LIVE line. This index must come " +
+                "from a line-anchored regex match and never from " +
+                "indexOf(\"g_probe_ctx == nullptr\"), and unlike the pin/create pair the danger " +
+                "here runs the other way: for a \"> createAt\" comparison a raw indexOf finds a " +
+                "COMMENT just as happily as code, so deleting the live guard while leaving any " +
+                "comment that mentions it below the create satisfies the ordering claim outright. " +
+                "The paired \"return JNI_FALSE\" conjunct does not save it either — the earlier " +
+                "modelPath == nullptr guard satisfies that one independently. Demonstrated, not " +
+                "assumed: replacing the guard with `if (false)` plus a FIXME comment naming it " +
+                "kept this entire class green.",
+            postLoadNullCheck != null
+        )
         assertTrue(
             "vadProbeInit must return JNI_FALSE on a live line, and must decide that by testing " +
                 "g_probe_ctx AFTER the load. A probe that reports success with a null context is " +
                 "worse than one that reports failure: the caller skips the amplitude fallback and " +
                 "N5's vadProbeFrame inherits the null.",
             containsLiveLine(init, "return JNI_FALSE;") &&
-                init.indexOf("g_probe_ctx == nullptr") > createAt
+                postLoadNullCheck!!.range.first > createAt
         )
         assertTrue(
             "vadProbeInit must not touch the batch filter's context",
@@ -393,7 +407,7 @@ class NativeVadSourceContractTest {
         )
         assertTrue(
             "1024 bytes = 512 samples of 16-bit PCM = exactly one mic callback",
-            Regex("""kProbeFrameBytes\s*=\s*kProbeFrameSamples \* 2""").containsMatchIn(jni)
+            Regex("""kProbeFrameBytes\s*=\s*kProbeFrameSamples\s*\*\s*2""").containsMatchIn(jni)
         )
         val frame = jniFunctionBody("vadProbeFrame")
         assertTrue(
@@ -406,8 +420,10 @@ class NativeVadSourceContractTest {
             frame.contains("nBytes != kProbeFrameBytes") && frame.contains("return -1.0f;")
         )
         assertTrue(
-            "0.0f must never be returned as a failure value — it is a legitimate probability",
-            !Regex("""return\s+0\.0f;""").containsMatchIn(frame)
+            "0.0f must never be returned as a failure value — it is a legitimate probability. " +
+                "The pattern deliberately catches every spelling of zero a refactor might reach " +
+                "for (0, 0.f, 0.0f, 0.0F), not just the one this function happens not to use.",
+            !Regex("""return\s+0(\.\d*)?[fF]?\s*;""").containsMatchIn(frame)
         )
         assertTrue(
             "an uninitialised probe returns the sentinel too",
@@ -419,13 +435,41 @@ class NativeVadSourceContractTest {
             frame.contains("GetDirectBufferAddress")
         )
         assertTrue(
+            "a direct buffer SHORTER than nBytes must be refused BEFORE the read. " +
+                "GetDirectBufferAddress reports where a buffer starts and never how big it is, so " +
+                "without GetDirectBufferCapacity a caller that hands over a 512-byte buffer with " +
+                "nBytes = 1024 reads 512 bytes past the end of a native allocation — an " +
+                "out-of-bounds read no JVM exception will ever surface.",
+            frame.contains("GetDirectBufferCapacity")
+        )
+        assertTrue(
+            "the PCM16 -> float copy must NOT go through reinterpret_cast<const int16_t *>. Two " +
+                "independent reasons: a direct ByteBuffer carries no int16 alignment guarantee, " +
+                "and the cast breaks strict aliasing — at -O3 clang is entitled to assume an " +
+                "int16_t* and the unsigned char* it came from never alias, and may reorder or " +
+                "fold the loads on that assumption. std::memcpy is the well-defined spelling and " +
+                "compiles down to the same halfword load, so the cast buys nothing at all.",
+            !Regex("""reinterpret_cast\s*<\s*(const\s+)?int16_t\s*\*\s*>""").containsMatchIn(frame)
+        )
+        assertTrue(
+            "PCM16 must be normalised by /32768.0f — the scale AudioMath.kt:52 " +
+                "((sample / 32768f).coerceIn(-1f, 1f)) already prepares every other float audio " +
+                "path in this app at. /32767.0f is the plausible-looking mistake: it would put " +
+                "the probe's input on a ~0.003% different scale from the batch filter's, which is " +
+                "invisible on-device and silently calibrated-against by whatever probability " +
+                "threshold Workstream D lands on.",
+            Regex("""/\s*32768\.0f""").containsMatchIn(frame)
+        )
+        assertTrue(
             "streaming MUST use the no_reset entry point; the resetting variant would wipe the " +
                 "LSTM on every single frame and the recurrence would never accumulate",
             frame.contains("whisper_vad_detect_speech_no_reset(")
         )
         assertTrue(
-            "vadProbeFrame must never call the resetting variant",
-            !Regex("""[^_]whisper_vad_detect_speech\(""").containsMatchIn(frame)
+            "vadProbeFrame must never call the resetting variant. The negative lookbehind says " +
+                "the intent directly — \"this symbol, not one that merely ends with it\" — and " +
+                "unlike [^_] it still bites when the call is the very first thing in the scope.",
+            !Regex("""(?<!_)whisper_vad_detect_speech\(""").containsMatchIn(frame)
         )
     }
 
@@ -433,7 +477,13 @@ class NativeVadSourceContractTest {
     fun probeSurface_isFourFunctions_eachIsolatedFromTheBatchFilter() {
         listOf("vadProbeInit", "vadProbeFrame", "vadProbeReset", "vadProbeFree").forEach { fn ->
             val body = jniFunctionBody(fn)
-            assertTrue("$fn must take g_probe_mutex", body.contains("g_probe_mutex"))
+            // POSITIVE pins go through containsLiveLine, NEGATIVE ones through plain contains, and
+            // the asymmetry is deliberate. A commented-out `// std::lock_guard ... g_probe_mutex`
+            // satisfies contains() while the lock it describes is gone — the exact shape of the
+            // false-green already proved twice on this file. In the other direction plain
+            // contains() is the STRICTER choice: even a comment mentioning g_vad_ctx inside one of
+            // these bodies is a claim about the batch context that has no business here.
+            assertTrue("$fn must take g_probe_mutex", containsLiveLine(body, "g_probe_mutex"))
             assertTrue(
                 "$fn must not touch g_vad_ctx: the batch filter resets that context's LSTM on " +
                     "entry and clobbers probs[0], which is the slot the probe reads",
@@ -443,8 +493,10 @@ class NativeVadSourceContractTest {
         }
         assertTrue(
             "vadProbeReset must clear the LSTM state — it is the 'new utterance starts here' " +
-                "signal, wired into all five reset sites by Workstream D",
-            jniFunctionBody("vadProbeReset").contains("whisper_vad_reset_state(g_probe_ctx);")
+                "signal, wired into all five reset sites by Workstream D. Must be a LIVE line: a " +
+                "commented-out reset leaves the recurrence running across an utterance boundary, " +
+                "which is precisely the bug this function exists to prevent.",
+            containsLiveLine(jniFunctionBody("vadProbeReset"), "whisper_vad_reset_state(g_probe_ctx);")
         )
     }
 }

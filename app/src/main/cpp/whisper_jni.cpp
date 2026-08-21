@@ -345,9 +345,26 @@ static float g_probe_frame[kProbeFrameSamples];
 // documented as "~1024" bytes: one chunk = one frame is the common case, never the contract.
 // The endpointer treats -1.0f as "keep the previous state" - it neither opens nor closes the gate.
 //
+// WHAT -1.0f DOES AND DOES NOT COVER, stated honestly. It covers a scheduler-allocation failure
+// and an empty probs vector. It does NOT cover a mid-graph compute failure:
+// whisper_vad_detect_speech_no_reset breaks out of its window loop (whisper.cpp:5170-5173) and
+// STILL returns true (:5186), leaving probs[0] unwritten - so this function returns 0.0f on the
+// first frame (probs.resize at :5122 value-initialises a freshly grown vector) and the PREVIOUS
+// frame's value on every frame after that (resizing to a size the vector already has touches
+// nothing). A compute failure is therefore reported as a plausible probability rather than as "no
+// verdict", and the WHISPER_LOG_ERROR at :5171 is the only signal it happened. Curing it means
+// returning false from the fork's loop instead of breaking, which changes the BATCH filter's
+// behaviour too - deferred to its own ticket, deliberately not patched from here.
+//
 // [pcm] must be a DIRECT ByteBuffer in native byte order. Bytes [0, nBytes) are read straight
 // from its base address; position/limit/mark are ignored, so one buffer is allocated per session
-// and refilled forever. Returning a RAW float rather than a bool is deliberate: threshold,
+// and refilled forever. The caller must not refill it CONCURRENTLY with this call - there is no
+// copy and nothing here locks the buffer itself, so the contract is fill, then call, on the same
+// thread. Byte order is a live trap on the Kotlin side: ByteBuffer.allocateDirect returns a
+// BIG_ENDIAN buffer on every platform, so fill it with put(ByteArray) - byte-verbatim, unaffected
+// by order - or call order(ByteOrder.nativeOrder()) first if putShort/asShortBuffer is used.
+// Getting that wrong byte-swaps every sample and the probe reads plausible-looking noise.
+// Returning a RAW float rather than a bool is deliberate: threshold,
 // hysteresis, hangover and min-speech policy live in Kotlin where they are JVM-pinnable, the same
 // split SegmentCapPolicy and SpeechSegmenter already use.
 extern "C" JNIEXPORT jfloat JNICALL
