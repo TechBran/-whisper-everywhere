@@ -53,17 +53,18 @@ class NativeVadSourceContractTest {
         val anchor = "static bool we_vad_filter("
         val start = jni.indexOf(anchor)
         assertTrue(
-            "anchor \"$anchor\" is missing from whisper_jni.cpp. substringAfter() returns its " +
-                "RECEIVER when the delimiter is absent, so without this check a renamed function " +
-                "would silently turn every assertion below into a whole-file assertion — passing " +
-                "on text borrowed from unrelated functions instead of failing.",
+            "anchor \"$anchor\" is missing from whisper_jni.cpp. indexOf() returns -1 when the " +
+                "anchor is absent, so substring(start + anchor.length) silently rebases the scope " +
+                "to the top of the file — ~130 unrelated lines ahead of we_vad_filter — and every " +
+                "assertion below then passes on text borrowed from unrelated functions instead of " +
+                "failing.",
             start >= 0
         )
         val body = jni.substring(start + anchor.length)
         assertTrue(
-            "no column-0 \"\\n}\\n\" follows \"$anchor\". substringBefore() also returns its " +
-                "receiver when the delimiter is absent, so the scope would silently widen to " +
-                "everything from we_vad_filter to end-of-file.",
+            "no column-0 \"\\n}\\n\" follows \"$anchor\". substringBefore() returns its RECEIVER " +
+                "when the delimiter is absent, so the scope would silently widen to everything " +
+                "from we_vad_filter to end-of-file.",
             body.contains("\n}\n")
         )
         return body.substringBefore("\n}\n")
@@ -75,13 +76,14 @@ class NativeVadSourceContractTest {
         val terminator = "bool whisper_vad_detect_speech("
         val start = fork.indexOf(anchor)
         assertTrue(
-            "anchor \"$anchor\" is missing from the vendored fork's whisper.cpp. substringAfter() " +
-                "returns its RECEIVER when the delimiter is absent, so without this check an " +
-                "upstream rename would silently scope the assertions below to the ENTIRE 7,264-line " +
-                "translation unit. That turns the \"no WHISPER_LOG_INFO survives\" claim from a " +
-                "78-line claim into a whole-file one: it would fail loudly against the 88 other " +
-                "unrelated INFO lines elsewhere in the file, so a real streaming regression would " +
-                "be buried behind a failure that has nothing to do with it.",
+            "anchor \"$anchor\" is missing from the vendored fork's whisper.cpp. indexOf() returns " +
+                "-1 when the anchor is absent, so substring(start + anchor.length) silently " +
+                "rebases the scope to the top of the file — 5,100+ unrelated lines ahead of the " +
+                "streaming function. That turns the \"no WHISPER_LOG_INFO survives\" claim from a " +
+                "78-line claim into a near-whole-file one: it would fail loudly against the 87 " +
+                "unrelated INFO call sites elsewhere in this 9,044-line translation unit, so a " +
+                "real streaming regression would be buried behind a failure that has nothing to " +
+                "do with it.",
             start >= 0
         )
         val body = fork.substring(start + anchor.length)
@@ -137,8 +139,14 @@ class NativeVadSourceContractTest {
             // already exists in this function (the upstream per-chunk probability trace), and
             // without this filter someone could satisfy "demote, don't delete" by commenting the
             // line out — which deletes it, losing -DWHISPER_DEBUG narration the rule exists to keep.
+            // Both comment forms are excluded: `/*` because commenting a block out is the more
+            // natural way to silence five adjacent lines at once.
             val line = fn.lineSequence()
-                .firstOrNull { it.contains(message) && !it.trimStart().startsWith("//") }
+                .firstOrNull {
+                    it.contains(message) &&
+                        !it.trimStart().startsWith("//") &&
+                        !it.trimStart().startsWith("/*")
+                }
                 ?: throw AssertionError(
                     "\"$message\" vanished from whisper_vad_detect_speech_no_reset (deleted, or " +
                         "commented out — both break the demote-don't-delete rule)"
@@ -150,8 +158,8 @@ class NativeVadSourceContractTest {
                     "is ~31 __android_log_write/second to logd, plausibly costing more than the " +
                     "1.36 MFLOP inference itself, and it evicts the WE-DIAG lines the owner's " +
                     "acceptance greps depend on. Do not replace the compile-out with a runtime " +
-                    "log-level filter: we_native_log (whisper_jni.cpp:22-27) maps every " +
-                    "non-WARN/ERROR level onto ANDROID_LOG_INFO, so filtering by level moves zero " +
+                    "log-level filter: we_native_log (whisper_jni.cpp) maps every non-WARN/ERROR " +
+                    "level onto ANDROID_LOG_INFO, so filtering by level moves zero " +
                     "bytes. Demoting (not deleting) keeps the fork upstream-mergeable and keeps " +
                     "-DWHISPER_DEBUG useful. Found: $line",
                 line.contains("WHISPER_LOG_DEBUG(")
@@ -164,7 +172,10 @@ class NativeVadSourceContractTest {
         )
         assertTrue(
             "both WHISPER_LOG_ERROR lines (sched-alloc, graph-compute) must stay loud — they are " +
-                "once-per-failure, not per-call",
+                "once-per-failure, not per-call — and there must be EXACTLY two. A third ERROR " +
+                "here fails this test on purpose: a new failure path in a function 3.7 calls " +
+                "31.25x/second needs a rate-limiting decision. If you added one deliberately, " +
+                "bump this count.",
             Regex("""WHISPER_LOG_ERROR\(""").findAll(fn).count() == 2
         )
     }

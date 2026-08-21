@@ -194,7 +194,7 @@ class NativeVadSourceContractTest {
                 "ggml_backend_cpu_set_threadpool is never called for a VAD context, so " +
                 "ggml_graph_compute takes the disposable-threadpool path and spawns + joins " +
                 "n_threads-1 real pthreads PER GRAPH COMPUTE (ggml-cpu.c:3319-3324) — and that " +
-                "compute sits inside the per-window frame loop (whisper.cpp:5164). At the default " +
+                "compute sits inside the per-window frame loop (whisper.cpp:5170). At the default " +
                 "4 that is 375 create/join cycles per 4 s chunk and 1,407 per 15 s chunk, today, " +
                 "on shipped behavior, for a ~74-node graph with a barrier between every node.",
             body.contains("vcp.n_threads = 1;")
@@ -240,7 +240,7 @@ with:
         // ggml_backend_cpu_set_threadpool is never called for a VAD context, so cpu_ctx->threadpool
         // is NULL and ggml_graph_compute takes the disposable path: it spawns + joins n_threads-1
         // real pthreads on EVERY graph compute (ggml-cpu.c:3319-3324) — and that compute is inside
-        // the per-window frame loop (whisper.cpp:5164), once per 512 samples. At the default 4 this
+        // the per-window frame loop (whisper.cpp:5170), once per 512 samples. At the default 4 this
         // costs 375 create/join cycles per 4 s commit and 1,407 per 15 s commit, for a ~74-node /
         // ~1.36 MFLOP graph with a ggml_barrier between every node, which cannot benefit from 4-way
         // splitting anyway. whisper_jni.cpp already encodes the softer version of this lesson for
@@ -748,7 +748,7 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeInit(
     // MANDATORY, not a tuning preference - see the same note on the batch context above. No
     // ggml threadpool is installed for a VAD context, so ggml_graph_compute spawns + joins
     // n_threads-1 real pthreads on every compute (ggml-cpu.c:3319-3324), and that compute runs
-    // once per 512-sample window (whisper.cpp:5164). At 31.25 frames/second the default 4 means
+    // once per 512-sample window (whisper.cpp:5170). At 31.25 frames/second the default 4 means
     // 93.75 create/join cycles per second, continuously, on the audio capture thread.
     // FIELD NAME: n_threads (whisper.h:683); ".n_thread" is the initializer comment at
     // whisper.cpp:4445 and does not compile.
