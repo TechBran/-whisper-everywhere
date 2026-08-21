@@ -326,6 +326,7 @@ class LocalWhisperEngine(
                 android.util.Log.i(
                     "WE-DIAG",
                     SegmentTiming.line(
+                        seq = seq,
                         audioMs = SegmentTiming.audioMs(samples.size),
                         transcribeMs = (System.nanoTime() - transcribeStartNs) / 1_000_000,
                     ),

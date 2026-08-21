@@ -8,7 +8,7 @@ import java.util.Locale
  * One line per resolved local segment, emitted by [LocalWhisperEngine.runSegment] around
  * `backend.transcribe`:
  *
- *     segment-timing: audio=<ms> transcribe=<ms> rtf=<x.xx>
+ *     segment-timing: seq=<n> audio=<ms> transcribe=<ms> rtf=<x.xx>
  *
  * rtf = transcribe/audio — RTF < 1 means faster than real time. This converts the deep-analysis
  * report's last big ESTIMATE (the multi tier's real RTF on the owner's device) into MEASURED
@@ -37,10 +37,16 @@ object SegmentTiming {
     /**
      * The line itself. A zero/negative [audioMs] (degenerate commit) reports rtf=0.00 instead of
      * dividing by zero. Locale.US so the decimal separator is always a point, never a comma.
+     *
+     * [seq] is PREPENDED, not appended and not emitted as a sibling line (3.7 Workstream F): the
+     * pre-3.7 substring `audio=… transcribe=… rtf=…` survives byte-identically, so every
+     * `findstr segment-timing` grep and every parser written against 3.6.0 keeps working, while a
+     * capture can now be joined against `endpoint:` / `perceived:` on the shared seq — which is
+     * what makes "why was this segment cut and how long did the user wait" answerable from one log.
      */
-    fun line(audioMs: Long, transcribeMs: Long): String {
+    fun line(seq: Long, audioMs: Long, transcribeMs: Long): String {
         val rtf = if (audioMs > 0) transcribeMs.toDouble() / audioMs.toDouble() else 0.0
-        return "segment-timing: audio=$audioMs transcribe=$transcribeMs rtf=" +
+        return "segment-timing: seq=$seq audio=$audioMs transcribe=$transcribeMs rtf=" +
             String.format(Locale.US, "%.2f", rtf)
     }
 }
