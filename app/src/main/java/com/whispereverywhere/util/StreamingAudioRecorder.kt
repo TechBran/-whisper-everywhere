@@ -68,6 +68,10 @@ class StreamingAudioRecorder(private val context: Context) {
         android.util.Log.i("WE-DIAG", "AudioRecord recording bufferSize=$bufferSize rate=$SAMPLE_RATE")
 
         thread = Thread {
+            // FIRST statement: this thread drains the AudioRecord ring and (from 3.7) runs the
+            // Silero probe inline in the callback. At default priority a busy device deschedules
+            // exactly it, and a missed read is unrecoverable audio.
+            CaptureThreadPolicy.enterCaptureThread()
             // Read in 32ms slices (512 samples @16kHz = 1024 bytes), NOT the full buffer:
             // syllables arrive at 4-8/sec and plosives last 5-40ms — a 128ms read cadence
             // gives ~8 amplitude updates/sec, which visibly undersamples speech (the bubble
@@ -100,18 +104,45 @@ class StreamingAudioRecorder(private val context: Context) {
     }
 
     fun stop() {
+        // The one path where the ordering below does not run at all. It cannot strand an
+        // AudioRecord: `recording = true` is set immediately after the successful-init assignment
+        // above, so a live record always implies a true flag.
         if (!recording) return
         recording = false
         _amplitude.value = 0
-        try {
-            thread?.join(2000)
-            audioRecord?.stop()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            audioRecord?.release()
-            audioRecord = null
-            thread = null
-        }
+        // STOP THE RECORD, THEN JOIN — the same order PlaybackAudioCapturer.stop() has always used
+        // (PlaybackAudioCapturer.kt:95-99, which explains why). read() blocks until its buffer
+        // fills and only stop() unblocks it immediately, so the pre-3.7 join-then-stop waited a
+        // full read period at best. This runs on MAIN from four sites (FloatingBubbleService.kt:764
+        // onDestroy, :916, :1822, :2344), and 3.7 puts a native probe in the capture callback, so
+        // "at best" stopped being the interesting case: the join could wait out its whole 2 s
+        // bound, twice per session — ANR territory. The timeout path was worse than slow: it fell
+        // through to release() while the capture thread could still be inside onAudioChunk ->
+        // sendAudio, landing a chunk AFTER the unconditional stop flush
+        // (FloatingBubbleService.kt:2388) — a lost tail or an orphan segment.
+        //
+        // Deliberately NOT wrapped in try/catch: stopThenJoin cannot throw. It guards each callback
+        // individually (runCatching catches Throwable, and both guards are pinned —
+        // stopThenJoin_stillJoins_whenStoppingTheRecordThrows,
+        // stopThenJoin_doesNotPropagate_whenTheJoinItselfThrows). The old catch only ever covered
+        // the two calls that are now inside the policy; release() below propagated then (it ran in
+        // a `finally`) and propagates now, unchanged.
+        //
+        // The join is BOUNDED, and Thread.join(ms) returns identically on termination and on
+        // timeout — stopThenJoin returns Unit, so nothing here can tell the two apart. After a
+        // timed-out join the capture thread may still be alive, possibly about to enter its own
+        // cleanup, so everything after this call must be safe against that: release() below is
+        // (a stopped record's reader just sees read() <= 0 and `recording` is already false), and
+        // so must anything 3.7 adds — a vadProbeFree here, or the vadProbeInit of the NEXT session
+        // starting while the previous capture thread is still unwinding. Stopping first makes the
+        // timeout unlikely, not impossible.
+        CaptureThreadPolicy.stopThenJoin(
+            joinMs = CaptureThreadPolicy.CAPTURE_JOIN_MS,
+            stopRecord = { audioRecord?.stop() },
+            joinThread = { ms -> thread?.join(ms) },
+        )
+        audioRecord?.release()
+        audioRecord = null
+        thread = null
     }
 }

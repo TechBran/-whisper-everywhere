@@ -62,6 +62,9 @@ class PlaybackAudioCapturer(
         // 32 ms per read: 1024 bytes @16k, 3072 bytes @48k (decimates to ~1024).
         val readSize = if (sampleRate == 16000) 1024 else 3072
         thread = Thread {
+            // Same contract as the mic path — see CaptureThreadPolicy. stop() below already
+            // stops-then-joins and is the precedent that policy is named after; it stays as is.
+            com.whispereverywhere.util.CaptureThreadPolicy.enterCaptureThread()
             val buffer = ByteArray(readSize)
             var lastLoudMs = System.currentTimeMillis()
             var silentFired = false
