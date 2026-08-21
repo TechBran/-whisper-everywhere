@@ -27,10 +27,16 @@ static void we_native_log(enum ggml_log_level level, const char *text, void * /*
     __android_log_write(prio, "ggml", text);
 }
 
+// ATOMIC because 3.7's vadProbeInit is the first caller NOT serialised by NativeComputeGate: it
+// runs on the audio capture thread while any other JNI entry point may be inside the gate on
+// another thread. The old plain `static bool` read-modify-write became a formal data race the
+// moment that bypass landed. Benign in practice — the worst case is two threads installing the
+// same two callbacks — but it is a genuine TSan finding, and "benign race" stops being true the
+// day someone puts non-idempotent work here. exchange() also makes the guard actually guard under
+// concurrency: exactly one caller ever observes false.
 static void we_install_native_logging() {
-    static bool done = false;
-    if (done) return;
-    done = true;
+    static std::atomic<bool> done{false};
+    if (done.exchange(true)) return;
     ggml_log_set(we_native_log, nullptr);
     whisper_log_set(we_native_log, nullptr);
 }
@@ -142,8 +148,10 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
         // n_threads = 1 is a straight latency win, not a tuning preference.
         // ggml_backend_cpu_set_threadpool is never called for a VAD context, so cpu_ctx->threadpool
         // is NULL and ggml_graph_compute takes the disposable path: it spawns + joins n_threads-1
-        // real pthreads on EVERY graph compute (ggml-cpu.c:3319-3324) — and that compute is inside
-        // the per-window frame loop (whisper.cpp:5170), once per 512 samples. At the default 4 this
+        // real pthreads on EVERY graph compute — the disposable decision is ggml-cpu.c:3320-3325,
+        // the spawn is the `for (j = 1; j < n_threads; j++) ggml_thread_create` loop at :3283-3287
+        // inside ggml_threadpool_new_impl, and the join is :3379 — and that compute is inside the
+        // per-window frame loop (whisper.cpp:5170), once per 512 samples. At the default 4 this
         // costs 375 create/join cycles per 4 s commit and 1,407 per 15 s commit, for a ~74-node /
         // ~1.36 MFLOP graph with a ggml_barrier between every node, which cannot benefit from 4-way
         // splitting anyway. whisper_jni.cpp already encodes the softer version of this lesson for
@@ -239,6 +247,12 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
 //      (NativeComputeGate.kt:34), so each 32 ms frame would queue behind whatever holds it: a
 //      4-15 s whisper_full, or one of BatchTranscriber's ~54 s per-chunk holds. That is precisely
 //      the stall 3.7 exists to remove, recreated inside the mechanism meant to remove it.
+//   5. The bypass is not free, and this is its bill. Every process-wide singleton these four
+//      functions touch loses the gate's implicit serialisation and has to carry its own. Today
+//      that is exactly one: we_install_native_logging's once-guard, which vadProbeInit is the
+//      first caller to reach un-gated - it is a std::atomic<bool> exchange for that reason and
+//      must stay one. Anything added to this surface that writes shared process state owes the
+//      same audit; the argument above is only as good as this list is complete.
 // Nothing else may follow the probe through this hole: NativeComputeGate still wraps every
 // whisper_full, load and release.
 //
@@ -266,6 +280,12 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeInit(
     {
         const char *raw = env->GetStringUTFChars(modelPath, nullptr);
         if (raw == nullptr) {
+            // ART is documented to throw OutOfMemoryError here, and in practice tends to abort the
+            // process rather than return NULL, so this branch may well be unreachable on Android.
+            // Clearing is the cheap side of that uncertainty: returning to Kotlin with a pending
+            // exception rethrows it at the call site, which would turn "false is a normal outcome"
+            // into a crash on the one path that most needs the amplitude fallback.
+            env->ExceptionClear();
             return JNI_FALSE;
         }
         pathStr = raw;
@@ -282,7 +302,9 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeInit(
     whisper_vad_context_params vcp = whisper_vad_default_context_params();
     // MANDATORY, not a tuning preference - see the same note on the batch context above. No
     // ggml threadpool is installed for a VAD context, so ggml_graph_compute spawns + joins
-    // n_threads-1 real pthreads on every compute (ggml-cpu.c:3319-3324), and that compute runs
+    // n_threads-1 real pthreads on every compute: the disposable decision at ggml-cpu.c:3320-3325,
+    // the `for (j = 1; j < n_threads; j++) ggml_thread_create` loop at :3283-3287 inside
+    // ggml_threadpool_new_impl that does the spawning, and the join at :3379. That compute runs
     // once per 512-sample window (whisper.cpp:5170). At 31.25 frames/second the default 4 means
     // 93.75 create/join cycles per second, continuously, on the audio capture thread.
     // FIELD NAME: n_threads (whisper.h:683); ".n_thread" is the initializer comment at
@@ -304,8 +326,10 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeInit(
 }
 
 // Releases the probe context (~2.6 MB). Idempotent, and safe after a failed vadProbeInit.
-// Blocks briefly if a frame is in flight, so it MUST be called on the capture-thread teardown
-// path, never Main.
+// Blocks until any in-flight frame or an in-flight vadProbeInit model load completes - call it
+// only on the capture-thread teardown path, never Main. The load is the wide case and the one
+// that sizes the ANR risk: a frame is sub-millisecond, but vadProbeInit holds g_probe_mutex
+// across whisper_vad_init_from_file_with_params, which is file I/O plus tensor allocation.
 extern "C" JNIEXPORT void JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_vadProbeFree(
         JNIEnv * /*env*/, jobject /* this */) {

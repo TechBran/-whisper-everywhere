@@ -39,7 +39,8 @@ case degrades to exactly today's behavior.
    independent corruptions if shared).
 3. `vcp.n_threads = 1` (field is `n_threads`, `whisper.h:683` — the `.n_thread` initializer
    comment is wrong). Without it every 32 ms graph compute spawns+joins 3 pthreads
-   (disposable-threadpool path, `ggml-cpu.c:3319-3324`) — 93.75 create/join per second.
+   (disposable-threadpool path, `ggml-cpu.c:3320-3325`, joined at `:3379`) — 93.75 create/join
+   per second.
 4. **Outside `NativeComputeGate`, provably safe:** VAD is forced CPU-only at
    `whisper.cpp:4671-4674` regardless of params; own backend, own work buffers; 2.6 MB is no
    OOM risk. Routing 32 ms frames through the fair gate would queue them behind 4–15 s

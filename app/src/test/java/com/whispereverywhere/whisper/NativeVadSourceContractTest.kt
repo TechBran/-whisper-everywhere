@@ -108,6 +108,25 @@ class NativeVadSourceContractTest {
                 !trimmed.startsWith("*")
         }
 
+    /**
+     * The LIVE line in [init] that assigns the probe context, as a match (so callers get its
+     * index, not a literal's). Both ordering assertions over `vadProbeInit` compare against this:
+     * an `indexOf("whisper_vad_init_from_file_with_params")` would measure a COMMENTED-OUT mention
+     * just as happily as the real call, and a comment that drifts above the code it describes
+     * would then silently satisfy "the pin/free comes first".
+     */
+    private fun probeContextCreation(init: String): MatchResult {
+        val create = Regex("""(?m)^[ \t]*g_probe_ctx = whisper_vad_init_from_file_with_params""")
+            .find(init)
+        assertTrue(
+            "vadProbeInit must assign g_probe_ctx from whisper_vad_init_from_file_with_params on " +
+                "a LIVE line. Without it there is no create index, so every ordering claim below " +
+                "would be comparing against a position that does not exist.",
+            create != null
+        )
+        return create!!
+    }
+
     /** The streaming VAD entry point's body: bounded by the resetting wrapper that follows it. */
     private fun streamingVadEntryPoint(): String {
         val anchor = "bool whisper_vad_detect_speech_no_reset("
@@ -142,7 +161,8 @@ class NativeVadSourceContractTest {
             "we_vad_filter must set vcp.n_threads = 1 before creating the batch VAD context. " +
                 "ggml_backend_cpu_set_threadpool is never called for a VAD context, so " +
                 "ggml_graph_compute takes the disposable-threadpool path and spawns + joins " +
-                "n_threads-1 real pthreads PER GRAPH COMPUTE (ggml-cpu.c:3319-3324) — and that " +
+                "n_threads-1 real pthreads PER GRAPH COMPUTE (ggml-cpu.c:3320-3325, joined at " +
+                ":3379) — and that " +
                 "compute sits inside the per-window frame loop (whisper.cpp:5170). At the default " +
                 "4 that is 375 create/join cycles per 4 s chunk and 1,407 per 15 s chunk, today, " +
                 "on shipped behavior, for a ~74-node graph with a barrier between every node.",
@@ -296,12 +316,13 @@ class NativeVadSourceContractTest {
                 "with a ggml_barrier between every node that cannot be split 4 ways at all.",
             pin != null
         )
+        val create = probeContextCreation(init)
         assertTrue(
-            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises. The index comes " +
-                "from the line-anchored regex match, not indexOf(\"vcp.n_threads = 1;\"): a literal " +
-                "search would happily measure the position of a COMMENTED-OUT pin and report the " +
-                "ordering of a line that never executes.",
-            pin!!.range.first < init.indexOf("whisper_vad_init_from_file_with_params")
+            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises. BOTH indices " +
+                "come from line-anchored regex matches, never indexOf(): a literal search on " +
+                "EITHER side would happily measure the position of a COMMENTED-OUT line and " +
+                "report the ordering of code that never executes.",
+            pin!!.range.first < create.range.first
         )
         assertTrue(
             "the field is n_threads (whisper.h:683), not the .n_thread of the initializer comment",
@@ -319,12 +340,25 @@ class NativeVadSourceContractTest {
             free != null
         )
         val freeAt = free!!.range.first
-        val createAt = init.indexOf("whisper_vad_init_from_file_with_params")
+        val createAt = probeContextCreation(init).range.first
         assertTrue(
             "vadProbeInit must free any existing probe context BEFORE creating a new one — it is " +
                 "called once per recording session and a session restart or model swap would " +
                 "otherwise leak ~2.6 MB each time",
             freeAt in 0 until createAt
+        )
+        assertTrue(
+            "vadProbeInit must take g_probe_mutex",
+            containsLiveLine(init, "g_probe_mutex")
+        )
+        assertTrue(
+            "vadProbeInit must return JNI_FALSE on a live line, and must decide that by testing " +
+                "g_probe_ctx AFTER the load. A probe that reports success with a null context is " +
+                "worse than one that reports failure: the caller skips the amplitude fallback and " +
+                "N5's vadProbeFrame inherits the null.",
+            containsLiveLine(init, "return JNI_FALSE;") &&
+                init.indexOf("g_probe_ctx == nullptr") >
+                init.indexOf("whisper_vad_init_from_file_with_params")
         )
         assertTrue(
             "vadProbeInit must not touch the batch filter's context",

@@ -24,7 +24,8 @@ Every task's requirements implicitly include this section.
 
 Task IDs are letter-blocked by workstream, and the ID order IS the execution order. Four orderings are load-bearing and are not preferences:
 
-- **E1/E2 land early, before D wires the probe in.** `StreamingAudioRecorder.stop()` joins before it stops the record; `vadProbeFree` blocks on the probe mutex while a frame is in flight and is reachable from Main. Until the reorder lands, wiring the probe in creates an ANR vector.
+- **E1/E2 land early, before D wires the probe in.** `StreamingAudioRecorder.stop()` joins before it stops the record; `vadProbeFree` blocks on the probe mutex and is reachable from Main. Size the window by the WIDEST holder, not the typical one: a frame is sub-millisecond, but `vadProbeInit` (N4) holds `g_probe_mutex` across `whisper_vad_init_from_file_with_params` — file I/O plus tensor allocation — so a stop landing during session startup blocks Main for a model load, not for a frame. Until the reorder lands, wiring the probe in creates an ANR vector.
+- **Free-after-init is a binding constraint on the N6/D integration wiring, not a style choice.** The probe surface is idempotent but not order-free: if a stop wins the race against a still-running `vadProbeInit`, `vadProbeFree` takes the mutex first, finds `g_probe_ctx == nullptr`, returns having freed nothing, and the init that was blocked behind it then publishes a live context that nothing will ever release — leaked until the next `vadProbeInit` frees it, which may be never. The wiring must guarantee `vadProbeFree` runs *after* any in-flight `vadProbeInit` has published (E1/E2's join gives exactly this), or carry an explicit "init was cancelled" flag checked under the same mutex.
 - **F1–F6 land before C**, so C can consume `ProbeStats` (C10) and so the `segment-timing: seq=` prepend is in place before anything joins on `seq`.
 - **D1 and D2 land before C1.** `SileroEndpointer` declares `: Endpointer` from birth, so the interface has to exist first; D1 (the `SpeechSegmenter` collapse) precedes D2 so `AmplitudeEndpointer` wraps the final three-parameter shape and its parity test is meaningful. The rest of D (D3–D10) runs after C, because D8 constructs `SileroEndpointer` and D9 makes it the verdict.
 - **F7–F9 land after D9/D10.** They edit the same five commit sites and the same two source-shape pin tests D just wrote; running them second means one re-anchor instead of two.
@@ -193,7 +194,8 @@ class NativeVadSourceContractTest {
             "we_vad_filter must set vcp.n_threads = 1 before creating the batch VAD context. " +
                 "ggml_backend_cpu_set_threadpool is never called for a VAD context, so " +
                 "ggml_graph_compute takes the disposable-threadpool path and spawns + joins " +
-                "n_threads-1 real pthreads PER GRAPH COMPUTE (ggml-cpu.c:3319-3324) — and that " +
+                "n_threads-1 real pthreads PER GRAPH COMPUTE (ggml-cpu.c:3320-3325, joined at " +
+                ":3379) — and that " +
                 "compute sits inside the per-window frame loop (whisper.cpp:5170). At the default " +
                 "4 that is 375 create/join cycles per 4 s chunk and 1,407 per 15 s chunk, today, " +
                 "on shipped behavior, for a ~74-node graph with a barrier between every node.",
@@ -239,8 +241,10 @@ with:
         // n_threads = 1 is a straight latency win, not a tuning preference.
         // ggml_backend_cpu_set_threadpool is never called for a VAD context, so cpu_ctx->threadpool
         // is NULL and ggml_graph_compute takes the disposable path: it spawns + joins n_threads-1
-        // real pthreads on EVERY graph compute (ggml-cpu.c:3319-3324) — and that compute is inside
-        // the per-window frame loop (whisper.cpp:5170), once per 512 samples. At the default 4 this
+        // real pthreads on EVERY graph compute — the disposable decision is ggml-cpu.c:3320-3325,
+        // the spawn is the `for (j = 1; j < n_threads; j++) ggml_thread_create` loop at :3283-3287
+        // inside ggml_threadpool_new_impl, and the join is :3379 — and that compute is inside the
+        // per-window frame loop (whisper.cpp:5170), once per 512 samples. At the default 4 this
         // costs 375 create/join cycles per 4 s commit and 1,407 per 15 s commit, for a ~74-node /
         // ~1.36 MFLOP graph with a ggml_barrier between every node, which cannot benefit from 4-way
         // splitting anyway. whisper_jni.cpp already encodes the softer version of this lesson for
@@ -810,7 +814,9 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeInit(
     whisper_vad_context_params vcp = whisper_vad_default_context_params();
     // MANDATORY, not a tuning preference - see the same note on the batch context above. No
     // ggml threadpool is installed for a VAD context, so ggml_graph_compute spawns + joins
-    // n_threads-1 real pthreads on every compute (ggml-cpu.c:3319-3324), and that compute runs
+    // n_threads-1 real pthreads on every compute: the disposable decision at ggml-cpu.c:3320-3325,
+    // the `for (j = 1; j < n_threads; j++) ggml_thread_create` loop at :3283-3287 inside
+    // ggml_threadpool_new_impl that does the spawning, and the join at :3379. That compute runs
     // once per 512-sample window (whisper.cpp:5170). At 31.25 frames/second the default 4 means
     // 93.75 create/join cycles per second, continuously, on the audio capture thread.
     // FIELD NAME: n_threads (whisper.h:683); ".n_thread" is the initializer comment at
