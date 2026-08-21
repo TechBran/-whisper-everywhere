@@ -251,6 +251,58 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
 static std::mutex             g_probe_mutex;
 static whisper_vad_context  * g_probe_ctx = nullptr;
 
+// Creates (or recreates) the probe context. Called once per recording session, on the capture
+// thread, before the first frame. Returns false for a missing/unloadable model - a NORMAL
+// outcome, not an error: the caller then runs the amplitude endpointer, which is byte-identical
+// to 3.6.0 behaviour (VadModel.path() already returns null and logs "running without VAD").
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_vadProbeInit(
+        JNIEnv *env, jobject /* this */, jstring modelPath) {
+    we_install_native_logging();
+    if (modelPath == nullptr) {
+        return JNI_FALSE;
+    }
+    std::string pathStr;
+    {
+        const char *raw = env->GetStringUTFChars(modelPath, nullptr);
+        if (raw == nullptr) {
+            return JNI_FALSE;
+        }
+        pathStr = raw;
+        env->ReleaseStringUTFChars(modelPath, raw);
+    }
+
+    std::lock_guard<std::mutex> lock(g_probe_mutex);
+    // Idempotent. A session restart or a model swap must not leak the previous ~2.6 MB context.
+    if (g_probe_ctx != nullptr) {
+        whisper_vad_free(g_probe_ctx);
+        g_probe_ctx = nullptr;
+    }
+
+    whisper_vad_context_params vcp = whisper_vad_default_context_params();
+    // MANDATORY, not a tuning preference - see the same note on the batch context above. No
+    // ggml threadpool is installed for a VAD context, so ggml_graph_compute spawns + joins
+    // n_threads-1 real pthreads on every compute (ggml-cpu.c:3319-3324), and that compute runs
+    // once per 512-sample window (whisper.cpp:5170). At 31.25 frames/second the default 4 means
+    // 93.75 create/join cycles per second, continuously, on the audio capture thread.
+    // FIELD NAME: n_threads (whisper.h:683); ".n_thread" is the initializer comment at
+    // whisper.cpp:4445 and does not compile.
+    vcp.n_threads = 1;
+    // use_gpu is already false by default and whisper_vad_init_context forces it false anyway
+    // (whisper.cpp:4671-4674) - that forcing is load-bearing for the PROBE SAFETY argument above,
+    // so do not "helpfully" enable it here if a future whisper.cpp makes GPU VAD viable without
+    // first moving this surface inside NativeComputeGate.
+
+    g_probe_ctx = whisper_vad_init_from_file_with_params(pathStr.c_str(), vcp);
+    if (g_probe_ctx == nullptr) {
+        LOGE("vad probe: init failed for %s - endpointing falls back to amplitude",
+             pathStr.c_str());
+        return JNI_FALSE;
+    }
+    LOGI("vad probe: context ready (n_threads=1, %s)", pathStr.c_str());
+    return JNI_TRUE;
+}
+
 // Releases the probe context (~2.6 MB). Idempotent, and safe after a failed vadProbeInit.
 // Blocks briefly if a frame is in flight, so it MUST be called on the capture-thread teardown
 // path, never Main.

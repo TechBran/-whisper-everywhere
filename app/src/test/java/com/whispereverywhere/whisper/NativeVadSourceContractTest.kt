@@ -284,4 +284,51 @@ class NativeVadSourceContractTest {
             containsLiveLine(free, "g_probe_ctx = nullptr;")
         )
     }
+
+    @Test
+    fun probeContext_pinsOneThread_soFrameRateProbingDoesNotForkPthreadsThirtyTimesASecond() {
+        val init = jniFunctionBody("vadProbeInit")
+        val pin = Regex("""(?m)^[ \t]*vcp\.n_threads = 1;""").find(init)
+        assertTrue(
+            "vadProbeInit must set vcp.n_threads = 1. This is the highest-leverage single line " +
+                "in Workstream A: at 31.25 frames/second the default 4 means 93.75 pthread " +
+                "create/join cycles per second, continuously, for a ~74-node / ~1.36 MFLOP graph " +
+                "with a ggml_barrier between every node that cannot be split 4 ways at all.",
+            pin != null
+        )
+        assertTrue(
+            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises. The index comes " +
+                "from the line-anchored regex match, not indexOf(\"vcp.n_threads = 1;\"): a literal " +
+                "search would happily measure the position of a COMMENTED-OUT pin and report the " +
+                "ordering of a line that never executes.",
+            pin!!.range.first < init.indexOf("whisper_vad_init_from_file_with_params")
+        )
+        assertTrue(
+            "the field is n_threads (whisper.h:683), not the .n_thread of the initializer comment",
+            !Regex("""vcp\.n_thread\b""").containsMatchIn(init)
+        )
+    }
+
+    @Test
+    fun probeInit_isIdempotent_soARestartedSessionCannotLeakTheEarlierContext() {
+        val init = jniFunctionBody("vadProbeInit")
+        val free = Regex("""(?m)^[ \t]*whisper_vad_free\(g_probe_ctx\);""").find(init)
+        assertTrue(
+            "vadProbeInit must call whisper_vad_free(g_probe_ctx) on a LIVE line: a commented-out " +
+                "free satisfies indexOf() while leaking the context it claims to release.",
+            free != null
+        )
+        val freeAt = free!!.range.first
+        val createAt = init.indexOf("whisper_vad_init_from_file_with_params")
+        assertTrue(
+            "vadProbeInit must free any existing probe context BEFORE creating a new one — it is " +
+                "called once per recording session and a session restart or model swap would " +
+                "otherwise leak ~2.6 MB each time",
+            freeAt in 0 until createAt
+        )
+        assertTrue(
+            "vadProbeInit must not touch the batch filter's context",
+            !init.contains("g_vad_ctx")
+        )
+    }
 }
