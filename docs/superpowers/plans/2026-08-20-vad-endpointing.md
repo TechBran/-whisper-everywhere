@@ -3039,17 +3039,28 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 **Files:**
 - Create `app/src/test/java/com/whispereverywhere/transcription/LocalWhisperEngineStatsTest.kt`
 - Modify `app/src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt` — the
-  timing emit at `:321-332` (post-F2 shape)
+  timing emit written in Task F2. ANCHOR ON CONTENT (the `transcribeStartNs`/`transcribeMs` emit
+  block), never on a line range: the plan's original `:321-332` was off by one (the block spans
+  `:321-333`) and F2/F5 shifted it further.
+- Modify `app/src/test/java/com/whispereverywhere/transcription/SegmentTimingTest.kt` — three
+  source-anchored pins the F5 review mandated (see Step 1b).
 
 **Interfaces:**
 - Consumes: `WhisperBackend.lastSegmentStats(ctx: Long): NativeSegmentStats?` (Task F4),
   `SegmentTiming.line(seq, audioMs, transcribeMs, stats)` (Task F5).
 - Produces: no new symbols. Behaviour: exactly one `lastSegmentStats(ctx)` query per segment,
-  after the transcribe that produced it.
+  after the transcribe that produced it, on the successful return path only.
 
 **Executor discipline:** this test uses a REAL `Executors.newSingleThreadExecutor()`, not the
 package's `SameThreadExecutorService` — the property under test is ordering across the engine's
 background thread, and a same-thread stub cannot express it.
+
+**THE HAZARD THIS TASK IS SHAPED AROUND:** `android.util.Log` is a JVM no-op here
+(`unitTests.isReturnDefaultValues = true`), so no behavioural test can see the STRING the emit
+produces. A mutant that calls `backend.lastSegmentStats(ctx)` and then passes `stats = null` —
+paying for the read and discarding it — passes every behavioural test in this task while every
+segment-timing line on a real device silently loses its suffix. The Step-1b source pins are what
+close it; they are not optional polish.
 
 - [ ] **Step 1: Write the failing test** — create
 `app/src/test/java/com/whispereverywhere/transcription/LocalWhisperEngineStatsTest.kt`:
@@ -3071,6 +3082,13 @@ import java.util.concurrent.TimeUnit
  *
  * REAL single-thread executor throughout — the ordering property lives on the engine's background
  * thread, and a same-thread stub would prove nothing about it.
+ *
+ * WHAT NO TEST IN THIS CLASS CAN SEE: the emit is `android.util.Log.i`, which this build stubs to
+ * a no-op (`unitTests.isReturnDefaultValues = true`), so the STRING the call site produces is
+ * invisible here. Everything below is about WHICH backend calls happened and IN WHAT ORDER. The
+ * complementary half — that the value read is the value printed, rather than read and discarded —
+ * is source-anchored in `SegmentTimingTest.theStatsTheEngineReadsAreTheStatsItPrints_notDiscarded`.
+ * Neither half is sufficient alone; a reviewer must read them as one pin.
  */
 class LocalWhisperEngineStatsTest {
 
@@ -3078,22 +3096,28 @@ class LocalWhisperEngineStatsTest {
 
     private fun fastRetry() = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 })
 
-    private class PathProvider(private val path: String?) : ModelPathProvider {
-        override fun installedModelPath(): String? = path
-    }
-
     /** Records the ORDER of native touches so "stats after transcribe" is provable, not assumed. */
-    private class OrderRecordingBackend : WhisperBackend {
+    private class OrderRecordingBackend(private val transcribeThrows: Boolean = false) : WhisperBackend {
         val events: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
         override fun load(modelPath: String): Long = 42L
+
+        // DEPENDS ON A DEFAULT: the engine calls transcribeStreaming, which this fake does NOT
+        // override — WhisperBackend.transcribeStreaming's interface default delegates to
+        // transcribe(...) (TranscriptionEngine.kt, "= transcribe(ctx, samples, lang, useVad)").
+        // Named so that if that default ever stops delegating, this fake fails loudly here
+        // instead of silently recording zero transcribes and turning the order assertions green
+        // for the wrong reason.
         override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
             events += "transcribe(ctx=$ctx)"
+            if (transcribeThrows) throw RuntimeException("native transcribe failed")
             return " hello"
         }
+
         override fun lastSegmentStats(ctx: Long): NativeSegmentStats? {
             events += "stats(ctx=$ctx)"
             return NativeSegmentStats(ctxFrames = 512, vadInSamples = 38_400, vadOutSamples = 32_000)
         }
+
         override fun release(ctx: Long) = Unit
     }
 
@@ -3101,27 +3125,34 @@ class LocalWhisperEngineStatsTest {
         val done = CountDownLatch(resolutions)
         val opened = CountDownLatch(1)
         val resolved: MutableList<Long> = java.util.Collections.synchronizedList(mutableListOf())
+        val outcomes: MutableList<SegmentOutcome> = java.util.Collections.synchronizedList(mutableListOf())
         override fun onOpen() { opened.countDown() }
         override fun onDelta(text: String) = Unit
         override fun onSegmentResolved(seq: Long, outcome: SegmentOutcome) {
             resolved += seq
+            outcomes += outcome
             done.countDown()
         }
         override fun onError(message: String) = Unit
         override fun onClosed() = Unit
     }
 
+    private fun engineOn(
+        backend: WhisperBackend,
+        executor: java.util.concurrent.ExecutorService,
+    ) = LocalWhisperEngine(
+        modelPathProvider = FakeModelPathProvider("/models/pro.bin"),
+        retry = fastRetry(),
+        backend = backend,
+        executor = executor,
+    )
+
     @Test
     fun statsAreQueriedOncePerSegment_afterTheTranscribeThatProducedThem() {
         val executor = Executors.newSingleThreadExecutor()
         try {
             val backend = OrderRecordingBackend()
-            val engine = LocalWhisperEngine(
-                modelPathProvider = PathProvider("/models/pro.bin"),
-                retry = fastRetry(),
-                backend = backend,
-                executor = executor,
-            )
+            val engine = engineOn(backend, executor)
             val listener = LatchListener(resolutions = 1)
             engine.connect(language = "en", listener = listener)
             assertTrue("engine never opened", listener.opened.await(5, TimeUnit.SECONDS))
@@ -3131,7 +3162,9 @@ class LocalWhisperEngineStatsTest {
             assertTrue("segment never resolved", listener.done.await(5, TimeUnit.SECONDS))
 
             // The ORDER is the contract: the counters describe the call that just finished, so a
-            // read before it would report the PREVIOUS segment's encoder cost.
+            // read before it would report the PREVIOUS segment's encoder cost. The ctx in the
+            // recorded event is the one the engine passed, so a read against any other handle
+            // (0L, a literal) shows up here as a different string rather than as silence.
             assertEquals(listOf("transcribe(ctx=42)", "stats(ctx=42)"), backend.events)
             assertEquals(listOf(0L), listener.resolved)
         } finally {
@@ -3144,12 +3177,7 @@ class LocalWhisperEngineStatsTest {
         val executor = Executors.newSingleThreadExecutor()
         try {
             val backend = OrderRecordingBackend()
-            val engine = LocalWhisperEngine(
-                modelPathProvider = PathProvider("/models/pro.bin"),
-                retry = fastRetry(),
-                backend = backend,
-                executor = executor,
-            )
+            val engine = engineOn(backend, executor)
             val listener = LatchListener(resolutions = 3)
             engine.connect(language = "en", listener = listener)
             assertTrue(listener.opened.await(5, TimeUnit.SECONDS))
@@ -3172,9 +3200,50 @@ class LocalWhisperEngineStatsTest {
     }
 
     @Test
+    fun aThrownTranscribeNeverQueriesTheCounters() {
+        // The capture follows the SUCCESSFUL return path only, and must NOT be hoisted into a
+        // finally. On a throw the counters are, correctly, whatever the previous transcribe left —
+        // the backend seam invalidates them, so the honest answer is null and the honest line is
+        // no line at all. A capture in a finally would run here, and would ALSO pair a
+        // segment-timing line with a segment that produced no transcript, which is exactly the
+        // "why does this segment have a timing line but no text" confusion the workstream removes.
+        // Nothing else in the suite covers this: the emit is a JVM no-op, so the extra line is
+        // invisible and only the extra BACKEND CALL recorded below gives the mutation away.
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val backend = OrderRecordingBackend(transcribeThrows = true)
+            val engine = engineOn(backend, executor)
+            val listener = LatchListener(resolutions = 1)
+            engine.connect(language = "en", listener = listener)
+            assertTrue(listener.opened.await(5, TimeUnit.SECONDS))
+
+            engine.sendAudio(pcm)
+            engine.commit()
+            assertTrue("segment never resolved", listener.done.await(5, TimeUnit.SECONDS))
+
+            assertEquals(
+                "a transcribe that THREW must leave no stats query behind it",
+                listOf("transcribe(ctx=42)"),
+                backend.events,
+            )
+            // And the throw still resolves the seq exactly once, as Lost — unchanged from 3.6.0.
+            assertEquals(listOf(0L), listener.resolved)
+            assertTrue(
+                "a thrown transcribe is a LOST segment, not an empty one: whisper reached no " +
+                    "verdict about this audio. Got: ${listener.outcomes}",
+                listener.outcomes.single() is SegmentOutcome.Lost,
+            )
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun aBackendWithNoCountersStillResolvesNormally() {
         // The default lastSegmentStats returns null; the engine must log a stats-free line and
-        // resolve exactly as it did in 3.6.0.
+        // resolve exactly as it did in 3.6.0. This is also the null-after-success shape in
+        // production (an interleaved batch chunk re-tagged the slot between transcribe and read):
+        // omit the fields, never warn, never assert, never retry the read.
         val executor = Executors.newSingleThreadExecutor()
         try {
             val backend = object : WhisperBackend {
@@ -3182,12 +3251,7 @@ class LocalWhisperEngineStatsTest {
                 override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean) = " plain"
                 override fun release(ctx: Long) = Unit
             }
-            val engine = LocalWhisperEngine(
-                modelPathProvider = PathProvider("/models/pro.bin"),
-                retry = fastRetry(),
-                backend = backend,
-                executor = executor,
-            )
+            val engine = engineOn(backend, executor)
             val listener = LatchListener(resolutions = 1)
             engine.connect(language = "en", listener = listener)
             assertTrue(listener.opened.await(5, TimeUnit.SECONDS))
@@ -3196,6 +3260,7 @@ class LocalWhisperEngineStatsTest {
             engine.commit()
             assertTrue(listener.done.await(5, TimeUnit.SECONDS))
             assertEquals(listOf(0L), listener.resolved)
+            assertEquals(listOf(SegmentOutcome.Text("plain")), listener.outcomes)
         } finally {
             executor.shutdownNow()
         }
@@ -3203,19 +3268,108 @@ class LocalWhisperEngineStatsTest {
 }
 ```
 
+- [ ] **Step 1b: the source-anchored pins** — append to
+`app/src/test/java/com/whispereverywhere/transcription/SegmentTimingTest.kt` (it already owns the
+`source()` / `liveLineCount()` helpers and F2's seam pin, so the engine-emit pins stay together in
+one class):
+
+```kotlin
+    @Test
+    fun theStatsTheEngineReadsAreTheStatsItPrints_notDiscarded() {
+        // Source-anchored for the same reason as the seq pin above, and it closes a strictly
+        // NASTIER hole. `LocalWhisperEngineStatsTest` proves the engine CALLS
+        // backend.lastSegmentStats(ctx) in the right order — but the emit is `android.util.Log.i`,
+        // a JVM no-op here, so a mutant that performs that call and then passes `stats = null`
+        // (or drops the argument, falling back to the null default) satisfies every behavioural
+        // assertion in that class while EVERY segment-timing line on a real device silently loses
+        // its vadIn/vadOut/ctxFrames suffix. The read would be paid for and thrown away, and no
+        // test in the suite would notice. Verified by mutation: exactly that edit is green
+        // everywhere except here.
+        val engine = source("src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt")
+        assertEquals(
+            "the timing line must be handed the stats the engine JUST READ (`stats = nativeStats`) " +
+                "- reading the counters and then printing without them is invisible to every JVM " +
+                "test and costs every device line its suffix",
+            1,
+            liveLineCount(engine, "stats = nativeStats"),
+        )
+        assertEquals(
+            "and there must be exactly one read to hand over: `val nativeStats = " +
+                "backend.lastSegmentStats(ctx)`. A second read is a second answer - the slot can " +
+                "be re-tagged by an interleaved batch chunk between them, so the two calls can " +
+                "legitimately disagree and the line would report whichever one won",
+            1,
+            liveLineCount(engine, "val nativeStats = backend.lastSegmentStats(ctx)"),
+        )
+    }
+
+    @Test
+    fun transcribeMsIsMeasuredBeforeTheCountersAreRead() {
+        // Also invisible to every JVM test, and self-referential in a way that makes it hard to
+        // spot by eye: with the two lines swapped the timing line reports a transcribe duration
+        // that INCLUDES the diagnostic query annotating it. Two volatile reads is a small lie
+        // today, but `lastSegmentStats` is a SEAM — any future backend may answer it over JNI or
+        // behind a lock, and the number that goes stale is the one the tier-consolidation and GPU
+        // decision gates read. Regex-anchored on BOTH sides (the N5 lesson): a raw indexOf would
+        // happily match either name inside the comment block above them.
+        val engine = source("src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt")
+        val measure = Regex("""(?m)^[ \t]*val transcribeMs = """).find(engine)
+        val read = Regex("""(?m)^[ \t]*val nativeStats = """).find(engine)
+        assertTrue("the emit block must declare `val transcribeMs = ...` on a live line", measure != null)
+        assertTrue("the emit block must declare `val nativeStats = ...` on a live line", read != null)
+        assertTrue(
+            "the elapsed time must be taken BEFORE the counters are read, so the diagnostic can " +
+                "never inflate the number it is annotating",
+            measure!!.range.first < read!!.range.first,
+        )
+    }
+
+    @Test
+    fun theKDocSampleLineShowsTheSuffixFields() {
+        // The sample at the top of SegmentTiming.kt is what a reader greps for before writing a
+        // parser, so it is documentation with a consumer. Drifting behind the emitter teaches the
+        // wrong field list; F5 updated it in lockstep and this keeps it there.
+        val timing = source("src/main/java/com/whispereverywhere/transcription/SegmentTiming.kt")
+        val samples = timing.lineSequence().filter { it.contains("segment-timing: seq=<n>") }.toList()
+        assertEquals(
+            "SegmentTiming.kt must carry exactly one placeholder sample line (`segment-timing: " +
+                "seq=<n> ...`) in its KDoc. Zero means the assertion below would pass vacuously; " +
+                "two means one of them is drifting unnoticed. Found: $samples",
+            1,
+            samples.size,
+        )
+        assertEquals(
+            "the KDoc sample must show the full 3.7 line, suffix included",
+            " *     segment-timing: seq=<n> audio=<ms> transcribe=<ms> rtf=<x.xx> " +
+                "vadIn=<n> vadOut=<n> ctxFrames=<n>",
+            samples.single(),
+        )
+    }
+```
+
+Also extend the comment inside `withoutNativeStatsTheLineIsByteIdenticalToTheSeqOnlyForm` to say
+which assertion does which job — the six expected-string literals above it are what pin the bytes;
+that test pins only that the `stats` DEFAULT is null, i.e. that those six keep exercising the
+no-counters form now that the parameter exists.
+
 - [ ] **Step 2: Run it, expected failure** —
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.transcription.LocalWhisperEngineStatsTest" --no-daemon
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.transcription.LocalWhisperEngineStatsTest" --tests "com.whispereverywhere.transcription.SegmentTimingTest" --no-daemon
 ```
 
-Expected: the first two tests fail with
-`java.lang.AssertionError: expected:<[transcribe(ctx=42), stats(ctx=42)]> but was:<[transcribe(ctx=42)]>`
-— the engine does not query the counters yet. The third test passes already (it pins the
-unchanged path).
+Expected: **three** failures.
+`statsAreQueriedOncePerSegment_afterTheTranscribeThatProducedThem` with
+`java.lang.AssertionError: expected:<[transcribe(ctx=42), stats(ctx=42)]> but was:<[transcribe(ctx=42)]>`,
+`everySegmentGetsItsOwnStatsQuery_neverOneForTheWholeSession` with the three-segment form of the
+same, and `theStatsTheEngineReadsAreTheStatsItPrints_notDiscarded` with `expected:<1> but was:<0>`
+— the engine does not query the counters yet. `aThrownTranscribeNeverQueriesTheCounters`,
+`aBackendWithNoCountersStillResolvesNormally`, `transcribeMsIsMeasuredBeforeTheCountersAreRead`
+and `theKDocSampleLineShowsTheSuffixFields` pass already (they pin unchanged paths).
 
-- [ ] **Step 3: Minimal implementation** — `LocalWhisperEngine.kt:321-332`, replace the timing
-emit written in Task F2:
+- [ ] **Step 3: Minimal implementation** — in `LocalWhisperEngine.runSegment`, replace the timing
+emit written in Task F2 (anchor on the `android.util.Log.i("WE-DIAG", SegmentTiming.line(` block
+that follows `val text = runBlocking { retry.retry { … } }`) with:
 
 ```kotlin
                 // Permanent per-segment RTF instrumentation (3.6.0, Workstream A3; extended by
@@ -3229,6 +3383,22 @@ emit written in Task F2:
                 // never inflate the number it is annotating. lastSegmentStats describes the call
                 // that just returned and is null for any backend without native counters, in
                 // which case the line degrades to the seq-only form rather than forging zeros.
+                //
+                // READ ONCE, HERE, AND NOWHERE ELSE. The position is the whole correctness
+                // argument, on three axes:
+                //   - AFTER the retry returns, on this same executor thread: the counters are a
+                //     one-slot snapshot tagged with the ctx that last ran, so they describe the
+                //     LAST attempt (see SegmentTiming.line's retry paragraph). A read hoisted
+                //     above or inside retry.retry{} would report a previous segment's encoder
+                //     cost with nothing about the numbers looking wrong.
+                //   - On the SUCCESS path only, never in a finally. A transcribe that threw is
+                //     handled below as Lost, and its counters are — correctly — invalidated by
+                //     the backend seam; emitting there would pair a timing line with a segment
+                //     that produced no transcript.
+                //   - A NULL answer after a SUCCESSFUL transcribe is NORMAL, not an anomaly: the
+                //     native counters are process-global, so an interleaved batch chunk can
+                //     re-tag the slot between the two calls. The line simply omits the fields.
+                //     Never warn, never assert, never re-read — a second read is a second answer.
                 val transcribeMs = (System.nanoTime() - transcribeStartNs) / 1_000_000
                 val nativeStats = backend.lastSegmentStats(ctx)
                 android.util.Log.i(
@@ -3249,23 +3419,34 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Evidence: `TEST-com.whispereverywhere.transcription.LocalWhisperEngineStatsTest.xml` shows
-`tests="3" failures="0"`, and `LocalWhisperEngineTest` / `LocalWhisperEngineStreamingTest` /
-`LocalWhisperEnginePinTest` XMLs are unchanged and green.
+`tests="4" failures="0"` (the brief's 3 plus the thrown-transcribe case, which is the ONLY test
+that kills a capture hoisted into a `finally`);
+`TEST-com.whispereverywhere.transcription.SegmentTimingTest.xml` goes `tests="13"` → `tests="16"`;
+and `LocalWhisperEngineTest` / `LocalWhisperEngineStreamingTest` / `LocalWhisperEnginePinTest`
+XMLs are unchanged and green. Section delta: **+7 tests, +1 class.**
 
-- [ ] **Step 5: Commit** —
+- [ ] **Step 5: Commit** — message via `git commit -F <utf-8 file>` (branch practice; `-m @'…'@`
+mangles em-dashes under PS 5.1):
 
-```powershell
-git add app/src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt app/src/test/java/com/whispereverywhere/transcription/LocalWhisperEngineStatsTest.kt; git commit -m @'
-feat(diag): engine emits seq + native cost counters on every segment-timing line
+```
+feat(diag): the engine feeds the native cost counters into every segment-timing line
 
-transcribeMs is taken before the counters are queried so the diagnostic cannot inflate the
-number it annotates. The test drives a REAL single-thread executor and pins the ORDER
-(transcribe then stats) - a read before the call would report the previous segment's encoder
-cost, which is exactly the confusion ctxFrames exists to end.
+Read once, immediately after this segment's own transcribe, on the same executor thread, on
+the successful return path only - never in a finally, where it would print a timing line for
+a segment that produced no transcript. transcribeMs is taken BEFORE the query so the
+diagnostic cannot inflate the number it annotates, and a null answer after a successful
+transcribe is NORMAL (an interleaved batch chunk re-tagged the process-global slot): the line
+omits the fields and says nothing about it.
+
+The behavioural tests drive a REAL single-thread executor and pin the ORDER - a read before
+the call would report the previous segment's encoder cost, which is exactly the confusion
+ctxFrames exists to end. They cannot see the emitted string, though: Log is a JVM no-op here,
+so a mutant that reads the counters and then prints stats = null passes all of them while
+every device line loses its suffix. Three source-anchored pins in SegmentTimingTest close
+that, alongside F2's seq pin.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
-'@
 ```
 
 ## Workstream D (seam prerequisites) — SpeechSegmenter collapse + the Endpointer interface
