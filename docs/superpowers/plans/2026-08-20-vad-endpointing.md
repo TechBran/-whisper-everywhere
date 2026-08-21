@@ -3011,7 +3011,8 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Evidence: `TEST-com.whispereverywhere.transcription.SegmentTimingTest.xml` shows
-`tests="11" failures="0"` — the six pinned assertions from Task F2 still green, unchanged.
+`tests="12" failures="0"` — the six pinned assertions from Task F2 still green, unchanged
+(F2 landed 9 tests, not the predicted 8: a source-anchored seam pin was added in-task).
 
 - [ ] **Step 5: Commit** —
 
