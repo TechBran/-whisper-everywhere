@@ -20,6 +20,10 @@
 // The owner's acceptance greps are `adb logcat -s WE-DIAG`. A native line that belongs to that
 // story must carry that tag, or it is invisible to the capture that is supposed to answer for it.
 #define LOGDIAG(...) __android_log_print(ANDROID_LOG_INFO, "WE-DIAG", __VA_ARGS__)
+// The same tag at ERROR level. A WE-DIAG-only capture must be able to separate "no VAD was
+// configured for this commit" (no VAD line at all) from "the VAD failed and we transcribed
+// unfiltered" — and that distinction is exactly what vadIn=0 vadOut=0 cannot make on its own.
+#define LOGDIAGE(...) __android_log_print(ANDROID_LOG_ERROR, "WE-DIAG", __VA_ARGS__)
 
 // Forward ggml + whisper internal logging (normally stderr, which Android discards) to logcat.
 // This is how the OpenCL/CPU backends narrate their init (platform/device selection, kernel
@@ -174,7 +178,8 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
         g_vad_ctx = whisper_vad_init_from_file_with_params(vadPath.c_str(), vcp);
         g_vad_path = vadPath;
         if (g_vad_ctx == nullptr) {
-            LOGE("VAD init failed for %s — transcribing without VAD", vadPath.c_str());
+            // Tag+level moved whisper_jni/E -> WE-DIAG/E (3.7 F); the TEXT is byte-identical.
+            LOGDIAGE("VAD init failed for %s — transcribing without VAD", vadPath.c_str());
             return false;
         }
         LOGI("VAD context loaded (%s)", vadPath.c_str());
@@ -198,7 +203,8 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
     const auto t_vad_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t_vad_start).count();
     if (segs == nullptr) {
-        LOGE("VAD segmentation failed — transcribing without VAD");
+        // Tag+level moved whisper_jni/E -> WE-DIAG/E (3.7 F); the TEXT is byte-identical.
+        LOGDIAGE("VAD segmentation failed — transcribing without VAD");
         return false;
     }
 

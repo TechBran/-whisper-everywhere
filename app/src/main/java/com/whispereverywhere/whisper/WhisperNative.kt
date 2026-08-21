@@ -11,6 +11,7 @@ import java.nio.ByteBuffer
  *   - detectedLanguage() -> whisper_lang_str(whisper_full_lang_id()): the LAST completed transcribe's detection
  *   - free()             -> whisper_free()
  *   - vadProbe*()        -> a dedicated streaming Silero VAD context (3.7 endpointing; see below)
+ *   - lastSegmentStats() -> the 3.7 Workstream F cost counters for the last transcribeRaw (diagnostics only)
  *
  * The returned Long is an opaque native pointer handle owned by the caller
  * (LocalWhisperEngine caches it). Never dereference it in Kotlin.
@@ -228,8 +229,12 @@ object WhisperNative {
      * `[ctxFrames, vadInSamples, vadOutSamples]` (3.7 Workstream F).
      *
      * - `ctxFrames` — the encoder audio context actually used. 0 means whisper_full never ran
-     *   (the VAD found zero speech, or the energy gate fired). This is the cost driver 3.7's
-     *   cadence arithmetic turns on and was entirely invisible from Kotlin before 3.7.
+     *   (a null ctx or null samples, the VAD found zero speech, or the energy gate fired). This is
+     *   the cost driver 3.7's cadence arithmetic turns on and was entirely invisible from Kotlin
+     *   before 3.7. A NON-ZERO ctxFrames means the encoder was CONFIGURED for that context on this
+     *   call — not that the decode succeeded. A whisper_full that fails (fullRc != 0), or a result
+     *   allocation that fails after it succeeded, both return empty text with ctxFrames left at
+     *   the configured value. Never read non-zero ctxFrames as proof of a successful segment.
      * - `vadInSamples` / `vadOutSamples` — we_vad_filter's before/after sample counts. Both 0
      *   means no VAD ran; `vadIn > 0` with `vadOut == 0` is the probe-vs-batch-filter
      *   disagreement, which is the one thing `cut=vad` cannot tell you on its own.

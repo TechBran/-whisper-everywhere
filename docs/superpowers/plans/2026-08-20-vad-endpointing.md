@@ -11464,12 +11464,22 @@ $decl = @(git diff --name-only main...HEAD -- docs/PLAY-DECLARATIONS.md app/src/
 # exports — assembleDebug only proves the C++ compiled, and JNI binds BY NAME at runtime. This row
 # is the only place the two sides are ever compared. It reads the artifact Step 4 builds, so if the
 # .so is older than whisper_jni.cpp, re-run this row after Step 4 rather than trusting it.
-$so  = 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\intermediates\stripped_native_libs\debug\stripDebugDebugSymbols\out\lib\arm64-v8a\libwhisper_jni.so'
+# The .so is pinned to the CMake output under intermediates\cxx\Debug\, and that pin is
+# load-bearing twice over (both verified on disk, 2026-08-21). (1) A STALE 6-EXPORT
+# libwhisper_jni.so from an older configuration is still present at
+# intermediates\cmake\debug\obj\arm64-v8a\ — "cmake" sorts BEFORE "cxx", so any glob across
+# intermediates\* picks the stale one first and this row reports MISMATCH against code that is
+# perfectly fine. (2) stripped_native_libs — this row's original target — is written by
+# stripDebugDebugSymbols, which runs on the packaging chain and NOT on a plain :app:assembleDebug
+# that only recompiles whisper_jni.cpp; measured 20 minutes behind the CMake output it is supposed
+# to stand for. The Debug\<hash>\ segment is a configuration hash and is not stable across
+# machines or clean builds, so it is globbed — and the NEWEST match is taken, never the first.
+$so  = (Get-ChildItem 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\intermediates\cxx\Debug\*\obj\arm64-v8a\libwhisper_jni.so' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1).FullName
 $nm  = (Get-ChildItem 'C:\Users\bastr\AppData\Local\Android\Sdk\ndk' -Filter 'llvm-nm.exe' -Recurse | Select-Object -First 1).FullName
-$soF = Get-Item $so -ErrorAction SilentlyContinue
+$soF = if ($so) { Get-Item $so -ErrorAction SilentlyContinue } else { $null }
 $cpp = Get-Item 'app\src\main\cpp\whisper_jni.cpp'
 if (-not $soF -or $soF.LastWriteTime -lt $cpp.LastWriteTime) {
-  "{0,-24} {1}" -f 'jni-name-pairing', 'STALE .so - re-run after Step 4'
+  "{0,-24} {1}" -f 'jni-name-pairing', 'STALE OR MISSING .so - re-run after Step 4'
 } else {
   $kotlin = @(Select-String -Path 'app\src\main\java\com\whispereverywhere\whisper\WhisperNative.kt' -Pattern '^\s*external fun (\w+)' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object)
   $exp    = @(& $nm --dynamic --defined-only $so | Select-String 'Java_com_whispereverywhere_whisper_WhisperNative_' | ForEach-Object { ($_ -split ' ')[2] })

@@ -181,8 +181,14 @@ class NativeSegmentStatsContractTest {
                     "and nothing in the type system forces its caller onto the writing thread — a " +
                     "plain int is a formal data race the day someone reads it off-gate, which is " +
                     "exactly the mistake the probe surface already had to correct once " +
-                    "(we_install_native_logging). ZERO-INITIALISED because a process that has " +
-                    "never transcribed must report \"whisper_full never ran\", not garbage.",
+                    "(we_install_native_logging). The {0} is pinned as EXPLICIT rather than as " +
+                    "load-bearing, and the difference is worth stating honestly: a namespace-scope " +
+                    "std::atomic<int> is zero-initialised by static initialization whether or not " +
+                    "the braces are there, so dropping them changes no behavior. It is pinned " +
+                    "because the documented reading depends on the value — \"ctxFrames = 0 means " +
+                    "whisper_full never ran\" is a claim about a process that has never " +
+                    "transcribed — and a reader should not have to know the static-initialization " +
+                    "rule to trust it.",
                 Regex("""static\s+std::atomic<int>\s+$name\{0\};""").containsMatchIn(jni)
             )
         }
@@ -402,7 +408,7 @@ class NativeSegmentStatsContractTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    fun theVadFilterLineCarriesTheWeDiagTag_withItsTextUnchanged() {
+    fun theVadFilterNarratesOnWeDiag_summaryAtInfoAndBothFailuresAtError() {
         assertTrue(
             "whisper_jni.cpp must define LOGDIAG on the literal tag \"WE-DIAG\". The owner's " +
                 "acceptance greps are `adb logcat -s WE-DIAG`; a native line that belongs to that " +
@@ -413,18 +419,44 @@ class NativeSegmentStatsContractTest {
                     """__android_log_print\(ANDROID_LOG_INFO, "WE-DIAG", __VA_ARGS__\)"""
             ).containsMatchIn(jni)
         )
+        assertTrue(
+            "whisper_jni.cpp must also define LOGDIAGE — the same tag at ERROR level. Level, not " +
+                "tag, is what separates the filter's two failure lines from its summary inside a " +
+                "single `-s WE-DIAG` capture; folding them onto LOGDIAG would put a failure and a " +
+                "successful measurement at the same priority in the same stream.",
+            Regex(
+                """#define LOGDIAGE\(\.\.\.\) """ +
+                    """__android_log_print\(ANDROID_LOG_ERROR, "WE-DIAG", __VA_ARGS__\)"""
+            ).containsMatchIn(jni)
+        )
         val body = cppBody("static bool we_vad_filter(")
         live(
             body,
             """LOGDIAG\("VAD: %zu -> %zu samples \(%d segments\) wallMs=%\.1f",""",
             "the VAD filter's summary line"
         )
+        // The two failure lines. Without these on WE-DIAG, a WE-DIAG-only capture shows NO VAD
+        // line in three different situations that demand three different responses: no VAD model
+        // was configured, the model would not load, and the segmentation call failed. All three
+        // then reach lastSegmentStats as vadIn=0 vadOut=0, which is the one reading these counters
+        // cannot disambiguate on their own — the log line is the disambiguator, so it has to be in
+        // the same capture as the counters it explains.
+        live(
+            body,
+            """LOGDIAGE\("VAD init failed for %s""",
+            "the VAD init failure line"
+        )
+        live(
+            body,
+            """LOGDIAGE\("VAD segmentation failed""",
+            "the VAD segmentation failure line"
+        )
         assertTrue(
-            "the format string is deliberately BYTE-IDENTICAL to the one this line has always " +
-                "carried — only the tag moved — so every existing grep for `VAD: ` still matches " +
-                "and the B' wallMs measurement is not silently dropped in the move. No LOGI " +
-                "spelling of it may survive.",
-            !containsLiveLine(body, "LOGI(\"VAD: ")
+            "every one of the three texts is deliberately BYTE-IDENTICAL to what it has always " +
+                "carried — only tag and level moved — so every existing grep still matches and " +
+                "the B' wallMs measurement is not silently dropped in the move. No LOGI or LOGE " +
+                "spelling of any of them may survive.",
+            !containsLiveLine(body, "LOGI(\"VAD: ") && !containsLiveLine(body, "LOGE(\"VAD ")
         )
     }
 
@@ -477,5 +509,25 @@ class NativeSegmentStatsContractTest {
                 doc.contains(inKt)
             )
         }
+
+        // Two items are Kotlin-ONLY, and that asymmetry is deliberate rather than an oversight:
+        // both are rules about how to READ a value, and the reader is F4, which reads this KDoc.
+        // The native side does not need them to write the counter correctly.
+        assertTrue(
+            "the KDoc must say that a NON-ZERO ctxFrames means the encoder was CONFIGURED for that " +
+                "context, not that the decode succeeded. Two paths return empty text with " +
+                "ctxFrames left at the configured value: whisper_full failing (fullRc != 0) and " +
+                "the result NewByteArray failing after it succeeded. Both look, from Kotlin, " +
+                "exactly like a segment that ran and produced nothing — so \"ctxFrames > 0\" is " +
+                "not a success signal and must never be used as one.",
+            doc.contains("not that the decode succeeded")
+        )
+        assertTrue(
+            "the ctxFrames = 0 enumeration must be EXHAUSTIVE. There are four ways to reach it, " +
+                "and the two argument guards (null ctx, null samples) are the two a reader is " +
+                "least likely to think of — they are also the two the drafted reset placement " +
+                "would have got wrong. A partial list reads as a complete one.",
+            doc.contains("a null ctx or null samples")
+        )
     }
 }
