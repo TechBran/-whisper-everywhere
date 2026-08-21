@@ -78,6 +78,9 @@ class WhisperNativeVadProbeShapeTest {
     fun vadProbeFrame_takesADirectBufferAndAByteCount_andReturnsARawProbability() {
         val m = method("vadProbeFrame", ByteBuffer::class.java, Integer.TYPE)
         assertTrue("vadProbeFrame must be declared `external`", Modifier.isNative(m.modifiers))
+        // Inert by construction: method() above matched this exact parameter list, so this can
+        // never be the assertion that fails — the guard is the lookup. It stays as the written
+        // record of WHY the parameter is a ByteBuffer, which the lookup cannot say.
         assertEquals(
             "a ByteBuffer, not a ByteArray: the buffer is direct and reused for the whole " +
                 "session, so no per-frame allocation or JNI array copy happens at 31.25 Hz",
@@ -97,6 +100,8 @@ class WhisperNativeVadProbeShapeTest {
             val m = method(name)
             assertTrue("$name must be declared `external`", Modifier.isNative(m.modifiers))
             assertEquals("$name returns nothing", java.lang.Void.TYPE, m.returnType)
+            // Inert by construction: method() above matched this exact parameter list (empty), so
+            // this can never be the assertion that fails — the guard is the lookup.
             assertEquals("$name takes no arguments", 0, m.parameterTypes.size)
         }
     }

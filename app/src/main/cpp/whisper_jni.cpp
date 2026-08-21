@@ -426,6 +426,8 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeReset(
 // only on the capture-thread teardown path, never Main. The load is the wide case and the one
 // that sizes the ANR risk: a frame is sub-millisecond, but vadProbeInit holds g_probe_mutex
 // across whisper_vad_init_from_file_with_params, which is file I/O plus tensor allocation.
+// Idempotent is not order-free: a free that takes the mutex before an in-flight init publishes
+// frees nothing, and the init behind it leaks. The caller must order free AFTER init.
 extern "C" JNIEXPORT void JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_vadProbeFree(
         JNIEnv * /*env*/, jobject /* this */) {

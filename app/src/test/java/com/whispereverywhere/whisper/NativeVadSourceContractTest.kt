@@ -48,6 +48,18 @@ class NativeVadSourceContractTest {
 
     private val fork: String by lazy { readNormalized("src/main/cpp/whisper.cpp/src/whisper.cpp") }
 
+    /**
+     * The Kotlin side of the same surface. Four items of the probe contract can be stated ONLY in
+     * prose — no signature carries them — and they have two separate audiences that read two
+     * separate files: whoever moves the native code reads whisper_jni.cpp, and Workstreams C/D,
+     * who write every caller, read the KDoc in WhisperNative.kt and never open the .cpp at all.
+     * An item present on one side only is invisible to half the people who must obey it, so the
+     * assertions below pin each one on BOTH.
+     */
+    private val kt: String by lazy {
+        readNormalized("src/main/java/com/whispereverywhere/whisper/WhisperNative.kt")
+    }
+
     /** we_vad_filter's body: the only column-0 `}` in that function is its closing brace. */
     private fun weVadFilterBody(): String {
         val anchor = "static bool we_vad_filter("
@@ -91,6 +103,69 @@ class NativeVadSourceContractTest {
             body.contains("\n}\n")
         )
         return body.substringBefore("\n}\n")
+    }
+
+    /**
+     * The COMMENT block immediately above one JNI export — a different scope from
+     * [jniFunctionBody], which starts AT the export and therefore contains none of the prose.
+     */
+    private fun jniCommentFor(name: String): String {
+        val marker = "Java_com_whispereverywhere_whisper_WhisperNative_$name("
+        val at = jni.indexOf(marker)
+        assertTrue(
+            "JNI export $name is not declared in whisper_jni.cpp. indexOf() returns -1 when the " +
+                "marker is absent, so substring(0, at) would be substring(0, -1) — this assert " +
+                "turns that into a sentence instead of an IndexOutOfBounds with no explanation.",
+            at >= 0
+        )
+        val head = jni.substring(0, at)
+        val blank = head.lastIndexOf("\n\n")
+        assertTrue("no blank line precedes $name's declaration in whisper_jni.cpp", blank >= 0)
+        val block = head.substring(blank)
+        assertTrue(
+            "no comment block sits immediately above $name. The scope here is \"back up to the " +
+                "previous blank line\", so DELETING the prose does not fail on the phrase " +
+                "assertions — it silently rebases the scope onto whatever declaration or function " +
+                "body precedes it, and the phrases then fail for a reason that reads like drift " +
+                "rather than deletion. This assert names the real cause: the contract prose that " +
+                "must live at this surface is gone.",
+            block.trimStart('\n').lineSequence().first().trimStart().startsWith("//")
+        )
+        assertTrue(
+            "the comment scope for $name widened past a previous function body (it contains a " +
+                "column-0 closing brace), so the phrase assertions below would be answered by " +
+                "prose belonging to a different function",
+            !block.contains("\n}")
+        )
+        return block
+    }
+
+    /**
+     * The KDoc block immediately above [declaration] in WhisperNative.kt — from its opening marker
+     * down to the declaration itself. (Spelling that marker out in this comment is not possible:
+     * Kotlin NESTS block comments, so it would open one that never closes.)
+     */
+    private fun ktDocFor(declaration: String): String {
+        val at = kt.indexOf(declaration)
+        assertTrue(
+            "WhisperNative.kt does not declare \"$declaration\". If the signature was changed " +
+                "deliberately, WhisperNativeVadProbeShapeTest fails first and says far more about " +
+                "what that costs on-device — fix that one first and this follows.",
+            at >= 0
+        )
+        val head = kt.substring(0, at)
+        val open = head.lastIndexOf("/**")
+        assertTrue("no KDoc block opens above \"$declaration\"", open >= 0)
+        val block = head.substring(open)
+        assertTrue(
+            "the KDoc scope for \"$declaration\" widened past a previous member: lastIndexOf " +
+                "(\"/**\") finds the NEAREST KDoc above the declaration, so deleting this " +
+                "member's KDoc outright silently borrows the previous member's — and a phrase " +
+                "assertion could then be satisfied by documentation written about a different " +
+                "function.",
+            !block.contains("external fun")
+        )
+        return block
     }
 
     /**
@@ -471,6 +546,51 @@ class NativeVadSourceContractTest {
                 "unlike [^_] it still bites when the call is the very first thing in the scope.",
             !Regex("""(?<!_)whisper_vad_detect_speech\(""").containsMatchIn(frame)
         )
+
+        // The frame contract items that NO signature can carry, pinned on BOTH sides of the JNI
+        // boundary. Left phrase = how whisper_jni.cpp spells it, right = how WhisperNative.kt's
+        // KDoc spells it; the casing differs on purpose and each side is matched against its own.
+        val frameComment = jniCommentFor("vadProbeFrame")
+        val frameDoc = ktDocFor("external fun vadProbeFrame(pcm: ByteBuffer, nBytes: Int): Float")
+        listOf(
+            Triple(
+                "the byte-order trap: ByteBuffer.allocateDirect returns a BIG_ENDIAN buffer on " +
+                    "EVERY platform whatever the hardware, so a caller who fills it with putShort " +
+                    "and never calls order(nativeOrder()) byte-swaps every sample — and the probe " +
+                    "then reads plausible-looking noise with no exception and no sentinel",
+                "BIG_ENDIAN", "BIG_ENDIAN"
+            ),
+            Triple(
+                "the escape from that trap, named rather than left as an exercise: put(ByteArray) " +
+                    "is byte-verbatim and unaffected by the buffer's order",
+                "put(ByteArray)", "put(ByteArray)"
+            ),
+            Triple(
+                "the buffer must not be refilled CONCURRENTLY with the call — nothing copies it " +
+                    "and nothing locks it, so \"fill, then call, same thread\" is the entire " +
+                    "safety argument for a zero-copy frame path",
+                "must not refill it CONCURRENTLY", "must not refill it concurrently"
+            ),
+            Triple(
+                "-1.0f does NOT cover a mid-graph compute failure — the call returns 0.0f on the " +
+                    "first frame and the previous frame's value after it, so a caller cannot read " +
+                    "\"not -1.0f\" as \"the probe is healthy\". It is the one hole in the sentinel " +
+                    "and it stays documented until the fork ticket closes it.",
+                "mid-graph compute failure", "mid-graph compute failure"
+            ),
+        ).forEach { (item, inCpp, inKt) ->
+            assertTrue(
+                "whisper_jni.cpp's vadProbeFrame comment must state $item. Expected \"$inCpp\".",
+                frameComment.contains(inCpp)
+            )
+            assertTrue(
+                "WhisperNative.kt's vadProbeFrame KDoc must state $item. Expected \"$inKt\". " +
+                    "Workstreams C and D write every caller of this method and read only this " +
+                    "KDoc — they never open the .cpp — so an item that lives solely on the native " +
+                    "side is invisible to exactly the people who have to obey it.",
+                frameDoc.contains(inKt)
+            )
+        }
     }
 
     @Test
@@ -498,5 +618,47 @@ class NativeVadSourceContractTest {
                 "which is precisely the bug this function exists to prevent.",
             containsLiveLine(jniFunctionBody("vadProbeReset"), "whisper_vad_reset_state(g_probe_ctx);")
         )
+
+        // vadProbeFree's three prose-only items, pinned on both sides for the same reason as the
+        // frame contract above: the blocking width and the ordering rule are lifecycle facts that
+        // Workstream E has to design around, and E reads the KDoc.
+        //
+        // The blocking-width anchor is the SENTENCE ("Blocks until any in-flight"), not the word
+        // "in-flight". Demonstrated, not assumed: with the bare word, deleting the blocking-width
+        // sentence from the Kotlin KDoc left this class fully GREEN, because the ordering sentence
+        // below it also says "in-flight" and satisfied the anchor on its own. Two contract items
+        // sharing one distinctive word means the shorter anchor pins neither.
+        val freeComment = jniCommentFor("vadProbeFree")
+        val freeDoc = ktDocFor("external fun vadProbeFree()")
+        listOf(
+            Triple(
+                "vadProbeFree BLOCKS until an in-flight frame — or, the wide case, an in-flight " +
+                    "vadProbeInit MODEL LOAD — completes. \"Idempotent and cheap\" is the natural " +
+                    "reading of a free() and it is wrong here.",
+                "Blocks until any in-flight", "Blocks until any in-flight"
+            ),
+            Triple(
+                "and therefore belongs on the capture-thread teardown path, never on Main: the " +
+                    "init it can queue behind is file I/O plus tensor allocation, which is an ANR " +
+                    "rather than a hiccup",
+                "never Main", "never on Main"
+            ),
+            Triple(
+                "free-after-init ordering is BINDING on the caller, because idempotent is not " +
+                    "order-free: a free that takes the mutex before an in-flight init publishes " +
+                    "frees nothing, and the init behind it then leaves a live context that " +
+                    "nothing will ever release",
+                "order free AFTER init", "AFTER any in-flight"
+            ),
+        ).forEach { (item, inCpp, inKt) ->
+            assertTrue(
+                "whisper_jni.cpp's vadProbeFree comment must state $item. Expected \"$inCpp\".",
+                freeComment.contains(inCpp)
+            )
+            assertTrue(
+                "WhisperNative.kt's vadProbeFree KDoc must state $item. Expected \"$inKt\".",
+                freeDoc.contains(inKt)
+            )
+        }
     }
 }

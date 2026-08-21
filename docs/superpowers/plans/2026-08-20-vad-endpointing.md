@@ -1137,6 +1137,7 @@ package com.whispereverywhere.whisper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.nio.ByteBuffer
 
@@ -1146,16 +1147,55 @@ import java.nio.ByteBuffer
  * WhisperNative's init block calls System.loadLibrary("whisper_jni"), which throws
  * UnsatisfiedLinkError on a plain JVM — so this loads the class WITHOUT running its static
  * initializer (Class.forName(..., initialize = false)) and inspects declared methods only. That is
- * enough to catch every failure this seam can have on the Kotlin side: JNI resolves BY NAME, so a
- * rename or a changed parameter type is not a compile error anywhere — it is an
- * UnsatisfiedLinkError on the audio capture thread at the first frame of the next dictation.
+ * enough to catch every failure this seam can have on the Kotlin side: JNI resolves BY NAME, so
+ * neither a rename nor a changed parameter type is a compile error anywhere. A rename becomes an
+ * UnsatisfiedLinkError on the audio capture thread at the first frame of the next dictation; a
+ * parameter-type change does not even get that far — the short name still resolves and the same
+ * native function is called with arguments it was not written for. See [method] for the full shape
+ * of both failures.
+ *
+ * This is one half of a pair. NativeVadSourceContractTest anchors the C++ side on
+ * "Java_com_whispereverywhere_whisper_WhisperNative_<name>(" for the same four names, so between
+ * the two classes both ends of every JNI name are pinned and a one-sided rename fails here.
  */
 class WhisperNativeVadProbeShapeTest {
 
     private val clazz: Class<*> =
         Class.forName("com.whispereverywhere.whisper.WhisperNative", false, javaClass.classLoader)
 
-    private fun method(name: String, vararg params: Class<*>) = clazz.getDeclaredMethod(name, *params)
+    /**
+     * getDeclaredMethod pins name AND signature in one call — but it throws a bare
+     * NoSuchMethodException, which is the failure this class produces for its two most likely
+     * mutations and says nothing about why either matters. Translated here into the two on-device
+     * outcomes instead, with the declared surface printed so the diff is visible in the failure.
+     */
+    private fun method(name: String, vararg params: Class<*>): Method =
+        try {
+            clazz.getDeclaredMethod(name, *params)
+        } catch (e: NoSuchMethodException) {
+            val declared = clazz.declaredMethods
+                .filter { it.name.startsWith("vadProbe") }
+                .map { m -> "${m.name}(${m.parameterTypes.joinToString { it.simpleName }})" }
+                .sorted()
+            throw AssertionError(
+                "WhisperNative declares no ${name}(${params.joinToString { it.simpleName }}), and " +
+                    "nothing on the Kotlin side makes that a compile error. The two ways to get " +
+                    "here fail DIFFERENTLY on-device. A RENAME leaves the native symbol " +
+                    "Java_com_whispereverywhere_whisper_WhisperNative_$name matching no declared " +
+                    "method, and the first frame of the next dictation throws UnsatisfiedLinkError " +
+                    "on the audio capture thread. A SIGNATURE change is quieter and worse: JNI " +
+                    "looks the implementation up by the SHORT name first and only falls back to " +
+                    "the signature-mangled long name for overloaded natives, of which this class " +
+                    "has none — so the same native function is bound and called with arguments it " +
+                    "was not written for. Hand vadProbeFrame a FloatArray and " +
+                    "GetDirectBufferAddress is specified to return NULL for an object that is not " +
+                    "a direct Buffer, which whisper_jni's null guard turns into -1.0f on every " +
+                    "frame of every session: no exception, no crash, and no fallback either, " +
+                    "because vadProbeInit still returned true. " +
+                    "Declared instead: $declared",
+                e
+            )
+        }
 
     @Test
     fun vadProbeInit_takesAModelPath_andReportsReadinessAsBoolean() {
@@ -1172,6 +1212,9 @@ class WhisperNativeVadProbeShapeTest {
     fun vadProbeFrame_takesADirectBufferAndAByteCount_andReturnsARawProbability() {
         val m = method("vadProbeFrame", ByteBuffer::class.java, Integer.TYPE)
         assertTrue("vadProbeFrame must be declared `external`", Modifier.isNative(m.modifiers))
+        // Inert by construction: method() above matched this exact parameter list, so this can
+        // never be the assertion that fails — the guard is the lookup. It stays as the written
+        // record of WHY the parameter is a ByteBuffer, which the lookup cannot say.
         assertEquals(
             "a ByteBuffer, not a ByteArray: the buffer is direct and reused for the whole " +
                 "session, so no per-frame allocation or JNI array copy happens at 31.25 Hz",
@@ -1191,6 +1234,8 @@ class WhisperNativeVadProbeShapeTest {
             val m = method(name)
             assertTrue("$name must be declared `external`", Modifier.isNative(m.modifiers))
             assertEquals("$name returns nothing", java.lang.Void.TYPE, m.returnType)
+            // Inert by construction: method() above matched this exact parameter list (empty), so
+            // this can never be the assertion that fails — the guard is the lookup.
             assertEquals("$name takes no arguments", 0, m.parameterTypes.size)
         }
     }
@@ -1216,11 +1261,11 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 Expected:
 ```
 com.whispereverywhere.whisper.WhisperNativeVadProbeShapeTest > vadProbeInit_takesAModelPath_andReportsReadinessAsBoolean FAILED
-    java.lang.NoSuchMethodException: com.whispereverywhere.whisper.WhisperNative.vadProbeInit(java.lang.String)
+    java.lang.AssertionError: WhisperNative declares no vadProbeInit(String), and nothing on the Kotlin side makes that a compile error. ... Declared instead: []
 com.whispereverywhere.whisper.WhisperNativeVadProbeShapeTest > vadProbeFrame_takesADirectBufferAndAByteCount_andReturnsARawProbability FAILED
-    java.lang.NoSuchMethodException: com.whispereverywhere.whisper.WhisperNative.vadProbeFrame(java.nio.ByteBuffer, int)
+    java.lang.AssertionError: WhisperNative declares no vadProbeFrame(ByteBuffer, int), ... Declared instead: []
 com.whispereverywhere.whisper.WhisperNativeVadProbeShapeTest > vadProbeResetAndFree_takeNoArguments_andReturnNothing FAILED
-    java.lang.NoSuchMethodException: com.whispereverywhere.whisper.WhisperNative.vadProbeReset()
+    java.lang.AssertionError: WhisperNative declares no vadProbeReset(), ... Declared instead: []
 com.whispereverywhere.whisper.WhisperNativeVadProbeShapeTest > theProbeSurfaceIsExactlyFourMethods_soNoPolicyLeaksAcrossTheJniBoundary FAILED
     java.lang.AssertionError: four and only four: init, frame, reset, free. ... expected:<[vadProbeFrame, vadProbeFree, vadProbeInit, vadProbeReset]> but was:<[]>
 ```
@@ -1349,8 +1394,12 @@ belongs in Kotlin.
 Pinned by WhisperNativeVadProbeShapeTest, which loads WhisperNative WITHOUT
 running its static initializer (System.loadLibrary would throw on a JVM) and
 checks the four declared methods by reflection. JNI resolves by name, so a
-rename or a changed parameter type is a compile error nowhere — it is an
-UnsatisfiedLinkError on the audio capture thread at the first frame.
+rename or a changed parameter type is a compile error nowhere — and the two
+fail DIFFERENTLY. A rename is an UnsatisfiedLinkError on the audio capture
+thread at the first frame. A parameter-type change never reaches that: JNI
+resolves the SHORT name first (the signature-mangled long name is only for
+overloaded natives, of which this class has none), so the same native function
+is bound and called with arguments it was not written for.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
@@ -5931,9 +5980,9 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 - Create `app/src/test/java/com/whispereverywhere/audio/VadProbeLifecycleTest.kt`
 
 **Interfaces:**
-- Consumes (Workstream A — **this task lands after A's externs task**): `WhisperNative.vadProbeInit(modelPath: String): Boolean`, `WhisperNative.vadProbeFrame(pcm16: java.nio.ByteBuffer, nBytes: Int): Float`, `WhisperNative.vadProbeReset()`, `WhisperNative.vadProbeFree()`. Also `EndpointerTuning.FRAME_BYTES` / `EndpointerTuning.NO_VERDICT` (Task C1, same package, lands first in the binding order) — the SINGLE OWNER of the native frame contract.
+- Consumes (Workstream A — **this task lands after A's externs task**): `WhisperNative.vadProbeInit(modelPath: String): Boolean`, `WhisperNative.vadProbeFrame(pcm: java.nio.ByteBuffer, nBytes: Int): Float`, `WhisperNative.vadProbeReset()`, `WhisperNative.vadProbeFree()`. Also `EndpointerTuning.FRAME_BYTES` / `EndpointerTuning.NO_VERDICT` (Task C1, same package, lands first in the binding order) — the SINGLE OWNER of the native frame contract.
 - Produces:
-  - `interface VadProbe { fun init(modelPath: String): Boolean; fun frame(pcm16: java.nio.ByteBuffer, nBytes: Int): Float; fun reset(); fun free() }` with `VadProbe.FRAME_BYTES` and `VadProbe.NO_VERDICT` declared as ALIASES of the `EndpointerTuning` constants (`= EndpointerTuning.FRAME_BYTES` / `= EndpointerTuning.NO_VERDICT`), never as second literals
+  - `interface VadProbe { fun init(modelPath: String): Boolean; fun frame(pcm: java.nio.ByteBuffer, nBytes: Int): Float; fun reset(); fun free() }` with `VadProbe.FRAME_BYTES` and `VadProbe.NO_VERDICT` declared as ALIASES of the `EndpointerTuning` constants (`= EndpointerTuning.FRAME_BYTES` / `= EndpointerTuning.NO_VERDICT`), never as second literals
   - `object NativeVadProbe : VadProbe`
   - `class VadProbeLifecycle(probe: VadProbe)` with `enum class State { IDLE, ARMED, READY, UNAVAILABLE }`, `state(): State`, `arm(modelPath: String?)`, `ensureReady(): Boolean`, `reset()`, `release()`
 
@@ -5963,7 +6012,7 @@ class FakeVadProbe(
         if (initThrows) throw RuntimeException("probe init blew up")
         return initReturns
     }
-    override fun frame(pcm16: ByteBuffer, nBytes: Int): Float = 0.9f
+    override fun frame(pcm: ByteBuffer, nBytes: Int): Float = 0.9f
     override fun reset() { resetCalls++; calls += "reset" }
     override fun free() { freeCalls++; calls += "free" }
 }
@@ -6107,10 +6156,10 @@ interface VadProbe {
     fun init(modelPath: String): Boolean
 
     /**
-     * One 512-sample window. [pcm16] MUST be a DIRECT buffer and [nBytes] MUST be
+     * One 512-sample window. [pcm] MUST be a DIRECT buffer and [nBytes] MUST be
      * [FRAME_BYTES] — anything else returns [NO_VERDICT], never a silence verdict.
      */
-    fun frame(pcm16: ByteBuffer, nBytes: Int): Float
+    fun frame(pcm: ByteBuffer, nBytes: Int): Float
 
     /** Zero the LSTM recurrence (h/c state only; model weights are in a different buffer). */
     fun reset()
@@ -6136,7 +6185,7 @@ interface VadProbe {
 /** Production probe: delegates to the four `WhisperNative` externs. */
 object NativeVadProbe : VadProbe {
     override fun init(modelPath: String): Boolean = WhisperNative.vadProbeInit(modelPath)
-    override fun frame(pcm16: ByteBuffer, nBytes: Int): Float = WhisperNative.vadProbeFrame(pcm16, nBytes)
+    override fun frame(pcm: ByteBuffer, nBytes: Int): Float = WhisperNative.vadProbeFrame(pcm, nBytes)
     override fun reset() = WhisperNative.vadProbeReset()
     override fun free() = WhisperNative.vadProbeFree()
 }
@@ -6278,7 +6327,7 @@ class VadProbeLifecycleConcurrencyTest {
             order += "init-exit"
             return true
         }
-        override fun frame(pcm16: ByteBuffer, nBytes: Int): Float = 0.9f
+        override fun frame(pcm: ByteBuffer, nBytes: Int): Float = 0.9f
         override fun reset() { order += "reset" }
         override fun free() { freeCalls.incrementAndGet(); order += "free" }
     }
@@ -10465,7 +10514,7 @@ JVM-green that would not mean anything.
 **Interfaces:**
 - Consumes (Workstream A, exact signatures this file compiles against — **A must land first**):
   `WhisperNative.vadProbeInit(modelPath: String): Boolean` ·
-  `WhisperNative.vadProbeFrame(pcm16: java.nio.ByteBuffer, nBytes: Int): Float` ·
+  `WhisperNative.vadProbeFrame(pcm: java.nio.ByteBuffer, nBytes: Int): Float` ·
   `WhisperNative.vadProbeReset()` · `WhisperNative.vadProbeFree()`
 - Consumes (existing, verified in-tree): `VadModel.path(): String?`
   (`transcription/VadModel.kt:20`) · `CanaryAudio.dataChunk(bytes: ByteArray): ByteArray` and
@@ -11225,6 +11274,27 @@ $st  = 'app\src\main\java\com\whispereverywhere\transcription\SegmentTiming.kt'
 # 7th: no declaration and no permission moved on this branch.
 $decl = @(git diff --name-only main...HEAD -- docs/PLAY-DECLARATIONS.md app/src/main/AndroidManifest.xml)
 "{0,-24} {1}" -f 'play-declarations', $(if ($decl.Count -eq 0) { 'unchanged' } else { 'CHANGED - STOP' })
+
+# 8th: the JNI name pairing. NOTHING in this build cross-checks Kotlin's externs against the .so's
+# exports — assembleDebug only proves the C++ compiled, and JNI binds BY NAME at runtime. This row
+# is the only place the two sides are ever compared. It reads the artifact Step 4 builds, so if the
+# .so is older than whisper_jni.cpp, re-run this row after Step 4 rather than trusting it.
+$so  = 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\intermediates\stripped_native_libs\debug\stripDebugDebugSymbols\out\lib\arm64-v8a\libwhisper_jni.so'
+$nm  = (Get-ChildItem 'C:\Users\bastr\AppData\Local\Android\Sdk\ndk' -Filter 'llvm-nm.exe' -Recurse | Select-Object -First 1).FullName
+$soF = Get-Item $so -ErrorAction SilentlyContinue
+$cpp = Get-Item 'app\src\main\cpp\whisper_jni.cpp'
+if (-not $soF -or $soF.LastWriteTime -lt $cpp.LastWriteTime) {
+  "{0,-24} {1}" -f 'jni-name-pairing', 'STALE .so - re-run after Step 4'
+} else {
+  $kotlin = @(Select-String -Path 'app\src\main\java\com\whispereverywhere\whisper\WhisperNative.kt' -Pattern '^\s*external fun (\w+)' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object)
+  $exp    = @(& $nm --dynamic --defined-only $so | Select-String 'Java_com_whispereverywhere_whisper_WhisperNative_' | ForEach-Object { ($_ -split ' ')[2] })
+  $short  = @($exp | Where-Object { $_ -notmatch '__' } | ForEach-Object { $_ -replace '^Java_com_whispereverywhere_whisper_WhisperNative_', '' } | Sort-Object)
+  $verdict = if ($kotlin.Count -eq 0 -or $exp.Count -eq 0) { 'NOTHING READ - STOP' }
+             elseif ($exp.Count -ne $short.Count)          { 'LONG NAMES PRESENT - STOP' }
+             elseif (Compare-Object $kotlin $short)        { "MISMATCH - STOP: kotlin=$($kotlin -join ',') so=$($short -join ',')" }
+             else                                          { "$($kotlin.Count) matched" }
+  "{0,-24} {1}" -f 'jni-name-pairing', $verdict
+}
 ```
 
 Expected, exactly:
@@ -11237,7 +11307,13 @@ stop-flush-uncond        1
 final-only-commit        1
 segment-timing-prepend   2
 play-declarations        unchanged
+jni-name-pairing         11 matched
 ```
+
+**`jni-name-pairing` reads `11`, not `10`.** Ten externs exist when Workstream A closes
+(`loadBackends`, `init`, `transcribeRaw`, `detectedLanguage`, the four `vadProbe*`,
+`setAudioCtxFloor`, `free`); Task F3 adds `lastSegmentStats` before this task runs, which is the
+eleventh. If the count is 10 here, F3's extern or its export went missing — check which side.
 
 **`segment-timing-prepend` reads `2`, not `1`, and that is the pass condition.** `Select-String`
 returns one match per matching LINE, and after Tasks F2/F5 `SegmentTiming.kt` carries the prefix on
@@ -11252,6 +11328,14 @@ check which. `stop-flush-uncond` at 0 means the flush was gated — the change t
 whole sessions for soft talkers. `play-declarations` at anything but `unchanged` means 3.7 touched a
 declaration or a permission: the release notes and the Console submission both assume it did not, and
 the spec's Workstream I makes "no new permissions, no FGS/Data-Safety/disclosure changes" binding.
+`jni-name-pairing` at `MISMATCH` means a Kotlin extern and its native export have drifted apart:
+that is not a build error anywhere — JNI resolves by name at first call, so the symptom on-device is
+an `UnsatisfiedLinkError` on the audio capture thread mid-dictation (or, if only the *signature*
+moved, no error at all — the short name still binds and the native function runs on arguments it was
+not written for). `LONG NAMES PRESENT` means some export is now signature-mangled
+(`Java_..._name__Ljava_lang_String_2`), which happens when a class declares OVERLOADED natives; the
+whole short-name argument in `WhisperNativeVadProbeShapeTest` assumes there are none, so re-verify
+that test's reasoning before shipping.
 
 - [ ] **Step 2: Purge stale results, then force a fresh full unit run.** The purge is not
   optional: XML from a suite that was renamed or deleted during the branch survives in this
