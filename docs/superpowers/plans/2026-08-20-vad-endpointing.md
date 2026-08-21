@@ -119,8 +119,8 @@ Our-own-before/after only, on the same device, and the copy says so. No absolute
 | Cut record | `data class EndpointCut(val speechMs: Long, val trailMs: Long, val prob: Float)` (`com.whispereverywhere.audio`), produced by `SileroEndpointer.lastCut()` | C8 | F8, F9 |
 | Diagnostic formats | `object EndpointDiag` (`com.whispereverywhere.service`): `endpointLine(seq: Long, cut: String, ec: EndpointCut?)`, `queueLine(depth: Int)`, `perceivedLine(seq: Long, speechEndToVisibleMs: Long)`, `capCommitLine(capMs: Long)`; companion `VAD`/`CAP`/`STOP`/`SWITCH` | F7, F8, F9 | S3, S5 |
 | Queue depth | `class SegmentQueueDepth` (`com.whispereverywhere.service`): `onCommitted(seq: Long): Int`, `onResolved(seq: Long): Int`, `depth(): Int`, `reset()` — seq-SET based, ONE instance on the service | F7 | G1, G3, G4, G5 |
-| Commit funnel | `private fun FloatingBubbleService.commitSegment(engine: TranscriptionEngine, cut: String, retainMs: Long = 0L): Long` — the ONE funnel all five commit sites route through | F7 | F8, F9, G3 |
-| Probe cost | `class ProbeStats(budgetUs: Long, emitIntervalMs: Long = EMIT_INTERVAL_MS)` (`com.whispereverywhere.util`): `record(elapsedUs: Long, nowMs: Long): Boolean`, `frames()`, `overruns()`, `percentileUs(q)`, `line()`, `reset()` | F1 | C10 |
+| Commit funnel | `private fun commitSegment(engine: TranscriptionEngine, cut: String, retainMs: Long = 0L, nowMs: Long = System.currentTimeMillis()): Long` — a private MEMBER function of `FloatingBubbleService` (NOT a top-level extension: it reads the service's private `segmentQueueDepth` / `perceivedLatency` / `endpointer` / `serviceScope`), the ONE funnel all five commit sites route through | F7 | F8, F9, G3 |
+| Probe cost | `class ProbeStats(budgetUs: Long, emitIntervalMs: Long = EMIT_INTERVAL_MS)` (`com.whispereverywhere.util`): `record(elapsedUs: Long, nowMs: Long): Boolean`, `frames()`, `overruns()`, `percentileUs(q)`, `line()`, `reset()` — every one of them `@Synchronized` on the instance: `record()` is written from the capture thread while `reset()`/`line()` are called from Main | F1 | C10 |
 | Timing line | `SegmentTiming.line(seq: Long, audioMs: Long, transcribeMs: Long, stats: NativeSegmentStats? = null): String` | F2, F5 | F6, S5 |
 
 **Line prefixes are contiguous single string literals in source** (`endpoint: seq=`, `queue: depth=`, `perceived: `, `probe: frames=`, `segment-timing: seq=`), because S3 and S5 grep the source for them with `-SimpleMatch`. Never build one of these prefixes by concatenation. The `probe:` line's unit is `µs` (written as the `\u00B5` escape); no grep in this plan contains a `µ`.
@@ -1492,7 +1492,8 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 ### Task E2: Wire both capture threads — priority + stop-then-join
 
 **Files:**
-- Modify `app/src/test/java/com/whispereverywhere/util/CaptureThreadPolicyTest.kt` (append one test)
+- Modify `app/src/test/java/com/whispereverywhere/util/CaptureThreadPolicyTest.kt` (append two tests
+  + the source locator helper)
 - Modify `app/src/main/java/com/whispereverywhere/util/CaptureThreadPolicy.kt` (already carries
   `CAPTURE_JOIN_MS` from Task E1 — no edit if Step 3 of Task E1 landed verbatim)
 - Modify `app/src/main/java/com/whispereverywhere/util/StreamingAudioRecorder.kt` — thread body
@@ -1519,7 +1520,53 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
         // silently lengthen a Main-thread wait.
         assertEquals(2_000L, CaptureThreadPolicy.CAPTURE_JOIN_MS)
     }
+
+    @Test
+    fun bothCaptureThreadsEnterThePolicy_andTheRecorderStopsBeforeItJoins() {
+        // THE load-bearing red for this task. Neither wiring can be reached from a JVM test
+        // (AudioRecord and AudioPlaybackCaptureConfiguration are Android-only), so the contract is
+        // pinned STRUCTURALLY on the source — the CapSeamPinTest pattern this plan uses at every
+        // service seam. Without it the reorder has no regression protection at all: `assembleDebug`
+        // compiles the un-wired recorder perfectly happily, so it cannot express this contract.
+        val recorder = source("src/main/java/com/whispereverywhere/util/StreamingAudioRecorder.kt")
+        val playback = source("src/main/java/com/whispereverywhere/audio/PlaybackAudioCapturer.kt")
+
+        assertTrue(
+            "StreamingAudioRecorder.stop() must go through CaptureThreadPolicy.stopThenJoin",
+            recorder.contains("CaptureThreadPolicy.stopThenJoin("),
+        )
+        assertEquals(
+            "no bare join survives: the record must be stopped first, and only the policy orders that",
+            0,
+            recorder.split("thread?.join(2000)").size - 1,
+        )
+        assertTrue(
+            "the mic capture thread must raise its priority as its FIRST statement",
+            recorder.contains("CaptureThreadPolicy.enterCaptureThread()"),
+        )
+        assertTrue(
+            "the device-audio capture thread must raise its priority too",
+            playback.contains("CaptureThreadPolicy.enterCaptureThread()"),
+        )
+    }
 ```
+
+with the source locator helper (same one `CapSeamPinTest` uses), added once to the class:
+
+```kotlin
+    private fun source(relative: String): String {
+        var dir: java.io.File? = java.io.File(System.getProperty("user.dir")!!).absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(java.io.File(dir, relative), java.io.File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate.readText()
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
+    }
+```
+
+and the import `import org.junit.Assert.assertTrue` if the file does not already carry it.
 
 - [ ] **Step 2: Run it, expected failure** —
 
@@ -1527,11 +1574,14 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.util.CaptureThreadPolicyTest" --no-daemon
 ```
 
-Expected (only if Task E1's Step 3 was landed WITHOUT `CAPTURE_JOIN_MS`):
-`e: ...CaptureThreadPolicyTest.kt: Unresolved reference: CAPTURE_JOIN_MS`.
-If Task E1 landed the constant verbatim this step is green immediately — record that as the
-verification, then proceed; the load-bearing red for this task is Step 4's `assembleDebug`
-against the un-wired recorder, which cannot express the reorder at all.
+Expected:
+`bothCaptureThreadsEnterThePolicy_andTheRecorderStopsBeforeItJoins FAILED — java.lang.AssertionError: StreamingAudioRecorder.stop() must go through CaptureThreadPolicy.stopThenJoin`.
+That is this task's red, and it is a genuine one: it fails against today's `thread?.join(2000)` /
+`audioRecord?.stop()` pair at `StreamingAudioRecorder.kt:107-108` and pins the reorder against a
+future revert. `captureJoinBoundIsNamedOnce_andMatchesThePre37Literal` is red only if Task E1's
+Step 3 was landed WITHOUT `CAPTURE_JOIN_MS`
+(`e: ...CaptureThreadPolicyTest.kt: Unresolved reference: CAPTURE_JOIN_MS`); if E1 landed the
+constant verbatim it is green immediately — record that as an already-green guard and proceed.
 
 - [ ] **Step 3: Minimal implementation** —
 
@@ -1616,8 +1666,10 @@ verification for the two Android-only files:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.util.CaptureThreadPolicyTest" --no-daemon; if ($?) { .\gradlew.bat :app:assembleDebug --no-daemon }
 ```
 
-Evidence: `TEST-com.whispereverywhere.util.CaptureThreadPolicyTest.xml` shows `tests="5" failures="0"`,
-and `assembleDebug` reports `BUILD SUCCESSFUL`.
+Evidence: `TEST-com.whispereverywhere.util.CaptureThreadPolicyTest.xml` shows `tests="6" failures="0"`
+— including `bothCaptureThreadsEnterThePolicy_andTheRecorderStopsBeforeItJoins`, which was red in
+Step 2 and is now green against the reordered `stop()` — and `assembleDebug` reports
+`BUILD SUCCESSFUL`.
 
 - [ ] **Step 5: Commit** —
 
@@ -1758,6 +1810,41 @@ class ProbeStatsTest {
         assertEquals(0L, s.overruns())
         assertEquals(0L, s.percentileUs(0.99))
     }
+
+    @Test
+    fun aRealCaptureThreadRecordingWhileMainReadsAndResetsNeverTearsTheCounters() {
+        // The production shape, and the reason every method is @Synchronized: record() runs on the
+        // AudioRecord capture thread while reset() (onSessionStart) and line() (onSessionEnd) are
+        // called from Main — and E1's join is TIMED, so a timed-out teardown genuinely leaves the
+        // capture thread inside record() while Main is inside line(). REAL executor per the Global
+        // Constraints' concurrency rule; never a same-thread stub.
+        val capture = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val s = ProbeStats(budgetUs = budgetUs)
+            val n = 4_000
+            val done = java.util.concurrent.CountDownLatch(1)
+            capture.execute {
+                for (i in 0 until n) s.record(if (i % 4 == 0) 9_600L else 800L, i * 32L)
+                done.countDown()
+            }
+            // Main hammers the readers throughout — a torn read would surface as an exception
+            // (IndexOutOfBounds from a half-cleared histogram) or as an impossible invariant.
+            while (done.count > 0L) {
+                s.line()
+                assertTrue("overruns can never exceed frames", s.overruns() <= s.frames())
+            }
+            assertTrue("workers did not finish", done.await(20, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(n.toLong(), s.frames())
+            assertEquals((n / 4).toLong(), s.overruns())
+
+            // And a reset from Main leaves the instance usable, not half-cleared.
+            s.reset()
+            assertEquals(0L, s.frames())
+            assertEquals(0L, s.overruns())
+        } finally {
+            capture.shutdownNow()
+        }
+    }
 }
 ```
 
@@ -1789,9 +1876,14 @@ package com.whispereverywhere.util
  * session-cumulative (not windowed) because the acceptance question is "did this session ever
  * miss", not "is it missing right now" — the overrun counter answers the latter.
  *
- * THREADING: single-threaded by construction. Every call comes from the capture thread — the
- * probe records, and the capture thread also emits the line when [record] says one is due. No
- * synchronisation, because there is no second caller.
+ * THREADING: [record] runs on the CAPTURE thread (the probe records, and that thread also emits the
+ * line when [record] says one is due); [reset] and [line] are called from MAIN, at session start and
+ * session end respectively (Task C10 wires both). Every method is therefore `@Synchronized` on the
+ * instance. This is not defensive: E1's teardown join is TIMED, so a timed-out join leaves the
+ * capture thread free to mutate `frameCount` / `overrunCount` / `hist` while Main is reading them —
+ * and an under-reported `overruns` is exactly the number the S3 acceptance sheet gates on. The lock
+ * is re-entrant, so [line] calling [percentileUs] is safe, and it is a handful of int ops taken
+ * ~31 times a second, uncontended.
  */
 class ProbeStats(
     /** [PROBE_BUDGET_MS] from the tuning object, in microseconds. A frame strictly ABOVE it overruns. */
@@ -1810,6 +1902,7 @@ class ProbeStats(
      * [emitIntervalMs]). The first frame only ARMS the clock — a line on frame one would report
      * a one-sample distribution.
      */
+    @Synchronized
     fun record(elapsedUs: Long, nowMs: Long): Boolean {
         frameCount++
         if (elapsedUs > budgetUs) overrunCount++
@@ -1826,8 +1919,10 @@ class ProbeStats(
         return true
     }
 
+    @Synchronized
     fun frames(): Long = frameCount
 
+    @Synchronized
     fun overruns(): Long = overrunCount
 
     /**
@@ -1835,6 +1930,7 @@ class ProbeStats(
      * ever recorded. Quantisation is 16 us against an expected 200-1500 us cost — three orders of
      * magnitude below the 8 ms budget the number is read against.
      */
+    @Synchronized
     fun percentileUs(q: Double): Long {
         if (frameCount == 0L) return 0L
         var rank = Math.ceil(q * frameCount).toLong()
@@ -1851,11 +1947,13 @@ class ProbeStats(
      * The greppable line. `\u00B5` is MICRO SIGN written as an escape so this source file stays
      * pure ASCII and the emitted byte cannot drift with the file's on-disk encoding.
      */
+    @Synchronized
     fun line(): String =
         "probe: frames=$frameCount p50=${percentileUs(0.50)}\u00B5s " +
             "p99=${percentileUs(0.99)}\u00B5s overruns=$overrunCount"
 
-    /** Per-session reset; the endpointer calls this from its own session reset. */
+    /** Per-session reset; the endpointer calls this from its own session reset, on Main. */
+    @Synchronized
     fun reset() {
         java.util.Arrays.fill(hist, 0)
         frameCount = 0L
@@ -1879,7 +1977,8 @@ class ProbeStats(
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.util.ProbeStatsTest" --no-daemon
 ```
 
-Evidence: `TEST-com.whispereverywhere.util.ProbeStatsTest.xml` shows `tests="7" failures="0" errors="0"`.
+Evidence: `TEST-com.whispereverywhere.util.ProbeStatsTest.xml` shows `tests="8" failures="0" errors="0"`
+(the **+8 delta** for this task — seven pure cases plus the real-executor concurrency case).
 
 - [ ] **Step 5: Commit** —
 
@@ -2113,6 +2212,14 @@ live one.
 - Modify `app/src/main/java/com/whispereverywhere/whisper/WhisperNative.kt` — add one extern
   beside `setAudioCtxFloor` (`:105-113`)
 
+**Every `whisper_jni.cpp` line number above is PRE-Workstream-N.** The binding execution order is
+N1→N6 first, and N3–N5 insert the whole probe surface (~180 lines) immediately after
+`we_vad_filter`'s closing brace — so by the time this task runs, everything below `:182` has moved
+down by that block and the `// ---` banner at the old `:184` is now N3's `3.7 Workstream A` header.
+**Anchor on the quoted TEXT, never on these numbers**, and place `lastSegmentStats` immediately
+AFTER the `vadProbeFree` export (the last member of N3–N5's block) rather than "before the `// ---`
+banner".
+
 **Interfaces:**
 - Consumes: nothing.
 - Produces: `external fun WhisperNative.lastSegmentStats(): IntArray` — a 3-element array
@@ -2124,8 +2231,9 @@ throws `UnsatisfiedLinkError` off-device), so the gate is the C++ compiler, driv
 write the consumer first, watch it fail to compile, then declare what it needed.
 
 - [ ] **Step 1: Write the failing test** — the failing artifact is the new JNI entry point,
-which reads three counters that do not exist yet. Insert immediately AFTER `we_vad_filter`'s
-closing brace (`whisper_jni.cpp:182`), before the `// ---` banner at `:184`:
+which reads three counters that do not exist yet. Insert it immediately AFTER the `vadProbeFree`
+export — the last member of the probe-surface block N3–N5 landed between `we_vad_filter`'s closing
+brace and the new-segment banner — and before that banner:
 
 ```cpp
 
@@ -2480,7 +2588,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 **Files:**
 - Modify `app/src/test/java/com/whispereverywhere/transcription/SegmentTimingTest.kt` (append tests)
 - Modify `app/src/main/java/com/whispereverywhere/transcription/SegmentTiming.kt` — `line()` and
-  the KDoc sample at `:11` (post-Task-27 shape)
+  the KDoc sample at `:11` (post-F2 shape)
 
 **Interfaces:**
 - Consumes: `NativeSegmentStats` (Task F4).
@@ -2626,7 +2734,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 **Files:**
 - Create `app/src/test/java/com/whispereverywhere/transcription/LocalWhisperEngineStatsTest.kt`
 - Modify `app/src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt` — the
-  timing emit at `:321-332` (post-Task-27 shape)
+  timing emit at `:321-332` (post-F2 shape)
 
 **Interfaces:**
 - Consumes: `WhisperBackend.lastSegmentStats(ctx: Long): NativeSegmentStats?` (Task F4),
@@ -3399,7 +3507,14 @@ object EndpointerTuning {
     /** Silero's window: 512 samples of 16 kHz mono is exactly one probe frame (model n_window). */
     const val FRAME_SAMPLES = 512
 
-    /** 512 samples x 2 bytes (PCM16). `vadProbeFrame` returns [NO_VERDICT] for any other size. */
+    /**
+     * 512 samples x 2 bytes (PCM16). `vadProbeFrame` returns [NO_VERDICT] for any other size.
+     *
+     * SINGLE OWNER: this object owns the native frame contract. `VadProbe.FRAME_BYTES` (Task D4)
+     * is an alias of this constant, not a second literal — `EndpointerFactory` sizes its direct
+     * buffer from one and fills it from the other, so a divergence would be a
+     * `BufferOverflowException` on the capture thread rather than a doc inconsistency.
+     */
     const val FRAME_BYTES = 1024
 
     /** 512 / 16 000 s. One mic callback delivers exactly this much audio. */
@@ -3409,6 +3524,10 @@ object EndpointerTuning {
      * "No verdict" from the native probe — NEVER "silence". A short frame zero-padded into the
      * model still advances the LSTM and poisons the recurrence, so the native side refuses and the
      * client keeps the previous state.
+     *
+     * SINGLE OWNER, as for [FRAME_BYTES]: `VadProbe.NO_VERDICT` (Task D4) aliases this. Two
+     * independent `-1.0f` literals in one package would let a future edit turn the native sentinel
+     * into a legitimate probability on one side of the seam only.
      */
     const val NO_VERDICT = -1.0f
 
@@ -4403,8 +4522,13 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 - Test (modify): `app/src/test/java/com/whispereverywhere/audio/SileroEndpointerTest.kt` (append)
 
 **Interfaces:**
-- Consumes: `EndpointerTuning.MIN_COMMIT_INTERVAL_PRO_MS`, `MIN_COMMIT_INTERVAL_MULTI_MS` (Task C1);
-  the constructor's `minCommitIntervalMs` (Task C2).
+- Consumes: nothing new from Task C1 — **the commit-interval constants do NOT live in
+  `EndpointerTuning`** (see C1's closing `// NO COMMIT-INTERVAL CONSTANTS LIVE HERE`), and the
+  cadence floor is **not** a constructor parameter. It arrives per session through
+  `Endpointer.onSessionStart(nowMs, minCommitIntervalMs)` (Task D2). Also `Pump`, `FakeProbe`, `BASE`
+  (Task C2). The interval VALUES are quoted here as bare literals (`1_200L` / `6_000L` / `8_000L`)
+  with `CommitCadencePolicy` (Task D3) named in a comment, because Workstream C must compile without
+  the `service` package.
 - Produces: `override fun SileroEndpointer.onSessionStart(nowMs: Long, minCommitIntervalMs: Long)` —
   the session anchor AND this session's cadence floor, wired by Workstream D at
   `FloatingBubbleService.kt:2224` (onOpen) alongside `SegmentCapPolicy.onSessionStart(now)`.
@@ -4977,7 +5101,8 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
 data class EndpointCut(val speechMs: Long, val trailMs: Long, val prob: Float)
 ```
 
-add one field under `private var framesOverBudget = 0L`:
+add one field under `private var probeCutout = false` (the last field Task C7 added, so the fields
+block order matches Task C9's pinned list exactly):
 
 ```kotlin
     private var lastCutRecord: EndpointCut? = null
@@ -5312,10 +5437,14 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
-`e: ...\SileroEndpointerTest.kt:<n>:13 Cannot find a parameter with this name: probeStats` and
-`e: ...\SileroEndpointerTest.kt:<n>:12 Unresolved reference: onSessionEnd` is NOT expected — that one
-is inherited from `Endpointer` as a no-op default, so it compiles and the third test fails its
-teardown assertion instead: `java.lang.AssertionError: the native context is freed exactly once, at session end expected:<1> but was:<0>`.
+`e: ...\SileroEndpointerTest.kt:<n>:13 Cannot find a parameter with this name: probeStats`
+(and the same for `probeArm` / `probeTeardown`). That compile failure IS the red for this task, and
+it is the whole red: with `probeStats` unresolved the test source set does not compile, so no test
+runs and no assertion failure is produced.
+
+**What the red must NOT contain:** `Unresolved reference: onSessionEnd`. That member is inherited
+from `Endpointer` as a no-op default (Task D2), so it resolves fine — seeing it unresolved means
+D2's default body was not landed.
 
 - [ ] **Step 3: Minimal implementation.** In `SileroEndpointer.kt`:
 
@@ -5337,6 +5466,8 @@ with the KDoc lines under `@param nanoClock`:
  *        recorded on every probe call, emitted as the `probe:` line when its interval is due, reset
  *        at session start and emitted once more at session end. Defaulted so the state-machine tests
  *        need not supply one; [com.whispereverywhere.audio.EndpointerFactory] passes the real one.
+ *        Two threads reach it: `record()` from the CAPTURE thread, `reset()` (onSessionStart) and
+ *        `line()` (onSessionEnd) from MAIN — which is why every method on it is `@Synchronized`.
  * @param probeArm arms the native probe's lifecycle for a new session (Main). The context itself is
  *        still created lazily on the capture thread, at the first frame.
  * @param probeTeardown frees the native probe context at session end, after the capture threads have
@@ -5394,7 +5525,9 @@ and update its one call site in `onFrame`:
             val p = timedProbe(nowMs)
 ```
 
-(d) extend `onSessionStart()` — the stats reset and the arm go beside the cutout re-arm:
+(d) extend `onSessionStart()` — the stats reset and the arm go beside the cutout re-arm. Both run on
+MAIN (Workstream D wires `onSessionStart` from `onOpen`), which is the other half of why
+`ProbeStats` is instance-synchronized:
 
 ```kotlin
         probeStats.reset()
@@ -5405,8 +5538,10 @@ and update its one call site in `onFrame`:
 
 ```kotlin
     /**
-     * Session end (Main), from stopRecording AFTER both capture sources have stopped and JOINED
-     * their threads and after the unconditional stop flush. Emits the session's final `probe:` line
+     * Session end, **on MAIN**, from stopRecording AFTER both capture sources have stopped and
+     * JOINED their threads and after the unconditional stop flush. [probeStats] is read from this
+     * thread while the capture thread may still be writing it (E1's join is timed), which is what
+     * its instance synchronisation is for. Emits the session's final `probe:` line
      * — unconditionally, because a session that never reached the 10 s interval would otherwise
      * report nothing at all, and "overruns=0 over 40 frames" is exactly the acceptance evidence —
      * then frees the native context.
@@ -5727,9 +5862,9 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 - Create `app/src/test/java/com/whispereverywhere/audio/VadProbeLifecycleTest.kt`
 
 **Interfaces:**
-- Consumes (Workstream A — **this task lands after A's externs task**): `WhisperNative.vadProbeInit(modelPath: String): Boolean`, `WhisperNative.vadProbeFrame(pcm16: java.nio.ByteBuffer, nBytes: Int): Float`, `WhisperNative.vadProbeReset()`, `WhisperNative.vadProbeFree()`.
+- Consumes (Workstream A — **this task lands after A's externs task**): `WhisperNative.vadProbeInit(modelPath: String): Boolean`, `WhisperNative.vadProbeFrame(pcm16: java.nio.ByteBuffer, nBytes: Int): Float`, `WhisperNative.vadProbeReset()`, `WhisperNative.vadProbeFree()`. Also `EndpointerTuning.FRAME_BYTES` / `EndpointerTuning.NO_VERDICT` (Task C1, same package, lands first in the binding order) — the SINGLE OWNER of the native frame contract.
 - Produces:
-  - `interface VadProbe { fun init(modelPath: String): Boolean; fun frame(pcm16: java.nio.ByteBuffer, nBytes: Int): Float; fun reset(); fun free() }` with `VadProbe.FRAME_BYTES = 1024` and `VadProbe.NO_VERDICT = -1.0f`
+  - `interface VadProbe { fun init(modelPath: String): Boolean; fun frame(pcm16: java.nio.ByteBuffer, nBytes: Int): Float; fun reset(); fun free() }` with `VadProbe.FRAME_BYTES` and `VadProbe.NO_VERDICT` declared as ALIASES of the `EndpointerTuning` constants (`= EndpointerTuning.FRAME_BYTES` / `= EndpointerTuning.NO_VERDICT`), never as second literals
   - `object NativeVadProbe : VadProbe`
   - `class VadProbeLifecycle(probe: VadProbe)` with `enum class State { IDLE, ARMED, READY, UNAVAILABLE }`, `state(): State`, `arm(modelPath: String?)`, `ensureReady(): Boolean`, `reset()`, `release()`
 
@@ -5915,11 +6050,17 @@ interface VadProbe {
     fun free()
 
     companion object {
+        // ALIASES, not literals. [EndpointerTuning] (Task C1, same package) is the SINGLE OWNER of
+        // the native frame contract; these exist so a caller holding a VadProbe need not import the
+        // tuning object. EndpointerFactory sizes its direct buffer from one of these pairs and
+        // fills it from the other, so two independent literals would be a BufferOverflowException
+        // on the capture thread — or a native sentinel silently readable as a probability.
+
         /** 512 samples of PCM16 mono @16 kHz — exactly one Silero window. */
-        const val FRAME_BYTES = 1024
+        const val FRAME_BYTES = EndpointerTuning.FRAME_BYTES
 
         /** "No verdict." NEVER to be read as silence: a short frame poisons the recurrence. */
-        const val NO_VERDICT = -1.0f
+        const val NO_VERDICT = EndpointerTuning.NO_VERDICT
     }
 }
 
@@ -6163,7 +6304,15 @@ Expected:
 `twoCaptureThreadsRacingTheFirstFrameInitialiseExactlyOnce FAILED` —
 `java.lang.AssertionError: the native probe context must be created exactly once expected:<1> but was:<2>`,
 and `releaseNeverFreesAContextThatIsStillBeingCreated FAILED` —
-`expected:<[init-enter, init-exit, free]> but was:<[init-enter, free, init-exit]>`.
+`expected:<[init-enter, init-exit, free]> but was:<[init-enter, init-exit]>`, accompanied by
+`freeCalls expected:<1> but was:<0>` and `expected:<IDLE> but was:<READY>`.
+
+**Read that second red correctly — the pre-fix bug is a LEAKED context, not an interleaved free.**
+Task D4's `release()` is `if (currentState == State.READY) runCatching { probe.free() }`, and
+`ensureReady()` only assigns `READY` AFTER `probe.init(path)` returns. So during an in-flight init
+the state is still `ARMED`: the un-synchronised release sees it, SKIPS the free entirely, sets
+`IDLE` — and the finishing init then overwrites that with `READY`. Nothing is ever freed and the
+lifecycle claims it is ready, which is the second half of what the monitor fixes.
 
 - [ ] **Step 3: Minimal implementation.** In `app/src/main/java/com/whispereverywhere/audio/VadProbeLifecycle.kt`, add a monitor and take it around the init and the free. The volatile fast path stays, so the 31.25 Hz steady-state cost is one volatile read:
 ```kotlin
@@ -6817,7 +6966,8 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 **Files:**
 - Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt`
-  (import :47; field :250; seam :1691, :1716, :1721–1722)
+  (import :47; field :250; seam :1691, :1716, :1721–1722; the three surviving
+  `speechSegmenter.reset()` call sites at :1819, :2224, :2393 — **rename only**)
 - Create `app/src/test/java/com/whispereverywhere/service/CapSeamPinTest.kt`
 
 **Interfaces:**
@@ -6934,7 +7084,7 @@ Expected: 5 of 7 fail, headed by
 `theEndpointerIsTheVerdictInsideTheIf FAILED — java.lang.AssertionError: missing from FloatingBubbleService.kt: <<            if (endpointer.onFrame(chunk, amp, now)) {>>`
 and `theAmplitudeSegmenterIsNoLongerCalledDirectly FAILED — expected:<0> but was:<8>`.
 
-- [ ] **Step 3: Minimal implementation.** Three edits to `FloatingBubbleService.kt`.
+- [ ] **Step 3: Minimal implementation.** Four edits to `FloatingBubbleService.kt`.
 
 (a) Line 47: replace `import com.whispereverywhere.util.SpeechSegmenter` with
 ```kotlin
@@ -6987,6 +7137,27 @@ split. Every other line in :1689–1724 — including the entire comment block a
 ```
 Also update the comment at :1705 to name the new call:
 `// hasPendingSpeech() is read BEFORE endpointer.reset(), which clears the flag.`
+
+(d) **The three remaining `speechSegmenter.reset()` call sites — rename, nothing more.** Deleting the
+field in (b) without these leaves `switchSource` (:1819), `onOpen` (:2224) and `stopRecording`
+(:2393) referencing a field that no longer exists, so `compileDebugKotlin` fails with three
+`Unresolved reference: speechSegmenter` and this task's own
+`theAmplitudeSegmenterIsNoLongerCalledDirectly` cannot reach 0. At each of the three, replace:
+
+```kotlin
+        speechSegmenter.reset()
+```
+
+with:
+
+```kotlin
+        endpointer.reset()
+```
+
+(matching each site's existing indentation — 8 spaces at :1819 and :2393, 20 inside `onOpen`'s
+coroutine at :2224). **Rename only.** The comment extension at `switchSource`, the per-session
+cadence handover in `onOpen` and the `onSessionEnd()` teardown in `stopRecording` are Task D10's, and
+none of them is landed here.
 
 - [ ] **Step 4: Run tests green.**
 ```powershell
@@ -7119,9 +7290,18 @@ class EndpointerLifecyclePinTest {
 
     @Test
     fun theProbeIsFreedOnlyAfterBothCaptureSourcesHaveJoined() {
-        val recorderStop = indexOfOrFail("        audioRecorder.stop()")
-        val playbackStop = indexOfOrFail("        stopPlaybackCapturer()")
-        val end = indexOfOrFail("        endpointer.onSessionEnd()")
+        // SCOPED TO stopRecording, deliberately. Both capture-stop anchors also occur, at the same
+        // 8-space indentation, inside onDestroy far above (FloatingBubbleService.kt:764-765). An
+        // unscoped indexOf() would therefore compare onDestroy's offsets against stopRecording's
+        // teardown and pass unconditionally — pinning nothing, while the hazard it claims to pin
+        // (vadProbeFree running with a frame still inside vadProbeFrame) stayed wide open.
+        val stopFn = indexOfOrFail("    private fun stopRecording() {")
+        val recorderStop = text.indexOf("        audioRecorder.stop()", stopFn)
+        val playbackStop = text.indexOf("        stopPlaybackCapturer()", stopFn)
+        val end = text.indexOf("        endpointer.onSessionEnd()", stopFn)
+        assertTrue("stopRecording must stop the mic recorder", recorderStop >= 0)
+        assertTrue("stopRecording must stop the playback capturer", playbackStop >= 0)
+        assertTrue("stopRecording must end the endpointer session", end >= 0)
         assertTrue(recorderStop < end)
         assertTrue(playbackStop < end)
     }
@@ -7138,27 +7318,37 @@ class EndpointerLifecyclePinTest {
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.service.EndpointerLifecyclePinTest" --no-daemon
 ```
-Expected: 5 of 7 fail, headed by
-`thereAreExactlyFourServiceSideResetSites FAILED — expected:<4> but was:<1>` (only Task D9's cap-cut
-reset exists) and
-`onOpenResetsAndHandsOverThisSessionsCadence FAILED — missing from FloatingBubbleService.kt: <<                    endpointer.onSessionStart(>>`.
+Expected: **4 of the 7 fail, and three are already green.** Task D9 renamed all four service-side
+reset sites, so the three tests that only assert the rename pass immediately — record them as
+already-green guards (the same shape as the guards in Tasks H5 and G1), not as a miss:
 
-- [ ] **Step 3: Minimal implementation.** Three edits to `FloatingBubbleService.kt`.
+- already green: `thereAreExactlyFourServiceSideResetSites`,
+  `switchSourceResetsBeforeSwappingTheAcousticSource`, `theOldSegmenterFieldIsGoneEverywhere`.
+- still red, all four for the same missing pair (`endpointer.onSessionStart(` /
+  `endpointer.onSessionEnd()`, which this task lands):
+  - `onOpenResetsAndHandsOverThisSessionsCadence FAILED — java.lang.AssertionError: missing from FloatingBubbleService.kt: <<                    endpointer.onSessionStart(>>`
+  - `theCloudFirstCapSuppressionIsUntouchedAndStillPrecedesTheCadence FAILED — java.lang.AssertionError: missing from FloatingBubbleService.kt: <<                    endpointer.onSessionStart(>>`
+  - `stopRecordingFlushesUnconditionallyThenResetsThenFreesTheProbe FAILED — java.lang.AssertionError: the probe is freed after the reset` (the `onSessionEnd()` search returns -1)
+  - `theProbeIsFreedOnlyAfterBothCaptureSourcesHaveJoined FAILED — java.lang.AssertionError: stopRecording must end the endpointer session`
 
-(a) `switchSource`, line 1819 — replace `speechSegmenter.reset()`:
+- [ ] **Step 3: Minimal implementation.** Three edits to `FloatingBubbleService.kt`. **None of them
+renames anything** — Task D9 already swapped all four `speechSegmenter.reset()` calls to
+`endpointer.reset()`; what is missing is the lifecycle around them.
+
+(a) `switchSource`, line 1819 — the reset already reads `endpointer.reset()`:
 ```kotlin
         transcriptionEngine?.commit()
         endpointer.reset()
 ```
-and extend the comment above it (:1815–1817) with one sentence:
+This task only extends the comment above it (:1815–1817) with one sentence:
 ```kotlin
         // ...the same mechanism stopRecording's tail commit uses. The endpointer reset is a
         // CORRECTNESS requirement, not hygiene: this line swaps mic <-> device audio, and the
         // streaming VAD's LSTM recurrence must never carry across an acoustic-source change.
 ```
 
-(b) `onOpen`, line 2224 — replace `speechSegmenter.reset()` with `endpointer.reset()`, and insert
-the cadence handover immediately after the cloud-suppression line at :2238 and before
+(b) `onOpen`, line 2224 — the reset already reads `endpointer.reset()` (Task D9). Insert the cadence
+handover immediately after the cloud-suppression line at :2238 and before
 `val started = startAudioInput()` at :2239:
 ```kotlin
                     if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionOpenMs)
@@ -7180,7 +7370,8 @@ the cadence handover immediately after the cloud-suppression line at :2238 and b
                     val started = startAudioInput()
 ```
 
-(c) `stopRecording`, line 2393 — replace `speechSegmenter.reset()`:
+(c) `stopRecording`, line 2393 — the reset already reads `endpointer.reset()` (Task D9). Add the
+teardown immediately after it:
 ```kotlin
         endpointer.reset()
         // 3.7 (Workstream D5/D8): the probe's native context is freed HERE, and only here.
@@ -7232,7 +7423,8 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 - Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` at the five
   sites that today discard `commit()`'s return: `:915` (projection-consent flush), `:1694`
   (endpoint cut), `:1721` (wall-cap cut), `:1818` (`switchSource`), `:2388` (stop flush); plus
-  `onSegmentResolved` at `:2298-2306` and a field beside `segmentCapPolicy` at `:307`.
+  `onSegmentResolved` at `:2298-2306`, a field beside `segmentCapPolicy` at `:307`, and the
+  per-session reset at `:2152` (beside `segmentOrderer = …SegmentOrderer()`).
 - Modify `app/src/test/java/com/whispereverywhere/service/CapSeamPinTest.kt` (Task D9) and
   `app/src/test/java/com/whispereverywhere/service/EndpointerLifecyclePinTest.kt` (Task D10) — three
   quoted source literals move with the call sites. **The assertions are updated, never weakened:**
@@ -7251,13 +7443,20 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
   - `class SegmentQueueDepth` in `com.whispereverywhere.service` with
     `fun onCommitted(seq: Long): Int`, `fun onResolved(seq: Long): Int`, `fun depth(): Int`, `fun reset()`
   - `object EndpointDiag` in `com.whispereverywhere.service` with `fun queueLine(depth: Int): String`
-    → `"queue: depth=<n>"`
-  - **`private fun FloatingBubbleService.commitSegment(engine: TranscriptionEngine, cut: String, retainMs: Long = 0L): Long`
-    — THE single commit funnel.** All five commit sites route through it exactly once. It calls
-    `commit()` (or `commitRetainingTailMs` when the cap offered a retain window), returns that seq
-    unchanged, and owns the diagnostics that hang off a commit. Tasks F8 and F9 each extend this ONE
-    function — `endpoint:`/`perceived:` — and Task G3 hangs the in-flight strip repaint off it.
-    There is never a second funnel.
+    → `"queue: depth=<n>"`, **and the four cut-kind constants `VAD` / `CAP` / `STOP` / `SWITCH`**.
+    They are born here, not in Task F8, because this task's five rewritten call sites already
+    reference them — `assembleDebug` could not succeed at this boundary otherwise. Task F8 adds only
+    the two formatters that need `EndpointCut`.
+  - **`private fun commitSegment(engine: TranscriptionEngine, cut: String, retainMs: Long = 0L, nowMs: Long = System.currentTimeMillis()): Long`
+    — THE single commit funnel, a private MEMBER of `FloatingBubbleService`** (never a top-level
+    extension: it reads the service's private `segmentQueueDepth`, `endpointer` and `serviceScope`).
+    All five commit sites route through it exactly once. It calls `commit()` (or
+    `commitRetainingTailMs` when the cap offered a retain window), returns that seq unchanged, and
+    owns the diagnostics that hang off a commit. `nowMs` is the FRAME's clock where the caller has
+    one — the two capture-thread sites pass their `now`, so Task F9's speech-end stamp is measured
+    against the same instant `trailMs` was; the three Main-side sites take the default. Tasks F8 and
+    F9 each extend this ONE function — `endpoint:`/`perceived:` — and Task G3 hangs the in-flight
+    strip repaint off it. There is never a second funnel.
 
 - [ ] **Step 1: Write the failing test** — create
 `app/src/test/java/com/whispereverywhere/service/SegmentQueueDepthTest.kt`:
@@ -7458,10 +7657,27 @@ package com.whispereverywhere.service
  */
 object EndpointDiag {
 
+    /** The endpointer found a real pause: the cadence 3.7 exists to produce. */
+    const val VAD = "vad"
+
+    /** The wall-clock backstop fired. Under 3.7 this is a VAD-FAILURE signature, not the norm. */
+    const val CAP = "cap"
+
+    /** The unconditional stop flush. */
+    const val STOP = "stop"
+
+    /** A mic <-> device-audio source swap cut the segment at the boundary. */
+    const val SWITCH = "switch"
+
     /** The committed-but-unresolved backlog, from [SegmentQueueDepth]. */
     fun queueLine(depth: Int): String = "queue: depth=$depth"
 }
 ```
+
+The four constants land HERE rather than in Task F8 because edits (d)–(h) below reference them: the
+main source set would not compile at this task's boundary otherwise, and Step 4's `assembleDebug`
+gate is exactly what would catch that. They are pure string constants with no dependency on
+`EndpointCut`, so nothing about F8 is pulled forward with them.
 
 (c) `FloatingBubbleService.kt:307` — add the field beside `segmentCapPolicy`. After:
 
@@ -7507,8 +7723,13 @@ with:
             if (endpointer.onFrame(chunk, amp, now)) {
                 android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
                 segmentCapPolicy.onCommit(now)
-                commitSegment(engine, EndpointDiag.VAD)
+                commitSegment(engine, EndpointDiag.VAD, nowMs = now)
 ```
+
+`nowMs = now` is the frame's clock — the same `now` `onFrame` was given, and the one the endpointer's
+`trailMs` was measured against. Task F9 derives the speech-end instant from that pair, so taking a
+fresh `System.currentTimeMillis()` inside the funnel instead would bias the headline metric low by
+the whole `engine.commit()` buffer snapshot. Named argument because `retainMs` is skipped here.
 
 (f) `FloatingBubbleService.kt:1721` — the wall-cap cut, inside the untouched `else if`. The retain
 window Task D9 computes is passed straight through, so the funnel makes the same call the branch
@@ -7522,7 +7743,7 @@ made before it (`commitRetainingTailMs(0)` IS `commit()`, by first line and by t
 with:
 
 ```kotlin
-                commitSegment(engine, EndpointDiag.CAP, retainMs)
+                commitSegment(engine, EndpointDiag.CAP, retainMs, now)
                 endpointer.reset()
 ```
 
@@ -7603,9 +7824,12 @@ the KDoc block starts there):
      *
      * [cut] is one of [EndpointDiag]'s four cut kinds and names WHY this commit happened.
      * [retainMs] is non-zero only at the wall-cap site, where the endpointer offered a micro-pause
-     * to cut at. Returns exactly what the engine returned — the seq, or
-     * `LocalWhisperEngine.NO_SEGMENT` (-1) when there was nothing to cut, which contributes nothing
-     * to the backlog because it will never resolve.
+     * to cut at. [nowMs] is the FRAME's clock at the two capture-thread sites and defaults to the
+     * wall clock at the three Main-side ones; it exists so Task F9's speech-end stamp is measured
+     * against the same instant the endpointer's `trailMs` was, not against a clock re-read after a
+     * ~960 KB buffer snapshot. Returns exactly what the engine returned — the seq, or the -1
+     * "nothing was cut" answer documented on [TranscriptionEngine.commit], which contributes
+     * nothing to the backlog because it will never resolve.
      *
      * Callable from the CAPTURE thread (the endpoint and cap cuts) and from Main (switchSource,
      * stopRecording, the projection-consent flush) — [SegmentQueueDepth] is synchronized.
@@ -7614,6 +7838,7 @@ the KDoc block starts there):
         engine: TranscriptionEngine,
         cut: String,
         retainMs: Long = 0L,
+        nowMs: Long = System.currentTimeMillis(),
     ): Long {
         val seq = if (retainMs > 0L) engine.commitRetainingTailMs(retainMs) else engine.commit()
         android.util.Log.i("WE-DIAG", EndpointDiag.queueLine(segmentQueueDepth.onCommitted(seq)))
@@ -7621,10 +7846,22 @@ the KDoc block starts there):
     }
 ```
 
-(k) `FloatingBubbleService.kt` — reset the backlog when the session's seq numbering restarts.
-In `stopRecording`, immediately after the `endpointer.reset()` at `:2393`, insert:
+(k) `FloatingBubbleService.kt:2152` — reset the backlog where the session's seq numbering restarts.
+**Session START, not stop.** The engine restarts seq numbering at 0 in `connect()`, and the orderer
+is recreated on the same line for exactly that reason; resetting at stop instead would zero the depth
+BEFORE the drain, so `queue: depth=` would read 0 for every segment still in flight at stop — the
+part of the session the counter exists to show. After:
 
 ```kotlin
+        segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()
+```
+
+insert:
+
+```kotlin
+        // 3.7 Workstream F: same reason the orderer is recreated. A depth carried over from a
+        // torn-down session would render a phantom backlog on the next one's first commit, and a
+        // reset at stop would blank the diagnostic for the whole drain.
         segmentQueueDepth.reset()
 ```
 
@@ -7633,7 +7870,7 @@ Update the three literals — same assertions, same branches, new expression. In
 `CapSeamPinTest.theCapBranchKeepsItsBookkeepingAndItsUnconditionalCommit`:
 
 ```kotlin
-        val commit = indexOfOrFail("                commitSegment(engine, EndpointDiag.CAP, retainMs)")
+        val commit = indexOfOrFail("                commitSegment(engine, EndpointDiag.CAP, retainMs, now)")
 ```
 
 and in `EndpointerLifecyclePinTest`, `switchSourceResetsBeforeSwappingTheAcousticSource`:
@@ -7709,7 +7946,11 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 - Produces:
   - `EndpointDiag.endpointLine(seq: Long, cut: String, ec: EndpointCut?): String`
   - `EndpointDiag.capCommitLine(capMs: Long): String`
-  - companion constants on `EndpointDiag`: `VAD` / `CAP` / `STOP` / `SWITCH`
+  - the `import com.whispereverywhere.audio.EndpointCut` those two formatters need
+
+  **The four cut-kind constants `VAD` / `CAP` / `STOP` / `SWITCH` are NOT produced here** — Task F7
+  landed them, because F7's five rewritten call sites already reference them. They survive this
+  task's whole-file replacement unchanged.
 
 **Binding constraint on the reword:** `cap=<n>ms` must survive VERBATIM. `cap=4000ms` appearing in
 a cloud session is the documented 3.6.0 regression signature the owner's acceptance greps for
@@ -7807,10 +8048,17 @@ class EndpointDiagTest {
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.service.EndpointDiagTest" --no-daemon
 ```
 
-Expected: `e: ...EndpointDiagTest.kt: Unresolved reference: VAD` and
-`e: ...EndpointDiagTest.kt: Unresolved reference: endpointLine`.
+Expected: `e: ...EndpointDiagTest.kt: Unresolved reference: endpointLine` and
+`e: ...EndpointDiagTest.kt: Unresolved reference: capCommitLine`.
 
-- [ ] **Step 3: Minimal implementation** — `EndpointDiag.kt`, replace the whole file:
+**Not** `Unresolved reference: VAD` — Task F7 landed the four cut-kind constants, so
+`theCutVocabularyIsExactlyTheFourSpeccedValues` is an ALREADY-GREEN guard over work that exists (the
+same shape as the already-green guards in Tasks H5 and G1). It is kept because the vocabulary is
+what the acceptance sheet greps, and nothing else pins it.
+
+- [ ] **Step 3: Minimal implementation** — `EndpointDiag.kt`, replace the whole file. The four
+constants are carried through byte-identically from Task F7; only the import, the two formatters and
+the class KDoc are new:
 
 ```kotlin
 package com.whispereverywhere.service
@@ -7909,6 +8157,7 @@ Replace the body — the KDoc above it gains one paragraph, quoted after the cod
         engine: TranscriptionEngine,
         cut: String,
         retainMs: Long = 0L,
+        nowMs: Long = System.currentTimeMillis(),
     ): Long {
         val seq = if (retainMs > 0L) engine.commitRetainingTailMs(retainMs) else engine.commit()
         // Only a VAD cut has a probe behind it. lastCut() is read IMMEDIATELY after the verdict,
@@ -7920,6 +8169,9 @@ Replace the body — the KDoc above it gains one paragraph, quoted after the cod
         return seq
     }
 ```
+
+(the signature is Task F7's, unchanged — `nowMs` is quoted here only so the replacement block is
+complete; this task adds the two `ec` lines and nothing else)
 
 added to its KDoc:
 
@@ -7950,8 +8202,8 @@ the `endpoint:` line here without touching a single branch again:
 
 ```kotlin
                     transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }   // :915
-                commitSegment(engine, EndpointDiag.VAD)                                   // :1694
-                commitSegment(engine, EndpointDiag.CAP, retainMs)                         // :1721
+                commitSegment(engine, EndpointDiag.VAD, nowMs = now)                      // :1694
+                commitSegment(engine, EndpointDiag.CAP, retainMs, now)                    // :1721
         transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }               // :1818
         transcriptionEngine?.let { commitSegment(it, EndpointDiag.STOP) }                 // :2388
 ```
@@ -7993,13 +8245,19 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 - Modify `app/src/main/java/com/whispereverywhere/service/EndpointDiag.kt` (append one formatter)
 - Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — a field at
   `:307` (beside `segmentQueueDepth` from Task F7), the funnel `commitSegment` (before `:2576`),
-  `onSegmentResolved` at `:2298-2306` (post-Task-F7 shape), and the session reset in
-  `stopRecording` at `:2393`
+  `onSegmentResolved` at `:2298-2306` (post-Task-F7 shape), and the per-session reset at `:2152`
+  (beside the `segmentQueueDepth.reset()` Task F7 landed there)
 
 **Interfaces:**
 - Consumes: `com.whispereverywhere.audio.EndpointCut.trailMs` (Task C8), which the funnel already
-  reads for the `endpoint:` line — `speechEnd = nowMs - trailMs`, so the perceived metric needs no
-  accessor of its own on the endpointer and no second read of its state.
+  reads for the `endpoint:` line, and the funnel's own `nowMs` parameter (Task F7) — the FRAME's
+  clock, which the two capture-thread commit sites pass in. `speechEnd = nowMs - trailMs`, so the
+  perceived metric needs no accessor of its own on the endpointer and no second read of its state.
+  **The stamp must not re-read the clock inside the funnel:** `trailMs` was computed from the capture
+  chunk's `nowMs`, taken before `endpointer.onFrame`, and the funnel then runs `engine.commit()` (a
+  full buffer snapshot under `bufferLock`, up to ~960 KB) plus two `Log.i` calls before it would get
+  there — every reported `speechEndToVisible` would be smaller than the truth by that delta, on the
+  exact metric S3 Check 2 and S4's release-notes contingency read.
 
 **Where the stamp is taken, and where it is NOT.** The metric means WORDS VISIBLE, so it is read at
 `deliverReleasedText`'s return, on the same Main tick, where the view write has already happened.
@@ -8230,11 +8488,13 @@ KDoc gains one paragraph and the body one `if`; nothing else about it changes, a
 task in Workstream F that touches it:
 
 ```kotlin
-     * The speech-end instant is DERIVED from the same `trailMs` the `endpoint:` line reports
-     * (`speechEnd = now - trailMs`), so the perceived metric needs no accessor of its own on the
-     * endpointer and no second read of its state. Only `cut=vad` is stamped: the other three cut
-     * kinds have no speech-end instant, and a stamp with no honest instant behind it would be a
-     * number the acceptance sheet could not use.
+     * The speech-end instant is DERIVED from the same `trailMs` the `endpoint:` line reports and
+     * from the FRAME clock the caller handed in (`speechEnd = nowMs - trailMs`), so the perceived
+     * metric needs no accessor of its own on the endpointer and no second read of its state — and
+     * no second read of the clock, which would land after the commit's buffer snapshot and bias
+     * every number low. Only `cut=vad` is stamped: the other three cut kinds have no speech-end
+     * instant, and a stamp with no honest instant behind it would be a number the acceptance sheet
+     * could not use.
 ```
 
 ```kotlin
@@ -8242,12 +8502,13 @@ task in Workstream F that touches it:
         engine: TranscriptionEngine,
         cut: String,
         retainMs: Long = 0L,
+        nowMs: Long = System.currentTimeMillis(),
     ): Long {
         val seq = if (retainMs > 0L) engine.commitRetainingTailMs(retainMs) else engine.commit()
         val ec = if (cut == EndpointDiag.VAD) (endpointer as? SileroEndpointer)?.lastCut() else null
         android.util.Log.i("WE-DIAG", EndpointDiag.endpointLine(seq, cut, ec))
         if (cut == EndpointDiag.VAD && ec != null) {
-            perceivedLatency.onCommitted(seq, System.currentTimeMillis() - ec.trailMs)
+            perceivedLatency.onCommitted(seq, nowMs - ec.trailMs)
         }
         android.util.Log.i("WE-DIAG", EndpointDiag.queueLine(segmentQueueDepth.onCommitted(seq)))
         return seq
@@ -8278,12 +8539,20 @@ task in Workstream F that touches it:
                 }
 ```
 
-(d) In `stopRecording`, beside the `segmentQueueDepth.reset()` added in Task F7 (after `:2393`),
-insert:
+(d) At `:2152`, beside the `segmentQueueDepth.reset()` Task F7 added after
+`segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()`, insert:
 
 ```kotlin
         perceivedLatency.reset()
 ```
+
+**Session START, not stop — for the same reason and a sharper one.** Seq numbering restarts at 0 in
+`connect()`, so the session boundary is here. Resetting at stop would drop every stamp for the
+segments still in flight when the user taps stop, and those are systematically the SLOWEST samples:
+at pro's utterance cadence the last utterance is always in flight, and on multi (6 s pacing, F=2.3 s)
+several are. `onVisible` would return null for all of them, no `perceived:` line would be emitted,
+and S3 Check 2's p50/p95 grid — the contingency gate for S4's release-notes latency claim — would be
+biased low by exactly the tail it is supposed to measure.
 
 Then the compile gate and the full suite:
 
@@ -8388,10 +8657,14 @@ rather than silently dropped so the coverage is not lost with the class.
             assertTrue("workers did not finish", done.await(20, TimeUnit.SECONDS))
 
             // 1000 distinct seqs committed and the same 1000 resolved, in any interleaving: every
-            // resolution that arrived early is a no-op on an absent key, so the end state is a
-            // depth in [0, 1000] and never negative.
-            val end = q.depth()
-            assertTrue("depth escaped its bounds: $end", end in 0..1000)
+            // resolution that arrived early is a no-op on an absent key, so a residue of real keys
+            // is expected here. Draining all of them DETERMINISTICALLY, from this thread, is what
+            // makes the assertion bite — an unsynchronized HashSet loses or duplicates entries
+            // under a four-thread storm and leaves a non-zero residue that no drain can clear.
+            // (A bare `depth() in 0..1000` would pass by construction: a set fed 1000 distinct keys
+            // cannot exceed 1000 whether it is synchronized or not.)
+            for (seq in 0 until 1000) q.onResolved(seq.toLong())
+            assertEquals("the storm left entries the drain could not clear", 0, q.depth())
 
             // And the counter is still usable afterwards — no torn state.
             q.reset()
@@ -8418,9 +8691,12 @@ one. `TEST-com.whispereverywhere.service.SegmentQueueDepthTest.xml` shows
   this task is a class that must NOT be there:
 
 ```powershell
-Select-String -Path app\src\main\java\com\whispereverywhere -Recurse -SimpleMatch -Pattern 'class SegmentQueueDepth' | Select-Object Path
+Get-ChildItem app\src\main\java\com\whispereverywhere -Recurse -Filter *.kt | Select-String -SimpleMatch -Pattern 'class SegmentQueueDepth' | Select-Object Path
 Select-String -Path app\src\main\java\com\whispereverywhere\service\FloatingBubbleService.kt -SimpleMatch -Pattern 'SegmentQueueDepth()' | Measure-Object | Select-Object -ExpandProperty Count
 ```
+
+(`Select-String` has no `-Recurse`; the enumeration is `Get-ChildItem`'s job — the same idiom Task S3
+Step 2 uses. The second command targets a single file and is already valid.)
 
 Expected: exactly ONE file declares the class
 (`app\src\main\java\com\whispereverywhere\service\SegmentQueueDepth.kt`), and the service constructs
@@ -8602,19 +8878,20 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task G3: Hang the in-flight strip off the commit funnel
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — add `commitAdvancesQueueDepth` beside the Task G2 rules (after `inFlightStripLabel`); ONE edit to the funnel `commitSegment` (landed in Task F7, grown in F8/F9); the `renderInFlightStrip()` stub after it; per-session reset at line 2152.
+- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — add `commitAdvancesQueueDepth` beside the Task G2 rules (after `inFlightStripLabel`); ONE edit to the funnel `commitSegment` (landed in Task F7, grown in F8/F9); the `renderInFlightStrip()` stub after it. **No reset is added:** Task F7 already established the per-session `segmentQueueDepth.reset()` at line 2152.
 - Modify `app/src/test/java/com/whispereverywhere/service/InFlightStripTest.kt` — add the funnel rule's assertions.
 
 **Interfaces:**
-- Consumes: `SegmentQueueDepth` and the funnel `commitSegment(engine, cut, retainMs)` (Task F7); `LocalWhisperEngine.NO_SEGMENT = -1L` (`LocalWhisperEngine.kt:67`).
+- Consumes: `SegmentQueueDepth` and the funnel `commitSegment(engine, cut, retainMs, nowMs)` (Task F7); `LocalWhisperEngine`'s **-1 "nothing was cut" return**, documented on `TranscriptionEngine.commit()`. `NO_SEGMENT` itself is a `private companion object` const (`LocalWhisperEngine.kt:62-67`) and is UNREACHABLE from the `service` package — never reference it by name; compare against `0L` directly (`seq >= 0L`).
 - Produces: `internal fun commitAdvancesQueueDepth(seq: Long): Boolean` and a `renderInFlightStrip()` hook inside the existing funnel.
 
-**What this task does NOT do.** It does not create a funnel, a counter or a field: Workstream F
-landed all three, the five call sites already route through `commitSegment`, and every commit
-already updates `segmentQueueDepth` and emits `queue: depth=`. What is missing is the SCREEN — the
-number is in the log and nowhere else. So this task adds exactly one line to the funnel (a Main-hop
-repaint) plus the guard that decides when a repaint is worth posting. One task, one edit to the
-funnel, no second writer.
+**What this task does NOT do.** It does not create a funnel, a counter, a field **or a reset**:
+Workstream F landed all four, the five call sites already route through `commitSegment`, every commit
+already updates `segmentQueueDepth` and emits `queue: depth=`, and the per-session
+`segmentQueueDepth.reset()` already sits at line 2152 beside the orderer's. What is missing is the
+SCREEN — the number is in the log and nowhere else. So this task adds exactly one line to the funnel
+(a Main-hop repaint) plus the guard that decides when a repaint is worth posting. One task, one edit
+to the funnel, no second writer.
 
 - [ ] **Step 1: Write the failing test** — append to `app/src/test/java/com/whispereverywhere/service/InFlightStripTest.kt`, immediately before the final closing `}`:
 
@@ -8623,10 +8900,11 @@ funnel, no second writer.
     // ------------------------------------------------------------- the commit funnel
 
     @Test fun a_commit_that_cut_nothing_does_not_advance_the_queue() {
-        // LocalWhisperEngine.NO_SEGMENT (-1L) means "there was nothing to cut" — the silent
-        // no-op the stop flush and switchSource hit on an already-empty buffer. Counting it
+        // -1L is TranscriptionEngine.commit()'s documented "there was nothing to cut" answer — the
+        // silent no-op the stop flush and switchSource hit on an already-empty buffer. Counting it
         // would strand the strip on "Transcribing…" for the rest of the session, because no
-        // resolution can ever arrive to take it back down.
+        // resolution can ever arrive to take it back down. (The engine's own NO_SEGMENT constant is
+        // private to LocalWhisperEngine and deliberately not referenced from this package.)
         assertFalse(commitAdvancesQueueDepth(-1L))
     }
 
@@ -8651,7 +8929,7 @@ funnel, no second writer.
 Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
 `e: ...InFlightStripTest.kt:78:21 Unresolved reference: commitAdvancesQueueDepth`
 
-- [ ] **Step 3: Minimal implementation** — three edits in `FloatingBubbleService.kt`.
+- [ ] **Step 3: Minimal implementation** — two edits in `FloatingBubbleService.kt`.
 
 (a) after `inFlightStripLabel` (the Task G2 block), add the rule:
 
@@ -8660,10 +8938,12 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
 /**
  * Does this `commit()` return value represent a segment the queue should count (3.7, G)?
  *
- * `LocalWhisperEngine.NO_SEGMENT` is `-1L` and means "nothing to cut" — the ordinary outcome of
- * the unconditional stop flush and of `switchSource` on an already-drained buffer. Counting one
- * would leave the in-flight line up for the rest of the session with no resolution able to take
- * it down. seq 0 is a REAL segment: connect() restarts numbering at zero every session.
+ * [TranscriptionEngine.commit] returns `-1L` for "nothing to cut" — the ordinary outcome of the
+ * unconditional stop flush and of `switchSource` on an already-drained buffer. (The engine names
+ * that value `NO_SEGMENT` in a private companion; it is not visible here, so the contract is the
+ * documented `-1`, compared directly.) Counting one would leave the in-flight line up for the rest
+ * of the session with no resolution able to take it down. seq 0 is a REAL segment: connect()
+ * restarts numbering at zero every session.
  *
  * [SegmentQueueDepth] applies the same rule to its own set; this names it for the SCREEN, which
  * must not post a repaint for a commit that changed nothing.
@@ -8691,14 +8971,14 @@ and, immediately after the funnel, the stub that Task G4 replaces with the real 
     private fun renderInFlightStrip() = Unit
 ```
 
-(c) after line 2152 (`        segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()`), add:
-
-```kotlin
-        // Same reason the orderer is recreated: a depth carried over from a torn-down session
-        // would render a phantom backlog on the next one's first commit. (stopRecording resets it
-        // too — this is the belt to that session-end braces, for a session that never got there.)
-        segmentQueueDepth.reset()
-```
+**No third edit: the per-session reset already exists.** Task F7 landed
+`segmentQueueDepth.reset()` at line 2152, immediately after
+`segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()`, for the same reason the
+orderer is recreated there — a depth carried over from a torn-down session would render a phantom
+backlog on the next one's first commit, and the strip reads `depth()` on every session's first
+render pass. Task F9 put `perceivedLatency.reset()` beside it. **Verify both lines are present and
+add neither**; a second reset call would be a second writer to the state this task's whole argument
+is that there is only one of.
 
 - [ ] **Step 4: Run tests green** —
 
@@ -8714,7 +8994,7 @@ git commit -m "feat(bubble): G — the in-flight strip repaints from the one com
 
 The five commit sites already route through commitSegment() and already update
 the queue depth; this hangs the screen off the same place, so the log line and
-the strip can never disagree. A commit that cut nothing (NO_SEGMENT) posts no
+the strip can never disagree. A commit that cut nothing (seq -1) posts no
 repaint, because it cannot have changed the depth. The wall-cap else-if, the
 cloud 4s suppression and the unconditional stop flush are untouched.
 
@@ -8727,7 +9007,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task G4: Paint the in-flight line, and kill the per-utterance reclamp churn
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — add `StripVisibility` + `inFlightStripVisibility` beside the Task G2/33 rules; replace the `renderInFlightStrip()` stub from Task G3; fix `estimatedWindowSize` line **1321**.
+- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — add `StripVisibility` + `inFlightStripVisibility` beside the Task G2 / G3 rules (after `commitAdvancesQueueDepth`, which Task G3 adds); replace the `renderInFlightStrip()` stub from Task G3; fix `estimatedWindowSize` line **1321**.
 - Modify `app/src/test/java/com/whispereverywhere/service/InFlightStripTest.kt`
 
 **Interfaces:**
@@ -9084,13 +9364,22 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 
 **Files:**
 - Modify `app/src/main/java/com/whispereverywhere/model/WhisperModel.kt` — the `retired` KDoc + new `unsupported` field (lines 25–31); `entries` (lines 63–132); `DEFAULT_MODEL_ID` (line 142).
+- Modify `app/src/main/java/com/whispereverywhere/model/ModelMigration.kt` — line 35 (the target constant) and line 44 (the gate). **Two surgical edits, no block replacement.**
 - Modify `app/src/test/java/com/whispereverywhere/model/WhisperCatalogHelpersTest.kt` — lines 106–124.
+- Modify `app/src/test/java/com/whispereverywhere/model/ModelMigrationTest.kt` — lines 15–18, 41–56, 63–77.
+
+**Why the migration gate lands HERE and not in Task H2.** Retiring eco/base and flipping
+`DEFAULT_MODEL_ID` to "pro" while `ModelMigration.decide` still reads `if (!selected.retired)` puts
+two guaranteed failures on this task's commit: `decide("eco")` starts returning `OfferDownload`
+instead of `None`, and `SwapAndDelete("extreme", "eco")` becomes `SwapAndDelete("extreme", "pro")`.
+The gate flip and the target constant are therefore part of the same change as the retirement, not a
+follow-up — Task H2 keeps the rename, the Settings wiring and the `targetIdFor` documentation.
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `WhisperModel.unsupported: Boolean` (default `false`); `WhisperCatalog.pickable == [pro, multi]`; `WhisperCatalog.DEFAULT_MODEL_ID == "pro"`.
+- Produces: `WhisperModel.unsupported: Boolean` (default `false`); `WhisperCatalog.pickable == [pro, multi]`; `WhisperCatalog.DEFAULT_MODEL_ID == "pro"`; `ModelMigration.decide` gated on `unsupported`; `ModelMigration.MULTILINGUAL_TARGET_ID == "multi"` (private).
 
-- [ ] **Step 1: Write the failing test** — in `WhisperCatalogHelpersTest.kt`, replace lines 106–124 (`retired_tiers_are_not_pickable` through `default_is_pickable`) with:
+- [ ] **Step 1: Write the failing tests** — two files. First `WhisperCatalogHelpersTest.kt`, replace lines 106–124 (`retired_tiers_are_not_pickable` through `default_is_pickable`) with:
 
 ```kotlin
     @Test fun retired_tiers_are_not_pickable() {
@@ -9145,12 +9434,93 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
     }
 ```
 
+Then `ModelMigrationTest.kt` — three replacements. **The line numbers are the file's ORIGINAL ones,
+so apply them bottom-up** (63–77 first, then 41–56, then 15–18).
+
+replace lines 15–18 (`a_current_tier_needs_no_migration`) with:
+
+```kotlin
+    @Test fun a_current_tier_needs_no_migration() {
+        assertEquals(ModelMigration.Action.None, decide("pro"))
+        assertEquals(ModelMigration.Action.None, decide("multi"))
+    }
+
+    @Test fun a_retired_but_supported_tier_is_left_completely_alone() {
+        // 3.7 Workstream H: eco and base are retired (hidden from the chooser) but still work.
+        // Raising the migration card for them would ask a user with a working 60 MB model to
+        // download 190 MB they never asked for — and the card's own copy ("much faster") would
+        // be false, since pro is slower than eco. This is the test that forces decide() to gate
+        // on `unsupported` rather than `retired`, in the same task that retires them.
+        assertEquals(ModelMigration.Action.None, decide("eco"))
+        assertEquals(ModelMigration.Action.None, decide("base"))
+        assertEquals(ModelMigration.Action.None, decide("eco", online = false))
+        assertEquals(ModelMigration.Action.None, decide("base", targetInstalled = true))
+    }
+```
+
+replace lines 41–56 (`swap_only_happens_once_the_target_is_actually_on_disk` and
+`swap_happens_offline_too_once_the_target_is_installed`) with:
+
+```kotlin
+    @Test fun swap_only_happens_once_the_target_is_actually_on_disk() {
+        // "ultra" is MULTILINGUAL, so its target is "multi", not the ENGLISH default "pro" —
+        // see the MF3 tests below pinning the scope-aware mapping.
+        assertEquals(
+            ModelMigration.Action.SwapAndDelete("ultra", "multi"),
+            decide("ultra", targetInstalled = true),
+        )
+    }
+
+    @Test fun swap_happens_offline_too_once_the_target_is_installed() {
+        // No network needed to swap a file that is already downloaded.
+        assertEquals(
+            ModelMigration.Action.SwapAndDelete("extreme", "pro"),
+            decide("extreme", targetInstalled = true, online = false),
+        )
+    }
+```
+
+replace lines 63–77 (the MF3 comment and its two tests) with:
+
+```kotlin
+    // MF3: the target must match the retired model's language scope. "ultra" is MULTILINGUAL
+    // (large-v3-turbo) — routing it to the ENGLISH-only default silently breaks dictation in every
+    // other language. "extreme" is ENGLISH, so the English default is correct for it. Since 3.7 the
+    // lineup is two tiers, so those targets are "multi" and "pro".
+    // Replaces the old `migration_target_is_the_catalog_default`, which assumed every retired
+    // tier maps to WhisperCatalog.DEFAULT_MODEL_ID regardless of scope — that assumption is the
+    // bug MF3 fixes.
+    @Test fun a_multilingual_unsupported_tier_migrates_to_multi_not_the_english_default() {
+        val a = decide("ultra", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
+        assertEquals("multi", a.toId)
+    }
+
+    @Test fun an_english_unsupported_tier_migrates_to_pro() {
+        val a = decide("extreme", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
+        assertEquals(WhisperCatalog.DEFAULT_MODEL_ID, a.toId)
+        assertEquals("pro", a.toId)
+    }
+```
+
 - [ ] **Step 2: Run it, expected failure** —
 
-`$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.model.WhisperCatalogHelpersTest" --no-daemon`
+`$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.model.*" --no-daemon`
 
 Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
 `e: ...WhisperCatalogHelpersTest.kt:124:38 Unresolved reference: unsupported`
+
+That compile failure is the whole red for Step 2 — the test source set does not build, so none of the
+migration assertions run yet. They are the SECOND red, and they only become visible once Step 3(a)
+has landed the `unsupported` field: at that point, with `retired` still on the gate and
+`MULTILINGUAL_TARGET_ID` still `"base"`, three tests fail:
+- `a_retired_but_supported_tier_is_left_completely_alone` → `expected:<None> but was:<OfferDownload>`
+- `swap_only_happens_once_the_target_is_actually_on_disk` → `expected:<SwapAndDelete(fromId=ultra, toId=multi)> but was:<SwapAndDelete(fromId=ultra, toId=base)>`
+- `a_multilingual_unsupported_tier_migrates_to_multi_not_the_english_default` → `expected:<multi> but was:<base>`
+
+`swap_happens_offline_too_once_the_target_is_installed` and `an_english_unsupported_tier_migrates_to_pro`
+are already green at this checkpoint — Step 3(d) flipped the ENGLISH target to `"pro"`. Step 3(e)'s
+gate edit clears the first failure; 3(e)'s constant edit clears the other two. If you land 3(a)–(d)
+and stop, that three-red set is exactly what you will see.
 
 - [ ] **Step 3: Minimal implementation** — in `WhisperModel.kt`:
 
@@ -9208,16 +9578,37 @@ and identically in the `ultra` block (line 130).
     const val DEFAULT_MODEL_ID = "pro"
 ```
 
+(e) `ModelMigration.kt` — two surgical edits, the ones that keep this task's own suite green.
+
+Line 35 — the multilingual target follows the new lineup:
+
+```kotlin
+    private const val MULTILINGUAL_TARGET_ID = "multi"
+```
+
+Line 44 — the gate reads the flag this task just split out. Replace
+`        if (!selected.retired) return Action.None` with:
+
+```kotlin
+        // `unsupported`, not `retired` (3.7 Workstream H): a merely retired tier is hidden from
+        // the chooser and otherwise left completely alone — its installed users are not prompted,
+        // not migrated, and never asked to re-download.
+        if (!selected.unsupported) return Action.None
+```
+
+*(the `targetIdFor` KDoc above still describes the old "base"/"eco" lineup and is rewritten in Task
+H2, which owns the documentation and the Settings wiring. The behaviour is correct as of this task.)*
+
 - [ ] **Step 4: Run tests green** —
 
 `$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.model.*" --no-daemon`
 
-Expected: `BUILD SUCCESSFUL`; `TEST-com.whispereverywhere.model.WhisperCatalogHelpersTest.xml` shows 0 failures, and `ModelTierCopyTest` / `ModelMigrationTest` are still green (eco is retired-but-supported, so `decide("eco")` remains `None`).
+Expected: `BUILD SUCCESSFUL`; `TEST-com.whispereverywhere.model.WhisperCatalogHelpersTest.xml` shows 0 failures; `TEST-com.whispereverywhere.model.ModelMigrationTest.xml` shows **11 tests / 0 failures** (the ten it had plus `a_retired_but_supported_tier_is_left_completely_alone`); and `ModelTierCopyTest` is untouched and still green — it iterates `WhisperCatalog.pickable`, which merely got shorter, and eco/base still have copy until Task H3 removes it.
 
 - [ ] **Step 5: Commit** —
 
 ```
-git add app/src/main/java/com/whispereverywhere/model/WhisperModel.kt app/src/test/java/com/whispereverywhere/model/WhisperCatalogHelpersTest.kt
+git add app/src/main/java/com/whispereverywhere/model/WhisperModel.kt app/src/main/java/com/whispereverywhere/model/ModelMigration.kt app/src/test/java/com/whispereverywhere/model/WhisperCatalogHelpersTest.kt app/src/test/java/com/whispereverywhere/model/ModelMigrationTest.kt
 git commit -m "feat(model): H — retire eco + base; split unsupported out of retired
 
 Owner decision 2026-08-20. The 60 MB tiers leave the chooser and stay fully
@@ -9225,81 +9616,38 @@ resolvable; a new `unsupported` flag (extreme/ultra only) is what raises the
 migration card, so installed eco/base users see nothing and are never asked to
 re-download. Default becomes pro.
 
+decide() moves onto the new flag in the same commit, because retiring a tier
+while the gate still reads `retired` would prompt every installed eco/base user
+to re-download - and the scope-aware targets move with the lineup (ENGLISH ->
+pro, MULTILINGUAL -> multi).
+
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ```
 
 ---
 
-### Task H2: Migration follows the split — targets become pro and multi
+### Task H2: Migration follows the split — the rename, the card wiring and the documentation
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/model/ModelMigration.kt` — lines 26–48.
+- Modify `app/src/main/java/com/whispereverywhere/model/ModelMigration.kt` — **lines 26–31 only** (the `targetIdFor` KDoc block; the constant on line 35 and the gate on line 44 landed in Task H1). The block replaced is the KDoc alone, so no brace moves and none is duplicated.
 - Modify `app/src/main/java/com/whispereverywhere/model/WhisperModelManager.kt` — lines 53–60.
 - Modify `app/src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt` — lines 166–168, 211–215.
-- Modify `app/src/test/java/com/whispereverywhere/model/ModelMigrationTest.kt` — lines 15–18, 41–48, 50–56, 63–77.
+- Modify `app/src/test/java/com/whispereverywhere/model/ModelMigrationTest.kt` — append one test.
+
+**What Task H1 already did.** The gate (`if (!selected.unsupported)`), the target constant
+(`MULTILINGUAL_TARGET_ID = "multi"`) and every affected assertion in `ModelMigrationTest` moved into
+H1, because retiring eco/base without them would have put two real failures on H1's commit. This task
+is what is LEFT: the manager rename, the Settings card that reads it, the documentation that still
+describes the old lineup, and one new pin.
 
 **Interfaces:**
-- Consumes: `WhisperModel.unsupported`, `WhisperCatalog.DEFAULT_MODEL_ID == "pro"` (Task H1).
-- Produces: `ModelMigration.targetIdFor(ModelScope): String` → `"pro"` / `"multi"`; `WhisperModelManager.unsupportedInstalledModel(): WhisperModel?` (renamed from `retiredInstalledModel`).
+- Consumes: `WhisperModel.unsupported`, `WhisperCatalog.DEFAULT_MODEL_ID == "pro"`, `ModelMigration.decide` gated on `unsupported` (all Task H1).
+- Produces: `WhisperModelManager.unsupportedInstalledModel(): WhisperModel?` (renamed from `retiredInstalledModel`). `ModelMigration.targetIdFor(ModelScope): String` already returns `"pro"` / `"multi"`; this task only documents it.
 
-- [ ] **Step 1: Write the failing test** — in `ModelMigrationTest.kt`:
-
-replace lines 15–18 with:
+- [ ] **Step 1: Write the test** — in `ModelMigrationTest.kt`, append inside the class:
 
 ```kotlin
-    @Test fun a_current_tier_needs_no_migration() {
-        assertEquals(ModelMigration.Action.None, decide("pro"))
-        assertEquals(ModelMigration.Action.None, decide("multi"))
-    }
-
-    @Test fun a_retired_but_supported_tier_is_left_completely_alone() {
-        // 3.7 Workstream H: eco and base are retired (hidden from the chooser) but still work.
-        // Raising the migration card for them would ask a user with a working 60 MB model to
-        // download 190 MB they never asked for — and the card's own copy ("much faster") would
-        // be false, since pro is slower than eco.
-        assertEquals(ModelMigration.Action.None, decide("eco"))
-        assertEquals(ModelMigration.Action.None, decide("base"))
-        assertEquals(ModelMigration.Action.None, decide("eco", online = false))
-        assertEquals(ModelMigration.Action.None, decide("base", targetInstalled = true))
-    }
-```
-
-replace lines 41–56 (`swap_only_happens_once_the_target_is_actually_on_disk` and `swap_happens_offline_too_once_the_target_is_installed`) with:
-
-```kotlin
-    @Test fun swap_only_happens_once_the_target_is_actually_on_disk() {
-        // "ultra" is MULTILINGUAL, so its target is "multi", not the ENGLISH default "pro" —
-        // see the MF3 tests below pinning the scope-aware mapping.
-        assertEquals(
-            ModelMigration.Action.SwapAndDelete("ultra", "multi"),
-            decide("ultra", targetInstalled = true),
-        )
-    }
-
-    @Test fun swap_happens_offline_too_once_the_target_is_installed() {
-        // No network needed to swap a file that is already downloaded.
-        assertEquals(
-            ModelMigration.Action.SwapAndDelete("extreme", "pro"),
-            decide("extreme", targetInstalled = true, online = false),
-        )
-    }
-```
-
-replace lines 69–77 (the two MF3 tests) with:
-
-```kotlin
-    @Test fun a_multilingual_unsupported_tier_migrates_to_multi_not_the_english_default() {
-        val a = decide("ultra", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
-        assertEquals("multi", a.toId)
-    }
-
-    @Test fun an_english_unsupported_tier_migrates_to_pro() {
-        val a = decide("extreme", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
-        assertEquals(WhisperCatalog.DEFAULT_MODEL_ID, a.toId)
-        assertEquals("pro", a.toId)
-    }
-
     @Test fun every_migration_target_is_a_tier_the_user_can_actually_pick() {
         // A target that is itself retired would move users from one dead end to another.
         listOf(ModelScope.ENGLISH, ModelScope.MULTILINGUAL).forEach { scope ->
@@ -9315,19 +9663,32 @@ replace lines 69–77 (the two MF3 tests) with:
 
 and add the imports `import org.junit.Assert.assertTrue` at the top of the file (after `assertEquals`).
 
-- [ ] **Step 2: Run it, expected failure** —
+- [ ] **Step 2: Run it** —
 
 `$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.model.ModelMigrationTest" --no-daemon`
 
-Expected: `BUILD SUCCESSFUL` for compilation but the test task FAILS with, in
-`TEST-com.whispereverywhere.model.ModelMigrationTest.xml`:
-`a_multilingual_unsupported_tier_migrates_to_multi_not_the_english_default` → `java.lang.AssertionError: expected:<multi> but was:<base>`
-and `an_english_unsupported_tier_migrates_to_pro` → `expected:<pro> but was:<base>` is not reached because `swap_happens_offline_too_once_the_target_is_installed` already fails with
-`expected:<SwapAndDelete(fromId=extreme, toId=pro)> but was:<SwapAndDelete(fromId=extreme, toId=base)>`.
+Expected: **green**, and that is correct. `every_migration_target_is_a_tier_the_user_can_actually_pick`
+is an ALREADY-GREEN guard over behaviour Task H1 landed (`targetIdFor(ENGLISH) == "pro"`,
+`targetIdFor(MULTILINGUAL) == "multi"`, both pickable and both scope-matched) — the same shape as the
+already-green guards in Tasks H5, G1 and F8. **This task's red already happened, in Task H1:** the
+migration semantics were driven there by
+`a_retired_but_supported_tier_is_left_completely_alone` and the two swap assertions, because retiring
+eco/base and flipping the gate cannot be split across two commits without leaving one of them on a
+failing suite. The pin is recorded here rather than dropped, so the coverage does not disappear with
+the task that owns the rename.
+
+The load-bearing verification for THIS task is therefore Step 4's `assembleDebug`: renaming
+`retiredInstalledModel` without updating the `SettingsScreen` call site does not fail any unit test —
+it fails the compile, and nothing else would catch it.
 
 - [ ] **Step 3: Minimal implementation** —
 
-(a) `ModelMigration.kt`, replace lines 26–48 with:
+(a) `ModelMigration.kt`, replace **lines 26–31** — the `targetIdFor` KDoc block, and only that. It
+still describes the pre-3.7 lineup ("base" as the multilingual counterpart to the ENGLISH default
+"eco") while the code beneath it, since Task H1, returns "multi" and "pro". The block starts at the
+`/**` on line 26 and ends at the `*/` on line 31; the function signature on line 32 and everything
+below it — including `MULTILINGUAL_TARGET_ID` and the whole of `decide` — is untouched, so no brace
+is moved or duplicated:
 
 ```kotlin
     /**
@@ -9337,27 +9698,6 @@ and `an_english_unsupported_tier_migrates_to_pro` → `expected:<pro> but was:<b
      * the lineup is two tiers: "pro" is the ENGLISH default and "multi" is its multilingual
      * counterpart.
      */
-    fun targetIdFor(scope: ModelScope): String =
-        if (scope == ModelScope.MULTILINGUAL) MULTILINGUAL_TARGET_ID else WhisperCatalog.DEFAULT_MODEL_ID
-
-    private const val MULTILINGUAL_TARGET_ID = "multi"
-
-    fun decide(
-        selectedId: String?,
-        selectedInstalled: Boolean,
-        targetInstalled: Boolean,
-        online: Boolean,
-    ): Action {
-        val selected = selectedId?.let { WhisperCatalog.byId(it) } ?: return Action.None
-        // `unsupported`, not `retired` (3.7 Workstream H): a merely retired tier is hidden from
-        // the chooser and otherwise left completely alone — its installed users are not prompted,
-        // not migrated, and never asked to re-download.
-        if (!selected.unsupported) return Action.None
-        val target = targetIdFor(selected.scope)
-        // Target on disk wins regardless of connectivity — nothing left to download.
-        if (targetInstalled) return Action.SwapAndDelete(selected.id, target)
-        return if (online) Action.OfferDownload else Action.WaitForNetwork
-    }
 ```
 
 (b) `WhisperModelManager.kt`, replace lines 53–60 with:
@@ -9406,18 +9746,23 @@ then a compile check of the Compose call site:
 
 `$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:assembleDebug --no-daemon`
 
-Expected: `BUILD SUCCESSFUL` for both; `TEST-com.whispereverywhere.model.ModelMigrationTest.xml` shows 12 tests / 0 failures.
+Expected: `BUILD SUCCESSFUL` for both — the `assembleDebug` half is the one that matters, because it
+is the only thing that proves the `SettingsScreen` call site followed the rename.
+`TEST-com.whispereverywhere.model.ModelMigrationTest.xml` shows 12 tests / 0 failures (H1's 11 plus
+this task's guard).
 
 - [ ] **Step 5: Commit** —
 
 ```
 git add app/src/main/java/com/whispereverywhere/model/ModelMigration.kt app/src/main/java/com/whispereverywhere/model/WhisperModelManager.kt app/src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt app/src/test/java/com/whispereverywhere/model/ModelMigrationTest.kt
-git commit -m "feat(model): H — migration keys off `unsupported`; targets are pro and multi
+git commit -m "feat(model): H — the migration card reads `unsupported`, and the docs follow
 
-decide() now gates on unsupported, so eco/base users are never prompted; the
-scope-aware targets follow the new lineup (ENGLISH -> pro, MULTILINGUAL -> multi)
-and a new test pins that every target is itself pickable and scope-matched. The
-card's copy is unchanged and still true for extreme/ultra.
+decide() moved onto the unsupported flag in H1, with the retirement it belongs
+to. This is the surface around it: retiredInstalledModel becomes
+unsupportedInstalledModel, the Settings card reads the new name, targetIdFor's
+doc stops describing the retired lineup, and a new test pins that every target
+is itself pickable and scope-matched. The card's copy is unchanged and still
+true for extreme/ultra.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
@@ -9429,13 +9774,13 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 
 **Files:**
 - Modify `app/src/main/java/com/whispereverywhere/model/ModelTierCopy.kt` — the class doc, `copyById` (lines 21–43), and new members after `forId`.
-- Modify `app/src/test/java/com/whispereverywhere/model/ModelTierCopyTest.kt` — lines 73–85 plus additions.
+- Modify `app/src/test/java/com/whispereverywhere/model/ModelTierCopyTest.kt` — lines 73–**86** plus additions.
 
 **Interfaces:**
 - Consumes: `WhisperCatalog.pickable`, `WhisperModel.retired` (Task H1).
 - Produces: `ModelTierCopy.steerIdForLanguageTag(languageTag: String): String` and `const val ModelTierCopy.STEER_BADGE: String = "Best match for your language"`.
 
-- [ ] **Step 1: Write the failing test** — in `ModelTierCopyTest.kt`, replace lines 73–85 (`the_owner_approved_headlines_are_pinned_exactly` and `retired_and_unknown_tiers_have_no_copy`) with:
+- [ ] **Step 1: Write the failing test** — in `ModelTierCopyTest.kt`, replace lines **73–86** (`the_owner_approved_headlines_are_pinned_exactly` and `retired_and_unknown_tiers_have_no_copy`, **through the class-closing `}` on line 86**) with the block below. The replacement ends with its own class-closing `}`, so the range must include the old one — replacing 73–85 would leave a duplicate brace and a syntax error:
 
 ```kotlin
     @Test fun the_owner_approved_headlines_are_pinned_exactly() {
@@ -9600,7 +9945,8 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 - Consumes: `ModelTierCopy.steerIdForLanguageTag`, `ModelTierCopy.STEER_BADGE` (Task H3).
 - Produces: `ModelTierCopy.orderedForLanguageTag(languageTag: String): List<String>`.
 
-- [ ] **Step 1: Write the failing test** — append to `ModelTierCopyTest.kt` before the final `}`:
+- [ ] **Step 1: Write the failing test** — append to `ModelTierCopyTest.kt`, inside the class,
+immediately before the final `}`:
 
 ```kotlin
 
@@ -9626,8 +9972,10 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
             assertNotNull(ModelTierCopy.forId(it))
         }
     }
-}
 ```
+
+(the appended block carries **no** trailing `}` — the file's existing class-closing brace is the one
+that closes it, exactly as the G-section tasks spell out. Appending a `}` here would duplicate it.)
 
 - [ ] **Step 2: Run it, expected failure** —
 
@@ -10782,13 +11130,13 @@ evidence is the XML aggregation below — never a Gradle task count and never a 
 
 **Interfaces:**
 - Consumes: the whole branch. The `segment-timing: seq=` probe consumes Workstream F's format
-  change; the other five consume the untouchable contracts as they stand today.
+  change; the other six consume the untouchable contracts as they stand today.
 - Produces: the certified `suites= tests= failures= errors= skipped=` tuple recorded in the sheet.
   **Baseline to beat: the 3.6.0 branch certified 94 suites / 1,041 tests / 0 failures / 0 errors
   (re-verified against the current results dir while drafting). 3.7 must be strictly greater on
   both counts and exactly 0 on failures and errors.**
 
-- [ ] **Step 1: Untouchable contracts — the cheapest gate, so it runs first.** Six invariants the
+- [ ] **Step 1: Untouchable contracts — the cheapest gate, so it runs first.** Seven invariants the
   spec's Constraints section makes non-negotiable, each anchored on content rather than a line
   number (every one of these files moves during 3.7):
 
@@ -10804,9 +11152,13 @@ $st  = 'app\src\main\java\com\whispereverywhere\transcription\SegmentTiming.kt'
   @{n='final-only-commit';      f=$jni; p='params.no_context'},
   @{n='segment-timing-prepend'; f=$st;  p='segment-timing: seq='}
 ) | ForEach-Object { $c = @(Select-String -Path $_.f -SimpleMatch -Pattern $_.p).Count; "{0,-24} {1}" -f $_.n, $c }
+
+# 7th: no declaration and no permission moved on this branch.
+$decl = @(git diff --name-only main...HEAD -- docs/PLAY-DECLARATIONS.md app/src/main/AndroidManifest.xml)
+"{0,-24} {1}" -f 'play-declarations', $(if ($decl.Count -eq 0) { 'unchanged' } else { 'CHANGED - STOP' })
 ```
 
-Expected, exactly — **all six read `1`**:
+Expected, exactly:
 
 ```
 sendAudio-first          1
@@ -10814,14 +11166,23 @@ caps-in-else-if          1
 cloud-4s-suppression     1
 stop-flush-uncond        1
 final-only-commit        1
-segment-timing-prepend   1
+segment-timing-prepend   2
+play-declarations        unchanged
 ```
+
+**`segment-timing-prepend` reads `2`, not `1`, and that is the pass condition.** `Select-String`
+returns one match per matching LINE, and after Tasks F2/F5 `SegmentTiming.kt` carries the prefix on
+two lines: the KDoc sample at `:11` and the literal in `line()`. Both are required — the sample
+documents the shape the sheet greps, the literal emits it.
 
 Reading a failure: `caps-in-else-if` at 0 means the wall caps left the `else if` and are now inside
 the endpointer's verdict — the single structural fact the whole de-risking rests on; STOP.
 `segment-timing-prepend` at 0 means Workstream F emitted a sibling line instead of prepending
-`seq=`, breaking every existing `findstr segment-timing` grep. `stop-flush-uncond` at 0 means the
-flush was gated — the change that silently discarded whole sessions for soft talkers.
+`seq=`, breaking every existing `findstr segment-timing` grep; at 1, one of the two sites drifted —
+check which. `stop-flush-uncond` at 0 means the flush was gated — the change that silently discarded
+whole sessions for soft talkers. `play-declarations` at anything but `unchanged` means 3.7 touched a
+declaration or a permission: the release notes and the Console submission both assume it did not, and
+the spec's Workstream I makes "no new permissions, no FGS/Data-Safety/disclosure changes" binding.
 
 - [ ] **Step 2: Purge stale results, then force a fresh full unit run.** The purge is not
   optional: XML from a suite that was renamed or deleted during the branch survives in this
@@ -10878,8 +11239,9 @@ with NEW (substitute the real numbers from Steps 2-4; `<date>` is the run date):
     suites=<N> tests=<M> failures=0 errors=0 skipped=0   (forced fresh run, <date>)
     assembleDebug:             BUILD SUCCESSFUL
     assembleDebugAndroidTest:  BUILD SUCCESSFUL
-    untouchable contracts:     6/6 (sendAudio-first, caps-in-else-if, cloud-4s-suppression,
-                               stop-flush-uncond, final-only-commit, segment-timing-prepend)
+    untouchable contracts:     7/7 (sendAudio-first, caps-in-else-if, cloud-4s-suppression,
+                               stop-flush-uncond, final-only-commit, segment-timing-prepend,
+                               play-declarations-unchanged)
     baseline for comparison:   3.6.0 = 94 suites / 1041 tests / 0 failures
 ```
 
@@ -10887,5 +11249,5 @@ with NEW (substitute the real numbers from Steps 2-4; `<date>` is the run date):
 
 ```powershell
 git add docs/superpowers/specs/2026-08-20-i-owner-acceptance.md
-git commit -m "chore(release): certify the 3.7.0 branch - <M> tests/0 failures, both APKs, 6/6 untouchables (I5)" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`nClaude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
+git commit -m "chore(release): certify the 3.7.0 branch - <M> tests/0 failures, both APKs, 7/7 untouchables (I5)" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`nClaude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ```
