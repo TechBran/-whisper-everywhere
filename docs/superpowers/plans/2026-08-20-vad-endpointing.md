@@ -5809,7 +5809,9 @@ counters is exactly how the log and the latch would start disagreeing.
 /**
  * The injected probe. Records a COPY of every frame it is handed — the endpointer REUSES one
  * 1024-byte array, so retaining the reference would alias every "frame" onto the latest one.
- * Optionally charges [costMs] of synthetic wall time against [clock] for the cutout tests.
+ * `the_probe_is_handed_ONE_reused_array_which_is_why_the_fake_copies` proves that is a real hazard
+ * and not a defensive habit. Optionally charges [costMs] of synthetic wall time against [clock]
+ * for the cutout tests.
  */
 private class FakeProbe(var next: Float = 0f) : (ByteArray) -> Float {
     val frames = mutableListOf<ByteArray>()
@@ -5908,7 +5910,7 @@ and append:
         pump.run(0.9f, 10)
         assertEquals(16, probe.frames.size)
 
-        ep.onSessionStart(pump.t, 1_200L)
+        ep.onSessionStart(nowMs = pump.t, minCommitIntervalMs = 1_200L)
         assertFalse("a fresh session re-arms it", ep.isProbeCutout())
         pump.run(0.9f, 5)
         assertEquals(21, probe.frames.size)
@@ -5939,11 +5941,13 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
  *        testable on the JVM.
 ```
 
-add two fields under `private var hasCommitted = false`:
+add two fields AFTER `@Volatile private var minCommitIntervalMs = 8_000L` — NOT inside the
+governor's three, which are one mechanism under one joint KDoc (task-C7-report):
 
 ```kotlin
-    private var slowRun = 0
-    private var probeCutout = false
+    @Volatile private var slowRun = 0
+
+    @Volatile private var probeCutout = false
 ```
 
 replace the `onFrame` body:
@@ -6016,7 +6020,7 @@ and extend `onSessionStart()` with the re-arm (before `clearForNextSegment()`):
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `46 tests / 0 failures / 0 errors`.
+Expected: `48 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6161,7 +6165,7 @@ and one line in `onSessionStart()` beside the other counter resets:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `49 tests / 0 failures / 0 errors`.
+Expected: `51 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6337,7 +6341,7 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Expected: `failures=0 errors=0`. This task's own delta is +2 (`SileroEndpointerConcurrencyTest`);
-the section's running delta after Task C10 is +60. No absolute total is asserted here — Task S5
+the section's running delta after Task C10 is +62. No absolute total is asserted here — Task S5
 computes the branch's totals once, from a purged results directory.
 
 - [ ] **Step 5: Commit.**
@@ -6584,9 +6588,9 @@ MAIN (Workstream D wires `onSessionStart` from `onOpen`), which is the other hal
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.*" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `52 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
-this is the section's evidence: `failures=0 errors=0` and the **+60 delta** this section adds
-(`EndpointerTuningTest` 6, `SileroEndpointerTest` 52, `SileroEndpointerConcurrencyTest` 2). The
+Expected: `54 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
+this is the section's evidence: `failures=0 errors=0` and the **+62 delta** this section adds
+(`EndpointerTuningTest` 6, `SileroEndpointerTest` 54, `SileroEndpointerConcurrencyTest` 2). The
 absolute total is computed once, in Task S5.
 
 Sixty, not the forty-five this section was planned at: ALL SIX shipped deviations are in it.
@@ -6617,12 +6621,19 @@ session PARAMETER rather than a constant and a test may therefore CHOOSE one the
 (896 ms), so this boundary test stays ON `Pump` while the other four stay off it — and
 `before_any_session_start_the_floor_is_the_conservative_8000`, which brackets the pre-session default
 between 6976 and 8128 ms so that the R8 ruling (UNMEASURED means assume the expensive end) is held by
-the suite rather than by a literal nobody reads. All of those extras except the second-utterance test
-were the SOLE killer of a mutation that would otherwise have survived — C5's two account for three
-such mutations between them and C6's two for three more; the second-utterance test is a property
-test rather than a sole killer, and kills across four of C4's battery's mutations.
+the suite rather than by a literal nobody reads; and C7 shipped 48 rather than 46, adding
+`the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds`, which pins the TRUNCATED-
+millisecond semantics of the cutout's own comparison — 8.5 ms is not an overrun here and IS one
+under the microsecond compare Task C10 introduces, so without it C10 retunes the latch inside a
+wiring commit — and `the_frame_that_trips_the_latch_has_its_verdict_discarded`, the only test in
+the class where the latching frame would otherwise have COMMITTED. All of those extras except the
+second-utterance test were the SOLE killer of a mutation that would otherwise have survived — C5's
+two account for three such mutations between them, C6's two for three more and C7's two for two
+more; the second-utterance test is a property test rather than a sole killer, and kills across four
+of C4's battery's mutations.
 Arithmetic against the suite, which is the check that catches a half-applied rebase: 1121 after D2,
-1127 after C1, 1138 after C2, 1146 after C3, 1155 after C4, 1162 after C5, 1169 after C6.
+1127 after C1, 1138 after C2, 1146 after C3, 1155 after C4, 1162 after C5, 1169 after C6,
+1175 after C7.
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --no-daemon

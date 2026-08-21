@@ -55,6 +55,10 @@ package com.whispereverywhere.audio
  * @param probeReset resets the native probe's LSTM state; fired on every commit, every [reset] and
  *        every [onSessionStart]. NOT on a merge: the merged audio is still in the caller's buffer
  *        and still the same utterance stream, so the recurrence must run on through it.
+ * @param nanoClock monotonic ns source for the probe budget; injected only so the cutout is
+ *        testable on the JVM. It is NOT this class's wall clock — see the "ONE clock" ruling above,
+ *        which stands: this one never leaves [timedProbe], where it measures the duration of a
+ *        single native call and nothing about the audio stream.
  *
  * The per-tier cost governor is NOT a constructor parameter: it is handed over per session through
  * [Endpointer.onSessionStart], because it depends on the installed tier AND on whether
@@ -63,6 +67,7 @@ package com.whispereverywhere.audio
 class SileroEndpointer(
     private val probe: (ByteArray) -> Float,
     private val probeReset: () -> Unit = {},
+    private val nanoClock: () -> Long = { System.nanoTime() },
 ) : Endpointer {
     /** The accumulator. One array for the life of the endpointer: no per-frame allocation. */
     private val frame = ByteArray(EndpointerTuning.FRAME_BYTES)
@@ -146,6 +151,28 @@ class SileroEndpointer(
     @Volatile private var minCommitIntervalMs = 8_000L
 
     /**
+     * THE SLOW-PROBE LATCH. [slowRun] counts CONSECUTIVE frames whose probe call overran
+     * [EndpointerTuning.PROBE_BUDGET_MS] — one frame inside the budget puts it back to zero — and
+     * [probeCutout] is the latch it throws at [EndpointerTuning.PROBE_CUTOUT_FRAMES], after which
+     * [onFrame] returns false for the rest of the session and the amplitude fallback and the wall
+     * caps own it. The third and last fallback tier, under "no model at all" and over "the wall
+     * caps always".
+     *
+     * The pair sits AFTER the governor's three fields rather than inside them, where the plan drew
+     * it: those three are one mechanism under one joint KDoc and this is a different mechanism. The
+     * resulting order is also the one `SileroEndpointerConcurrencyTest` pins (Task C9) and the
+     * position Task C8 hangs `lastCutRecord` off.
+     *
+     * @Volatile for the reason the class KDoc gives, and this pair states it more sharply than
+     * most: the capture thread writes both on every frame while [onSessionStart] clears both from
+     * Main, and the latch is PERMANENT within a session — a re-arm the capture thread never sees is
+     * a probe that stays off for the rest of the recording.
+     */
+    @Volatile private var slowRun = 0
+
+    @Volatile private var probeCutout = false
+
+    /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
      * @param amp the chunk's RMS, ignored here — it exists for the amplitude fallback that shares
      *        this call shape.
@@ -162,6 +189,13 @@ class SileroEndpointer(
      * than padding it.
      */
     override fun onFrame(chunk: ByteArray, amp: Int, nowMs: Long): Boolean {
+        // LATCHED OFF: the probe blew its budget PROBE_CUTOUT_FRAMES frames running, so from here
+        // this session belongs to the amplitude fallback and the wall caps. Above `lastFrameMs`
+        // deliberately — a cut-out endpointer does NO work on the audio thread, not even
+        // bookkeeping. Nothing past this line can commit again this session, so the one reader of
+        // that stamp (reset()'s governor anchor) has nothing left to anchor, and onSessionStart
+        // stamps it itself.
+        if (probeCutout) return false
         lastFrameMs = nowMs
         var src = 0
         while (src < chunk.size) {
@@ -175,7 +209,13 @@ class SileroEndpointer(
             // bytes belong to audio the caller has just handed off, and carrying them forward
             // would prepend the previous utterance's tail to the next segment.
             fill = 0
-            if (onProb(probe(frame), nowMs)) return true
+            val p = timedProbe()
+            // The frame that TRIPPED the latch has its verdict DISCARDED, cut and all: the reason
+            // the latch fires is that this probe's output has stopped being trustworthy, and a cut
+            // is the one verdict the caller cannot take back (`no_context = true` makes a mid-word
+            // cut unrepairable). From here the amplitude fallback owns the session.
+            if (probeCutout) return false
+            if (onProb(p, nowMs)) return true
         }
         return false
     }
@@ -218,6 +258,16 @@ class SileroEndpointer(
     override fun pendingCutPointMs(): Long = prevEndMs
 
     /**
+     * True once the probe has been latched off for this session (amplitude fallback in force).
+     *
+     * It stays on the CONCRETE class rather than joining [Endpointer]'s members: an amplitude
+     * endpointer has no probe to latch, and the one caller that cares — the diagnostic funnel —
+     * reaches it with an `as?`. Putting it on the interface would oblige every implementor to fake
+     * a probe it does not have.
+     */
+    fun isProbeCutout(): Boolean = probeCutout
+
+    /**
      * A commit happened elsewhere — the wall-cap cut (`FloatingBubbleService.kt:1722`),
      * `switchSource` (`:1819`), `stopRecording` (`:2393`). Fires the native probe reset, which
      * `switchSource` in particular MUST have: carrying LSTM state across a mic <-> device-audio
@@ -251,13 +301,55 @@ class SileroEndpointer(
      * the micro-pause memory with it, so `pendingCutPointMs()` cannot offer a cut point measured
      * on the previous session's audio — no separate clear is needed here, and adding one would
      * duplicate a line whose ADDRESS is load-bearing.
+     *
+     * The slow-probe latch is RE-ARMED here and nowhere else. [reset] deliberately leaves it
+     * standing: re-arming on every commit IS the per-frame retry the latch exists to forbid, only
+     * spaced a commit apart, and it would hand the audio thread back to a probe that has already
+     * missed its budget [EndpointerTuning.PROBE_CUTOUT_FRAMES] frames running. A NEW recording is
+     * a new machine state — a different route, a different thermal state, a finished neighbour
+     * app — and is the one event that earns the probe another chance.
      */
     override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
         lastFrameMs = nowMs
         lastCommitMs = nowMs
         hasCommitted = false
+        slowRun = 0
+        probeCutout = false
         clearForNextSegment()
+    }
+
+    /**
+     * One native probe call, timed. After [EndpointerTuning.PROBE_CUTOUT_FRAMES] CONSECUTIVE frames
+     * over [EndpointerTuning.PROBE_BUDGET_MS] the probe is latched off for the rest of the session
+     * and the caller falls back to amplitude. Latched, never retried per frame: the same discipline
+     * the new-segment callback uses for a throwing callback — something that failed 16 frames
+     * running will fail on the next one too, and retrying costs the audio thread every time.
+     *
+     * CONSECUTIVE is the whole question the latch asks — "is this device failing to keep up RIGHT
+     * NOW" — and one frame inside the budget answers it, which is why a fast frame zeroes the run
+     * rather than merely pausing it. The session's TOTALS ("did this session ever miss the budget")
+     * are a different question with a different owner: `com.whispereverywhere.util.ProbeStats`,
+     * wired in by Task C10. Two sets of counters is exactly how the latch and the `probe:` log line
+     * would start disagreeing.
+     *
+     * The comparison is TRUNCATED MILLISECONDS, strictly above the budget, so the effective
+     * threshold is 9 ms: an 8.5 ms probe truncates to 8 and is NOT an overrun. Task C10 measures
+     * this same call in MICROSECONDS against the same constant converted, where 8.5 ms IS one —
+     * that is a RETUNE of this latch and not a change of units, and it must move this sentence and
+     * `the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds` along with the code.
+     */
+    private fun timedProbe(): Float {
+        val t0 = nanoClock()
+        val p = probe(frame)
+        val elapsedMs = (nanoClock() - t0) / 1_000_000L
+        if (elapsedMs > EndpointerTuning.PROBE_BUDGET_MS) {
+            slowRun++
+            if (slowRun >= EndpointerTuning.PROBE_CUTOUT_FRAMES) probeCutout = true
+        } else {
+            slowRun = 0
+        }
+        return p
     }
 
     /**

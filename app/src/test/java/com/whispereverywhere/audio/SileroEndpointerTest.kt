@@ -13,17 +13,44 @@ private const val B = EndpointerTuning.FRAME_BYTES
 private const val BASE = 1_000_000L
 
 /**
+ * The smallest cost [FakeProbe] can charge that this endpointer counts as an OVERRUN.
+ *
+ * Spelled as "the budget plus one whole millisecond" rather than as `9`, because that is exactly
+ * what the endpointer's comparison means: it truncates the elapsed nanoseconds to milliseconds and
+ * tests STRICTLY above [EndpointerTuning.PROBE_BUDGET_MS], so anything under the next whole
+ * millisecond — 8.5 ms included — is not an overrun.
+ * `the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds` is where that lives as a
+ * property; this constant only keeps the other tests from re-deciding it in a literal.
+ */
+private val OVERRUN_MS = EndpointerTuning.PROBE_BUDGET_MS + 1
+
+/**
  * The injected probe. Records a COPY of every frame it is handed — the endpointer REUSES one
  * 1024-byte array, so retaining the reference would alias every "frame" onto the latest one.
  * `the_probe_is_handed_ONE_reused_array_which_is_why_the_fake_copies` proves that is a real hazard
- * and not a defensive habit.
+ * and not a defensive habit. Optionally charges [costMs] of synthetic wall time against [clock] for
+ * the cutout tests.
  */
 private class FakeProbe(var next: Float = 0f) : (ByteArray) -> Float {
     val frames = mutableListOf<ByteArray>()
+    var clock: FakeClock? = null
+    var costMs: Long = 0L
     override fun invoke(frame: ByteArray): Float {
         frames += frame.copyOf()
+        clock?.let { it.nowNs += costMs * 1_000_000L }
         return next
     }
+}
+
+/**
+ * A hand-cranked `System.nanoTime`, advanced ONLY by the probe that charges it — [FakeProbe.costMs]
+ * in whole milliseconds, or a bespoke probe lambda where a sub-millisecond cost is the point.
+ *
+ * Nothing else moves it, and that is the whole design: the budget measures time spent INSIDE one
+ * probe call, so a clock that advanced with the audio stream would measure the wrong thing.
+ */
+private class FakeClock(var nowNs: Long = 0L) : () -> Long {
+    override fun invoke(): Long = nowNs
 }
 
 /**
@@ -34,11 +61,13 @@ private class FakeProbe(var next: Float = 0f) : (ByteArray) -> Float {
  * the "ONE clock" ruling in [SileroEndpointer]'s KDoc. Advancing `t` here is therefore the only way
  * wall time passes anywhere in this class.
  *
- * Task C7 adds a SECOND clock, and it is not a contradiction: a `nanoClock` third constructor
- * parameter driving the probe's cost budget, with its own `FakeClock` helper beside this one. A
+ * Task C7 added the SECOND clock, and it is not a contradiction: the `nanoClock` third constructor
+ * parameter driving the probe's cost budget, with its own [FakeClock] helper beside this one. A
  * different clock in a different unit measuring a different thing — monotonic nanoseconds spent
  * inside one probe call, never wall time along the audio stream. Neither may be used for the
- * other's job.
+ * other's job, and this pump never touches the nanoClock: only a probe that charges it does. That
+ * is why the budget's boundary is reachable through [Pump] as well as off it — the 32 ms
+ * quantisation the four CONSTANT boundary tests below have to escape applies to `nowMs` alone.
  */
 private class Pump(
     val ep: SileroEndpointer,
@@ -897,6 +926,226 @@ class SileroEndpointerTest {
         assertEquals(2, pump.commits)
     }
 
+    // ---------------------------------------------------------------------------------------
+    // The latched slow-probe cutout (Task C7): the THIRD fallback tier, under "no model ->
+    // AmplitudeEndpointer" and over "the wall caps always". PROBE_CUTOUT_FRAMES CONSECUTIVE frames
+    // over PROBE_BUDGET_MS and the probe is latched off for the rest of the SESSION — never retried
+    // per frame, and not re-armed by a commit either: a probe that has blown its budget 16 frames
+    // running will blow it on the 17th too, and every retry costs the audio thread again.
+    //
+    // Four properties, none of which any other one implies, and each pinned below on its own:
+    //  - the run must be CONSECUTIVE — one fast frame resets it;
+    //  - the comparison is TRUNCATED MILLISECONDS, STRICTLY above the budget, so its effective
+    //    threshold is 9 ms and an 8.5 ms probe is not an overrun. Task C10 re-measures the same
+    //    call in MICROSECONDS, where 8.5 ms IS one: different numbers, and the test below says
+    //    which of them this is;
+    //  - the frame that TRIPS the latch has its verdict DISCARDED, commit and all;
+    //  - the latch is permanent within a session and lifted ONLY by onSessionStart.
+    // ---------------------------------------------------------------------------------------
+
+    @Test fun a_frame_exactly_at_the_budget_is_not_an_overrun() {
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        probe.costMs = EndpointerTuning.PROBE_BUDGET_MS
+        val ep = SileroEndpointer(
+            probe = probe,
+            nanoClock = clock,
+        )
+        Pump(ep, probe).run(0.1f, 40)
+        assertFalse(ep.isProbeCutout())
+        assertEquals("every frame still reached the probe", 40, probe.frames.size)
+    }
+
+    /**
+     * THE UNITS PIN, and the one test on this branch written against a task that has not run yet.
+     *
+     * [EndpointerTuning.PROBE_BUDGET_MS] is 8 MILLISECONDS and its two consumers do not compare it
+     * the same way. This latch truncates the elapsed nanoseconds to whole milliseconds and tests
+     * strictly above the budget, so its real threshold is 9 ms. Task C10's `ProbeStats` compares
+     * MICROSECONDS against the same constant converted, where the threshold is 8.000 ms exactly.
+     * **A probe costing 8.5 ms is not an overrun here and is one there** — so if C10 "unifies" the
+     * two by moving this comparison to microseconds, it retunes the cutout latch inside a wiring
+     * commit: a behaviour change wearing a plumbing commit's message.
+     *
+     * Both sides are stated, because neither is visible from the other: half a millisecond past the
+     * budget must NOT latch after four times the cutout run, and one whole millisecond past it must
+     * latch on exactly the 16th frame. Spelled from [EndpointerTuning.PROBE_BUDGET_MS] throughout,
+     * so a retune of the budget moves the boundary this test describes instead of stranding it.
+     */
+    @Test fun the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds() {
+        val clock = FakeClock()
+        val budgetNs = EndpointerTuning.PROBE_BUDGET_MS * 1_000_000L
+        var costNs = budgetNs + 500_000L
+        var probed = 0
+        val ep = SileroEndpointer(
+            probe = { clock.nowNs += costNs; probed++; 0.1f },
+            nanoClock = clock,
+        )
+        var t = BASE
+        fun frames(n: Int) = repeat(n) {
+            ep.onFrame(ByteArray(B), 0, t)
+            t += EndpointerTuning.FRAME_MS
+        }
+
+        frames(4 * EndpointerTuning.PROBE_CUTOUT_FRAMES)
+        assertFalse(
+            "half a millisecond past the budget truncates back TO the budget, and the budget " +
+                "itself is not an overrun — four times the cutout run of it must not latch",
+            ep.isProbeCutout(),
+        )
+        costNs = budgetNs + 999_999L
+        frames(EndpointerTuning.PROBE_CUTOUT_FRAMES)
+        assertFalse(
+            "one nanosecond under the next whole millisecond still truncates to the budget",
+            ep.isProbeCutout(),
+        )
+        costNs = budgetNs + 1_000_000L
+        frames(EndpointerTuning.PROBE_CUTOUT_FRAMES - 1)
+        assertFalse("the run is one frame short", ep.isProbeCutout())
+        frames(1)
+        assertTrue(
+            "one whole millisecond past the budget IS an overrun — the effective threshold is 9 " +
+                "ms, not 8, and not 8.000 as a microsecond compare would make it",
+            ep.isProbeCutout(),
+        )
+        assertEquals(
+            "every frame up to the latch was probed, and none after it",
+            6 * EndpointerTuning.PROBE_CUTOUT_FRAMES,
+            probed,
+        )
+    }
+
+    @Test fun the_cutout_latches_only_on_16_CONSECUTIVE_overruns() {
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        val ep = SileroEndpointer(
+            probe = probe,
+            nanoClock = clock,
+        )
+        val pump = Pump(ep, probe)
+
+        probe.costMs = OVERRUN_MS
+        pump.run(0.1f, 15)
+        assertFalse("15 is not 16", ep.isProbeCutout())
+        probe.costMs = 0
+        pump.run(0.1f, 1)
+        assertFalse(ep.isProbeCutout())
+        probe.costMs = OVERRUN_MS
+        pump.run(0.1f, 15)
+        assertFalse("the fast frame broke the run", ep.isProbeCutout())
+        pump.run(0.1f, 1)
+        assertTrue("the 16th consecutive overrun latches", ep.isProbeCutout())
+        assertEquals("32 frames were probed before the latch fired", 32, probe.frames.size)
+    }
+
+    @Test fun a_latched_cutout_stops_probing_for_the_rest_of_the_session() {
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        probe.costMs = OVERRUN_MS
+        val ep = SileroEndpointer(
+            probe = probe,
+            nanoClock = clock,
+        )
+        val pump = Pump(ep, probe)
+        pump.run(0.1f, 16)
+        assertTrue(ep.isProbeCutout())
+        val probed = probe.frames.size
+        probe.costMs = 0
+        assertFalse("the amplitude fallback owns the session now", pump.run(0.9f, 200))
+        assertEquals("not one more native call", probed, probe.frames.size)
+        assertEquals("the latch fired on the 16th frame", 16, probed)
+    }
+
+    /**
+     * The frame that TRIPS the latch has its verdict DISCARDED — and here it was a commit.
+     *
+     * The check sits between [SileroEndpointer.onFrame]'s probe call and its dispatch into
+     * `onProb`, not after it, so the last measurement a failing probe ever produces is thrown away
+     * rather than acted on. That is the conservative direction and the only defensible one: the
+     * reason the latch fires at all is that this probe's output has stopped being trustworthy, and
+     * a cut is the one verdict the caller cannot take back — `no_context = true` makes a mid-word
+     * cut unrepairable.
+     *
+     * The fixture lines two constants up on purpose. At the 32 ms cadence the hangover cuts on the
+     * dip's 17TH frame and [EndpointerTuning.PROBE_CUTOUT_FRAMES] is 16, so making every frame from
+     * the dip's second onward slow puts the 16th consecutive overrun exactly on the committing
+     * frame. A retune of either constant breaks this arithmetic LOUDLY — the assertions below stop
+     * describing the frame they name — rather than quietly leaving the property untested.
+     */
+    @Test fun the_frame_that_trips_the_latch_has_its_verdict_discarded() {
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        val ep = SileroEndpointer(
+            probe = probe,
+            nanoClock = clock,
+        )
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)                  // fast: gate opens at BASE, speech runs to BASE+608
+        assertTrue("640 ms of speech is comfortably committable", ep.hasPendingSpeech())
+        pump.run(0.1f, 1)                   // the dip's first frame stamps the end at BASE+640
+        probe.costMs = OVERRUN_MS
+        assertFalse(
+            "the dip's frames 2..16 are slow, but 480 ms is under the hangover",
+            pump.run(0.1f, EndpointerTuning.PROBE_CUTOUT_FRAMES - 1),
+        )
+        assertFalse("15 consecutive overruns is not the latch either", ep.isProbeCutout())
+        assertFalse(
+            "the dip's 17th frame is 512 ms in and WOULD cut — but it is also the 16th " +
+                "consecutive overrun, and the latch discards the verdict it just paid for",
+            pump.run(0.1f, 1),
+        )
+        assertTrue(ep.isProbeCutout())
+        assertEquals(0, pump.commits)
+        assertTrue(
+            "onProb never ran on that frame, so nothing cleared the buffer either",
+            ep.hasPendingSpeech(),
+        )
+    }
+
+    @Test fun the_latch_survives_reset_and_is_re_armed_only_by_a_new_session() {
+        // The we_on_new_segment latch discipline: a probe that blew its budget 16 frames running
+        // will almost certainly blow it again, so it is never retried per frame — or per commit.
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        probe.costMs = OVERRUN_MS
+        val ep = SileroEndpointer(
+            probe = probe,
+            nanoClock = clock,
+        )
+        val pump = Pump(ep, probe)
+        pump.run(0.1f, 16)
+        assertTrue(ep.isProbeCutout())
+        ep.reset()
+        assertTrue("a commit must NOT re-arm the probe", ep.isProbeCutout())
+        probe.costMs = 0
+        pump.run(0.9f, 10)
+        assertEquals(16, probe.frames.size)
+
+        ep.onSessionStart(nowMs = pump.t, minCommitIntervalMs = 1_200L)
+        assertFalse("a fresh session re-arms it", ep.isProbeCutout())
+
+        // And the RUN is re-armed with the flag, which only a SLOW first frame can show. A session
+        // start that cleared `probeCutout` and left the counter sitting at its cutout value would
+        // re-latch on this very frame — one overrun, not sixteen — the per-frame retry in its most
+        // expensive disguise: the probe gets exactly one frame's chance and the whole recording is
+        // decided by it. Any fast frame in between hides that, because a fast frame zeroes the run
+        // itself; the first draft of this test ran five and the mutation survived.
+        probe.costMs = OVERRUN_MS
+        pump.run(0.9f, 1)
+        assertEquals("the probe is live again", 17, probe.frames.size)
+        assertFalse("one slow frame into a new session is one, not sixteen", ep.isProbeCutout())
+        pump.run(0.9f, EndpointerTuning.PROBE_CUTOUT_FRAMES - 2)
+        assertFalse("15 overruns is still not the latch", ep.isProbeCutout())
+        pump.run(0.9f, 1)
+        assertTrue("the 16th is, on the new session's own count", ep.isProbeCutout())
+        assertEquals(32, probe.frames.size)
+    }
+
     /**
      * The obligations this file places on LATER tasks and on other files are pinned as WHOLE
      * SENTENCES, each scoped to the member that states it.
@@ -943,6 +1192,20 @@ class SileroEndpointerTest {
                 "the cadence floor is not a constructor parameter, and why",
                 classKdoc(),
                 "The per-tier cost governor is NOT a constructor parameter",
+            ),
+            // C7's own two, and both are obligations on C10 — the task that wires ProbeStats and
+            // the native arm/teardown into this same method and this same timed call.
+            Pin(
+                "the probe budget's UNITS and strictness — C10 measures the same call differently",
+                kdocFor("private fun timedProbe("),
+                "The comparison is TRUNCATED MILLISECONDS, strictly above the budget, so the " +
+                    "effective threshold is 9 ms: an 8.5 ms probe truncates to 8 and is NOT an " +
+                    "overrun.",
+            ),
+            Pin(
+                "only a new SESSION lifts the slow-probe latch — a commit must not (C10)",
+                kdocFor("override fun onSessionStart("),
+                "The slow-probe latch is RE-ARMED here and nowhere else.",
             ),
         )
 
@@ -1129,6 +1392,35 @@ class SileroEndpointerTest {
             .map { it.substringBefore("//").trim() }
             .filter { it.isNotEmpty() }
 
+    /**
+     * A DECLARATION's first line, in any form this class uses or is planned to use.
+     *
+     * Written as modifiers-then-keyword rather than as the list of exact prefixes it replaces,
+     * because the list is what went stale. C2 wrote `override fun `, `private fun `, `class `,
+     * `private val ` and `@Volatile`; C7's own `fun isProbeCutout()` carries no modifier at all and
+     * matches none of them, and neither would C8's `data class EndpointCut` or any `internal fun`.
+     * A scope guard that has quietly stopped seeing the members it guards against is worse than no
+     * guard: it reports green while a pin is satisfied by a KDoc written about something else.
+     *
+     * Local `val`/`var` lines inside a body match too, deliberately — any CODE between a KDoc block
+     * and the declaration it is claimed for means the block is not that declaration's.
+     */
+    private val memberStart = Regex(
+        "^(?:@\\w+(?:\\([^)]*\\))?\\s+)*" +
+            "(?:(?:private|internal|protected|public|override|open|abstract|final|data|value|" +
+            "lateinit|const|companion|suspend|operator|inline|external)\\s+)*" +
+            "(?:fun|val|var|class|object|constructor)\\b",
+    )
+
+    /** …or a line carrying nothing but annotations, which is how a field's may be written. */
+    private val annotationOnly = Regex("^(?:@\\w+(?:\\([^)]*\\))?\\s*)+$")
+
+    private fun spansAMember(block: String): Boolean =
+        block.lineSequence().drop(1).any {
+            val t = it.trimStart()
+            memberStart.containsMatchIn(t) || annotationOnly.matches(t)
+        }
+
     /** The class's own KDoc: the block that ends at the `class SileroEndpointer` declaration. */
     private fun classKdoc(): String {
         val at = src.indexOf("class SileroEndpointer(")
@@ -1142,7 +1434,13 @@ class SileroEndpointerTest {
                 "the sentence pins for what reads like drift.",
             open >= 0,
         )
-        return head.substring(open)
+        val block = head.substring(open)
+        assertTrue(
+            "the class KDoc scope widened past a top-level declaration: the two class-scoped " +
+                "pins would then be satisfied by a helper's KDoc, not by the class's own.",
+            !spansAMember(block),
+        )
+        return block
     }
 
     /**
@@ -1162,12 +1460,7 @@ class SileroEndpointerTest {
                 "the NEAREST block above the declaration, so deleting THIS member's KDoc outright " +
                 "silently borrows the previous member's (or the class's) — and an obligation pin " +
                 "could then be satisfied by a sentence written about something else.",
-            block.lineSequence().drop(1).none {
-                val t = it.trimStart()
-                t.startsWith("override fun ") || t.startsWith("private fun ") ||
-                    t.startsWith("class ") || t.startsWith("private val ") ||
-                    t.startsWith("@Volatile")
-            },
+            !spansAMember(block),
         )
         return block
     }
