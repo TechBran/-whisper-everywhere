@@ -264,6 +264,14 @@ class SileroEndpointer(
      * endpointer has no probe to latch, and the one caller that cares — the diagnostic funnel —
      * reaches it with an `as?`. Putting it on the interface would oblige every implementor to fake
      * a probe it does not have.
+     *
+     * **REPORTING the cutout is not the same as HANDLING it.** Once this reads true every predicate
+     * on this class is frozen at its last value, and [hasPendingSpeech] frozen FALSE is the
+     * expensive one: `capCutConsumesWindow(hasPendingSpeech = false, isCloudSession = false)` is
+     * false, so every later cap cut in a LOCAL session re-arms the 4 s first-cap window instead of
+     * consuming it — perpetual 4 s cuts on the device that could not afford the probe. Whoever
+     * wires this must either swap in an [AmplitudeEndpointer] on cutout or make the cap branch
+     * cutout-aware; a log line is not a fallback.
      */
     fun isProbeCutout(): Boolean = probeCutout
 
@@ -332,6 +340,10 @@ class SileroEndpointer(
      * are a different question with a different owner: `com.whispereverywhere.util.ProbeStats`,
      * wired in by Task C10. Two sets of counters is exactly how the latch and the `probe:` log line
      * would start disagreeing.
+     *
+     * The budget is a floor on what counts as an overrun, not a ceiling on what a frame may cost:
+     * the session's worst-case PRE-LATCH exposure is [EndpointerTuning.PROBE_CUTOUT_FRAMES] probe
+     * calls of unbounded duration, after which it is exactly zero.
      *
      * The comparison is TRUNCATED MILLISECONDS, strictly above the budget, so the effective
      * threshold is 9 ms: an 8.5 ms probe truncates to 8 and is NOT an overrun. Task C10 measures

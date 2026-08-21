@@ -1404,12 +1404,21 @@ class SileroEndpointerTest {
      *
      * Local `val`/`var` lines inside a body match too, deliberately — any CODE between a KDoc block
      * and the declaration it is claimed for means the block is not that declaration's.
+     *
+     * The keyword and modifier lists are deliberately WIDER than Kotlin-as-used-here: `interface`,
+     * `typealias`, `init`, `sealed`, `enum`, `annotation` and the rest cost two lines and close the
+     * shape instead of the instance. The list-shaped version of this guard was reopened by every
+     * declaration form nobody had written yet, which is how it came to miss a bare `fun` in the
+     * first place; a form omitted here does not fail loudly, it fails as the PUZZLE this guard
+     * exists to replace — a pin reporting that the class "no longer states" a sentence that is
+     * still there.
      */
     private val memberStart = Regex(
         "^(?:@\\w+(?:\\([^)]*\\))?\\s+)*" +
             "(?:(?:private|internal|protected|public|override|open|abstract|final|data|value|" +
-            "lateinit|const|companion|suspend|operator|inline|external)\\s+)*" +
-            "(?:fun|val|var|class|object|constructor)\\b",
+            "lateinit|const|companion|suspend|operator|inline|external|sealed|enum|annotation|" +
+            "inner|expect|actual|tailrec|infix|vararg|crossinline|noinline|reified)\\s+)*" +
+            "(?:fun|val|var|class|object|constructor|interface|typealias|init)\\b",
     )
 
     /** …or a line carrying nothing but annotations, which is how a field's may be written. */
