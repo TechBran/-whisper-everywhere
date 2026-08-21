@@ -51,6 +51,16 @@ class NativeSegmentStatsSeamTest {
                 "would be measuring a real native transcribe's counters instead of the seam."
         )
 
+    /** As [transcribeThatCannotLink], for the release path: `WhisperNative.free` cannot link here. */
+    private fun releaseThatCannotLink(ctx: Long): Throwable =
+        runCatching { WhisperNativeBackend.release(ctx) }.exceptionOrNull() ?: throw AssertionError(
+            "WhisperNativeBackend.release RETURNED on a plain JVM — see transcribeThatCannotLink."
+        )
+
+    /** True for the errors a JVM raises when libwhisper_jni cannot be linked. */
+    private fun isUnlinkable(t: Throwable): Boolean =
+        t is ExceptionInInitializerError || t is NoClassDefFoundError || t is UnsatisfiedLinkError
+
     /**
      * Clears the singleton's slot through PRODUCTION code — the same invalidation a real hold
      * performs — so no test can be answered by a previous test's snapshot. `useVad = false` keeps
@@ -167,9 +177,7 @@ class NativeSegmentStatsSeamTest {
                 "INSIDE the gate hold — a throw from the gate itself would never have reached " +
                 "the invalidation and the assertion below would pass for the wrong reason. Got: " +
                 thrown::class.java.name,
-            thrown is ExceptionInInitializerError ||
-                thrown is NoClassDefFoundError ||
-                thrown is UnsatisfiedLinkError
+            isUnlinkable(thrown)
         )
         assertNull(
             "a stats read may only ever be answered by the transcribe that completed in THIS " +
@@ -177,6 +185,41 @@ class NativeSegmentStatsSeamTest {
                 "leaves the PREVIOUS segment's numbers tagged with a still-matching ctx — and a " +
                 "ctx freed-then-reallocated at the same address (the GPU canary's failure " +
                 "branches free and re-init) inherits the canary's numbers.",
+            WhisperNativeBackend.lastSegmentStats(CTX_A)
+        )
+    }
+
+    @Test
+    fun releaseInvalidatesTheSlotBeforeFreeingTheHandle() {
+        WhisperNativeBackend.captureStatsFrom(CTX_A, intArrayOf(512, 48_000, 32_000))
+        assertNotNull("precondition: the slot holds CTX_A's numbers", WhisperNativeBackend.lastSegmentStats(CTX_A))
+
+        val thrown = releaseThatCannotLink(CTX_A)
+        assertTrue(
+            "this test proves the ORDERING only if WhisperNative.free was actually reached — a " +
+                "throw from anywhere earlier would mean the assertion below says nothing about " +
+                "where the invalidation sits. Got: " + thrown::class.java.name,
+            isUnlinkable(thrown)
+        )
+        assertNull(
+            "release() must clear the slot for the ctx it is freeing, and must do it ABOVE the " +
+                "free — which is exactly what this asserts, because the slot is empty EVEN " +
+                "THOUGH free threw. The handle dies in this call, so the snapshot must not " +
+                "outlive it: whisper_context allocations are handed back at the same address, so " +
+                "a later ctx landing there inherits a tag naming a context that no longer exists.",
+            WhisperNativeBackend.lastSegmentStats(CTX_A)
+        )
+    }
+
+    @Test
+    fun releasingADifferentCtxLeavesTheSlotAlone() {
+        WhisperNativeBackend.captureStatsFrom(CTX_A, intArrayOf(512, 48_000, 32_000))
+        releaseThatCannotLink(CTX_B)
+        assertNotNull(
+            "release's invalidation is SCOPED BY THE TAG. The bubble and batch services share " +
+                "this singleton, so an unconditional clear would let a batch job's teardown erase " +
+                "a bubble segment's numbers between the transcribe and the timing line — turning " +
+                "a real reading into \"unknown\" for reasons the diagnostic could never show.",
             WhisperNativeBackend.lastSegmentStats(CTX_A)
         )
     }
@@ -359,6 +402,58 @@ class NativeSegmentStatsSeamTest {
                 "runs for a THROWN transcribe too and re-tags the slot the invalidation just " +
                 "cleared",
             captures[1].range.first < finallyAt.range.first
+        )
+    }
+
+    @Test
+    fun theNativeReadIsRunCatchingWrapped_soADiagnosticCannotFailASucceededTranscribe() {
+        val body = memberBody("private fun captureStats(")
+        assertTrue(
+            "the native read must stay inside a runCatching. It is the INVALIDATION'S PARTNER: " +
+                "together they say \"a capture may fail silently, and the silence is honest\". " +
+                "Unwrapped, an UnsatisfiedLinkError from a stale .so — or an OOM allocating the " +
+                "3-int array — propagates out of transcribeInternal and fails a transcribe that " +
+                "had ALREADY SUCCEEDED, costing the user a segment for the sake of a diagnostic. " +
+                "Nothing else in the suite covers this: on a JVM the read always throws and " +
+                "deleting the wrapper leaves every other test green.",
+            liveLines(body, "runCatching").isNotEmpty()
+        )
+        assertTrue(
+            "and it must wrap THE NATIVE READ specifically — a runCatching that has drifted onto " +
+                "some other statement in this function is the same regression wearing the right " +
+                "word",
+            liveLines(body, "runCatching").any { it.contains("WhisperNative.lastSegmentStats(") }
+        )
+    }
+
+    @Test
+    fun theWidenedCaptureSurfaceHasExactlyOneProductionCallSite() {
+        val callSites = sourceDir("src/main/java").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { f ->
+                f.readText().replace("\r\n", "\n").lineSequence()
+                    .filter {
+                        isLive(it) && it.contains("captureStatsFrom(") &&
+                            !it.contains("fun captureStatsFrom(")
+                    }
+                    .map { "${f.name}: ${it.trim()}" }
+            }
+            .toList()
+        assertEquals(
+            "captureStatsFrom is `internal` ONLY so the payload rules are testable — WhisperNative " +
+                "cannot link on a JVM, so nothing else could reach them. It is not a second entry " +
+                "point: it TAGS THE SLOT, and a caller outside a NativeComputeGate hold would tag " +
+                "it with a ctx while another thread's transcribe is still writing the underlying " +
+                "process-global counters — the exact incoherent triple the hold exists to prevent, " +
+                "reported with a ctx that makes it look trustworthy. Exactly one production call " +
+                "site, and it is the wrapped read in captureStats. Found: $callSites",
+            1,
+            callSites.size
+        )
+        assertTrue(
+            "that one call site must live inside captureStats, the function that owns the " +
+                "runCatching-wrapped native read",
+            memberBody("private fun captureStats(").contains("captureStatsFrom(")
         )
     }
 

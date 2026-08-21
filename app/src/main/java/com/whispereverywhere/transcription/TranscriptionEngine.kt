@@ -357,6 +357,12 @@ object WhisperNativeBackend : WhisperBackend {
         // this workstream. Dropping it here would report those commits as "no data", identical to
         // a ctx that never transcribed. `< 3`, not `!= 3`, so a fourth native counter cannot blind
         // this seam on an app build that predates it.
+        //
+        // `v == null` is NOT dead defensive code, despite the external fun's non-null IntArray:
+        // the JNI side's NewIntArray can fail under memory pressure, and whisper_jni returns
+        // nullptr on that path rather than writing into an array it does not have. A non-null
+        // Kotlin type over a JNI return is a promise the JVM does not check, so the null arrives
+        // and the first dereference below would be an NPE inside a diagnostic.
         if (v == null || v.size < 3) return
         lastStats = NativeSegmentStats(ctxFrames = v[0], vadInSamples = v[1], vadOutSamples = v[2])
         lastStatsCtx = ctx   // LAST: the tag is the guard for the stats written above it
@@ -366,6 +372,13 @@ object WhisperNativeBackend : WhisperBackend {
      * @see WhisperBackend.lastSegmentStats. Answers only for the ctx the most recent transcribe
      * tagged. ctx 0 never matches: it is [WhisperNative.init]'s failure value, so without that
      * guard a caller passing it would match the untouched initial tag.
+     *
+     * DELIBERATELY NOT under [NativeComputeGate], unlike every other member of this backend: this
+     * is two volatile reads of a Kotlin snapshot and touches no native memory, so the house rule
+     * that guards native entry points does not apply. Taking the gate would block the timing line
+     * behind an in-flight batch chunk — a chunk that, by the time the wait ended, would have
+     * re-tagged the slot with ITS ctx. The wait would therefore INCREASE the null rate it looks
+     * like it is protecting against.
      */
     override fun lastSegmentStats(ctx: Long): NativeSegmentStats? =
         if (ctx != 0L && ctx == lastStatsCtx) lastStats else null
@@ -420,7 +433,18 @@ object WhisperNativeBackend : WhisperBackend {
     override fun detectedLanguage(ctx: Long): String? =
         NativeComputeGate.serialized { WhisperNative.detectedLanguage(ctx) }
 
-    override fun release(ctx: Long) = NativeComputeGate.serialized { WhisperNative.free(ctx) }
+    override fun release(ctx: Long) = NativeComputeGate.serialized {
+        // The handle dies here — the slot must not outlive it. This closes the freed-address-reuse
+        // residue for any reader outside the documented read point: whisper_context allocations do
+        // get handed back at the same address, and a later ctx landing there would otherwise match
+        // a tag naming a context that no longer exists. BEFORE the free, not after, so the
+        // invalidation still happens on the path where free throws.
+        if (ctx == lastStatsCtx) {
+            lastStats = null
+            lastStatsCtx = 0L
+        }
+        WhisperNative.free(ctx)
+    }
 }
 
 /**
