@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -142,7 +143,7 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
         // ggml_backend_cpu_set_threadpool is never called for a VAD context, so cpu_ctx->threadpool
         // is NULL and ggml_graph_compute takes the disposable path: it spawns + joins n_threads-1
         // real pthreads on EVERY graph compute (ggml-cpu.c:3319-3324) — and that compute is inside
-        // the per-window frame loop (whisper.cpp:5164), once per 512 samples. At the default 4 this
+        // the per-window frame loop (whisper.cpp:5170), once per 512 samples. At the default 4 this
         // costs 375 create/join cycles per 4 s commit and 1,407 per 15 s commit, for a ~74-node /
         // ~1.36 MFLOP graph with a ggml_barrier between every node, which cannot benefit from 4-way
         // splitting anyway. whisper_jni.cpp already encodes the softer version of this lesson for
@@ -165,8 +166,17 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
     vp.threshold     = 0.40f;
     vp.speech_pad_ms = 150;
 
+    // B' MEASURING INSTRUMENT. whisper.cpp's own "vad time = %.2f ms" line lives inside
+    // whisper_vad_detect_speech_no_reset and is now WHISPER_LOG_DEBUG (compiled out) because at the
+    // 3.7 streaming cadence it fired 31.25x/second. That demotion removed the only readout of the
+    // very thing the n_threads = 1 pin above changes, so the measurement is restored HERE instead:
+    // once per chunk, on the WE tag, around the whole segmentation call. Same quantity, ~1/125th
+    // the log volume, and it survives any future upstream merge of the fork.
+    const auto t_vad_start = std::chrono::steady_clock::now();
     whisper_vad_segments *segs =
         whisper_vad_segments_from_samples(g_vad_ctx, vp, pcm.data(), static_cast<int>(pcm.size()));
+    const auto t_vad_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t_vad_start).count();
     if (segs == nullptr) {
         LOGE("VAD segmentation failed — transcribing without VAD");
         return false;
@@ -188,7 +198,8 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
     }
     whisper_vad_free_segments(segs);
 
-    LOGI("VAD: %zu -> %zu samples (%d segments)", pcm.size(), filtered.size(), nseg);
+    LOGI("VAD: %zu -> %zu samples (%d segments) wallMs=%.1f", pcm.size(), filtered.size(), nseg,
+         static_cast<double>(t_vad_us) / 1000.0);
     pcm.swap(filtered);
     return true;
 }

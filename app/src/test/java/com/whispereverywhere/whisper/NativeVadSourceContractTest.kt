@@ -77,9 +77,11 @@ class NativeVadSourceContractTest {
         assertTrue(
             "anchor \"$anchor\" is missing from the vendored fork's whisper.cpp. substringAfter() " +
                 "returns its RECEIVER when the delimiter is absent, so without this check an " +
-                "upstream rename would silently scope the assertions below to the ENTIRE 8k-line " +
-                "translation unit — where the demoted strings still appear in the batch paths, so " +
-                "the guard would keep passing while the streaming path regressed.",
+                "upstream rename would silently scope the assertions below to the ENTIRE 7,264-line " +
+                "translation unit. That turns the \"no WHISPER_LOG_INFO survives\" claim from a " +
+                "78-line claim into a whole-file one: it would fail loudly against the 88 other " +
+                "unrelated INFO lines elsewhere in the file, so a real streaming regression would " +
+                "be buried behind a failure that has nothing to do with it.",
             start >= 0
         )
         val body = fork.substring(start + anchor.length)
@@ -95,20 +97,23 @@ class NativeVadSourceContractTest {
     @Test
     fun batchVadContext_pinsOneThread_soTheShippedFilterStopsForkingPthreadsPerChunk() {
         val body = weVadFilterBody()
+        val pin = Regex("""(?m)^[ \t]*vcp\.n_threads = 1;""").find(body)
         assertTrue(
             "we_vad_filter must set vcp.n_threads = 1 before creating the batch VAD context. " +
                 "ggml_backend_cpu_set_threadpool is never called for a VAD context, so " +
                 "ggml_graph_compute takes the disposable-threadpool path and spawns + joins " +
                 "n_threads-1 real pthreads PER GRAPH COMPUTE (ggml-cpu.c:3319-3324) — and that " +
-                "compute sits inside the per-window frame loop (whisper.cpp:5164). At the default " +
+                "compute sits inside the per-window frame loop (whisper.cpp:5170). At the default " +
                 "4 that is 375 create/join cycles per 4 s chunk and 1,407 per 15 s chunk, today, " +
                 "on shipped behavior, for a ~74-node graph with a barrier between every node.",
-            Regex("""(?m)^[ \t]*vcp\.n_threads = 1;""").containsMatchIn(body)
+            pin != null
         )
         assertTrue(
-            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises",
-            body.indexOf("vcp.n_threads = 1;") <
-                body.indexOf("whisper_vad_init_from_file_with_params")
+            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises. The index comes " +
+                "from the line-anchored regex match, not indexOf(\"vcp.n_threads = 1;\"): a literal " +
+                "search would happily measure the position of a COMMENTED-OUT pin and report the " +
+                "ordering of a line that never executes.",
+            pin!!.range.first < body.indexOf("whisper_vad_init_from_file_with_params")
         )
         assertTrue(
             "the field is n_threads (whisper.h:683). `.n_thread` is the initializer COMMENT at " +
@@ -128,16 +133,27 @@ class NativeVadSourceContractTest {
             "chunk_len: %d < n_window: %d",
             "vad time = %.2f ms processing %d samples",
         ).forEach { message ->
-            val line = fn.lineSequence().firstOrNull { it.contains(message) }
-                ?: throw AssertionError("\"$message\" vanished from whisper_vad_detect_speech_no_reset")
+            // A commented-out line does not count as a surviving log: `//WHISPER_LOG_DEBUG(...)`
+            // already exists in this function (the upstream per-chunk probability trace), and
+            // without this filter someone could satisfy "demote, don't delete" by commenting the
+            // line out — which deletes it, losing -DWHISPER_DEBUG narration the rule exists to keep.
+            val line = fn.lineSequence()
+                .firstOrNull { it.contains(message) && !it.trimStart().startsWith("//") }
+                ?: throw AssertionError(
+                    "\"$message\" vanished from whisper_vad_detect_speech_no_reset (deleted, or " +
+                        "commented out — both break the demote-don't-delete rule)"
+                )
             assertTrue(
                 "\"$message\" must log at WHISPER_LOG_DEBUG, which is compiled out entirely " +
                     "(WHISPER_DEBUG is undefined at whisper.cpp:126). It fires per VAD call, and " +
                     "3.7 drives that call 31.25x/second from the capture thread — every INFO here " +
                     "is ~31 __android_log_write/second to logd, plausibly costing more than the " +
                     "1.36 MFLOP inference itself, and it evicts the WE-DIAG lines the owner's " +
-                    "acceptance greps depend on. Demoting (not deleting) keeps the fork " +
-                    "upstream-mergeable and keeps -DWHISPER_DEBUG useful. Found: $line",
+                    "acceptance greps depend on. Do not replace the compile-out with a runtime " +
+                    "log-level filter: we_native_log (whisper_jni.cpp:22-27) maps every " +
+                    "non-WARN/ERROR level onto ANDROID_LOG_INFO, so filtering by level moves zero " +
+                    "bytes. Demoting (not deleting) keeps the fork upstream-mergeable and keeps " +
+                    "-DWHISPER_DEBUG useful. Found: $line",
                 line.contains("WHISPER_LOG_DEBUG(")
             )
         }
@@ -145,6 +161,11 @@ class NativeVadSourceContractTest {
             "no WHISPER_LOG_INFO may survive anywhere in whisper_vad_detect_speech_no_reset — " +
                 "it is a per-call function and 3.7 makes it a per-frame one",
             !fn.contains("WHISPER_LOG_INFO")
+        )
+        assertTrue(
+            "both WHISPER_LOG_ERROR lines (sched-alloc, graph-compute) must stay loud — they are " +
+                "once-per-failure, not per-call",
+            Regex("""WHISPER_LOG_ERROR\(""").findAll(fn).count() == 2
         )
     }
 }

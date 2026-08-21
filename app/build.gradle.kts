@@ -167,6 +167,20 @@ android {
     }
 }
 
+// NativeVadSourceContractTest asserts over C++ SOURCE TEXT, but Gradle cannot see that: the .cpp
+// files are inputs to the CMake tasks, never to the JVM test task, so a change confined to native
+// sources leaves :app:testDebugUnitTest UP-TO-DATE and the contract goes unchecked. Verified: a
+// one-line perturbation of the vendored fork produced "Task :app:testDebugUnitTest UP-TO-DATE /
+// 27 actionable tasks: 27 up-to-date / BUILD SUCCESSFUL" without running a single test — which is
+// precisely the shape of an upstream merge that re-promotes the demoted VAD logs. Declaring the two
+// guarded files as explicit test inputs makes that change invalidate the task, so the guard fires.
+tasks.withType<Test>().configureEach {
+    inputs.files(
+        "src/main/cpp/whisper_jni.cpp",
+        "src/main/cpp/whisper.cpp/src/whisper.cpp",
+    ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 // sherpa-onnx AAR (on-device TTS, Track F): no official Maven coordinates exist (verified
 // 2026-07-18) and *.aar is gitignored, so the pinned upstream release asset is fetched on
 // demand and sha256-verified — self-healing for CI and fresh clones alike.
