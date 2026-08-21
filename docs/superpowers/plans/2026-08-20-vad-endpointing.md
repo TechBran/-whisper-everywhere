@@ -5755,7 +5755,7 @@ replace `commitAt()` and `reset()`, and add `onSessionStart()`:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `40 tests / 0 failures / 0 errors`.
+Expected: `42 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6016,7 +6016,7 @@ and extend `onSessionStart()` with the re-arm (before `clearForNextSegment()`):
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `44 tests / 0 failures / 0 errors`.
+Expected: `46 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6161,7 +6161,7 @@ and one line in `onSessionStart()` beside the other counter resets:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `47 tests / 0 failures / 0 errors`.
+Expected: `49 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6337,7 +6337,7 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Expected: `failures=0 errors=0`. This task's own delta is +2 (`SileroEndpointerConcurrencyTest`);
-the section's running delta after Task C10 is +58. No absolute total is asserted here — Task S5
+the section's running delta after Task C10 is +60. No absolute total is asserted here — Task S5
 computes the branch's totals once, from a purged results directory.
 
 - [ ] **Step 5: Commit.**
@@ -6584,12 +6584,12 @@ MAIN (Workstream D wires `onSessionStart` from `onOpen`), which is the other hal
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.*" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `50 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
-this is the section's evidence: `failures=0 errors=0` and the **+58 delta** this section adds
-(`EndpointerTuningTest` 6, `SileroEndpointerTest` 50, `SileroEndpointerConcurrencyTest` 2). The
+Expected: `52 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
+this is the section's evidence: `failures=0 errors=0` and the **+60 delta** this section adds
+(`EndpointerTuningTest` 6, `SileroEndpointerTest` 52, `SileroEndpointerConcurrencyTest` 2). The
 absolute total is computed once, in Task S5.
 
-Fifty-eight, not the forty-five this section was planned at: ALL FIVE shipped deviations are in it.
+Sixty, not the forty-five this section was planned at: ALL SIX shipped deviations are in it.
 C1 shipped `EndpointerTuningTest` with 6 tests rather than 4 (its KDoc-derivation and scope-ruling
 tests — the C1 section above was rebased to say so at its own Step 4); C2 shipped
 `SileroEndpointerTest` with 11 rather than 6, carrying every later expectation in this section up
@@ -6610,12 +6610,19 @@ tests this section planned for that task — and
 `the_wall_clock_sentinel_is_never_re_literalised_as_a_bare_zero`, which holds the half of C5's
 disclosed sentinel discipline that prose alone cannot: a bare `0L` for `prevEndMs` is correct today
 and silently wrong the day the endpointer's clock stops being wall clock, and it fails as "no
-micro-pause was ever observed" rather than as anything that looks like a bug. All of those extras
-except the second-utterance test were the SOLE killer of a mutation that would otherwise have
-survived — C5's two account for three such mutations between them; the second-utterance test is a
-property test rather than a sole killer, and kills across four of C4's battery's mutations.
+micro-pause was ever observed" rather than as anything that looks like a bug; and C6 shipped 42
+rather than 40, adding `exactly_the_interval_commits_and_one_millisecond_more_merges` — the
+grid-blindness pattern's FIFTH instance and its first EXCEPTION, because the cadence floor is a per-
+session PARAMETER rather than a constant and a test may therefore CHOOSE one the 32 ms grid lands on
+(896 ms), so this boundary test stays ON `Pump` while the other four stay off it — and
+`before_any_session_start_the_floor_is_the_conservative_8000`, which brackets the pre-session default
+between 6976 and 8128 ms so that the R8 ruling (UNMEASURED means assume the expensive end) is held by
+the suite rather than by a literal nobody reads. All of those extras except the second-utterance test
+were the SOLE killer of a mutation that would otherwise have survived — C5's two account for three
+such mutations between them and C6's two for three more; the second-utterance test is a property
+test rather than a sole killer, and kills across four of C4's battery's mutations.
 Arithmetic against the suite, which is the check that catches a half-applied rebase: 1121 after D2,
-1127 after C1, 1138 after C2, 1146 after C3, 1155 after C4, 1162 after C5.
+1127 after C1, 1138 after C2, 1146 after C3, 1155 after C4, 1162 after C5, 1169 after C6.
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --no-daemon

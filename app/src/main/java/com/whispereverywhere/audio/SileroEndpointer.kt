@@ -34,7 +34,8 @@ package com.whispereverywhere.audio
  *
  * ## Threading
  * [onFrame] runs on the capture thread. [reset] is also called from Main (switchSource
- * `FloatingBubbleService.kt:1819`, onOpen `:2224`, stopRecording `:2393`). Every mutable field is
+ * `FloatingBubbleService.kt:1819`, stopRecording `:2393`) and [onSessionStart] is Main-ONLY
+ * (onOpen `:2224`, the site that used to be a fourth [reset]). Every mutable field is
  * therefore @Volatile, with the same tolerance [com.whispereverywhere.service.SegmentCapPolicy]
  * documents: the writes are not atomic together, but a torn observation costs at most one 32 ms
  * chunk of slack. The annotation is not decoration — without it a Main-thread [reset] shares no
@@ -51,10 +52,12 @@ package com.whispereverywhere.audio
  *        Silero probe and returns its probability, or [EndpointerTuning.NO_VERDICT]. **The array is
  *        REUSED between calls — the probe must copy anything it retains.** The real binding to
  *        `WhisperNative.vadProbeFrame` is made by `EndpointerFactory` (Workstream D).
- * @param probeReset resets the native probe's LSTM state; fired on every commit and every [reset].
+ * @param probeReset resets the native probe's LSTM state; fired on every commit, every [reset] and
+ *        every [onSessionStart]. NOT on a merge: the merged audio is still in the caller's buffer
+ *        and still the same utterance stream, so the recurrence must run on through it.
  *
  * The per-tier cost governor is NOT a constructor parameter: it is handed over per session through
- * [Endpointer.onSessionStart] (Task C6), because it depends on the installed tier AND on whether
+ * [Endpointer.onSessionStart], because it depends on the installed tier AND on whether
  * every commit becomes a provider request — both of which change between sessions of one service.
  */
 class SileroEndpointer(
@@ -110,6 +113,36 @@ class SileroEndpointer(
      * `whisper.cpp:5341` — see [pendingCutPointMs].
      */
     @Volatile private var prevEndMs = Endpointer.NO_CUT_POINT
+
+    /**
+     * THE COST GOVERNOR's bookkeeping: the instant it paces FROM, and whether this session has
+     * committed at all yet.
+     *
+     * [lastCommitMs] is the last commit — or, until one happens, this session's open
+     * ([onSessionStart]) or the last frame before an external commit ([reset]). [hasCommitted] is
+     * what makes the session's FIRST endpoint free, and it is a FLAG rather than an arithmetic
+     * test against [lastCommitMs] deliberately: "no commit yet" must not be spelled as a zero on a
+     * clock the CALLER owns. That is the hazard [Endpointer.NO_CUT_POINT]'s own KDoc names for the
+     * sibling field, arriving at the governor — with a zero parked in [lastCommitMs],
+     * `nowMs - lastCommitMs` is astronomically larger than any floor under a wall clock, so the
+     * flag would be load-bearing on paper and dead in the machine, and a session start that forgot
+     * to re-arm it would be indistinguishable from one that did.
+     *
+     * [onSessionStart] therefore ANCHORS [lastCommitMs] on the session instead of zeroing it: the
+     * field then holds a sane instant at every moment of its life, and the flag alone decides.
+     */
+    @Volatile private var lastCommitMs = 0L
+
+    @Volatile private var hasCommitted = false
+
+    /**
+     * This session's cadence floor, handed over at [onSessionStart]. Before the first session start
+     * it is the conservative 8000 — the same "UNMEASURED means assume the expensive end" rule that
+     * gives extreme/ultra their row in
+     * [com.whispereverywhere.service.CommitCadencePolicy] — so a frame arriving before onOpen has
+     * run can never commit at a rate the tier cannot pay for.
+     */
+    @Volatile private var minCommitIntervalMs = 8_000L
 
     /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
@@ -183,8 +216,46 @@ class SileroEndpointer(
      */
     override fun pendingCutPointMs(): Long = prevEndMs
 
-    /** A commit happened elsewhere (cap cut, source switch, session open, stop). */
+    /**
+     * A commit happened elsewhere — the wall-cap cut (`FloatingBubbleService.kt:1722`),
+     * `switchSource` (`:1819`), `stopRecording` (`:2393`). Fires the native probe reset, which
+     * `switchSource` in particular MUST have: carrying LSTM state across a mic <-> device-audio
+     * swap is a correctness bug, not merely suboptimal.
+     *
+     * [reset] carries no clock — the interface's three abstract members are the capture path's,
+     * and widening this one for the governor would push a timestamp through four call sites that
+     * do not have one — so the governor re-anchors on the last frame seen: within one 32 ms chunk
+     * of the true commit instant, the same tolerance
+     * [com.whispereverywhere.service.SegmentCapPolicy] documents for its own cross-thread writes.
+     * [onSessionStart] stamps [lastFrameMs] itself, so a reset arriving before a session's first
+     * frame anchors on the session open rather than on the previous session's last frame.
+     */
     override fun reset() {
+        lastCommitMs = lastFrameMs
+        hasCommitted = true
+        clearForNextSegment()
+    }
+
+    /**
+     * A new RECORDING session (`FloatingBubbleService.kt:2224`, beside
+     * `SegmentCapPolicy.onSessionStart`). Everything [reset] clears, plus the governor's
+     * first-cut-is-free arming and THIS session's cadence floor.
+     *
+     * [minCommitIntervalMs] comes from
+     * [com.whispereverywhere.service.CommitCadencePolicy.minCommitIntervalMs] at the call site,
+     * which is the only place that knows both the installed tier and whether this session posts
+     * every commit to a provider. Two same-typed `Long`s: call it with NAMED arguments.
+     *
+     * It also ends the last state that outlived a session boundary. [clearForNextSegment] takes
+     * the micro-pause memory with it, so `pendingCutPointMs()` cannot offer a cut point measured
+     * on the previous session's audio — no separate clear is needed here, and adding one would
+     * duplicate a line whose ADDRESS is load-bearing.
+     */
+    override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
+        this.minCommitIntervalMs = minCommitIntervalMs
+        lastFrameMs = nowMs
+        lastCommitMs = nowMs
+        hasCommitted = false
         clearForNextSegment()
     }
 
@@ -264,6 +335,26 @@ class SileroEndpointer(
             closeGate()
             return false
         }
+
+        if (hasCommitted && nowMs - lastCommitMs < minCommitIntervalMs) {
+            // THE COST GOVERNOR. A real endpoint, but committing it now would outrun the tier's
+            // measured per-commit cost (F*N + m*S <= 0.70*60 s). MERGE: close the gate so the next
+            // pause is judged afresh, and keep `pendingSpeech` — that audio really is still
+            // uncommitted. The session's FIRST cut is never merged: first text fast on every tier,
+            // and the governor bounds only the steady state.
+            //
+            // Nothing writes `prevEndMs` here, deliberately, and the plan's merge line
+            // `prevEndMs = tempEndMs` was DROPPED rather than kept. It is dead: this branch is
+            // reachable only past `nowMs - tempEndMs >= HANGOVER_MS`, and the micro-pause
+            // promotion above fires at `> MICRO_PAUSE_MS`, so it has ALREADY written exactly this
+            // value in this same call — for every value in HANGOVER_MS's 350-800 owner range. And
+            // it is worse than redundant: one tidy-up reorder past `closeGate()` and it would
+            // store 0 instead, because closeGate() zeroes `tempEndMs` — with the promotion above
+            // silently covering for it on every reachable path, so neither the suite nor a
+            // mutation battery would see the wall cap quietly stop being offered cut points.
+            closeGate()
+            return false
+        }
         commitAt(nowMs)
         return true
     }
@@ -284,11 +375,15 @@ class SileroEndpointer(
     /**
      * A real endpoint, taken: the caller is about to send the buffer, so everything about it goes.
      *
-     * Separate from [clearForNextSegment] because Task C6 hangs the per-tier cadence governor's
-     * bookkeeping here — the commit instant `nowMs` is what it will pace against — while [reset]
-     * keeps calling the clear directly.
+     * Separate from [clearForNextSegment] because the per-tier cadence governor's bookkeeping
+     * hangs here — [nowMs] is the instant the next interval is measured from — while
+     * [clearForNextSegment] speaks only for the buffer and is shared with [onSessionStart], which
+     * is not a commit and must not pretend to be one. The governor's OTHER non-commit, the merge
+     * inside [onProb], reaches neither: it closes the gate and leaves the buffer alone.
      */
     private fun commitAt(nowMs: Long) {
+        lastCommitMs = nowMs
+        hasCommitted = true
         clearForNextSegment()
     }
 

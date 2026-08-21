@@ -678,6 +678,225 @@ class SileroEndpointerTest {
         )
     }
 
+    // ---------------------------------------------------------------------------------------
+    // The per-tier commit governor (Task C6): an endpoint that lands INSIDE the session's cadence
+    // floor is MERGED rather than committed — the gate closes, the audio stays pending, and the
+    // next real pause is judged afresh. The session's FIRST endpoint is never merged, so first
+    // text stays fast on every tier and the governor bounds only the steady state.
+    //
+    // The floor arrives per SESSION through onSessionStart(nowMs, minCommitIntervalMs), and every
+    // call below NAMES both arguments. They are two same-typed Longs whose order is pinned by
+    // nothing — Task D2's M22 mutation swapped them and survived its whole suite — so a positional
+    // call here would be one silent transposition away from anchoring a session on 6000 and pacing
+    // it at a wall-clock instant.
+    // ---------------------------------------------------------------------------------------
+
+    @Test fun the_sessions_first_endpoint_is_never_merged() {
+        // First text fast, on every tier. The governor bounds the STEADY state; one early commit is
+        // exactly what FIRST_SEGMENT_WALL_MS exists to buy, and this beats it to the punch.
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        // 8000L is CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS, quoted rather than imported:
+        // Workstream C compiles without the service package (Task D3 owns that object).
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 8_000L)
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))
+        assertEquals(1, pump.commits)
+    }
+
+    @Test fun pro_merges_an_utterance_that_endpoints_inside_1200ms() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        // 1200L is CommitCadencePolicy.MIN_COMMIT_INTERVAL_FAST_MS (pro), quoted not imported.
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))                 // commit 1 at BASE+1152
+        pump.run(0.9f, 11)                             // utterance 2: BASE+1184..1504
+        assertFalse("endpoint at +896 ms is inside the 1200 ms interval", pump.run(0.1f, 17))
+        assertEquals(1, pump.commits)
+        assertTrue("the merged audio is still uncommitted", ep.hasPendingSpeech())
+        assertEquals(
+            "the merged endpoint becomes the best known cut point",
+            BASE + 1536,
+            ep.pendingCutPointMs(),
+        )
+        pump.run(0.9f, 11)                             // utterance 3: BASE+2080..2400
+        assertTrue("endpoint at +1792 ms clears the interval", pump.run(0.1f, 17))
+        assertEquals(2, pump.commits)
+        assertEquals(BASE + 2944, pump.lastCommitMs)
+    }
+
+    @Test fun multi_paces_three_utterances_into_one_commit() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        // 6000L is CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS, quoted not imported.
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 6_000L)
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))                 // commit 1 at BASE+1152
+        pump.run(0.9f, 11); assertFalse(pump.run(0.1f, 17))
+        pump.run(0.9f, 11); assertFalse(pump.run(0.1f, 17))
+        assertEquals(
+            "6 s has not elapsed: the endpointer still cuts, it just merges",
+            1,
+            pump.commits,
+        )
+        assertTrue(ep.hasPendingSpeech())
+        // And the merge really CLOSES the gate. The governor is a floor on commits, NOT a timer
+        // that fires when it expires: six seconds after the commit the interval has elapsed, but
+        // with no new speech there is no new endpoint to take. A merge that returned false without
+        // closing the gate would leave the pending end and the old speech start standing, and the
+        // first frame past the floor would cut HERE — mid-silence, on a boundary already judged.
+        assertFalse("an elapsed interval is not itself a cut", pump.run(0.1f, 200))
+        assertEquals(1, pump.commits)
+    }
+
+    /**
+     * The interval boundary — and, unlike this class's four other boundary tests, it is REACHABLE
+     * through [Pump].
+     *
+     * The difference is structural rather than a change of heart. [EndpointerTuning.MIN_SPEECH_MS],
+     * [EndpointerTuning.HANGOVER_MS] and [EndpointerTuning.MICRO_PAUSE_MS] are CONSTANTS, and none
+     * of 300 / 500 / 98 is a multiple of the 32 ms frame, so no pump-driven test can land on them;
+     * each has its own direct-`onFrame` test and those four stay exactly where they are. The
+     * cadence floor is a PARAMETER the caller chooses per session, so a test may simply choose one
+     * the grid hits. 896 ms is where this fixture's second endpoint falls: commit 1 at BASE+1152,
+     * endpoint 2 at BASE+2048.
+     *
+     * The guard is `nowMs - lastCommitMs < minCommitIntervalMs`, so exactly the interval has
+     * ELAPSED and commits, and one millisecond more of floor merges the same endpoint. Both sides
+     * are stated because `<` versus `<=` is invisible from either one alone.
+     */
+    @Test fun exactly_the_interval_commits_and_one_millisecond_more_merges() {
+        fun secondEndpointUnder(intervalMs: Long): Pump {
+            val probe = FakeProbe()
+            val ep = SileroEndpointer(probe = probe)
+            val pump = Pump(ep, probe)
+            ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = intervalMs)
+            pump.run(0.9f, 20)
+            assertTrue("commit 1 lands at BASE+1152", pump.run(0.1f, 17))
+            pump.run(0.9f, 11)
+            pump.run(0.1f, 17)                         // endpoint 2 at BASE+2048: exactly +896 ms
+            return pump
+        }
+        val elapsed = secondEndpointUnder(896L)
+        assertEquals(
+            "exactly the interval has ELAPSED — the endpoint is not INSIDE the window",
+            2,
+            elapsed.commits,
+        )
+        assertEquals(BASE + 2048, elapsed.lastCommitMs)
+        val inside = secondEndpointUnder(897L)
+        assertEquals(
+            "one millisecond more of floor and the same endpoint merges",
+            1,
+            inside.commits,
+        )
+    }
+
+    @Test fun reset_anchors_the_governor_on_the_last_frame_seen() {
+        // The Endpointer interface carries no clock into reset(), so an EXTERNAL commit (cap cut,
+        // switchSource, stop) re-anchors on the most recent frame timestamp — within one 32 ms
+        // chunk of the real instant, the same tolerance SegmentCapPolicy documents for its own
+        // cross-thread writes.
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        // PRO's 1200 ms floor, deliberately, and not multi's 6000: the endpoint below lands 896 ms
+        // after the cap cut but 1504 ms after the session opened, so only a floor BETWEEN those
+        // two can tell the two anchors apart. Under 6000 both anchors merge and the test would
+        // pass against an implementation that re-anchored on nothing at all.
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)
+        pump.run(0.9f, 20)                             // last frame at BASE+608
+        ep.reset()                                     // the wall-cap cut at FBS.kt:1722
+        assertFalse(ep.hasPendingSpeech())
+        pump.run(0.9f, 11)
+        assertFalse(
+            "896 ms after the cap cut is inside pro's 1200 — measured from the SESSION it would " +
+                "be 1504 and would cut",
+            pump.run(0.1f, 17),
+        )
+        assertEquals(0, pump.commits)
+        // And a reset arriving BEFORE this session's first frame anchors on the SESSION, not on
+        // whatever frame the previous session left behind: [onSessionStart] stamps `lastFrameMs`
+        // itself. Same session hygiene as the micro-pause memory it clears through
+        // clearForNextSegment — a minute-old timestamp surviving a session boundary would clear
+        // any floor instantly and hand the new session a second free cut it was never promised.
+        pump.t = BASE + 60_000
+        ep.onSessionStart(nowMs = BASE + 60_000, minCommitIntervalMs = 1_200L)
+        ep.reset()                                     // switchSource, before a single frame
+        pump.run(0.9f, 11)
+        assertFalse(
+            "the anchor is this session's open, not the minute-old frame the last one left",
+            pump.run(0.1f, 17),
+        )
+        assertEquals(0, pump.commits)
+    }
+
+    @Test fun onSessionStart_re_arms_the_first_free_cut() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 6_000L)   // multi's paced floor
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))                 // commit 1 at BASE+1152
+        // The governor is shown ENGAGED before the re-arm is asked to lift it. Without this the
+        // test asserts a commit that a never-merging endpointer delivers for free — it passed
+        // vacuously at RED against the interface's defaulted no-op, which is the exact shape of
+        // test that reports success while the feature is missing.
+        pump.run(0.9f, 11)
+        assertFalse("still inside multi's 6 s", pump.run(0.1f, 17))
+        assertTrue(ep.hasPendingSpeech())
+        assertEquals(BASE + 1536, ep.pendingCutPointMs())
+        pump.t = BASE + 3_000
+        ep.onSessionStart(nowMs = BASE + 3_000, minCommitIntervalMs = 6_000L)
+        // The session boundary is also the last place the previous session's audio is spoken for.
+        // onSessionStart clears the buffer bookkeeping through the same clearForNextSegment a
+        // commit uses, so the merged audio the last session left does not read as pending here,
+        // and the wall cap cannot be offered a cut point measured on it. Asserted after showing
+        // both were SET two lines above: an absence nothing ever created is not a clear.
+        assertFalse("a new session starts with an empty buffer", ep.hasPendingSpeech())
+        assertEquals(
+            "and with no cut point measured on the last session's audio",
+            Endpointer.NO_CUT_POINT,
+            ep.pendingCutPointMs(),
+        )
+        pump.run(0.9f, 11)
+        assertTrue("a new session's first cut is free again", pump.run(0.1f, 17))
+        assertEquals(2, pump.commits)
+    }
+
+    /**
+     * The floor BEFORE any session start is the conservative LARGE one, not a tier's own.
+     *
+     * "Unmeasured means assume the expensive end" — the same rule that gives extreme and ultra
+     * their row in `CommitCadencePolicy`. The only way to reach this state is a frame arriving
+     * before `onOpen` has run, and the cost of guessing low there is a commit rate the installed
+     * tier cannot pay for; the cost of guessing high is one late cut on audio nobody has asked for
+     * yet. The two assertions BRACKET the value rather than reading the field: 6976 ms still
+     * merges (so the default is above multi's 6000, above the cloud batch's 3000 and far above
+     * pro's 1200) and 8128 ms commits (so it is not something merely enormous).
+     */
+    @Test fun before_any_session_start_the_floor_is_the_conservative_8000() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertTrue("the first cut is free here too", pump.run(0.1f, 17))   // commit 1, BASE+1152
+        pump.run(0.1f, 190)                            // quiet: the gate is shut, nothing happens
+        pump.run(0.9f, 11)
+        assertFalse(
+            "6976 ms after the commit is still inside the LARGE floor",
+            pump.run(0.1f, 17),
+        )
+        pump.run(0.1f, 8)
+        pump.run(0.9f, 11)
+        assertTrue("8128 ms clears it", pump.run(0.1f, 17))
+        assertEquals(2, pump.commits)
+    }
+
     /**
      * The obligations this file places on LATER tasks and on other files are pinned as WHOLE
      * SENTENCES, each scoped to the member that states it.
@@ -750,9 +969,10 @@ class SileroEndpointerTest {
     /**
      * The class KDoc promises "@Volatile", and `reset()` really is called from Main while the
      * capture thread is inside `onFrame` (`Endpointer`'s own threading note; the four service
-     * sites at FloatingBubbleService.kt:1722/:1819/:2224/:2393). Without the annotation there is
-     * no happens-before edge at all between the Main-thread clear and the capture thread, so the
-     * cleared state may never become visible — a promise no prose can keep on its own.
+     * sites at FloatingBubbleService.kt:1722/:1819/:2224/:2393, of which :2224 becomes
+     * `onSessionStart` — Main-only, and a WRITER of three more fields). Without the annotation
+     * there is no happens-before edge at all between the Main-thread clear and the capture thread,
+     * so the cleared state may never become visible — a promise no prose can keep on its own.
      *
      * CARRY, deliberately enforced on later tasks: Tasks C3-C10 add fields to this class. It has
      * already paid for itself once — the plan's C3 snippet declared its three (`speaking`,
@@ -839,8 +1059,13 @@ class SileroEndpointerTest {
      * Scoped to `prevEndMs` ALONE, deliberately, in both directions. [SileroEndpointer]'s
      * `tempEndMs` keeps its bare `0L`: that zero is private "not in a dip" bookkeeping published
      * to nobody, and dragging it under the interface's clock ruling would be a false claim about
-     * what the sentinel governs. And Task C6 assigns `prevEndMs = tempEndMs` on the merge path —
-     * a wall-clock instant, not a sentinel — which this scan must not forbid.
+     * what the sentinel governs. The scan permits an ASSIGNMENT of a wall-clock instant — it
+     * forbids only a zero — which is why C5 wrote it this way for a `prevEndMs = tempEndMs` the
+     * plan expected Task C6 to add on the merge path. C6 dropped that line instead (it was dead:
+     * the promotion above the hangover check has always already written the same value, and
+     * moving it past `closeGate()` would have written 0 with the promotion covering), so the
+     * allowance stands unused. The scoping is still what it was written for: a future merge-site
+     * boundary write must not have to fight this scan to say a legitimate instant.
      */
     @Test fun the_wall_clock_sentinel_is_never_re_literalised_as_a_bare_zero() {
         val bareZero = Regex("""(?<![\w.])0L?(?![\w.])""")
