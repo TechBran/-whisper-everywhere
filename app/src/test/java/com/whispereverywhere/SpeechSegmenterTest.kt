@@ -11,7 +11,6 @@ class SpeechSegmenterTest {
         voiceThreshold = 1000,
         silenceThreshold = 500,
         pauseMs = 700,
-        maxSegmentMs = 8000,
     )
 
     @Test
@@ -37,14 +36,21 @@ class SpeechSegmenterTest {
     }
 
     @Test
-    fun continuous_speech_forces_commit_at_max_segment() {
+    fun continuousSpeech_neverSelfCommits_theWallCapOwnsThatClock() {
+        // 3.7: the segmenter's own maxSegmentMs was a DEAD, differently-anchored duplicate of
+        // SegmentCapPolicy.MAX_SEGMENT_WALL_MS (segment-start anchor vs last-commit anchor). Two
+        // disagreeing wall clocks is how the next diagnosis gets confusing, so there is now
+        // exactly one — and it lives at the call site's `else if`, not in here.
         val s = segmenter()
         var t = 0L
-        // Speak continuously well past maxSegmentMs; a quiet sample after the cap commits.
-        while (t <= 8000) { s.onAmplitude(5000, t); t += 500 }
-        // A quiet sample now: segment length exceeded -> commit even though pause is short.
-        val committed = s.onAmplitude(100, t)
-        assertTrue(committed)
+        while (t <= 20_000) { assertFalse(s.onAmplitude(5000, t)); t += 500 }
+        // A quiet sample far past the OLD 15 s duplicate, but only 100 ms after the last voice:
+        // the pause condition is unmet, so this segmenter must stay silent and let the cap fire.
+        assertFalse(
+            "SpeechSegmenter must no longer own a wall clock — SegmentCapPolicy does",
+            s.onAmplitude(100, 20_100),
+        )
+        assertTrue("the segment is still open", s.hasPendingSpeech())
     }
 
     @Test
