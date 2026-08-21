@@ -445,15 +445,47 @@ class SileroEndpointerTest {
             probe = probe,
             probeReset = { resets++ },
         )
+        val minSpeech = EndpointerTuning.MIN_SPEECH_MS
         probe.next = 0.9f
         assertFalse(ep.onFrame(ByteArray(B), 0, BASE))
-        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 300))
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + minSpeech))
         assertTrue(ep.hasPendingSpeech())
         probe.next = 0.1f
-        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 300))    // pending end == speechStart + 300
-        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 900))    // 600 ms of silence: hangover done
+        // The pending end lands exactly MIN_SPEECH_MS after the speech start.
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + minSpeech))
+        // Comfortably past the hangover, so the ONLY reason this frame does not cut is the strict
+        // commit gate. Spelled from the constants: a retune must not leave this test asserting a
+        // boundary its own failure message no longer describes.
+        assertFalse(
+            ep.onFrame(ByteArray(B), 0, BASE + minSpeech + EndpointerTuning.HANGOVER_MS + 100),
+        )
         assertEquals("no commit at exactly MIN_SPEECH_MS", 0, resets)
         assertTrue("but the buffer is not empty", ep.hasPendingSpeech())
+    }
+
+    /**
+     * The second utterance is measured from ITS OWN start.
+     *
+     * This property could not be stated before C4: nothing in this class ever committed, so there
+     * was no "next" utterance for a stale `speechStartMs` to poison. C4 creates that path, so the
+     * assertion lands with it. The burst here is 256 ms — under [EndpointerTuning.MIN_SPEECH_MS]
+     * on its own clock, and therefore correctly discarded — but 1440 ms measured from the FIRST
+     * utterance's start, which would commit. A commit that forgot to re-anchor the clock is not a
+     * subtle mistake in the length it reports; it is an extra cut in the wrong place.
+     */
+    @Test fun a_second_utterance_is_measured_from_its_OWN_start() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertFalse(pump.run(0.1f, 16))
+        assertTrue("the first utterance commits", pump.run(0.1f, 1))
+        pump.run(0.9f, 8)                        // 256 ms on the new clock, 1440 on the old one
+        assertFalse(
+            "a stale speech start would measure this burst from the FIRST utterance and cut",
+            pump.run(0.1f, 40),
+        )
+        assertEquals("the short second burst is discarded, not committed", 1, pump.commits)
     }
 
     @Test fun a_commit_resets_the_probe_and_clears_the_accumulator() {

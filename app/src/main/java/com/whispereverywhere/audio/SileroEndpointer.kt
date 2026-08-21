@@ -83,6 +83,10 @@ class SileroEndpointer(
      * Stamped ONCE per dip and cleared by exactly one thing — a frame back at or above ONSET. That
      * is the whole hard-timer mechanism: the hangover is `nowMs - tempEndMs`, wall time, so neither
      * a dead-band mumble nor a run of no-verdict frames can push it back.
+     *
+     * The clock only advances when a frame arrives; a session that stops producing frames is ended
+     * by the unconditional stop flush, not by this timer or by the wall cap — both live inside
+     * `onAudioChunk`.
      */
     @Volatile private var tempEndMs = 0L
 
