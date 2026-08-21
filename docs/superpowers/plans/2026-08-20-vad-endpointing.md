@@ -3823,6 +3823,12 @@ class AmplitudeEndpointerTest {
         val a = trace.map { (amp, t) -> plain.onFrame(chunk, amp, t) }
         val b = trace.map { (amp, t) -> poked.onFrame(chunk, amp, t) }
         assertEquals("a cadence floor must not reach the amplitude path", a, b)
+        // ABSOLUTE, and it must come first: every cut-point assertion below is DIFFERENTIAL
+        // against the constant, so re-defining the sentinel moves both sides and they all still
+        // pass. The wall-cap branch (D6) tests `!= NO_CUT_POINT`, and an implementation that
+        // initialises its own cut-point field to a literal 0L — as SileroEndpointer will — is
+        // only correct while the sentinel IS 0L.
+        assertEquals("the NO_CUT_POINT sentinel is 0L", 0L, Endpointer.NO_CUT_POINT)
         // No micro-pause memory exists here, so the cap cut can never be offered a cut point —
         // which is what makes the 15 s backstop byte-identical to 3.6.0 on this path.
         assertEquals(Endpointer.NO_CUT_POINT, poked.pendingCutPointMs())
@@ -3830,6 +3836,37 @@ class AmplitudeEndpointerTest {
         assertEquals(Endpointer.NO_CUT_POINT, poked.pendingCutPointMs())
         poked.onSessionEnd()
         assertEquals(Endpointer.NO_CUT_POINT, poked.pendingCutPointMs())
+
+        // "Inert" is a claim about live state, not only about the verdict stream: poking the
+        // extension points on an OPEN segment must not disturb it. Poking `poked` above could
+        // not catch a resetting override, because it happened before any frame — where a reset
+        // is indistinguishable from a no-op.
+        val open = AmplitudeEndpointer().also { it.onFrame(chunk, 5_000, 0L) }
+        assertTrue(open.hasPendingSpeech())
+        open.onSessionStart(nowMs = 0L, minCommitIntervalMs = 6_000L)
+        assertTrue("onSessionStart must not touch endpoint state", open.hasPendingSpeech())
+        open.onSessionEnd()
+        assertTrue("onSessionEnd must not touch endpoint state", open.hasPendingSpeech())
+    }
+
+    @Test
+    fun productionDefaultsArePinned_notMerelyMirrored() {
+        // ABSOLUTE, never differential against SpeechSegmenter: a differential assertion inherits
+        // any mutation to the defaults and passes. FBS constructs the endpointer with all defaults,
+        // so 500/250/800 are the values that actually run. (D1 inheritance: M2/M3/M4/M5/M8.)
+        val chunk = ByteArray(1024)
+        assertFalse("499 is below the voice floor",
+            AmplitudeEndpointer().let { it.onFrame(chunk, 499, 0L); it.hasPendingSpeech() })
+        assertTrue("500 is at the voice floor",
+            AmplitudeEndpointer().let { it.onFrame(chunk, 500, 0L); it.hasPendingSpeech() })
+        val midFloor = AmplitudeEndpointer().also { it.onFrame(chunk, 5_000, 0L) }
+        assertFalse("251 is above the silence floor — a mid-floor room opens but never closes",
+            midFloor.onFrame(chunk, 251, 10_000L))
+        val atFloor = AmplitudeEndpointer().also { it.onFrame(chunk, 5_000, 0L) }
+        assertTrue("250 is at the silence floor", atFloor.onFrame(chunk, 250, 800L))
+        val pause = AmplitudeEndpointer().also { it.onFrame(chunk, 5_000, 0L) }
+        assertFalse("799 ms is not yet a pause", pause.onFrame(chunk, 100, 799L))
+        assertTrue("800 ms exactly IS a pause (>= not >)", pause.onFrame(chunk, 100, 800L))
     }
 }
 ```
@@ -3838,9 +3875,18 @@ class AmplitudeEndpointerTest {
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.AmplitudeEndpointerTest" --no-daemon
 ```
-Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
-`e: ...AmplitudeEndpointerTest.kt:...: Unresolved reference: AmplitudeEndpointer` and
-`Unresolved reference: Endpointer`.
+Expected: `> Task :app:compileDebugUnitTestKotlin FAILED`, first error
+`e: ...AmplitudeEndpointerTest.kt:31:26 Unresolved reference 'AmplitudeEndpointer'.`
+
+MEASURED, not predicted (D2 fix round, against the six-test block above): **60 `e:` lines**, because
+each unresolved constructor poisons the lambdas downstream of it — 13 × `Unresolved reference
+'AmplitudeEndpointer'`, 10 × `'onFrame'`, 5 × `'hasPendingSpeech'`, 4 × `'Endpointer'`, 1 each of
+`'onSessionStart'` / `'onSessionEnd'`, plus 22 × `Cannot infer type for this parameter` from the
+`trace.map { (amp, t) -> … }` lambdas whose receiver is unknown and 4 argument-type-mismatch
+cascades. Do not expect the two-line red the K1 wording suggested.
+
+Note the Kotlin 2.x message shape: the name is **quoted with a trailing period**
+(`Unresolved reference 'X'.`), not the K1 `Unresolved reference: X`.
 
 - [ ] **Step 3: Minimal implementation.** Create `app/src/main/java/com/whispereverywhere/audio/Endpointer.kt`:
 ```kotlin
@@ -3964,7 +4010,7 @@ class AmplitudeEndpointer(
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.AmplitudeEndpointerTest" --no-daemon
 ```
-Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+5 delta** for this task (`AmplitudeEndpointerTest`).
+Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+6 delta** for this task (`AmplitudeEndpointerTest`) — six, not five, because the sixth test (`productionDefaultsArePinned_notMerelyMirrored`) is the binding addendum from the D1 review: the other five assertions are DIFFERENTIAL against `SpeechSegmenter`, so a mutated production default moves both sides and passes, leaving D1's M2/M3/M4/M5/M8 alive.
 
 - [ ] **Step 5: Commit.**
 ```powershell

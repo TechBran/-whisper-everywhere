@@ -80,7 +80,15 @@ interface Endpointer {
     fun pendingCutPointMs(): Long = NO_CUT_POINT
 
     companion object {
-        /** "No micro-pause was observed in this stretch." */
+        /**
+         * "No micro-pause was observed in this stretch."
+         *
+         * WALL CLOCK ONLY. This sentinel shares its value space with the clock
+         * [pendingCutPointMs] reports: 0L is a legal `System.currentTimeMillis()` reading, merely
+         * unreachable in practice. An implementation that switches to a monotonic or
+         * session-relative clock — where 0 IS reachable at the origin — would silently report
+         * "no micro-pause" on its first frame. Change the sentinel before changing the clock.
+         */
         const val NO_CUT_POINT = 0L
     }
 }
