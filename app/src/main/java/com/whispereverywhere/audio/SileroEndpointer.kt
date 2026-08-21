@@ -14,15 +14,16 @@ package com.whispereverywhere.audio
  * Silero post-processor `whisper_vad_segments_from_probs` (`whisper.cpp:5217-5451`) — including two
  * details that are easy to lose:
  *  - **The dead band.** A frame with `RELEASE <= p < ONSET` neither clears the pending end nor
- *    counts as silence. The native onset guard at `whisper.cpp:5282` and the silence guard at
- *    `whisper.cpp:5321` test DIFFERENT thresholds, and the gap between them falls through both.
+ *    counts as silence. The native onset guard at `whisper.cpp:5283` and the silence guard at
+ *    `whisper.cpp:5322` test DIFFERENT thresholds, and the gap between them falls through both.
  *    Only a frame at or above `ONSET` resets the hangover clock. That is what makes the hangover a
  *    HARD TIMER rather than a decaying one.
  *  - **The micro-pause memory.** The most recent dip below `RELEASE` that outlived
  *    [EndpointerTuning.MICRO_PAUSE_MS] is remembered (native `prev_end = temp_end`,
- *    `whisper.cpp:5328`), so the 15 s wall cap can cut at a real boundary instead of an arbitrary
- *    millisecond. `no_context = true` makes mid-word cuts unrepairable, so a better boundary is
- *    free quality at the same latency bound.
+ *    `whisper.cpp:5329`, guarded by the strict comparison at `:5328` that
+ *    [EndpointerTuning.MICRO_PAUSE_MS] cites), so the 15 s wall cap can cut at a real boundary
+ *    instead of an arbitrary millisecond. `no_context = true` makes mid-word cuts unrepairable, so
+ *    a better boundary is free quality at the same latency bound.
  *
  * ## Clock
  * ONE clock: the caller's `nowMs`, stamped on the chunk the frames came from. The native reference
@@ -39,6 +40,12 @@ package com.whispereverywhere.audio
  * chunk of slack. The annotation is not decoration — without it a Main-thread [reset] shares no
  * happens-before edge with the capture thread, so the cleared state may never become visible at
  * all. `SileroEndpointerTest` fails the build if a later task adds a `var` without it.
+ *
+ * What @Volatile buys here is VISIBILITY, not atomicity: `fill += n` is a non-atomic
+ * read-modify-write, so a Main-thread [reset] racing the capture thread can be LOST, leaving at
+ * most one frame of pre-reset audio in the accumulator — inside the same one-chunk tolerance. No
+ * ordering of the volatile reads can produce an out-of-bounds copy or a short frame, because every
+ * length in [onFrame] is recomputed from the field it just read.
  *
  * @param probe hands a frame of exactly [EndpointerTuning.FRAME_BYTES] PCM16 bytes to the native
  *        Silero probe and returns its probability, or [EndpointerTuning.NO_VERDICT]. **The array is

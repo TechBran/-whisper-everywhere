@@ -29,10 +29,16 @@ private class FakeProbe(var next: Float = 0f) : (ByteArray) -> Float {
 /**
  * Drives one endpointer at the real 32 ms frame cadence, holding the clock between stretches.
  *
- * `t` IS this section's clock: there is no separate fake-clock type, because the endpointer never
- * reads a clock of its own — every time it knows comes in as `onFrame`'s `nowMs`, which is the
- * whole point of the "ONE clock" ruling in [SileroEndpointer]'s KDoc. Advancing `t` here is
- * therefore the only way time passes anywhere in this class.
+ * `t` IS this section's WALL clock, and for now the only one: the endpointer reads no wall clock of
+ * its own — every wall time it knows comes in as `onFrame`'s `nowMs`, which is the whole point of
+ * the "ONE clock" ruling in [SileroEndpointer]'s KDoc. Advancing `t` here is therefore the only way
+ * wall time passes anywhere in this class.
+ *
+ * Task C7 adds a SECOND clock, and it is not a contradiction: a `nanoClock` third constructor
+ * parameter driving the probe's cost budget, with its own `FakeClock` helper beside this one. A
+ * different clock in a different unit measuring a different thing — monotonic nanoseconds spent
+ * inside one probe call, never wall time along the audio stream. Neither may be used for the
+ * other's job.
  */
 private class Pump(
     val ep: SileroEndpointer,
@@ -209,6 +215,12 @@ class SileroEndpointerTest {
      */
     @Test fun the_binding_obligations_are_pinned_in_the_source() {
         val pins = listOf(
+            // THE NEXT TWO PINS ARE C3'S TO DELETE, IN THE SAME COMMIT THAT DISCHARGES THEM.
+            // C3's Step 3 replaces this stub's whole KDoc, not just its body — so both sentences
+            // go, and both pins fail. That failure is CORRECT: the obligation was discharged, not
+            // dropped. Delete the two Pin entries; do NOT restore the sentences, and do not
+            // weaken the pin to keep them passing. Every other pin below outlives C3 — onProb's
+            // KDoc in particular is kept by C3, so the T10 pin must still hold afterwards.
             Pin(
                 "C3 must make hasPendingSpeech honest, and the KDoc says what honest MEANS",
                 kdocFor("override fun hasPendingSpeech()"),
@@ -251,7 +263,11 @@ class SileroEndpointerTest {
                     "implementer what the stub was standing in FOR — delete it and the stub " +
                     "becomes indistinguishable from finished code. Restore the sentence, or, if " +
                     "the obligation really changed, change the code, the sentence and this pin " +
-                    "together.",
+                    "together.\n" +
+                    "ONE EXCEPTION, and it is scheduled: the two hasPendingSpeech pins are " +
+                    "DISCHARGED by Task C3, which replaces that stub's whole KDoc. If you are C3, " +
+                    "delete those two Pin entries in the same commit — do not restore the " +
+                    "sentences to make this pass.",
                 prose(scope).contains(sentence),
             )
         }
