@@ -1,6 +1,7 @@
 package com.whispereverywhere.transcription
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class SegmentTimingTest {
@@ -122,6 +123,71 @@ class SegmentTimingTest {
                 "is the key endpoint:/perceived:/queue: join on",
             1,
             liveLineCount(engine, "seq = seq,"),
+        )
+    }
+
+    @Test
+    fun nativeStatsAreAppendedAfterRtf_neverInterleaved() {
+        assertEquals(
+            "segment-timing: seq=4 audio=2400 transcribe=1100 rtf=0.46 " +
+                "vadIn=38400 vadOut=32000 ctxFrames=512",
+            SegmentTiming.line(
+                seq = 4L,
+                audioMs = 2_400L,
+                transcribeMs = 1_100L,
+                stats = NativeSegmentStats(ctxFrames = 512, vadInSamples = 38_400, vadOutSamples = 32_000),
+            ),
+        )
+    }
+
+    @Test
+    fun withoutNativeStatsTheLineIsByteIdenticalToTheSeqOnlyForm() {
+        // The 6 pinned assertions above pass `stats` implicitly as null. This states WHY that is
+        // safe: a backend with no counters must produce the exact same bytes as before.
+        assertEquals(
+            SegmentTiming.line(seq = 4L, audioMs = 2_400L, transcribeMs = 1_100L),
+            SegmentTiming.line(seq = 4L, audioMs = 2_400L, transcribeMs = 1_100L, stats = null),
+        )
+    }
+
+    @Test
+    fun aVadThatFoundNoSpeechReportsVadOutZeroAndCtxFramesZero() {
+        // The probe-vs-batch-filter disagreement signature: the endpointer said "utterance ended,
+        // commit" and we_vad_filter found nothing, so whisper_full never ran.
+        assertEquals(
+            "segment-timing: seq=9 audio=1000 transcribe=40 rtf=0.04 " +
+                "vadIn=16000 vadOut=0 ctxFrames=0",
+            SegmentTiming.line(
+                seq = 9L,
+                audioMs = 1_000L,
+                transcribeMs = 40L,
+                stats = NativeSegmentStats(ctxFrames = 0, vadInSamples = 16_000, vadOutSamples = 0),
+            ),
+        )
+    }
+
+    @Test
+    fun anAllZeroStatsStillPrintsTheWholeSuffix_becauseZerosAreAMeasurement() {
+        // THE tidy-omit regression target. The ONLY thing that may drop the suffix is a null
+        // (`lastSegmentStats` said "no transcribe ran on this ctx"). An all-zero reading is the
+        // opposite fact — a transcribe ran and cost nothing, i.e. the energy gate / VAD found no
+        // speech at all — and it is the single most diagnostic shape in this workstream. A reader
+        // that "helpfully" omits a zeroed suffix makes that shape indistinguishable from a fake
+        // backend, so the two forms are asserted to be DIFFERENT strings, not merely correct ones.
+        val measured = SegmentTiming.line(
+            seq = 5L,
+            audioMs = 1_000L,
+            transcribeMs = 20L,
+            stats = NativeSegmentStats(ctxFrames = 0, vadInSamples = 0, vadOutSamples = 0),
+        )
+        assertEquals(
+            "segment-timing: seq=5 audio=1000 transcribe=20 rtf=0.02 vadIn=0 vadOut=0 ctxFrames=0",
+            measured,
+        )
+        assertNotEquals(
+            "an all-zero measurement must NOT collapse to the no-counters form",
+            SegmentTiming.line(seq = 5L, audioMs = 1_000L, transcribeMs = 20L, stats = null),
+            measured,
         )
     }
 }

@@ -8,7 +8,7 @@ import java.util.Locale
  * One line per resolved local segment, emitted by [LocalWhisperEngine.runSegment] around
  * `backend.transcribe`:
  *
- *     segment-timing: seq=<n> audio=<ms> transcribe=<ms> rtf=<x.xx>
+ *     segment-timing: seq=<n> audio=<ms> transcribe=<ms> rtf=<x.xx> vadIn=<n> vadOut=<n> ctxFrames=<n>
  *
  * rtf = transcribe/audio — RTF < 1 means faster than real time. This converts the deep-analysis
  * report's last big ESTIMATE (the multi tier's real RTF on the owner's device) into MEASURED
@@ -43,10 +43,38 @@ object SegmentTiming {
      * `findstr segment-timing` grep and every parser written against 3.6.0 keeps working, while a
      * capture can now be joined against `endpoint:` / `perceived:` on the shared seq — which is
      * what makes "why was this segment cut and how long did the user wait" answerable from one log.
+     *
+     * [stats] is APPENDED and OPTIONAL, for the same compatibility reason from the other end: a
+     * backend with no native counters (every fake, any future non-native backend) emits exactly
+     * the seq-only form. `ctxFrames` is the encoder cost driver 3.7's cadence arithmetic turns on;
+     * `vadIn`/`vadOut` instrument the rare probe-vs-batch-filter disagreement (`cut=vad` with
+     * `vadOut=0`), which otherwise surfaces only as a silent EmptyExpected.
+     *
+     * The suffix is omitted for a NULL [stats] and for nothing else. An all-zero reading is a
+     * measurement ("a transcribe ran and cost nothing"), not an absence, and prints in full —
+     * see [NativeSegmentStats]. Field order here is deliberately NOT the data class's: the line
+     * reads in pipeline order (VAD in, VAD out, then what the encoder was given).
+     *
+     * MIND THE DENOMINATORS ACROSS RETRIES: [transcribeMs] spans EVERY attempt this segment took
+     * (LocalWhisperEngine measures around the whole retry), while the counters describe only the
+     * LAST attempt. On a retried segment rtf is therefore high against a `ctxFrames` that only
+     * paid for one pass — that is a retry, not a lying encoder; cross-check `WE-DIAG` retry lines
+     * before reading such a pair as a per-frame cost.
      */
-    fun line(seq: Long, audioMs: Long, transcribeMs: Long): String {
+    fun line(
+        seq: Long,
+        audioMs: Long,
+        transcribeMs: Long,
+        stats: NativeSegmentStats? = null,
+    ): String {
         val rtf = if (audioMs > 0) transcribeMs.toDouble() / audioMs.toDouble() else 0.0
-        return "segment-timing: seq=$seq audio=$audioMs transcribe=$transcribeMs rtf=" +
+        val head = "segment-timing: seq=$seq audio=$audioMs transcribe=$transcribeMs rtf=" +
             String.format(Locale.US, "%.2f", rtf)
+        return if (stats == null) {
+            head
+        } else {
+            head + " vadIn=${stats.vadInSamples} vadOut=${stats.vadOutSamples}" +
+                " ctxFrames=${stats.ctxFrames}"
+        }
     }
 }
