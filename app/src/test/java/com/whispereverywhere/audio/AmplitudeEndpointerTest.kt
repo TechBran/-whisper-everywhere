@@ -75,6 +75,12 @@ class AmplitudeEndpointerTest {
         val a = trace.map { (amp, t) -> plain.onFrame(chunk, amp, t) }
         val b = trace.map { (amp, t) -> poked.onFrame(chunk, amp, t) }
         assertEquals("a cadence floor must not reach the amplitude path", a, b)
+        // ABSOLUTE, and it must come first: every cut-point assertion below is DIFFERENTIAL
+        // against the constant, so re-defining the sentinel moves both sides and they all still
+        // pass. The wall-cap branch (D6) tests `!= NO_CUT_POINT`, and an implementation that
+        // initialises its own cut-point field to a literal 0L — as SileroEndpointer will — is
+        // only correct while the sentinel IS 0L.
+        assertEquals("the NO_CUT_POINT sentinel is 0L", 0L, Endpointer.NO_CUT_POINT)
         // No micro-pause memory exists here, so the cap cut can never be offered a cut point —
         // which is what makes the 15 s backstop byte-identical to 3.6.0 on this path.
         assertEquals(Endpointer.NO_CUT_POINT, poked.pendingCutPointMs())
@@ -82,6 +88,17 @@ class AmplitudeEndpointerTest {
         assertEquals(Endpointer.NO_CUT_POINT, poked.pendingCutPointMs())
         poked.onSessionEnd()
         assertEquals(Endpointer.NO_CUT_POINT, poked.pendingCutPointMs())
+
+        // "Inert" is a claim about live state, not only about the verdict stream: poking the
+        // extension points on an OPEN segment must not disturb it. Poking `poked` above could
+        // not catch a resetting override, because it happened before any frame — where a reset
+        // is indistinguishable from a no-op.
+        val open = AmplitudeEndpointer().also { it.onFrame(chunk, 5_000, 0L) }
+        assertTrue(open.hasPendingSpeech())
+        open.onSessionStart(nowMs = 0L, minCommitIntervalMs = 6_000L)
+        assertTrue("onSessionStart must not touch endpoint state", open.hasPendingSpeech())
+        open.onSessionEnd()
+        assertTrue("onSessionEnd must not touch endpoint state", open.hasPendingSpeech())
     }
 
     @Test
