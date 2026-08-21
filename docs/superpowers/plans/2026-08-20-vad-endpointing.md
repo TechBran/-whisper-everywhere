@@ -3650,7 +3650,7 @@ Expected: `continuousSpeech_neverSelfCommits_theWallCapOwnsThatClock FAILED` wit
  * is unit-testable: feed it amplitude samples via [onAmplitude] and it returns
  * true when a commit should fire — after a natural pause following speech.
  *
- * ONE wall clock, and it is not here (3.7, Workstream D6): this class used to carry its own
+ * ONE wall clock, and it is not here (3.7, Task D1): this class used to carry its own
  * `maxSegmentMs = 15000` anchored at first-voice-sample, a dead duplicate of
  * [com.whispereverywhere.service.SegmentCapPolicy.MAX_SEGMENT_WALL_MS] anchored at last-commit.
  * It was provably unreachable in both real cases (loud audio returns early above; mid-floor audio
