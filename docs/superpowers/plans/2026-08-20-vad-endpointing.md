@@ -4637,6 +4637,18 @@ dashes this message contains.
 
 ### Task C2: SileroEndpointer — the exact-512-sample accumulator and the −1.0f sentinel
 
+> **PARTLY SUPERSEDED — this section is C2's own record, and two of its bodies are stubs later
+> tasks replaced.** `hasPendingSpeech(): Boolean = false` is the stub Task C3 filled in, and
+> `if (onProb(probe(frame), nowMs)) return true` became `val p = timedProbe(nowMs)` at Task C7 (and
+> `timedProbe(nowMs)` again at C10). Both are left as C2 wrote them, deliberately: they are what
+> this task landed, and the sentence beside a stub is what tells the next implementer what the stub
+> stood in for. What was NOT left alone is the field block — its `private var`s are now written
+> `@Volatile private var`, because that annotation was never optional (Task C9's carry-test fails
+> the build without it) and a re-extraction handing an implementer the unannotated form gives them
+> a snippet the suite rejects. **The rule this section and the eight below were rebased under: a
+> snippet that faithfully records a stub gets a banner; a snippet that contradicts discipline that
+> was already in force gets RESPLICED from the shipped source.**
+
 **Files:**
 - Create: `app/src/main/java/com/whispereverywhere/audio/SileroEndpointer.kt`
 - Test (create): `app/src/test/java/com/whispereverywhere/audio/SileroEndpointerTest.kt`
@@ -4849,8 +4861,8 @@ class SileroEndpointer(
     /** The accumulator. One array for the life of the endpointer: no per-frame allocation. */
     private val frame = ByteArray(EndpointerTuning.FRAME_BYTES)
 
-    private var fill = 0
-    private var lastFrameMs = 0L
+    @Volatile private var fill = 0
+    @Volatile private var lastFrameMs = 0L
 
     /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
@@ -4913,7 +4925,8 @@ overridden in Tasks C5, C6 and C10 as the state they report comes into existence
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `11 tests / 0 failures / 0 errors`.
+Expected: `11 tests / 0 failures / 0 errors`. *Step 1's block above carries SIX of those eleven;
+this count, not that block, is the authority on what C2 shipped.*
 
 - [ ] **Step 5: Commit.**
 
@@ -5035,9 +5048,9 @@ The two "never opens the gate" tests pass already — they are the regressions t
   `private var lastFrameMs = 0L`:
 
 ```kotlin
-    private var speaking = false
-    private var speechStartMs = 0L
-    private var pendingSpeech = false
+    @Volatile private var speaking = false
+    @Volatile private var speechStartMs = 0L
+    @Volatile private var pendingSpeech = false
 ```
 
 replace the `hasPendingSpeech()` body:
@@ -5100,7 +5113,9 @@ and extend `clearForNextSegment()`:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `19 tests / 0 failures / 0 errors`.
+Expected: `19 tests / 0 failures / 0 errors`. *C3 added EIGHT tests; Step 1's block above carries
+six. The two it omits are `the_latch_fires_at_exactly_MIN_SPEECH_MS` and
+`silence_below_RELEASE_does_not_clear_the_uncommitted_buffer`.*
 
 - [ ] **Step 5: Commit.**
 
@@ -5212,13 +5227,20 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
             probe = probe,
             probeReset = { resets++ },
         )
+        val minSpeech = EndpointerTuning.MIN_SPEECH_MS
         probe.next = 0.9f
         assertFalse(ep.onFrame(ByteArray(B), 0, BASE))
-        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 300))
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + minSpeech))
         assertTrue(ep.hasPendingSpeech())
         probe.next = 0.1f
-        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 300))    // pending end == speechStart + 300
-        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + 900))    // 600 ms of silence: hangover done
+        // The pending end lands exactly MIN_SPEECH_MS after the speech start.
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + minSpeech))
+        // Comfortably past the hangover, so the ONLY reason this frame does not cut is the strict
+        // commit gate. Spelled from the constants: a retune must not leave this test asserting a
+        // boundary its own failure message no longer describes.
+        assertFalse(
+            ep.onFrame(ByteArray(B), 0, BASE + minSpeech + EndpointerTuning.HANGOVER_MS + 100),
+        )
         assertEquals("no commit at exactly MIN_SPEECH_MS", 0, resets)
         assertTrue("but the buffer is not empty", ep.hasPendingSpeech())
     }
@@ -5266,7 +5288,7 @@ Expected: `SileroEndpointerTest > the_hangover_cuts_at_exactly_500ms_of_trailing
   `private var pendingSpeech = false`:
 
 ```kotlin
-    private var tempEndMs = 0L
+    @Volatile private var tempEndMs = 0L
 ```
 
 replace the `onProb` body (keeping its KDoc):
@@ -5341,7 +5363,9 @@ and add the two helpers plus the extended clear (replace `clearForNextSegment()`
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `28 tests / 0 failures / 0 errors`.
+Expected: `28 tests / 0 failures / 0 errors`. *C4 added NINE tests; Step 1's block above carries
+seven. The two it omits are `the_hangover_fires_at_exactly_HANGOVER_MS` and
+`a_second_utterance_is_measured_from_its_OWN_start`.*
 
 - [ ] **Step 5: Commit.**
 
@@ -5469,7 +5493,7 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
   `private var tempEndMs = 0L`:
 
 ```kotlin
-    private var prevEndMs = 0L
+    @Volatile private var prevEndMs = Endpointer.NO_CUT_POINT
 ```
 
 insert the promotion line into the silence branch of `onProb`, between the pending-end stamp and the
@@ -5506,7 +5530,7 @@ add the public accessor next to `hasPendingSpeech()`:
 and extend `clearForNextSegment()` with one line (after `closeGate()`):
 
 ```kotlin
-        prevEndMs = 0L
+        prevEndMs = Endpointer.NO_CUT_POINT
 ```
 
 - [ ] **Step 4: Run tests green.**
@@ -5515,7 +5539,9 @@ and extend `clearForNextSegment()` with one line (after `closeGate()`):
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `35 tests / 0 failures / 0 errors`.
+Expected: `35 tests / 0 failures / 0 errors`. *C5 added SEVEN tests; Step 1's block above carries
+five. The two it omits are `the_micro_pause_floor_is_exclusive_at_exactly_MICRO_PAUSE_MS` and
+`the_wall_clock_sentinel_is_never_re_literalised_as_a_bare_zero`.*
 
 - [ ] **Step 5: Commit.**
 
@@ -5579,7 +5605,7 @@ onOpen has run.
         val pump = Pump(ep, probe)
         // 8000L is CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS, quoted rather than imported:
         // Workstream C compiles without the service package (Task D3 owns that object).
-        ep.onSessionStart(BASE, 8_000L)
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 8_000L)
         pump.run(0.9f, 20)
         assertTrue(pump.run(0.1f, 17))
         assertEquals(1, pump.commits)
@@ -5590,7 +5616,7 @@ onOpen has run.
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         // 1200L is CommitCadencePolicy.MIN_COMMIT_INTERVAL_FAST_MS (pro), quoted not imported.
-        ep.onSessionStart(BASE, 1_200L)
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)
         pump.run(0.9f, 20)
         assertTrue(pump.run(0.1f, 17))                 // commit 1 at BASE+1152
         pump.run(0.9f, 11)                             // utterance 2: BASE+1184..1504
@@ -5609,7 +5635,7 @@ onOpen has run.
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         // 6000L is CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS, quoted not imported.
-        ep.onSessionStart(BASE, 6_000L)
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 6_000L)
         pump.run(0.9f, 20)
         assertTrue(pump.run(0.1f, 17))                 // commit 1 at BASE+1152
         pump.run(0.9f, 11); assertFalse(pump.run(0.1f, 17))
@@ -5626,7 +5652,7 @@ onOpen has run.
         val probe = FakeProbe()
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
-        ep.onSessionStart(BASE, 6_000L)                // multi's paced floor
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 6_000L)                // multi's paced floor
         pump.run(0.9f, 20)                             // last frame at BASE+608
         ep.reset()                                     // the wall-cap cut at FBS.kt:1722
         assertFalse(ep.hasPendingSpeech())
@@ -5639,11 +5665,11 @@ onOpen has run.
         val probe = FakeProbe()
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
-        ep.onSessionStart(BASE, 6_000L)                // multi's paced floor
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 6_000L)                // multi's paced floor
         pump.run(0.9f, 20)
         assertTrue(pump.run(0.1f, 17))                 // commit 1
         pump.t = BASE + 2_000
-        ep.onSessionStart(BASE + 2_000, 6_000L)
+        ep.onSessionStart(nowMs = BASE + 2_000, minCommitIntervalMs = 6_000L)
         pump.run(0.9f, 11)
         assertTrue("a new session's first cut is free again", pump.run(0.1f, 17))
         assertEquals(2, pump.commits)
@@ -5743,7 +5769,7 @@ replace `commitAt()` and `reset()`, and add `onSessionStart()`:
     override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
         lastFrameMs = nowMs
-        lastCommitMs = nowMs   // NOT 0L — see task-C6-report §4.2 (G12/G13/G14)
+        lastCommitMs = nowMs
         hasCommitted = false
         clearForNextSegment()
     }
@@ -5755,7 +5781,9 @@ replace `commitAt()` and `reset()`, and add `onSessionStart()`:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `42 tests / 0 failures / 0 errors`.
+Expected: `42 tests / 0 failures / 0 errors`. *C6 added SEVEN tests; Step 1's block above carries
+five. The two it omits are `exactly_the_interval_commits_and_one_millisecond_more_merges` and
+`before_any_session_start_the_floor_is_the_conservative_8000`.*
 
 - [ ] **Step 5: Commit.**
 
@@ -5782,6 +5810,23 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 ---
 
 ### Task C7: The latched slow-probe cutout
+
+> **SUPERSEDED IN PART BY TASK C10 — READ THIS BEFORE RE-EXTRACTING THIS SECTION.**
+> C7 shipped the budget comparison in TRUNCATED MILLISECONDS (`elapsedMs = ns / 1_000_000;
+> elapsedMs > PROBE_BUDGET_MS`), so its effective threshold was 9 ms and an 8.5 ms probe was not an
+> overrun. **Task C10 retuned it to MICROSECONDS** — `elapsedUs = ns / 1_000; elapsedUs > budgetUs`,
+> where `budgetUs` is `EndpointerTuning.PROBE_BUDGET_US` — so the boundary is now 8.000 ms exactly
+> and 8.5 ms IS an overrun. C7 planted `the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_micro`
+> `seconds` as a tripwire against that happening by accident; it fired, the decision was taken
+> deliberately, and the test was REPLACED by
+> `the_budget_is_compared_in_MICROSECONDS_and_the_boundary_is_strict`. See commit `a276376` and
+> `task-C10-report.md §2`.
+>
+> Step 3's `timedProbe` and Step 1's `FakeProbe` below have been RESPLICED from the shipped source
+> so that a re-extraction cannot reinstate the truncated-millisecond compare or the `costMs`-only
+> fake. They therefore show C10's `probeStats` / `diag` wiring, which C7 itself did not have — read
+> them as "what this member looks like now", not as "what C7 landed". Everything else in this
+> section is C7's own.
 
 **Files:**
 - Modify: `app/src/main/java/com/whispereverywhere/audio/SileroEndpointer.kt` (constructor; fields
@@ -5810,21 +5855,26 @@ counters is exactly how the log and the latch would start disagreeing.
  * The injected probe. Records a COPY of every frame it is handed — the endpointer REUSES one
  * 1024-byte array, so retaining the reference would alias every "frame" onto the latest one.
  * `the_probe_is_handed_ONE_reused_array_which_is_why_the_fake_copies` proves that is a real hazard
- * and not a defensive habit. Optionally charges [costMs] of synthetic wall time against [clock]
+ * and not a defensive habit. Optionally charges [costUs] of synthetic wall time against [clock]
  * for the cutout tests.
  */
 private class FakeProbe(var next: Float = 0f) : (ByteArray) -> Float {
     val frames = mutableListOf<ByteArray>()
     var clock: FakeClock? = null
-    var costMs: Long = 0L
+    /** MICROSECONDS — the unit the endpointer measures in. See the C10 banner above. */
+    var costUs: Long = 0L
+    /** [costUs] in whole milliseconds. A view, not a second field. */
+    var costMs: Long
+        get() = costUs / 1_000L
+        set(value) { costUs = value * 1_000L }
     override fun invoke(frame: ByteArray): Float {
         frames += frame.copyOf()
-        clock?.let { it.nowNs += costMs * 1_000_000L }
+        clock?.let { it.nowNs += costUs * 1_000L }
         return next
     }
 }
 
-/** A hand-cranked nanoTime, advanced only by [FakeProbe.costMs]. */
+/** A hand-cranked nanoTime, advanced only by [FakeProbe.costUs]. */
 private class FakeClock(var nowNs: Long = 0L) : () -> Long {
     override fun invoke(): Long = nowNs
 }
@@ -5857,13 +5907,13 @@ and append:
         )
         val pump = Pump(ep, probe)
 
-        probe.costMs = 9
+        probe.costMs = OVERRUN_MS
         pump.run(0.1f, 15)
         assertFalse("15 is not 16", ep.isProbeCutout())
         probe.costMs = 0
         pump.run(0.1f, 1)
         assertFalse(ep.isProbeCutout())
-        probe.costMs = 9
+        probe.costMs = OVERRUN_MS
         pump.run(0.1f, 15)
         assertFalse("the fast frame broke the run", ep.isProbeCutout())
         pump.run(0.1f, 1)
@@ -5875,7 +5925,7 @@ and append:
         val clock = FakeClock()
         val probe = FakeProbe()
         probe.clock = clock
-        probe.costMs = 9
+        probe.costMs = OVERRUN_MS
         val ep = SileroEndpointer(
             probe = probe,
             nanoClock = clock,
@@ -5896,7 +5946,7 @@ and append:
         val clock = FakeClock()
         val probe = FakeProbe()
         probe.clock = clock
-        probe.costMs = 9
+        probe.costMs = OVERRUN_MS
         val ep = SileroEndpointer(
             probe = probe,
             nanoClock = clock,
@@ -5964,7 +6014,7 @@ replace the `onFrame` body:
             src += n
             if (fill < EndpointerTuning.FRAME_BYTES) break
             fill = 0
-            val p = timedProbe()
+            val p = timedProbe(nowMs)
             // The frame that TRIPPED the latch has its verdict discarded: from here the amplitude
             // fallback owns the session.
             if (probeCutout) return false
@@ -5979,16 +6029,23 @@ add `timedProbe()` beside `onProb`:
 ```kotlin
     /**
      * One native probe call, timed. After [EndpointerTuning.PROBE_CUTOUT_FRAMES] CONSECUTIVE frames
-     * over [EndpointerTuning.PROBE_BUDGET_MS] the probe is latched off for the rest of the session
-     * and the caller falls back to amplitude. Latched, never retried per frame: the same discipline
-     * the new-segment callback uses for a throwing callback — something that failed 16 frames
-     * running will fail on the next one too, and retrying costs the audio thread every time.
+     * over the budget the probe is latched off for the rest of the session and the caller falls
+     * back to amplitude. Latched, never retried per frame: the same discipline the new-segment
+     * callback uses for a throwing callback — something that failed 16 frames running will fail on
+     * the next one too, and retrying costs the audio thread every time.
+     *
+     * The comparison is MICROSECONDS, strictly above [budgetUs] — see the C10 banner at the head of
+     * this section. C7 shipped it as truncated milliseconds; C10 retuned it, and the shipped KDoc
+     * carries several more paragraphs this snippet does not.
      */
-    private fun timedProbe(): Float {
+    private fun timedProbe(nowMs: Long): Float {
         val t0 = nanoClock()
         val p = probe(frame)
-        val elapsedMs = (nanoClock() - t0) / 1_000_000L
-        if (elapsedMs > EndpointerTuning.PROBE_BUDGET_MS) {
+        val elapsedUs = (nanoClock() - t0) / 1_000L
+        if (probeStats.record(elapsedUs, nowMs)) {
+            diag(probeStats.line())
+        }
+        if (elapsedUs > budgetUs) {
             slowRun++
             if (slowRun >= EndpointerTuning.PROBE_CUTOUT_FRAMES) probeCutout = true
         } else {
@@ -6020,7 +6077,10 @@ and extend `onSessionStart()` with the re-arm (before `clearForNextSegment()`):
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `48 tests / 0 failures / 0 errors`.
+Expected: `48 tests / 0 failures / 0 errors`. *C7 added SIX tests; Step 1's block above carries
+four. The two it omits were added in-task: the tripwire (since REPLACED by C10 — see the banner at
+the head of this section) and `the_frame_that_trips_the_latch_has_its_verdict_discarded`. The count
+is unchanged by C10's replacement, which was one-for-one.*
 
 - [ ] **Step 5: Commit.**
 
@@ -6176,7 +6236,10 @@ and one line in `onSessionStart()` beside the other counter resets:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `51 tests / 0 failures / 0 errors`.
+Expected: `52 tests / 0 failures / 0 errors`. (C8 shipped 52, not the 51 planned: its fix round
+added `the_cut_record_survives_reset_and_is_cleared_only_by_a_new_session`'s sibling, splitting the
+two-sided claim into two methods so each half keeps a sole killer.) *Step 1's block above therefore
+carries three of C8's four.*
 
 - [ ] **Step 5: Commit.**
 
@@ -6199,6 +6262,20 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 ---
 
 ### Task C9: Cross-thread safety — @Volatile fields, pinned, with a real capture-thread storm
+
+> **PARTLY SUPERSEDED — Step 1's test below is the PLANNED shape, not the shipped one.** C9's own
+> fix round and Task C10 both landed in this file, and four things this snippet does not have are
+> load-bearing in the tree: the census is **SET EQUALITY** (a `mutable` set built by reflection and
+> compared with `assertEquals`, so a fourteenth `var` fails the build) rather than the containment
+> loop shown here; the coherence phase plants a **600-byte partial frame** (deliberately not a
+> multiple of 128) and asserts an exact `EndpointCut`; a `check(...)` at the top pins
+> `COHERENCE_BASE` clear of the storm's last frame clock; and Task C10 added the **F10 guard**
+> (`assertFalse(... ep.isProbeCutout())`) so a latched probe cannot make the storm silently stop
+> storming. The literals have been respliced to the `STORM_BASE` / `STORM_MAX_FRAMES` constants the
+> shipped test hoists them into, and the `onSessionStart` call to named arguments, so a
+> re-extraction does not hand an implementer code that contradicts settled discipline. The
+> assertion MESSAGES here predate the fix round and are not worth respelling — read them as
+> intent.
 
 **Files:**
 - Modify: `app/src/main/java/com/whispereverywhere/audio/SileroEndpointer.kt` (every mutable field
@@ -6267,7 +6344,7 @@ class SileroEndpointerConcurrencyTest {
                 if ((probed.incrementAndGet() / 20) % 2 == 0) 0.9f else 0.05f
             },
         )
-        ep.onSessionStart(1_000_000L, 1_200L)
+        ep.onSessionStart(nowMs = STORM_BASE, minCommitIntervalMs = 1_200L)
 
         val capture = Executors.newSingleThreadExecutor()
         val stop = AtomicBoolean(false)
@@ -6276,10 +6353,10 @@ class SileroEndpointerConcurrencyTest {
 
         capture.execute {
             try {
-                var t = 1_000_000L
+                var t = STORM_BASE
                 var i = 0
                 // Short reads interleaved with whole frames, as AudioRecord really delivers them.
-                while (!stop.get() && i < 200_000) {
+                while (!stop.get() && i < STORM_MAX_FRAMES) {
                     val size = if (i % 3 == 0) 640 else EndpointerTuning.FRAME_BYTES
                     ep.onFrame(ByteArray(size), 0, t)
                     t += EndpointerTuning.FRAME_MS
@@ -6292,7 +6369,7 @@ class SileroEndpointerConcurrencyTest {
             }
         }
 
-        repeat(5_000) { ep.reset() }        // Main hammering the four external reset sites
+        repeat(5_000) { ep.reset() }        // Main hammering the external reset sites
         stop.set(true)
         assertTrue("the capture pump did not finish", done.await(30, TimeUnit.SECONDS))
         capture.shutdownNow()
@@ -6331,7 +6408,7 @@ that the storm produces no exception and no partial frame, not the substantive p
     @Volatile private var speechStartMs = 0L
     @Volatile private var pendingSpeech = false
     @Volatile private var tempEndMs = 0L
-    @Volatile private var prevEndMs = 0L
+    @Volatile private var prevEndMs = Endpointer.NO_CUT_POINT
     @Volatile private var lastCommitMs = 0L
     @Volatile private var hasCommitted = false
     @Volatile private var minCommitIntervalMs = 8_000L
@@ -6352,7 +6429,7 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Expected: `failures=0 errors=0`. This task's own delta is +2 (`SileroEndpointerConcurrencyTest`);
-the section's running delta after Task C10 is +62. No absolute total is asserted here — Task S5
+the section's running delta after Task C10 is +65. No absolute total is asserted here — Task S5
 computes the branch's totals once, from a purged results directory.
 
 - [ ] **Step 5: Commit.**
@@ -6379,6 +6456,31 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 ---
 
 ### Task C10: `ProbeStats` wiring + the session probe seam (arm / teardown)
+
+> **THIS SECTION UNDER-DESCRIBES WHAT C10 LANDED. Four things happened that the brief below does
+> not mention at all.**
+>
+> 1. **THE RETUNE.** Transcribing Step 3(c)'s microsecond `timedProbe` turns C7's tripwire test red
+>    — by C7's design. The decision was ADOPT MICROSECONDS: one overrun definition for the latch
+>    and for `ProbeStats`, so the `probe:` line cannot report overruns the latch never counted. The
+>    cutout's effective threshold moved 9 ms → 8.000 ms exactly. C7's test was REPLACED by
+>    `the_budget_is_compared_in_MICROSECONDS_and_the_boundary_is_strict`, its KDoc pin sentence was
+>    replaced with the µs one, and `FakeProbe` gained a `costUs` field with `costMs` rewritten as a
+>    computed view over it so that 8500 µs is scriptable at all. See commit `a276376`.
+> 2. **THE `diag` SEAM.** A FOURTH defaulted lambda, `diag: (String) -> Unit`, carries both `probe:`
+>    emissions. Without it, deleting the session-end line and inverting `onSessionEnd`'s two
+>    statements were both mutations nothing could see: `android.util.Log` is a no-op under
+>    `unitTests.isReturnDefaultValues` and `ProbeStats` is final, so no spy exists. Two tests follow
+>    it, and the 10 s interval line — which every earlier task had to write off as unreachable —
+>    is pinned for the first time.
+> 3. **THE OWNED CONVERSION.** `EndpointerTuning.PROBE_BUDGET_US` (Step 3(b) below) exists because
+>    `budgetUs` and the `ProbeStats` default were re-deriving the same conversion independently.
+> 4. **`SileroEndpointerConcurrencyTest` is a third file in this task's commit**, carrying C9's F10
+>    guard: with the µs compare live, a latch during the storm would make `onFrame` return without
+>    touching `fill`, so the pump would loop doing nothing and the storm would silently un-storm.
+>
+> Also: every `onSessionStart` call site takes NAMED arguments, and `probe.costMs = 9` is spelled
+> `OVERRUN_MS`. Both are respliced below.
 
 **Files:**
 - Modify: `app/src/main/java/com/whispereverywhere/audio/SileroEndpointer.kt` (constructor; `timedProbe()`;
@@ -6432,7 +6534,7 @@ scattered handful of slow frames or never latch at all.
         val clock = FakeClock()
         val probe = FakeProbe()
         probe.clock = clock
-        probe.costMs = 9
+        probe.costMs = OVERRUN_MS
         val stats = ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L)
         val ep = SileroEndpointer(probe = probe, nanoClock = clock, probeStats = stats)
         Pump(ep, probe).run(0.1f, 40)
@@ -6459,7 +6561,7 @@ scattered handful of slow frames or never latch at all.
         pump.run(0.1f, 10)
         assertEquals(10L, stats.frames())
 
-        ep.onSessionStart(pump.t, 1_200L)
+        ep.onSessionStart(nowMs = pump.t, minCommitIntervalMs = 1_200L)
         assertEquals("a session's probe accounting starts from zero", 0L, stats.frames())
         assertEquals("the native probe is armed once per session, on Main", 1, arms)
         assertEquals("arming must not free anything", 0, teardowns)
@@ -6521,12 +6623,21 @@ and add the import beside the file's other imports:
 import com.whispereverywhere.util.ProbeStats
 ```
 
-(b) add one field beside the other cost fields (it is a plain `val`, so no `@Volatile`; the budget is
-a constant for the endpointer's life):
+(b) add one field beside `frame`, the class's other `val` — NOT inside the `@Volatile var` block,
+which both the census KDoc and `every_mutable_field_is_volatile_because_reset_arrives_from_Main`
+describe as "the mutable state this class carries" (it is a plain `val`, so no `@Volatile`; the
+budget is a constant for the endpointer's life):
 
 ```kotlin
-    private val budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L
+    private val budgetUs = EndpointerTuning.PROBE_BUDGET_US
 ```
+
+The conversion is OWNED by `EndpointerTuning.PROBE_BUDGET_US` and is not spelled here. Two sites
+each writing `PROBE_BUDGET_MS * 1_000L` would agree only by coincidence of identical expressions —
+and the `ProbeStats` constructor default above cannot read this property at all, because a Kotlin
+constructor default may not see a class-body declaration. The third site is `EndpointerFactory`'s,
+which this class cannot check: `ProbeStats` keeps its budget private, so no `require` is available.
+That obligation on D8 is written into `budgetUs`' KDoc and pinned by the class's obligation list.
 
 (c) replace `timedProbe()` — it now takes the frame's wall clock, because `ProbeStats` needs it to
 decide when a line is due, and it measures in MICROSECONDS, the unit the `probe:` line reports:
@@ -6599,12 +6710,24 @@ MAIN (Workstream D wires `onSessionStart` from `onOpen`), which is the other hal
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.*" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `54 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
-this is the section's evidence: `failures=0 errors=0` and the **+62 delta** this section adds
-(`EndpointerTuningTest` 6, `SileroEndpointerTest` 54, `SileroEndpointerConcurrencyTest` 2). The
+Expected: `57 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
+this is the section's evidence: `failures=0 errors=0` and the **+65 delta** this section adds
+(`EndpointerTuningTest` 6, `SileroEndpointerTest` 57, `SileroEndpointerConcurrencyTest` 2). The
 absolute total is computed once, in Task S5.
 
-Sixty, not the forty-five this section was planned at: ALL SIX shipped deviations are in it.
+The number moved twice after this section was written, and both moves are recorded rather than
+silently absorbed. **54 → 55**: this brief was drafted before Task C8's fix round, which added a
+test it could not know about. **55 → 57**: C10's own fix round added two, both of them killing
+mutants that had survived — `the_final_probe_line_is_emitted_from_the_live_session_before_the_`
+`context_is_freed` (the session-end emission AND its order against the teardown, neither of which
+anything held) and `the_interval_line_is_emitted_once_per_10s_from_the_capture_thread` (the 10 s
+`probe:` line, unreachable by any test until the `diag` lambda made the emission observable).
+C10's own net contribution to `SileroEndpointerTest` is therefore **+5**: three wiring tests, one
+replacement for C7's tripwire (deleted, so net zero), and two from the fix round. *Step 1's block
+above carries the three wiring tests only; the other three are described in the banner at the head
+of this section.*
+
+Sixty-five, not the forty-five this section was planned at: ALL SIX shipped deviations are in it.
 C1 shipped `EndpointerTuningTest` with 6 tests rather than 4 (its KDoc-derivation and scope-ruling
 tests — the C1 section above was rebased to say so at its own Step 4); C2 shipped
 `SileroEndpointerTest` with 11 rather than 6, carrying every later expectation in this section up
@@ -6633,10 +6756,17 @@ session PARAMETER rather than a constant and a test may therefore CHOOSE one the
 `before_any_session_start_the_floor_is_the_conservative_8000`, which brackets the pre-session default
 between 6976 and 8128 ms so that the R8 ruling (UNMEASURED means assume the expensive end) is held by
 the suite rather than by a literal nobody reads; and C7 shipped 48 rather than 46, adding
-`the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds`, which pins the TRUNCATED-
-millisecond semantics of the cutout's own comparison — 8.5 ms is not an overrun here and IS one
-under the microsecond compare Task C10 introduces, so without it C10 retunes the latch inside a
-wiring commit — and `the_frame_that_trips_the_latch_has_its_verdict_discarded`, the only test in
+`the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds`, which pinned the TRUNCATED-
+millisecond semantics of the cutout's own comparison so that C10 could not retune the latch inside
+a wiring commit without deciding to — **and it worked, and the trap sprang.** C10 landed the
+microsecond compare with C7's KDoc left standing and that one test failed, alone, on its own "half
+a millisecond past the budget truncates back TO the budget" assertion; the retune was then taken
+deliberately and the test REPLACED (not deleted) by
+`the_budget_is_compared_in_MICROSECONDS_and_the_boundary_is_strict`, which pins the same boundary
+from both sides at 500 µs resolution. The cutout's effective threshold is 8.000 ms today, not the
+9 ms C7 shipped — see commit `a276376` — and C7 shipped 48 tests either way, because the
+replacement is one-for-one. C7's other extra was
+`the_frame_that_trips_the_latch_has_its_verdict_discarded`, the only test in
 the class where the latching frame would otherwise have COMMITTED. All of those extras except the
 second-utterance test were the SOLE killer of a mutation that would otherwise have survived — C5's
 two account for three such mutations between them, C6's two for three more and C7's two for two
