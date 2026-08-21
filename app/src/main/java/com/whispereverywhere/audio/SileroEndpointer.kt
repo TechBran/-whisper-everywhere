@@ -1,5 +1,7 @@
 package com.whispereverywhere.audio
 
+import com.whispereverywhere.util.ProbeStats
+
 /**
  * The 3.7 real-VAD endpointer: streaming Silero probabilities in, "commit now" out.
  *
@@ -35,7 +37,8 @@ package com.whispereverywhere.audio
  * ## Threading
  * [onFrame] runs on the capture thread. [reset] is also called from Main (switchSource
  * `FloatingBubbleService.kt:1819`, stopRecording `:2393`) and [onSessionStart] is Main-ONLY
- * (onOpen `:2224`, the site that used to be a fourth [reset]). Every mutable field is
+ * (onOpen `:2224`, the site that used to be a fourth [reset]); [onSessionEnd] is Main-only too,
+ * from stopRecording after both capture threads have joined. Every mutable field is
  * therefore @Volatile, with the same tolerance [com.whispereverywhere.service.SegmentCapPolicy]
  * documents: the writes are not atomic together, but a torn observation costs at most one 32 ms
  * chunk of slack. The annotation is not decoration — without it a Main-thread [reset] shares no
@@ -59,6 +62,16 @@ package com.whispereverywhere.audio
  *        testable on the JVM. It is NOT this class's wall clock — see the "ONE clock" ruling above,
  *        which stands: this one never leaves [timedProbe], where it measures the duration of a
  *        single native call and nothing about the audio stream.
+ * @param probeStats the session's probe cost/overrun accounting. ONE instance per endpointer: it is
+ *        recorded on every probe call, emitted as the `probe:` line when its interval is due, reset
+ *        at session start and emitted once more at session end. Defaulted so the state-machine tests
+ *        need not supply one; [com.whispereverywhere.audio.EndpointerFactory] passes the real one.
+ *        Two threads reach it: `record()` from the CAPTURE thread, `reset()` (onSessionStart) and
+ *        `line()` (onSessionEnd) from MAIN — which is why every method on it is `@Synchronized`.
+ * @param probeArm arms the native probe's lifecycle for a new session (Main). The context itself is
+ *        still created lazily on the capture thread, at the first frame.
+ * @param probeTeardown frees the native probe context at session end, after the capture threads have
+ *        joined. Injected rather than called directly so this class needs no JNI on the classpath.
  *
  * The per-tier cost governor is NOT a constructor parameter: it is handed over per session through
  * [Endpointer.onSessionStart], because it depends on the installed tier AND on whether
@@ -68,9 +81,23 @@ class SileroEndpointer(
     private val probe: (ByteArray) -> Float,
     private val probeReset: () -> Unit = {},
     private val nanoClock: () -> Long = { System.nanoTime() },
+    private val probeStats: ProbeStats =
+        ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L),
+    private val probeArm: () -> Unit = {},
+    private val probeTeardown: () -> Unit = {},
 ) : Endpointer {
     /** The accumulator. One array for the life of the endpointer: no per-frame allocation. */
     private val frame = ByteArray(EndpointerTuning.FRAME_BYTES)
+
+    /**
+     * [EndpointerTuning.PROBE_BUDGET_MS] in the unit [timedProbe] measures. A plain `val`, so no
+     * `@Volatile`: the budget is a constant for this endpointer's life, and the census in
+     * `SileroEndpointerConcurrencyTest` covers `var`s only for exactly that reason.
+     *
+     * It is converted ONCE here rather than at the two comparison sites, so the latch and the
+     * [probeStats] instance constructed above it cannot drift onto different numbers.
+     */
+    private val budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L
 
     @Volatile private var fill = 0
     @Volatile private var lastFrameMs = 0L
@@ -228,7 +255,7 @@ class SileroEndpointer(
             // bytes belong to audio the caller has just handed off, and carrying them forward
             // would prepend the previous utterance's tail to the next segment.
             fill = 0
-            val p = timedProbe()
+            val p = timedProbe(nowMs)
             // The frame that TRIPPED the latch has its verdict DISCARDED, cut and all: the reason
             // the latch fires is that this probe's output has stopped being trustworthy, and a cut
             // is the one verdict the caller cannot take back (`no_context = true` makes a mid-word
@@ -345,6 +372,14 @@ class SileroEndpointer(
      * of those is a VAD cut, so none has a speechMs/trailMs/p of its own to leave behind; clearing
      * the record there would blank the funnel's numbers for the VAD cut that really did happen. The
      * merge path and the discarded short burst leave it standing for exactly the same reason.
+     *
+     * [probeStats] is reset and [probeArm] fired here for the same reason and in the same place: a
+     * session is the unit the `probe:` line accounts for ("overruns=0 over this recording"), and
+     * arming is the session-open half of the native probe's lifecycle whose other half is
+     * [onSessionEnd]'s teardown. Both sit with the re-arms ABOVE [clearForNextSegment], so the
+     * whole invalidation happens at the top and the shared per-segment clear stays the last word.
+     * [probeArm] must be MAIN-SAFE and must not initialise anything: the native context is created
+     * lazily on the CAPTURE thread, at this session's first frame.
      */
     override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
@@ -354,38 +389,71 @@ class SileroEndpointer(
         slowRun = 0
         probeCutout = false
         lastCutRecord = null
+        probeStats.reset()
+        probeArm()
         clearForNextSegment()
     }
 
     /**
-     * One native probe call, timed. After [EndpointerTuning.PROBE_CUTOUT_FRAMES] CONSECUTIVE frames
-     * over [EndpointerTuning.PROBE_BUDGET_MS] the probe is latched off for the rest of the session
-     * and the caller falls back to amplitude. Latched, never retried per frame: the same discipline
-     * the new-segment callback uses for a throwing callback — something that failed 16 frames
-     * running will fail on the next one too, and retrying costs the audio thread every time.
+     * Session end, **on MAIN**, from stopRecording AFTER both capture sources have stopped and
+     * JOINED their threads and after the unconditional stop flush. [probeStats] is read from this
+     * thread while the capture thread may still be writing it (E1's join is timed), which is what
+     * its instance synchronisation is for. Emits the session's final `probe:` line
+     * — unconditionally, because a session that never reached the 10 s interval would otherwise
+     * report nothing at all, and "overruns=0 over 40 frames" is exactly the acceptance evidence —
+     * then frees the native context.
      *
-     * CONSECUTIVE is the whole question the latch asks — "is this device failing to keep up RIGHT
+     * The endpointer's DECISION state — the governor's anchor, the cutout latch, the cut record —
+     * is deliberately left standing here. [onSessionStart] is the sole re-arm point; this method
+     * only ACCOUNTS and FREES. A session end that also cleared the machine would put two re-arm
+     * sites in the class and make "which one ran last" load-bearing, and it would take the cut
+     * record away from the funnel line that is emitted after it.
+     */
+    override fun onSessionEnd() {
+        android.util.Log.i("WE-DIAG", probeStats.line())
+        probeTeardown()
+    }
+
+    /**
+     * One native probe call, timed. Two independent consumers of the same measurement:
+     *  - [probeStats] accumulates the session's cost distribution and overrun total, and says when a
+     *    `probe: frames=… p50=…µs p99=…µs overruns=…` line is due (at most one per 10 s);
+     *  - [slowRun] is the LATCH's consecutive-overrun counter. After
+     *    [EndpointerTuning.PROBE_CUTOUT_FRAMES] consecutive frames over
+     *    [EndpointerTuning.PROBE_BUDGET_MS] the probe is latched off for the rest of the session and
+     *    the caller falls back to amplitude. Latched, never retried per frame: the same discipline
+     *    the new-segment callback uses for a throwing callback — something that failed 16 frames
+     *    running will fail on the next one too, and retrying costs the audio thread every time.
+     *
+     * CONSECUTIVE is the whole question the LATCH asks — "is this device failing to keep up RIGHT
      * NOW" — and one frame inside the budget answers it, which is why a fast frame zeroes the run
-     * rather than merely pausing it. The session's TOTALS ("did this session ever miss the budget")
-     * are a different question with a different owner: `com.whispereverywhere.util.ProbeStats`,
-     * wired in by Task C10. Two sets of counters is exactly how the latch and the `probe:` log line
-     * would start disagreeing.
+     * rather than merely pausing it. [probeStats] asks the SESSION's question instead ("did this
+     * session ever miss the budget") and only a new session resets it. Two counters, ONE overrun
+     * DEFINITION: both read the same microsecond cost against the same [budgetUs], which is what
+     * keeps the `probe:` line from reporting overruns this latch never counted.
      *
      * The budget is a floor on what counts as an overrun, not a ceiling on what a frame may cost:
      * the session's worst-case PRE-LATCH exposure is [EndpointerTuning.PROBE_CUTOUT_FRAMES] probe
-     * calls of unbounded duration, after which it is exactly zero.
+     * calls of unbounded duration, after which it is exactly zero. Whether ONE catastrophic frame —
+     * a single probe call longer than the whole 32 ms frame period — should latch immediately
+     * rather than wait for sixteen is DEFERRED, not declined: such a rule needs a THRESHOLD, and
+     * the `probe:` line's p99 is the evidence that would set it. The S-task's on-device
+     * measurements produce that number; nothing here may invent one ahead of them.
      *
-     * The comparison is TRUNCATED MILLISECONDS, strictly above the budget, so the effective
-     * threshold is 9 ms: an 8.5 ms probe truncates to 8 and is NOT an overrun. Task C10 measures
-     * this same call in MICROSECONDS against the same constant converted, where 8.5 ms IS one —
-     * that is a RETUNE of this latch and not a change of units, and it must move this sentence and
-     * `the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds` along with the code.
+     * The comparison is MICROSECONDS, strictly above [budgetUs], so the boundary is exact: a probe
+     * costing 8.000 ms is NOT an overrun and one costing 8.5 ms IS. That is Task C10's deliberate
+     * RETUNE of Task C7's truncated-millisecond compare, taken so this latch and [probeStats] can
+     * never hold two opinions about what an overrun is;
+     * `the_budget_is_compared_in_MICROSECONDS_and_the_boundary_is_strict` holds both halves of it.
      */
-    private fun timedProbe(): Float {
+    private fun timedProbe(nowMs: Long): Float {
         val t0 = nanoClock()
         val p = probe(frame)
-        val elapsedMs = (nanoClock() - t0) / 1_000_000L
-        if (elapsedMs > EndpointerTuning.PROBE_BUDGET_MS) {
+        val elapsedUs = (nanoClock() - t0) / 1_000L
+        if (probeStats.record(elapsedUs, nowMs)) {
+            android.util.Log.i("WE-DIAG", probeStats.line())
+        }
+        if (elapsedUs > budgetUs) {
             slowRun++
             if (slowRun >= EndpointerTuning.PROBE_CUTOUT_FRAMES) probeCutout = true
         } else {

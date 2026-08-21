@@ -204,6 +204,13 @@ class SileroEndpointerConcurrencyTest {
         assertNull("capture thread threw: ${thrown.get()}", thrown.get())
         assertEquals("the probe must only ever see whole frames", 0, badFrameSize.get())
         assertTrue("the pump did no work", probed.get() > 0)
+        // C9's F10 handoff, taken with C10's microsecond retune. A latched probeCutout makes
+        // onFrame return at its FIRST line without touching `fill`, so the pump would keep
+        // looping and doing nothing: `probed > 0` still passes on the pre-latch frames and the
+        // storm silently stops storming, with no failure anywhere. C9 could not reach that state
+        // (the storm's probe is a ~50 ns lambda against a truncated-millisecond compare); C10's
+        // exact microsecond boundary is what makes it worth guarding, and this is the guard.
+        assertFalse("the storm latched the probe off — it stopped storming", ep.isProbeCutout())
 
         // A KNOWN partial frame, PLANTED, so the accumulator check below cannot depend on what
         // residue the storm happened to leave behind.

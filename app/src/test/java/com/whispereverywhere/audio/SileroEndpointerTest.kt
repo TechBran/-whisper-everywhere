@@ -1,5 +1,6 @@
 package com.whispereverywhere.audio
 
+import com.whispereverywhere.util.ProbeStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -14,14 +15,16 @@ private const val B = EndpointerTuning.FRAME_BYTES
 private const val BASE = 1_000_000L
 
 /**
- * The smallest cost [FakeProbe] can charge that this endpointer counts as an OVERRUN.
+ * A cost, in WHOLE MILLISECONDS, that this endpointer counts as an OVERRUN — the value the tests
+ * below reach for when they want "over budget" and do not care by how much.
  *
- * Spelled as "the budget plus one whole millisecond" rather than as `9`, because that is exactly
- * what the endpointer's comparison means: it truncates the elapsed nanoseconds to milliseconds and
- * tests STRICTLY above [EndpointerTuning.PROBE_BUDGET_MS], so anything under the next whole
- * millisecond — 8.5 ms included — is not an overrun.
- * `the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds` is where that lives as a
- * property; this constant only keeps the other tests from re-deciding it in a literal.
+ * Spelled as "the budget plus one whole millisecond" rather than as `9` so that a retune of
+ * [EndpointerTuning.PROBE_BUDGET_MS] carries it, and NOT because a whole millisecond is where the
+ * boundary sits: since Task C10 the comparison is MICROSECONDS strictly above the budget, so the
+ * smallest overrun is one microsecond past it and 8.5 ms is one too.
+ * `the_budget_is_compared_in_MICROSECONDS_and_the_boundary_is_strict` is where the boundary lives
+ * as a property, through [FakeProbe.costUs]; this constant only keeps the other tests from
+ * re-deciding the budget in a literal.
  */
 private val OVERRUN_MS = EndpointerTuning.PROBE_BUDGET_MS + 1
 
@@ -29,16 +32,32 @@ private val OVERRUN_MS = EndpointerTuning.PROBE_BUDGET_MS + 1
  * The injected probe. Records a COPY of every frame it is handed — the endpointer REUSES one
  * 1024-byte array, so retaining the reference would alias every "frame" onto the latest one.
  * `the_probe_is_handed_ONE_reused_array_which_is_why_the_fake_copies` proves that is a real hazard
- * and not a defensive habit. Optionally charges [costMs] of synthetic wall time against [clock] for
+ * and not a defensive habit. Optionally charges [costUs] of synthetic wall time against [clock] for
  * the cutout tests.
  */
 private class FakeProbe(var next: Float = 0f) : (ByteArray) -> Float {
     val frames = mutableListOf<ByteArray>()
     var clock: FakeClock? = null
-    var costMs: Long = 0L
+
+    /**
+     * The charged cost in MICROSECONDS — the unit the endpointer has measured in since Task C10,
+     * and the only granularity at which its boundary can be described: 8000 us is not an overrun
+     * and 8500 us is, and neither is expressible in [costMs].
+     */
+    var costUs: Long = 0L
+
+    /**
+     * [costUs] spelled in whole milliseconds, which is all most callers here want. A view, not a
+     * second field: two independent cost knobs on one fake is exactly how a test ends up charging
+     * a cost it did not mean to. The getter truncates, and nothing reads it.
+     */
+    var costMs: Long
+        get() = costUs / 1_000L
+        set(value) { costUs = value * 1_000L }
+
     override fun invoke(frame: ByteArray): Float {
         frames += frame.copyOf()
-        clock?.let { it.nowNs += costMs * 1_000_000L }
+        clock?.let { it.nowNs += costUs * 1_000L }
         return next
     }
 }
@@ -936,10 +955,12 @@ class SileroEndpointerTest {
     //
     // Four properties, none of which any other one implies, and each pinned below on its own:
     //  - the run must be CONSECUTIVE — one fast frame resets it;
-    //  - the comparison is TRUNCATED MILLISECONDS, STRICTLY above the budget, so its effective
-    //    threshold is 9 ms and an 8.5 ms probe is not an overrun. Task C10 re-measures the same
-    //    call in MICROSECONDS, where 8.5 ms IS one: different numbers, and the test below says
-    //    which of them this is;
+    //  - the comparison is MICROSECONDS, STRICTLY above the budget, so the boundary is exact: 8.000
+    //    ms is not an overrun and 8.5 ms is. Task C7 shipped this as TRUNCATED MILLISECONDS with a
+    //    9 ms effective threshold and planted a test saying so, precisely so that C10 could not
+    //    retune it by accident while wiring ProbeStats in. C10 retuned it ON PURPOSE — one overrun
+    //    definition for the latch and the session totals — and replaced that test with the one
+    //    below, which states the new boundary from both sides;
     //  - the frame that TRIPS the latch has its verdict DISCARDED, commit and all;
     //  - the latch is permanent within a session and lifted ONLY by onSessionStart.
     // ---------------------------------------------------------------------------------------
@@ -959,28 +980,37 @@ class SileroEndpointerTest {
     }
 
     /**
-     * THE UNITS PIN, and the one test on this branch written against a task that has not run yet.
+     * THE UNITS PIN, and the successor to C7's `..._in_TRUNCATED_MILLISECONDS_not_microseconds`.
      *
-     * [EndpointerTuning.PROBE_BUDGET_MS] is 8 MILLISECONDS and its two consumers do not compare it
-     * the same way. This latch truncates the elapsed nanoseconds to whole milliseconds and tests
-     * strictly above the budget, so its real threshold is 9 ms. Task C10's `ProbeStats` compares
-     * MICROSECONDS against the same constant converted, where the threshold is 8.000 ms exactly.
-     * **A probe costing 8.5 ms is not an overrun here and is one there** — so if C10 "unifies" the
-     * two by moving this comparison to microseconds, it retunes the cutout latch inside a wiring
-     * commit: a behaviour change wearing a plumbing commit's message.
+     * C7 measured this call in truncated milliseconds, so its effective threshold was 9 ms and an
+     * 8.5 ms probe was not an overrun; the session totals Task C10 wires in compare MICROSECONDS
+     * against the same constant converted, where 8.5 ms IS one. C7 planted its test as a TRIPWIRE
+     * against C10 unifying the two by accident — a retune of the cutout latch wearing a plumbing
+     * commit's message. C10 unified them ON PURPOSE, and this test is the conscious decision in the
+     * place the tripwire stood: ONE overrun definition, so the `probe:` line cannot report overruns
+     * the latch never counted, nor the latch trip on frames the line calls comfortable.
      *
-     * Both sides are stated, because neither is visible from the other: half a millisecond past the
-     * budget must NOT latch after four times the cutout run, and one whole millisecond past it must
-     * latch on exactly the 16th frame. Spelled from [EndpointerTuning.PROBE_BUDGET_MS] throughout,
-     * so a retune of the budget moves the boundary this test describes instead of stranding it.
+     * Both halves are stated, because neither is visible from the other:
+     *  - EXACTLY the budget is NOT an overrun — the comparison is STRICTLY above it, and four times
+     *    the cutout run of frames costing precisely 8000 us must leave the latch alone;
+     *  - 8500 us IS one, which is the half C7's compare could not see at all: it truncated to 8 ms
+     *    and read as inside the budget, so under C7 this phase would have run forever without
+     *    latching. Half a millisecond is deliberately the SAME cost C7's test used to prove the
+     *    opposite, so the two tests cannot both be true and the replacement is visible as a
+     *    replacement.
+     *
+     * Off [Pump] on purpose, as C7's was: this is a boundary on the nanoClock, not on the audio
+     * stream, and it is driven frame by frame so the 16th consecutive overrun can be named. Spelled
+     * from [EndpointerTuning.PROBE_BUDGET_MS] throughout, so a retune of the budget moves the
+     * boundary this test describes instead of stranding it.
      */
-    @Test fun the_budget_is_compared_in_TRUNCATED_MILLISECONDS_not_microseconds() {
+    @Test fun the_budget_is_compared_in_MICROSECONDS_and_the_boundary_is_strict() {
         val clock = FakeClock()
-        val budgetNs = EndpointerTuning.PROBE_BUDGET_MS * 1_000_000L
-        var costNs = budgetNs + 500_000L
-        var probed = 0
+        val probe = FakeProbe(next = 0.1f)
+        probe.clock = clock
+        val budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L
         val ep = SileroEndpointer(
-            probe = { clock.nowNs += costNs; probed++; 0.1f },
+            probe = probe,
             nanoClock = clock,
         )
         var t = BASE
@@ -989,31 +1019,26 @@ class SileroEndpointerTest {
             t += EndpointerTuning.FRAME_MS
         }
 
+        probe.costUs = budgetUs
         frames(4 * EndpointerTuning.PROBE_CUTOUT_FRAMES)
         assertFalse(
-            "half a millisecond past the budget truncates back TO the budget, and the budget " +
-                "itself is not an overrun — four times the cutout run of it must not latch",
+            "EXACTLY the budget is not an overrun — the comparison is strictly ABOVE it, so four " +
+                "times the cutout run of frames costing precisely 8000 us must not latch",
             ep.isProbeCutout(),
         )
-        costNs = budgetNs + 999_999L
-        frames(EndpointerTuning.PROBE_CUTOUT_FRAMES)
-        assertFalse(
-            "one nanosecond under the next whole millisecond still truncates to the budget",
-            ep.isProbeCutout(),
-        )
-        costNs = budgetNs + 1_000_000L
+        probe.costUs = budgetUs + 500L
         frames(EndpointerTuning.PROBE_CUTOUT_FRAMES - 1)
         assertFalse("the run is one frame short", ep.isProbeCutout())
         frames(1)
         assertTrue(
-            "one whole millisecond past the budget IS an overrun — the effective threshold is 9 " +
-                "ms, not 8, and not 8.000 as a microsecond compare would make it",
+            "8500 us IS an overrun now — C7's truncated-millisecond compare read it as 8 ms and " +
+                "therefore as inside the budget, and this phase would never have latched",
             ep.isProbeCutout(),
         )
         assertEquals(
             "every frame up to the latch was probed, and none after it",
-            6 * EndpointerTuning.PROBE_CUTOUT_FRAMES,
-            probed,
+            5 * EndpointerTuning.PROBE_CUTOUT_FRAMES,
+            probe.frames.size,
         )
     }
 
@@ -1227,6 +1252,70 @@ class SileroEndpointerTest {
         assertNull(ep.lastCut())
     }
 
+    // ---------------------------------------------------------------------------------------
+    // ProbeStats wiring and the session probe seam (Task C10). ONE budget with ONE overrun
+    // definition and TWO consumers: the LATCH's consecutive run (above) and the SESSION's totals
+    // (here). Task F1 landed `ProbeStats` ownerless because this file did not exist yet; this is
+    // the handoff, and it is also where the endpointer gains the two injected lambdas Workstream
+    // D binds the native probe's lifecycle to — probeArm at session start, probeTeardown at
+    // session end — so the state machine still needs no JNI on the classpath to be tested.
+    // ---------------------------------------------------------------------------------------
+
+    @Test fun every_probe_call_is_recorded_against_the_budget() {
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        probe.costMs = 1
+        val stats = ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L)
+        val ep = SileroEndpointer(probe = probe, nanoClock = clock, probeStats = stats)
+        Pump(ep, probe).run(0.1f, 40)
+        assertEquals(40L, stats.frames())
+        assertEquals(0L, stats.overruns())
+    }
+
+    @Test fun overrunning_frames_reach_the_stats_and_the_latch_stops_the_count() {
+        // ONE budget, two consumers: the latch (16 CONSECUTIVE) and the session totals. Once the
+        // latch fires the probe is not called again, so the totals stop where the amplitude
+        // fallback took over — which is exactly what the `probe:` line should report.
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        probe.costMs = OVERRUN_MS
+        val stats = ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L)
+        val ep = SileroEndpointer(probe = probe, nanoClock = clock, probeStats = stats)
+        Pump(ep, probe).run(0.1f, 40)
+        assertTrue(ep.isProbeCutout())
+        assertEquals(16L, stats.frames())
+        assertEquals(16L, stats.overruns())
+    }
+
+    @Test fun a_new_session_resets_the_stats_arms_the_probe_and_session_end_tears_it_down() {
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        val stats = ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L)
+        var arms = 0
+        var teardowns = 0
+        val ep = SileroEndpointer(
+            probe = probe,
+            nanoClock = clock,
+            probeStats = stats,
+            probeArm = { arms++ },
+            probeTeardown = { teardowns++ },
+        )
+        val pump = Pump(ep, probe)
+        pump.run(0.1f, 10)
+        assertEquals(10L, stats.frames())
+
+        ep.onSessionStart(nowMs = pump.t, minCommitIntervalMs = 1_200L)
+        assertEquals("a session's probe accounting starts from zero", 0L, stats.frames())
+        assertEquals("the native probe is armed once per session, on Main", 1, arms)
+        assertEquals("arming must not free anything", 0, teardowns)
+
+        ep.onSessionEnd()
+        assertEquals("the native context is freed exactly once, at session end", 1, teardowns)
+    }
+
     /**
      * The obligations this file places on LATER tasks and on other files are pinned as WHOLE
      * SENTENCES, each scoped to the member that states it.
@@ -1274,14 +1363,17 @@ class SileroEndpointerTest {
                 classKdoc(),
                 "The per-tier cost governor is NOT a constructor parameter",
             ),
-            // C7's own two, and both are obligations on C10 — the task that wires ProbeStats and
-            // the native arm/teardown into this same method and this same timed call.
+            // C7's own two were obligations ON C10, and C10 has now met both. The latch one was
+            // DISCHARGED BY RETUNE rather than by deletion: C7's sentence said the compare was
+            // truncated milliseconds and that changing it would be a retune, C10 made that retune
+            // deliberately, so the sentence is REPLACED by the one that describes what the code
+            // does now. Replacing a pin is the loud path; deleting it would have been the quiet
+            // one, and the whole point of C7 planting it was that this decision be visible.
             Pin(
-                "the probe budget's UNITS and strictness — C10 measures the same call differently",
+                "the probe budget's UNITS and strictness — ONE definition for latch and stats",
                 kdocFor("private fun timedProbe("),
-                "The comparison is TRUNCATED MILLISECONDS, strictly above the budget, so the " +
-                    "effective threshold is 9 ms: an 8.5 ms probe truncates to 8 and is NOT an " +
-                    "overrun.",
+                "The comparison is MICROSECONDS, strictly above [budgetUs], so the boundary is " +
+                    "exact: a probe costing 8.000 ms is NOT an overrun and one costing 8.5 ms IS.",
             ),
             Pin(
                 "only a new SESSION lifts the slow-probe latch — a commit must not (C10)",
