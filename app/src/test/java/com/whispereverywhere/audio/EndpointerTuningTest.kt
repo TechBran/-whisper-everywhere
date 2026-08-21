@@ -1,0 +1,354 @@
+package com.whispereverywhere.audio
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * The 3.7 tuning table (spec "Tuning constants") pinned verbatim. Every value here is a decision
+ * with a written derivation; a silent edit is a behaviour change, so it fails this test first.
+ *
+ * Two of these tests read `EndpointerTuning.kt` as TEXT instead of calling it, for the reason
+ * `NativeVadSourceContractTest` gives for reading C++: what is load-bearing about a tuning constant
+ * is not only its value but the derivation written beside it (the A/B ranges an owner turns, the
+ * single-owner rulings Task D4 aliases against, the native line the number was copied from), and
+ * this object's SCOPE ruling — no commit-cadence constant may ever live here — is a rule about what
+ * must NEVER be added, which no value assertion can express.
+ */
+class EndpointerTuningTest {
+
+    @Test fun the_shipped_tuning_table_is_pinned_verbatim() {
+        assertEquals(0.50f, EndpointerTuning.ONSET_THRESHOLD, 0.0f)
+        assertEquals(0.35f, EndpointerTuning.RELEASE_THRESHOLD, 0.0f)
+        assertEquals(500L, EndpointerTuning.HANGOVER_MS)
+        assertEquals(300L, EndpointerTuning.MIN_SPEECH_MS)
+        assertEquals(98L, EndpointerTuning.MICRO_PAUSE_MS)
+        assertEquals(8L, EndpointerTuning.PROBE_BUDGET_MS)
+        assertEquals(16, EndpointerTuning.PROBE_CUTOUT_FRAMES)
+        assertEquals(-1.0f, EndpointerTuning.NO_VERDICT, 0.0f)
+    }
+
+    @Test fun the_frame_geometry_is_the_silero_window() {
+        // whisper.cpp model header: n_window = 512 @ 16 kHz mono PCM16.
+        assertEquals(512, EndpointerTuning.FRAME_SAMPLES)
+        // ABSOLUTE first, derivation second (the D1/D2 lesson): a purely differential assertion
+        // survives a mutation that moves both of its sides, so each of the three geometry numbers
+        // is pinned to its own literal, and the two identities below stay as the explanation of
+        // WHY those literals are the only legal ones.
+        assertEquals(1024, EndpointerTuning.FRAME_BYTES)
+        assertEquals(32L, EndpointerTuning.FRAME_MS)
+        assertEquals(EndpointerTuning.FRAME_SAMPLES * 2, EndpointerTuning.FRAME_BYTES)
+        assertEquals(1_000L * EndpointerTuning.FRAME_SAMPLES / 16_000L, EndpointerTuning.FRAME_MS)
+    }
+
+    @Test fun the_release_threshold_is_the_native_schmitt_hysteresis() {
+        // whisper.cpp:5258 -> neg_threshold = threshold - 0.15f
+        assertEquals(0.15f, EndpointerTuning.ONSET_THRESHOLD - EndpointerTuning.RELEASE_THRESHOLD, 1e-6f)
+    }
+
+    @Test fun the_endpointer_onset_is_NOT_the_batch_filters_0_40() {
+        // whisper_jni.cpp:191-192 keeps 0.40/150 ms for we_vad_filter: the probe decides WHEN to
+        // cut, the batch filter decides WHAT reaches the encoder. Independent knobs, by design.
+        assertNotEquals(0.40f, EndpointerTuning.ONSET_THRESHOLD)
+    }
+
+    /**
+     * The derivations, the owner-facing A/B ranges and the two single-owner rulings are pinned as
+     * WHOLE SENTENCES, each scoped to the member it documents.
+     *
+     * Whole sentences and not distinctive words, because of the N6 K10 lesson: two contract items
+     * that share one distinctive word mean the shorter anchor pins NEITHER — deleting the sentence
+     * leaves the anchor satisfied by its neighbour, and the deletion is invisible.
+     */
+    @Test fun the_load_bearing_derivations_are_pinned_in_the_source() {
+        val pins = listOf(
+            // --- object KDoc: the two rulings that decide what this object is FOR ---
+            Pin(
+                "the batch filter is a different job, not a stale copy of this one",
+                classKdoc(),
+                "the streaming probe decides WHEN to cut an utterance, the batch filter decides " +
+                    "WHAT audio inside that commit reaches the encoder"
+            ),
+            Pin(
+                "why the batch filter's 0.40 is right there and wrong here",
+                classKdoc(),
+                "the batch filter's 0.40 buys onset headroom that `suppress_nst` absorbs at the " +
+                    "token layer, and endpointing has no token layer"
+            ),
+            Pin(
+                "smoothing is an absence with a reason, not an omission",
+                classKdoc(),
+                "There is deliberately NO smoothing/EMA constant."
+            ),
+            Pin(
+                "the cost of adding one anyway",
+                classKdoc(),
+                "An EMA would add lag and a second thing to tune."
+            ),
+            // --- FRAME_BYTES / NO_VERDICT: the single-owner rulings Task D4 aliases against ---
+            Pin(
+                "FRAME_BYTES is the single owner of the native frame size",
+                kdocFor("FRAME_BYTES"),
+                "SINGLE OWNER: this object owns the native frame contract."
+            ),
+            Pin(
+                "and D4 must alias it rather than restate it",
+                kdocFor("FRAME_BYTES"),
+                "`VadProbe.FRAME_BYTES` (Task D4) is an alias of this constant, not a second literal"
+            ),
+            Pin(
+                "NO_VERDICT is not silence",
+                kdocFor("NO_VERDICT"),
+                "\"No verdict\" from the native probe — NEVER \"silence\"."
+            ),
+            Pin(
+                "why the native side refuses a short frame instead of padding it",
+                kdocFor("NO_VERDICT"),
+                "A short frame zero-padded into the model still advances the LSTM and poisons the " +
+                    "recurrence, so the native side refuses and the client keeps the previous state."
+            ),
+            Pin(
+                "NO_VERDICT is the single owner of the sentinel",
+                kdocFor("NO_VERDICT"),
+                "SINGLE OWNER, as for [FRAME_BYTES]: `VadProbe.NO_VERDICT` (Task D4) aliases this."
+            ),
+            // --- the acoustic numbers: where each one came from, and which are owner knobs ---
+            Pin(
+                "the onset is the native default, copied not invented",
+                kdocFor("ONSET_THRESHOLD"),
+                "Native default (`whisper_vad_default_params`, whisper.cpp:4454)."
+            ),
+            Pin(
+                "the release is the native Schmitt hysteresis",
+                kdocFor("RELEASE_THRESHOLD"),
+                "Schmitt hysteresis, native `neg_threshold = threshold - 0.15f` (whisper.cpp:5258)."
+            ),
+            Pin(
+                "the hysteresis is the fix for a shipped defect, not a refinement",
+                kdocFor("RELEASE_THRESHOLD"),
+                "This is the exact mechanism whose absence causes today's 251-499 RMS dead band"
+            ),
+            Pin(
+                "the release threshold is an owner A/B knob",
+                kdocFor("RELEASE_THRESHOLD"),
+                "Widen to 0.30 if mid-word splits appear in A/B."
+            ),
+            Pin(
+                "the hangover's cost asymmetry — why 500 and not the native 100",
+                kdocFor("HANGOVER_MS"),
+                "Inter-clause pauses run 200-500 ms; the cost of cutting too early is one extra " +
+                    "full encoder pass PLUS a mid-clause boundary that `no_context = true` makes " +
+                    "unrepairable."
+            ),
+            Pin(
+                "the hangover also feeds the batch filter's padding",
+                kdocFor("HANGOVER_MS"),
+                "Also feeds the batch filter's `speech_pad_ms = 150`, which needs trailing audio " +
+                    "to expand into."
+            ),
+            Pin(
+                "the hangover is an owner A/B knob",
+                kdocFor("HANGOVER_MS"),
+                "Owner A/B range 350-800."
+            ),
+            Pin(
+                "300 ms is agreement with the native filter, not a guess",
+                kdocFor("MIN_SPEECH_MS"),
+                "The native filter already drops <250 ms before `whisper_full`; 300 keeps client " +
+                    "and native agreeing instead of fighting."
+            ),
+            Pin(
+                "the micro-pause floor is the native max-speech split value",
+                kdocFor("MICRO_PAUSE_MS"),
+                "native `min_silence_samples_at_max_speech`, whisper.cpp:5255"
+            ),
+            Pin(
+                "what the floor means at the 32 ms frame cadence",
+                kdocFor("MICRO_PAUSE_MS"),
+                "At the 32 ms frame cadence the first qualifying frame is the 4th of the dip " +
+                    "(128 ms > 98 ms)."
+            ),
+            Pin(
+                "the probe budget is the probe's OWN cost, not the frame period",
+                kdocFor("PROBE_BUDGET_MS"),
+                "the probe's own cost budget inside the 32 ms frame period, not the frame period " +
+                    "itself"
+            ),
+            Pin(
+                "the cutout is latched for the session, not per frame",
+                kdocFor("PROBE_CUTOUT_FRAMES"),
+                "Consecutive overruns that latch the probe off for the rest of the session."
+            ),
+            // --- the scope ruling, in prose (its structural twin is the next test) ---
+            Pin(
+                "the commit cadence is NOT an acoustic knob and is NOT here",
+                commitCadenceNote(),
+                "NO COMMIT-INTERVAL CONSTANTS LIVE HERE."
+            ),
+            Pin(
+                "and the object that does own it is named",
+                commitCadenceNote(),
+                "is owned solely by com.whispereverywhere.service.CommitCadencePolicy"
+            ),
+            Pin(
+                "and the route it takes to the endpointer is named",
+                commitCadenceNote(),
+                "reaches the endpointer per SESSION via Endpointer.onSessionStart(nowMs, " +
+                    "minCommitIntervalMs)"
+            ),
+        )
+
+        pins.forEach { (item, scope, sentence) ->
+            assertTrue(
+                "EndpointerTuning.kt no longer states: \"$sentence\"\n" +
+                    "That sentence is the written derivation for: $item.\n" +
+                    "A tuning constant without its derivation is a number nobody may safely " +
+                    "change: the next person cannot tell an owner-tunable knob from a value " +
+                    "copied out of whisper.cpp, and the A/B session that follows re-derives it " +
+                    "from scratch or gets it wrong. Restore the sentence, or — if the DECISION " +
+                    "changed — change the value, the sentence and this pin together.",
+                prose(scope).contains(sentence)
+            )
+        }
+    }
+
+    /**
+     * The scope ruling, structurally. The prose pin above says the cadence does not live here; this
+     * one makes the statement executable, because prose cannot stop an addition.
+     *
+     * Two objects both answering "how often may this tier commit" is how the log and the code start
+     * disagreeing. The cadence is a per-SESSION function of the installed tier and of whether every
+     * commit becomes a provider request — `CommitCadencePolicy` (Task D3) owns it, and hands it to
+     * the endpointer at `onSessionStart`.
+     */
+    @Test fun no_commit_cadence_constant_may_live_in_this_object() {
+        val named = Regex("""(?m)^\s*const val (\w*(?:COMMIT|INTERVAL|CADENCE)\w*)""")
+            .findAll(src).map { it.groupValues[1] }.toList()
+        assertEquals(
+            "EndpointerTuning declares a commit-cadence constant: $named. It belongs to " +
+                "com.whispereverywhere.service.CommitCadencePolicy (Task D3) and NOWHERE else — " +
+                "the endpointer receives it per session through onSessionStart(nowMs, " +
+                "minCommitIntervalMs), because it depends on the installed tier AND on whether " +
+                "every commit becomes a provider request, neither of which is an acoustic knob.",
+            emptyList<String>(),
+            named
+        )
+
+        listOf("\"eco\"", "\"base\"", "\"pro\"", "\"extreme\"", "\"multi\"", "\"ultra\"").forEach { id ->
+            assertTrue(
+                "EndpointerTuning mentions the tier id $id. A per-tier table in this file is the " +
+                    "same defect as a per-tier constant wearing a different name (1200 pro / 6000 " +
+                    "multi / 8000 extreme+ultra / 3000 cloud batch live in CommitCadencePolicy): " +
+                    "this object holds only what the state machine itself decides with — " +
+                    "thresholds, durations, frame geometry, the probe budget.",
+                !src.contains(id)
+            )
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Source-reading helpers. Same shape as NativeVadSourceContractTest's, same reasons.
+    // ---------------------------------------------------------------------------------------
+
+    private data class Pin(val item: String, val scope: String, val sentence: String)
+
+    private fun repoFile(relative: String): File {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            File(dir, relative).let { if (it.isFile) return it }
+            File(dir, "app/$relative").let { if (it.isFile) return it }
+            dir = dir.parentFile
+        }
+        throw AssertionError(
+            "could not locate $relative from ${System.getProperty("user.dir")}"
+        )
+    }
+
+    /**
+     * Line endings are normalized to LF at the single read site, so no anchor below can be defeated
+     * by a CRLF checkout (the N1/N2 lesson: `readText()` does not normalize, and a needle with an
+     * embedded "\n" can never match CRLF text).
+     */
+    private val src: String by lazy {
+        repoFile("src/main/java/com/whispereverywhere/audio/EndpointerTuning.kt")
+            .readText().replace("\r\n", "\n")
+    }
+
+    /** The object's own KDoc: the first block in the file, ending at the `object` declaration. */
+    private fun classKdoc(): String {
+        val at = src.indexOf("object EndpointerTuning")
+        assertTrue("EndpointerTuning.kt no longer declares `object EndpointerTuning`", at >= 0)
+        val head = src.substring(0, at)
+        val open = head.lastIndexOf("/**")
+        assertTrue(
+            "no KDoc block opens above `object EndpointerTuning`. lastIndexOf returns -1 when the " +
+                "block is gone, so this assert names the real cause — the object's two scope " +
+                "rulings (independent of the batch filter; deliberately no smoothing) were " +
+                "deleted — instead of failing four sentence pins for what reads like drift.",
+            open >= 0
+        )
+        return head.substring(open)
+    }
+
+    /**
+     * The KDoc block immediately above one constant — from its opening marker down to the
+     * declaration. (Spelling that marker out here is not possible: Kotlin NESTS block comments, so
+     * it would open one that never closes.)
+     */
+    private fun kdocFor(constant: String): String {
+        val decl = "const val $constant"
+        val at = src.indexOf(decl)
+        assertTrue("EndpointerTuning.kt no longer declares `$decl`", at >= 0)
+        val head = src.substring(0, at)
+        val open = head.lastIndexOf("/**")
+        assertTrue("no KDoc block opens above `$decl`", open >= 0)
+        val block = head.substring(open)
+        assertTrue(
+            "the KDoc scope for `$decl` widened past a previous member: lastIndexOf finds the " +
+                "NEAREST block above the declaration, so deleting THIS constant's KDoc outright " +
+                "silently borrows the previous constant's (or the object's) — and a sentence pin " +
+                "could then be satisfied by a derivation written about a different number.",
+            block.lineSequence().none {
+                val t = it.trimStart()
+                t.startsWith("const val") || t.startsWith("object ")
+            }
+        )
+        return block
+    }
+
+    /** The trailing `//` note that states the scope ruling: everything after the last constant. */
+    private fun commitCadenceNote(): String {
+        val last = src.lastIndexOf("const val ")
+        assertTrue("EndpointerTuning.kt declares no constants at all", last >= 0)
+        val tail = src.substring(last)
+        assertTrue(
+            "no comment follows the last constant in EndpointerTuning.kt. The scope ruling — that " +
+                "the per-tier commit cadence is CommitCadencePolicy's and never this object's — " +
+                "is stated there; this assert names its deletion instead of failing three " +
+                "sentence pins against the constant's own KDoc.",
+            tail.lineSequence().any { it.trimStart().startsWith("//") }
+        )
+        return tail
+    }
+
+    /**
+     * KDoc/comment prose as a single normalized line: the leading decoration is stripped and runs
+     * of whitespace collapse, so a pin can anchor on a WHOLE SENTENCE without being defeated by
+     * wherever the 100-column limit happened to wrap it.
+     */
+    private fun prose(scope: String): String =
+        scope.lineSequence()
+            .map { line ->
+                var t = line.trim()
+                if (t.startsWith("/**")) t = t.removePrefix("/**")
+                if (t.startsWith("//")) t = t.removePrefix("//")
+                if (t.endsWith("*/")) t = t.removeSuffix("*/")
+                if (t.startsWith("*")) t = t.removePrefix("*")
+                t.trim()
+            }
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+            .replace(Regex("\\s+"), " ")
+}

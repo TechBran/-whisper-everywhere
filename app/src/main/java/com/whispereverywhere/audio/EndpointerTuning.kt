@@ -1,0 +1,103 @@
+package com.whispereverywhere.audio
+
+/**
+ * Every knob the 3.7 Silero endpointer turns, in ONE object, JVM-pinned by EndpointerTuningTest.
+ *
+ * Deliberately SEPARATE from the batch VAD filter's tuning (`we_vad_filter`,
+ * `whisper_jni.cpp:191-192` — threshold 0.40 / speech_pad 150 ms), which is untouched: the
+ * streaming probe decides WHEN to cut an utterance, the batch filter decides WHAT audio inside
+ * that commit reaches the encoder. Independent knobs on independent jobs — the batch filter's 0.40
+ * buys onset headroom that `suppress_nst` absorbs at the token layer, and endpointing has no token
+ * layer.
+ *
+ * There is deliberately NO smoothing/EMA constant. The reference implementation does not smooth
+ * (`whisper_vad_segments_from_probs`, `whisper.cpp:5217-5451`): the Schmitt trigger, the minimum
+ * speech duration and the hangover already low-pass the sequence. An EMA would add lag and a second
+ * thing to tune.
+ */
+object EndpointerTuning {
+
+    /** Silero's window: 512 samples of 16 kHz mono is exactly one probe frame (model n_window). */
+    const val FRAME_SAMPLES = 512
+
+    /**
+     * 512 samples x 2 bytes (PCM16). `vadProbeFrame` returns [NO_VERDICT] for any other size.
+     *
+     * SINGLE OWNER: this object owns the native frame contract. `VadProbe.FRAME_BYTES` (Task D4)
+     * is an alias of this constant, not a second literal — `EndpointerFactory` sizes its direct
+     * buffer from one and fills it from the other, so a divergence would be a
+     * `BufferOverflowException` on the capture thread rather than a doc inconsistency.
+     */
+    const val FRAME_BYTES = 1024
+
+    /** 512 / 16 000 s. One mic callback delivers exactly this much audio. */
+    const val FRAME_MS = 32L
+
+    /**
+     * "No verdict" from the native probe — NEVER "silence". A short frame zero-padded into the
+     * model still advances the LSTM and poisons the recurrence, so the native side refuses and the
+     * client keeps the previous state.
+     *
+     * SINGLE OWNER, as for [FRAME_BYTES]: `VadProbe.NO_VERDICT` (Task D4) aliases this. Two
+     * independent `-1.0f` literals in one package would let a future edit turn the native sentinel
+     * into a legitimate probability on one side of the seam only.
+     */
+    const val NO_VERDICT = -1.0f
+
+    /**
+     * Native default (`whisper_vad_default_params`, whisper.cpp:4454). A frame at or above this
+     * opens/holds the gate.
+     */
+    const val ONSET_THRESHOLD = 0.50f
+
+    /**
+     * Schmitt hysteresis, native `neg_threshold = threshold - 0.15f` (whisper.cpp:5258). This is
+     * the exact mechanism whose absence causes today's 251-499 RMS dead band (the KNOWN LIMITATION
+     * block at `com.whispereverywhere.util.SpeechSegmenter:22-30`: a room whose noise floor sits
+     * between the two amplitude thresholds opens a segment that can never close). Widen to 0.30 if
+     * mid-word splits appear in A/B.
+     */
+    const val RELEASE_THRESHOLD = 0.35f
+
+    /**
+     * Trailing silence that ends an utterance. NOT the native 100 ms (`whisper.cpp:4456`), which is
+     * a file-segmentation value with a 200 ms merge pass behind it (`whisper.cpp:5359`).
+     * Inter-clause pauses run 200-500 ms; the cost of cutting too early is one extra full encoder
+     * pass PLUS a mid-clause boundary that `no_context = true` makes unrepairable. Also feeds the
+     * batch filter's `speech_pad_ms = 150`, which needs trailing audio to expand into. Owner A/B
+     * range 350-800.
+     */
+    const val HANGOVER_MS = 500L
+
+    /**
+     * Shortest run of speech that may be committed. The native filter already drops <250 ms before
+     * `whisper_full`; 300 keeps client and native agreeing instead of fighting.
+     * (`min_speech_duration_ms = 250`, `whisper.cpp:4455`.)
+     */
+    const val MIN_SPEECH_MS = 300L
+
+    /**
+     * A dip below [RELEASE_THRESHOLD] lasting longer than this is remembered as a cut point for the
+     * wall-cap path (native `min_silence_samples_at_max_speech`, whisper.cpp:5255, compared
+     * strictly at `whisper.cpp:5328`). At the 32 ms frame cadence the first qualifying frame is the
+     * 4th of the dip (128 ms > 98 ms).
+     */
+    const val MICRO_PAUSE_MS = 98L
+
+    /**
+     * A probe frame slower than this is an overrun: the probe's own cost budget inside the 32 ms
+     * frame period, not the frame period itself. `ProbeStats` counts one when `elapsedUs` is
+     * strictly above it, and both wiring sites convert this constant to microseconds themselves
+     * (`SileroEndpointer`'s default, Task C10; `EndpointerFactory`, Task D8).
+     */
+    const val PROBE_BUDGET_MS = 8L
+
+    /** Consecutive overruns that latch the probe off for the rest of the session. */
+    const val PROBE_CUTOUT_FRAMES = 16
+
+    // NO COMMIT-INTERVAL CONSTANTS LIVE HERE. The measured per-tier cost governor
+    // (1200 pro / 6000 multi / 8000 extreme+ultra / 3000 cloud batch) is owned solely by
+    // com.whispereverywhere.service.CommitCadencePolicy, and reaches the endpointer per SESSION via
+    // Endpointer.onSessionStart(nowMs, minCommitIntervalMs) — it depends on the installed tier AND
+    // on whether every commit becomes a provider request, neither of which is an acoustic knob.
+}
