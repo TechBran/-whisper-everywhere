@@ -28,8 +28,17 @@ class LocalWhisperEngineStatsTest {
 
     private fun fastRetry() = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 })
 
-    /** Records the ORDER of native touches so "stats after transcribe" is provable, not assumed. */
-    private class OrderRecordingBackend(private val transcribeThrows: Boolean = false) : WhisperBackend {
+    /**
+     * Records the ORDER of native touches so "stats after transcribe" is provable, not assumed.
+     *
+     * [result] is what the fake's transcribe returns; a BLANK one is the production shape for
+     * "the native VAD filter yielded zero speech, so whisper_full never ran". [failTimes] throws
+     * from the first N attempts (naming follows `FakeWhisperBackend.failTimes` in this package).
+     */
+    private class OrderRecordingBackend(
+        private val result: String = " hello",
+        private var failTimes: Int = 0,
+    ) : WhisperBackend {
         val events: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
         override fun load(modelPath: String): Long = 42L
 
@@ -41,8 +50,8 @@ class LocalWhisperEngineStatsTest {
         // for the wrong reason.
         override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
             events += "transcribe(ctx=$ctx)"
-            if (transcribeThrows) throw RuntimeException("native transcribe failed")
-            return " hello"
+            if (failTimes > 0) { failTimes--; throw RuntimeException("native transcribe failed") }
+            return result
         }
 
         override fun lastSegmentStats(ctx: Long): NativeSegmentStats? {
@@ -72,9 +81,10 @@ class LocalWhisperEngineStatsTest {
     private fun engineOn(
         backend: WhisperBackend,
         executor: java.util.concurrent.ExecutorService,
+        retry: RetryPolicy = fastRetry(),
     ) = LocalWhisperEngine(
         modelPathProvider = FakeModelPathProvider("/models/pro.bin"),
-        retry = fastRetry(),
+        retry = retry,
         backend = backend,
         executor = executor,
     )
@@ -143,7 +153,7 @@ class LocalWhisperEngineStatsTest {
         // invisible and only the extra BACKEND CALL recorded below gives the mutation away.
         val executor = Executors.newSingleThreadExecutor()
         try {
-            val backend = OrderRecordingBackend(transcribeThrows = true)
+            val backend = OrderRecordingBackend(failTimes = 1)
             val engine = engineOn(backend, executor)
             val listener = LatchListener(resolutions = 1)
             engine.connect(language = "en", listener = listener)
@@ -165,6 +175,76 @@ class LocalWhisperEngineStatsTest {
                     "verdict about this audio. Got: ${listener.outcomes}",
                 listener.outcomes.single() is SegmentOutcome.Lost,
             )
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun aBlankResultStillEmitsItsTimingLine_becauseVadOutZeroIsTheSignature() {
+        // THE BLANK PATH IS NOT THE BORING PATH. A blank return is what the native side produces
+        // when we_vad_filter yielded zero speech, so this is precisely where the workstream's most
+        // diagnostic reading lives: `vadIn=<N> vadOut=0 ctxFrames=0` — the endpointer said "commit,
+        // the utterance ended" and the batch filter disagreed. Without that line the disagreement
+        // surfaces only as a silent EmptyExpected, which is the confusion vadIn/vadOut exist to end.
+        //
+        // THE REFACTOR HAZARD: the emit sits ABOVE the isBlank() split, and it must stay there. A
+        // tidy-looking move into the non-blank branch — next to the text it seems to describe —
+        // costs exactly the segments worth measuring, and every OTHER test in this class and in
+        // SegmentTimingTest stays green when it happens (the source pins are indentation- and
+        // scope-blind; they only count the line). This test is the only thing that notices.
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val backend = OrderRecordingBackend(result = "")
+            val engine = engineOn(backend, executor)
+            val listener = LatchListener(resolutions = 1)
+            engine.connect(language = "en", listener = listener)
+            assertTrue(listener.opened.await(5, TimeUnit.SECONDS))
+
+            engine.sendAudio(pcm)
+            engine.commit()
+            assertTrue("segment never resolved", listener.done.await(5, TimeUnit.SECONDS))
+
+            assertEquals(
+                "a segment that produced no text still ran a transcribe, so it still has counters " +
+                    "to report and still gets its timing line",
+                listOf("transcribe(ctx=42)", "stats(ctx=42)"),
+                backend.events,
+            )
+            assertEquals(listOf<SegmentOutcome>(SegmentOutcome.EmptyExpected), listener.outcomes)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun aRetriedSegmentQueriesTheCountersOnce_afterTheLastAttempt() {
+        // Makes SegmentTiming.line's retry caveat executable: transcribeMs spans EVERY attempt,
+        // the counters describe only the LAST one. Two transcribes, ONE stats query, and it comes
+        // after both — which is exactly why a high rtf against a one-pass ctxFrames is a retry
+        // rather than a lying encoder. A read inside the retry lambda would produce two queries
+        // here and would leave the first attempt's numbers on a line that charges for both.
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val backend = OrderRecordingBackend(failTimes = 1)
+            val engine = engineOn(
+                backend,
+                executor,
+                retry = RetryPolicy(maxAttempts = 2, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+            )
+            val listener = LatchListener(resolutions = 1)
+            engine.connect(language = "en", listener = listener)
+            assertTrue(listener.opened.await(5, TimeUnit.SECONDS))
+
+            engine.sendAudio(pcm)
+            engine.commit()
+            assertTrue("segment never resolved", listener.done.await(5, TimeUnit.SECONDS))
+
+            assertEquals(
+                listOf("transcribe(ctx=42)", "transcribe(ctx=42)", "stats(ctx=42)"),
+                backend.events,
+            )
+            assertEquals(listOf<SegmentOutcome>(SegmentOutcome.Text("hello")), listener.outcomes)
         } finally {
             executor.shutdownNow()
         }

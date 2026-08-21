@@ -3055,12 +3055,20 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 package's `SameThreadExecutorService` — the property under test is ordering across the engine's
 background thread, and a same-thread stub cannot express it.
 
-**THE HAZARD THIS TASK IS SHAPED AROUND:** `android.util.Log` is a JVM no-op here
-(`unitTests.isReturnDefaultValues = true`), so no behavioural test can see the STRING the emit
-produces. A mutant that calls `backend.lastSegmentStats(ctx)` and then passes `stats = null` —
-paying for the read and discarding it — passes every behavioural test in this task while every
-segment-timing line on a real device silently loses its suffix. The Step-1b source pins are what
-close it; they are not optional polish.
+**THE TWO HAZARDS THIS TASK IS SHAPED AROUND**, both silent, both green under a naive test set:
+
+1. **The value can be read and discarded.** `android.util.Log` is a JVM no-op here
+   (`unitTests.isReturnDefaultValues = true`), so no behavioural test can see the STRING the emit
+   produces. A mutant that calls `backend.lastSegmentStats(ctx)` and then passes `stats = null` —
+   paying for the read and throwing it away — passes every behavioural test in this task while
+   every segment-timing line on a real device silently loses its suffix. The Step-1b source pins
+   are what close it; they are not optional polish.
+2. **The emit can be moved below the `isBlank()` split.** Dropping it into the non-blank branch,
+   next to the text it appears to describe, reads as tidying and costs exactly the segments worth
+   measuring: the blank path is where `vadIn=<N> vadOut=0 ctxFrames=0` lives — the endpointer said
+   "commit" and `we_vad_filter` disagreed, which otherwise surfaces only as a silent
+   `EmptyExpected`. The source pins CANNOT see this (they count a line, blind to its scope), so it
+   takes a behavioural test on a blank result: `aBlankResultStillEmitsItsTimingLine_…`.
 
 - [ ] **Step 1: Write the failing test** — create
 `app/src/test/java/com/whispereverywhere/transcription/LocalWhisperEngineStatsTest.kt`:
@@ -3096,8 +3104,17 @@ class LocalWhisperEngineStatsTest {
 
     private fun fastRetry() = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 })
 
-    /** Records the ORDER of native touches so "stats after transcribe" is provable, not assumed. */
-    private class OrderRecordingBackend(private val transcribeThrows: Boolean = false) : WhisperBackend {
+    /**
+     * Records the ORDER of native touches so "stats after transcribe" is provable, not assumed.
+     *
+     * [result] is what the fake's transcribe returns; a BLANK one is the production shape for
+     * "the native VAD filter yielded zero speech, so whisper_full never ran". [failTimes] throws
+     * from the first N attempts (naming follows `FakeWhisperBackend.failTimes` in this package).
+     */
+    private class OrderRecordingBackend(
+        private val result: String = " hello",
+        private var failTimes: Int = 0,
+    ) : WhisperBackend {
         val events: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
         override fun load(modelPath: String): Long = 42L
 
@@ -3109,8 +3126,8 @@ class LocalWhisperEngineStatsTest {
         // for the wrong reason.
         override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
             events += "transcribe(ctx=$ctx)"
-            if (transcribeThrows) throw RuntimeException("native transcribe failed")
-            return " hello"
+            if (failTimes > 0) { failTimes--; throw RuntimeException("native transcribe failed") }
+            return result
         }
 
         override fun lastSegmentStats(ctx: Long): NativeSegmentStats? {
@@ -3140,9 +3157,10 @@ class LocalWhisperEngineStatsTest {
     private fun engineOn(
         backend: WhisperBackend,
         executor: java.util.concurrent.ExecutorService,
+        retry: RetryPolicy = fastRetry(),
     ) = LocalWhisperEngine(
         modelPathProvider = FakeModelPathProvider("/models/pro.bin"),
-        retry = fastRetry(),
+        retry = retry,
         backend = backend,
         executor = executor,
     )
@@ -3211,7 +3229,7 @@ class LocalWhisperEngineStatsTest {
         // invisible and only the extra BACKEND CALL recorded below gives the mutation away.
         val executor = Executors.newSingleThreadExecutor()
         try {
-            val backend = OrderRecordingBackend(transcribeThrows = true)
+            val backend = OrderRecordingBackend(failTimes = 1)
             val engine = engineOn(backend, executor)
             val listener = LatchListener(resolutions = 1)
             engine.connect(language = "en", listener = listener)
@@ -3233,6 +3251,76 @@ class LocalWhisperEngineStatsTest {
                     "verdict about this audio. Got: ${listener.outcomes}",
                 listener.outcomes.single() is SegmentOutcome.Lost,
             )
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun aBlankResultStillEmitsItsTimingLine_becauseVadOutZeroIsTheSignature() {
+        // THE BLANK PATH IS NOT THE BORING PATH. A blank return is what the native side produces
+        // when we_vad_filter yielded zero speech, so this is precisely where the workstream's most
+        // diagnostic reading lives: `vadIn=<N> vadOut=0 ctxFrames=0` — the endpointer said "commit,
+        // the utterance ended" and the batch filter disagreed. Without that line the disagreement
+        // surfaces only as a silent EmptyExpected, which is the confusion vadIn/vadOut exist to end.
+        //
+        // THE REFACTOR HAZARD: the emit sits ABOVE the isBlank() split, and it must stay there. A
+        // tidy-looking move into the non-blank branch — next to the text it seems to describe —
+        // costs exactly the segments worth measuring, and every OTHER test in this class and in
+        // SegmentTimingTest stays green when it happens (the source pins are indentation- and
+        // scope-blind; they only count the line). This test is the only thing that notices.
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val backend = OrderRecordingBackend(result = "")
+            val engine = engineOn(backend, executor)
+            val listener = LatchListener(resolutions = 1)
+            engine.connect(language = "en", listener = listener)
+            assertTrue(listener.opened.await(5, TimeUnit.SECONDS))
+
+            engine.sendAudio(pcm)
+            engine.commit()
+            assertTrue("segment never resolved", listener.done.await(5, TimeUnit.SECONDS))
+
+            assertEquals(
+                "a segment that produced no text still ran a transcribe, so it still has counters " +
+                    "to report and still gets its timing line",
+                listOf("transcribe(ctx=42)", "stats(ctx=42)"),
+                backend.events,
+            )
+            assertEquals(listOf<SegmentOutcome>(SegmentOutcome.EmptyExpected), listener.outcomes)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun aRetriedSegmentQueriesTheCountersOnce_afterTheLastAttempt() {
+        // Makes SegmentTiming.line's retry caveat executable: transcribeMs spans EVERY attempt,
+        // the counters describe only the LAST one. Two transcribes, ONE stats query, and it comes
+        // after both — which is exactly why a high rtf against a one-pass ctxFrames is a retry
+        // rather than a lying encoder. A read inside the retry lambda would produce two queries
+        // here and would leave the first attempt's numbers on a line that charges for both.
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val backend = OrderRecordingBackend(failTimes = 1)
+            val engine = engineOn(
+                backend,
+                executor,
+                retry = RetryPolicy(maxAttempts = 2, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
+            )
+            val listener = LatchListener(resolutions = 1)
+            engine.connect(language = "en", listener = listener)
+            assertTrue(listener.opened.await(5, TimeUnit.SECONDS))
+
+            engine.sendAudio(pcm)
+            engine.commit()
+            assertTrue("segment never resolved", listener.done.await(5, TimeUnit.SECONDS))
+
+            assertEquals(
+                listOf("transcribe(ctx=42)", "transcribe(ctx=42)", "stats(ctx=42)"),
+                backend.events,
+            )
+            assertEquals(listOf<SegmentOutcome>(SegmentOutcome.Text("hello")), listener.outcomes)
         } finally {
             executor.shutdownNow()
         }
@@ -3358,14 +3446,27 @@ no-counters form now that the parameter exists.
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.transcription.LocalWhisperEngineStatsTest" --tests "com.whispereverywhere.transcription.SegmentTimingTest" --no-daemon
 ```
 
-Expected: **three** failures.
-`statsAreQueriedOncePerSegment_afterTheTranscribeThatProducedThem` with
-`java.lang.AssertionError: expected:<[transcribe(ctx=42), stats(ctx=42)]> but was:<[transcribe(ctx=42)]>`,
-`everySegmentGetsItsOwnStatsQuery_neverOneForTheWholeSession` with the three-segment form of the
-same, and `theStatsTheEngineReadsAreTheStatsItPrints_notDiscarded` with `expected:<1> but was:<0>`
-— the engine does not query the counters yet. `aThrownTranscribeNeverQueriesTheCounters`,
-`aBackendWithNoCountersStillResolvesNormally`, `transcribeMsIsMeasuredBeforeTheCountersAreRead`
-and `theKDocSampleLineShowsTheSuffixFields` pass already (they pin unchanged paths).
+Expected: **6 failures / 22 tests** — REPRODUCED against the pre-F6 engine (`711b5bc`) with the
+final test files, not predicted. `LocalWhisperEngineStatsTest` 6 tests / 4 failures:
+
+- `statsAreQueriedOncePerSegment_afterTheTranscribeThatProducedThem` —
+  `expected:<[transcribe(ctx=42), stats(ctx=42)]> but was:<[transcribe(ctx=42)]>`
+- `everySegmentGetsItsOwnStatsQuery_neverOneForTheWholeSession` — the three-segment form of the same
+- `aBlankResultStillEmitsItsTimingLine_becauseVadOutZeroIsTheSignature` — the same pair, prefixed by
+  its message
+- `aRetriedSegmentQueriesTheCountersOnce_afterTheLastAttempt` —
+  `expected:<[transcribe(ctx=42), transcribe(ctx=42), stats(ctx=42)]> but was:<[transcribe(ctx=42), transcribe(ctx=42)]>`
+
+`SegmentTimingTest` 16 tests / 2 failures:
+
+- `theStatsTheEngineReadsAreTheStatsItPrints_notDiscarded` — `expected:<1> but was:<0>`
+- `transcribeMsIsMeasuredBeforeTheCountersAreRead` — ``the emit block must declare `val
+  transcribeMs = ...` on a live line``. NOTE this one is a RED, not a pass: the pre-F6 emit
+  computes the elapsed time inline inside the `line(` call, so there is no `val transcribeMs`
+  declaration for the regex to find.
+
+`aThrownTranscribeNeverQueriesTheCounters`, `aBackendWithNoCountersStillResolvesNormally` and
+`theKDocSampleLineShowsTheSuffixFields` pass already — they pin paths this task does not change.
 
 - [ ] **Step 3: Minimal implementation** — in `LocalWhisperEngine.runSegment`, replace the timing
 emit written in Task F2 (anchor on the `android.util.Log.i("WE-DIAG", SegmentTiming.line(` block
@@ -3419,11 +3520,13 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Evidence: `TEST-com.whispereverywhere.transcription.LocalWhisperEngineStatsTest.xml` shows
-`tests="4" failures="0"` (the brief's 3 plus the thrown-transcribe case, which is the ONLY test
-that kills a capture hoisted into a `finally`);
+`tests="6" failures="0"` — the brief's 3, plus three each of which is the SOLE killer of a
+contract mutant no other test in the suite catches: the thrown-transcribe case (capture hoisted
+into a `finally`), the blank-result case (emit moved below the `isBlank()` split), and the
+retried-segment case (the counters describe the LAST attempt).
 `TEST-com.whispereverywhere.transcription.SegmentTimingTest.xml` goes `tests="13"` → `tests="16"`;
 and `LocalWhisperEngineTest` / `LocalWhisperEngineStreamingTest` / `LocalWhisperEnginePinTest`
-XMLs are unchanged and green. Section delta: **+7 tests, +1 class.**
+XMLs are unchanged and green. Section delta: **+9 tests, +1 class.**
 
 - [ ] **Step 5: Commit** — message via `git commit -F <utf-8 file>` (branch practice; `-m @'…'@`
 mangles em-dashes under PS 5.1):
