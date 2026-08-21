@@ -1538,9 +1538,12 @@ package com.whispereverywhere.util
  * waveform smoothness, and a backwards teardown only cost one read period. The inline Silero
  * probe puts real native work in the capture callback, which promotes both to load-bearing.
  *
- * Pure and framework-light on purpose (only the two `android.os.Process` touches, which the unit
- * test's returnDefaultValues stubs make no-ops) so the ordering rule is JVM-pinned —
- * CaptureThreadPolicyTest.
+ * Pure and framework-light on purpose — one `android.os.Process` touch and two `android.util.Log`
+ * diagnostics, all of which the unit test's returnDefaultValues stubs make no-ops — so the
+ * ordering rule is JVM-pinned (CaptureThreadPolicyTest). The flip side of stubbed-out framework
+ * calls is that nothing observes them from a JVM test: the priority setter and both teardown
+ * diagnostics are pinned STRUCTURALLY, on this file's source, by
+ * captureThreadPolicySource_pinsWhatNoJvmCallerCanReach.
  */
 object CaptureThreadPolicy {
 
@@ -1553,15 +1556,34 @@ object CaptureThreadPolicy {
     const val CAPTURE_THREAD_PRIORITY: Int = android.os.Process.THREAD_PRIORITY_URGENT_AUDIO
 
     /**
-     * How long teardown waits for a capture thread to exit. Pre-3.7 this was a bare `2000`
-     * literal inside StreamingAudioRecorder.stop(); naming it here is what lets the ordering
-     * rule and its bound be read in one place.
+     * How long teardown waits for a capture thread to exit. Pre-3.7 this was a bare `2000` literal
+     * at both capture sites; naming it here is what lets the ordering rule and its bound be read in
+     * one place, and preserves the value both sites already used. E2 wired
+     * StreamingAudioRecorder.stop() to this constant; PlaybackAudioCapturer.stop() keeps its own
+     * `2000` (PlaybackAudioCapturer.kt:99) because the 3.7 plan fences that method off — it was
+     * already correct and is the precedent this policy is named after.
+     *
+     * The bound is the point, not the number: teardown can be reached from Main, so the wait must
+     * be capped well inside the input-dispatch ANR window rather than left open-ended.
      */
     const val CAPTURE_JOIN_MS: Long = 2_000L
 
-    /** FIRST statement of every capture thread body. */
-    fun enterCaptureThread() {
-        android.os.Process.setThreadPriority(CAPTURE_THREAD_PRIORITY)
+    /**
+     * The real priority setter. Named so [enterCaptureThread]'s default is a single thing rather
+     * than an inline lambda buried in the signature.
+     */
+    private val systemSetThreadPriority: (Int) -> Unit = { android.os.Process.setThreadPriority(it) }
+
+    /**
+     * FIRST statement of every capture thread body.
+     *
+     * [applyPriority] is an injection seam, not a knob: `android.os.Process.setThreadPriority` is
+     * stubbed to a no-op under the unit test's returnDefaultValues, so without the seam an EMPTY
+     * body would be indistinguishable from a correct one (verified — that mutation survived the
+     * whole suite). Production callers use the zero-arg form.
+     */
+    fun enterCaptureThread(applyPriority: (Int) -> Unit = systemSetThreadPriority) {
+        applyPriority(CAPTURE_THREAD_PRIORITY)
     }
 
     /**
@@ -1569,15 +1591,24 @@ object CaptureThreadPolicy {
      *
      * `AudioRecord.read()` blocks until its buffer fills, and stopping the record is what
      * unblocks it immediately — joining first waits a full read period at best, and with native
-     * work in the callback it can wait far longer, on Main. PlaybackAudioCapturer.kt:92-95 has
-     * always done it this way and says why; this is that comment made reusable and testable.
+     * work in the callback it can wait far longer, on Main. PlaybackAudioCapturer.kt:95-99 has
+     * always done it this way and says why — the comment AND the stop/join pair it explains; this
+     * is that made reusable and testable.
      *
      * Both callbacks are individually guarded: a throwing [stopRecord] (AudioRecord.stop() on an
      * uninitialized record) must never skip the join, or the capture thread outlives release().
+     * Each guard logs what it swallowed: a capture thread that refused to die is undebuggable if
+     * teardown fails silently. Note the swallow is total — an interrupted join loses the interrupt
+     * flag too (`Thread.join` clears it when it throws); deliberate, and pinned as such.
+     *
+     * [joinMs] is handed to [joinThread] unchanged — a join that ignores its bound is an
+     * unbounded Main-thread wait, which is the failure this whole ordering exists to prevent.
      */
     fun stopThenJoin(joinMs: Long, stopRecord: () -> Unit, joinThread: (Long) -> Unit) {
         runCatching { stopRecord() }
+            .onFailure { android.util.Log.w("WE-DIAG", "capture teardown: stop failed", it) }
         runCatching { joinThread(joinMs) }
+            .onFailure { android.util.Log.w("WE-DIAG", "capture teardown: join failed", it) }
     }
 }
 ```
@@ -1589,7 +1620,8 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Evidence: `C:/Users/bastr/.androidbuild/WhisperEverywhere/app/test-results/testDebugUnitTest/TEST-com.whispereverywhere.util.CaptureThreadPolicyTest.xml`
-shows `tests="4" failures="0" errors="0" skipped="0"`.
+shows `tests="8" failures="0" errors="0" skipped="0"` - the brief's four plus the four the
+mutation battery forced (Task E1 report, deviation 2).
 
 - [ ] **Step 5: Commit** —
 
@@ -1610,35 +1642,39 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 ### Task E2: Wire both capture threads — priority + stop-then-join
 
 **Files:**
-- Modify `app/src/test/java/com/whispereverywhere/util/CaptureThreadPolicyTest.kt` (append two tests
-  + the source locator helper)
-- Modify `app/src/main/java/com/whispereverywhere/util/CaptureThreadPolicy.kt` (already carries
-  `CAPTURE_JOIN_MS` from Task E1 — no edit if Step 3 of Task E1 landed verbatim)
+- Modify `app/src/test/java/com/whispereverywhere/util/CaptureThreadPolicyTest.kt` (append the
+  wiring test and the source-pin test, plus the source locator and live-line helpers)
+- Modify `app/src/main/java/com/whispereverywhere/util/CaptureThreadPolicy.kt` — it carries
+  `CAPTURE_JOIN_MS` from Task E1; E2 adds the teardown diagnostics and corrects the KDoc anchors
+  its own wiring moves (Task E1 review fold-ins L-1 / NIT-1)
 - Modify `app/src/main/java/com/whispereverywhere/util/StreamingAudioRecorder.kt` — thread body
-  opens at `:70` (`thread = Thread {`); `stop()` is `:102-116`, with the backwards
-  `thread?.join(2000)` / `audioRecord?.stop()` pair at `:107-108`
+  opens at `:70` (`thread = Thread {`); `stop()` was `:102-116` pre-E2, with the backwards
+  `thread?.join(2000)` / `audioRecord?.stop()` pair at `:107-108`, and is `:106-149` post-E2
 - Modify `app/src/main/java/com/whispereverywhere/audio/PlaybackAudioCapturer.kt` — thread body
-  opens at `:64` (`thread = Thread {`). **`stop()` at `:90-101` is deliberately NOT touched** —
-  it is already the correct order and is the precedent Task E1 documents.
+  opens at `:64` (`thread = Thread {`). **`stop()` is deliberately NOT touched** — `:90-101`
+  pre-E2, `:93-104` post-E2: it is already the correct order and is the precedent Task E1
+  documents. E2's wiring test DEFENDS that fence (nothing else in the suite watches it) rather
+  than rewiring it.
 
 **Interfaces:**
 - Consumes: `CaptureThreadPolicy.enterCaptureThread()`, `CaptureThreadPolicy.stopThenJoin(joinMs, stopRecord, joinThread)`,
   `CaptureThreadPolicy.CAPTURE_JOIN_MS` (Task E1).
 - Produces: no new symbols. Behaviour: both capture threads run at −19; `StreamingAudioRecorder.stop()`
-  halts the record before joining.
+  halts the record before joining, and releases only after the join has returned.
+
+**Task E1 review fold-ins, landed here rather than in a separate round:** the structural pin that
+`enterCaptureThread`'s zero-arg default IS the real setter and is still WIRED to it (M-1, plus
+review MEDIUM-2); the M-2 comment reword honouring the `PlaybackAudioCapturer` fence; WE-DIAG
+`onFailure` on both teardown guards (L-1); the timing test's derived bound (L-3); the precedent
+range `:92-96` → `:95-99` (NIT-1, rebased once more by E2's own three-line insert); the duplicate
+join-bound test dropped (E1 already pins it); four Main call sites, not three; and the dead
+try/catch around `stopThenJoin` dropped rather than written.
 
 - [ ] **Step 1: Write the failing test** — append to
-`app/src/test/java/com/whispereverywhere/util/CaptureThreadPolicyTest.kt`, inside the class:
+`app/src/test/java/com/whispereverywhere/util/CaptureThreadPolicyTest.kt`, inside the class. E1
+already pins the join bound as `captureJoinMs_keepsThePre37Bound`, so E2 adds no second copy of it:
 
 ```kotlin
-    @Test
-    fun captureJoinBoundIsNamedOnce_andMatchesThePre37Literal() {
-        // StreamingAudioRecorder.stop() used a bare `2000` literal. Naming it is what lets the
-        // ordering rule and its bound be read in one place; pin the value so the wiring cannot
-        // silently lengthen a Main-thread wait.
-        assertEquals(2_000L, CaptureThreadPolicy.CAPTURE_JOIN_MS)
-    }
-
     @Test
     fun bothCaptureThreadsEnterThePolicy_andTheRecorderStopsBeforeItJoins() {
         // THE load-bearing red for this task. Neither wiring can be reached from a JVM test
@@ -1651,40 +1687,155 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
         assertTrue(
             "StreamingAudioRecorder.stop() must go through CaptureThreadPolicy.stopThenJoin",
-            recorder.contains("CaptureThreadPolicy.stopThenJoin("),
+            containsLiveLine(recorder, "CaptureThreadPolicy.stopThenJoin("),
         )
         assertEquals(
-            "no bare join survives: the record must be stopped first, and only the policy orders that",
-            0,
-            recorder.split("thread?.join(2000)").size - 1,
+            "exactly one join, the one the policy orders",
+            1,
+            recorder.lines().count { !it.trimStart().startsWith("//") && it.contains("thread?.join(") },
+        )
+        // The reorder's own OUTCOME, not just its shape: hoisting release() back above the policy
+        // call leaves every other assertion here green while restoring the exact hazard — a record
+        // released while the capture thread is still inside onAudioChunk -> sendAudio.
+        assertTrue(
+            "release() must FOLLOW the join — releasing under a live sendAudio is the hazard this reorder closes",
+            liveIndexOf(recorder, "CaptureThreadPolicy.stopThenJoin(") <
+                liveIndexOf(recorder, "audioRecord?.release()"),
+        )
+        // Each argument pinned for its own reason: a call that reaches stopThenJoin with any one of
+        // them hollowed out passes the assertion above while meaning something else entirely.
+        assertTrue(
+            "the recorder must hand the NAMED bound: a literal 0L here means Thread.join(0) — unbounded, on Main",
+            containsLiveLine(recorder, "joinMs = CaptureThreadPolicy.CAPTURE_JOIN_MS"),
+        )
+        assertTrue(
+            "stopRecord must really halt the record — an empty lambda restores the pre-3.7 bug wearing the new shape",
+            containsLiveLine(recorder, "stopRecord = { audioRecord?.stop() }"),
+        )
+        assertTrue(
+            "joinThread must really join the capture thread, with the bound it was handed",
+            containsLiveLine(recorder, "joinThread = { ms -> thread?.join(ms) }"),
         )
         assertTrue(
             "the mic capture thread must raise its priority as its FIRST statement",
-            recorder.contains("CaptureThreadPolicy.enterCaptureThread()"),
+            containsLiveLine(recorder, "CaptureThreadPolicy.enterCaptureThread()"),
         )
         assertTrue(
             "the device-audio capture thread must raise its priority too",
-            playback.contains("CaptureThreadPolicy.enterCaptureThread()"),
+            containsLiveLine(playback, "CaptureThreadPolicy.enterCaptureThread()"),
+        )
+        // ...and INSIDE the thread body, ahead of the read loop. setThreadPriority applies to the
+        // CALLING thread, so the same call sitting outside `Thread { }` raises the wrong thread's
+        // priority and one sitting after the loop raises it when capture is already over — both
+        // leave every presence assertion above green.
+        for ((name, src) in listOf("StreamingAudioRecorder" to recorder, "PlaybackAudioCapturer" to playback)) {
+            val bodyOpen = liveIndexOf(src, "thread = Thread {")
+            val readLoop = liveIndexOf(src, "while (recording)")
+            val enter = liveIndexOf(src, "CaptureThreadPolicy.enterCaptureThread()")
+            assertTrue(
+                "$name: expected a live capture thread body and read loop (open=$bodyOpen loop=$readLoop)",
+                bodyOpen >= 0 && bodyOpen < readLoop,
+            )
+            assertTrue(
+                "$name must enter the policy inside its capture thread body and before the read loop (at $enter)",
+                enter > bodyOpen && enter < readLoop,
+            )
+        }
+        // The fence, defended. PlaybackAudioCapturer.stop() is deliberately NOT wired to the policy
+        // (it was already correct), which means nothing else in this suite watches it — and it is
+        // the precedent every ordering KDoc in CaptureThreadPolicy cites. A silent reorder there
+        // would leave the policy quoting a file that no longer does what the quote claims.
+        assertTrue(
+            "the fenced capturer must KEEP stopping before it joins — it is the precedent this policy cites",
+            liveIndexOf(playback, "runCatching { it.stop() }") < liveIndexOf(playback, "thread?.join("),
+        )
+    }
+
+    @Test
+    fun captureThreadPolicySource_pinsWhatNoJvmCallerCanReach() {
+        val policy = source("src/main/java/com/whispereverywhere/util/CaptureThreadPolicy.kt")
+
+        // The injection seam displaced the empty-body mutant rather than killing it outright:
+        // emptying enterCaptureThread's BODY is caught by
+        // enterCaptureThread_appliesTheCapturePriority_notNothing, but emptying its DEFAULT
+        // (`= {}`) is invisible to this whole suite — every JVM caller either passes its own lambda
+        // or observes nothing, since android.os.Process.setThreadPriority is a returnDefaultValues
+        // no-op. The default is structurally-only reachable, so pin it structurally.
+        assertTrue(
+            "enterCaptureThread's zero-arg DEFAULT must be the real setter — nothing else here reaches it",
+            containsLiveLine(policy, "android.os.Process.setThreadPriority(it)"),
+        )
+        // …and the setter must still be WIRED to the default. The line above is satisfied by a
+        // `systemSetThreadPriority` that nothing references: `= { }` in the signature leaves the
+        // real setter live-but-unreachable, and every production caller then sets no priority at
+        // all, invisibly. Two halves of one contract, so two assertions.
+        assertTrue(
+            "the default must BE systemSetThreadPriority — a live-but-unreferenced setter is the same bug, hidden better",
+            containsLiveLine(policy, "applyPriority: (Int) -> Unit = systemSetThreadPriority"),
+        )
+
+        // Same argument for the two teardown guards: android.util.Log is a returnDefaultValues
+        // no-op, so "it reported what it swallowed" cannot be observed at runtime from here. A
+        // silent runCatching is exactly how a capture thread that refused to die becomes
+        // undebuggable, and both halves must report — the stop guard and the join guard.
+        assertTrue(
+            "the stop guard must report what it swallowed, not swallow it silently",
+            containsLiveLine(policy, ".onFailure { android.util.Log.w(\"WE-DIAG\", \"capture teardown: stop failed\", it) }"),
+        )
+        assertTrue(
+            "the join guard must report what it swallowed, not swallow it silently",
+            containsLiveLine(policy, ".onFailure { android.util.Log.w(\"WE-DIAG\", \"capture teardown: join failed\", it) }"),
         )
     }
 ```
 
-with the source locator helper (same one `CapSeamPinTest` uses), added once to the class:
+with the source locator and live-line helpers, added once to the class. Plain `contains` is NOT
+enough for the positive assertions — a commented-out call keeps it green while the capture thread
+runs at default priority (mutation X1) — while the negative stays a plain count, which is stricter
+for a prohibition:
 
 ```kotlin
+    /**
+     * Reads a repo source file from the test's working directory — the locator
+     * NativeVadSourceContractTest uses, for the same reason: the contract lives in a file no JVM
+     * test can execute (AudioRecord / AudioPlaybackCaptureConfiguration are Android-only), so the
+     * source itself is the only place the wiring can be observed.
+     *
+     * Line endings are normalized at this single read site (the N1 lesson: readText() does not
+     * normalize, and a CRLF checkout silently defeats anything anchored on "\n").
+     */
     private fun source(relative: String): String {
         var dir: java.io.File? = java.io.File(System.getProperty("user.dir")!!).absoluteFile
         while (dir != null) {
             for (candidate in listOf(java.io.File(dir, relative), java.io.File(dir, "app/$relative"))) {
-                if (candidate.isFile) return candidate.readText()
+                if (candidate.isFile) return candidate.readText().replace("\r\n", "\n")
             }
             dir = dir.parentFile
         }
         throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
     }
+
+    /**
+     * Character index of the first LIVE line of [scope] containing [needle], or -1. Never a raw
+     * indexOf: `// CaptureThreadPolicy.enterCaptureThread()` left behind by a refactor keeps a
+     * plain contains() green while the capture thread runs at default priority, and in an ordering
+     * comparison a commented-out mention would decide the order.
+     */
+    private fun liveIndexOf(scope: String, needle: String): Int {
+        var offset = 0
+        for (line in scope.lineSequence()) {
+            val trimmed = line.trimStart()
+            val commented = trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")
+            if (!commented && line.contains(needle)) return offset + line.indexOf(needle)
+            offset += line.length + 1
+        }
+        return -1
+    }
+
+    private fun containsLiveLine(scope: String, needle: String): Boolean = liveIndexOf(scope, needle) >= 0
 ```
 
-and the import `import org.junit.Assert.assertTrue` if the file does not already carry it.
+The file already carries `import org.junit.Assert.assertTrue`.
 
 - [ ] **Step 2: Run it, expected failure** —
 
@@ -1692,20 +1843,19 @@ and the import `import org.junit.Assert.assertTrue` if the file does not already
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.util.CaptureThreadPolicyTest" --no-daemon
 ```
 
-Expected:
-`bothCaptureThreadsEnterThePolicy_andTheRecorderStopsBeforeItJoins FAILED — java.lang.AssertionError: StreamingAudioRecorder.stop() must go through CaptureThreadPolicy.stopThenJoin`.
-That is this task's red, and it is a genuine one: it fails against today's `thread?.join(2000)` /
-`audioRecord?.stop()` pair at `StreamingAudioRecorder.kt:107-108` and pins the reorder against a
-future revert. `captureJoinBoundIsNamedOnce_andMatchesThePre37Literal` is red only if Task E1's
-Step 3 was landed WITHOUT `CAPTURE_JOIN_MS`
-(`e: ...CaptureThreadPolicyTest.kt: Unresolved reference: CAPTURE_JOIN_MS`); if E1 landed the
-constant verbatim it is green immediately — record that as an already-green guard and proceed.
+Expected, with the XML mtime checked BEFORE the result is read: `tests="10" failures="2"` —
+`bothCaptureThreadsEnterThePolicy_andTheRecorderStopsBeforeItJoins FAILED — java.lang.AssertionError: StreamingAudioRecorder.stop() must go through CaptureThreadPolicy.stopThenJoin`
+and `captureThreadPolicySource_pinsWhatNoJvmCallerCanReach FAILED — java.lang.AssertionError: the stop guard must report what it swallowed, not swallow it silently`.
+Both reds are genuine: the first fails against the pre-E2 `thread?.join(2000)` / `audioRecord?.stop()`
+pair at `StreamingAudioRecorder.kt:107-108` and pins the reorder against a future revert; the second
+is L-1's. M-1's two setter assertions are GREEN in the red run — they exist to keep a correct
+default correct, and the controls (mutant applied, that one assertion neutralized) prove the rest of
+the suite is blind to both mutants.
 
 - [ ] **Step 3: Minimal implementation** —
 
-(a) `StreamingAudioRecorder.kt` — add the import beside the existing ones (the file is in the same
-package `com.whispereverywhere.util`, so **no import is needed**; `CaptureThreadPolicy` resolves
-directly).
+(a) `StreamingAudioRecorder.kt` — no import needed: the file is in the same package
+`com.whispereverywhere.util`, so `CaptureThreadPolicy` resolves directly.
 
 (b) `StreamingAudioRecorder.kt:70` — insert the priority call as the first statement of the thread
 body. Replace:
@@ -1726,36 +1876,57 @@ with:
             // Read in 32ms slices (512 samples @16kHz = 1024 bytes), NOT the full buffer:
 ```
 
-(c) `StreamingAudioRecorder.kt:102-116` — replace the whole `stop()`:
+(c) `StreamingAudioRecorder.kt:102-116` (pre-E2) — replace the whole `stop()` with the form below.
+Note what is NOT here: no `try`/`catch`/`finally`. `stopThenJoin` cannot throw — both callbacks are
+individually guarded and the only statements outside those guards are the two `Log.w` diagnostics —
+so a wrapper would only hide the guards, and the old `catch` covered nothing that is not now inside
+the policy. `release()` must stay AFTER the call (mutation X14: hoisting it above restores the exact
+hazard the reorder closes, and passes every other assertion):
 
 ```kotlin
     fun stop() {
+        // The one path where the ordering below does not run at all. It cannot strand an
+        // AudioRecord: `recording = true` is set immediately after the successful-init assignment
+        // above, so a live record always implies a true flag.
         if (!recording) return
         recording = false
         _amplitude.value = 0
-        try {
-            // STOP THE RECORD, THEN JOIN — the same order PlaybackAudioCapturer.stop() has always
-            // used (PlaybackAudioCapturer.kt:92-95, which explains why). read() blocks until its
-            // buffer fills and only stop() unblocks it immediately, so the pre-3.7 join-then-stop
-            // waited a full read period at best. This runs on MAIN from three sites
-            // (FloatingBubbleService.kt:916, :1822, :2344), and 3.7 puts a native probe in the
-            // capture callback, so "at best" stopped being the interesting case: the join could
-            // wait out its whole 2 s bound, twice per session — ANR territory. The timeout path was
-            // worse than slow: it fell through to release() while the capture thread could still be
-            // inside onAudioChunk -> sendAudio, landing a chunk AFTER the unconditional stop flush
-            // (FloatingBubbleService.kt:2388) — a lost tail or an orphan segment.
-            CaptureThreadPolicy.stopThenJoin(
-                joinMs = CaptureThreadPolicy.CAPTURE_JOIN_MS,
-                stopRecord = { audioRecord?.stop() },
-                joinThread = { ms -> thread?.join(ms) },
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            audioRecord?.release()
-            audioRecord = null
-            thread = null
-        }
+        // STOP THE RECORD, THEN JOIN — the same order PlaybackAudioCapturer.stop() has always used
+        // (PlaybackAudioCapturer.kt:95-99, which explains why). read() blocks until its buffer
+        // fills and only stop() unblocks it immediately, so the pre-3.7 join-then-stop waited a
+        // full read period at best. This runs on MAIN from four sites (FloatingBubbleService.kt:764
+        // onDestroy, :916, :1822, :2344), and 3.7 puts a native probe in the capture callback, so
+        // "at best" stopped being the interesting case: the join could wait out its whole 2 s
+        // bound, twice per session — ANR territory. The timeout path was worse than slow: it fell
+        // through to release() while the capture thread could still be inside onAudioChunk ->
+        // sendAudio, landing a chunk AFTER the unconditional stop flush
+        // (FloatingBubbleService.kt:2388) — a lost tail or an orphan segment.
+        //
+        // Deliberately NOT wrapped in try/catch: stopThenJoin cannot throw: both callbacks are
+        // individually guarded, and the only statements outside those guards are the two Log.w
+        // diagnostics. (runCatching catches Throwable, and both guards are pinned —
+        // stopThenJoin_stillJoins_whenStoppingTheRecordThrows,
+        // stopThenJoin_doesNotPropagate_whenTheJoinItselfThrows). The old catch only ever covered
+        // the two calls that are now inside the policy; release() below propagated then (it ran in
+        // a `finally`) and propagates now, unchanged.
+        //
+        // The join is BOUNDED, and Thread.join(ms) returns identically on termination and on
+        // timeout — stopThenJoin returns Unit, so nothing here can tell the two apart. After a
+        // timed-out join the capture thread may still be alive, possibly about to enter its own
+        // cleanup, so everything after this call must be safe against that: release() below is
+        // (a stopped record's reader just sees read() <= 0 and `recording` is already false), and
+        // so must anything 3.7 adds — a vadProbeFree here, or the vadProbeInit of the NEXT session
+        // starting while the previous capture thread is still unwinding. Stopping first makes the
+        // timeout unlikely, not impossible. The obligation that leaves for the probe wiring is
+        // item T2 of .superpowers/sdd/2026-08-20-vad-endpointing/teardown-bill.md.
+        CaptureThreadPolicy.stopThenJoin(
+            joinMs = CaptureThreadPolicy.CAPTURE_JOIN_MS,
+            stopRecord = { audioRecord?.stop() },
+            joinThread = { ms -> thread?.join(ms) },
+        )
+        audioRecord?.release()
+        audioRecord = null
+        thread = null
     }
 ```
 
@@ -1777,33 +1948,46 @@ with:
             val buffer = ByteArray(readSize)
 ```
 
-- [ ] **Step 4: Run tests green** — unit tests, then the compile gate that is the real
-verification for the two Android-only files:
+- [ ] **Step 4: Run tests green** — the unit tests are also the compile gate for the two
+Android-only files: `:app:compileDebugKotlin` executes as part of them. `assembleDebug` is NOT
+required and was not run (Kotlin-only change, no native surface, no CMake input touched):
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.util.CaptureThreadPolicyTest" --no-daemon; if ($?) { .\gradlew.bat :app:assembleDebug --no-daemon }
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.util.CaptureThreadPolicyTest" --no-daemon
 ```
 
-Evidence: `TEST-com.whispereverywhere.util.CaptureThreadPolicyTest.xml` shows `tests="6" failures="0"`
-— including `bothCaptureThreadsEnterThePolicy_andTheRecorderStopsBeforeItJoins`, which was red in
-Step 2 and is now green against the reordered `stop()` — and `assembleDebug` reports
-`BUILD SUCCESSFUL`.
+Evidence: `TEST-com.whispereverywhere.util.CaptureThreadPolicyTest.xml` shows
+`tests="10" failures="0" errors="0" skipped="0"` — E1's eight plus this task's two — with
+`:app:compileDebugKotlin` **executed** (not UP-TO-DATE) in the same run. Full suite:
+`tests=1063 failures=0 errors=0 skipped=0` across 97 classes (E1 left 1061/97, so E2 is +2/+0).
 
-- [ ] **Step 5: Commit** —
+- [ ] **Step 5: Commit** — the two shipped commits, `9774719` (the wiring + fold-ins) and the
+E-section close (the review's five test/comment items + this plan rebase):
 
 ```powershell
-git add app/src/main/java/com/whispereverywhere/util/StreamingAudioRecorder.kt app/src/main/java/com/whispereverywhere/audio/PlaybackAudioCapturer.kt app/src/test/java/com/whispereverywhere/util/CaptureThreadPolicyTest.kt; git commit -m @'
+git add app/src/main/java/com/whispereverywhere/util/StreamingAudioRecorder.kt app/src/main/java/com/whispereverywhere/audio/PlaybackAudioCapturer.kt app/src/main/java/com/whispereverywhere/util/CaptureThreadPolicy.kt app/src/test/java/com/whispereverywhere/util/CaptureThreadPolicyTest.kt; git commit -F <utf-8 message file>
+```
+
+```
 fix(capture): stop the AudioRecord before joining, and run both capture threads urgent-audio
 
 StreamingAudioRecorder.stop() joined before stopping, so on Main it could wait a full read
 period - and, with 3.7 native work in the callback, its whole 2 s bound. A timed-out join
-also released the record while the thread might still be inside sendAudio, landing a chunk
-after the unconditional stop flush. PlaybackAudioCapturer.stop() is unchanged: it was
-already right, and is the precedent CaptureThreadPolicy is named after.
+also released the record while the capture thread might still be inside sendAudio, landing
+a chunk after the unconditional stop flush. Both capture thread bodies now enter
+CaptureThreadPolicy as their first statement, and the recorder's teardown goes through
+stopThenJoin with the named bound. PlaybackAudioCapturer.stop() is unchanged: it was already
+right, and is the precedent CaptureThreadPolicy is named after.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
-'@
+Neither wiring is reachable from a JVM test, so both are pinned structurally on the source -
+presence, argument by argument, and position inside the thread body ahead of the read loop.
+
+Folds in the E1 review bill: the zero-arg priority default is pinned structurally (the
+injection seam displaced the empty-body mutant into the default, where no JVM test reaches
+it - verified: that mutant passes 10/10 without the pin); both teardown guards now report
+what they swallowed; the ordering test derives its bound from the timeout under test; the
+dead try/catch the plan wrapped around stopThenJoin is dropped, since neither callback can
+escape it.
 ```
 
 ## Workstream F (pure) — Diagnostics with no service dependency (F1–F6)

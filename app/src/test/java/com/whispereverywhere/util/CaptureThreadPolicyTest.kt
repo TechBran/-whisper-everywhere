@@ -199,9 +199,17 @@ class CaptureThreadPolicyTest {
             containsLiveLine(recorder, "CaptureThreadPolicy.stopThenJoin("),
         )
         assertEquals(
-            "no bare join survives: the record must be stopped first, and only the policy orders that",
-            0,
-            recorder.split("thread?.join(2000)").size - 1,
+            "exactly one join, the one the policy orders",
+            1,
+            recorder.lines().count { !it.trimStart().startsWith("//") && it.contains("thread?.join(") },
+        )
+        // The reorder's own OUTCOME, not just its shape: hoisting release() back above the policy
+        // call leaves every other assertion here green while restoring the exact hazard — a record
+        // released while the capture thread is still inside onAudioChunk -> sendAudio.
+        assertTrue(
+            "release() must FOLLOW the join — releasing under a live sendAudio is the hazard this reorder closes",
+            liveIndexOf(recorder, "CaptureThreadPolicy.stopThenJoin(") <
+                liveIndexOf(recorder, "audioRecord?.release()"),
         )
         // Each argument pinned for its own reason: a call that reaches stopThenJoin with any one of
         // them hollowed out passes the assertion above while meaning something else entirely.
@@ -242,6 +250,14 @@ class CaptureThreadPolicyTest {
                 enter > bodyOpen && enter < readLoop,
             )
         }
+        // The fence, defended. PlaybackAudioCapturer.stop() is deliberately NOT wired to the policy
+        // (it was already correct), which means nothing else in this suite watches it — and it is
+        // the precedent every ordering KDoc in CaptureThreadPolicy cites. A silent reorder there
+        // would leave the policy quoting a file that no longer does what the quote claims.
+        assertTrue(
+            "the fenced capturer must KEEP stopping before it joins — it is the precedent this policy cites",
+            liveIndexOf(playback, "runCatching { it.stop() }") < liveIndexOf(playback, "thread?.join("),
+        )
     }
 
     @Test
@@ -257,6 +273,14 @@ class CaptureThreadPolicyTest {
         assertTrue(
             "enterCaptureThread's zero-arg DEFAULT must be the real setter — nothing else here reaches it",
             containsLiveLine(policy, "android.os.Process.setThreadPriority(it)"),
+        )
+        // …and the setter must still be WIRED to the default. The line above is satisfied by a
+        // `systemSetThreadPriority` that nothing references: `= { }` in the signature leaves the
+        // real setter live-but-unreachable, and every production caller then sets no priority at
+        // all, invisibly. Two halves of one contract, so two assertions.
+        assertTrue(
+            "the default must BE systemSetThreadPriority — a live-but-unreferenced setter is the same bug, hidden better",
+            containsLiveLine(policy, "applyPriority: (Int) -> Unit = systemSetThreadPriority"),
         )
 
         // Same argument for the two teardown guards: android.util.Log is a returnDefaultValues

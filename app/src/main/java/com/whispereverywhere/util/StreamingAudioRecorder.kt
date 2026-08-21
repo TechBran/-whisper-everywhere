@@ -121,8 +121,9 @@ class StreamingAudioRecorder(private val context: Context) {
         // sendAudio, landing a chunk AFTER the unconditional stop flush
         // (FloatingBubbleService.kt:2388) — a lost tail or an orphan segment.
         //
-        // Deliberately NOT wrapped in try/catch: stopThenJoin cannot throw. It guards each callback
-        // individually (runCatching catches Throwable, and both guards are pinned —
+        // Deliberately NOT wrapped in try/catch: stopThenJoin cannot throw: both callbacks are
+        // individually guarded, and the only statements outside those guards are the two Log.w
+        // diagnostics. (runCatching catches Throwable, and both guards are pinned —
         // stopThenJoin_stillJoins_whenStoppingTheRecordThrows,
         // stopThenJoin_doesNotPropagate_whenTheJoinItselfThrows). The old catch only ever covered
         // the two calls that are now inside the policy; release() below propagated then (it ran in
@@ -135,7 +136,8 @@ class StreamingAudioRecorder(private val context: Context) {
         // (a stopped record's reader just sees read() <= 0 and `recording` is already false), and
         // so must anything 3.7 adds — a vadProbeFree here, or the vadProbeInit of the NEXT session
         // starting while the previous capture thread is still unwinding. Stopping first makes the
-        // timeout unlikely, not impossible.
+        // timeout unlikely, not impossible. The obligation that leaves for the probe wiring is
+        // item T2 of .superpowers/sdd/2026-08-20-vad-endpointing/teardown-bill.md.
         CaptureThreadPolicy.stopThenJoin(
             joinMs = CaptureThreadPolicy.CAPTURE_JOIN_MS,
             stopRecord = { audioRecord?.stop() },

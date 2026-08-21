@@ -131,6 +131,9 @@ case degrades to exactly today's behavior.
    `PlaybackAudioCapturer.kt:90-93` does it right and documents why. With a native probe in the
    callback this graduates from latent to ANR-vector (called from Main at `FBS.kt:2344`/`:1822`)
    and can release the AudioRecord under a live `sendAudio`. **Reorder: stop, then join.**
+   [Correction 2026-08-21 (E2 review): the precedent is PlaybackAudioCapturer.kt:92-96 pre-E2 /
+   :95-99 post-E2 — ':90-93' was wrong when written. And StreamingAudioRecorder.stop() is
+   Main-reachable from FOUR sites: FBS.kt:764 (onDestroy), :916, :1822, :2344.]
 2. `THREAD_PRIORITY_URGENT_AUDIO` on both capture threads (`TtsEngine.kt:302` is the in-repo
    precedent).
 3. Overrun counter surfaced in the `probe:` diagnostic line.
