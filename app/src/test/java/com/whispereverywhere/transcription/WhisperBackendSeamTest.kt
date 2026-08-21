@@ -30,4 +30,19 @@ class WhisperBackendSeamTest {
         assertEquals("text", text)
         assertEquals(0, callbacks)   // the default streams nothing: byte-for-byte 3.5.0 behavior
     }
+
+    @Test
+    fun lastSegmentStats_defaultsToNull_soTheTimingLineDegradesInsteadOfLying() {
+        // A backend with no native counters must report NOTHING, not zeros: `ctxFrames=0` is a
+        // real and meaningful reading (whisper_full never ran), so a fake must not forge it.
+        assertNull(MinimalBackend().lastSegmentStats(1L))
+    }
+
+    @Test
+    fun nativeSegmentStats_carriesTheThreeNativeCounters() {
+        val s = NativeSegmentStats(ctxFrames = 512, vadInSamples = 48_000, vadOutSamples = 32_000)
+        assertEquals(512, s.ctxFrames)
+        assertEquals(48_000, s.vadInSamples)
+        assertEquals(32_000, s.vadOutSamples)
+    }
 }

@@ -81,6 +81,31 @@ interface TranscriptionEngine {
     }
 }
 
+/**
+ * The native cost counters for one completed transcribe (3.7 Workstream F), read back through the
+ * backend seam so [SegmentTiming] can name them without Kotlin guessing.
+ *
+ * `ctxFrames == 0` is a real reading, not a missing one: it means whisper_full never ran (the VAD
+ * found zero speech, or the energy gate fired). "Unknown" is expressed by a null
+ * [WhisperBackend.lastSegmentStats], never by zeros.
+ *
+ * So an ALL-ZERO instance of this type is a MEASUREMENT — "a transcribe ran and cost nothing" —
+ * and it is a different fact, at a different value, from a null. The two commits that produce it
+ * are the most interesting diagnostics in this workstream, so nothing between the native counters
+ * and the timing line may collapse zeros to "no data"; a `stats.ctxFrames == 0` reader must print
+ * the zero, and only a `stats == null` reader may omit the fields.
+ *
+ * NON-ZERO IS NOT SUCCESS, either. `ctxFrames > 0` means the encoder was CONFIGURED for that many
+ * frames — not that the decode succeeded. `ctxFrames > 0` alongside EMPTY text is a failed
+ * whisper_full or a genuine zero-segment decode, and this type cannot tell you which: it carries
+ * COST, never a verdict.
+ */
+data class NativeSegmentStats(
+    val ctxFrames: Int,
+    val vadInSamples: Int,
+    val vadOutSamples: Int,
+)
+
 /** Thin seam over the native layer so the engine can be tested without JNI. */
 interface WhisperBackend {
     fun load(modelPath: String): Long
@@ -123,6 +148,20 @@ interface WhisperBackend {
         useVad: Boolean = true,
         onNewSegment: (String) -> Unit,
     ): String = transcribe(ctx, samples, lang, useVad)
+
+    /**
+     * Cost counters for the LAST transcribe THIS backend ran on [ctx], or null when the backend
+     * has none (every fake, and any future non-native backend). Default null so existing fakes
+     * keep 3.6.0 behaviour byte for byte — the timing line simply omits the fields.
+     *
+     * Null and an all-zero [NativeSegmentStats] are DIFFERENT ANSWERS: null is "no transcribe has
+     * run on this ctx", zeros are "a transcribe ran and cost zero". Callers branch on the null and
+     * never on the values.
+     *
+     * Called by [LocalWhisperEngine.runSegment] immediately after its transcribe returns, on the
+     * same single native-executor thread. Diagnostics only.
+     */
+    fun lastSegmentStats(ctx: Long): NativeSegmentStats? = null
 
     fun release(ctx: Long)
 }
@@ -277,6 +316,60 @@ object WhisperNativeBackend : WhisperBackend {
         onNewSegment: (String) -> Unit,
     ): String = transcribeInternal(ctx, samples, lang, useVad, onNewSegment)
 
+    // 3.7 Workstream F: WhisperNative's cost counters are PROCESS-GLOBAL, so this one slot holds a
+    // snapshot of them taken INSIDE the gate hold that produced them, tagged with the ctx that ran.
+    // The seam needs TWO separate guarantees and each has its own mechanism:
+    //
+    //   1. SNAPSHOT COHERENCE comes from the GATE HOLD. The single JNI round trip is necessary but
+    //      NOT sufficient: natively those three counters are three independent RELAXED atomic
+    //      loads, so read outside a hold they can straddle another transcribe's writes and return
+    //      a triple no single segment ever had. Only the hold makes them one segment's numbers.
+    //   2. READ CORRECTNESS comes from the ctx TAG *plus* the INVALIDATION at the top of the hold.
+    //      The tag alone is not enough — a transcribe that threw would leave the previous
+    //      segment's numbers behind a still-matching ctx — which is why the two are documented as
+    //      one mechanism and must be changed as one.
+    //
+    // And the tag names which ctx last RAN, never which SEGMENT: the GPU canary IS a real
+    // transcribe on the ctx it just loaded, so the canary's numbers are legitimately tagged with
+    // that ctx until the session's first real segment overwrites them.
+    //
+    // Written stats FIRST, tag LAST (both @Volatile; the tag is the guard), so a reader that sees
+    // a matching tag is guaranteed to see the stats that go with it.
+    @Volatile private var lastStats: NativeSegmentStats? = null
+    @Volatile private var lastStatsCtx: Long = 0L
+
+    private fun captureStats(ctx: Long) {
+        // runCatching: a diagnostic must never be able to fail a transcribe that already
+        // succeeded (UnsatisfiedLinkError on a stale .so, OOM on the 3-int array).
+        captureStatsFrom(ctx, runCatching { WhisperNative.lastSegmentStats() }.getOrNull())
+    }
+
+    /**
+     * The payload half of [captureStats], split off so its rules are testable at all:
+     * WhisperNative's static initialiser calls System.loadLibrary, so on a JVM the read above can
+     * only ever throw. Internal for that reason alone — production has exactly one caller,
+     * [captureStats].
+     */
+    internal fun captureStatsFrom(ctx: Long, v: IntArray?) {
+        // SIZE IS THE ONLY REJECTION. Not `v.all { it == 0 }`: an all-zero payload is the reading
+        // that says a transcribe ran and whisper_full did not (the VAD found zero speech, or the
+        // energy gate fired), which is a measurement and one of the two most interesting ones in
+        // this workstream. Dropping it here would report those commits as "no data", identical to
+        // a ctx that never transcribed. `< 3`, not `!= 3`, so a fourth native counter cannot blind
+        // this seam on an app build that predates it.
+        if (v == null || v.size < 3) return
+        lastStats = NativeSegmentStats(ctxFrames = v[0], vadInSamples = v[1], vadOutSamples = v[2])
+        lastStatsCtx = ctx   // LAST: the tag is the guard for the stats written above it
+    }
+
+    /**
+     * @see WhisperBackend.lastSegmentStats. Answers only for the ctx the most recent transcribe
+     * tagged. ctx 0 never matches: it is [WhisperNative.init]'s failure value, so without that
+     * guard a caller passing it would match the untouched initial tag.
+     */
+    override fun lastSegmentStats(ctx: Long): NativeSegmentStats? =
+        if (ctx != 0L && ctx == lastStatsCtx) lastStats else null
+
     // The one place the gate + GpuPolicy sentinel wrap a native whisper_full. [onNewSegment]
     // (nullable) is invoked by the JNI trampoline on THIS thread while the gate is held —
     // see WhisperBackend.transcribeStreaming's contract for why the closure must stay lock-free.
@@ -287,12 +380,23 @@ object WhisperNativeBackend : WhisperBackend {
         useVad: Boolean,
         onNewSegment: ((String) -> Unit)?,
     ): String = NativeComputeGate.serialized {
+        // FIRST, above every path — the mirror of whisper_jni's own reset at the top of
+        // transcribeRaw. A stats read may only ever be answered by the transcribe that completed
+        // in THIS hold. Without this, a transcribe that THREW leaves the previous segment's
+        // numbers tagged with a still-matching ctx, and a ctx freed-then-reallocated at the same
+        // address (the GPU canary's failure branches free and re-init) inherits the canary's
+        // numbers. Never move these below anything, and never delete them as redundant because
+        // the capture overwrites them: the capture does not run on the paths that need this.
+        lastStats = null
+        lastStatsCtx = 0L
         val vad = if (useVad) VadModel.path() else null   // batch passes false -> no native VAD
         val validating = GpuPolicy.needsComputeValidation()
         if (!validating) {
-            return@serialized WhisperNative.transcribe(
+            val text = WhisperNative.transcribe(
                 ctx, samples, lang, translate = false, vadModelPath = vad, onNewSegment = onNewSegment
             )
+            captureStats(ctx)
+            return@serialized text
         }
         GpuPolicy.onGpuComputeStarting()
         var ok = false
@@ -301,6 +405,7 @@ object WhisperNativeBackend : WhisperBackend {
                 ctx, samples, lang, translate = false, vadModelPath = vad, onNewSegment = onNewSegment
             )
             ok = true
+            captureStats(ctx)   // AFTER ok = true: the sentinel's verdict is about the transcribe
             text
         } finally {
             GpuPolicy.onGpuComputeFinished(ok)
