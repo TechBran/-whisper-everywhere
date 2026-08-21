@@ -32,6 +32,13 @@ tier/mode/build:
 & $adb logcat -d | Select-String "WE-DIAG" | Select-String "segment-timing"
 ```
 
+[Correction 2026-08-21 (3.7 F5 review): on a 3.7 build the segment-timing line reads
+`segment-timing: seq=<n> audio=<ms> transcribe=<ms> rtf=<x.xx>[ vadIn=<n> vadOut=<n> ctxFrames=<n>]`
+— seq= prepended (3.7 F2) and an optional stats suffix appended (3.7 F5/F6). The greps above
+still match unchanged. Also: the native VAD summary line and its two failure lines now log
+under the WE-DIAG tag, not whisper_jni — an `-s whisper_jni` capture habit no longer sees
+them. On a 3.6.0 build the original shape applies as written.]
+
 RTF-capture hygiene (A4 review): capture `segment-timing` with NO batch file-transcription job
 running (the compute gate is shared and inflates transcribe-ms) and with cloud OFF for the
 local rows (rescue segments stream into the same log unlabelled). For any outlier rtf, pull the
