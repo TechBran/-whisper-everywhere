@@ -3011,8 +3011,10 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Evidence: `TEST-com.whispereverywhere.transcription.SegmentTimingTest.xml` shows
-`tests="12" failures="0"` — the six pinned assertions from Task F2 still green, unchanged
-(F2 landed 9 tests, not the predicted 8: a source-anchored seam pin was added in-task).
+`tests="13" failures="0"` — the six pinned assertions from Task F2 still green, unchanged
+(F2 landed 9 tests, not the predicted 8: a source-anchored seam pin was added in-task; F5
+landed 4 new tests, not 3: the F4-review handoff mandated the all-zero-suffix case, which
+mutation M1 proved to be the ONLY test killing the tidy-omit regression).
 
 - [ ] **Step 5: Commit** —
 
