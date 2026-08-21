@@ -2,6 +2,7 @@ package com.whispereverywhere.audio
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -1144,6 +1145,54 @@ class SileroEndpointerTest {
         pump.run(0.9f, 1)
         assertTrue("the 16th is, on the new session's own count", ep.isProbeCutout())
         assertEquals(32, probe.frames.size)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The cut record (Task C8): the three numbers only the endpointer knows at the moment of a
+    // cut — how much speech it cut, how much trailing silence bought the decision, and the
+    // probability of the frame that fired it. The commit funnel (Task F8) reads them straight
+    // after onFrame() returns true and formats the `endpoint:` line from them; nothing downstream
+    // may re-derive them, because the state machine has already re-armed by the time it returns.
+    //
+    // Two properties beyond "it records something", each pinned below on its own:
+    //  - a MERGED endpoint is not a cut and leaves the record exactly as it was;
+    //  - onSessionStart is the ONLY thing that clears it — not a commit, not a reset.
+    // ---------------------------------------------------------------------------------------
+
+    @Test fun a_vad_cut_records_what_it_cut() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        assertNull("nothing has been cut yet", ep.lastCut())
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))
+        assertEquals(EndpointCut(speechMs = 640L, trailMs = 512L, prob = 0.1f), ep.lastCut())
+    }
+
+    @Test fun a_merged_endpoint_is_not_a_cut() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)   // pro's utterance cadence
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))
+        pump.run(0.9f, 11)
+        assertFalse(pump.run(0.1f, 17))
+        assertEquals(
+            "the merge changed nothing about the last CUT",
+            EndpointCut(speechMs = 640L, trailMs = 512L, prob = 0.1f),
+            ep.lastCut(),
+        )
+    }
+
+    @Test fun onSessionStart_clears_the_cut_record() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))
+        ep.onSessionStart(nowMs = pump.t, minCommitIntervalMs = 1_200L)
+        assertNull(ep.lastCut())
     }
 
     /**

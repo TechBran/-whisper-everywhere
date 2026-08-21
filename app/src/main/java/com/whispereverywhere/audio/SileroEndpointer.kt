@@ -173,6 +173,25 @@ class SileroEndpointer(
     @Volatile private var probeCutout = false
 
     /**
+     * THE CUT RECORD: what the most recent VAD-decided commit of this session actually cut, or null
+     * before the first one. Written on the commit path of [onProb] and read by [lastCut].
+     *
+     * It is written where it is because the three numbers cease to exist one line later: [commitAt]
+     * runs [clearForNextSegment], which wipes [tempEndMs] and [speechStartMs], so the record must be
+     * taken BEFORE the state machine re-arms and not reconstructed after it.
+     *
+     * Cleared by [onSessionStart] and by NOTHING else — not [clearForNextSegment], not [reset]. The
+     * record describes a CUT, and the two events that look like one are not: a merged endpoint is a
+     * deliberate non-commit, and a discarded short burst never was an utterance. Either one erasing
+     * the record would leave the funnel with no numbers for the cut that really did happen.
+     *
+     * @Volatile for the reason the class KDoc gives: the capture thread writes it and Main clears it
+     * at [onSessionStart]. The reader is the capture thread's own funnel, immediately after
+     * [onFrame] returned true, so the only cross-thread edge that matters is that session clear.
+     */
+    @Volatile private var lastCutRecord: EndpointCut? = null
+
+    /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
      * @param amp the chunk's RMS, ignored here — it exists for the amplitude fallback that shares
      *        this call shape.
@@ -257,6 +276,9 @@ class SileroEndpointer(
      */
     override fun pendingCutPointMs(): Long = prevEndMs
 
+    /** The most recent VAD cut of this session, or null. A MERGED endpoint is not a cut. */
+    fun lastCut(): EndpointCut? = lastCutRecord
+
     /**
      * True once the probe has been latched off for this session (amplitude fallback in force).
      *
@@ -324,6 +346,7 @@ class SileroEndpointer(
         hasCommitted = false
         slowRun = 0
         probeCutout = false
+        lastCutRecord = null
         clearForNextSegment()
     }
 
@@ -460,6 +483,11 @@ class SileroEndpointer(
             closeGate()
             return false
         }
+        // A REAL CUT, taken. Record it BEFORE the commit — the order is load-bearing, not tidy:
+        // commitAt() runs clearForNextSegment(), which zeroes `tempEndMs` and `speechStartMs`, so
+        // `nowMs - tempEndMs` computed one line later is `nowMs` itself. Every number here dies
+        // with this frame, which is the whole reason [EndpointCut] exists.
+        lastCutRecord = EndpointCut(speechMs = speechMs, trailMs = nowMs - tempEndMs, prob = p)
         commitAt(nowMs)
         return true
     }
@@ -505,3 +533,19 @@ class SileroEndpointer(
         probeReset()
     }
 }
+
+/**
+ * What a VAD-decided commit actually cut, for the `endpoint:` diagnostic line. These three numbers
+ * exist nowhere else: by the time the service sees the verdict, the state machine has already
+ * re-armed. Read immediately after [SileroEndpointer.onFrame] returns true.
+ *
+ * It is declared BELOW the class rather than above it: `SileroEndpointerTest`'s class-KDoc scope
+ * guard resolves the class's own documentation by the nearest block above the declaration, so a
+ * top-level member wedged in between would hand the class's two scoped obligation pins a KDoc
+ * written about something else.
+ *
+ * @param speechMs speech from the gate opening to the frame that began the trailing silence
+ * @param trailMs trailing silence at the moment of the cut (always >= HANGOVER_MS)
+ * @param prob the Silero probability of the frame that fired the cut
+ */
+data class EndpointCut(val speechMs: Long, val trailMs: Long, val prob: Float)
