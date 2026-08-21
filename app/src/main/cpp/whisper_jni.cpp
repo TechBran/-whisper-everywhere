@@ -205,6 +205,66 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// 3.7 Workstream A - streaming VAD probe surface (vadProbeInit / vadProbeFrame / vadProbeReset /
+// vadProbeFree).
+//
+// A dedicated Silero context driven ONE 512-sample frame at a time from the audio capture thread,
+// so the Kotlin endpointer can cut segments where the user actually stopped talking instead of
+// where a wall clock ran out. It is deliberately SEPARATE from g_vad_ctx above, and that is a
+// correctness requirement rather than an optimisation: we_vad_filter reaches
+// whisper_vad_detect_speech, which resets the LSTM state on entry (whisper.cpp:5193) and resizes
+// probs to hundreds of entries from index 0. Sharing one context corrupts the probe three
+// independent ways - state wipe, probs clobber, and a ggml_backend_sched data race (sched is not
+// thread-safe and both callers write the same "frame" input tensor). A mutex fixes only the
+// third. Two contexts cost ~2.6 MB RSS; the process already carries one for the batch filter.
+//
+// Division of labour with that batch filter, which still runs on every commit: the PROBE decides
+// WHEN to cut, the FILTER decides WHAT audio inside the cut reaches the encoder. Independent
+// jobs, independent knobs - the filter keeps its own 0.40 / 150 ms onset tuning untouched.
+//
+// PROBE SAFETY: these four functions run OUTSIDE NativeComputeGate. Every other whisper call in
+// this process is wrapped by it; the probe alone is not. The argument:
+//   1. The gate exists for exactly two named reasons (NativeComputeGate.kt:15-21): concurrent
+//      submits on the shared Adreno OpenCL command queue racing GpuPolicy's crash sentinel, and
+//      two full contexts doubling the KV/compute buffers inside a foreground service.
+//   2. Reason one is unreachable. whisper_vad_init_context hard-forces use_gpu = false at
+//      whisper.cpp:4671-4674 ("GPU VAD is forced disabled until the performance is improved"),
+//      REGARDLESS of what the params ask for; belt and braces,
+//      whisper_vad_default_context_params() already defaults it false. A VAD context cannot
+//      touch OpenCL, so it cannot race the sentinel.
+//   3. Reason two is unreachable. The VAD context builds its own CPU backend with its own work
+//      buffers, sched and galloc - no mutable state shared with any whisper_context - and 2.6 MB
+//      is not an OOM risk against a 190-574 MB model tier the user already loaded.
+//   4. Taking the gate would be actively harmful. It is a FAIR ReentrantLock
+//      (NativeComputeGate.kt:34), so each 32 ms frame would queue behind whatever holds it: a
+//      4-15 s whisper_full, or one of BatchTranscriber's ~54 s per-chunk holds. That is precisely
+//      the stall 3.7 exists to remove, recreated inside the mechanism meant to remove it.
+// Nothing else may follow the probe through this hole: NativeComputeGate still wraps every
+// whisper_full, load and release.
+//
+// Thread-safety here is g_probe_mutex, which guards ONLY these four functions and the probe
+// context. It is never taken while g_vad_mutex is held and never the reverse, so the two VAD
+// paths cannot deadlock against each other.
+// ---------------------------------------------------------------------------------------------
+
+static std::mutex             g_probe_mutex;
+static whisper_vad_context  * g_probe_ctx = nullptr;
+
+// Releases the probe context (~2.6 MB). Idempotent, and safe after a failed vadProbeInit.
+// Blocks briefly if a frame is in flight, which is why the caller runs it on the capture-thread
+// teardown path rather than on Main.
+extern "C" JNIEXPORT void JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_vadProbeFree(
+        JNIEnv * /*env*/, jobject /* this */) {
+    std::lock_guard<std::mutex> lock(g_probe_mutex);
+    if (g_probe_ctx != nullptr) {
+        whisper_vad_free(g_probe_ctx);
+        g_probe_ctx = nullptr;
+        LOGI("vad probe: context freed");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // 3.6.0 Workstream D: incremental new-segment delivery. whisper_full invokes
 // new_segment_callback ON THE CALLING THREAD (the engine's single native-executor thread) after
 // each accepted segment; we forward the FULL running text of THIS call to Kotlin — the same

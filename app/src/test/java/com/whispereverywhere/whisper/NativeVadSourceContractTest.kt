@@ -70,6 +70,43 @@ class NativeVadSourceContractTest {
         return body.substringBefore("\n}\n")
     }
 
+    /** One JNI export's body: every JNI function in whisper_jni.cpp closes at column 0. */
+    private fun jniFunctionBody(name: String): String {
+        val marker = "Java_com_whispereverywhere_whisper_WhisperNative_$name("
+        val start = jni.indexOf(marker)
+        assertTrue(
+            "JNI export $name is not declared in whisper_jni.cpp. indexOf() returns -1 when the " +
+                "marker is absent, so substring(start) would silently rebase the scope to the top " +
+                "of the file, and every claim about $name's body would then be answered by " +
+                "unrelated code hundreds of lines away instead of failing here.",
+            start >= 0
+        )
+        val body = jni.substring(start)
+        assertTrue(
+            "no column-0 \"\\n}\\n\" follows \"$marker\". substringBefore() returns its RECEIVER " +
+                "when the delimiter is absent, so the scope would silently widen to everything " +
+                "from $name to end-of-file — which would turn a \"must not touch g_vad_ctx\" " +
+                "assertion into a whole-file search that fails for a reason unrelated to $name.",
+            body.contains("\n}\n")
+        )
+        return body.substringBefore("\n}\n")
+    }
+
+    /**
+     * True when [needle] appears on a line of LIVE code inside [scope]; a commented-out line does
+     * not count. Same lesson as the log-demotion guard below: `// g_probe_ctx = nullptr;` left
+     * behind by a refactor would keep a plain contains() green while the dangling pointer it
+     * describes is real.
+     */
+    private fun containsLiveLine(scope: String, needle: String): Boolean =
+        scope.lineSequence().any { line ->
+            val trimmed = line.trimStart()
+            line.contains(needle) &&
+                !trimmed.startsWith("//") &&
+                !trimmed.startsWith("/*") &&
+                !trimmed.startsWith("*")
+        }
+
     /** The streaming VAD entry point's body: bounded by the resetting wrapper that follows it. */
     private fun streamingVadEntryPoint(): String {
         val anchor = "bool whisper_vad_detect_speech_no_reset("
@@ -177,6 +214,69 @@ class NativeVadSourceContractTest {
                 "31.25x/second needs a rate-limiting decision. If you added one deliberately, " +
                 "bump this count.",
             Regex("""WHISPER_LOG_ERROR\(""").findAll(fn).count() == 2
+        )
+    }
+
+    @Test
+    fun probeSurface_recordsTheComputeGateBypassArgument_whereTheBypassActuallyLives() {
+        val banner = "3.7 Workstream A"
+        val terminator = "g_probe_mutex"
+        assertTrue(
+            "the section banner \"$banner\" is missing from whisper_jni.cpp. substringAfter() " +
+                "returns its RECEIVER when the delimiter is absent, so the scope below would " +
+                "silently become everything from the top of the file up to the first " +
+                "\"$terminator\" — and the whole point of this test is that the argument lives AT " +
+                "the probe surface, not merely somewhere in the translation unit.",
+            jni.contains(banner)
+        )
+        val afterBanner = jni.substringAfter(banner)
+        assertTrue(
+            "\"$terminator\" does not follow \"$banner\". substringBefore() returns its receiver " +
+                "when the delimiter is absent, so the scope would silently widen to end-of-file " +
+                "and the claims below could be satisfied by prose written anywhere at all.",
+            afterBanner.contains(terminator)
+        )
+        val header = afterBanner.substringBefore(terminator)
+        listOf(
+            "OUTSIDE NativeComputeGate",
+            "whisper.cpp:4671-4674",
+            "own CPU backend",
+            "FAIR ReentrantLock",
+            "2.6 MB",
+        ).forEach { claim ->
+            assertTrue(
+                "NativeComputeGate wraps EVERY whisper call in this process; the probe alone " +
+                    "bypasses it, so the argument for why that is safe must live at the surface " +
+                    "itself, where anyone moving this code will read it. It must state \"$claim\". " +
+                    "(If the whisper.cpp citation has drifted, re-verify the forced-CPU line " +
+                    "rather than deleting the claim.)",
+                header.contains(claim)
+            )
+        }
+    }
+
+    @Test
+    fun probeContext_isDedicated_becauseSharingTheBatchContextCorruptsItThreeWays() {
+        assertTrue(
+            "the probe needs its OWN whisper_vad_context. we_vad_filter's path reaches " +
+                "whisper_vad_detect_speech, which unconditionally resets the LSTM on entry " +
+                "(whisper.cpp:5193) — wiping the recurrence the probe is riding — and resizes " +
+                "probs to hundreds of entries from index 0, which is the slot the probe reads.",
+            Regex("""static\s+whisper_vad_context\s*\*\s*g_probe_ctx\s*=\s*nullptr;""")
+                .containsMatchIn(jni)
+        )
+        assertTrue(
+            "the probe needs its OWN mutex. ggml_backend_sched is not thread-safe and both " +
+                "callers would write the same \"frame\" input tensor; g_vad_mutex cannot fix the " +
+                "state wipe or the probs clobber anyway.",
+            Regex("""static\s+std::mutex\s+g_probe_mutex;""").containsMatchIn(jni)
+        )
+        val free = jniFunctionBody("vadProbeFree")
+        assertTrue("vadProbeFree must take g_probe_mutex", containsLiveLine(free, "g_probe_mutex"))
+        assertTrue("vadProbeFree must not touch g_vad_ctx", !free.contains("g_vad_ctx"))
+        assertTrue(
+            "vadProbeFree must be null-safe and idempotent",
+            containsLiveLine(free, "g_probe_ctx = nullptr;")
         )
     }
 }

@@ -302,7 +302,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 - Consumes: `NativeVadSourceContractTest.repoFile(String): File` (Task N1). `WHISPER_LOG_DEBUG(...)` — verified at `whisper.cpp:125-132`: `WHISPER_DEBUG` is commented out at `:126`, so `WHISPER_LOG_DEBUG(...)` expands to **nothing**. This is a true compile-out, not a re-level: it must be, because `we_native_log` (`whisper_jni.cpp:22-27`) maps every non-WARN/ERROR level to `ANDROID_LOG_INFO`, so a level change alone would have fixed nothing.
 - Produces: `NativeVadSourceContractTest.fork: String` (lazy read of the vendored `whisper.cpp`), consumed by no later task in this section.
 
-**Line-anchor resolution (binding):** the spec and the investigation report cite `whisper.cpp:5104,5105,5108,5117,5176`. Re-verified in the actual submodule at `714224a3`: the four aligned-path lines are now **5113, 5114, 5117, 5176** and the short-frame line is **5143** (the spec's `5117` was the short-frame one; today `5117` is `props size`). Anchor on the format strings, listed below, not the numbers.
+**Line-anchor resolution (binding):** the spec and the investigation report cite `whisper.cpp:5104,5105,5108,5117,5176`. Re-verified in the actual submodule at `714224a3`: the four aligned-path lines are now **5119, 5120, 5123, 5182** and the short-frame line is **5149** (the spec's `5117` was the short-frame one; today `5123` is `props size`). These were re-rebased +6 after task N1 bumped the fork: the six-line fork note now sitting at `:5104-5109` shifted everything below it. Anchor on the format strings, listed below, not the numbers.
 
 **Not JVM-TDD-able (explicit):** same as Task N1 — the failing test is a source-contract assertion over the vendored `.cpp`; `:app:assembleDebug` is the compile gate. This one is a **submodule** edit, so it takes two commits (fork commit + parent pointer bump).
 
@@ -504,7 +504,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
         assertTrue(
             "the probe needs its OWN whisper_vad_context. we_vad_filter's path reaches " +
                 "whisper_vad_detect_speech, which unconditionally resets the LSTM on entry " +
-                "(whisper.cpp:5187) — wiping the recurrence the probe is riding — and resizes " +
+                "(whisper.cpp:5193) — wiping the recurrence the probe is riding — and resizes " +
                 "probs to hundreds of entries from index 0, which is the slot the probe reads.",
             Regex("""static\s+whisper_vad_context\s*\*\s*g_probe_ctx\s*=\s*nullptr;""")
                 .containsMatchIn(jni)
@@ -547,7 +547,7 @@ com.whispereverywhere.whisper.NativeVadSourceContractTest > probeContext_isDedic
 // so the Kotlin endpointer can cut segments where the user actually stopped talking instead of
 // where a wall clock ran out. It is deliberately SEPARATE from g_vad_ctx above, and that is a
 // correctness requirement rather than an optimisation: we_vad_filter reaches
-// whisper_vad_detect_speech, which resets the LSTM state on entry (whisper.cpp:5187) and resizes
+// whisper_vad_detect_speech, which resets the LSTM state on entry (whisper.cpp:5193) and resizes
 // probs to hundreds of entries from index 0. Sharing one context corrupts the probe three
 // independent ways - state wipe, probs clobber, and a ggml_backend_sched data race (sched is not
 // thread-safe and both callers write the same "frame" input tensor). A mutex fixes only the
@@ -841,7 +841,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
         assertTrue(
             "a misaligned frame must be REFUSED with -1.0f, never zero-padded and never reported " +
                 "as silence: whisper_vad_detect_speech_no_reset zero-pads a short frame " +
-                "(whisper.cpp:5142-5153) and STILL advances the LSTM one step, poisoning the " +
+                "(whisper.cpp:5148-5159) and STILL advances the LSTM one step, poisoning the " +
                 "recurrence for every frame after it. AudioRecord.read returns UP TO the buffer " +
                 "size and the 48 kHz decimator emits \"~1024\" bytes, so one chunk = one frame is " +
                 "the common case and never the contract.",
@@ -928,7 +928,7 @@ static float g_probe_frame[kProbeFrameSamples];
 // Speech probability in [0,1] for EXACTLY ONE 512-sample window, or -1.0f meaning "no verdict".
 //
 // -1.0f is NEVER "silence". A short frame is zero-padded by whisper_vad_detect_speech_no_reset
-// (whisper.cpp:5142-5153) and STILL advances the LSTM one step, which poisons the recurrence for
+// (whisper.cpp:5148-5159) and STILL advances the LSTM one step, which poisons the recurrence for
 // every frame after it - a silent, gradual accuracy loss with no symptom at the call site. So a
 // misaligned frame is refused outright and the Kotlin caller accumulates to exact 512-sample
 // boundaries. record.read() returns UP TO the buffer size and the 48 kHz decimator output is
