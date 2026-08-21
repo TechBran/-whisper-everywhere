@@ -96,6 +96,24 @@ class CaptureThreadPolicyTest {
     }
 
     @Test
+    fun stopThenJoin_doesNotPropagate_whenTheJoinItselfThrows() {
+        // The other half of "both callbacks are individually guarded": Thread.join throws
+        // InterruptedException, and teardown runs inside stop() paths that must not blow up on it.
+        // Without this, only the stopRecord guard is pinned and the join guard is a KDoc claim.
+        val outcome = runCatching {
+            CaptureThreadPolicy.stopThenJoin(
+                joinMs = CaptureThreadPolicy.CAPTURE_JOIN_MS,
+                stopRecord = {},
+                joinThread = { throw InterruptedException("interrupted mid-teardown") },
+            )
+        }
+        assertTrue(
+            "a throwing join must not escape teardown: ${outcome.exceptionOrNull()}",
+            outcome.isSuccess,
+        )
+    }
+
+    @Test
     fun stopThenJoin_handsItsBoundToTheJoin_unchanged() {
         // Closes a mutant that survived the rest of the suite: joinThread(0L) passes every
         // ordering test above (both fake threads exit promptly) while meaning Thread.join(0) —
