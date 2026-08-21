@@ -1154,9 +1154,10 @@ class SileroEndpointerTest {
     // after onFrame() returns true and formats the `endpoint:` line from them; nothing downstream
     // may re-derive them, because the state machine has already re-armed by the time it returns.
     //
-    // Two properties beyond "it records something", each pinned below on its own:
+    // Three properties beyond "it records something", each pinned below on its own:
     //  - a MERGED endpoint is not a cut and leaves the record exactly as it was;
-    //  - onSessionStart is the ONLY thing that clears it — not a commit, not a reset.
+    //  - an external commit (reset) is not a VAD cut either, and leaves it standing;
+    //  - onSessionStart is the ONLY thing that clears it.
     // ---------------------------------------------------------------------------------------
 
     @Test fun a_vad_cut_records_what_it_cut() {
@@ -1180,6 +1181,37 @@ class SileroEndpointerTest {
         assertFalse(pump.run(0.1f, 17))
         assertEquals(
             "the merge changed nothing about the last CUT",
+            EndpointCut(speechMs = 640L, trailMs = 512L, prob = 0.1f),
+            ep.lastCut(),
+        )
+    }
+
+    /**
+     * The cut record SURVIVES an external commit. Only a new session takes it away.
+     *
+     * C7's [the_latch_survives_reset_and_is_re_armed_only_by_a_new_session] states this same
+     * two-sided shape for the slow-probe latch, and the reason is the same one seen from the other
+     * end: `reset()` IS the wall-cap cut (`FloatingBubbleService.kt:1722`), `switchSource` (`:1819`)
+     * and `stopRecording` (`:2393`), and not one of those is a VAD cut. An external commit has no
+     * speechMs/trailMs/p of its own to leave behind, so erasing the record there would blank the
+     * funnel's numbers for the VAD cut that really did happen — and `EndpointDiag.endpointLine`
+     * already spells "this cut had no endpointer state behind it" as `ec = null` at the CALL site,
+     * which is a different statement from "the last VAD cut was nothing".
+     *
+     * The other half — that a new session DOES clear it — is [onSessionStart_clears_the_cut_record]
+     * directly below. C7 states both halves in one method; here they are deliberately two, so that
+     * the mutation for each half keeps a SOLE killer. One method asserting both would leave the
+     * deleted-session-clear mutant with two killers and nothing saying which assertion earned it.
+     */
+    @Test fun the_cut_record_survives_reset_and_is_cleared_only_by_a_new_session() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 20)
+        assertTrue(pump.run(0.1f, 17))
+        ep.reset()
+        assertEquals(
+            "an external commit is not a VAD cut, and must not erase one",
             EndpointCut(speechMs = 640L, trailMs = 512L, prob = 0.1f),
             ep.lastCut(),
         )

@@ -320,7 +320,8 @@ class SileroEndpointer(
     /**
      * A new RECORDING session (`FloatingBubbleService.kt:2224`, beside
      * `SegmentCapPolicy.onSessionStart`). Everything [reset] clears, plus the governor's
-     * first-cut-is-free arming and THIS session's cadence floor.
+     * first-cut-is-free arming, THIS session's cadence floor, the slow-probe latch and the CUT
+     * RECORD — the last two being the state [reset] deliberately leaves standing.
      *
      * [minCommitIntervalMs] comes from
      * [com.whispereverywhere.service.CommitCadencePolicy.minCommitIntervalMs] at the call site,
@@ -338,6 +339,12 @@ class SileroEndpointer(
      * missed its budget [EndpointerTuning.PROBE_CUTOUT_FRAMES] frames running. A NEW recording is
      * a new machine state — a different route, a different thermal state, a finished neighbour
      * app — and is the one event that earns the probe another chance.
+     *
+     * [lastCutRecord] is cleared here and nowhere else on the same terms, for a different reason.
+     * [reset] is an EXTERNAL commit — the wall-cap cut, `switchSource`, `stopRecording` — and none
+     * of those is a VAD cut, so none has a speechMs/trailMs/p of its own to leave behind; clearing
+     * the record there would blank the funnel's numbers for the VAD cut that really did happen. The
+     * merge path and the discarded short burst leave it standing for exactly the same reason.
      */
     override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
@@ -538,6 +545,13 @@ class SileroEndpointer(
  * What a VAD-decided commit actually cut, for the `endpoint:` diagnostic line. These three numbers
  * exist nowhere else: by the time the service sees the verdict, the state machine has already
  * re-armed. Read immediately after [SileroEndpointer.onFrame] returns true.
+ *
+ * BOTH durations are WALL-CLOCK milliseconds on `onFrame`'s own `nowMs` — the caller's chunk clock,
+ * the only clock this class has (see the "ONE clock" ruling in [SileroEndpointer]'s KDoc). [trailMs]
+ * is `nowMs - tempEndMs` evaluated on the frame that FIRED the cut, so the speech ended exactly
+ * [trailMs] before that frame's `nowMs`, and Task F9's `speechEnd = nowMs - trailMs` depends on that
+ * anchor and on nothing else. A move to a monotonic or session-relative clock changes what these two
+ * numbers mean at every reader.
  *
  * It is declared BELOW the class rather than above it: `SileroEndpointerTest`'s class-KDoc scope
  * guard resolves the class's own documentation by the nearest block above the declaration, so a
