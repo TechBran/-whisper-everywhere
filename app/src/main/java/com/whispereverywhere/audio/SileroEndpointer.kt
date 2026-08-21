@@ -129,7 +129,8 @@ class SileroEndpointer(
      * to re-arm it would be indistinguishable from one that did.
      *
      * [onSessionStart] therefore ANCHORS [lastCommitMs] on the session instead of zeroing it: the
-     * field then holds a sane instant at every moment of its life, and the flag alone decides.
+     * field then holds a sane instant from the first session start onward, and the flag alone
+     * decides.
      */
     @Volatile private var lastCommitMs = 0L
 

@@ -5665,11 +5665,11 @@ stronger red anyway (a no-op governor is exactly the bug):
 `onSessionStart_re_arms_the_first_free_cut FAILED java.lang.AssertionError: a new session's first cut is free again`.
 
 - [ ] **Step 3: Minimal implementation.** In `SileroEndpointer.kt` add three fields under
-  `private var prevEndMs = 0L`:
+  `@Volatile private var prevEndMs = Endpointer.NO_CUT_POINT`:
 
 ```kotlin
-    private var lastCommitMs = 0L
-    private var hasCommitted = false
+    @Volatile private var lastCommitMs = 0L
+    @Volatile private var hasCommitted = false
 
     /**
      * This session's cadence floor, handed over at [onSessionStart]. Before the first session start
@@ -5678,7 +5678,7 @@ stronger red anyway (a no-op governor is exactly the bug):
      * [com.whispereverywhere.service.CommitCadencePolicy] — so a frame arriving before onOpen has
      * run can never commit at a rate the tier cannot pay for.
      */
-    private var minCommitIntervalMs = 8_000L
+    @Volatile private var minCommitIntervalMs = 8_000L
 ```
 
 insert the governor between the min-speech check and `commitAt(nowMs)` in `onProb`, so the tail of
@@ -5693,10 +5693,10 @@ that function reads:
         if (hasCommitted && nowMs - lastCommitMs < minCommitIntervalMs) {
             // THE COST GOVERNOR. A real endpoint, but committing it now would outrun the tier's
             // measured per-commit cost (F*N + m*S <= 0.70*60 s). MERGE: close the gate so the next
-            // pause is judged afresh, keep pendingSpeech (that audio really is still uncommitted),
-            // and promote this endpoint to the micro-pause memory — it is the best cut point known.
+            // pause is judged afresh, keep pendingSpeech (that audio really is still uncommitted).
+            // The micro-pause promotion above has ALREADY recorded this boundary — do NOT write
+            // prevEndMs here (task-C6-report §4.1; mutation G26 kills the re-added line 2/42).
             // The session's FIRST cut is never merged: first text fast on every tier.
-            prevEndMs = tempEndMs
             closeGate()
             return false
         }
@@ -5743,7 +5743,7 @@ replace `commitAt()` and `reset()`, and add `onSessionStart()`:
     override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
         lastFrameMs = nowMs
-        lastCommitMs = 0L
+        lastCommitMs = nowMs   // NOT 0L — see task-C6-report §4.2 (G12/G13/G14)
         hasCommitted = false
         clearForNextSegment()
     }
