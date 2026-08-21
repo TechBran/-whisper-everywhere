@@ -357,8 +357,7 @@ class NativeVadSourceContractTest {
                 "worse than one that reports failure: the caller skips the amplitude fallback and " +
                 "N5's vadProbeFrame inherits the null.",
             containsLiveLine(init, "return JNI_FALSE;") &&
-                init.indexOf("g_probe_ctx == nullptr") >
-                init.indexOf("whisper_vad_init_from_file_with_params")
+                init.indexOf("g_probe_ctx == nullptr") > createAt
         )
         assertTrue(
             "vadProbeInit must not touch the batch filter's context",
