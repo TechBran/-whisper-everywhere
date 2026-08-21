@@ -223,6 +223,24 @@ object WhisperNative {
      */
     external fun setAudioCtxFloor(floor: Int)
 
+    /**
+     * Cost counters for the LAST [transcribeRaw] in this process, as
+     * `[ctxFrames, vadInSamples, vadOutSamples]` (3.7 Workstream F).
+     *
+     * - `ctxFrames` — the encoder audio context actually used. 0 means whisper_full never ran
+     *   (the VAD found zero speech, or the energy gate fired). This is the cost driver 3.7's
+     *   cadence arithmetic turns on and was entirely invisible from Kotlin before 3.7.
+     * - `vadInSamples` / `vadOutSamples` — we_vad_filter's before/after sample counts. Both 0
+     *   means no VAD ran; `vadIn > 0` with `vadOut == 0` is the probe-vs-batch-filter
+     *   disagreement, which is the one thing `cut=vad` cannot tell you on its own.
+     *
+     * PROCESS-GLOBAL, like [detectedLanguage]: only meaningful when read on the same thread that
+     * just ran the transcribe, while that thread still holds NativeComputeGate. WhisperNativeBackend
+     * snapshots it inside the gate and tags the snapshot with its ctx; nothing else may call it.
+     * Diagnostics only — never read for a decision.
+     */
+    external fun lastSegmentStats(): IntArray
+
     /** Frees the native whisper_context. Safe to call once per non-zero handle. */
     external fun free(ctxPtr: Long)
 }

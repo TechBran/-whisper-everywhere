@@ -17,6 +17,9 @@
 #define LOG_TAG "whisper_jni"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+// The owner's acceptance greps are `adb logcat -s WE-DIAG`. A native line that belongs to that
+// story must carry that tag, or it is invisible to the capture that is supposed to answer for it.
+#define LOGDIAG(...) __android_log_print(ANDROID_LOG_INFO, "WE-DIAG", __VA_ARGS__)
 
 // Forward ggml + whisper internal logging (normally stderr, which Android discards) to logcat.
 // This is how the OpenCL/CPU backends narrate their init (platform/device selection, kernel
@@ -135,6 +138,14 @@ static std::mutex             g_vad_mutex;
 static whisper_vad_context  * g_vad_ctx = nullptr;
 static std::string            g_vad_path;
 
+// 3.7 Workstream F cost counters for the LAST transcribeRaw; see lastSegmentStats below.
+// ATOMIC, not plain int: every WRITE below happens inside NativeComputeGate, but lastSegmentStats
+// is its own JNI entry point and nothing in the type system forces its caller onto the writing
+// thread — the same formal race we_install_native_logging above already had to correct once.
+static std::atomic<int>       g_last_ctx_frames{0};
+static std::atomic<int>       g_last_vad_in{0};
+static std::atomic<int>       g_last_vad_out{0};
+
 // Filters [pcm] down to speech-only (with 100 ms inter-segment gaps, mirroring whisper_full's
 // own VAD assembly). Returns false when VAD is unavailable (caller proceeds unfiltered). On
 // success pcm holds the filtered audio — possibly EMPTY when no speech at all was detected.
@@ -207,8 +218,15 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
     }
     whisper_vad_free_segments(segs);
 
-    LOGI("VAD: %zu -> %zu samples (%d segments) wallMs=%.1f", pcm.size(), filtered.size(), nseg,
-         static_cast<double>(t_vad_us) / 1000.0);
+    // BEFORE the swap below, and that ordering is the whole contract: afterwards pcm IS the
+    // filtered audio, so the two counters would trade places and always agree — and vadIn > 0 with
+    // vadOut == 0, the probe-vs-batch-filter disagreement these exist to expose, would be
+    // unreachable.
+    g_last_vad_in.store(static_cast<int>(pcm.size()), std::memory_order_relaxed);
+    g_last_vad_out.store(static_cast<int>(filtered.size()), std::memory_order_relaxed);
+    // Tag moved whisper_jni -> WE-DIAG (3.7 F); the TEXT is byte-identical so existing greps hold.
+    LOGDIAG("VAD: %zu -> %zu samples (%d segments) wallMs=%.1f", pcm.size(), filtered.size(), nseg,
+            static_cast<double>(t_vad_us) / 1000.0);
     pcm.swap(filtered);
     return true;
 }
@@ -440,6 +458,33 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeFree(
 }
 
 // ---------------------------------------------------------------------------------------------
+// 3.7 Workstream F: the two cost drivers Kotlin could not see. `ctxFrames` is the encoder audio
+// context actually used (the §4 cost driver: a 2.4 s utterance still pays the 512-frame floor),
+// and `vadIn`/`vadOut` are we_vad_filter's before/after sample counts — `vadOut=0` with a
+// `cut=vad` endpoint is the exact probe-vs-batch-filter disagreement signature.
+//
+// Process-global, written inside whisper_full's own JNI frame, which NativeComputeGate has
+// serialized process-wide. The Kotlin side snapshots them INSIDE that same gate hold and tags the
+// snapshot with its ctx, so a batch chunk interleaving afterwards cannot be misread as a bubble
+// segment's numbers. Diagnostics only: never read for a decision.
+// ---------------------------------------------------------------------------------------------
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_lastSegmentStats(
+        JNIEnv *env, jobject /* this */) {
+    jint values[3] = {
+        static_cast<jint>(g_last_ctx_frames.load(std::memory_order_relaxed)),
+        static_cast<jint>(g_last_vad_in.load(std::memory_order_relaxed)),
+        static_cast<jint>(g_last_vad_out.load(std::memory_order_relaxed)),
+    };
+    jintArray out = env->NewIntArray(3);
+    if (out == nullptr) {
+        return nullptr;
+    }
+    env->SetIntArrayRegion(out, 0, 3, values);
+    return out;
+}
+
+// ---------------------------------------------------------------------------------------------
 // 3.6.0 Workstream D: incremental new-segment delivery. whisper_full invokes
 // new_segment_callback ON THE CALLING THREAD (the engine's single native-executor thread) after
 // each accepted segment; we forward the FULL running text of THIS call to Kotlin — the same
@@ -520,6 +565,17 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
         JNIEnv *env, jobject /* this */,
         jlong ctxPtr, jfloatArray samples, jstring lang, jboolean translate,
         jstring vadModelPath, jobject segmentCallback) {
+    // Reset the F counters for THIS call, ABOVE every return in this function. Four returns below
+    // leave whisper_full unrun — a null ctx, a null sample array, "VAD found zero speech", the
+    // no-VAD energy gate — and none of them reaches the audio_ctx block, so reporting a previous
+    // segment's ctxFrames there would make an encoder-free commit look like it paid for a
+    // 512-frame encode. ctxFrames=0 means "whisper_full never ran"; vadIn=0 vadOut=0 means "no VAD
+    // ran at all". Those two readings are honest because of this placement and nothing else, so a
+    // new early return must go BELOW these three stores, never above them.
+    g_last_ctx_frames.store(0, std::memory_order_relaxed);
+    g_last_vad_in.store(0, std::memory_order_relaxed);
+    g_last_vad_out.store(0, std::memory_order_relaxed);
+
     auto emptyResult = [env]() { return env->NewByteArray(0); };
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
     if (ctx == nullptr) {
@@ -638,6 +694,10 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
         if (neededFrames < floorFrames) neededFrames = floorFrames;
         if (neededFrames > 1500) neededFrames = 1500;
         params.audio_ctx = neededFrames;
+        // Published AFTER both clamps, so it reports what the encoder was actually billed rather
+        // than what the samples/320 arithmetic hoped for — the floor is the entire reason this
+        // counter exists (a 2.4 s utterance needs ~184 frames and still pays 512).
+        g_last_ctx_frames.store(neededFrames, std::memory_order_relaxed);
     }
 
     // D (3.6.0): arm the new-segment trampoline. cbCtx is stack-local — whisper_full is
