@@ -276,6 +276,27 @@ class NativeVadSourceContractTest {
                 "misled an earlier investigation layer.",
             !Regex("""vcp\.n_thread\b""").containsMatchIn(body)
         )
+        // 3.7 C1: the batch filter's OWN onset tuning is a binding untouchable of the spec, and
+        // EndpointerTuning's KDoc contrasts the endpointer's 0.50 against these two numbers by
+        // citing them. Nothing pinned them before — the streaming work could have "unified" the
+        // knobs, or a later edit could drift them, and the only failure would be a contradiction
+        // in a comment. They are the filter's, and they stay.
+        assertTrue(
+            "we_vad_filter must keep vp.threshold = 0.40f. The batch filter keeps its own " +
+                "0.40 / 150 ms tuning — the probe decides WHEN to cut, the filter decides WHAT " +
+                "reaches the encoder — and EndpointerTuning.ONSET_THRESHOLD is 0.50 precisely " +
+                "because the two are independent knobs on independent jobs (the filter's 0.40 " +
+                "buys onset headroom that suppress_nst absorbs at the token layer; endpointing " +
+                "has no token layer).",
+            Regex("""vp\.threshold\s*=\s*0\.40f""").containsMatchIn(body)
+        )
+        assertTrue(
+            "we_vad_filter must keep vp.speech_pad_ms = 150. It is the other half of the same " +
+                "binding untouchable, and EndpointerTuning.HANGOVER_MS's 500 ms is chosen partly " +
+                "to leave trailing audio for this padding to expand into — shrink one without " +
+                "the other and the commit boundary eats the word it was protecting.",
+            Regex("""vp\.speech_pad_ms\s*=\s*150""").containsMatchIn(body)
+        )
     }
 
     @Test

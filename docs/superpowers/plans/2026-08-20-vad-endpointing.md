@@ -4162,7 +4162,7 @@ class EndpointerTuningTest {
             Pin(
                 "FRAME_BYTES is the single owner of the native frame size",
                 kdocFor("FRAME_BYTES"),
-                "SINGLE OWNER: this object owns the native frame contract."
+                "SINGLE OWNER: this object owns the JVM side of the native frame contract."
             ),
             Pin(
                 "and D4 must alias it rather than restate it",
@@ -4236,16 +4236,30 @@ class EndpointerTuningTest {
                 "native `min_silence_samples_at_max_speech`, whisper.cpp:5255"
             ),
             Pin(
-                "what the floor means at the 32 ms frame cadence",
+                "which frame of the dip is the first to qualify (the C1-review off-by-one)",
                 kdocFor("MICRO_PAUSE_MS"),
-                "At the 32 ms frame cadence the first qualifying frame is the 4th of the dip " +
-                    "(128 ms > 98 ms)."
+                "At the 32 ms frame cadence, with the dip clock started at the FIRST " +
+                    "sub-[RELEASE_THRESHOLD] frame (as native starts temp_end at that frame's " +
+                    "curr_sample), the first qualifying frame is the 5th of the dip: " +
+                    "128 ms > 98 ms, while the 4th is only 96 ms old."
+            ),
+            Pin(
+                "the floor's clock domain: wall-clock ms here, samples natively",
+                kdocFor("MICRO_PAUSE_MS"),
+                "CLOCK DOMAIN: this floor is WALL-CLOCK milliseconds because the endpointer's dip " +
+                    "clock is `nowMs`, while native counts SAMPLES"
             ),
             Pin(
                 "the probe budget is the probe's OWN cost, not the frame period",
                 kdocFor("PROBE_BUDGET_MS"),
                 "the probe's own cost budget inside the 32 ms frame period, not the frame period " +
                     "itself"
+            ),
+            Pin(
+                "why 8 ms and not a tighter number",
+                kdocFor("PROBE_BUDGET_MS"),
+                "Generous against the 0.2-1.5 ms the probe is expected to cost, so an overrun " +
+                    "means something is really wrong rather than that the estimate was tight."
             ),
             Pin(
                 "the cutout is latched for the session, not per frame",
@@ -4295,7 +4309,11 @@ class EndpointerTuningTest {
      * the endpointer at `onSessionStart`.
      */
     @Test fun no_commit_cadence_constant_may_live_in_this_object() {
-        val named = Regex("""(?m)^\s*const val (\w*(?:COMMIT|INTERVAL|CADENCE)\w*)""")
+        // ANY val, not just `const val`: a plain `val MIN_COMMIT_INTERVAL_MS = 1200L` (or a
+        // `private val`, or an `internal val`) is the same defect and the narrower regex let it
+        // through — proved by mutation, not assumed. `(?:\w+\s+)*` absorbs whatever modifiers
+        // precede the keyword; comment lines cannot match, because `//` is not `val`.
+        val named = Regex("""(?m)^\s*(?:\w+\s+)*val (\w*(?:COMMIT|INTERVAL|CADENCE)\w*)""")
             .findAll(src).map { it.groupValues[1] }.toList()
         assertEquals(
             "EndpointerTuning declares a commit-cadence constant: $named. It belongs to " +
@@ -4470,14 +4488,18 @@ object EndpointerTuning {
     /**
      * 512 samples x 2 bytes (PCM16). `vadProbeFrame` returns [NO_VERDICT] for any other size.
      *
-     * SINGLE OWNER: this object owns the native frame contract. `VadProbe.FRAME_BYTES` (Task D4)
-     * is an alias of this constant, not a second literal — `EndpointerFactory` sizes its direct
-     * buffer from one and fills it from the other, so a divergence would be a
-     * `BufferOverflowException` on the capture thread rather than a doc inconsistency.
+     * SINGLE OWNER: this object owns the JVM side of the native frame contract.
+     * `VadProbe.FRAME_BYTES` (Task D4) is an alias of this constant, not a second literal —
+     * `EndpointerFactory` sizes its direct buffer from one and fills it from the other, so a
+     * divergence would be a `BufferOverflowException` on the capture thread rather than a doc
+     * inconsistency.
      */
     const val FRAME_BYTES = 1024
 
-    /** 512 / 16 000 s. One mic callback delivers exactly this much audio. */
+    /**
+     * 512 / 16 000 s. One mic callback nominally delivers this much audio; `read()` may return
+     * short, so callers accumulate to exact [FRAME_BYTES] boundaries.
+     */
     const val FRAME_MS = 32L
 
     /**
@@ -4526,8 +4548,14 @@ object EndpointerTuning {
     /**
      * A dip below [RELEASE_THRESHOLD] lasting longer than this is remembered as a cut point for the
      * wall-cap path (native `min_silence_samples_at_max_speech`, whisper.cpp:5255, compared
-     * strictly at `whisper.cpp:5328`). At the 32 ms frame cadence the first qualifying frame is the
-     * 4th of the dip (128 ms > 98 ms).
+     * strictly at `whisper.cpp:5328`). At the 32 ms frame cadence, with the dip clock started at
+     * the FIRST sub-[RELEASE_THRESHOLD] frame (as native starts temp_end at that frame's
+     * curr_sample), the first qualifying frame is the 5th of the dip: 128 ms > 98 ms, while the 4th
+     * is only 96 ms old.
+     *
+     * CLOCK DOMAIN: this floor is WALL-CLOCK milliseconds because the endpointer's dip clock is
+     * `nowMs`, while native counts SAMPLES (`sample_rate * 98 / 1000` = 1568 at 16 kHz) — the same
+     * floor in different units, never comparable without converting.
      */
     const val MICRO_PAUSE_MS = 98L
 
@@ -4536,6 +4564,9 @@ object EndpointerTuning {
      * frame period, not the frame period itself. `ProbeStats` counts one when `elapsedUs` is
      * strictly above it, and both wiring sites convert this constant to microseconds themselves
      * (`SileroEndpointer`'s default, Task C10; `EndpointerFactory`, Task D8).
+     *
+     * Generous against the 0.2-1.5 ms the probe is expected to cost, so an overrun means something
+     * is really wrong rather than that the estimate was tight.
      */
     const val PROBE_BUDGET_MS = 8L
 

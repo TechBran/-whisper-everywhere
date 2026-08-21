@@ -78,6 +78,9 @@ case degrades to exactly today's behavior.
    open, the endpointer offers `prevEnd` as the cut point instead of an arbitrary millisecond —
    a strictly better boundary for the same latency bound (`no_context = true` makes mid-word
    cuts unrepairable).
+   [Correction 2026-08-21 (C1 review): "≥3-frame dip" was never correct — 3 frames is 96 ms, not
+   > the 98 ms floor. The first qualifying frame is the 5th (128 ms), matching whisper.cpp:5328's
+   strict > on min_silence_samples_at_max_speech.]
 3. Latched slow-probe cutout: N consecutive frames over `PROBE_BUDGET_MS` → amplitude fallback
    for the rest of the session, never per-frame retried (the `we_on_new_segment` latch
    discipline).
