@@ -85,9 +85,18 @@ class SileroEndpointerConcurrencyTest {
             mutable,
         )
 
+        // SECONDARY, and knowingly unreachable while the census above stands: any rename, removal
+        // or `var`-to-`val` change alters the mutable SET, so the assertion above fires first with
+        // the enrolment message. Kept as a diagnostic for the day the census is restructured, not
+        // as a pin anyone should count on — nothing in the battery can make it the sole killer.
         for (name in required) {
             val field = declared[name]
-            assertTrue("field $name has been renamed or removed — update this pin", field != null)
+            assertTrue(
+                "field $name has been renamed or removed — update this pin (secondary check: " +
+                    "the mutable-field census above is the primary, and normally reports this " +
+                    "first)",
+                field != null,
+            )
             assertTrue(
                 "$name is written on the capture thread and read/written from Main (reset at " +
                     "switchSource / stopRecording, onSessionStart at onOpen — " +
@@ -104,16 +113,32 @@ class SileroEndpointerConcurrencyTest {
      * The storm alone proves less than it looks. "No exception" is nearly unfalsifiable here, and
      * "the probe only ever saw whole frames" is vacuous BY CONSTRUCTION: `timedProbe` always hands
      * over the internal fixed-size accumulator, so no interleaving whatsoever could produce a short
-     * frame. Both are kept as harness sanity checks — they would catch a bounds bug or a pump that
-     * silently did nothing — but the substance is the COHERENCE phase below: on the same instance,
-     * after the storm, a scripted canonical utterance must still produce the exact cut C8 pins.
+     * frame. Both are kept as tell-tales only, and both are already subsumed by the two assertions
+     * beside them — a bounds bug throws and lands in `thrown`, a pump that did nothing fails
+     * `probed > 0`. The substance is the COHERENCE phase below: on the same instance, after the
+     * storm, a scripted canonical utterance must still produce the exact cut C8 pins.
+     *
      * Its two assertions split the claim. The marker-byte check answers "no torn `fill`" on
      * CONTENT — every frame the probe sees must be this session's audio, not a mix of it and the
-     * storm's. The exact [EndpointCut] answers "no stuck gate, no corrupted governor" — speechMs
-     * comes from the Schmitt gate's start stamp, trailMs from the hangover's pending end, and the
-     * cut happening at all means the cadence governor re-armed with the session.
+     * storm's — and it is fed a PLANTED partial frame rather than whatever residue the storm
+     * happened to leave, because harvesting the storm's residue makes the kill depend on
+     * scheduling luck (see the plant below for the arithmetic). The exact [EndpointCut] answers
+     * "no stuck gate, no corrupted governor" — speechMs comes from the Schmitt gate's start stamp,
+     * trailMs from the hangover's pending end, and the cut happening at all means the cadence
+     * governor re-armed with the session.
+     *
+     * What this test does NOT claim is that the two threads interleaved. The latch below buys
+     * CONCURRENT LIVENESS — at the instant Main starts resetting, the pump is provably mid-loop —
+     * and nothing here can observe instruction-level overlap from inside. No assertion depends on
+     * it: every value read below is read after `done.await()`, on a quiesced instance.
      */
     @Test fun main_thread_resets_never_corrupt_the_capture_thread_pump() {
+        // The coherence phase must start after every clock the storm could stamp: a stale storm
+        // timestamp surviving into it has to read as the PAST, because a NEGATIVE elapsed time
+        // would mask the staleness this phase exists to expose rather than show it.
+        check(STORM_BASE + STORM_MAX_FRAMES * EndpointerTuning.FRAME_MS < COHERENCE_BASE) {
+            "COHERENCE_BASE no longer clears the storm's last frame clock"
+        }
         val badFrameSize = AtomicInteger(0)
         val probed = AtomicInteger(0)
 
@@ -141,7 +166,7 @@ class SileroEndpointerConcurrencyTest {
                 var t = STORM_BASE
                 var i = 0
                 // Short reads interleaved with whole frames, as AudioRecord really delivers them.
-                while (!stop.get() && i < 200_000) {
+                while (!stop.get() && i < STORM_MAX_FRAMES) {
                     val size = if (i % 3 == 0) 640 else EndpointerTuning.FRAME_BYTES
                     ep.onFrame(ByteArray(size), 0, t)
                     t += EndpointerTuning.FRAME_MS
@@ -156,24 +181,50 @@ class SileroEndpointerConcurrencyTest {
             }
         }
 
-        // The whole point is OVERLAP, and 5 000 resets take about a millisecond: without this the
-        // storm can finish before the executor has scheduled its thread at all, and the test passes
-        // having never run the two threads at once. Waiting for the pump to be hot first is what
-        // makes the reset loop concurrent with it rather than merely before it.
-        assertTrue("the capture thread never started", started.await(10, TimeUnit.SECONDS))
-        repeat(5_000) { ep.reset() }        // Main hammering the external reset sites
-        stop.set(true)
-        assertTrue("the capture pump did not finish", done.await(30, TimeUnit.SECONDS))
-        capture.shutdownNow()
+        // 5 000 resets take about a millisecond, so without this the storm can finish before the
+        // executor has scheduled its thread at all — the two threads never both alive, and the
+        // test green anyway. Waiting for the pump to be hot buys CONCURRENT LIVENESS, which is the
+        // strongest claim available from here: the pump is provably mid-loop when the resets
+        // start, and its only exits are `stop` (set after them) and a frame bound it cannot reach
+        // in that millisecond. Interleaving itself stays unobservable, and nothing below needs it.
+        //
+        // The teardown is in a `finally` because the two awaits are assertions: on the failure
+        // path the executor's non-daemon thread would otherwise outlive the test, and after a
+        // failed `started.await` nothing would ever have set `stop`.
+        try {
+            assertTrue("the capture thread never started", started.await(10, TimeUnit.SECONDS))
+            repeat(5_000) { ep.reset() }    // Main hammering the external reset sites
+            stop.set(true)
+            assertTrue("the capture pump did not finish", done.await(30, TimeUnit.SECONDS))
+        } finally {
+            stop.set(true)
+            capture.shutdownNow()
+        }
 
         assertNull("capture thread threw: ${thrown.get()}", thrown.get())
         assertEquals("the probe must only ever see whole frames", 0, badFrameSize.get())
         assertTrue("the pump did no work", probed.get() > 0)
 
+        // A KNOWN partial frame, PLANTED, so the accumulator check below cannot depend on what
+        // residue the storm happened to leave behind.
+        //
+        // Harvesting that residue is the trap. Every chunk the storm feeds is 640 or 1024 bytes,
+        // both multiples of 128, so the accumulator's residue is always a multiple of 128 — one of
+        // only eight values, and 0 on roughly one run in eight. Planting 640 does not fix it: the
+        // mutation this check exists to kill is a `reset()` that stops clearing `fill`, so the
+        // plant does NOT start from zero, and 384 + 640 lands exactly on a frame boundary. Hence
+        // 600, which is deliberately NOT a multiple of 128: the residue afterwards is congruent to
+        // 88 mod 128 whatever the storm left, so it can never be a whole number of frames and
+        // never zero. Deterministic by arithmetic, not by luck.
+        //
+        // On a healthy tree this plant leaves no trace: the reset() below empties the accumulator.
+        ep.reset()
+        ep.onFrame(ByteArray(PLANT_BYTES), 0, STORM_BASE)
+
         // ---- Coherence. Same instance, single-threaded from here, deterministic clock. ----
-        // Every byte of this phase's audio is MARK, and the storm's was all zero, so a frame that
-        // is not uniformly MARK is a frame the accumulator carried storm bytes into: the "no torn
-        // fill" half of the claim, checked on content rather than assumed.
+        // Every byte of this phase's audio is MARK, and every byte before it — storm and plant
+        // alike — was zero, so a frame that is not uniformly MARK is a frame the accumulator
+        // carried old bytes into: the "no torn fill" half of the claim, checked on content.
         val dirty = AtomicInteger(0)
         delegate.set { f ->
             if (!f.all { it == MARK }) dirty.incrementAndGet()
@@ -200,8 +251,8 @@ class SileroEndpointerConcurrencyTest {
             t += EndpointerTuning.FRAME_MS
         }
         assertEquals(
-            "the storm left bytes in the accumulator: a fresh session's first frame was part " +
-                "storm audio, so reset()/onSessionStart no longer empty it",
+            "the planted partial frame survived into a fresh session: its first frame was part " +
+                "old audio, so reset()/onSessionStart no longer empty the accumulator",
             0,
             dirty.get(),
         )
@@ -223,13 +274,25 @@ class SileroEndpointerConcurrencyTest {
         /** Non-zero: 0L is the endpointer's "no micro-pause remembered" sentinel. */
         const val STORM_BASE = 1_000_000L
 
+        /** The storm's frame ceiling. Bounds the storm's clock, which the `check` above pins. */
+        const val STORM_MAX_FRAMES = 200_000
+
         /**
-         * Comfortably past the storm's last frame clock, so the coherence phase reads as the fresh
-         * session it is even when a stale timestamp somehow survives [SileroEndpointer.reset].
+         * Past the storm's last frame clock, so the coherence phase reads as the fresh session it
+         * is even when a stale timestamp somehow survives [SileroEndpointer.reset]. The margin is
+         * not a matter of taste — the `check` at the top of the storm test states the relation and
+         * fails the build if a later edit to [STORM_MAX_FRAMES] eats it.
          */
         const val COHERENCE_BASE = 9_000_000L
 
-        /** The coherence phase's audio. Any byte but the storm's zeroes would do. */
+        /**
+         * The planted partial frame. NOT a multiple of 128, which is the whole point — see the
+         * plant site. Every storm chunk is, so anything that is would be able to land the
+         * accumulator on a frame boundary and let the mutant through.
+         */
+        const val PLANT_BYTES = 600
+
+        /** The coherence phase's audio. Any byte but the zeroes fed before it would do. */
         const val MARK: Byte = 7
     }
 }
