@@ -6050,7 +6050,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 **Files:**
 - Modify: `app/src/main/java/com/whispereverywhere/audio/SileroEndpointer.kt` (new top-level
-  `data class EndpointCut` above the class; fields block; the commit tail of `onProb`;
+  `data class EndpointCut` BELOW the class; fields block; the commit tail of `onProb`;
   `onSessionStart`; new `lastCut()` accessor)
 - Test (modify): `app/src/test/java/com/whispereverywhere/audio/SileroEndpointerTest.kt` (append)
 
@@ -6082,7 +6082,7 @@ append:
         val probe = FakeProbe()
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
-        ep.onSessionStart(BASE, 1_200L)                // pro's utterance cadence
+        ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)   // pro's cadence
         pump.run(0.9f, 20)
         assertTrue(pump.run(0.1f, 17))
         pump.run(0.9f, 11)
@@ -6100,7 +6100,7 @@ append:
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
         assertTrue(pump.run(0.1f, 17))
-        ep.onSessionStart(pump.t, 1_200L)
+        ep.onSessionStart(nowMs = pump.t, minCommitIntervalMs = 1_200L)
         assertNull(ep.lastCut())
     }
 ```
@@ -6115,8 +6115,13 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
 `e: ...\SileroEndpointerTest.kt:<n>:44 Unresolved reference: lastCut` and
 `e: ...\SileroEndpointerTest.kt:<n>:22 Unresolved reference: EndpointCut`.
 
-- [ ] **Step 3: Minimal implementation.** In `SileroEndpointer.kt` add the data class above the
-  class declaration (below the `package` line):
+- [ ] **Step 3: Minimal implementation.** In `SileroEndpointer.kt` add the data class at the BOTTOM
+  of the file, BELOW the closing brace of the class — NOT above it. `classKdoc()`, widened by the
+  C7 fix round (`d4adc59`), resolves the class's own documentation as the nearest KDoc block above
+  `class SileroEndpointer(` and then asserts that block spans no member: a KDoc-carrying top-level
+  declaration wedged between the two would hand the class's two scoped obligation pins a KDoc
+  written about something else, and the guard goes red. (C7's own battery predicted this exact
+  shape — its H17 mutant IS a `data class` above the class.)
 
 ```kotlin
 /**
@@ -6132,13 +6137,19 @@ data class EndpointCut(val speechMs: Long, val trailMs: Long, val prob: Float)
 ```
 
 add one field under `private var probeCutout = false` (the last field Task C7 added, so the fields
-block order matches Task C9's pinned list exactly):
+block order matches Task C9's pinned list exactly), and it is `@Volatile` like every other mutable
+field here — Task C9's `every_cross_thread_field_stays_volatile` names `lastCutRecord` explicitly,
+and `SileroEndpointerTest`'s structural scan fails the build without it. It is semantically required
+too: written on the capture thread, cleared from Main at `onSessionStart`.
 
 ```kotlin
-    private var lastCutRecord: EndpointCut? = null
+    @Volatile private var lastCutRecord: EndpointCut? = null
 ```
 
-record it in `onProb` — replace the two lines `commitAt(nowMs)` / `return true` with:
+record it in `onProb` — replace the two lines `commitAt(nowMs)` / `return true` with the three
+below. **The order is load-bearing:** `commitAt()` runs `clearForNextSegment()`, which zeroes
+`tempEndMs` and `speechStartMs`, so a `trailMs = nowMs - tempEndMs` computed after the commit is
+`nowMs` itself.
 
 ```kotlin
         lastCutRecord = EndpointCut(speechMs = speechMs, trailMs = nowMs - tempEndMs, prob = p)
