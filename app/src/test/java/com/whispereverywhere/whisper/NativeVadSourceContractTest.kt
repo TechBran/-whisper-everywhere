@@ -127,6 +127,26 @@ class NativeVadSourceContractTest {
         return create!!
     }
 
+    /**
+     * The `g_vad_ctx` twin of [probeContextCreation], for the batch filter's ordering assertion.
+     * Same hazard, same fix: an `indexOf("whisper_vad_init_from_file_with_params")` measures a
+     * COMMENTED-OUT mention exactly as happily as the live call, so a comment that drifts above the
+     * code it describes silently satisfies "the pin comes first". This was proved empirically, not
+     * assumed: a mutation aimed at `vadProbeInit` (commented-out mention above the create, pin
+     * moved down) also landed in `we_vad_filter` and false-greened there under the raw `indexOf`.
+     */
+    private fun batchVadContextCreation(filter: String): MatchResult {
+        val create = Regex("""(?m)^[ \t]*g_vad_ctx = whisper_vad_init_from_file_with_params""")
+            .find(filter)
+        assertTrue(
+            "we_vad_filter must assign g_vad_ctx from whisper_vad_init_from_file_with_params on a " +
+                "LIVE line. Without it there is no create index, so the ordering claim below would " +
+                "be comparing against a position that does not exist.",
+            create != null
+        )
+        return create!!
+    }
+
     /** The streaming VAD entry point's body: bounded by the resetting wrapper that follows it. */
     private fun streamingVadEntryPoint(): String {
         val anchor = "bool whisper_vad_detect_speech_no_reset("
@@ -169,11 +189,11 @@ class NativeVadSourceContractTest {
             pin != null
         )
         assertTrue(
-            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises. The index comes " +
-                "from the line-anchored regex match, not indexOf(\"vcp.n_threads = 1;\"): a literal " +
-                "search would happily measure the position of a COMMENTED-OUT pin and report the " +
-                "ordering of a line that never executes.",
-            pin!!.range.first < body.indexOf("whisper_vad_init_from_file_with_params")
+            "vcp.n_threads = 1 must be set BEFORE the init call it parameterises. BOTH indices " +
+                "come from line-anchored regex matches, never indexOf(): a literal search on " +
+                "EITHER side would happily measure the position of a COMMENTED-OUT line and " +
+                "report the ordering of code that never executes.",
+            pin!!.range.first < batchVadContextCreation(body).range.first
         )
         assertTrue(
             "the field is n_threads (whisper.h:683). `.n_thread` is the initializer COMMENT at " +
@@ -362,6 +382,69 @@ class NativeVadSourceContractTest {
         assertTrue(
             "vadProbeInit must not touch the batch filter's context",
             !init.contains("g_vad_ctx")
+        )
+    }
+
+    @Test
+    fun probeFrame_refusesAnythingButOneExactSileroWindow_withTheNoVerdictSentinel() {
+        assertTrue(
+            "the window is 512 samples (model header n_window=512) = 32 ms at 16 kHz",
+            Regex("""kProbeFrameSamples\s*=\s*512""").containsMatchIn(jni)
+        )
+        assertTrue(
+            "1024 bytes = 512 samples of 16-bit PCM = exactly one mic callback",
+            Regex("""kProbeFrameBytes\s*=\s*kProbeFrameSamples \* 2""").containsMatchIn(jni)
+        )
+        val frame = jniFunctionBody("vadProbeFrame")
+        assertTrue(
+            "a misaligned frame must be REFUSED with -1.0f, never zero-padded and never reported " +
+                "as silence: whisper_vad_detect_speech_no_reset zero-pads a short frame " +
+                "(whisper.cpp:5148-5159) and STILL advances the LSTM one step, poisoning the " +
+                "recurrence for every frame after it. AudioRecord.read returns UP TO the buffer " +
+                "size and the 48 kHz decimator emits \"~1024\" bytes, so one chunk = one frame is " +
+                "the common case and never the contract.",
+            frame.contains("nBytes != kProbeFrameBytes") && frame.contains("return -1.0f;")
+        )
+        assertTrue(
+            "0.0f must never be returned as a failure value — it is a legitimate probability",
+            !Regex("""return\s+0\.0f;""").containsMatchIn(frame)
+        )
+        assertTrue(
+            "an uninitialised probe returns the sentinel too",
+            frame.contains("g_probe_ctx == nullptr")
+        )
+        assertTrue(
+            "the frame must reach native memory via GetDirectBufferAddress — no per-frame " +
+                "FloatArray (2 KB x 31.25/s), no JNI array copy, no callback trampoline",
+            frame.contains("GetDirectBufferAddress")
+        )
+        assertTrue(
+            "streaming MUST use the no_reset entry point; the resetting variant would wipe the " +
+                "LSTM on every single frame and the recurrence would never accumulate",
+            frame.contains("whisper_vad_detect_speech_no_reset(")
+        )
+        assertTrue(
+            "vadProbeFrame must never call the resetting variant",
+            !Regex("""[^_]whisper_vad_detect_speech\(""").containsMatchIn(frame)
+        )
+    }
+
+    @Test
+    fun probeSurface_isFourFunctions_eachIsolatedFromTheBatchFilter() {
+        listOf("vadProbeInit", "vadProbeFrame", "vadProbeReset", "vadProbeFree").forEach { fn ->
+            val body = jniFunctionBody(fn)
+            assertTrue("$fn must take g_probe_mutex", body.contains("g_probe_mutex"))
+            assertTrue(
+                "$fn must not touch g_vad_ctx: the batch filter resets that context's LSTM on " +
+                    "entry and clobbers probs[0], which is the slot the probe reads",
+                !body.contains("g_vad_ctx")
+            )
+            assertTrue("$fn must not take g_vad_mutex", !body.contains("g_vad_mutex"))
+        }
+        assertTrue(
+            "vadProbeReset must clear the LSTM state — it is the 'new utterance starts here' " +
+                "signal, wired into all five reset sites by Workstream D",
+            jniFunctionBody("vadProbeReset").contains("whisper_vad_reset_state(g_probe_ctx);")
         )
     }
 }

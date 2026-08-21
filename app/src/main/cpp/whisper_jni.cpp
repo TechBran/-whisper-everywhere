@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -323,6 +324,84 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeInit(
     }
     LOGI("vad probe: context ready (n_threads=1, %s)", pathStr.c_str());
     return JNI_TRUE;
+}
+
+// One Silero window. The bundled model header declares n_window = 512, which at 16 kHz is exactly
+// the 32 ms the mic callback delivers, and 1024 bytes of 16-bit PCM.
+static constexpr int kProbeFrameSamples = 512;
+static constexpr int kProbeFrameBytes   = kProbeFrameSamples * 2;
+
+// Reused for every frame: no per-frame allocation on the audio capture thread. Guarded by
+// g_probe_mutex along with g_probe_ctx.
+static float g_probe_frame[kProbeFrameSamples];
+
+// Speech probability in [0,1] for EXACTLY ONE 512-sample window, or -1.0f meaning "no verdict".
+//
+// -1.0f is NEVER "silence". A short frame is zero-padded by whisper_vad_detect_speech_no_reset
+// (whisper.cpp:5148-5159) and STILL advances the LSTM one step, which poisons the recurrence for
+// every frame after it - a silent, gradual accuracy loss with no symptom at the call site. So a
+// misaligned frame is refused outright and the Kotlin caller accumulates to exact 512-sample
+// boundaries. record.read() returns UP TO the buffer size and the 48 kHz decimator output is
+// documented as "~1024" bytes: one chunk = one frame is the common case, never the contract.
+// The endpointer treats -1.0f as "keep the previous state" - it neither opens nor closes the gate.
+//
+// [pcm] must be a DIRECT ByteBuffer in native byte order. Bytes [0, nBytes) are read straight
+// from its base address; position/limit/mark are ignored, so one buffer is allocated per session
+// and refilled forever. Returning a RAW float rather than a bool is deliberate: threshold,
+// hysteresis, hangover and min-speech policy live in Kotlin where they are JVM-pinnable, the same
+// split SegmentCapPolicy and SpeechSegmenter already use.
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_vadProbeFrame(
+        JNIEnv *env, jobject /* this */, jobject pcm, jint nBytes) {
+    if (pcm == nullptr || nBytes != kProbeFrameBytes) {
+        return -1.0f;
+    }
+    void *base = env->GetDirectBufferAddress(pcm);
+    if (base == nullptr) {
+        return -1.0f;   // not a direct buffer, or JNI cannot address it
+    }
+    if (env->GetDirectBufferCapacity(pcm) < static_cast<jlong>(nBytes)) {
+        return -1.0f;
+    }
+
+    std::lock_guard<std::mutex> lock(g_probe_mutex);
+    if (g_probe_ctx == nullptr) {
+        return -1.0f;   // probe unavailable: the caller is on the amplitude fallback
+    }
+
+    // PCM16 -> float natively: 512 samples, no JNI array copy, no Kotlin-side FloatArray.
+    // memcpy per sample rather than a reinterpret_cast because a direct ByteBuffer carries no
+    // int16 alignment guarantee; clang folds this to a halfword load.
+    const auto *bytes = static_cast<const unsigned char *>(base);
+    for (int i = 0; i < kProbeFrameSamples; ++i) {
+        int16_t s;
+        std::memcpy(&s, bytes + 2 * i, sizeof(s));
+        g_probe_frame[i] = static_cast<float>(s) / 32768.0f;
+    }
+
+    // no_reset: the LSTM hidden/cell state carries across calls at the graph level
+    // (whisper.cpp:4617/:4621 write back through ggml_cpy), which is the whole streaming premise.
+    if (!whisper_vad_detect_speech_no_reset(g_probe_ctx, g_probe_frame, kProbeFrameSamples)) {
+        return -1.0f;
+    }
+    if (whisper_vad_n_probs(g_probe_ctx) <= 0) {
+        return -1.0f;
+    }
+    return whisper_vad_probs(g_probe_ctx)[0];
+}
+
+// Zeroes the probe's LSTM hidden/cell state - the "a new utterance starts here" signal.
+// whisper_vad_reset_state clears the state buffer only (whisper.cpp:5100-5102); model weights
+// live in a different buffer, so this is one backend buffer clear and safe to call often.
+// Must run after EVERY commit and at every acoustic-source change: carrying recurrence across a
+// mic <-> device-audio switch is a correctness bug, not merely suboptimal.
+extern "C" JNIEXPORT void JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_vadProbeReset(
+        JNIEnv * /*env*/, jobject /* this */) {
+    std::lock_guard<std::mutex> lock(g_probe_mutex);
+    if (g_probe_ctx != nullptr) {
+        whisper_vad_reset_state(g_probe_ctx);
+    }
 }
 
 // Releases the probe context (~2.6 MB). Idempotent, and safe after a failed vadProbeInit.
