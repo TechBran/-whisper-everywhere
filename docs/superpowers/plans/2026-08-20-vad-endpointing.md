@@ -3848,7 +3848,7 @@ package com.whispereverywhere.audio
 
 /**
  * The ONE commit-decision surface the capture path asks "should I cut the segment now?"
- * (3.7, Workstream D1).
+ * (3.7, Task D2).
  *
  * The seam it plugs into (FloatingBubbleService.onAudioChunk) is deliberately NOT restructured:
  * the wall-cap check stays the `else if` it already was, so a never-firing endpointer leaves cap
@@ -3939,7 +3939,7 @@ import com.whispereverywhere.util.SpeechSegmenter
 
 /**
  * The 3.6.0 amplitude segmenter, wearing the 3.7 [Endpointer] interface and nothing more
- * (Workstream D1/D7 tier 1).
+ * (3.7, Task D2 — the fallback tier 1 that `EndpointerFactory` selects in Task D8).
  *
  * This is the fallback the service constructs whenever `VadModel.path()` returns null — the
  * existing "running without VAD" path, which already logs and already degrades gracefully. It
@@ -7377,7 +7377,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Fallback tier 1 (3.7, Workstream D7), pinned: model missing -> AmplitudeEndpointer -> a full
+ * Fallback tier 1 (3.7, Task D8), pinned: model missing -> AmplitudeEndpointer -> a full
  * session byte-identical to 3.6.0. This is not a new failure mode — `VadModel.path()` already
  * returns null and already logs "running without VAD".
  */
@@ -7466,7 +7466,7 @@ import java.nio.ByteOrder
 
 /**
  * The ONE place 3.7 decides which endpointer the session runs, and the ONE place the pure state
- * machine is bound to the native probe (Workstream D1/D7).
+ * machine is bound to the native probe (Tasks D2/D8).
  *
  * Chosen once, at FloatingBubbleService construction, on nothing more than whether the bundled
  * Silero model resolved on disk. `VadModel.path()` already returns null and already logs "running
@@ -7686,7 +7686,7 @@ place them immediately after `import com.whispereverywhere.WhisperEverywhereApp`
 (b) Line 250: replace `private val speechSegmenter = SpeechSegmenter()` with
 ```kotlin
     /**
-     * The ONE commit-decision surface for this service's life (3.7, Workstream D1). Chosen HERE,
+     * The ONE commit-decision surface for this service's life (3.7, Task D2 seam, wired in D9). Chosen HERE,
      * at construction, on nothing but whether the bundled Silero model resolved: a null path
      * yields AmplitudeEndpointer, which wraps the very SpeechSegmenter this field used to hold —
      * so "VAD model missing" is byte-identical shipped behaviour rather than a new path.
