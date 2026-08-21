@@ -26,6 +26,10 @@ class EndpointerTuningTest {
         assertEquals(300L, EndpointerTuning.MIN_SPEECH_MS)
         assertEquals(98L, EndpointerTuning.MICRO_PAUSE_MS)
         assertEquals(8L, EndpointerTuning.PROBE_BUDGET_MS)
+        // The unit every consumer of the budget actually compares in (Task C10's retune). Pinned
+        // beside the millisecond spelling rather than derived from it: a conversion this table
+        // computed for itself would agree with a broken constant.
+        assertEquals(8_000L, EndpointerTuning.PROBE_BUDGET_US)
         assertEquals(16, EndpointerTuning.PROBE_CUTOUT_FRAMES)
         assertEquals(-1.0f, EndpointerTuning.NO_VERDICT, 0.0f)
     }

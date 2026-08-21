@@ -96,14 +96,28 @@ object EndpointerTuning {
 
     /**
      * A probe frame slower than this is an overrun: the probe's own cost budget inside the 32 ms
-     * frame period, not the frame period itself. `ProbeStats` counts one when `elapsedUs` is
-     * strictly above it, and both wiring sites convert this constant to microseconds themselves
-     * (`SileroEndpointer`'s default, Task C10; `EndpointerFactory`, Task D8).
+     * frame period, not the frame period itself. Nothing measures against THIS spelling — the
+     * comparison is made in microseconds, against [PROBE_BUDGET_US] below.
      *
      * Generous against the 0.2-1.5 ms the probe is expected to cost, so an overrun means something
      * is really wrong rather than that the estimate was tight.
      */
     const val PROBE_BUDGET_MS = 8L
+
+    /**
+     * [PROBE_BUDGET_MS] in the unit the endpointer actually measures. **ONE conversion for the
+     * whole seam**, and that is the entire reason it exists rather than being spelled
+     * `PROBE_BUDGET_MS * 1_000L` at each site.
+     *
+     * There are three consumers and they must agree exactly: `SileroEndpointer`'s own cutout latch,
+     * the `ProbeStats` it constructs by default, and the `ProbeStats` `EndpointerFactory` (Task D8)
+     * passes in. Task C10 retuned the latch from truncated milliseconds to microseconds precisely so
+     * that the latch and the `probe:` line could not hold two opinions about what an overrun is; a
+     * second conversion site is how that agreement would be lost again, silently, in a commit that
+     * looked like a tidy-up. `ProbeStats` keeps its budget PRIVATE, so no `require` can catch a
+     * mismatch at runtime — this constant is the only enforcement there is.
+     */
+    const val PROBE_BUDGET_US = PROBE_BUDGET_MS * 1_000L
 
     /** Consecutive overruns that latch the probe off for the rest of the session. */
     const val PROBE_CUTOUT_FRAMES = 16

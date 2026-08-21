@@ -38,7 +38,10 @@ import com.whispereverywhere.util.ProbeStats
  * [onFrame] runs on the capture thread. [reset] is also called from Main (switchSource
  * `FloatingBubbleService.kt:1819`, stopRecording `:2393`) and [onSessionStart] is Main-ONLY
  * (onOpen `:2224`, the site that used to be a fourth [reset]); [onSessionEnd] is Main-only too,
- * from stopRecording after both capture threads have joined. Every mutable field is
+ * from stopRecording after both capture threads have joined. Two of those Main entry points can now
+ * BLOCK, briefly: [onSessionStart] and [onSessionEnd] take [probeStats]' instance monitor, which the
+ * capture thread holds inside `record()` for a handful of int ops — see [timedProbe] for why that is
+ * within [Endpointer]'s "lock-light on the [onFrame] path" obligation. Every mutable field is
  * therefore @Volatile, with the same tolerance [com.whispereverywhere.service.SegmentCapPolicy]
  * documents: the writes are not atomic together, but a torn observation costs at most one 32 ms
  * chunk of slack. The annotation is not decoration — without it a Main-thread [reset] shares no
@@ -65,13 +68,21 @@ import com.whispereverywhere.util.ProbeStats
  * @param probeStats the session's probe cost/overrun accounting. ONE instance per endpointer: it is
  *        recorded on every probe call, emitted as the `probe:` line when its interval is due, reset
  *        at session start and emitted once more at session end. Defaulted so the state-machine tests
- *        need not supply one; [com.whispereverywhere.audio.EndpointerFactory] passes the real one.
+ *        need not supply one; `EndpointerFactory` (Workstream D) passes the real one — and MUST
+ *        construct it with [EndpointerTuning.PROBE_BUDGET_US], see [budgetUs].
  *        Two threads reach it: `record()` from the CAPTURE thread, `reset()` (onSessionStart) and
  *        `line()` (onSessionEnd) from MAIN — which is why every method on it is `@Synchronized`.
  * @param probeArm arms the native probe's lifecycle for a new session (Main). The context itself is
- *        still created lazily on the capture thread, at the first frame.
+ *        still created lazily on the capture thread, at the first frame. It must not THROW — see
+ *        [onSessionStart].
  * @param probeTeardown frees the native probe context at session end, after the capture threads have
  *        joined. Injected rather than called directly so this class needs no JNI on the classpath.
+ * @param diag where the two `probe:` lines go. Injected for the same reason the other three lambdas
+ *        are, and for one more: `android.util.Log` is a no-op under `unitTests.isReturnDefaultValues`
+ *        and `ProbeStats` is final, so with the emission written inline NOTHING could observe that a
+ *        line was emitted at all — deleting it, or emitting it after the native context had already
+ *        been freed, were both mutations the suite could not see. Defaulted to the real `Log.i`, so
+ *        production behaviour is unchanged and only the tests supply anything.
  *
  * The per-tier cost governor is NOT a constructor parameter: it is handed over per session through
  * [Endpointer.onSessionStart], because it depends on the installed tier AND on whether
@@ -82,22 +93,33 @@ class SileroEndpointer(
     private val probeReset: () -> Unit = {},
     private val nanoClock: () -> Long = { System.nanoTime() },
     private val probeStats: ProbeStats =
-        ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L),
+        ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_US),
     private val probeArm: () -> Unit = {},
     private val probeTeardown: () -> Unit = {},
+    private val diag: (String) -> Unit = { android.util.Log.i("WE-DIAG", it) },
 ) : Endpointer {
     /** The accumulator. One array for the life of the endpointer: no per-frame allocation. */
     private val frame = ByteArray(EndpointerTuning.FRAME_BYTES)
 
     /**
-     * [EndpointerTuning.PROBE_BUDGET_MS] in the unit [timedProbe] measures. A plain `val`, so no
-     * `@Volatile`: the budget is a constant for this endpointer's life, and the census in
+     * The overrun boundary [timedProbe] compares against. A plain `val`, so no `@Volatile`: the
+     * budget is a constant for this endpointer's life, and the census in
      * `SileroEndpointerConcurrencyTest` covers `var`s only for exactly that reason.
      *
-     * It is converted ONCE here rather than at the two comparison sites, so the latch and the
-     * [probeStats] instance constructed above it cannot drift onto different numbers.
+     * The CONVERSION is owned by [EndpointerTuning.PROBE_BUDGET_US], not by this line, and that is
+     * load-bearing rather than tidy. Task C10 retuned the latch to microseconds so that it and
+     * [probeStats] could not hold two opinions about what an overrun is; two sites each spelling
+     * `PROBE_BUDGET_MS * 1_000L` would agree only by coincidence of two identical expressions, and
+     * a Kotlin constructor default cannot read this property, so the default above could never have
+     * referred to it.
+     *
+     * **The third site is the one this class cannot reach.** A [probeStats] supplied by the caller
+     * MUST be constructed with [EndpointerTuning.PROBE_BUDGET_US]. Nothing here checks it —
+     * `ProbeStats` keeps its budget private, so no `require` is even available — and a mismatch
+     * reinstates exactly the two-opinion split C10's retune removed: the `probe:` line would report
+     * overruns on frames this latch scored comfortable, or stay silent on frames that latched it.
      */
-    private val budgetUs = EndpointerTuning.PROBE_BUDGET_MS * 1_000L
+    private val budgetUs = EndpointerTuning.PROBE_BUDGET_US
 
     @Volatile private var fill = 0
     @Volatile private var lastFrameMs = 0L
@@ -379,7 +401,13 @@ class SileroEndpointer(
      * [onSessionEnd]'s teardown. Both sit with the re-arms ABOVE [clearForNextSegment], so the
      * whole invalidation happens at the top and the shared per-segment clear stays the last word.
      * [probeArm] must be MAIN-SAFE and must not initialise anything: the native context is created
-     * lazily on the CAPTURE thread, at this session's first frame.
+     * lazily on the CAPTURE thread, at this session's first frame. And it must NOT THROW. It runs
+     * ABOVE [clearForNextSegment], so an arm that throws leaves the cutout re-armed and the probe
+     * LIVE while the previous session's accumulator residue, pending-speech latch, micro-pause
+     * memory and native LSTM state all survive into the new recording — exactly the carry-over
+     * [clearForNextSegment] exists to prevent. Before this task the only throwing statement here
+     * was `probeReset()`, the LAST line of that clear, so a throw left every other re-arm applied.
+     * Swallow inside the bound lambda; this class does not.
      */
     override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
@@ -403,6 +431,19 @@ class SileroEndpointer(
      * report nothing at all, and "overruns=0 over 40 frames" is exactly the acceptance evidence —
      * then frees the native context.
      *
+     * The ORDER of the two statements is load-bearing and is pinned by
+     * `the_final_probe_line_is_emitted_from_the_live_session_before_the_context_is_freed`: the line
+     * must be read off a LIVE session, before anything native is released, because a teardown that
+     * throws or blocks must not be able to swallow the session's only accounting.
+     *
+     * **NOT idempotent — every call frees.** Two `onSessionEnd`s for one session is a double free,
+     * and it is not self-evidently unreachable: the T1 residual names two Main sites (`onDestroy`
+     * and `stopRecording`). That guard belongs to `VadProbeLifecycle` (Tasks D4/D5), not here. Nor
+     * may [probeTeardown] lean on the capture join as a fence — T2 SHARPENED: `Thread.join(ms)`
+     * returns identically on termination and on timeout and `stopThenJoin` returns `Unit`, so a
+     * late free can land after the NEXT session's `vadProbeInit`. The bound lambda must be safe
+     * against a subsequent init.
+     *
      * The endpointer's DECISION state — the governor's anchor, the cutout latch, the cut record —
      * is deliberately left standing here. [onSessionStart] is the sole re-arm point; this method
      * only ACCOUNTS and FREES. A session end that also cleared the machine would put two re-arm
@@ -410,7 +451,7 @@ class SileroEndpointer(
      * record away from the funnel line that is emitted after it.
      */
     override fun onSessionEnd() {
-        android.util.Log.i("WE-DIAG", probeStats.line())
+        diag(probeStats.line())
         probeTeardown()
     }
 
@@ -440,6 +481,14 @@ class SileroEndpointer(
      * the `probe:` line's p99 is the evidence that would set it. The S-task's on-device
      * measurements produce that number; nothing here may invent one ahead of them.
      *
+     * This is where [Endpointer]'s "allocation-free and lock-light on the [onFrame] path"
+     * obligation is discharged, and it is discharged with a cost rather than with a zero:
+     * [probeStats]' `record()` takes the instance monitor on every frame — uncontended, a thin
+     * lock over a handful of int ops — and once per 10 s the path also formats one `String` and
+     * walks a 1025-int histogram twice, ~2050 int ops amortised over ~312 frames. `ProbeStats`' own
+     * threading paragraph argues that trade; the reason it is restated HERE is that the interface's
+     * obligation is discharged at this call site and nowhere else.
+     *
      * The comparison is MICROSECONDS, strictly above [budgetUs], so the boundary is exact: a probe
      * costing 8.000 ms is NOT an overrun and one costing 8.5 ms IS. That is Task C10's deliberate
      * RETUNE of Task C7's truncated-millisecond compare, taken so this latch and [probeStats] can
@@ -451,7 +500,7 @@ class SileroEndpointer(
         val p = probe(frame)
         val elapsedUs = (nanoClock() - t0) / 1_000L
         if (probeStats.record(elapsedUs, nowMs)) {
-            android.util.Log.i("WE-DIAG", probeStats.line())
+            diag(probeStats.line())
         }
         if (elapsedUs > budgetUs) {
             slowRun++

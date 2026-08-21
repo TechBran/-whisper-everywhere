@@ -63,10 +63,14 @@ class SileroEndpointerConcurrencyTest {
         )
         val declared = SileroEndpointer::class.java.declaredFields.associateBy { it.name }
 
-        // Kotlin `val`s — `frame` and the three constructor parameters — compile to FINAL backing
-        // fields, which final-field semantics already publish safely; JaCoCo's `$jacocoData` is
-        // static and synthetic. Strip those three categories and what is left is exactly the
-        // mutable state this class carries across the capture/Main boundary.
+        // Kotlin `val`s — `frame`, `budgetUs` and the seven constructor parameters — compile to
+        // FINAL backing fields, which final-field semantics already publish safely; JaCoCo's
+        // `$jacocoData` is static and synthetic. Strip those three categories and what is left is
+        // exactly the mutable state this class carries across the capture/Main boundary.
+        //
+        // The count is deliberately spelled out rather than left as "the constructor parameters":
+        // C10 added four members to this class without touching the assertion below, and a
+        // sentence that cannot go stale is a sentence that stops recording anything.
         val mutable = SileroEndpointer::class.java.declaredFields
             .filter {
                 !Modifier.isStatic(it.modifiers) && !Modifier.isFinal(it.modifiers) &&
@@ -204,12 +208,15 @@ class SileroEndpointerConcurrencyTest {
         assertNull("capture thread threw: ${thrown.get()}", thrown.get())
         assertEquals("the probe must only ever see whole frames", 0, badFrameSize.get())
         assertTrue("the pump did no work", probed.get() > 0)
-        // C9's F10 handoff, taken with C10's microsecond retune. A latched probeCutout makes
-        // onFrame return at its FIRST line without touching `fill`, so the pump would keep
+        // C9's F10 handoff, named there and taken here with C10's wiring. A latched probeCutout
+        // makes onFrame return at its FIRST line without touching `fill`, so the pump would keep
         // looping and doing nothing: `probed > 0` still passes on the pre-latch frames and the
-        // storm silently stops storming, with no failure anywhere. C9 could not reach that state
-        // (the storm's probe is a ~50 ns lambda against a truncated-millisecond compare); C10's
-        // exact microsecond boundary is what makes it worth guarding, and this is the guard.
+        // storm silently stops storming, with no failure anywhere.
+        //
+        // The retune did NOT create the exposure. The storm's probe is a ~50 ns lambda, and 9 ms
+        // and 8.000 ms are equally unreachable for it — this guard was worth having under C9 on
+        // exactly the same terms, and C9 said so. It lands here because C10 is the task that was
+        // already in this file.
         assertFalse("the storm latched the probe off — it stopped storming", ep.isProbeCutout())
 
         // A KNOWN partial frame, PLANTED, so the accumulator check below cannot depend on what

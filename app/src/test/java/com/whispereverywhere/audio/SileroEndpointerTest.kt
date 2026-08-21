@@ -63,8 +63,10 @@ private class FakeProbe(var next: Float = 0f) : (ByteArray) -> Float {
 }
 
 /**
- * A hand-cranked `System.nanoTime`, advanced ONLY by the probe that charges it — [FakeProbe.costMs]
- * in whole milliseconds, or a bespoke probe lambda where a sub-millisecond cost is the point.
+ * A hand-cranked `System.nanoTime`, advanced ONLY by the probe that charges it — [FakeProbe.costUs],
+ * in microseconds, which since Task C10 is the unit the endpointer compares in. (Before C10 the
+ * sub-millisecond cases needed a bespoke charging lambda; `costUs` replaced the last one, so
+ * `FakeProbe.invoke` is now the only thing in this file that moves this clock.)
  *
  * Nothing else moves it, and that is the whole design: the budget measures time spent INSIDE one
  * probe call, so a clock that advanced with the audio stream would measure the wrong thing.
@@ -1317,6 +1319,104 @@ class SileroEndpointerTest {
     }
 
     /**
+     * The final `probe:` line is EMITTED, and emitted while the session is still LIVE.
+     *
+     * Both halves were unheld until this test existed, and both were found by mutation rather than
+     * by reading. Deleting the emission from [SileroEndpointer.onSessionEnd] killed nothing (the
+     * task's own battery, M6); so did INVERTING the method's two statements so the native context
+     * was freed before its accounting was read (the reviewer's RX1). The emission is the acceptance
+     * evidence for spec Workstream E item 3 — "overruns=0 over this recording" — and the order is
+     * what stops a teardown that throws or blocks from swallowing it.
+     *
+     * The reason neither was assertable is that the emission went straight to `android.util.Log`,
+     * which `unitTests.isReturnDefaultValues = true` turns into a no-op, and `ProbeStats` is a
+     * final class so no `line()`-counting spy exists either. The fix is NOT a log-capture harness —
+     * that would pin the tag and the sink rather than the behaviour. It is the class's own idiom:
+     * `diag` is a fourth injected lambda beside `probe`, `probeArm` and `probeTeardown`, defaulted
+     * to the real `Log.i` so production is unchanged.
+     *
+     * Recording BOTH lambdas into one ordered list is what makes the order a property rather than
+     * two independent facts: two separate counters would say "the line was emitted" and "the
+     * context was freed" and nothing at all about which came first.
+     */
+    @Test fun the_final_probe_line_is_emitted_from_the_live_session_before_the_context_is_freed() {
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        val stats = ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_US)
+        val events = mutableListOf<String>()
+        val ep = SileroEndpointer(
+            probe = probe,
+            nanoClock = clock,
+            probeStats = stats,
+            probeTeardown = { events += "teardown" },
+            diag = { events += "diag $it" },
+        )
+        Pump(ep, probe).run(0.1f, 40)
+        assertEquals(
+            "40 frames is 1280 ms — nothing is due inside the 10 s interval, so the session-end " +
+                "line below is the ONLY one, which is exactly why it may not be optional",
+            emptyList<String>(),
+            events.toList(),
+        )
+
+        ep.onSessionEnd()
+        assertEquals(
+            "session end must emit the final line and THEN free: a native context released " +
+                "before its own accounting is read is a session that can report nothing",
+            listOf("diag", "teardown"),
+            events.map { it.substringBefore(' ') },
+        )
+        assertTrue(
+            "the emitted line carries THIS session's accounting, not an empty or stale one: " +
+                "\"${events[0]}\"",
+            events[0].contains("frames=40") && events[0].contains("overruns=0"),
+        )
+    }
+
+    /**
+     * The INTERVAL line — the other half of the `probe:` emission, and the half that was
+     * unreachable until `diag` existed.
+     *
+     * `ProbeStats` arms its clock on the first frame and reports a line due at most once per
+     * [ProbeStats.EMIT_INTERVAL_MS]. At the 32 ms cadence that is frame 314: frame n is stamped
+     * `BASE + (n-1)*32`, and `(n-1)*32 >= 10_000` first holds at `n = 314` (312 frames is 9984 ms,
+     * 313 is 10016). 400 frames therefore contains EXACTLY ONE due line — the next would be frame
+     * 627 — which is what makes "at most one per 10 s" testable as an equality rather than as a
+     * bound.
+     *
+     * Every task before this one had to write "the interval line is unreachable in a 40-frame test
+     * by design" and leave it there. It is reachable now.
+     */
+    @Test fun the_interval_line_is_emitted_once_per_10s_from_the_capture_thread() {
+        val clock = FakeClock()
+        val probe = FakeProbe()
+        probe.clock = clock
+        val lines = mutableListOf<String>()
+        val ep = SileroEndpointer(
+            probe = probe,
+            nanoClock = clock,
+            probeStats = ProbeStats(budgetUs = EndpointerTuning.PROBE_BUDGET_US),
+            diag = { lines += it },
+        )
+        val pump = Pump(ep, probe)
+        pump.run(0.1f, 313)
+        assertEquals("9984 ms after the arming frame is still inside the interval", 0, lines.size)
+        pump.run(0.1f, 1)
+        assertEquals("10016 ms is the first frame past it", 1, lines.size)
+        pump.run(0.1f, 86)
+        assertEquals(
+            "the interval RE-ARMS from the emission, so 400 frames carry exactly one line",
+            1,
+            lines.size,
+        )
+        assertTrue(
+            "the line reports the running session totals: \"${lines[0]}\"",
+            lines[0].startsWith("probe: frames=314 ") && lines[0].contains("overruns=0"),
+        )
+    }
+
+    /**
      * The obligations this file places on LATER tasks and on other files are pinned as WHOLE
      * SENTENCES, each scoped to the member that states it.
      *
@@ -1379,6 +1479,19 @@ class SileroEndpointerTest {
                 "only a new SESSION lifts the slow-probe latch — a commit must not (C10)",
                 kdocFor("override fun onSessionStart("),
                 "The slow-probe latch is RE-ARMED here and nowhere else.",
+            ),
+            // ADDED by C10's fix round, and it is an obligation on D8 of a kind no code in this
+            // repository can enforce: `ProbeStats` keeps its budget PRIVATE, so the endpointer
+            // cannot `require` that the instance the factory hands it was built with the same
+            // number the latch compares against. A mismatch reinstates the two-opinion split the
+            // C10 retune existed to remove, and it would show up as a `probe:` line disagreeing
+            // with the fallback rather than as anything that looks like a bug. The sentence IS the
+            // enforcement, so the sentence gets a pin.
+            Pin(
+                "a caller-supplied ProbeStats must carry the endpointer's own budget (D8)",
+                kdocFor("private val budgetUs"),
+                "A [probeStats] supplied by the caller MUST be constructed with " +
+                    "[EndpointerTuning.PROBE_BUDGET_US].",
             ),
         )
 
