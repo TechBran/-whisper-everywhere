@@ -67,6 +67,15 @@ class SileroEndpointer(
     @Volatile private var fill = 0
     @Volatile private var lastFrameMs = 0L
 
+    /** The Schmitt gate: open from the first frame at or above ONSET until a hangover ends it. */
+    @Volatile private var speaking = false
+
+    /** `nowMs` of the frame that opened the gate — the MIN_SPEECH_MS clock's zero. */
+    @Volatile private var speechStartMs = 0L
+
+    /** The uncommitted-buffer latch [hasPendingSpeech] returns. Cleared only by commit/reset. */
+    @Volatile private var pendingSpeech = false
+
     /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
      * @param amp the chunk's RMS, ignored here — it exists for the amplitude fallback that shares
@@ -103,20 +112,21 @@ class SileroEndpointer(
     }
 
     /**
-     * True when speech has been seen since the last commit/reset.
+     * True when speech has been seen since the last commit/reset: at least
+     * [EndpointerTuning.MIN_SPEECH_MS] of frames at or above [EndpointerTuning.ONSET_THRESHOLD].
      *
-     * STUB. Task C3 replaces this stub and MUST implement the predicate the LOCAL-silence re-arm
-     * at `FloatingBubbleService.kt:1716` reads: ">= [EndpointerTuning.MIN_SPEECH_MS] of frames at
-     * or above [EndpointerTuning.ONSET_THRESHOLD] since the last commit/reset". It describes the
-     * UNCOMMITTED BUFFER, not the gate.
+     * It describes the UNCOMMITTED BUFFER, not the gate: a merged or discarded utterance leaves it
+     * true, because that audio really is still sitting there. Only a commit or a [reset] clears it
+     * — a closing gate does not, and neither does a silent frame. The two are easy to conflate and
+     * the cost of conflating them is specific: `FloatingBubbleService.kt:1716` re-arms the 4 s
+     * first-cap window whenever this reads false, so a predicate that meant "speech in the current
+     * frame" would re-arm on every cap cut that happened to land in a pause.
      *
-     * The stub is not a neutral placeholder and must not be mistaken for finished code: a constant
-     * `false` re-arms the 4 s first-cap window on EVERY local wall-cap cut, so a continuously loud
-     * local session would cut at 4 s forever instead of 4 s once and 15 s after. Cloud sessions are
-     * unaffected — the `|| cloudWrapper != null` half of that branch consumes the window
-     * regardless.
+     * This is the semantics upgrade that re-arm has been waiting for: the soft talker in a noisy
+     * room, whose RMS never clears 500, flips from permanently-false to true. The branch above it
+     * is unchanged — only the predicate gets honest.
      */
-    override fun hasPendingSpeech(): Boolean = false
+    override fun hasPendingSpeech(): Boolean = pendingSpeech
 
     /** A commit happened elsewhere (cap cut, source switch, session open, stop). */
     override fun reset() {
@@ -139,10 +149,36 @@ class SileroEndpointer(
      */
     private fun onProb(p: Float, nowMs: Long): Boolean {
         if (p < 0f) return false
+
+        // whisper.cpp:5283-5296 — the two native blocks this one branch merges. A frame at or
+        // above ONSET opens the gate if it is closed (`:5291`). (The pending-end clear the native
+        // side also performs here, `:5283`, lands with the hangover in Task C4.)
+        if (p >= EndpointerTuning.ONSET_THRESHOLD) {
+            if (!speaking) {
+                speaking = true
+                speechStartMs = nowMs
+            }
+            if (nowMs - speechStartMs >= EndpointerTuning.MIN_SPEECH_MS) pendingSpeech = true
+            return false
+        }
+
+        // THE DEAD BAND (RELEASE <= p < ONSET) is deliberately inert: it is neither an onset nor a
+        // silence. The native guards at :5283 and :5322 use DIFFERENT thresholds and the gap
+        // between them falls through both — that is the Schmitt hysteresis, and its absence is
+        // exactly what strands today's amplitude segmenter in the 251-499 RMS band.
+        if (p >= EndpointerTuning.RELEASE_THRESHOLD) return false
+
+        // Below RELEASE is SILENCE, and Task C4 gives it its behaviour (`whisper.cpp:5322`): the
+        // pending end, the micro-pause memory and the hangover that commits. Until then it is a
+        // fall-through — and note what it does NOT do even then: clearing `pendingSpeech` is a
+        // COMMIT's job, never a silent frame's.
         return false
     }
 
     private fun clearForNextSegment() {
+        speaking = false
+        speechStartMs = 0L
+        pendingSpeech = false
         fill = 0
         probeReset()
     }

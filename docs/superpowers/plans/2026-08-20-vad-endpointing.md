@@ -5100,7 +5100,7 @@ and extend `clearForNextSegment()`:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `17 tests / 0 failures / 0 errors`.
+Expected: `19 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -5341,7 +5341,7 @@ and add the two helpers plus the extended clear (replace `clearForNextSegment()`
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `24 tests / 0 failures / 0 errors`.
+Expected: `26 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -5515,7 +5515,7 @@ and extend `clearForNextSegment()` with one line (after `closeGate()`):
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `29 tests / 0 failures / 0 errors`.
+Expected: `31 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -5755,7 +5755,7 @@ replace `commitAt()` and `reset()`, and add `onSessionStart()`:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `34 tests / 0 failures / 0 errors`.
+Expected: `36 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6016,7 +6016,7 @@ and extend `onSessionStart()` with the re-arm (before `clearForNextSegment()`):
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `38 tests / 0 failures / 0 errors`.
+Expected: `40 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6161,7 +6161,7 @@ and one line in `onSessionStart()` beside the other counter resets:
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.SileroEndpointerTest" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `41 tests / 0 failures / 0 errors`.
+Expected: `43 tests / 0 failures / 0 errors`.
 
 - [ ] **Step 5: Commit.**
 
@@ -6337,7 +6337,7 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 
 Expected: `failures=0 errors=0`. This task's own delta is +2 (`SileroEndpointerConcurrencyTest`);
-the section's running delta after Task C10 is +52. No absolute total is asserted here — Task S5
+the section's running delta after Task C10 is +54. No absolute total is asserted here — Task S5
 computes the branch's totals once, from a purged results directory.
 
 - [ ] **Step 5: Commit.**
@@ -6584,17 +6584,21 @@ MAIN (Workstream D wires `onSessionStart` from `onOpen`), which is the other hal
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.*" --no-daemon; [xml]$x = Get-Content -Raw 'C:\Users\bastr\.androidbuild\WhisperEverywhere\app\test-results\testDebugUnitTest\TEST-com.whispereverywhere.audio.SileroEndpointerTest.xml'; "$($x.testsuite.tests) tests / $($x.testsuite.failures) failures / $($x.testsuite.errors) errors"
 ```
 
-Expected: `44 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
-this is the section's evidence: `failures=0 errors=0` and the **+52 delta** this section adds
-(`EndpointerTuningTest` 6, `SileroEndpointerTest` 44, `SileroEndpointerConcurrencyTest` 2). The
+Expected: `46 tests / 0 failures / 0 errors`. Then the whole suite — Workstream C is complete here, so
+this is the section's evidence: `failures=0 errors=0` and the **+54 delta** this section adds
+(`EndpointerTuningTest` 6, `SileroEndpointerTest` 46, `SileroEndpointerConcurrencyTest` 2). The
 absolute total is computed once, in Task S5.
 
-Fifty-two, not the forty-five this section was planned at, and not the fifty a single rebase against
-C2 would give: BOTH shipped deviations are in it. C1 shipped `EndpointerTuningTest` with 6 tests
-rather than 4 (its KDoc-derivation and scope-ruling tests — the C1 section above was rebased to say
-so at its own Step 4), and C2 shipped `SileroEndpointerTest` with 11 rather than 6, which carries
-every later expectation in this section up by 5. Arithmetic against the suite, which is the check
-that catches a half-applied rebase: 1121 after D2, 1127 after C1, 1138 after C2.
+Fifty-four, not the forty-five this section was planned at: ALL THREE shipped deviations are in it.
+C1 shipped `EndpointerTuningTest` with 6 tests rather than 4 (its KDoc-derivation and scope-ruling
+tests — the C1 section above was rebased to say so at its own Step 4); C2 shipped
+`SileroEndpointerTest` with 11 rather than 6, carrying every later expectation in this section up
+by 5; and C3 shipped 19 rather than the 17 that made, adding `the_latch_fires_at_exactly_MIN_SPEECH_MS`
+(the `>=` boundary is off the 32 ms grid, so no pump-driven test can reach it) and
+`silence_below_RELEASE_does_not_clear_the_uncommitted_buffer` (the uncommitted-buffer semantics,
+which nothing else held). Both were the sole killers of a mutation that would otherwise have
+survived. Arithmetic against the suite, which is the check that catches a half-applied rebase:
+1121 after D2, 1127 after C1, 1138 after C2, 1146 after C3.
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --no-daemon

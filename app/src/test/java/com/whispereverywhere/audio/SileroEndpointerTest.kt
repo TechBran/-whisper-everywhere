@@ -205,6 +205,128 @@ class SileroEndpointerTest {
         assertTrue("frame 2 is its own array", probe.frames[1].all { it == 2.toByte() })
     }
 
+    // ---------------------------------------------------------------------------------------
+    // The Schmitt trigger (Task C3): the onset branch, the inert dead band, and the
+    // uncommitted-buffer predicate. The silence branch, the pending end and the hangover are
+    // Task C4's — every test below is written to keep stating the SAME property once they land.
+    // ---------------------------------------------------------------------------------------
+
+    @Test fun a_frame_below_ONSET_never_opens_the_gate() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        assertFalse(pump.run(0.49f, 100))
+        assertFalse("0.49 is under ONSET — 3.2 s of it is still not speech", ep.hasPendingSpeech())
+    }
+
+    @Test fun ONSET_opens_the_gate_and_MIN_SPEECH_MS_latches_pending_speech() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        // Frames land at BASE + 32k. After 10 frames the newest is at +288 ms: under 300.
+        assertFalse(pump.run(EndpointerTuning.ONSET_THRESHOLD, 10))
+        assertFalse("288 ms of speech is under MIN_SPEECH_MS", ep.hasPendingSpeech())
+        assertFalse(pump.run(EndpointerTuning.ONSET_THRESHOLD, 1))
+        assertTrue("the 11th frame is 320 ms in — the latch must set", ep.hasPendingSpeech())
+    }
+
+    /**
+     * The 32 ms grid steps 288 → 320, so it can never land ON [EndpointerTuning.MIN_SPEECH_MS] and
+     * `>=` versus `>` is invisible to every [Pump]-driven test in this class. The boundary is
+     * nonetheless REACHABLE in production: `nowMs` is the wall clock stamped on the CHUNK, and a
+     * chunk is whatever `AudioRecord.read` returned — bursts and short reads put frames at
+     * arbitrary milliseconds, which is the same premise the class KDoc's burst-delivery paragraph
+     * rests on. So this one test drives `onFrame` directly rather than through the pump.
+     *
+     * There is no native counterpart to diverge from: `whisper.cpp:5337` compares a FINISHED
+     * segment's length at the moment it is emitted, while this is a running latch on an open gate.
+     * The inclusive boundary is a JVM-side choice, and this is where it is written down.
+     */
+    @Test fun the_latch_fires_at_exactly_MIN_SPEECH_MS() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        probe.next = EndpointerTuning.ONSET_THRESHOLD
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE))
+        assertFalse("the frame that opens the gate is 0 ms in", ep.hasPendingSpeech())
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + EndpointerTuning.MIN_SPEECH_MS - 1))
+        assertFalse("299 ms is not yet MIN_SPEECH_MS", ep.hasPendingSpeech())
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + EndpointerTuning.MIN_SPEECH_MS))
+        assertTrue("the boundary is inclusive: 300 ms IS MIN_SPEECH_MS", ep.hasPendingSpeech())
+    }
+
+    @Test fun the_dead_band_alone_never_opens_the_gate() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        assertFalse(pump.run(0.42f, 100))
+        assertFalse(ep.hasPendingSpeech())
+    }
+
+    @Test fun dead_band_frames_do_not_close_an_open_gate_or_move_the_speech_start() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 5)                     // gate opens at BASE; 128 ms in — no latch yet
+        assertFalse(ep.hasPendingSpeech())
+        assertFalse(pump.run(0.42f, 20))      // 640 ms of dead band: inert, gate stays open
+        assertFalse("a dead-band frame never runs the latch itself", ep.hasPendingSpeech())
+        assertFalse(pump.run(0.9f, 1))        // the frame at BASE+800: 800 ms since speechStart
+        assertTrue("speechStart survived the dead band untouched", ep.hasPendingSpeech())
+    }
+
+    @Test fun no_verdict_frames_do_not_close_an_open_gate() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 11)
+        assertTrue(ep.hasPendingSpeech())
+        assertFalse(pump.run(EndpointerTuning.NO_VERDICT, 100))
+        assertTrue("a no-verdict frame keeps the previous state exactly", ep.hasPendingSpeech())
+    }
+
+    /**
+     * `hasPendingSpeech()` describes the UNCOMMITTED BUFFER, not the gate — the semantics the
+     * LOCAL-silence re-arm at `FloatingBubbleService.kt:1716` reads, and the one thing Tasks C4
+     * and C5 must not quietly narrow back to "speech in the current frame". Speech that has been
+     * heard and not yet committed stays pending THROUGH silence, because that audio really is
+     * still sitting in the caller's buffer waiting to be sent.
+     *
+     * The silent stretch is deliberately SHORTER than [EndpointerTuning.HANGOVER_MS] (320 ms of
+     * the 500), so this test states exactly one property today and the SAME one property after
+     * C4 gives a long silence the power to commit. A 6 s stretch here would start failing the
+     * moment the hangover exists, and would then be "fixed" by weakening the assertion.
+     */
+    @Test fun silence_below_RELEASE_does_not_clear_the_uncommitted_buffer() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 11)
+        assertTrue(ep.hasPendingSpeech())
+        assertFalse(pump.run(0.0f, 10))
+        assertTrue(
+            "a silent frame is not a commit — the speech already heard is still uncommitted",
+            ep.hasPendingSpeech(),
+        )
+    }
+
+    @Test fun reset_clears_pending_speech() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        pump.run(0.9f, 11)
+        assertTrue(ep.hasPendingSpeech())
+        ep.reset()
+        assertFalse(ep.hasPendingSpeech())
+        // The GATE has to close with it, not just the latch: if `speaking` survived a reset, the
+        // stale speechStartMs would make the very next onset frame latch instantly — a whole
+        // segment's worth of pending speech conjured from one frame.
+        assertFalse(pump.run(0.9f, 1))
+        assertFalse(
+            "reset closes the gate too, so the next onset frame starts a fresh clock",
+            ep.hasPendingSpeech(),
+        )
+    }
+
     /**
      * The obligations this file places on LATER tasks and on other files are pinned as WHOLE
      * SENTENCES, each scoped to the member that states it.
@@ -215,22 +337,22 @@ class SileroEndpointerTest {
      */
     @Test fun the_binding_obligations_are_pinned_in_the_source() {
         val pins = listOf(
-            // THE NEXT TWO PINS ARE C3'S TO DELETE, IN THE SAME COMMIT THAT DISCHARGES THEM.
-            // C3's Step 3 replaces this stub's whole KDoc, not just its body — so both sentences
-            // go, and both pins fail. That failure is CORRECT: the obligation was discharged, not
-            // dropped. Delete the two Pin entries; do NOT restore the sentences, and do not
-            // weaken the pin to keep them passing. Every other pin below outlives C3 — onProb's
-            // KDoc in particular is kept by C3, so the T10 pin must still hold afterwards.
+            // The two pins that stood here were C2's obligations ON C3 — "Task C3 replaces this
+            // stub and MUST implement…" and what a constant `false` cost until it did. C3
+            // discharged both and deleted them with the stub's KDoc, which is what a discharged
+            // obligation is supposed to look like. The two below are C3's own, and they are
+            // obligations on C4 and C5: they say what the predicate MEANS now that it is real.
             Pin(
-                "C3 must make hasPendingSpeech honest, and the KDoc says what honest MEANS",
+                "hasPendingSpeech describes the uncommitted BUFFER, not the gate (C4/C5)",
                 kdocFor("override fun hasPendingSpeech()"),
-                "Task C3 replaces this stub and MUST implement the predicate the LOCAL-silence " +
-                    "re-arm at `FloatingBubbleService.kt:1716` reads",
+                "It describes the UNCOMMITTED BUFFER, not the gate: a merged or discarded " +
+                    "utterance leaves it true, because that audio really is still sitting there.",
             ),
             Pin(
-                "and what a constant `false` costs until it does",
+                "and therefore what may clear it — a closing gate is not a commit",
                 kdocFor("override fun hasPendingSpeech()"),
-                "a constant `false` re-arms the 4 s first-cap window on EVERY local wall-cap cut",
+                "Only a commit or a [reset] clears it — a closing gate does not, and neither " +
+                    "does a silent frame.",
             ),
             Pin(
                 "the probe must copy anything it retains — the array is reused",
@@ -264,10 +386,11 @@ class SileroEndpointerTest {
                     "becomes indistinguishable from finished code. Restore the sentence, or, if " +
                     "the obligation really changed, change the code, the sentence and this pin " +
                     "together.\n" +
-                    "ONE EXCEPTION, and it is scheduled: the two hasPendingSpeech pins are " +
-                    "DISCHARGED by Task C3, which replaces that stub's whole KDoc. If you are C3, " +
-                    "delete those two Pin entries in the same commit — do not restore the " +
-                    "sentences to make this pass.",
+                    "A pin may legitimately be DELETED, but only by the task that DISCHARGES its " +
+                    "obligation, in the same commit, and only when the sentence describes a stub " +
+                    "that no longer exists. Task C3 deleted two on exactly those terms (see the " +
+                    "comment above this list). Deleting one to get green is the failure this " +
+                    "test exists to catch.",
                 prose(scope).contains(sentence),
             )
         }
@@ -280,10 +403,11 @@ class SileroEndpointerTest {
      * no happens-before edge at all between the Main-thread clear and the capture thread, so the
      * cleared state may never become visible — a promise no prose can keep on its own.
      *
-     * CARRY, deliberately enforced on later tasks: Tasks C3-C10 add fields to this class. The
-     * plan's C3 snippet declares its three (`speaking`, `speechStartMs`, `pendingSpeech`) without
-     * the annotation; this test is what tells that implementer to add it, in the same breath as
-     * the reason. `val` fields are exempt — final-field semantics already publish them safely.
+     * CARRY, deliberately enforced on later tasks: Tasks C3-C10 add fields to this class. It has
+     * already paid for itself once — the plan's C3 snippet declared its three (`speaking`,
+     * `speechStartMs`, `pendingSpeech`) without the annotation, and this test is what told that
+     * implementer to add it, in the same breath as the reason. C4-C10 add more fields on the same
+     * terms. `val` fields are exempt — final-field semantics already publish them safely.
      */
     @Test fun every_mutable_field_is_volatile_because_reset_arrives_from_Main() {
         val lines = src.lines()
