@@ -4,6 +4,7 @@ import com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine
 import com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine
 import com.whispereverywhere.transcription.live.LiveTranscriptionEngine
 import com.whispereverywhere.util.RetryPolicy
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -67,6 +68,9 @@ class LocalWhisperEngineCapSplitTest {
         override fun release(ctx: Long) = Unit
     }
 
+    /** Every engine built by [engine], so [shutDownEveryEngine] can stop them all unconditionally. */
+    private val engines = CopyOnWriteArrayList<LocalWhisperEngine>()
+
     /**
      * Every engine here runs on the REAL default executor, so every engine here is also SHUT DOWN,
      * not merely closed. `close()` detaches the listener and clears the buffer; it does not stop a
@@ -79,7 +83,19 @@ class LocalWhisperEngineCapSplitTest {
         retry = RetryPolicy(maxAttempts = 1, baseDelayMs = 0, maxDelayMs = 0, rng = { 0.0 }),
         backend = backend,
         // executor deliberately left at its default: a REAL single-thread background executor.
-    )
+    ).also { engines += it }
+
+    @After
+    fun shutDownEveryEngine() {
+        // UNCONDITIONAL, and that is the whole point of it being @After rather than a trailing line
+        // in each test: a FAILING assertion must not leak this file's real, non-daemon executor
+        // threads into the rest of the suite's single JVM. Inline teardown skips on exactly the runs
+        // that matter most — every mutation-battery pass, where assertions fail by design.
+        // close() detaches a listener; only shutdown() stops the two threads (LocalWhisperEngine's
+        // `executor` and `controlExecutor`).
+        engines.forEach { runCatching { it.close() }; runCatching { it.shutdown() } }
+        engines.clear()
+    }
 
     /** 32 bytes of PCM16 mono @16 kHz is exactly 1 ms. */
     private fun pcm(ms: Int) = ByteArray(ms * 32) { 0x11 }
@@ -101,7 +117,6 @@ class LocalWhisperEngineCapSplitTest {
         assertEquals(seqA, seqB)
         assertEquals(a.sampleCounts.toList(), b.sampleCounts.toList())
         assertEquals(listOf(8_000), b.sampleCounts.toList())     // 500 ms * 16 samples/ms
-        ea.close(); eb.close(); ea.shutdown(); eb.shutdown()
     }
 
     /**
@@ -131,7 +146,6 @@ class LocalWhisperEngineCapSplitTest {
         assertEquals(listOf(8_000), backend.sampleCounts.toList())
         // The whole buffer went, exactly as commit() would have sent it: nothing was retained.
         assertEquals(-1L, e.commit())
-        e.close(); e.shutdown()
     }
 
     @Test
@@ -149,7 +163,6 @@ class LocalWhisperEngineCapSplitTest {
         assertTrue(done.await(10, TimeUnit.SECONDS))
         // 4 200 ms committed, then the retained 800 ms + the new 200 ms.
         assertEquals(listOf(67_200, 16_000), backend.sampleCounts.toList())
-        e.close(); e.shutdown()
     }
 
     @Test
@@ -165,7 +178,6 @@ class LocalWhisperEngineCapSplitTest {
         assertEquals(listOf(1_600), backend.sampleCounts.toList())
         // and the buffer really is empty: a cap that already fired never defers its whole window.
         assertEquals(-1L, e.commit())
-        e.close(); e.shutdown()
     }
 
     @Test
@@ -175,7 +187,6 @@ class LocalWhisperEngineCapSplitTest {
         e.connect(null, RecordingListener())
         assertEquals(-1L, e.commitRetainingTailMs(800L))
         assertEquals(0, backend.sampleCounts.size)
-        e.close(); e.shutdown()
     }
 
     @Test
@@ -217,7 +228,7 @@ class LocalWhisperEngineCapSplitTest {
      */
     @Test
     fun noWrapperEngineOverridesTheRetainingCommit() {
-        val engines = listOf(
+        val wrapperEngines = listOf(
             FallbackTranscriptionEngine::class.java,
             CloudTranscriptionEngine::class.java,
             LiveTranscriptionEngine::class.java,
@@ -225,7 +236,7 @@ class LocalWhisperEngineCapSplitTest {
 
         // THE CENSUS. Assertions first, mechanism tripwire last, so a toolchain change can never
         // stop the contract itself from being checked.
-        for (clazz in engines) {
+        for (clazz in wrapperEngines) {
             assertFalse(
                 "${clazz.simpleName} now declares commitRetainingTailMs. The interface default is a " +
                     "plain commit() ON PURPOSE — read TranscriptionEngine.commitRetainingTailMs's " +
@@ -249,7 +260,7 @@ class LocalWhisperEngineCapSplitTest {
         // CONTROL 2: and it sees a real override ON THE CENSUSED CLASSES THEMSELVES, so a false
         // negative above cannot be the helper failing on those particular classes. All three
         // override commit().
-        for (clazz in engines) {
+        for (clazz in wrapperEngines) {
             assertTrue(
                 "${clazz.simpleName} should declare commit() — the d2 discriminator is broken",
                 kotlinDeclares(clazz, "commit"),
@@ -316,7 +327,6 @@ class LocalWhisperEngineCapSplitTest {
         val retainedBytes = backend.sampleCounts[1] * 2 - 32
         assertEquals("the retained tail must be a whole number of PCM16 frames", 0, retainedBytes % 2)
         assertEquals(32, retainedBytes)
-        e.close(); e.shutdown()
     }
 
     // ----------------------------------------------------------------- the split is atomic
@@ -387,7 +397,6 @@ class LocalWhisperEngineCapSplitTest {
             mainBytes + stormChunks.get() * STORM_CHUNK_BYTES,
             backend.sampleCounts.sumOf { it.toLong() } * 2,
         )
-        e.close(); e.shutdown()
     }
 
     private companion object {

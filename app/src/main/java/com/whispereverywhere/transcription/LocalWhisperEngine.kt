@@ -267,14 +267,22 @@ class LocalWhisperEngine(
                 android.util.Log.i("WE-DIAG", "commit: pcmBytes=0 -> nothing to cut")
                 return NO_SEGMENT
             }
-            // Aligned DOWN to a whole PCM16 frame so a split can never land mid-sample.
+            // retainMs * 32 is always a multiple of 32, so this mask is a NO-OP on any buffer that
+            // honours sendAudio's PCM16-frame contract. It bites only when the coerce clamps to an
+            // ODD snapshot.size (a caller that wrote a half frame): the orphan byte is pushed into
+            // the COMMITTED segment so the retained tail stays a whole number of frames. That can
+            // leave the committed segment as short as 1 byte / 0 samples — pinned by
+            // theRetainedTailIsAlignedDownToAWholeFrameOnAnOddBuffer.
             val retain = (retainMs * BYTES_PER_MS)
                 .coerceAtMost(snapshot.size.toLong())
                 .toInt() and 1.inv()
             val cut = snapshot.size - retain
             if (cut <= 0) {
                 // The offer covers the whole window. A cap that has already fired must never
-                // defer its entire buffer, so this degrades to a plain full commit.
+                // defer its entire buffer, so this degrades to a plain full commit. On an ODD
+                // snapshot this branch is NOT reached — the alignment above leaves cut == 1 and
+                // size-1 bytes are deferred — but odd buffers violate sendAudio's frame contract
+                // and are unreachable from capture. See the ruling in review-D6-verdict.md §4.
                 buffer.reset()
                 Triple(nextSeq++, snapshot, 0)
             } else {
