@@ -1,0 +1,133 @@
+package com.whispereverywhere.service
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * THE ONE COMMIT FUNNEL, pinned structurally (3.7 Workstream F). Task F7 routed all five of this
+ * service's commit sites through `commitSegment`; this file is what keeps them routed.
+ *
+ * **Why it exists.** F7's mutation battery restored a direct `engine.commit()` at each of the five
+ * sites in turn. Three died on pins Workstream D had already left behind — `CapSeamPinTest` for the
+ * wall-cap site, `EndpointerLifecyclePinTest` for `switchSource` and the stop flush — but the
+ * ENDPOINT cut and the projection-consent flush had no pin at all and the whole suite stayed green,
+ * as did a funnel that fed [SegmentQueueDepth] a constant instead of the seq the engine returned.
+ * The endpoint cut is the site 3.7 exists to produce, and a `queue:` line reading `depth=0` for the
+ * life of a session is a diagnostic that lies exactly when the backlog it reports is growing. Both
+ * are silent regressions with a green suite, so both get a pin.
+ *
+ * `FloatingBubbleService` is an Android Service and cannot be instantiated in a JVM test, so the
+ * pin is on the SOURCE — the same instrument and the same reasoning as `CapSeamPinTest` and
+ * `EndpointerLifecyclePinTest`, whose KDocs carry the full argument. Tasks F8, F9 and G3 all extend
+ * the funnel's BODY and nothing here constrains that. What is pinned is narrower and permanent:
+ * there is ONE funnel, the five sites reach the engine only through it, and it records the seq the
+ * engine actually returned.
+ *
+ * **Counting discipline (the D10 lesson).** A bare count of `engine.commit()` reads TWO, not one:
+ * D9's load-bearing note in the cap branch quotes the call verbatim ("commitRetainingTailMs(0) IS
+ * engine.commit()"), and that comment is what states the identity the wall cap's 3.6.0-parity
+ * argument rests on. Fix the TEST, never the prose. The needle below is therefore
+ * `else engine.commit()`, a form only the funnel's own body can produce.
+ *
+ * **The source is read LF-NORMALISED.** `core.autocrlf=true` checks this repo out with CRLF, so a
+ * needle written with a bare `\n` finds nothing and every assertion would pass or fail for the
+ * wrong reason. The normalisation happens once, at the single read site below.
+ */
+class CommitFunnelPinTest {
+
+    private fun source(relative: String): File {
+        var dir: File? = File(System.getProperty("user.dir")!!).absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(File(dir, relative), File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
+    }
+
+    /** The ONE read site, LF-normalised so every `\n` needle below is checkout-independent. */
+    private val text: String by lazy {
+        source("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt")
+            .readText()
+            .replace("\r\n", "\n")
+    }
+
+    private fun count(needle: String) = text.split(needle).size - 1
+
+    private fun indexOfOrFail(needle: String): Int {
+        val i = text.indexOf(needle)
+        assertTrue("missing from FloatingBubbleService.kt: <<$needle>>", i >= 0)
+        return i
+    }
+
+    @Test
+    fun thereIsExactlyOneFunnelAndNeverASecond() {
+        assertEquals(
+            "commitSegment is THE funnel, and a private MEMBER so it can reach segmentQueueDepth, " +
+                "endpointer and serviceScope — never a top-level extension",
+            1,
+            count("    private fun commitSegment("),
+        )
+        // SIX occurrences of the call form: this one declaration plus the five call sites pinned
+        // below. A seventh means a sixth commit site appeared — or that prose started quoting the
+        // call form, the same hazard D9's comment created for `engine.commit()`. Either way this
+        // file is where that gets decided, deliberately.
+        assertEquals(6, count("commitSegment("))
+    }
+
+    @Test
+    fun allFiveCommitSitesRouteThroughTheFunnel() {
+        // The two CAPTURE-THREAD sites. Each names its cut kind and passes the FRAME's clock, so
+        // Task F9's speech-end stamp is measured against the same instant the endpointer's
+        // trailMs was rather than a wall clock re-read after a ~960 KB buffer snapshot.
+        indexOfOrFail("                commitSegment(engine, EndpointDiag.VAD, nowMs = now)")
+        indexOfOrFail(
+            "                commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now)"
+        )
+        // The three MAIN-side sites, which take the funnel's default clock: the projection-consent
+        // handover and switchSource (both SWITCH — a source handover is a source handover), and
+        // the unconditional stop flush.
+        assertEquals(2, count("transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }"))
+        assertEquals(1, count("transcriptionEngine?.let { commitSegment(it, EndpointDiag.STOP) }"))
+    }
+
+    @Test
+    fun noCommitSiteReachesTheEngineDirectlyAnyMore() {
+        assertEquals(
+            "a bare transcriptionEngine?.commit() is a site throwing its seq away again",
+            0,
+            count("transcriptionEngine?.commit()"),
+        )
+        // The funnel's body is the ONLY place either engine entry point is called. See the class
+        // KDoc for why this needle carries its `else`.
+        assertEquals(1, count("else engine.commit()"))
+        assertEquals(1, count("engine.commitRetainingTailMs("))
+    }
+
+    @Test
+    fun theFunnelRecordsTheSeqTheEngineActuallyReturned() {
+        // The mutant this kills fed the backlog a constant: the suite stayed green while every
+        // `queue:` line read depth=0 for the whole session.
+        assertEquals(1, count("segmentQueueDepth.onCommitted(seq)"))
+        // ...and the resolution side is fed the seq that actually resolved, from the one place it
+        // lands. Depth is a SET difference, so a constant on either side strands or inverts it.
+        assertEquals(1, count("segmentQueueDepth.onResolved(seq)"))
+    }
+
+    @Test
+    fun theBacklogIsResetAtSessionStartBesideTheOrderer() {
+        val orderer =
+            indexOfOrFail("        segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()")
+        val reset = indexOfOrFail("        segmentQueueDepth.reset()")
+        assertTrue("the backlog resets at session START, beside the orderer", reset > orderer)
+        assertEquals(
+            "a second reset — at stop — would blank the diagnostic for the whole drain, the part " +
+                "of the session it exists to show",
+            1,
+            count("segmentQueueDepth.reset()"),
+        )
+    }
+}
