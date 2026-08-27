@@ -56,13 +56,13 @@ import java.util.concurrent.atomic.AtomicLong
  * be observed cannot be constructed.
  *
  * **IT IS A SESSION GENERATION, AND THAT IS A REAL LIMIT, NOT A PHRASING.** `switchSource`
- * (`FloatingBubbleService.kt:1812`) swaps capturers WITHIN one session — same bounded
+ * (FloatingBubbleService) swaps capturers WITHIN one session — same bounded
  * `stopThenJoin`, same unobservable outcome — and never re-arms, so the epoch does not move. A mic
  * thread that outlives that join holds a token that is still CURRENT, passes both gates, and writes
  * D8's one shared direct buffer alongside the device-audio thread: T8 torn frames in an
  * INTRA-session form this class cannot see by construction. D8/D9/D10 must either bump the epoch at
- * `switchSource` — the natural site, which already resets the endpointer at
- * `FloatingBubbleService.kt:1819` — or show the switch's stop-then-join makes the survivor
+ * `switchSource` — the natural site, which already calls `endpointer.reset()` on its own
+ * (FloatingBubbleService) — or show the switch's stop-then-join makes the survivor
  * impossible within T2-SHARPENED's best-effort bounds. Decided there; not closable here.
  *
  * **THE WIRING D8 MUST USE** — the ungated [ensureReady] overload is exactly the route a stale
@@ -97,9 +97,8 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * (2) `probeArm` runs before the session's first frame. `SileroEndpointer` fires it from
  * `onSessionStart` (`:421`), and the ordering that actually carries this is a THREAD START, not the
- * lambda's reachability: `onOpen`'s Main body runs `onSessionStart` at
- * `FloatingBubbleService.kt:2224` and only then `startAudioInput()` at `:2239`, which spawns the
- * capture thread.
+ * lambda's reachability: `onOpen`'s Main body (FloatingBubbleService) runs `onSessionStart` and
+ * only then `startAudioInput()`, which spawns the capture thread.
  *
  * (3) A capture thread's FIRST probe call must land while its OWN session is still open. `mine.get()`
  * initialises at the first call, not at thread start, so a thread that produced NO probe frames
@@ -244,8 +243,8 @@ class VadProbeLifecycle(private val probe: VadProbe) {
      *
      * UNGATED, deliberately, and this is the one capture-path route the epoch does not watch.
      * `probeReset` is fired from BOTH Main (`onSessionStart` and three of the four service reset
-     * sites) and the CAPTURE thread (the wall-cap cut at `FloatingBubbleService.kt:1722` /
-     * `plan:8349`, inside `onAudioChunk`), so no single token binding can be correct for both
+     * sites) and the CAPTURE thread (the wall-cap cut inside `onAudioChunk`, FloatingBubbleService
+     * / `plan:8349`), so no single token binding can be correct for both
      * callers: binding it to the capture thread's snapshot would cache MAIN's token forever and
      * refuse Main's resets for every later session, and binding it to the currently-armed epoch
      * gates nothing. A stale capture thread reaching the cap branch therefore clears the LIVE next

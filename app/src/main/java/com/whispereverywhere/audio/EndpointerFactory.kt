@@ -57,8 +57,8 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * **Capture-originated resets are gated on the same token** (D5 review I2). `probeReset` is one
  * lambda fired from Main (`onSessionStart`, `switchSource`, `stopRecording`) AND from the capture
- * thread (every commit through `clearForNextSegment`, and the wall-cap cut at
- * `FloatingBubbleService.kt:1754`), and [VadProbeLifecycle.reset] is deliberately ungated because
+ * thread (every commit through `clearForNextSegment`, and the wall-cap cut in `onAudioChunk`,
+ * FloatingBubbleService), and [VadProbeLifecycle.reset] is deliberately ungated because
  * the lifecycle cannot bind one token to two callers. Comparing THIS thread's snapshot against the
  * open epoch resolves it without a second lifecycle API: Main's snapshot is refreshed at every arm
  * so Main is never refused, a live capture thread matches, and a stale one is skipped. Milder than
@@ -83,9 +83,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   `nativeOrder()` above is belt and braces against a future `putShort`/`asShortBuffer` edit. T8
  *   ("fill, then call, same thread") is discharged CROSS-session by the epoch, which keeps a stale
  *   thread off the buffer entirely. It is NOT discharged INTRA-session: `switchSource`
- *   (`FloatingBubbleService.kt:1844`; every FBS line number in this file is POST-D7 numbering,
- *   which the neighbouring 3.7 files have not yet been re-anchored to) swaps capturers without
- *   re-arming, so a mic thread outliving
+ *   (FloatingBubbleService) swaps capturers without re-arming, so a mic thread outliving
  *   that bounded join holds a token that is still CURRENT and can refill this buffer alongside the
  *   device-audio thread. D9/D10 must either bump the epoch at that boundary or show the survivor is
  *   impossible — and note the tension: a bump alone fails CLOSED, because `armed` is published by

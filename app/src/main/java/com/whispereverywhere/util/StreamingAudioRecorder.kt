@@ -113,13 +113,15 @@ class StreamingAudioRecorder(private val context: Context) {
         // STOP THE RECORD, THEN JOIN — the same order PlaybackAudioCapturer.stop() has always used
         // (PlaybackAudioCapturer.kt:95-99, which explains why). read() blocks until its buffer
         // fills and only stop() unblocks it immediately, so the pre-3.7 join-then-stop waited a
-        // full read period at best. This runs on MAIN from four sites (FloatingBubbleService.kt:764
-        // onDestroy, :916, :1822, :2344), and 3.7 puts a native probe in the capture callback, so
+        // full read period at best. This runs on MAIN from four sites in FloatingBubbleService
+        // (onDestroy, onMediaPlaybackStarted, switchSource, stopRecording), and 3.7 puts a native
+        // probe in the capture callback, so
         // "at best" stopped being the interesting case: the join could wait out its whole 2 s
         // bound, twice per session — ANR territory. The timeout path was worse than slow: it fell
         // through to release() while the capture thread could still be inside onAudioChunk ->
         // sendAudio, landing a chunk AFTER the unconditional stop flush
-        // (FloatingBubbleService.kt:2388) — a lost tail or an orphan segment.
+        // (the unconditional flush in stopRecording, FloatingBubbleService) — a lost tail or an
+        // orphan segment.
         //
         // Deliberately NOT wrapped in try/catch: stopThenJoin cannot throw: both callbacks are
         // individually guarded, and the only statements outside those guards are the two Log.w

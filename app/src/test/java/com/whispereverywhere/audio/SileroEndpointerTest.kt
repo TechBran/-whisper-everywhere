@@ -177,9 +177,10 @@ class SileroEndpointerTest {
     }
 
     @Test fun reset_drops_the_partial_frame_and_resets_the_native_probe() {
-        // reset() is one of the five vadProbeReset sites (cap cut FloatingBubbleService.kt:1722,
-        // switchSource :1819, onOpen :2224, stopRecording :2393 — all four verified against the
-        // tree today — and this internal one). The partial frame goes with it: the next probe
+        // reset() is one of the five vadProbeReset sites (the cap cut in onAudioChunk,
+        // switchSource, onOpen, stopRecording — all four in FloatingBubbleService, all four
+        // verified against the tree today — and this internal one). The partial frame goes with
+        // it: the next probe
         // frame must start on a boundary aligned with the fresh LSTM.
         var resets = 0
         val probe = FakeProbe()
@@ -338,8 +339,9 @@ class SileroEndpointerTest {
 
     /**
      * `hasPendingSpeech()` describes the UNCOMMITTED BUFFER, not the gate — the semantics the
-     * LOCAL-silence re-arm at `FloatingBubbleService.kt:1716` reads, and the one thing Tasks C4
-     * and C5 must not quietly narrow back to "speech in the current frame". Speech that has been
+     * LOCAL-silence re-arm in the wall-cap branch of `onAudioChunk` (FloatingBubbleService) reads,
+     * and the one thing Tasks C4 and C5 must not quietly narrow back to "speech in the current
+     * frame". Speech that has been
      * heard and not yet committed stays pending THROUGH silence, because that audio really is
      * still sitting in the caller's buffer waiting to be sent.
      *
@@ -1218,8 +1220,8 @@ class SileroEndpointerTest {
      *
      * C7's [the_latch_survives_reset_and_is_re_armed_only_by_a_new_session] states this same
      * two-sided shape for the slow-probe latch, and the reason is the same one seen from the other
-     * end: `reset()` IS the wall-cap cut (`FloatingBubbleService.kt:1722`), `switchSource` (`:1819`)
-     * and `stopRecording` (`:2393`), and not one of those is a VAD cut. An external commit has no
+     * end: `reset()` IS the wall-cap cut in `onAudioChunk`, `switchSource` and `stopRecording`
+     * (all FloatingBubbleService), and not one of those is a VAD cut. An external commit has no
      * speechMs/trailMs/p of its own to leave behind, so erasing the record there would blank the
      * funnel's numbers for the VAD cut that really did happen — and `EndpointDiag.endpointLine`
      * already spells "this cut had no endpointer state behind it" as `ec = null` at the CALL site,
@@ -1518,7 +1520,8 @@ class SileroEndpointerTest {
     /**
      * The class KDoc promises "@Volatile", and `reset()` really is called from Main while the
      * capture thread is inside `onFrame` (`Endpointer`'s own threading note; the four service
-     * sites at FloatingBubbleService.kt:1722/:1819/:2224/:2393, of which :2224 becomes
+     * sites in FloatingBubbleService — the cap cut in `onAudioChunk`, `switchSource`, `onOpen`,
+     * `stopRecording` — of which `onOpen`'s becomes
      * `onSessionStart` — Main-only, and a WRITER of three more fields). Without the annotation
      * there is no happens-before edge at all between the Main-thread clear and the capture thread,
      * so the cleared state may never become visible — a promise no prose can keep on its own.

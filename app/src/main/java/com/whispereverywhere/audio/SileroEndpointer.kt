@@ -6,8 +6,8 @@ import com.whispereverywhere.util.ProbeStats
  * The 3.7 real-VAD endpointer: streaming Silero probabilities in, "commit now" out.
  *
  * It replaces the amplitude DECISION only. Everything structural around it is unchanged: the wall
- * caps stay in the `else if` at `FloatingBubbleService.kt:1695` as backstops, `sendAudio` stays
- * unconditional and first (`FloatingBubbleService.kt:1668`), and the stop flush stays
+ * caps stay in the `else if` of `onAudioChunk` (FloatingBubbleService) as backstops, `sendAudio`
+ * stays unconditional and first (the first statement of that function), and the stop flush stays
  * unconditional. With this endpointer stubbed to never fire, session behaviour is byte-identical
  * to 3.6.0 — that is the whole de-risking argument.
  *
@@ -35,9 +35,9 @@ import com.whispereverywhere.util.ProbeStats
  * early — the conservative direction.
  *
  * ## Threading
- * [onFrame] runs on the capture thread. [reset] is also called from Main (switchSource
- * `FloatingBubbleService.kt:1819`, stopRecording `:2393`) and [onSessionStart] is Main-ONLY
- * (onOpen `:2224`, the site that used to be a fourth [reset]); [onSessionEnd] is Main-only too,
+ * [onFrame] runs on the capture thread. [reset] is also called from Main (`switchSource` and
+ * `stopRecording`, both FloatingBubbleService) and [onSessionStart] is Main-ONLY (`onOpen`, the
+ * site that used to be a fourth [reset]); [onSessionEnd] is Main-only too,
  * from stopRecording after both capture threads have joined. Two of those Main entry points can now
  * BLOCK, briefly: [onSessionStart] and [onSessionEnd] take [probeStats]' instance monitor, which the
  * capture thread holds inside `record()` for a handful of int ops — see [timedProbe] for why that is
@@ -296,9 +296,10 @@ class SileroEndpointer(
      * It describes the UNCOMMITTED BUFFER, not the gate: a merged or discarded utterance leaves it
      * true, because that audio really is still sitting there. Only a commit or a [reset] clears it
      * — a closing gate does not, and neither does a silent frame. The two are easy to conflate and
-     * the cost of conflating them is specific: `FloatingBubbleService.kt:1716` re-arms the 4 s
-     * first-cap window whenever this reads false, so a predicate that meant "speech in the current
-     * frame" would re-arm on every cap cut that happened to land in a pause.
+     * the cost of conflating them is specific: the LOCAL-silence re-arm in the wall-cap branch of
+     * `onAudioChunk` (FloatingBubbleService) re-arms the 4 s first-cap window whenever this reads
+     * false, so a predicate that meant "speech in the current frame" would re-arm on every cap cut
+     * that happened to land in a pause.
      *
      * This is the semantics upgrade that re-arm has been waiting for: the soft talker in a noisy
      * room, whose RMS never clears 500, flips from permanently-false to true. The branch above it
@@ -347,8 +348,8 @@ class SileroEndpointer(
     fun isProbeCutout(): Boolean = probeCutout
 
     /**
-     * A commit happened elsewhere — the wall-cap cut (`FloatingBubbleService.kt:1722`),
-     * `switchSource` (`:1819`), `stopRecording` (`:2393`). Fires the native probe reset, which
+     * A commit happened elsewhere — the wall-cap cut in `onAudioChunk`, `switchSource`,
+     * `stopRecording` (all FloatingBubbleService). Fires the native probe reset, which
      * `switchSource` in particular MUST have: carrying LSTM state across a mic <-> device-audio
      * swap is a correctness bug, not merely suboptimal.
      *
@@ -367,7 +368,7 @@ class SileroEndpointer(
     }
 
     /**
-     * A new RECORDING session (`FloatingBubbleService.kt:2224`, beside
+     * A new RECORDING session (the `onOpen` handler in FloatingBubbleService, beside
      * `SegmentCapPolicy.onSessionStart`). Everything [reset] clears, plus the governor's
      * first-cut-is-free arming, THIS session's cadence floor, the slow-probe latch and the CUT
      * RECORD — the last two being the state [reset] deliberately leaves standing.

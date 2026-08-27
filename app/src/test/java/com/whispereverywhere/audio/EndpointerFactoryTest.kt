@@ -216,7 +216,7 @@ class EndpointerFactoryTest {
     /**
      * THE THIRD CAPTURE-PATH ROUTE (D5 review I2). `probeReset` is one lambda fired from BOTH Main
      * (`onSessionStart`, `switchSource`, `stopRecording`) and the CAPTURE thread (the wall-cap cut
-     * at `FloatingBubbleService.kt:1754`, POST-D7 numbering, and every commit through
+     * in `onAudioChunk` (FloatingBubbleService), and every commit through
      * `clearForNextSegment`), and
      * `VadProbeLifecycle.reset()` is deliberately ungated — the lifecycle cannot bind one token to
      * two callers. So the routing decision is D8's, and this is the pin on it: a session-N thread's
@@ -276,8 +276,8 @@ class EndpointerFactoryTest {
     /**
      * THE OTHER HALF OF THE RESET GATE — the failure a gate must never cause.
      *
-     * Three of the four service reset sites are MAIN's (`onSessionStart`, `switchSource`
-     * `FloatingBubbleService.kt:1851`, `stopRecording` `:2425`), and `switchSource`'s is the
+     * Three of the four service reset sites are MAIN's (`onSessionStart`, `switchSource` and
+     * `stopRecording`, all FloatingBubbleService), and `switchSource`'s is the
      * correctness-critical one: carrying LSTM recurrence across a mic <-> device-audio swap is a
      * bug, not merely suboptimal (teardown-bill T9). `probeArm` refreshes MAIN's snapshot at every
      * session open precisely so the gate can never refuse them. A gate bound to a snapshot Main
