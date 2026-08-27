@@ -20,10 +20,19 @@ import java.io.File
  *
  * `FloatingBubbleService` is an Android Service and cannot be instantiated in a JVM test, so the
  * pin is on the SOURCE — the same instrument and the same reasoning as `CapSeamPinTest` and
- * `EndpointerLifecyclePinTest`, whose KDocs carry the full argument. Tasks F8, F9 and G3 all extend
- * the funnel's BODY and nothing here constrains that. What is pinned is narrower and permanent:
- * there is ONE funnel, the five sites reach the engine only through it, and it records the seq the
- * engine actually returned.
+ * `EndpointerLifecyclePinTest`, whose KDocs carry the full argument. Tasks F9 and G3 extend the
+ * funnel's BODY and nothing here constrains that. What is pinned is narrower and permanent:
+ * there is ONE funnel, the five sites reach the engine only through it, it records the seq the
+ * engine actually returned, and it reads the endpointer's cut record ONLY on a `cut=vad` commit.
+ *
+ * **That last one is Task F8's addition, and it is the one body constraint this class carries on
+ * purpose.** `SileroEndpointer.lastCut()` is not a "current state" accessor: it holds the LAST vad
+ * cut and survives until the next one, so a cap / stop / switch commit that asked for it would be
+ * handed an OLDER cut's `speechMs`/`trailMs`/`p` and would print them as this segment's. Task C8's
+ * report states the read contract and names the exact regression it feared — "a simplification that
+ * hoists the `lastCut()` read above the branch and lets non-nullness stand in for the
+ * discriminator" — and that mutant is invisible to every other test in the suite, because no test
+ * can reach the funnel's body. So it is pinned here, structurally, where the branch is legible.
  *
  * **Counting discipline (the D10 lesson).** A bare count of `engine.commit()` reads TWO, not one:
  * D9's load-bearing note in the cap branch quotes the call verbatim ("commitRetainingTailMs(0) IS
@@ -115,6 +124,22 @@ class CommitFunnelPinTest {
         // ...and the resolution side is fed the seq that actually resolved, from the one place it
         // lands. Depth is a SET difference, so a constant on either side strands or inverts it.
         assertEquals(1, count("segmentQueueDepth.onResolved(seq)"))
+    }
+
+    @Test
+    fun theEndpointerCutRecordIsReadOnlyOnAVadCommit() {
+        // The gate is on the CUT KIND. Dropping the `if (cut == EndpointDiag.VAD)` — the
+        // "simplification" Task C8's read contract names — makes every cap/stop/switch line report
+        // the PREVIOUS vad cut's numbers as this segment's, with the whole suite green.
+        indexOfOrFail(
+            "        val ec = if (cut == EndpointDiag.VAD) " +
+                "(endpointer as? SileroEndpointer)?.lastCut() else null\n"
+        )
+        assertEquals(
+            "the endpointer's cut record is read from exactly one place, the funnel's vad branch",
+            1,
+            count(".lastCut()"),
+        )
     }
 
     @Test

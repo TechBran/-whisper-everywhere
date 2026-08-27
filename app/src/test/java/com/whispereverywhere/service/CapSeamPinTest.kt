@@ -25,6 +25,14 @@ import java.io.File
  * named arguments is inert by construction; a mis-bound *value* is not, and the exact-match needle
  * is what catches it as a textual change.
  *
+ * **The retain window is no longer text-only (3.7 F8, D9's M4b follow-up).** Its two `Long`s moved
+ * into `capCutRetainWindowMs(nowMs, endpointer)` — different types, so a positional swap does not
+ * compile — and `CapCutRetainWindowTest` pins the VALUE binding behaviourally. The needle in
+ * `theCapCutAsksTheCadencePolicyForItsRetainWindow` is kept as belt to those braces, and now pins
+ * the helper's body too. `capCutConsumesWindow`'s pair is still text-only here and deliberately
+ * so: it is SYMMETRIC, a positional call to it is inert, and it is pinned four ways in
+ * `CapCutBookkeepingTest`.
+ *
  * **The source is read LF-NORMALISED.** `core.autocrlf=true` on this repo checks the file out with
  * CRLF, so a needle written with bare `\n` finds nothing on a fresh clone and every assertion here
  * would pass or fail for the wrong reason. The normalisation happens once, at the single read site
@@ -99,8 +107,22 @@ class CapSeamPinTest {
 
     @Test
     fun theCapCutAsksTheCadencePolicyForItsRetainWindow() {
+        // The branch asks the extracted pure helper (3.7 F8, the M4b follow-up)...
         indexOfOrFail(
-            "                val retainMs = CommitCadencePolicy.capCutRetainMs(nowMs = now, cutPointMs = endpointer.pendingCutPointMs())"
+            "                val retainMs = capCutRetainWindowMs(nowMs = now, endpointer = endpointer)"
+        )
+        // ...and that helper is the ONE place the cadence policy is asked, with the two same-typed
+        // Longs bound by name. This needle is now BELT: the binding itself is pinned behaviourally
+        // by CapCutRetainWindowTest, so a swapped VALUE dies on a value assertion and not only on
+        // this restatement of the source.
+        indexOfOrFail(
+            "internal fun capCutRetainWindowMs(nowMs: Long, endpointer: Endpointer): Long =\n" +
+                "    CommitCadencePolicy.capCutRetainMs(nowMs = nowMs, cutPointMs = endpointer.pendingCutPointMs())"
+        )
+        assertEquals(
+            "the cadence policy's retain window is asked from exactly one place",
+            1,
+            text.split("CommitCadencePolicy.capCutRetainMs(").size - 1,
         )
     }
 

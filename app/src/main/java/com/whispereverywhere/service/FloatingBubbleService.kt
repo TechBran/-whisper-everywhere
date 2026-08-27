@@ -198,6 +198,32 @@ internal fun processingTimerRunsIn(state: FloatingBubbleService.BubbleState): Bo
 internal fun capCutConsumesWindow(hasPendingSpeech: Boolean, isCloudSession: Boolean): Boolean =
     hasPendingSpeech || isCloudSession
 
+/**
+ * How many trailing milliseconds the wall-cap commit retains, given the endpointer's remembered
+ * micro-pause at cap time [nowMs] (3.7, Workstream D — the M4b follow-up, landed at Task F8).
+ *
+ * The wall-cap branch used to ask [CommitCadencePolicy.capCutRetainMs] directly, and that call
+ * takes TWO adjacent same-typed `Long`s whose order nothing behavioural pinned: a swapped pair
+ * returns `0L` for EVERY input, which silently reverts the cap-cut split to 3.6.0 with the whole
+ * suite green (D2's M22 survived exactly that). Named arguments make a POSITIONAL swap inert, but
+ * they cannot make a mis-bound VALUE inert, and `FloatingBubbleService` cannot be instantiated in a
+ * JVM test — so the only guard over the binding was an exact-match source needle written in the
+ * same session as the code.
+ *
+ * Lifting the computation here fixes that at the type level and at the value level both. The two
+ * parameters are now a `Long` and an [Endpointer], so a positional swap does not COMPILE; and the
+ * binding of `nowMs`/`cutPointMs` inside this one line is pinned behaviourally by
+ * `CapCutRetainWindowTest` (no-offer -> 0, a fresh micro-pause -> the elapsed ms, a reversed pair
+ * -> 0). `CapSeamPinTest`'s needle stays, as belt to those braces.
+ *
+ * It reads [Endpointer.pendingCutPointMs] itself rather than taking the offer as a second `Long`,
+ * because a `(nowMs, cutPointMs)` signature would have re-created the very hazard it exists to
+ * remove one call frame further out. Pure and Context-free; it must be called BEFORE
+ * `endpointer.reset()`, which clears the offer.
+ */
+internal fun capCutRetainWindowMs(nowMs: Long, endpointer: Endpointer): Long =
+    CommitCadencePolicy.capCutRetainMs(nowMs = nowMs, cutPointMs = endpointer.pendingCutPointMs())
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
@@ -1748,10 +1774,7 @@ class FloatingBubbleService : Service(),
                 // currentCapMs() is read BEFORE onCommit flips first->later, so the line names
                 // the cap that actually fired (4000ms for the session's first LOCAL stretch;
                 // cloud sessions closed the first-cap window at onOpen and always read 15000ms).
-                android.util.Log.i(
-                    "WE-DIAG",
-                    "wall-clock cap -> commit (cap=${segmentCapPolicy.currentCapMs()}ms)",
-                )
+                android.util.Log.i("WE-DIAG", EndpointDiag.capCommitLine(segmentCapPolicy.currentCapMs()))
                 // A cap cut on SILENCE-ONLY audio still commits the buffer (bounded, and whisper's
                 // VAD returns empty fast); only the policy bookkeeping below is conditional.
                 // hasPendingSpeech() and pendingCutPointMs() are both read BEFORE
@@ -1794,10 +1817,12 @@ class FloatingBubbleService : Service(),
                 // unrepairable. capCutRetainMs returns 0 for no offer, a stale offer, and for the
                 // amplitude endpointer always; commitRetainingTailMs(0) IS engine.commit(). So an
                 // endpointer that never fires leaves this branch byte-identical to 3.6.0.
-                // NAMED arguments, not positional: two same-typed Longs whose order nothing else
-                // pins, and a swap returns 0 for EVERY input — the split silently reverts to
-                // 3.6.0 with the whole suite green (D2's M22 survived exactly that).
-                val retainMs = CommitCadencePolicy.capCutRetainMs(nowMs = now, cutPointMs = endpointer.pendingCutPointMs())
+                // The two same-typed Longs this used to pass CommitCadencePolicy directly (a swap
+                // returns 0 for EVERY input, silently reverting the split to 3.6.0 — D2's M22
+                // survived exactly that) now live inside capCutRetainWindowMs, where the binding is
+                // pinned BEHAVIOURALLY by CapCutRetainWindowTest and a positional swap here cannot
+                // even compile. See that function's KDoc.
+                val retainMs = capCutRetainWindowMs(nowMs = now, endpointer = endpointer)
                 // The funnel call inherits the same hazard and the same discipline: it ALSO ends
                 // in two adjacent Longs, and swapping them degrades to a plain full commit (D6's
                 // `cut <= 0` guard clamps) while handing Workstream F's clock a 0-3000ms value.
@@ -2762,6 +2787,10 @@ class FloatingBubbleService : Service(),
      * "nothing was cut" answer documented on [TranscriptionEngine.commit], which contributes
      * nothing to the backlog because it will never resolve.
      *
+     * The `endpoint:` line is emitted even for a `-1` seq — "the endpointer fired and there was
+     * nothing buffered" is exactly the kind of thing this family exists to make visible — while the
+     * backlog deliberately ignores it, because that seq will never resolve.
+     *
      * Callable from the CAPTURE thread (the endpoint and cap cuts) and from Main (switchSource,
      * stopRecording, the projection-consent flush) — [SegmentQueueDepth] is synchronized.
      */
@@ -2772,6 +2801,16 @@ class FloatingBubbleService : Service(),
         nowMs: Long = System.currentTimeMillis(),
     ): Long {
         val seq = if (retainMs > 0L) engine.commitRetainingTailMs(retainMs) else engine.commit()
+        // Only a VAD cut has a probe behind it. lastCut() is read IMMEDIATELY after the verdict,
+        // because the state machine re-arms as it returns true; an amplitude endpointer is not a
+        // SileroEndpointer and yields null, which renders the unknown shape (p=-1.00).
+        //
+        // The gate is on the CUT KIND and must never be "simplified" to non-nullness (Task C8's
+        // read contract): lastCut() holds the LAST vad cut and survives until the next one, so a
+        // cap/stop/switch commit asking for it would be handed an OLDER cut's numbers and report
+        // them as this segment's. Pinned structurally by CommitFunnelPinTest.
+        val ec = if (cut == EndpointDiag.VAD) (endpointer as? SileroEndpointer)?.lastCut() else null
+        android.util.Log.i("WE-DIAG", EndpointDiag.endpointLine(seq, cut, ec))
         android.util.Log.i("WE-DIAG", EndpointDiag.queueLine(segmentQueueDepth.onCommitted(seq)))
         return seq
     }

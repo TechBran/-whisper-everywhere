@@ -1,5 +1,8 @@
 package com.whispereverywhere.service
 
+import com.whispereverywhere.audio.EndpointCut
+import java.util.Locale
+
 /**
  * The 3.7 endpoint diagnostic family (Workstream F). One greppable set of lines, all under the
  * WE-DIAG tag and all joinable on `seq=` with `segment-timing:`, so a single logcat capture
@@ -29,6 +32,35 @@ object EndpointDiag {
     /** A mic <-> device-audio source swap cut the segment at the boundary. */
     const val SWITCH = "switch"
 
+    /**
+     * Why this seq was cut, and on what evidence. Locale.US: the point is always a point.
+     *
+     * [ec] is the endpointer's own record of the cut ([com.whispereverywhere.audio.SileroEndpointer.lastCut]),
+     * and it is null for every cut that had no probe behind it — the cap, stop and switch sites, and
+     * the whole amplitude fallback. A null renders `speechMs=0 trailMs=0 p=-1.00`: the UNKNOWN
+     * shape, matching the native frame contract where -1 is "no verdict" and never "silence".
+     * `p=0.00` is never emitted for an unknown cut, because it would read as "the probe was certain
+     * there was no speech" — a different and much stronger claim.
+     */
+    fun endpointLine(seq: Long, cut: String, ec: EndpointCut?): String =
+        "endpoint: seq=$seq cut=$cut speechMs=${ec?.speechMs ?: 0L} trailMs=${ec?.trailMs ?: 0L} p=" +
+            String.format(Locale.US, "%.2f", ec?.prob ?: -1.0f)
+
     /** The committed-but-unresolved backlog, from [SegmentQueueDepth]. */
     fun queueLine(depth: Int): String = "queue: depth=$depth"
+
+    /**
+     * The wall-clock backstop line, REWORDED for 3.7 as the failure signature it becomes.
+     *
+     * Before 3.7 this was the normal path (the amplitude segmenter's dead band meant most cuts
+     * were cap cuts). With a real endpointer it means the endpointer did not fire for a whole cap
+     * window — worth investigating every time.
+     *
+     * Two substrings are load-bearing and are preserved BYTE FOR BYTE, which is why the marker is
+     * appended rather than the line rewritten: `wall-clock cap -> commit` is the existing grep,
+     * and `cap=<n>ms` is the documented regression signature — `cap=4000ms` appearing in a CLOUD
+     * session means the LOCAL-only first-cap suppression at FloatingBubbleService.kt:2238 broke.
+     */
+    fun capCommitLine(capMs: Long): String =
+        "wall-clock cap -> commit (cap=${capMs}ms) VAD-MISS: no endpoint in this window"
 }
