@@ -8816,6 +8816,58 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 ## Workstream F (service) — The commit funnel and the endpoint diagnostics (F7–F9)
 
+> **F-SECTION CLOSE (rebase pass, Task F9). Workstream F is COMPLETE — F7, F8 and F9 all shipped,
+> reviewed and accepted.** This banner records what the three tasks changed under the sections
+> below, so a reader arriving here does not re-derive it or trip over it. Same rebase rule as the
+> C2 and D9 banners: *a snippet that faithfully records a stub gets a banner; a snippet that
+> contradicts discipline already in force gets RESPLICED from the shipped source.* Sharpened by the
+> F-close: a stale snippet whose damage is LOUD (the suite fails on it) may keep its banner; one
+> whose damage is SILENT is respliced. **Three snippets were RESPLICED** — F9's Step 4(c) block and
+> BOTH sides of Task G5's Step 3(c) "replace X with Y", all three of which carried the
+> `val waited = …; if (waited != null && release.text.isNotBlank())` form that F9's review found
+> defective. G5's is the one that mattered: its "with" side would have REINSTATED the defect in a
+> task that has not been dispatched yet. Corrected to the shipped form, which consumes the stamp
+> only inside `if (release.text.isNotBlank())`. F8 had already discharged the fourth (`:9651`, the
+> positional cap call, rewritten at commit `5457a58`).
+>
+> **1. The D-close correction table that used to sit in F7's banner is RETIRED.** See F7's banner
+> for why and for what replaced it. Short version: five of its nine rows named text F7 dissolved.
+>
+> **2. Every `FloatingBubbleService.kt` line number in ALL THREE sections is stale, and they are
+> deliberately NOT renumbered.** Measured at the F-close, tree clean: the four anchors that survive
+> moved a second time (`:307`→**399**, `:2152`→**2317**, `:2298-2306`→**2508**, `:2576`→**2896**;
+> the funnel itself is at **2858**). The file moved under F7, F8 and F9 and will move again under
+> G3. Anchor on the STATEMENTS. The living authority on the five commit sites is
+> `CommitFunnelPinTest`, not any number in this document.
+>
+> **3. THE F-SECTION'S RUNNING SUITE TOTALS, as shipped.** Recorded once here so the per-task lines
+> below stay as each task wrote them. Every F-service task shipped MORE tests than planned — each
+> one's own mutation battery or review found a pin that was missing — and the per-task deltas below
+> are left untouched as the record of what each task set out to add.
+>
+> | Task | Planned delta | Shipped delta | Suite after | Classes |
+> |---|---|---|---|---|
+> | F7 | +7 | **+12** | **1266** | 115 |
+> | F8 | +6 | **+12** | **1278** | 117 |
+> | F9 | +9 | **+26** | **1304** | 119 |
+>
+> The ones worth knowing: **F7 planned 1261 and shipped 1266** (its battery found the endpoint cut
+> and the projection flush unpinned, so `CommitFunnelPinTest` was born mid-task); **F8 planned +6
+> and shipped +12** across two commits (`CapCutRetainWindowTest` for the M4b value pin, plus the fix
+> round's two emission pins); **F9 planned +9 and shipped +26** across three commits (+14
+> `PerceivedLatencyTest` after the eviction and derivation rows, +8 `PerceivedStampPinTest`, +1
+> `CommitFunnelPinTest`, then +3 resolution-order rows in the fix round). Any later section
+> reasoning "F8 leaves the suite at 1272" or "F9 adds nine tests" is doing arithmetic on numbers
+> that never existed. **No absolute total is asserted in any F section; Task S5 computes the
+> branch's totals once, from a purged results directory.**
+>
+> **4. Claim corrections carried out of the three reports.** (a) F7's §1.4 rebase row was RETRACTED
+> as a null item — no plan line ever carried the "the funnel takes over emitting `commit:` /
+> `cap-cut split:`" premise; it existed only in dispatch prose, and those two lines live in
+> `LocalWhisperEngine` and are untouched. (b) F8's `:9651` positional cap call: discharged in
+> `5457a58`, not re-opened. (c) F9's own stale anchors: **LEFT, by measured ruling** — see the
+> banner on that section.
+
 ---
 
 ### Task F7: The commit funnel — capture the five discarded `commit()` seqs + `queue: depth=`
@@ -8829,30 +8881,46 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 > same session. **Write it as `commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now)`
 > and quote the names in Step 3(l)'s needle.** A swap does NOT retain the whole buffer — D6's
 > `if (cut <= 0)` guard in `LocalWhisperEngine.commitRetainingTailMs` clamps and degrades to a plain
-> full commit — so the damage is silent in two ways: every cap cut reverts to 3.6.0's arbitrary
-> mid-word cut with the suite green (log signature `retainedTailBytes=0 retainedMs=0`), and `nowMs`
-> receives a 0–3000 ms value that wrecks Task F9's `perceived:` arithmetic. This is the same hazard
+> full commit — so the damage is silent: every cap cut reverts to 3.6.0's arbitrary mid-word cut
+> with the suite green (log signature `retainedTailBytes=0 retainedMs=0`). This is the same hazard
 > class as D2's M22 and the `capCutRetainMs` resplice in Task D9.
 >
-> **2. Every `FloatingBubbleService.kt` line number in this section is stale by +46 to +157.**
-> Workstream D grew that file repeatedly. Anchor on the STATEMENTS; the numbers below are kept only
-> as a reading aid. Measured at the D-close (`git show HEAD:<path> | grep -n`, tree verified clean —
-> re-measure before editing, because this file moves under every task):
+> **Correction from the F-close (Task F9 measured it):** this banner also predicted that the swap
+> would hand `nowMs` "a 0–3000 ms value that wrecks Task F9's `perceived:` arithmetic". **It does
+> not.** F9's speech-end stamp is gated on `cut == EndpointDiag.VAD` and THIS IS THE CAP SITE, so
+> `nowMs` is read by nothing here — before F9 or after it. Mutant M6 (the value swap) was run
+> against the shipped F9 tree and produced exactly two killers, both exact-match source needles and
+> both identical to F7's recorded set; no behavioural killer appeared, and `CapCutRetainWindowTest`
+> stayed green (the F8 value pin guards the binding one frame IN, not this call). The `retainMs`
+> half above is the whole of the damage. The named-argument instruction stands unchanged — it is
+> what those two needles pin.
 >
-> | This section says | Anchor | At the D-close |
-> |---|---|---|
-> | `:307` | `private val segmentCapPolicy = SegmentCapPolicy()` | **353** |
-> | `:915` | projection-consent `transcriptionEngine?.commit()` | **961** |
-> | `:1694` | `engine.commit()` inside the `onFrame` branch | **1740** |
-> | `:1721` | `engine.commitRetainingTailMs(retainMs)` | **1795** |
-> | `:1818` | `switchSource`'s `transcriptionEngine?.commit()` | **1914** |
-> | `:2152` | `segmentOrderer = …SegmentOrderer()` | **2248** |
-> | `:2298-2306` | `override fun onSegmentResolved(` | **2428** |
-> | `:2388` | the stop flush `transcriptionEngine?.commit()` | **2518** |
-> | `:2576` | `private fun deliverReleasedText(` | **2733** |
+> **2. Every `FloatingBubbleService.kt` line number in this section is stale — and the nine-row
+> table that used to correct them is RETIRED (F-section close, Task F9's rebase pass).**
 >
-> The three `transcriptionEngine?.commit()` sites are **not** distinguishable by their own text —
-> edits (d), (g) and (h) each need a two-line anchor.
+> It was written at the D-close and it was right then. By the F-close it had failed twice over.
+> Four of its rows had drifted AGAIN (`:307` 353→**399**, `:2152` 2248→**2317**, `:2298-2306`
+> 2428→**2508**, `:2576` 2733→**2896**), and — worse — **five of its nine rows named text THIS TASK
+> DISSOLVED.** After F7 there is no `transcriptionEngine?.commit()` anywhere in the file: it occurs
+> **zero** times and is *pinned* at zero by
+> `CommitFunnelPinTest#noCommitSiteReachesTheEngineDirectlyAnyMore`. `engine.commit()` and
+> `engine.commitRetainingTailMs(retainMs)` survive only INSIDE the funnel's own body. Renumbering
+> would have been the table's third correction; converting those five rows to "symbol form" would
+> have aimed a future reader at symbols that no longer exist at those sites — a third failure of the
+> very table that exists to prevent this. So it is replaced by its living successor:
+>
+> > **`app/src/test/java/com/whispereverywhere/service/CommitFunnelPinTest.kt` is the authority on
+> > where the commit sites are and what they look like.** It pins all five call forms VERBATIM,
+> > pins that there is exactly ONE funnel, pins that nothing reaches the engine directly, and pins
+> > both emissions. It fails the BUILD the moment any of them moves — which is something no table in
+> > a plan document has ever been able to do. Anchor on the STATEMENTS below; when you need the
+> > current shape of a call site, read that test.
+>
+> The three `transcriptionEngine?.commit()` sites were **not** distinguishable by their own text, so
+> edits (d), (g) and (h) each needed a two-line anchor. **That note still stands after F7**, because
+> two of the three became the same string: `commitSegment(it, EndpointDiag.SWITCH)` (projection
+> consent and `switchSource`), against `commitSegment(it, EndpointDiag.STOP)` for the stop flush.
+> `CommitFunnelPinTest` counts the SWITCH form at exactly 2 for that reason.
 >
 > **3. Step 3(l)'s two `EndpointerLifecyclePinTest` literals are correct as written.** That class
 > reads the source LF-NORMALISED, so bare `\n` literals match. Keep the flush literal FIRST in
@@ -9372,6 +9440,13 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 ### Task F8: `endpoint:` lines at all five cut sites + the wall-cap reword
 
+> **SHIPPED. Its line numbers are stale and are LEFT THAT WAY, on the same ruling as F9's** (see the
+> workstream banner). The one row that would have caused real damage — Step 3(d)'s POSITIONAL cap
+> call — was rewritten to the named form at `:9651` during F8 itself (commit `5457a58`) and is
+> **not** re-opened here. F8 also landed one thing this section does not describe: the M4b
+> behavioural follow-up, `internal fun capCutRetainWindowMs(nowMs, endpointer)` plus
+> `CapCutRetainWindowTest`, re-routed here from Task D9 via F7.
+
 **Files:**
 - Modify `app/src/main/java/com/whispereverywhere/service/EndpointDiag.kt`
 - Create `app/src/test/java/com/whispereverywhere/service/EndpointDiagTest.kt`
@@ -9684,6 +9759,22 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 ### Task F9: `perceived: speechEndToVisible` — the headline metric
 
+> **SHIPPED. Its `:307` / `:2576` / `:2298-2306` / `:2152` anchors are stale and are LEFT THAT WAY
+> — decided, not missed (F-close rebase, ruling confirmed by review against measurement).** Nothing
+> downstream reads them: Task S5's certification walk is content-anchored (all seven untouchable
+> contracts are `Select-String -SimpleMatch` on statement text, Steps 2/3 are directory globs, Step
+> 4 is a build) and reads no `FloatingBubbleService.kt` line number and no part of this section;
+> Task S3 greps log TOKENS, not lines; Task G3's section carries no line anchors at all. This
+> section is shipped and will never be re-dispatched, so renumbering it would cost a commit and buy
+> nothing. The measured values at the F-close are in the workstream banner above, and
+> `CommitFunnelPinTest` is the living authority. **The implementation deviated from the snippets
+> below in three sanctioned ways** — the speech-end derivation is extracted as
+> `internal fun speechEndMs(nowMs, ec)` rather than inlined, the stamp is consumed only on a
+> NON-BLANK release (the review's I1: resolutions arrive out of order on cloud, and the original
+> form lost both `perceived:` lines of an overtaken pair), and `deliverReleasedText` does **not**
+> write the view synchronously, so the metric excludes one Main hop and one frame. Read
+> `task-F9-report.md` §§2 and 10 before reusing any snippet from this section.
+
 **Files:**
 - Create `app/src/main/java/com/whispereverywhere/service/PerceivedLatency.kt`
 - Create `app/src/test/java/com/whispereverywhere/service/PerceivedLatencyTest.kt`
@@ -9965,17 +10056,27 @@ task in Workstream F that touches it:
 ```kotlin
                 serviceScope.launch(Dispatchers.Main) {
                     // The Release is captured rather than inlined so the perceived stamp can be
-                    // read at the moment the text ACTUALLY rendered: deliverReleasedText writes
-                    // the view synchronously on Main and early-returns on blank, so "returned
-                    // having delivered non-blank text" is exactly the visible instant. The
-                    // SegmentOrderer's release rules are untouched — this only names its result.
+                    // read at the moment this seq's words reached the user. deliverReleasedText
+                    // early-returns on blank and otherwise hands the resolved text to the preview
+                    // sink; the TextView write itself lands on the NEXT Main dispatch (the sink's
+                    // StateFlow -> previewJob's collectLatest), so the metric excludes one Main
+                    // hop and one frame — single-digit to ~20 ms against a 1.3-2.8 s number, and
+                    // biased low. Reading the stamp above the call would instead time the START of
+                    // delivery. The SegmentOrderer's release rules are untouched — this only names
+                    // its result.
                     val release = segmentOrderer.onResolved(seq, outcome)
                     deliverReleasedText(release.text)
-                    val waited = perceivedLatency.onVisible(seq, System.currentTimeMillis())
-                    // Always consume the stamp (it prunes), but only REPORT when text rendered:
-                    // a segment that resolved to silence made nothing visible to time.
-                    if (waited != null && release.text.isNotBlank()) {
-                        android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                    // The stamp is consumed ONLY on a non-blank release, and that gate is load
+                    // bearing rather than cosmetic. Resolutions arrive OUT OF ORDER on cloud
+                    // (CloudTranscriptionEngine runs Semaphore(3) and completes in network order),
+                    // so an overtaking seq reaches here while the orderer still holds it and its
+                    // release is blank. Consuming the stamp there would drop that seq's number AND
+                    // prune its predecessor's, losing BOTH perceived: lines — measured, and pinned
+                    // by PerceivedLatencyTest's resolution-order rows.
+                    if (release.text.isNotBlank()) {
+                        perceivedLatency.onVisible(seq, System.currentTimeMillis())?.let { waited ->
+                            android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                        }
                     }
                     android.util.Log.i(
                         "WE-DIAG",
@@ -10708,17 +10809,27 @@ visible. Replace:
 ```kotlin
                 serviceScope.launch(Dispatchers.Main) {
                     // The Release is captured rather than inlined so the perceived stamp can be
-                    // read at the moment the text ACTUALLY rendered: deliverReleasedText writes
-                    // the view synchronously on Main and early-returns on blank, so "returned
-                    // having delivered non-blank text" is exactly the visible instant. The
-                    // SegmentOrderer's release rules are untouched — this only names its result.
+                    // read at the moment this seq's words reached the user. deliverReleasedText
+                    // early-returns on blank and otherwise hands the resolved text to the preview
+                    // sink; the TextView write itself lands on the NEXT Main dispatch (the sink's
+                    // StateFlow -> previewJob's collectLatest), so the metric excludes one Main
+                    // hop and one frame — single-digit to ~20 ms against a 1.3-2.8 s number, and
+                    // biased low. Reading the stamp above the call would instead time the START of
+                    // delivery. The SegmentOrderer's release rules are untouched — this only names
+                    // its result.
                     val release = segmentOrderer.onResolved(seq, outcome)
                     deliverReleasedText(release.text)
-                    val waited = perceivedLatency.onVisible(seq, System.currentTimeMillis())
-                    // Always consume the stamp (it prunes), but only REPORT when text rendered:
-                    // a segment that resolved to silence made nothing visible to time.
-                    if (waited != null && release.text.isNotBlank()) {
-                        android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                    // The stamp is consumed ONLY on a non-blank release, and that gate is load
+                    // bearing rather than cosmetic. Resolutions arrive OUT OF ORDER on cloud
+                    // (CloudTranscriptionEngine runs Semaphore(3) and completes in network order),
+                    // so an overtaking seq reaches here while the orderer still holds it and its
+                    // release is blank. Consuming the stamp there would drop that seq's number AND
+                    // prune its predecessor's, losing BOTH perceived: lines — measured, and pinned
+                    // by PerceivedLatencyTest's resolution-order rows.
+                    if (release.text.isNotBlank()) {
+                        perceivedLatency.onVisible(seq, System.currentTimeMillis())?.let { waited ->
+                            android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                        }
                     }
                     android.util.Log.i(
                         "WE-DIAG",
@@ -10732,10 +10843,14 @@ with:
 ```kotlin
                 serviceScope.launch(Dispatchers.Main) {
                     // The Release is captured rather than inlined so the perceived stamp can be
-                    // read at the moment the text ACTUALLY rendered: deliverReleasedText writes
-                    // the view synchronously on Main and early-returns on blank, so "returned
-                    // having delivered non-blank text" is exactly the visible instant. The
-                    // SegmentOrderer's release rules are untouched — this only names its result.
+                    // read at the moment this seq's words reached the user. deliverReleasedText
+                    // early-returns on blank and otherwise hands the resolved text to the preview
+                    // sink; the TextView write itself lands on the NEXT Main dispatch (the sink's
+                    // StateFlow -> previewJob's collectLatest), so the metric excludes one Main
+                    // hop and one frame — single-digit to ~20 ms against a 1.3-2.8 s number, and
+                    // biased low. Reading the stamp above the call would instead time the START of
+                    // delivery. The SegmentOrderer's release rules are untouched — this only names
+                    // its result.
                     val release = segmentOrderer.onResolved(seq, outcome)
                     // 3.7 G: the queue drops BEFORE delivery and independently of it — an
                     // EmptyExpected or a Lost segment resolves without releasing any text, and
@@ -10746,11 +10861,18 @@ with:
                     )
                     renderInFlightStrip()
                     deliverReleasedText(release.text)
-                    val waited = perceivedLatency.onVisible(seq, System.currentTimeMillis())
-                    // Always consume the stamp (it prunes), but only REPORT when text rendered:
-                    // a segment that resolved to silence made nothing visible to time.
-                    if (waited != null && release.text.isNotBlank()) {
-                        android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                    // The stamp is consumed ONLY on a non-blank release, and that gate is load
+                    // bearing rather than cosmetic. Resolutions arrive OUT OF ORDER on cloud
+                    // (CloudTranscriptionEngine runs Semaphore(3) and completes in network order),
+                    // so an overtaking seq reaches here while the orderer still holds it and its
+                    // release is blank. Consuming the stamp there would drop that seq's number AND
+                    // prune its predecessor's, losing BOTH perceived: lines. G5 moves the queue
+                    // line and the repaint; it must NOT move or re-shape this gate, which
+                    // PerceivedStampPinTest#theStampIsConsumedOnlyOnANonBlankRelease pins verbatim.
+                    if (release.text.isNotBlank()) {
+                        perceivedLatency.onVisible(seq, System.currentTimeMillis())?.let { waited ->
+                            android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                        }
                     }
                 }
 ```
