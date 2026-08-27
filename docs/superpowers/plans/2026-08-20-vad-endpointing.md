@@ -954,7 +954,8 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
         }
         assertTrue(
             "vadProbeReset must clear the LSTM state — it is the 'new utterance starts here' " +
-                "signal, wired into all five reset sites by Workstream D",
+                "signal, wired into the three service-side reset sites plus the endpointer's own " +
+                "post-commit reset by Workstream D",
             jniFunctionBody("vadProbeReset").contains("whisper_vad_reset_state(g_probe_ctx);")
         )
     }
@@ -1102,7 +1103,8 @@ Returning a raw float rather than a verdict keeps threshold, hysteresis and
 hangover policy in Kotlin, where it is JVM-pinnable.
 
 vadProbeReset zeroes the LSTM state for the next utterance — a state-buffer
-clear only, so it is cheap enough for the five reset sites that will call it.
+clear only, so it is cheap enough for the three service-side reset sites plus
+the endpointer's own post-commit reset that will call it.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
