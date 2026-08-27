@@ -69,6 +69,9 @@ class LocalWhisperEngine(
         /** [SegmentOutcome.Lost] reasons. Fixed strings — a reason must never quote user audio. */
         const val NO_MODEL = "speech model not loaded"
         const val TRANSCRIBE_FAILED = "transcription failed"
+
+        /** PCM16 mono @16 kHz: 16 000 samples/s * 2 bytes = 32 bytes per millisecond. */
+        const val BYTES_PER_MS = 32
     }
 
     /**
@@ -235,6 +238,56 @@ class LocalWhisperEngine(
             (nextSeq++) to snapshot
         }
         android.util.Log.i("WE-DIAG", "commit: seq=$seq pcmBytes=${pcm.size} samples=${pcm.size / 2}")
+        executor.execute { runSegment(seq, pcm, lang, myListener) }
+        return seq
+    }
+
+    /**
+     * [commit], minus a trailing tail (3.7, Workstream D). See the interface KDoc for why
+     * `retainMs <= 0` must be indistinguishable from [commit] — the first line here is that
+     * guarantee, not an optimisation.
+     *
+     * The split is computed INSIDE bufferLock together with the seq, for the same reason [commit]
+     * allocates its seq there: the capture thread is still calling sendAudio, and a snapshot taken
+     * outside the lock would let a chunk land between the read and the rewrite.
+     */
+    override fun commitRetainingTailMs(retainMs: Long): Long {
+        if (retainMs <= 0L) return commit()
+
+        val myListener = this.listener
+        if (myListener == null) {
+            android.util.Log.i("WE-DIAG", "commit: no listener (session ended), skipped")
+            return NO_SEGMENT
+        }
+        val lang = this.language
+
+        val (seq, pcm, retainedBytes) = synchronized(bufferLock) {
+            val snapshot = buffer.toByteArray()
+            if (snapshot.isEmpty()) {
+                android.util.Log.i("WE-DIAG", "commit: pcmBytes=0 -> nothing to cut")
+                return NO_SEGMENT
+            }
+            // Aligned DOWN to a whole PCM16 frame so a split can never land mid-sample.
+            val retain = (retainMs * BYTES_PER_MS)
+                .coerceAtMost(snapshot.size.toLong())
+                .toInt() and 1.inv()
+            val cut = snapshot.size - retain
+            if (cut <= 0) {
+                // The offer covers the whole window. A cap that has already fired must never
+                // defer its entire buffer, so this degrades to a plain full commit.
+                buffer.reset()
+                Triple(nextSeq++, snapshot, 0)
+            } else {
+                buffer.reset()
+                buffer.write(snapshot, cut, retain)
+                Triple(nextSeq++, snapshot.copyOfRange(0, cut), retain)
+            }
+        }
+        android.util.Log.i("WE-DIAG", "commit: seq=$seq pcmBytes=${pcm.size} samples=${pcm.size / 2}")
+        android.util.Log.i(
+            "WE-DIAG",
+            "cap-cut split: seq=$seq retainedTailBytes=$retainedBytes retainedMs=${retainedBytes / BYTES_PER_MS}",
+        )
         executor.execute { runSegment(seq, pcm, lang, myListener) }
         return seq
     }

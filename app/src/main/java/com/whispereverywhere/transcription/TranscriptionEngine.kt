@@ -22,6 +22,23 @@ interface TranscriptionEngine {
      */
     fun commit(): Long
 
+    /**
+     * Commit everything buffered EXCEPT the last [retainMs] milliseconds, which stay buffered and
+     * open the next segment (3.7, Workstream D).
+     *
+     * Its ONE caller is the wall-cap branch, and it is handed the endpointer's remembered
+     * micro-pause via `CommitCadencePolicy.capCutRetainMs`, which returns 0 whenever there is no
+     * usable offer. `commitRetainingTailMs(0)` is therefore required to be exactly [commit] —
+     * that identity is what keeps the wall cap byte-identical to 3.6.0 under an endpointer that
+     * never fires, and it is pinned by test.
+     *
+     * Default: a plain [commit]. Retaining audio is a LOCAL-engine affordance — a cloud engine's
+     * commit is an HTTP POST and the fallback wrapper mirrors PCM per committed seq, so keeping
+     * bytes back behind either one's back would desynchronise a mirror rather than improve a
+     * boundary. Cloud/live/batch sessions keep 3.6.0 behaviour by inheriting this.
+     */
+    fun commitRetainingTailMs(retainMs: Long): Long = commit()
+
     /** Release the session (cancel pending work). */
     fun close()
 
