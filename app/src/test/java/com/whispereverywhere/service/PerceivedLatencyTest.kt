@@ -1,6 +1,8 @@
 package com.whispereverywhere.service
 
 import com.whispereverywhere.audio.EndpointCut
+import com.whispereverywhere.transcription.SegmentOrderer
+import com.whispereverywhere.transcription.SegmentOutcome
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -168,5 +170,89 @@ class PerceivedLatencyTest {
             ),
         )
         assertEquals(1_700L, p.onVisible(seq = 7L, nowMs = frameNow + 1_200L))
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Resolution ORDER. The three rows below drive the REAL SegmentOrderer through the exact
+    // statement order of FloatingBubbleService.onSegmentResolved's Main coroutine, because the
+    // F9 review found that the class KDoc's prune premise ("delivery is strictly in seq order")
+    // was false: onVisible fires at RESOLUTION, and CloudTranscriptionEngine runs Semaphore(3)
+    // and completes in network order. The reviewer measured an out-of-order pair losing BOTH
+    // perceived: lines. These rows are that throwaway probe made permanent.
+    // ---------------------------------------------------------------------------------------
+
+    /** onSegmentResolved's Main coroutine, minus the Android calls it cannot make in a JVM test. */
+    private class ResolutionProbe {
+        val orderer = SegmentOrderer()
+        val perceived = PerceivedLatency()
+        val emitted = mutableListOf<String>()
+
+        fun resolve(seq: Long, outcome: SegmentOutcome, nowMs: Long) {
+            val release = orderer.onResolved(seq, outcome)
+            // deliverReleasedText(release.text) — blank is an early return, so nothing renders.
+            if (release.text.isNotBlank()) {
+                perceived.onVisible(seq, nowMs)?.let { waited ->
+                    emitted += EndpointDiag.perceivedLine(seq, waited)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun inOrderResolutionsEachReportTheirOwnWait() {
+        // The control. Both segments resolve in order, both render, both report.
+        val probe = ResolutionProbe()
+        probe.perceived.onCommitted(seq = 0L, speechEndMs = 1_000L)
+        probe.perceived.onCommitted(seq = 1L, speechEndMs = 5_000L)
+        probe.resolve(0L, SegmentOutcome.Text("alpha"), nowMs = 2_500L)
+        probe.resolve(1L, SegmentOutcome.Text("beta"), nowMs = 6_400L)
+        assertEquals(
+            listOf(
+                "perceived: seq=0 speechEndToVisible=1500ms",
+                "perceived: seq=1 speechEndToVisible=1400ms",
+            ),
+            probe.emitted,
+        )
+    }
+
+    @Test
+    fun anOvertakingResolutionDoesNotDestroyItsPredecessorsStamp() {
+        // THE REGRESSION. seq 1 wins the race and reaches the resolution path first; the orderer
+        // holds it, so the release is blank and nothing rendered. Before the fix, the stamp was
+        // consumed anyway — seq 1's number went nowhere AND the prune deleted seq 0's — so when
+        // seq 0 arrived and drained both, `emitted` was EMPTY. The whole cloud tier's headline
+        // metric disappeared on exactly the segments that were slow enough to be overtaken.
+        val probe = ResolutionProbe()
+        probe.perceived.onCommitted(seq = 0L, speechEndMs = 1_000L)
+        probe.perceived.onCommitted(seq = 1L, speechEndMs = 5_000L)
+        probe.resolve(1L, SegmentOutcome.Text("beta"), nowMs = 6_000L)   // held: release is blank
+        probe.resolve(0L, SegmentOutcome.Text("alpha"), nowMs = 7_000L)  // drains 0 and 1
+        assertEquals(
+            listOf("perceived: seq=0 speechEndToVisible=6000ms"),
+            probe.emitted,
+        )
+    }
+
+    @Test
+    fun theKnownLimit_aSilentHeadReportsTheDrainedTailsRenderAgainstItsOwnSpeechEnd() {
+        // CHARACTERISATION, not endorsement. This row records a limit the minimal fix does NOT
+        // close, so that it cannot be rediscovered as a surprise: when a SILENT head drains a
+        // later segment's text, the release is non-blank but the words belong to the tail, while
+        // the seq handed to onVisible is the head's. The line is emitted under seq 0 and times
+        // seq 0's speech-end (1_000) against seq 1's render (7_000).
+        //
+        // It is an over-report, never a lost line, and closing it needs SegmentOrderer.Release to
+        // name the seq range it drained — a change to a class this workstream must not touch. If
+        // that ever lands, THIS TEST IS THE ONE THAT SHOULD FAIL, and its expectation becomes
+        // "perceived: seq=1 speechEndToVisible=2000ms".
+        val probe = ResolutionProbe()
+        probe.perceived.onCommitted(seq = 0L, speechEndMs = 1_000L)
+        probe.perceived.onCommitted(seq = 1L, speechEndMs = 5_000L)
+        probe.resolve(1L, SegmentOutcome.Text("beta"), nowMs = 6_000L)
+        probe.resolve(0L, SegmentOutcome.Text(""), nowMs = 7_000L)
+        assertEquals(
+            listOf("perceived: seq=0 speechEndToVisible=6000ms"),
+            probe.emitted,
+        )
     }
 }

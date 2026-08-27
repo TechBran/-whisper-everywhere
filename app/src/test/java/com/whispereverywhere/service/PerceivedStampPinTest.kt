@@ -18,12 +18,18 @@ import java.io.File
  *    two `Log.i` calls. A `System.currentTimeMillis()` inside the funnel would therefore subtract
  *    all of that from every reported wait: the metric would be biased LOW, silently, everywhere,
  *    and it is the metric S3 Check 2's p50/p95 grid and S4's release-notes latency claim read.
- *  - **The visible side must be read AFTER delivery returns.** The claim is "you can read your
- *    sentence", not "an utterance is in flight" (that second one is Workstream G's strip, which
- *    renders earlier and on purpose). `deliverReleasedText` writes the view synchronously on Main
- *    and early-returns on blank, so "returned having delivered non-blank text" is exactly the
- *    visible instant. Reading the stamp before the call would report the wait to the START of
- *    delivery instead.
+ *  - **The visible side must be read AFTER delivery returns, and only on a NON-BLANK release.**
+ *    The claim is "you can read your sentence", not "an utterance is in flight" (that second one
+ *    is Workstream G's strip, which renders earlier and on purpose). `deliverReleasedText`
+ *    early-returns on blank and otherwise hands the resolved text to the preview sink; the TextView
+ *    write follows on the next Main dispatch (`TranscriptSink`'s `MutableStateFlow` ->
+ *    `previewJob`'s `collectLatest`), so the metric excludes one Main hop and one frame —
+ *    single-digit to ~20 ms against a 1.3-2.8 s number. That is a real and acknowledged bias, and
+ *    it is small; reading the stamp ABOVE the call would instead time the START of delivery, which
+ *    is not small. **This class's first version claimed the write was synchronous. It is not, and
+ *    the pin below is right for the corrected reason, not the original one.** The blank gate is
+ *    load-bearing too: resolutions arrive out of order on cloud, and consuming a held seq's stamp
+ *    would prune its predecessor's as well.
  *  - **The stamp must exist at all.** Task F8's review found that every byte of the sibling
  *    `endpoint:` line was pinned while nothing said the funnel ever CALLED the formatter — the
  *    emission was deleted and 1276 tests stayed green. The same attack is run against both of this
@@ -151,20 +157,38 @@ class PerceivedStampPinTest {
             1,
             count("android.util.Log.i(\"WE-DIAG\", EndpointDiag.perceivedLine(seq, waited))"),
         )
-        // ...and only for a segment that actually rendered text. A silent segment consumes its
-        // stamp (the map prunes) but has nothing visible to time, so reporting one would be an
-        // invented number in the middle of the acceptance grid.
-        indexOfOrFail("                    if (waited != null && release.text.isNotBlank()) {\n")
+    }
+
+    @Test
+    fun theStampIsConsumedOnlyOnANonBlankRelease() {
+        // The F9 review's I1, pinned structurally. The gate is on the RELEASE, and it wraps the
+        // onVisible call rather than filtering its result: a blank release means the orderer is
+        // still holding this seq (cloud resolves out of order under Semaphore(3)), so consuming
+        // the stamp there loses this seq's number AND prunes its predecessor's — both lines gone.
+        // The earlier `if (waited != null && release.text.isNotBlank())` form read almost the same
+        // and had exactly that defect, which is why the shape is pinned and not just the presence.
+        indexOfOrFail("                    if (release.text.isNotBlank()) {\n")
+        indexOfOrFail(
+            "                        perceivedLatency.onVisible(seq, System.currentTimeMillis())" +
+                "?.let { waited ->\n"
+        )
+        assertEquals(
+            "the stamp is never consumed outside that gate",
+            0,
+            count("val waited = perceivedLatency.onVisible("),
+        )
     }
 
     @Test
     fun theVisibleStampIsTakenAfterTheTextHasBeenDelivered() {
-        // WORDS VISIBLE is the claim. deliverReleasedText writes the view synchronously on Main,
-        // so its return is the instant; reading the stamp above it would time the start of
-        // delivery instead and quietly under-report the metric.
+        // WORDS ON THEIR WAY is the claim. deliverReleasedText hands the resolved text to the
+        // preview sink and returns; the TextView write lands one Main dispatch later (StateFlow ->
+        // previewJob), so this stamp excludes one hop and one frame. Reading it ABOVE the call
+        // would instead time the START of delivery — a much larger and much less honest error.
+        // M11 is the mutant: the hoisted form compiles, runs, and emits a line for every segment.
         val delivered = indexOfOrFail("                    deliverReleasedText(release.text)\n")
         val stamped =
-            indexOfOrFail("                    val waited = perceivedLatency.onVisible(seq, System.currentTimeMillis())\n")
+            indexOfOrFail("                        perceivedLatency.onVisible(seq, System.currentTimeMillis())")
         assertTrue("the visible stamp is read AFTER delivery returns", stamped > delivered)
         assertEquals(
             "the visible stamp is read from exactly one place",

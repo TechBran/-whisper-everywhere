@@ -10,9 +10,29 @@ package com.whispereverywhere.service
  *
  * KEYED BY SEQ, not a positional queue. Segments that resolve to silence release no text, so a
  * FIFO pop would drift one entry per silent segment and start attributing one utterance's wait to
- * the next one — a diagnostic that lies in precisely the sessions worth diagnosing. [onVisible]
- * also prunes every EARLIER seq, which is sound because delivery is strictly in seq order
- * (SegmentOrderer), and is what keeps the map bounded through a session of quiet commits.
+ * the next one — a diagnostic that lies in precisely the sessions worth diagnosing.
+ *
+ * **[onVisible] also prunes every EARLIER seq, and the caller must only call it on a NON-BLANK
+ * release.** That is the whole soundness argument and the first version of this KDoc got it wrong:
+ * it said pruning is safe "because delivery is strictly in seq order", but `onVisible` is called at
+ * RESOLUTION, and resolutions are not in order — `SegmentOrderer` exists precisely because
+ * `CloudTranscriptionEngine` runs `Semaphore(3)` and completes in whatever order the network
+ * returns. What IS true is the corrected premise: a non-blank release means the orderer drained,
+ * which means every seq up to and including this one has been delivered, so the earlier stamps are
+ * genuinely spent. Calling this on a blank release — an overtaking seq the orderer is still
+ * holding — would consume a stamp that has rendered nothing AND prune the predecessor that is
+ * about to render, losing both numbers. Measured on a cloud-shaped probe; the wiring in
+ * `FloatingBubbleService.onSegmentResolved` gates on `release.text.isNotBlank()` and
+ * `PerceivedLatencyTest`'s resolution-order rows pin it.
+ *
+ * **KNOWN RESIDUAL LIMIT, accepted deliberately.** When a SILENT head drains a later segment's
+ * text, the release is non-blank but the words on screen belong to the tail, while the seq handed
+ * to [onVisible] is the head's. The line is then emitted under the head's seq and times the head's
+ * speech-end against the tail's render — an over-report, never a lost line. Closing it requires
+ * `SegmentOrderer.Release` to name the seq range it drained, which is a change to a class this
+ * workstream is not allowed to touch. It is pinned as a characterisation row in
+ * `PerceivedLatencyTest` so it cannot be forgotten, and it is listed as an absence/attribution
+ * cause in the S3 acceptance block.
  *
  * Only endpoint (`cut=vad`) commits are stamped: a cap/stop/switch cut has no speech-end instant,
  * so there is no honest number to report and [onVisible] returns null rather than inventing one.
@@ -36,6 +56,10 @@ class PerceivedLatency(private val maxTracked: Int = MAX_TRACKED) {
     /**
      * [seq]'s text just became visible. Returns the wait in ms, or null when this seq carried no
      * speech-end stamp. Consumes the stamp and prunes every earlier one.
+     *
+     * **Call this ONLY when the release was non-blank** — see the class KDoc. On a blank release
+     * the orderer held the segment and nothing rendered, and calling here would destroy two stamps
+     * to report zero lines.
      */
     @Synchronized
     fun onVisible(seq: Long, nowMs: Long): Long? {

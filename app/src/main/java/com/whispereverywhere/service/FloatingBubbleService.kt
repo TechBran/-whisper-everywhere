@@ -2512,17 +2512,27 @@ class FloatingBubbleService : Service(),
                 // so delivery timing is unchanged.
                 serviceScope.launch(Dispatchers.Main) {
                     // The Release is captured rather than inlined so the perceived stamp can be
-                    // read at the moment the text ACTUALLY rendered: deliverReleasedText writes
-                    // the view synchronously on Main and early-returns on blank, so "returned
-                    // having delivered non-blank text" is exactly the visible instant. The
-                    // SegmentOrderer's release rules are untouched — this only names its result.
+                    // read at the moment this seq's words reached the user. deliverReleasedText
+                    // early-returns on blank and otherwise hands the resolved text to the preview
+                    // sink; the TextView write itself lands on the NEXT Main dispatch (the sink's
+                    // StateFlow -> previewJob's collectLatest), so the metric excludes one Main
+                    // hop and one frame — single-digit to ~20 ms against a 1.3-2.8 s number, and
+                    // biased low. Reading the stamp above the call would instead time the START of
+                    // delivery. The SegmentOrderer's release rules are untouched — this only names
+                    // its result.
                     val release = segmentOrderer.onResolved(seq, outcome)
                     deliverReleasedText(release.text)
-                    val waited = perceivedLatency.onVisible(seq, System.currentTimeMillis())
-                    // Always consume the stamp (it prunes), but only REPORT when text rendered:
-                    // a segment that resolved to silence made nothing visible to time.
-                    if (waited != null && release.text.isNotBlank()) {
-                        android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                    // The stamp is consumed ONLY on a non-blank release, and that gate is load
+                    // bearing rather than cosmetic. Resolutions arrive OUT OF ORDER on cloud
+                    // (CloudTranscriptionEngine runs Semaphore(3) and completes in network order),
+                    // so an overtaking seq reaches here while the orderer still holds it and its
+                    // release is blank. Consuming the stamp there would drop that seq's number AND
+                    // prune its predecessor's, losing BOTH perceived: lines — measured, and pinned
+                    // by PerceivedLatencyTest's resolution-order rows.
+                    if (release.text.isNotBlank()) {
+                        perceivedLatency.onVisible(seq, System.currentTimeMillis())?.let { waited ->
+                            android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                        }
                     }
                     android.util.Log.i(
                         "WE-DIAG",

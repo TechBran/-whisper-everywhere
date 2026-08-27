@@ -13,6 +13,13 @@ import java.util.Locale
  *     queue:          depth=N
  *     perceived:      seq=N speechEndToVisible=…ms
  *     probe:          frames=N p50=…µs p99=…µs overruns=N
+ *     wall-clock cap -> commit (cap=…ms) VAD-MISS: no endpoint in this window
+ *
+ * The cap line is the odd member and is listed last for that reason: it is the only one with
+ * neither a `name:` prefix nor a `seq=` field, because its bytes predate 3.7 and are a documented
+ * grep the reword had to preserve (see [capCommitLine]). `queue:` is the only OTHER member without
+ * a `seq=`; it is read by ADJACENCY, immediately after `endpoint:` on the commit side and
+ * immediately after `perceived:` on the resolve side.
  *
  * Pure so every format is JVM-pinned: the owner's acceptance sheet greps these exact strings, and
  * a silent format drift would break every report that parses them. Content discipline is the same
