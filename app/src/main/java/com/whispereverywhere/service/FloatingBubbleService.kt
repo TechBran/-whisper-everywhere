@@ -280,6 +280,21 @@ internal fun inFlightStripLabel(depth: Int): String? = when {
     else -> "Transcribing… ($depth in queue)"
 }
 
+/**
+ * Does this `commit()` return value represent a segment the queue should count (3.7, G)?
+ *
+ * [TranscriptionEngine.commit] returns `-1L` for "nothing to cut" — the ordinary outcome of the
+ * unconditional stop flush and of `switchSource` on an already-drained buffer. (The engine names
+ * that value `NO_SEGMENT` in a private companion; it is not visible here, so the contract is the
+ * documented `-1`, compared directly.) Counting one would leave the in-flight line up for the rest
+ * of the session with no resolution able to take it down. seq 0 is a REAL segment: connect()
+ * restarts numbering at zero every session.
+ *
+ * [SegmentQueueDepth] applies the same rule to its own set; this names it for the SCREEN, which
+ * must not post a repaint for a commit that changed nothing.
+ */
+internal fun commitAdvancesQueueDepth(seq: Long): Boolean = seq >= 0L
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
@@ -2930,8 +2945,15 @@ class FloatingBubbleService : Service(),
             perceivedLatency.onCommitted(seq, speechEndMs(nowMs = nowMs, ec = ec))
         }
         android.util.Log.i("WE-DIAG", EndpointDiag.queueLine(segmentQueueDepth.onCommitted(seq)))
+        // 3.7 G: the depth is now in the log AND on screen from one place. The repaint hops to
+        // Main because this funnel is also called from the capture thread; it is skipped entirely
+        // for a commit that cut nothing, which cannot have changed the depth.
+        if (commitAdvancesQueueDepth(seq)) serviceScope.launch(Dispatchers.Main) { renderInFlightStrip() }
         return seq
     }
+
+    /** Painted in Task G4; the funnel calls it from the first commit onward. */
+    private fun renderInFlightStrip() = Unit
 
     /**
      * The ONE routing point for text the [segmentOrderer] releases — used by onSegmentResolved and

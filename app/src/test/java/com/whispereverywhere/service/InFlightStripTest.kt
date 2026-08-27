@@ -57,4 +57,25 @@ class InFlightStripTest {
                 }
         }
     }
+
+    // ------------------------------------------------------------- the commit funnel
+
+    @Test fun a_commit_that_cut_nothing_does_not_advance_the_queue() {
+        // -1L is TranscriptionEngine.commit()'s documented "there was nothing to cut" answer — the
+        // silent no-op the stop flush and switchSource hit on an already-empty buffer. Counting it
+        // would strand the strip on "Transcribing…" for the rest of the session, because no
+        // resolution can ever arrive to take it back down. (The engine's own NO_SEGMENT constant is
+        // private to LocalWhisperEngine and deliberately not referenced from this package.)
+        assertFalse(commitAdvancesQueueDepth(-1L))
+    }
+
+    @Test fun the_very_first_segment_of_a_session_advances_the_queue() {
+        // seq numbering restarts at 0 in connect(), so zero is a REAL segment, not a sentinel.
+        assertTrue(commitAdvancesQueueDepth(0L))
+    }
+
+    @Test fun any_real_seq_advances_the_queue() {
+        assertTrue(commitAdvancesQueueDepth(1L))
+        assertTrue(commitAdvancesQueueDepth(4_096L))
+    }
 }
