@@ -67,4 +67,18 @@ object EndpointDiag {
      */
     fun capCommitLine(capMs: Long): String =
         "wall-clock cap -> commit (cap=${capMs}ms) VAD-MISS: no endpoint in this window"
+
+    /**
+     * The headline metric: how long the user waited between finishing a sentence and seeing it.
+     * Emitted only for endpoint cuts — see [PerceivedLatency] for why cap/stop/switch cuts have
+     * no honest number here.
+     *
+     * INTEGER milliseconds, deliberately, and therefore the one line in this family with no
+     * `Locale` on it: Kotlin renders a `Long` through `Long.toString`, which has no locale at all,
+     * so the comma-decimal hazard `endpointLine`'s `p=` field carries (and pins) does not exist
+     * here. If this ever grows a fractional field it needs `String.format(Locale.US, …)` and a
+     * locale-driven test, exactly as `endpointLine` has.
+     */
+    fun perceivedLine(seq: Long, speechEndToVisibleMs: Long): String =
+        "perceived: seq=$seq speechEndToVisible=${speechEndToVisibleMs}ms"
 }

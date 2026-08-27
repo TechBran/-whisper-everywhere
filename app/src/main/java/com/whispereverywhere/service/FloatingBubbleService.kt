@@ -32,6 +32,7 @@ import androidx.core.content.ContextCompat
 import com.whispereverywhere.MainActivity
 import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.audio.EndpointCut
 import com.whispereverywhere.audio.Endpointer
 import com.whispereverywhere.audio.EndpointerFactory
 import com.whispereverywhere.audio.SileroEndpointer
@@ -224,6 +225,25 @@ internal fun capCutConsumesWindow(hasPendingSpeech: Boolean, isCloudSession: Boo
 internal fun capCutRetainWindowMs(nowMs: Long, endpointer: Endpointer): Long =
     CommitCadencePolicy.capCutRetainMs(nowMs = nowMs, cutPointMs = endpointer.pendingCutPointMs())
 
+/**
+ * WHEN the user actually stopped speaking, for the segment [ec] cut (3.7, Workstream F — Task F9).
+ *
+ * [EndpointCut.trailMs] is `nowMs - tempEndMs` evaluated on the frame that FIRED the cut, so the
+ * speech ended exactly that many milliseconds before that frame's clock — and [nowMs] here is that
+ * same frame clock, handed to the funnel by the capture site that also handed it to
+ * `endpointer.onFrame`. The whole `perceived:` metric rests on those two numbers sharing one
+ * instant; see [PerceivedLatency].
+ *
+ * Lifted out of the funnel for the same reason [capCutRetainWindowMs] was, and with the same two
+ * consequences. `FloatingBubbleService` cannot be instantiated in a JVM test, so an inline
+ * `nowMs - ec.trailMs` would have had an exact-match source needle over it and nothing else — and
+ * a REVERSED subtraction is not a small error: it reports a wait of about 54 years on every
+ * endpoint cut, which is a headline metric that lies, with the whole suite green. Here it is a
+ * pure function three rows of `PerceivedLatencyTest` call directly. The parameters are a `Long`
+ * and an [EndpointCut], so a positional swap does not compile either.
+ */
+internal fun speechEndMs(nowMs: Long, ec: EndpointCut): Long = nowMs - ec.trailMs
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
@@ -383,6 +403,12 @@ class FloatingBubbleService : Service(),
      * onSegmentResolved; the only surface that shows a growing multi-tier backlog while it grows.
      */
     private val segmentQueueDepth = SegmentQueueDepth()
+
+    /**
+     * 3.7 Workstream F: speech-end -> text-visible per segment, the headline acceptance metric.
+     * Stamped at the endpoint cut, read where the text actually renders.
+     */
+    private val perceivedLatency = PerceivedLatency()
 
     // Set true when any transcription text is produced during a recording session; drives the
     // "No speech detected" feedback on stop so the user is not left with silent nothing.
@@ -1823,9 +1849,18 @@ class FloatingBubbleService : Service(),
                 // pinned BEHAVIOURALLY by CapCutRetainWindowTest and a positional swap here cannot
                 // even compile. See that function's KDoc.
                 val retainMs = capCutRetainWindowMs(nowMs = now, endpointer = endpointer)
-                // The funnel call inherits the same hazard and the same discipline: it ALSO ends
-                // in two adjacent Longs, and swapping them degrades to a plain full commit (D6's
-                // `cut <= 0` guard clamps) while handing Workstream F's clock a 0-3000ms value.
+                // The funnel call inherits the same hazard and the same discipline: it ALSO ends in
+                // two adjacent Longs, and swapping them degrades to a plain full commit (D6's
+                // `cut <= 0` guard clamps) — silently, which is why both names are spelled out and
+                // pinned verbatim by CapSeamPinTest and CommitFunnelPinTest.
+                //
+                // The `nowMs` half of that swap is still INERT here, and Task F9 did not change
+                // that: the funnel's speech-end stamp is gated on `cut == EndpointDiag.VAD`, and
+                // this is the CAP site. (An earlier version of this comment predicted F9 would hand
+                // Workstream F's clock a 0-3000ms value; it does not, because a cap cut has no
+                // speech-end instant to stamp in the first place. Measured, not assumed — F9's
+                // battery ran the swap.) The live clock binding is the VAD site's `nowMs = now`,
+                // which has no swap partner: its other two arguments are an engine and a String.
                 commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now)
                 // Residue inherited from D8 (report §5): the factory's epoch gate covers the NATIVE
                 // probe reset alone. A stale capture thread reaching this line still writes EIGHT
@@ -2284,6 +2319,13 @@ class FloatingBubbleService : Service(),
         // torn-down session would render a phantom backlog on the next one's first commit, and a
         // reset at stop would blank the diagnostic for the whole drain.
         segmentQueueDepth.reset()
+        // Session START, not stop, and for a sharper reason than the two above: resetting at stop
+        // would drop every stamp for the segments still in flight when the user taps it, and those
+        // are systematically the SLOWEST samples (at pro's utterance cadence the last utterance is
+        // always in flight; on multi several are). onVisible would answer null for all of them, no
+        // perceived: line would be emitted, and S3 Check 2's p50/p95 grid would be biased low by
+        // exactly the tail it exists to measure.
+        perceivedLatency.reset()
         sessionStartMs = System.currentTimeMillis()
         // Freeze this session's routing mode and injection target at the tap. Segments finish
         // seconds later and the user may click anywhere in between; the session must not follow.
@@ -2469,7 +2511,19 @@ class FloatingBubbleService : Service(),
                 // this from its executor thread. The hop is the same one the old onCompleted did,
                 // so delivery timing is unchanged.
                 serviceScope.launch(Dispatchers.Main) {
-                    deliverReleasedText(segmentOrderer.onResolved(seq, outcome).text)
+                    // The Release is captured rather than inlined so the perceived stamp can be
+                    // read at the moment the text ACTUALLY rendered: deliverReleasedText writes
+                    // the view synchronously on Main and early-returns on blank, so "returned
+                    // having delivered non-blank text" is exactly the visible instant. The
+                    // SegmentOrderer's release rules are untouched — this only names its result.
+                    val release = segmentOrderer.onResolved(seq, outcome)
+                    deliverReleasedText(release.text)
+                    val waited = perceivedLatency.onVisible(seq, System.currentTimeMillis())
+                    // Always consume the stamp (it prunes), but only REPORT when text rendered:
+                    // a segment that resolved to silence made nothing visible to time.
+                    if (waited != null && release.text.isNotBlank()) {
+                        android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
+                    }
                     android.util.Log.i(
                         "WE-DIAG",
                         EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),
@@ -2791,6 +2845,13 @@ class FloatingBubbleService : Service(),
      * nothing buffered" is exactly the kind of thing this family exists to make visible — while the
      * backlog deliberately ignores it, because that seq will never resolve.
      *
+     * The speech-end instant is DERIVED from the same `trailMs` the `endpoint:` line reports and
+     * from the FRAME clock the caller handed in ([speechEndMs]), so the perceived metric needs no
+     * accessor of its own on the endpointer and no second read of its state — and no second read of
+     * the clock, which would land after the commit's buffer snapshot and bias every number low.
+     * Only `cut=vad` is stamped: the other three cut kinds have no speech-end instant, and a stamp
+     * with no honest instant behind it would be a number the acceptance sheet could not use.
+     *
      * Callable from the CAPTURE thread (the endpoint and cap cuts) and from Main (switchSource,
      * stopRecording, the projection-consent flush) — [SegmentQueueDepth] is synchronized.
      */
@@ -2811,6 +2872,17 @@ class FloatingBubbleService : Service(),
         // them as this segment's. Pinned structurally by CommitFunnelPinTest.
         val ec = if (cut == EndpointDiag.VAD) (endpointer as? SileroEndpointer)?.lastCut() else null
         android.util.Log.i("WE-DIAG", EndpointDiag.endpointLine(seq, cut, ec))
+        // The perceived-latency stamp, from the SAME `ec` the line above reports and the SAME
+        // `nowMs` the caller measured `trailMs` against. NOT a second read of the endpointer's cut
+        // record (Task C8's read contract, pinned at exactly one such read in the whole file) and
+        // NOT a second read of the wall clock: the commit above takes a full ~960 KB buffer
+        // snapshot under bufferLock, so a fresh clock read here would silently subtract that
+        // snapshot's cost from every reported wait — on the exact metric S3 Check 2 and S4's
+        // release-notes contingency read. Both no-reread properties are pinned, structurally, by
+        // PerceivedStampPinTest.
+        if (cut == EndpointDiag.VAD && ec != null) {
+            perceivedLatency.onCommitted(seq, speechEndMs(nowMs = nowMs, ec = ec))
+        }
         android.util.Log.i("WE-DIAG", EndpointDiag.queueLine(segmentQueueDepth.onCommitted(seq)))
         return seq
     }

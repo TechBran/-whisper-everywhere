@@ -20,10 +20,12 @@ import java.io.File
  *
  * `FloatingBubbleService` is an Android Service and cannot be instantiated in a JVM test, so the
  * pin is on the SOURCE — the same instrument and the same reasoning as `CapSeamPinTest` and
- * `EndpointerLifecyclePinTest`, whose KDocs carry the full argument. Tasks F9 and G3 extend the
- * funnel's BODY and nothing here constrains that. What is pinned is narrower and permanent:
- * there is ONE funnel, the five sites reach the engine only through it, it records the seq the
- * engine actually returned, and it reads the endpointer's cut record ONLY on a `cut=vad` commit.
+ * `EndpointerLifecyclePinTest`, whose KDocs carry the full argument. Task G3 extends the funnel's
+ * BODY and nothing here constrains that; Task F9's own body addition — the speech-end stamp — is
+ * pinned in `PerceivedStampPinTest`, deliberately not here, because half of that contract lives in
+ * `onSegmentResolved`. What is pinned is narrower and permanent: there is ONE funnel, the five
+ * sites reach the engine only through it, it records the seq the engine actually returned, it
+ * reads the endpointer's cut record ONLY on a `cut=vad` commit, and it emits both of its lines.
  *
  * **That last one is Task F8's addition, and it is the one body constraint this class carries on
  * purpose.** `SileroEndpointer.lastCut()` is not a "current state" accessor: it holds the LAST vad
@@ -161,6 +163,25 @@ class CommitFunnelPinTest {
             1,
             count("EndpointDiag.endpointLine(seq, cut, ec)"),
         )
+    }
+
+    @Test
+    fun theFunnelActuallyEmitsTheQueueLine() {
+        // The accident named above, closed. `queue:` survived the emission-deletion attack only
+        // because `segmentQueueDepth.onCommitted(seq)` happens to sit INSIDE its log call, so the
+        // census in theFunnelRecordsTheSeqTheEngineActuallyReturned dropped to 0 along with it —
+        // an incidental kill that a refactor moving the bookkeeping onto its own line would end,
+        // silently. Task F9 inserted the speech-end stamp directly above this line, so per F8's
+        // handoff the accident is replaced with an explicit pin rather than left standing.
+        assertEquals(
+            "the funnel EMITS the commit-side queue: line",
+            1,
+            count("EndpointDiag.queueLine(segmentQueueDepth.onCommitted(seq))"),
+        )
+        // Two emissions in the file and no more: the commit side here and the resolve side in
+        // onSegmentResolved. A third would mean the depth is being reported from somewhere that
+        // did not change it.
+        assertEquals(2, count("EndpointDiag.queueLine("))
     }
 
     @Test
