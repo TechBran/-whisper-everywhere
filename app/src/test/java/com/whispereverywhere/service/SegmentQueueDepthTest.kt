@@ -103,4 +103,62 @@ class SegmentQueueDepthTest {
         assertEquals("queue: depth=0", EndpointDiag.queueLine(0))
         assertEquals("queue: depth=7", EndpointDiag.queueLine(7))
     }
+
+    @Test
+    fun aFreshCounterIsEmpty() {
+        // The strip reads depth() before anything has been committed, on every session's first
+        // render pass; it must not have to defend against a garbage initial value.
+        assertEquals(0, SegmentQueueDepth().depth())
+    }
+
+    @Test
+    fun unorderedCommitsAndResolutionsFromFourRealThreadsStayInBounds() {
+        // The ORDERED case is pinned above (each resolution enqueued from inside its own commit).
+        // This is the adversarial one: two committer threads and two resolver threads with no
+        // happens-before between a seq's commit and its resolution, which is what a torn-down
+        // session, an error-path flush and the unconditional stop flush can genuinely produce.
+        // REAL pools, never a same-thread stub: in production onCommitted() is called from the
+        // AudioRecord capture thread while onResolved() runs on Main.
+        val q = SegmentQueueDepth()
+        val committers = Executors.newFixedThreadPool(2)
+        val resolvers = Executors.newFixedThreadPool(2)
+        try {
+            val start = CountDownLatch(1)
+            val done = CountDownLatch(4)
+            repeat(2) { worker ->
+                committers.execute {
+                    start.await()
+                    for (i in 0 until 500) q.onCommitted((worker * 500 + i).toLong())
+                    done.countDown()
+                }
+            }
+            repeat(2) { worker ->
+                resolvers.execute {
+                    start.await()
+                    for (i in 0 until 500) q.onResolved((worker * 500 + i).toLong())
+                    done.countDown()
+                }
+            }
+            start.countDown()
+            assertTrue("workers did not finish", done.await(20, TimeUnit.SECONDS))
+
+            // 1000 distinct seqs committed and the same 1000 resolved, in any interleaving: every
+            // resolution that arrived early is a no-op on an absent key, so a residue of real keys
+            // is expected here. Draining all of them DETERMINISTICALLY, from this thread, is what
+            // makes the assertion bite — an unsynchronized HashSet loses or duplicates entries
+            // under a four-thread storm and leaves a non-zero residue that no drain can clear.
+            // (A bare `depth() in 0..1000` would pass by construction: a set fed 1000 distinct keys
+            // cannot exceed 1000 whether it is synchronized or not.)
+            for (seq in 0 until 1000) q.onResolved(seq.toLong())
+            assertEquals("the storm left entries the drain could not clear", 0, q.depth())
+
+            // And the counter is still usable afterwards — no torn state.
+            q.reset()
+            assertEquals(0, q.depth())
+            assertEquals(1, q.onCommitted(0L))
+        } finally {
+            committers.shutdownNow()
+            resolvers.shutdownNow()
+        }
+    }
 }
