@@ -32,6 +32,9 @@ import androidx.core.content.ContextCompat
 import com.whispereverywhere.MainActivity
 import com.whispereverywhere.R
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.audio.Endpointer
+import com.whispereverywhere.audio.EndpointerFactory
+import com.whispereverywhere.audio.SileroEndpointer
 import com.whispereverywhere.net.ConnectivityMonitor
 import com.whispereverywhere.net.OkHttpTransport
 import com.whispereverywhere.provider.ProviderCatalog
@@ -44,7 +47,6 @@ import com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine
 import com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine
 import com.whispereverywhere.transcription.cloud.SttProviderFactory
 import com.whispereverywhere.ui.components.BarWaveformView
-import com.whispereverywhere.util.SpeechSegmenter
 import com.whispereverywhere.util.StreamingAudioRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -188,8 +190,10 @@ internal fun processingTimerRunsIn(state: FloatingBubbleService.BubbleState): Bo
  * know: once [com.whispereverywhere.audio.SileroEndpointer.isProbeCutout] latches, every predicate
  * on that endpointer freezes and the first post-latch commit/reset pins `hasPendingSpeech()` FALSE
  * for the rest of the session, so each later LOCAL cap cut arrives here as `(false, false)` and
- * re-arms the 4 s window perpetually — see that function's KDoc, which carries the D8/D9 charge to
- * close it (amplitude fallback on cutout, or a cutout-aware branch).
+ * re-arms the 4 s window perpetually. CLOSED in Task D9, and closed at the CALL SITE rather than
+ * here: the wall-cap branch ORs `isProbeCutout()` into the `hasPendingSpeech` argument it passes,
+ * so a latched session reads `(true, …)` and consumes the window. This predicate therefore stays
+ * SYMMETRIC — its 4-row truth table is unchanged, and a positional call to it remains inert.
  */
 internal fun capCutConsumesWindow(hasPendingSpeech: Boolean, isCloudSession: Boolean): Boolean =
     hasPendingSpeech || isCloudSession
@@ -275,7 +279,21 @@ class FloatingBubbleService : Service(),
     // The latched-fatal kind the user was last TOLD about — once per latch, not once per session:
     // dictating ten times against a dead key should produce one toast, not ten.
     private var notifiedFatalKind: com.whispereverywhere.transcription.cloud.FatalKind? = null
-    private val speechSegmenter = SpeechSegmenter()
+    /**
+     * The ONE commit-decision surface for this service's life (3.7, Task D2 seam, wired in D9). Chosen HERE,
+     * at construction, on nothing but whether the bundled Silero model resolved: a null path
+     * yields AmplitudeEndpointer, which wraps the very SpeechSegmenter this field used to hold —
+     * so "VAD model missing" is byte-identical shipped behaviour rather than a new path.
+     *
+     * Deliberately not per-session: the model path is process-constant. What IS per-session is the
+     * cadence floor and the probe's native context, both handed over in onOpen via
+     * [Endpointer.onSessionStart] and torn down in stopRecording via [Endpointer.onSessionEnd].
+     *
+     * Cost note: `VadModel.path()` may copy the 885 KB asset on the FIRST service construction
+     * after an install; every later call returns its cached @Volatile path.
+     */
+    private val endpointer: Endpointer =
+        EndpointerFactory.create(com.whispereverywhere.transcription.VadModel.path())
     private lateinit var mediaDetector: MediaSessionDetector
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -1716,7 +1734,7 @@ class FloatingBubbleService : Service(),
         // VAD is what cuts.
         if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(sessionIsLive)) {
             val now = System.currentTimeMillis()
-            if (speechSegmenter.onAmplitude(amp, now)) {
+            if (endpointer.onFrame(chunk, amp, now)) {
                 android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
                 segmentCapPolicy.onCommit(now)
                 engine.commit()
@@ -1730,7 +1748,7 @@ class FloatingBubbleService : Service(),
                 )
                 // A cap cut on SILENCE-ONLY audio still commits the buffer (bounded, and whisper's
                 // VAD returns empty fast); only the policy bookkeeping below is conditional.
-                // hasPendingSpeech() is read BEFORE speechSegmenter.reset(), which clears the flag.
+                // hasPendingSpeech() is read BEFORE endpointer.reset(), which clears the flag.
                 // The SegmentCapPolicy contract is unchanged (any onCommit consumes the window);
                 // the silence exception lives here at the call site.
                 //
@@ -1741,8 +1759,21 @@ class FloatingBubbleService : Service(),
                 //    session is the bug signature);
                 //  - LOCAL silence: re-arm the window so a user who pauses to think still gets the
                 //    4s first cut on their first real speech (3.5.0 parity guarantee).
+                //
+                // 3.7 (Workstream D) — the CUTOUT term, and why it is an OR here rather than a
+                // third parameter: see SileroEndpointer.isProbeCutout()'s KDoc. Once that latch
+                // throws, every predicate on the endpointer freezes and hasPendingSpeech() is
+                // pinned FALSE for the rest of the session, so without this term every later LOCAL
+                // cap cut arrives as (false, false) and RE-ARMS the 4 s first-cap window —
+                // a perpetual 4 s cadence, ~3.75x the encoder passes, on exactly the device that
+                // could not afford the probe. Treating a cutout as "consumes the window" restores
+                // the 4s-first/15s-steady cadence; the cost is that a genuinely silent cutout
+                // session pays a few near-free empty commits at 15 s instead of at 4 s. The OR
+                // lives HERE, at the call site, so capCutConsumesWindow itself stays SYMMETRIC and
+                // its 4-row truth table keeps holding unchanged.
                 if (capCutConsumesWindow(
-                        hasPendingSpeech = speechSegmenter.hasPendingSpeech(),
+                        hasPendingSpeech = endpointer.hasPendingSpeech() ||
+                            (endpointer as? SileroEndpointer)?.isProbeCutout() == true,
                         isCloudSession = cloudWrapper != null,
                     )
                 ) {
@@ -1750,8 +1781,24 @@ class FloatingBubbleService : Service(),
                 } else {
                     segmentCapPolicy.onSessionStart(now)
                 }
-                engine.commit()
-                speechSegmenter.reset()
+                // 3.7 (Workstream D): when the endpointer remembers a micro-pause inside this
+                // window, cut THERE and keep the tail — a strictly better boundary for the same
+                // latency bound, because `no_context = true` makes a mid-word cap cut permanently
+                // unrepairable. capCutRetainMs returns 0 for no offer, a stale offer, and for the
+                // amplitude endpointer always; commitRetainingTailMs(0) IS engine.commit(). So an
+                // endpointer that never fires leaves this branch byte-identical to 3.6.0.
+                // NAMED arguments, not positional: two same-typed Longs whose order nothing else
+                // pins, and a swap returns 0 for EVERY input — the split silently reverts to
+                // 3.6.0 with the whole suite green (D2's M22 survived exactly that).
+                val retainMs = CommitCadencePolicy.capCutRetainMs(nowMs = now, cutPointMs = endpointer.pendingCutPointMs())
+                engine.commitRetainingTailMs(retainMs)
+                // Residue inherited from D8 (report §5): the factory's epoch gate covers the NATIVE
+                // probe reset alone. A stale capture thread reaching this line still writes EIGHT
+                // of the live session's SileroEndpointer fields — including the cost governor's
+                // anchor (lastCommitMs/hasCommitted, worth up to a full cadence interval) and both
+                // of this branch's own inputs (pendingSpeech, prevEndMs). Reachability is bounded
+                // by the T2-SHARPENED join argument, not by this gate; the cleanup is C-side.
+                endpointer.reset()
             }
         }
     }
@@ -1848,7 +1895,7 @@ class FloatingBubbleService : Service(),
         // SEPARATE segments at the boundary. In a live (server-driven) session it cuts a client
         // turn mid-stream — the same mechanism stopRecording's tail commit uses.
         transcriptionEngine?.commit()
-        speechSegmenter.reset()
+        endpointer.reset()
         segmentCapPolicy.onCommit(System.currentTimeMillis())
         when (activeSource) {
             com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()
@@ -2253,7 +2300,7 @@ class FloatingBubbleService : Service(),
                 android.util.Log.i("WE-DIAG", "onOpen handler: state=$currentState")
                 serviceScope.launch(Dispatchers.Main) {
                     if (currentState != BubbleState.CONNECTING) return@launch
-                    speechSegmenter.reset()
+                    endpointer.reset()
                     // Per-session reset: the FIRST-segment 4 s cap applies again from here.
                     val sessionOpenMs = System.currentTimeMillis()
                     segmentCapPolicy.onSessionStart(sessionOpenMs)
@@ -2422,7 +2469,7 @@ class FloatingBubbleService : Service(),
             "WE-DIAG",
             "finalize-timing: commit-dispatch=${(System.nanoTime() - stopTapNs) / 1_000_000}ms",
         )
-        speechSegmenter.reset()
+        endpointer.reset()
 
         // Server-driven live only: the stop commit above cut the final open utterance under a tail
         // seq, but in server-driven mode NO server VAD endpoint can ever resolve it now — the mic is

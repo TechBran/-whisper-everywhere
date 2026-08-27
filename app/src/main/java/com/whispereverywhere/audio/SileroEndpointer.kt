@@ -340,9 +340,9 @@ class SileroEndpointer(
      * on this class is frozen at its last value, and [hasPendingSpeech] frozen FALSE is the
      * expensive one: `capCutConsumesWindow(hasPendingSpeech = false, isCloudSession = false)` is
      * false, so every later cap cut in a LOCAL session re-arms the 4 s first-cap window instead of
-     * consuming it — perpetual 4 s cuts on the device that could not afford the probe. Whoever
-     * wires this must either swap in an [AmplitudeEndpointer] on cutout or make the cap branch
-     * cutout-aware; a log line is not a fallback.
+     * consuming it — perpetual 4 s cuts on the device that could not afford the probe. **DISCHARGED
+     * in 3.7 Task D9 at the CALL SITE:** the wall-cap branch ORs this into `capCutConsumesWindow`'s
+     * `hasPendingSpeech`, so a latched session consumes the window; the predicate stays SYMMETRIC.
      */
     fun isProbeCutout(): Boolean = probeCutout
 
