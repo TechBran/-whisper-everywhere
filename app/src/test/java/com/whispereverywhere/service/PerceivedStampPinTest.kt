@@ -80,22 +80,35 @@ class PerceivedStampPinTest {
         text.substring(start, close)
     }
 
+    /**
+     * The next three tests are DELIBERATELY three, and the battery is why. A deleted stamp, a
+     * re-read clock and a mis-bound derivation are three different defects; folding them into one
+     * method made the first two name the same test and destroyed the sole-killer reading this
+     * project's battery discipline runs on (the fix round of Task F8 split for exactly this and
+     * gave the reason). The counts below are chosen so the first two are each SOLE: a re-read
+     * keeps `onCommitted(` at one occurrence, and a deletion leaves the funnel's one clock read
+     * (its default parameter) standing.
+     */
     @Test
-    fun theFunnelStampsSpeechEndWithoutEverReReadingTheClock() {
-        // The stamp is DERIVED: the caller's frame clock minus the trail the endpoint: line one
-        // statement above already reported. Not a fresh clock, not a second endpointer read.
-        indexOfOrFail(
-            "            perceivedLatency.onCommitted(seq, speechEndMs(nowMs = nowMs, ec = ec))\n"
-        )
+    fun theFunnelActuallyStampsTheSpeechEnd() {
+        // EXISTENCE, and nothing else. Task F8's review deleted the sibling `endpoint:` emission
+        // and 1276 tests stayed green: every byte of a formatter can be pinned while nothing says
+        // anyone calls it. The same attack on this stamp loses the headline metric silently.
         assertEquals(
-            "the speech-end stamp is written from exactly one place, the funnel",
+            "the speech-end stamp is written from exactly one place, the funnel — and IS written",
             1,
             count("perceivedLatency.onCommitted("),
         )
-        // THE NO-REREAD PROOF. Exactly one wall-clock read exists anywhere in the funnel, and it
-        // is the DEFAULT for the three Main-side call sites that have no frame clock to pass. A
-        // second occurrence means someone read the clock inside the body, after the commit's
-        // buffer snapshot — the bias this whole design exists to avoid.
+    }
+
+    @Test
+    fun theFunnelReadsTheWallClockOnceAndOnlyAsADefault() {
+        // THE NO-REREAD PROOF, and the load-bearing one. Exactly one wall-clock read exists
+        // anywhere in the funnel and it is the DEFAULT for the three Main-side call sites that
+        // have no frame clock to pass. A second occurrence means someone read the clock inside the
+        // body — after `engine.commit()`'s ~960 KB buffer snapshot under bufferLock and two Log.i
+        // calls — and every reported wait is then smaller than the truth by that delta, silently,
+        // on exactly the metric S3 Check 2 and S4's release-notes contingency read.
         assertEquals(
             "the funnel reads the wall clock ONCE, as a default parameter, and never in its body",
             1,
@@ -104,6 +117,17 @@ class PerceivedStampPinTest {
         assertTrue(
             "the one clock read is the nowMs default, not a body statement",
             funnel.contains("        nowMs: Long = System.currentTimeMillis(),\n"),
+        )
+    }
+
+    @Test
+    fun theStampIsDerivedFromTheFunnelsOwnFrameClockAndCutRecord() {
+        // PROVENANCE. The two inputs are the caller's frame clock and the very `ec` the endpoint:
+        // line one statement above already reported — no second read of the endpointer, no third
+        // source of "now". This is the needle that kills a wrong-clock binding (sessionStartMs,
+        // sessionOpenMs) which the census above cannot see, because those are not clock READS.
+        indexOfOrFail(
+            "            perceivedLatency.onCommitted(seq, speechEndMs(nowMs = nowMs, ec = ec))\n"
         )
     }
 
