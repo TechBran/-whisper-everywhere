@@ -634,7 +634,8 @@ class NativeVadSourceContractTest {
         }
         assertTrue(
             "vadProbeReset must clear the LSTM state — it is the 'new utterance starts here' " +
-                "signal, wired into all five reset sites by Workstream D. Must be a LIVE line: a " +
+                "signal, wired into the three service-side reset sites plus the endpointer's own " +
+                "post-commit reset by Workstream D. Must be a LIVE line: a " +
                 "commented-out reset leaves the recurrence running across an utterance boundary, " +
                 "which is precisely the bug this function exists to prevent.",
             containsLiveLine(jniFunctionBody("vadProbeReset"), "whisper_vad_reset_state(g_probe_ctx);")

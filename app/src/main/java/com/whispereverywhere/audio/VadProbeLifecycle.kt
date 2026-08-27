@@ -62,10 +62,12 @@ import java.util.concurrent.atomic.AtomicLong
  * `stopThenJoin`, same unobservable outcome — and never re-arms, so the epoch does not move. A mic
  * thread that outlives that join holds a token that is still CURRENT, passes both gates, and writes
  * D8's one shared direct buffer alongside the device-audio thread: T8 torn frames in an
- * INTRA-session form this class cannot see by construction. D8/D9/D10 must either bump the epoch at
+ * INTRA-session form this class cannot see by construction. D8, D9 and D10 all declined to close it
+ * and D10 said so in the source at `switchSource`: the remaining options are to bump the epoch at
  * `switchSource` — the natural site, which already calls `endpointer.reset()` on its own
- * (FloatingBubbleService) — or show the switch's stop-then-join makes the survivor
- * impossible within T2-SHARPENED's best-effort bounds. Decided there; not closable here.
+ * (FloatingBubbleService) — or to show the switch's stop-then-join makes the survivor
+ * impossible within T2-SHARPENED's best-effort bounds. The FINAL REVIEW owns that choice; it was
+ * never closable here.
  *
  * **THE WIRING D8 MUST USE** — the ungated [ensureReady] overload is exactly the route a stale
  * thread would take, so the capture path must not use it. The token has to be snapshotted ONCE PER
@@ -109,7 +111,9 @@ import java.util.concurrent.atomic.AtomicLong
  * frames (blocked in `record.read()` throughout a very short session) plus a timed-out join, so it
  * is narrower than the hazard the epoch closes; but it is the direction that costs something.
  * Closing it needs a capture-thread-ENTRY binding — `CaptureThreadPolicy.enterCaptureThread()` is
- * the natural site — which is D10's change, not D8's.
+ * the natural site. It was never D8's, and D10 did not take it either: D10 closed the SESSION
+ * lifecycle, and this binding belongs to the CAPTURE THREAD's entry. Still OPEN, routed to the
+ * final review.
  *
  * **THE MAIN-BLOCK BUDGET, stated rather than assumed (D4 review, teardown-bill T1 RESIDUAL).**
  * The monitor makes Main's [release] wait out a whole in-flight `vadProbeInit`, and it lands on
@@ -241,11 +245,12 @@ class VadProbeLifecycle(private val probe: VadProbe) {
     }
 
     /**
-     * One of the five reset sites, or the endpointer's own post-commit reset.
+     * One of the three service-side reset sites, or the endpointer's own post-commit reset.
      *
      * UNGATED, deliberately, and this is the one capture-path route the epoch does not watch.
-     * `probeReset` is fired from BOTH Main (`onSessionStart` and three of the four service reset
-     * sites) and the CAPTURE thread (the wall-cap cut inside `onAudioChunk`, FloatingBubbleService
+     * `probeReset` is fired from BOTH Main (`onSessionStart` at `onOpen`, plus TWO of the three
+     * service reset sites — `switchSource` and `stopRecording`) and the CAPTURE thread (the third
+     * service site: the wall-cap cut inside `onAudioChunk`, FloatingBubbleService
      * / `plan:8349`), so no single token binding can be correct for both
      * callers: binding it to the capture thread's snapshot would cache MAIN's token forever and
      * refuse Main's resets for every later session, and binding it to the currently-armed epoch

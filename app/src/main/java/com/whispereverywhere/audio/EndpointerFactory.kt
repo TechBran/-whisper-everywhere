@@ -17,8 +17,10 @@ import java.util.concurrent.atomic.AtomicLong
  * **The CALLER resolves the path, ONCE, in the service's field initialiser** —
  * `EndpointerFactory.create(VadModel.path())` — and [create] closes over the already-resolved
  * `String?`. That is deliberate twice over: the ~885 KB asset copy `VadModel.path()` may do on its
- * first call per process attaches to the construction site where it can be warmed or accepted
- * (D10's decision), and `arm` keeps its contract of "record the PROCESS-CONSTANT path" instead of
+ * first call per process attaches to the construction site where it can be warmed or accepted.
+ * D10 weighed that copy and left it UNDECIDED, deliberately: it is a jank question, not a
+ * correctness one, and it needs a first-launch-after-install measurement nobody has taken. Routed
+ * to the final review. `arm` keeps its contract of "record the PROCESS-CONSTANT path" instead of
  * silently re-resolving the model on every session open.
  *
  * THE BINDING. [SileroEndpointer] takes a `(ByteArray) -> Float` lambda rather than a [VadProbe],
@@ -77,8 +79,9 @@ import java.util.concurrent.atomic.AtomicLong
  * capture thread that produced ZERO probe frames during its own session and then delivers one
  * after the next arm snapshots the NEW epoch and is ADMITTED. It needs a whole session with no
  * probe frames plus a timed-out join, and closing it needs a capture-thread-ENTRY binding
- * (`CaptureThreadPolicy.enterCaptureThread()`), which is D10's change and not reachable from
- * inside a lambda here.
+ * (`CaptureThreadPolicy.enterCaptureThread()`), which is not reachable from inside a lambda here.
+ * D10 closed the endpointer lifecycle and did NOT take this on — the binding site is the capture
+ * thread's entry, not the session's. It stays OPEN and is routed to the final review.
  *
  * **The CUTOUT FREEZE was D9's, and is CLOSED.** This factory returns a [SileroEndpointer]; the
  * wall-cap branch in `onAudioChunk` (FloatingBubbleService) ORs [SileroEndpointer.isProbeCutout]
@@ -96,8 +99,10 @@ import java.util.concurrent.atomic.AtomicLong
  *   thread off the buffer entirely. It is NOT discharged INTRA-session: `switchSource`
  *   (FloatingBubbleService) swaps capturers without re-arming, so a mic thread outliving
  *   that bounded join holds a token that is still CURRENT and can refill this buffer alongside the
- *   device-audio thread. D10 must either bump the epoch at that boundary or show the survivor is
- *   impossible — and note the tension: a bump alone fails CLOSED, because `armed` is published by
+ *   device-audio thread. D10 examined this and left it UNDISCHARGED, stating so at `switchSource`
+ *   itself: the fix is to bump the epoch at that boundary or show the survivor is impossible, and
+ *   the FINAL REVIEW owns the choice — note the tension that decided it, since a bump alone fails
+ *   CLOSED, because `armed` is published by
  *   `probeArm`, which `switchSource` does not call, so every post-switch frame would be refused for
  *   the rest of the session. Pairing the bump with a re-publish means re-invoking the arm path.
  * - **Cadence.** Per session, per tier: `CommitCadencePolicy.minCommitIntervalMs` reaches the

@@ -1519,10 +1519,10 @@ class SileroEndpointerTest {
 
     /**
      * The class KDoc promises "@Volatile", and `reset()` really is called from Main while the
-     * capture thread is inside `onFrame` (`Endpointer`'s own threading note; the four service
-     * sites in FloatingBubbleService — the cap cut in `onAudioChunk`, `switchSource`, `onOpen`,
-     * `stopRecording` — of which `onOpen`'s becomes
-     * `onSessionStart` — Main-only, and a WRITER of three more fields). Without the annotation
+     * capture thread is inside `onFrame` (`Endpointer`'s own threading note; the three service
+     * reset sites in FloatingBubbleService — the cap cut in `onAudioChunk`, `switchSource`,
+     * `stopRecording` — with `onOpen` carrying `onSessionStart` instead since Task D10:
+     * Main-only, and a WRITER of three more fields). Without the annotation
      * there is no happens-before edge at all between the Main-thread clear and the capture thread,
      * so the cleared state may never become visible — a promise no prose can keep on its own.
      *

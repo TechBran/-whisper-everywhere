@@ -277,8 +277,9 @@ class EndpointerFactoryTest {
     /**
      * THE OTHER HALF OF THE RESET GATE — the failure a gate must never cause.
      *
-     * Three of the four service reset sites are MAIN's (`onSessionStart`, `switchSource` and
-     * `stopRecording`, all FloatingBubbleService), and `switchSource`'s is the
+     * TWO of the three service reset sites are MAIN's (`switchSource` and `stopRecording`, both
+     * FloatingBubbleService) and so is `onSessionStart` at `onOpen` — which is not itself a reset
+     * site since Task D10, but reaches `probeReset` the same way. `switchSource`'s is the
      * correctness-critical one: carrying LSTM recurrence across a mic <-> device-audio swap is a
      * bug, not merely suboptimal (teardown-bill T9). `probeArm` refreshes MAIN's snapshot at every
      * session open precisely so the gate can never refuse them. A gate bound to a snapshot Main
@@ -321,8 +322,9 @@ class EndpointerFactoryTest {
      * adjacent statements inside one lambda, so the only way to interleave them is two threads in
      * that lambda at once. The two stale-thread tests above are the CROSS-session half of that (a
      * refused thread never reaches the buffer at all). The INTRA-session half — `switchSource`
-     * running two capturers inside one epoch — is NOT closed here and is D9/D10's, per the class
-     * KDoc and D5's review finding I3.
+     * running two capturers inside one epoch — is NOT closed here, and D9 and D10 both left it
+     * open on purpose (D10 states the fail-CLOSED tension in the source at `switchSource`). It is
+     * the FINAL REVIEW's, per the class KDoc and D5's review finding I3.
      *
      * And ONE buffer for the endpointer's life, asserted by IDENTITY rather than by content: a
      * per-frame `allocateDirect` would be 32 KB/s of garbage on the audio thread and would still

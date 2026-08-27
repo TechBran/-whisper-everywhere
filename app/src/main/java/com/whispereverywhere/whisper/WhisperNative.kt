@@ -191,9 +191,12 @@ object WhisperNative {
      * weights live in a different buffer, so this is one backend buffer clear: cheap enough to
      * call on every commit.
      *
-     * Must run after EVERY commit — that is the five reset sites Workstream D wires (Task D10),
-     * all of them reached through the endpointer's own `reset()` — and at every acoustic-source
-     * change. Carrying recurrence across a mic ↔ device-audio switch is a correctness bug, not
+     * Must run after EVERY commit — that is the THREE service-side reset sites Workstream D wired
+     * (the wall-cap cut in `onAudioChunk`, `switchSource`, `stopRecording`, all reached through the
+     * endpointer's own `reset()`) plus the endpointer's internal post-commit reset. `onOpen` was a
+     * fourth service site until Task D10 replaced it with `onSessionStart`, which clears everything
+     * `reset()` clears and re-arms besides — so it still reaches this function, just not as a
+     * reset. Also at every acoustic-source change. Carrying recurrence across a mic ↔ device-audio switch is a correctness bug, not
      * merely suboptimal. No-op when the probe was never initialised.
      */
     external fun vadProbeReset()

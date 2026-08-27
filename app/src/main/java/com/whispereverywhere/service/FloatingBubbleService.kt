@@ -2352,6 +2352,13 @@ class FloatingBubbleService : Service(),
                     // NAMED arguments, not positional: onSessionStart takes two same-typed Longs
                     // whose order nothing else pins, and minCommitIntervalMs takes a nullable
                     // String beside a Boolean. EndpointerLifecyclePinTest quotes these names.
+                    //
+                    // isCloudBatch = (cloudWrapper != null) is BROADER than "batch": it is also
+                    // true for CLOUD_LIVE. That is harmless only because LiveTurnPolicy
+                    // .runClientVad(sessionIsLive) is FALSE for CLOUD_LIVE, so onFrame never runs
+                    // in a live session and this cadence is never consulted. A future task that
+                    // ever runs client VAD in a live session must split this predicate first —
+                    // otherwise a live session silently takes the cloud REQUEST floor.
                     endpointer.onSessionStart(
                         nowMs = sessionOpenMs,
                         minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(

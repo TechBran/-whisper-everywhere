@@ -437,9 +437,13 @@ class SileroEndpointer(
      * must be read off a LIVE session, before anything native is released, because a teardown that
      * throws or blocks must not be able to swallow the session's only accounting.
      *
-     * **NOT idempotent — every call frees.** Two `onSessionEnd`s for one session is a double free,
-     * and it is not self-evidently unreachable: the T1 residual names two Main sites (`onDestroy`
-     * and `stopRecording`). That guard belongs to `VadProbeLifecycle` (Tasks D4/D5), not here. Nor
+     * **NOT idempotent — every call frees.** Two `onSessionEnd`s for one session is a double free.
+     * As wired by Task D10, `stopRecording` is the ONLY call site (`count == 1`, pinned by
+     * `EndpointerLifecyclePinTest`); `onDestroy` frees nothing, so a destroy-terminated session
+     * orphans one context until the next `vadProbeInit` reclaims it — bounded at one orphan, and
+     * carried as a section-close item rather than a leak. The double-free guard stays in
+     * `VadProbeLifecycle` (Tasks D4/D5) rather than here because the second site is a live design
+     * option, not because it is currently reachable. Nor
      * may [probeTeardown] lean on the capture join as a fence — T2 SHARPENED: `Thread.join(ms)`
      * returns identically on termination and on timeout and `stopThenJoin` returns `Unit`, so a
      * late free can land after the NEXT session's `vadProbeInit`. The bound lambda must be safe
