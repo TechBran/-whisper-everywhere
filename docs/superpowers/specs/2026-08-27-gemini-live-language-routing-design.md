@@ -92,8 +92,16 @@ Gemini live session per language mode (auto + a concrete language), the 10-minut
 rollover mid-dictation, the cloud-"en" fix verified with eco installed + cloud selected,
 and the free-tier key path end to end. Listing copy claims wait for measured latency.
 
-## Open questions (owner)
+## Owner rulings (2026-08-27, closing the open questions)
 
-1. Does Gemini live become the DEFAULT cloud-live provider for new keys, or stay one of
-   four equals? (It is the only one with a free tier.)
-2. Onboarding placement: before or after the model-download step? (Draft says after.)
+1. Gemini live is NOT the default — one of four equals, with a **free-tier badge** on its
+   provider row ("Free tier available — works with a free Gemini key"). Labeling, not
+   defaulting.
+2. Onboarding language step goes **BEFORE model download** ("after the model downloads,
+   essentially everything is done") — the user locks language in first; auto stays in the
+   list for those who want it.
+3. **ORDERING (sovereignty-first):** within 3.8, the language routing + cloud-"en" leak
+   fix + onboarding step execute FIRST; the Gemini live provider (§4) moves to the END of
+   the plan — local sovereignty outranks cloud features, and the NPU track outranks
+   Gemini live in the owner's roadmap. Gemini batch (§3) rides with the routing work
+   since it shares the language seam.
