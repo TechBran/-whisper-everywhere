@@ -1,5 +1,8 @@
 package com.whispereverywhere.audio
 
+import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicLong
+
 /**
  * Owns WHEN the native probe context exists (3.7, Workstream D8) — never WHAT it decides.
  *
@@ -21,51 +24,189 @@ package com.whispereverywhere.audio
  *    the two apart. The warning lives in tree at `StreamingAudioRecorder.kt:131-138`;
  *    the obligation is teardown-bill T1 + T2 as SHARPENED by Task E2.
  *
- * SCOPE, stated once and honestly: every guarantee above is stated for the SEQUENTIAL lifecycle —
- * arm, then frames, then release, one call at a time — and cross-thread exclusion between
- * [ensureReady] and [release] arrives in Task D5 (teardown-bill T2), which takes a monitor around
- * exactly the two operations that touch the native context's EXISTENCE. Until it lands, a
- * [release] landing inside an in-flight init reads `ARMED`, skips the free and sets `IDLE`, and
- * the finishing init then republishes `READY` over it — the ~2.6 MB context is orphaned and the
- * lifecycle claims to be ready. That is an OWNERSHIP hazard, not a data race: all four externs
- * serialise on one native mutex (T4), so a late free cannot corrupt a concurrent init, only leak
- * what that init created.
+ * CONCURRENCY (Task D5). Two mechanisms, and they answer two different questions.
+ *
+ * **The monitor answers "how many, and in what order".** [contextLock] is held across the init
+ * and across the free, so two capture threads racing the first frame build ONE context and a
+ * teardown can never land inside an in-flight init. Before it, a [release] arriving mid-init read
+ * `ARMED`, skipped the free and set `IDLE`, and the finishing init republished `READY` over it:
+ * nothing was ever freed and the lifecycle claimed to be ready. That was an OWNERSHIP hazard, not
+ * a data race — all four externs serialise on one native mutex (T4), so a late free could not
+ * corrupt a concurrent init, only orphan what it created — and it was BOUNDED at exactly ONE
+ * orphaned context, because `vadProbeInit` is documented idempotent ("a second call frees the
+ * previous context first, so a session restart or model swap cannot leak ~2.6 MB",
+ * `WhisperNative.kt:132-134`), so the next session's init reclaimed the previous orphan and they
+ * could not accumulate.
+ *
+ * **The epoch answers "whose session is this".** The monitor alone would LEGITIMISE the one
+ * hazard that is actually reachable across sessions: a session-N capture thread that outlived its
+ * best-effort join (`StreamingAudioRecorder.kt:132-140` names this case by name — "the
+ * `vadProbeInit` of the NEXT session starting while the previous capture thread is still
+ * unwinding") calls back in after session N+1 has [arm]ed. It sees `ARMED`, takes the monitor
+ * legitimately, and creates session N+1's context; once N+1 is `READY` it would go on feeding N+1's
+ * context through D8's ONE shared direct buffer, concurrently with N+1's real capture thread —
+ * torn frames (T8) and cross-session LSTM contamination (T9), with no exception, no sentinel and
+ * no log. Nothing in the state machine can see that, because the state is legitimately `ARMED`.
+ *
+ * So [arm] opens a SESSION EPOCH and hands it back, and the two capture-path routes take it:
+ * [ensureReady] returns `false` and [frame] returns [VadProbe.NO_VERDICT] — probe untouched, zero
+ * native calls — for any caller holding a stale one. Both gates are plain volatile reads and take
+ * no lock, so the 31.25 Hz steady state is unchanged. A D10 ordering guarantee is NOT an
+ * alternative: E2's finding is that the join's outcome is unobservable, so an ordering that cannot
+ * be observed cannot be constructed.
+ *
+ * **THE WIRING D8 MUST USE** — the ungated [ensureReady] overload is exactly the route a stale
+ * thread would take, so the capture path must not use it. The token has to be snapshotted ONCE PER
+ * SESSION on the capture side and never re-read per frame: a per-frame read hands the stale thread
+ * the CURRENT epoch, and the gate then does nothing at all.
+ *
+ * ```
+ * val armed = AtomicLong(VadProbeLifecycle.NO_SESSION)   // written on Main by probeArm
+ * val mine  = ThreadLocal.withInitial { armed.get() }    // read ONCE per capture thread
+ * probeArm  = { armed.set(lifecycle.arm(vadModelPath)) }
+ * probe     = { frame ->
+ *     val session = mine.get()                           // THIS thread's session, not the open one
+ *     if (!lifecycle.ensureReady(session)) VadProbe.NO_VERDICT
+ *     else { buffer.clear(); buffer.put(frame, 0, VadProbe.FRAME_BYTES)
+ *            lifecycle.frame(session, buffer, VadProbe.FRAME_BYTES) }
+ * }
+ * ```
+ *
+ * Two preconditions that wiring rests on. Both hold today; both are worth an assertion if the
+ * capture side is ever restructured. (1) `StreamingAudioRecorder` starts a FRESH `Thread` per
+ * session (`:70`, `:101`, nulled at `:148`), so a capture thread cannot be carrying a PREVIOUS
+ * session's snapshot: a new session's thread takes its own epoch, and only a thread that outlived
+ * its join holds a stale one. Were capture threads ever POOLED this inverts — a reused thread would
+ * keep session N's snapshot and be refused for the whole of N+1, which is VAD silently off rather
+ * than corrupt (a permanent [VadProbe.NO_VERDICT] is "keep the previous state", T10), but it is
+ * still a regression and the pooling change would have to re-bind. (2) `probeArm` runs before the
+ * session's first frame, which `SileroEndpointer` gives by construction: it fires from
+ * `onSessionStart` (`:421`) and the probe lambda is reachable only from `onFrame`.
+ *
+ * **THE MAIN-BLOCK BUDGET, stated rather than assumed (D4 review, teardown-bill T1 RESIDUAL).**
+ * The monitor makes Main's [release] wait out a whole in-flight `vadProbeInit`, and it lands on
+ * `stopRecording`, the path T1's residual already budgets at ~4 s composite (2 × `CAPTURE_JOIN_MS`,
+ * since `audioRecorder.stop()` is followed by `stopPlaybackCapturer()`'s own 2000 ms fenced join)
+ * with roughly 1 s of headroom under the 5 s input-dispatch window. What that wait actually is:
+ * the probe's model is the bundled 885 KB `ggml-silero-v5.1.2.bin`, NOT a 190 MB whisper tier —
+ * so the worst case is a small model load, analytically tens of milliseconds of file I/O plus a
+ * ~2.6 MB allocation, not seconds. It is qualitatively far inside the ~1 s of headroom rather than
+ * a second join-sized bill. That is an ANALYTIC bound, not a measurement: the S-task on-device
+ * probe is the measurement point, and it is what would revise this paragraph. [arm] deliberately
+ * does NOT take the monitor, so session OPEN — also Main — can never block behind an init at all.
  */
 class VadProbeLifecycle(private val probe: VadProbe) {
+
+    companion object {
+        /**
+         * The epoch no session ever has. [arm] issues from 1 upward, so a caller still holding
+         * this has never been armed and is refused by both gated routes.
+         */
+        const val NO_SESSION = 0L
+    }
 
     enum class State { IDLE, ARMED, READY, UNAVAILABLE }
 
     @Volatile private var currentState = State.IDLE
     @Volatile private var modelPath: String? = null
 
+    /**
+     * The open session's epoch. Monotonic and never reused, so a token can only ever be current
+     * or stale — never accidentally current again. Read on the hot path as one volatile read
+     * (`AtomicLong.get()`), never under [contextLock].
+     */
+    private val epoch = AtomicLong(NO_SESSION)
+
+    /**
+     * Guards the two operations that touch the native context's EXISTENCE. The steady-state
+     * per-frame path never takes it: [ensureReady] returns on the volatile READY read above it.
+     * [release] runs on Main from the teardown path BEHIND the capture joins, so this lock is
+     * expected to be uncontended in production — but "behind the joins" is a best-effort ordering
+     * and NOT a fence (the class KDoc says why, and the epoch above exists because it is not one).
+     * The lock is what makes a mis-ordered teardown degrade to a wait instead of a free-under-init.
+     */
+    private val contextLock = Any()
+
     fun state(): State = currentState
 
-    /** Session open (Main). A null path means "no VAD model" — unavailable, probe untouched. */
-    fun arm(modelPath: String?) {
+    /**
+     * Session open (Main). A null path means "no VAD model" — unavailable, probe untouched.
+     *
+     * Opens a new session epoch and returns it; see the class KDoc for how D8 must carry it to
+     * the capture thread. The epoch is bumped BEFORE the state is published, and that order is
+     * load-bearing: publishing `ARMED` first would leave a window in which a stale capture thread
+     * reads the new `ARMED` and the OLD epoch, passes the gate, and initialises the incoming
+     * session's context — the exact hazard the epoch exists to refuse.
+     *
+     * Takes NO lock, by design: this is Main at session open and must never wait on an init.
+     */
+    fun arm(modelPath: String?): Long {
+        val opened = epoch.incrementAndGet()
         this.modelPath = modelPath
         currentState = if (modelPath == null) State.UNAVAILABLE else State.ARMED
+        return opened
     }
 
-    /** Capture thread, per frame. Cheap after the first call. @return true when the probe is usable. */
+    /**
+     * UNGATED. Sequential and Main-confined callers only — it cannot tell one session from the
+     * next, so it is the route a stale capture thread would take. The capture path must use the
+     * [ensureReady] overload that takes a session token.
+     */
     fun ensureReady(): Boolean {
-        val snapshot = currentState
-        if (snapshot == State.READY) return true
-        if (snapshot != State.ARMED) return false
-        val path = modelPath
-        if (path == null) {
-            currentState = State.UNAVAILABLE
-            return false
+        if (currentState == State.READY) return true          // hot path: one volatile read
+        synchronized(contextLock) {
+            val snapshot = currentState
+            if (snapshot == State.READY) return true
+            if (snapshot != State.ARMED) return false
+            val path = modelPath
+            if (path == null) {
+                currentState = State.UNAVAILABLE
+                return false
+            }
+            val ok = try {
+                probe.init(path)
+            } catch (t: Throwable) {
+                // Must never escape: this runs inline on the audio thread.
+                android.util.Log.w("WE-DIAG", "probe: init threw — amplitude fallback for this session", t)
+                false
+            }
+            currentState = if (ok) State.READY else State.UNAVAILABLE
+            if (!ok) android.util.Log.w("WE-DIAG", "probe: init failed — amplitude fallback for this session")
+            return ok
         }
-        val ok = try {
-            probe.init(path)
-        } catch (t: Throwable) {
-            // Must never escape: this runs inline on the audio thread.
-            android.util.Log.w("WE-DIAG", "probe: init threw — amplitude fallback for this session", t)
-            false
-        }
-        currentState = if (ok) State.READY else State.UNAVAILABLE
-        if (!ok) android.util.Log.w("WE-DIAG", "probe: init failed — amplitude fallback for this session")
-        return ok
+    }
+
+    /**
+     * Capture thread, per frame — THE CAPTURE PATH'S ROUTE. Cheap after the first call.
+     *
+     * @param session the token [arm] returned for THIS capture thread's session.
+     * @return true when the probe is usable; false for a stale [session], with the probe untouched
+     *   and no init attempted — a thread that outlived its join must never build the next
+     *   session's context.
+     */
+    fun ensureReady(session: Long): Boolean {
+        if (session != epoch.get()) return false             // stale caller: not this session's
+        return ensureReady()
+    }
+
+    /**
+     * Capture thread, per frame — THE CAPTURE PATH'S FRAME ROUTE, and the reason the epoch is not
+     * merely an `ensureReady` concern: D8's lambda calls the probe directly, so a gate in front of
+     * the init alone would leave a stale thread feeding the LIVE next-session context through the
+     * one shared direct buffer (T8 torn frames, T9 cross-session recurrence).
+     *
+     * [pcm] is forwarded unexamined — the buffer, its `allocateDirect` byte order and the
+     * no-concurrent-refill rule stay D8's alone (T7/T8), exactly as they are for
+     * [NativeVadProbe.frame]. This adds two volatile reads and no lock.
+     *
+     * @return the probe's probability, or [VadProbe.NO_VERDICT] for a stale [session] or a probe
+     *   that is not `READY` — with the probe untouched. NEVER 0.0f: "no verdict" is not silence
+     *   (T10), and a stale frame that read as confident silence would cut a live utterance.
+     */
+    fun frame(session: Long, pcm: ByteBuffer, nBytes: Int): Float {
+        if (session != epoch.get()) return VadProbe.NO_VERDICT
+        if (currentState != State.READY) return VadProbe.NO_VERDICT
+        return probe.frame(pcm, nBytes)
     }
 
     /** One of the five reset sites, or the endpointer's own post-commit reset. */
@@ -73,10 +214,19 @@ class VadProbeLifecycle(private val probe: VadProbe) {
         if (currentState == State.READY) runCatching { probe.reset() }
     }
 
-    /** Session end (Main), on the teardown path behind the capture joins. Idempotent. */
+    /**
+     * Session end (Main), on the teardown path behind the capture joins. Idempotent.
+     *
+     * Deliberately does NOT close the epoch: it does not need to. Every gated route out of `IDLE`
+     * already refuses — [ensureReady] on the `!= ARMED` check, [frame] on the `!= READY` check —
+     * so the epoch's job is only the case the state machine cannot see, which is the NEXT
+     * session's legitimate `ARMED`.
+     */
     fun release() {
-        if (currentState == State.READY) runCatching { probe.free() }
-        currentState = State.IDLE
-        modelPath = null
+        synchronized(contextLock) {
+            if (currentState == State.READY) runCatching { probe.free() }
+            currentState = State.IDLE
+            modelPath = null
+        }
     }
 }
