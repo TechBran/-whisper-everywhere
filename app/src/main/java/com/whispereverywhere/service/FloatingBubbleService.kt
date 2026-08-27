@@ -1895,6 +1895,22 @@ class FloatingBubbleService : Service(),
         // One engine serves both sources, so this commit is what keeps mic and device audio in
         // SEPARATE segments at the boundary. In a live (server-driven) session it cuts a client
         // turn mid-stream — the same mechanism stopRecording's tail commit uses.
+        //
+        // 3.7 (Workstream D9/D10): the endpointer reset below is a CORRECTNESS requirement, not
+        // hygiene. This function swaps mic <-> device audio, and the streaming VAD's LSTM
+        // recurrence must never carry across an acoustic-source change: the state it accumulated
+        // from one acoustic path is not evidence about the other, and carrying it makes the next
+        // few verdicts arbitrary. This is the ONE reset site where a miss is a wrong answer rather
+        // than a slack window.
+        //
+        // UNDISCHARGED, and deliberately not closed here: the native probe's EPOCH is not bumped
+        // across this swap, so a stale capture thread from the OLD source can still reach the
+        // probe. D10 does not close it alone because a bump without a matching `armed` re-publish
+        // fails CLOSED — every post-switch frame is refused and the VAD goes silently off for the
+        // rest of the session, which is worse than the residue. E2 additionally showed the join's
+        // outcome is unobservable (Thread.join(ms) returns identically on termination and on
+        // timeout), so the timing argument cannot be upgraded to a guarantee. Routed to final
+        // review with the rest of the D-section residue.
         transcriptionEngine?.commit()
         endpointer.reset()
         segmentCapPolicy.onCommit(System.currentTimeMillis())
@@ -2301,7 +2317,6 @@ class FloatingBubbleService : Service(),
                 android.util.Log.i("WE-DIAG", "onOpen handler: state=$currentState")
                 serviceScope.launch(Dispatchers.Main) {
                     if (currentState != BubbleState.CONNECTING) return@launch
-                    endpointer.reset()
                     // Per-session reset: the FIRST-segment 4 s cap applies again from here.
                     val sessionOpenMs = System.currentTimeMillis()
                     segmentCapPolicy.onSessionStart(sessionOpenMs)
@@ -2316,6 +2331,34 @@ class FloatingBubbleService : Service(),
                     // already resolved here — resolveTranscriptionEngine() ran in startRecording,
                     // and it is the same cloud predicate stopRecording uses.
                     if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionOpenMs)
+                    // 3.7 (Workstream D3): the endpointer's paced-commit floor is the MEASURED
+                    // cost governor, and it is per-session because it depends on BOTH the
+                    // installed tier and whether every commit becomes a provider request.
+                    // cloudWrapper is already resolved here — see the note above — and
+                    // installedModel was resolved just before connect(). Armed BEFORE
+                    // startAudioInput() so the first captured frame already sees this session's
+                    // cadence; the native probe itself initialises lazily on that first frame,
+                    // i.e. on the capture thread, never here on Main.
+                    //
+                    // This REPLACES the endpointer.reset() that used to open the session here,
+                    // rather than joining it: onSessionStart is a documented strict superset of
+                    // reset() ("Everything [reset] clears, plus…" — its KDoc), so a pair would
+                    // clear twice and put two probeResets inside one session open. Three
+                    // documents already describe the service as resetting from THREE sites with
+                    // onOpen carrying onSessionStart instead: SileroEndpointer's Threading
+                    // section, SileroEndpointerTest's volatility pin, and
+                    // SileroEndpointerConcurrencyTest's class KDoc, which carries the count.
+                    //
+                    // NAMED arguments, not positional: onSessionStart takes two same-typed Longs
+                    // whose order nothing else pins, and minCommitIntervalMs takes a nullable
+                    // String beside a Boolean. EndpointerLifecyclePinTest quotes these names.
+                    endpointer.onSessionStart(
+                        nowMs = sessionOpenMs,
+                        minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(
+                            tierId = installedModel?.id,
+                            isCloudBatch = cloudWrapper != null,
+                        ),
+                    )
                     val started = startAudioInput()
                     android.util.Log.i("WE-DIAG", "recorder start success=${started.isSuccess}")
                     if (started.isFailure) {
@@ -2471,6 +2514,27 @@ class FloatingBubbleService : Service(),
             "finalize-timing: commit-dispatch=${(System.nanoTime() - stopTapNs) / 1_000_000}ms",
         )
         endpointer.reset()
+        // 3.7 (Workstream D5/D8/D10, teardown bill T12): the probe's native context is freed HERE,
+        // and only here on the record-stop path — the ~2.6 MB the context holds is released at
+        // record stop rather than at process death.
+        //
+        // The POSITION is the pin, and it is a position in SOURCE, not a proof. Above this line,
+        // audioRecorder.stop() and stopPlaybackCapturer() have each asked their capture thread to
+        // stop and joined it, and the unconditional flush above still belongs to this session — so
+        // freeing any earlier would race the audio it is flushing, and freeing after the drain
+        // would hold the context across an arbitrarily long backlog. What the ordering does NOT
+        // give is exclusion: T2-SHARPENED — Thread.join(ms) returns identically on termination and
+        // on timeout and stopThenJoin returns Unit, so the join is BEST-EFFORT and its outcome is
+        // unobservable from here. A late free landing after the NEXT session's vadProbeInit is an
+        // ownership hazard the BOUND LAMBDA must survive (VadProbeLifecycle, Tasks D4/D5); this
+        // line may not claim the join prevents it.
+        //
+        // Main-thread budget (T1 RESIDUAL): the two capture stops above are COMPOSITE, not one
+        // join — 2 x CaptureThreadPolicy.CAPTURE_JOIN_MS, ~4 s worst case, under the 5 s
+        // input-dispatch ANR window with ~1 s headroom. onSessionEnd adds probeStats' instance
+        // monitor (a handful of int ops) and the free itself; both are budgeted against that
+        // composite, not against a single join.
+        endpointer.onSessionEnd()
 
         // Server-driven live only: the stop commit above cut the final open utterance under a tail
         // seq, but in server-driven mode NO server VAD endpoint can ever resolve it now — the mic is
