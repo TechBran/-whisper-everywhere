@@ -24,10 +24,11 @@ object ModelMigration {
     }
 
     /**
-     * The pickable tier a retired model's users should land on. MUST match the retired model's
-     * [ModelScope] — moving a MULTILINGUAL user to the ENGLISH-only default silently breaks
-     * dictation in every other language with no warning (that was the MF3 bug). "base" (Base
-     * multilingual) is the multilingual counterpart to the ENGLISH default "eco".
+     * The pickable tier an unsupported model's users should land on. MUST match the retired
+     * model's [ModelScope] — moving a MULTILINGUAL user to the ENGLISH-only default silently
+     * breaks dictation in every other language with no warning (that was the MF3 bug). Since 3.7
+     * the lineup is two tiers: "pro" is the ENGLISH default and "multi" is its multilingual
+     * counterpart.
      */
     fun targetIdFor(scope: ModelScope): String =
         if (scope == ModelScope.MULTILINGUAL) MULTILINGUAL_TARGET_ID else WhisperCatalog.DEFAULT_MODEL_ID

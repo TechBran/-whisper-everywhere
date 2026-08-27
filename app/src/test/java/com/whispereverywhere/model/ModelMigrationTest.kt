@@ -1,6 +1,7 @@
 package com.whispereverywhere.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModelMigrationTest {
@@ -88,5 +89,17 @@ class ModelMigrationTest {
         val a = decide("extreme", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
         assertEquals(WhisperCatalog.DEFAULT_MODEL_ID, a.toId)
         assertEquals("pro", a.toId)
+    }
+
+    @Test fun every_migration_target_is_a_tier_the_user_can_actually_pick() {
+        // A target that is itself retired would move users from one dead end to another.
+        listOf(ModelScope.ENGLISH, ModelScope.MULTILINGUAL).forEach { scope ->
+            val target = ModelMigration.targetIdFor(scope)
+            assertTrue(
+                "target '$target' for $scope is not pickable",
+                WhisperCatalog.pickable.any { it.id == target },
+            )
+            assertEquals(scope, WhisperCatalog.byId(target)!!.scope)
+        }
     }
 }

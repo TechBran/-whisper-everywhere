@@ -51,12 +51,14 @@ class WhisperModelManager(
     }
 
     /**
-     * The selected tier when it is RETIRED — i.e. still resolvable and possibly still installed,
-     * but no longer offered. Drives the migration prompt. Returns null in the normal case.
+     * The selected tier when it is UNSUPPORTED — still resolvable and possibly still installed,
+     * but one the app wants users off of. Drives the migration prompt. Merely RETIRED tiers
+     * (eco, base since 3.7) deliberately return null here: they are hidden from the chooser and
+     * otherwise untouched. Returns null in the normal case.
      */
-    fun retiredInstalledModel(): WhisperModel? {
+    fun unsupportedInstalledModel(): WhisperModel? {
         val model = WhisperCatalog.byId(prefs.selectedModelId) ?: return null
-        return if (model.retired) model else null
+        return if (model.unsupported) model else null
     }
 
     /** Delete a tier's file from disk. Returns true if a file was actually removed. */

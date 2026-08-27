@@ -163,9 +163,9 @@ fun SettingsScreen(
 
     val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
 
-    // Retired-tier migration (model catalog trim): non-null when the selected tier is retired.
-    // Drives the "no longer supported" card above the model picker.
-    val retiredModel = remember(modelRefreshKey) { modelManager.retiredInstalledModel() }
+    // Unsupported-tier migration: non-null only for extreme/ultra. Merely retired tiers
+    // (eco, base) never raise this card — see WhisperModel.unsupported.
+    val retiredModel = remember(modelRefreshKey) { modelManager.unsupportedInstalledModel() }
     val migrationScope = rememberCoroutineScope()
     var migrationBusy by remember { mutableStateOf(false) }
     var migrationStatus by remember { mutableStateOf<String?>(null) }
@@ -210,7 +210,7 @@ fun SettingsScreen(
             SettingsSection(title = "Speech model") {
                 if (retiredModel != null) {
                     // MF3: the target must match the retired model's scope — a multilingual
-                    // user must land on "base" (multilingual), not silently on the ENGLISH-only
+                    // user must land on "multi" (multilingual), not silently on the ENGLISH-only
                     // default. See ModelMigration.targetIdFor.
                     val target = WhisperCatalog.byId(ModelMigration.targetIdFor(retiredModel.scope))!!
                     // Re-derived every recomposition (same idiom as the permission checks
