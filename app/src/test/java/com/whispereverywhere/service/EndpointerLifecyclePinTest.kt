@@ -92,7 +92,9 @@ class EndpointerLifecyclePinTest {
 
     @Test
     fun switchSourceResetsBeforeSwappingTheAcousticSource() {
-        val commit = indexOfOrFail("        transcriptionEngine?.commit()\n        endpointer.reset()")
+        val commit = indexOfOrFail(
+            "        transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }\n        endpointer.reset()"
+        )
         val stopOld = text.indexOf("            com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()", commit)
         assertTrue("the reset must precede the source swap", stopOld > commit)
     }
@@ -120,7 +122,9 @@ class EndpointerLifecyclePinTest {
 
     @Test
     fun stopRecordingFlushesUnconditionallyThenResetsThenFreesTheProbe() {
-        val flush = indexOfOrFail("        transcriptionEngine?.commit()\n        android.util.Log.i(")
+        val flush = indexOfOrFail(
+            "        transcriptionEngine?.let { commitSegment(it, EndpointDiag.STOP) }\n        android.util.Log.i("
+        )
         val reset = text.indexOf("        endpointer.reset()", flush)
         val end = text.indexOf("        endpointer.onSessionEnd()", reset)
         assertTrue("the flush stays unconditional and first", reset > flush)

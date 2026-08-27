@@ -352,6 +352,12 @@ class FloatingBubbleService : Service(),
     // First-vs-later rule and per-session reset are JVM-pinned in SegmentCapPolicyTest.
     private val segmentCapPolicy = SegmentCapPolicy()
 
+    /**
+     * 3.7 Workstream F: the committed-but-unresolved backlog. Fed by every commit site and by
+     * onSegmentResolved; the only surface that shows a growing multi-tier backlog while it grows.
+     */
+    private val segmentQueueDepth = SegmentQueueDepth()
+
     // Set true when any transcription text is produced during a recording session; drives the
     // "No speech detected" feedback on stop so the user is not left with silent nothing.
     @Volatile private var sessionProducedText = false
@@ -958,7 +964,7 @@ class FloatingBubbleService : Service(),
                 } else {
                     // Flush + stop the mic NOW (never mix room audio into a media session),
                     // then ask; capture starts when consent lands.
-                    transcriptionEngine?.commit()
+                    transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
                     audioRecorder.stop()
                     com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
                     com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this@FloatingBubbleService)
@@ -1737,7 +1743,7 @@ class FloatingBubbleService : Service(),
             if (endpointer.onFrame(chunk, amp, now)) {
                 android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
                 segmentCapPolicy.onCommit(now)
-                engine.commit()
+                commitSegment(engine, EndpointDiag.VAD, nowMs = now)
             } else if (segmentCapPolicy.capExceeded(now)) {
                 // currentCapMs() is read BEFORE onCommit flips first->later, so the line names
                 // the cap that actually fired (4000ms for the session's first LOCAL stretch;
@@ -1792,7 +1798,10 @@ class FloatingBubbleService : Service(),
                 // pins, and a swap returns 0 for EVERY input — the split silently reverts to
                 // 3.6.0 with the whole suite green (D2's M22 survived exactly that).
                 val retainMs = CommitCadencePolicy.capCutRetainMs(nowMs = now, cutPointMs = endpointer.pendingCutPointMs())
-                engine.commitRetainingTailMs(retainMs)
+                // The funnel call inherits the same hazard and the same discipline: it ALSO ends
+                // in two adjacent Longs, and swapping them degrades to a plain full commit (D6's
+                // `cut <= 0` guard clamps) while handing Workstream F's clock a 0-3000ms value.
+                commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now)
                 // Residue inherited from D8 (report §5): the factory's epoch gate covers the NATIVE
                 // probe reset alone. A stale capture thread reaching this line still writes EIGHT
                 // of the live session's SileroEndpointer fields — including the cost governor's
@@ -1911,7 +1920,7 @@ class FloatingBubbleService : Service(),
         // outcome is unobservable (Thread.join(ms) returns identically on termination and on
         // timeout), so the timing argument cannot be upgraded to a guarantee. Routed to final
         // review with the rest of the D-section residue.
-        transcriptionEngine?.commit()
+        transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
         endpointer.reset()
         segmentCapPolicy.onCommit(System.currentTimeMillis())
         when (activeSource) {
@@ -2246,6 +2255,10 @@ class FloatingBubbleService : Service(),
         // and the engine restarts seq numbering at 0 in connect() — a reused orderer sitting at
         // head N would silently discard the whole next session.
         segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()
+        // 3.7 Workstream F: same reason the orderer is recreated. A depth carried over from a
+        // torn-down session would render a phantom backlog on the next one's first commit, and a
+        // reset at stop would blank the diagnostic for the whole drain.
+        segmentQueueDepth.reset()
         sessionStartMs = System.currentTimeMillis()
         // Freeze this session's routing mode and injection target at the tap. Segments finish
         // seconds later and the user may click anywhere in between; the session must not follow.
@@ -2432,6 +2445,10 @@ class FloatingBubbleService : Service(),
                 // so delivery timing is unchanged.
                 serviceScope.launch(Dispatchers.Main) {
                     deliverReleasedText(segmentOrderer.onResolved(seq, outcome).text)
+                    android.util.Log.i(
+                        "WE-DIAG",
+                        EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),
+                    )
                 }
             }
             override fun onError(message: String) {
@@ -2515,7 +2532,7 @@ class FloatingBubbleService : Service(),
         // discarded whole sessions for soft talkers ("No speech detected" despite real speech).
         // The native Silero VAD inside whisper_full now makes the unconditional flush safe: a
         // silence-only tail is trimmed to nothing and returns empty, fast, with no junk tokens.
-        transcriptionEngine?.commit()
+        transcriptionEngine?.let { commitSegment(it, EndpointDiag.STOP) }
         android.util.Log.i(
             "WE-DIAG",
             "finalize-timing: commit-dispatch=${(System.nanoTime() - stopTapNs) / 1_000_000}ms",
@@ -2722,6 +2739,41 @@ class FloatingBubbleService : Service(),
             // would ignore memory pressure in exactly the idle state where it matters most.
             localEngine?.releaseContext()
         }
+    }
+
+    /**
+     * THE ONE COMMIT FUNNEL (3.7 Workstream F). Every commit site in this service goes through
+     * here, so the seq [TranscriptionEngine.commit] has always returned is captured exactly once
+     * and in one place — which is what lets `queue:` (and, from Tasks F8/F9, `endpoint:` and
+     * `perceived:`) join to `segment-timing:` on one key. No plumbing was required; the number was
+     * always there and every call site threw it away.
+     *
+     * It adds NOTHING to the commit DECISION: the wall caps, the cloud 4 s suppression and the
+     * unconditional stop flush all decide whether to call it exactly as before, and
+     * `commitRetainingTailMs(0)` is `commit()` by first line and by test — so with an endpointer
+     * that never fires, this is byte-identical to 3.6.0.
+     *
+     * [cut] is one of [EndpointDiag]'s four cut kinds and names WHY this commit happened.
+     * [retainMs] is non-zero only at the wall-cap site, where the endpointer offered a micro-pause
+     * to cut at. [nowMs] is the FRAME's clock at the two capture-thread sites and defaults to the
+     * wall clock at the three Main-side ones; it exists so Task F9's speech-end stamp is measured
+     * against the same instant the endpointer's `trailMs` was, not against a clock re-read after a
+     * ~960 KB buffer snapshot. Returns exactly what the engine returned — the seq, or the -1
+     * "nothing was cut" answer documented on [TranscriptionEngine.commit], which contributes
+     * nothing to the backlog because it will never resolve.
+     *
+     * Callable from the CAPTURE thread (the endpoint and cap cuts) and from Main (switchSource,
+     * stopRecording, the projection-consent flush) — [SegmentQueueDepth] is synchronized.
+     */
+    private fun commitSegment(
+        engine: TranscriptionEngine,
+        cut: String,
+        retainMs: Long = 0L,
+        nowMs: Long = System.currentTimeMillis(),
+    ): Long {
+        val seq = if (retainMs > 0L) engine.commitRetainingTailMs(retainMs) else engine.commit()
+        android.util.Log.i("WE-DIAG", EndpointDiag.queueLine(segmentQueueDepth.onCommitted(seq)))
+        return seq
     }
 
     /**

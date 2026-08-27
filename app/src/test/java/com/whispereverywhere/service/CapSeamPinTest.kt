@@ -90,7 +90,7 @@ class CapSeamPinTest {
                 "                    )\n" +
                 "                ) {"
         )
-        val commit = indexOfOrFail("                engine.commitRetainingTailMs(retainMs)")
+        val commit = indexOfOrFail("                commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now)")
         val reset = text.indexOf("                endpointer.reset()", commit)
         assertTrue("bookkeeping stays inside the cap branch", bookkeeping > cap)
         assertTrue("the commit follows the bookkeeping", commit > bookkeeping)
