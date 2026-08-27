@@ -59,7 +59,11 @@ object EndpointDiag {
      * Two substrings are load-bearing and are preserved BYTE FOR BYTE, which is why the marker is
      * appended rather than the line rewritten: `wall-clock cap -> commit` is the existing grep,
      * and `cap=<n>ms` is the documented regression signature — `cap=4000ms` appearing in a CLOUD
-     * session means the LOCAL-only first-cap suppression at FloatingBubbleService.kt:2238 broke.
+     * session means the LOCAL-only first-cap suppression broke: the
+     * `if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionOpenMs)` line in the live
+     * session's `onOpen` inside `FloatingBubbleService.startRecording`. Cited by SYMBOL, not by
+     * line number — the number this comment shipped with (`:2238`) had already drifted into an
+     * unrelated function by the time anyone read it.
      */
     fun capCommitLine(capMs: Long): String =
         "wall-clock cap -> commit (cap=${capMs}ms) VAD-MISS: no endpoint in this window"

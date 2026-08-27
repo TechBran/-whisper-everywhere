@@ -9399,7 +9399,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 **Binding constraint on the reword:** `cap=<n>ms` must survive VERBATIM. `cap=4000ms` appearing in
 a cloud session is the documented 3.6.0 regression signature the owner's acceptance greps for
-(`h2-owner-acceptance.md:46-49`), and `wall-clock cap -> commit` is the existing grep. The reword
+(`docs/superpowers/specs/2026-08-19-h2-owner-acceptance.md`, "## The checks" — its two cap-line rows), and `wall-clock cap -> commit` is the existing grep. The reword
 therefore APPENDS the VAD-failure marker to a byte-identical prefix.
 
 - [ ] **Step 1: Write the failing test** — create
@@ -9648,7 +9648,7 @@ the `endpoint:` line here without touching a single branch again:
 ```kotlin
                     transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }   // :915
                 commitSegment(engine, EndpointDiag.VAD, nowMs = now)                      // :1694
-                commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now)  // :1721
+                commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now) // :1721
         transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }               // :1818
         transcriptionEngine?.let { commitSegment(it, EndpointDiag.STOP) }                 // :2388
 ```

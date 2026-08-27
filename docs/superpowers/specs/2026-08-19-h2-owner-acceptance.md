@@ -57,6 +57,9 @@ number and the adjacent `transcribe THREW` lines explain it.
 - [ ] **Silence semantics — LOCAL (expected, not bugs):** repeated `cap=4000ms` lines in a
   silent local session are CORRECT (the silence re-arm; empty commits are near-free); a user who
   pauses to think still gets the 4 s first cut on their first real speech.
+  **On a 3.7 build these cap lines carry a ` VAD-MISS: no endpoint in this window` suffix; on the
+  silence re-arm above and on the amplitude-fallback tier that suffix is EXPECTED and is not a
+  failure — it is a signature only when the Silero probe is supposed to be live.**
 - [ ] **`segment-timing` RTF captured (decision-gate data):** save rtf values per tier (CPU).
   These are the repo's first measured 190 MB-tier RTFs — report verbatim; they feed the
   tier-consolidation and GPU-default gates. Compare multi segment-0 (detect) vs segments-1+

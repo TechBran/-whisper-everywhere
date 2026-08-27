@@ -143,6 +143,27 @@ class CommitFunnelPinTest {
     }
 
     @Test
+    fun theFunnelActuallyEmitsTheEndpointLine() {
+        // A SEPARATE test from the gate above, deliberately: the two contracts fail for different
+        // reasons and a shared test would make the battery's killer sets unreadable — dropping the
+        // gate and deleting the emission are different defects and must name different tests.
+        //
+        // This is the pin the F8 review's fourth mutant demanded. Every BYTE of the line is pinned
+        // in EndpointDiagTest, and the gate that computes `ec` is pinned above, but until this
+        // assertion nothing said the funnel ever CALLS the formatter: the reviewer deleted the
+        // Log.i and the whole 1276-test suite passed. The `queue:` sibling survives the same
+        // attack only by accident — `segmentQueueDepth.onCommitted(seq)` happens to live INSIDE
+        // its log call, so deleting that line drops its count to 0. `endpointLine`'s arguments
+        // carry no such incidental anchor, so it gets an explicit one.
+        assertEquals(
+            "the funnel EMITS the endpoint: line — the formatter being pinned is not the same " +
+                "claim as the funnel calling it",
+            1,
+            count("EndpointDiag.endpointLine(seq, cut, ec)"),
+        )
+    }
+
+    @Test
     fun theBacklogIsResetAtSessionStartBesideTheOrderer() {
         val orderer =
             indexOfOrFail("        segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()")

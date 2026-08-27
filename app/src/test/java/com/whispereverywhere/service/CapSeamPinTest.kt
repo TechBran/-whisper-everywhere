@@ -106,6 +106,29 @@ class CapSeamPinTest {
     }
 
     @Test
+    fun theCapBranchActuallyEmitsItsCapLine() {
+        // The same-shape twin of the funnel's emission pin (F8 review F1), and it PREDATES 3.7:
+        // the cap log call has never been pinned at its call site, so deleting it left the suite
+        // green on 3.6.0 too. EndpointDiagTest pins every byte of the line; only this says the
+        // branch ever asks for it.
+        val capLine = indexOfOrFail(
+            "                android.util.Log.i(\"WE-DIAG\", " +
+                "EndpointDiag.capCommitLine(segmentCapPolicy.currentCapMs()))"
+        )
+        assertEquals(
+            "the cap line is emitted from exactly one place",
+            1,
+            text.split("EndpointDiag.capCommitLine(").size - 1,
+        )
+        // ...and it is emitted BEFORE the bookkeeping, which is load-bearing and is what the
+        // three-line comment above the call states: currentCapMs() must be read before onCommit
+        // flips first->later, or the line names the cap that is about to apply instead of the one
+        // that actually fired (15000ms reported for the session's first 4 s cut).
+        val bookkeeping = indexOfOrFail("                if (capCutConsumesWindow(\n")
+        assertTrue("the cap line is emitted before the window bookkeeping", capLine < bookkeeping)
+    }
+
+    @Test
     fun theCapCutAsksTheCadencePolicyForItsRetainWindow() {
         // The branch asks the extracted pure helper (3.7 F8, the M4b follow-up)...
         indexOfOrFail(
