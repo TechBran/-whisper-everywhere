@@ -10132,6 +10132,118 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 ## Workstream G — UX: the in-flight state
 
+> **G-SECTION CLOSE (rebase pass, Task G5). Workstream G is COMPLETE — G1, G2, G3, G4 and G5 all
+> shipped, reviewed and accepted.** This banner records what the five tasks changed under the
+> sections below, so a reader arriving here does not re-derive it or trip over it. Same rebase rule
+> as the C2, D9 and F-close banners: *a snippet that faithfully records a stub gets a banner; a
+> snippet that contradicts discipline already in force gets RESPLICED from the shipped source* —
+> sharpened at the F-close to *a stale snippet whose damage is LOUD (the suite fails on it) may keep
+> its banner; one whose damage is SILENT is respliced.*
+>
+> **1. SIX SNIPPETS RESPLICED, every one from the shipped source rather than transcribed.** All six
+> are in the SILENT class. Five are positional call forms that compile and behave identically — so
+> nothing would fail — while contradicting the named-argument discipline in force since the G2
+> review, and they now also contradict source pins that quote the named form byte-for-byte
+> (`InFlightStripWiringPinTest` counts `deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)` inside
+> the render, and quotes the delivery call in full). The sixth is worse than stale: **Task G5's
+> Step 3(c) carried a comment whose stated REASON was false**, and it would have been copied into
+> shipped source (it was — and was corrected at the G5 gate, commit `c27d86f`). The claim was that
+> the decrement had to precede delivery because a blank release would otherwise skip it;
+> `deliverReleasedText`'s blank guard returns from that METHOD, not from the coroutine, so the
+> decrement always ran. The real constraint — now in both the source and this plan — is that neither
+> PAINTER may read a pre-decrement depth (delivery paints too), and that the repaint must exist on
+> the resolve path rather than only inside delivery, whose painter sits below the blank guard.
+>
+> | Task | Step | What was respliced |
+> |---|---|---|
+> | G4 | 3(b) | `renderInFlightStrip`'s three positional calls → named |
+> | G5 | 3(a) | the rule body's positional `deltaOwnsPreviewStrip` → named |
+> | G5 | 3(b) | the whole `onDelta` gate block → shipped (named arg + the corrected LOCAL/non-live wording) |
+> | G5 | 3(c) | **the false queue-move justification** → the shipped, corrected one |
+> | G5 | 3(c) | the stamp comment's dropped `PerceivedLatencyTest` cross-reference → restored |
+> | G5 | 3(d) | the whole delivery block → shipped (named args, the `val finalizing` local, the fuller comment) |
+>
+> Task G5's Step 3(c) had already been respliced ONCE, at the F-close, for a different defect: both
+> sides of its replace-X-with-Y carried the pre-I1-fix form of the perceived stamp. That resplice
+> held — the tree at `fd2e08c` matched the "replace" side byte-for-byte when G5 was dispatched — and
+> nothing further is owed for that hazard.
+>
+> **2. EVERY `FloatingBubbleService.kt` LINE NUMBER IN THIS SECTION IS DELETED, not renumbered.**
+> This is the G-close's own ruling and it is binding on Workstream H's briefs too. Six anchors in
+> five sections drifted, in both directions, by **+80 to +458 lines**; two of them
+> (`onDelta`, `onSegmentResolved`) had **never been re-measured in any G document** and were
+> undocumented debt until the G5 report; and one that HAD been re-measured mid-section (G3's review
+> put `deliverReleasedText` at `:2973`) drifted another 76 lines before G5 read it. Renumbering
+> would only reset a clock that runs at roughly one drift per task.
+>
+> | Symbol | This section said | Actual when read | Drift |
+> |---|---|---|---|
+> | G2's insertion point | 167 / 169 | `:247–281` / `:283` | +80 |
+> | `segmentQueueDepth.reset()` | 2152 | `:2372` (G3) → `:2410` (G5) | +220, then +38 |
+> | `estimatedWindowSize`'s allowance | 1321 | `:1476` pre-edit / `:1497` post (G4) | +155 |
+> | `onDelta` | 2262–2297 | **`:2561`** | **+299** |
+> | `onSegmentResolved` | 2298–2306 | **`:2602`** | **+304** |
+> | `deliverReleasedText` | 2591–2595 | **`:3049`** | **+458** |
+>
+> Anchor on the STATEMENTS. The living authority on this surface is the test suite, not this
+> document: `InFlightStripTest` pins all five rules byte-for-byte, `CommitFunnelPinTest` pins the
+> funnel's posted repaint, and `InFlightStripWiringPinTest` pins the `onDelta` gate, both bare
+> painters, the render's ownership argument, the window allowance and the guarded reclamp — each
+> symbol-scoped, so they fail the build when a body moves rather than when a line number does.
+>
+> **3. THE G-SECTION'S RUNNING SUITE TOTALS, as shipped.** Recorded once here so the per-task
+> expectations below stay as each task wrote them. Unlike Workstream F, **every G task's per-step
+> count was exactly right** (`InFlightStripTest` at 10, then 14, then 17 — all three predicted
+> correctly); what the plan did not predict is the two test CLASSES the batteries forced into
+> existence.
+>
+> | Task | Commit | Suite after | Classes | Δ |
+> |---|---|---|---|---|
+> | G1 | `b65f4b7` | **1306** | 119 | +2 / +0 |
+> | G2 | `3ad5b1f` | **1313** | 120 | +7 / **+1** |
+> | G3 | `2e14dc8` | **1316** | 120 | +3 / +0 |
+> | G4 | `fd2e08c` | **1322** | 120 | +6 / +0 |
+> | G5 | `5410e3e` | **1332** | **121** | +10 / **+1** |
+>
+> **Section total: 1304 → 1332 = +28 tests, 119 → 121 = +2 classes.** No absolute total is asserted
+> in any G section; Task S5 computes the branch's totals once, from a purged results directory.
+>
+> **4. Claim corrections carried out of the five reports and their reviews.**
+>
+> (a) **G1's `AtomicInteger` duplicate was deliberately NEVER CREATED.** The section still describes
+> it because the decision — one seq-keyed `SegmentQueueDepth`, not two counters — is the point;
+> G1 shipped two pins onto the survivor instead. Nothing below builds a second counter.
+>
+> (b) **Task G3 consumes NEITHER G2 rule.** The G2 report said otherwise; the plan is right and the
+> G2 verdict ruled the plan governs.
+>
+> (c) **Two Step 5 `git add` lines stage two files; three landed in each case.** G4 added
+> `CommitFunnelPinTest.kt` (the F8 structural remedy for its deferred M3/M4) and G5 added
+> `InFlightStripWiringPinTest.kt` (the venue the G4 review ruled for M7/M8, plus the four painter and
+> gate pins its own battery mandate forced). Both were pre-authorised by their dispatch, both are
+> recorded in their reports as Deviation 1, and neither commit message matches the one quoted below
+> it — G5's gained the correction-of-record paragraph its dispatch required. The blocks are left as
+> the record of what each task set out to stage.
+>
+> (d) **The in-flight strip's owner is EVERY NON-LIVE SESSION — local AND cloud BATCH.** The rule is
+> `deltaOwnsPreviewStrip`, whose one argument is `sessionIsLive` — false for CLOUD_WITH_FALLBACK — so a
+> cloud-batch session now shows "Transcribing… (N in queue)" where 3.6.0 showed nothing. Intended,
+> and load-bearing for G4's M8 argument — but every G document said "LOCAL", including the shipped
+> KDocs until commit `c27d86f`. **Task S3's acceptance sheet needs a row for it and Task S4's release
+> notes need a line, or the owner will read the batch strip as a bug.**
+>
+> (e) **Reachability, measured at the close.** `SHOWING` and `OCCUPYING_BLANK` occur in production;
+> **`HIDDEN` does not** — it needs an empty queue AND a still-GONE strip, and the funnel's repaint for
+> a seq is always enqueued on Main before any resolution for that seq can be. It is kept as the
+> defensive row for exactly that ordering assumption. `OCCUPYING_BLANK` first occurs at G5 and is
+> painted first by the RESOLVE-PATH painter, not by delivery's; delivery's contribution is not
+> returning the strip to `GONE`.
+>
+> (f) **G4 as landed was net-NEGATIVE on its own churn metric**, and that is a sequencing fact rather
+> than a defect: its anti-churn rule was correct but unreachable, because `deliverReleasedText` still
+> hid the strip on every release, so each commit re-paid the reveal and its `reclampNow()` — one per
+> UTTERANCE, against BASE's zero. G5's Step 3(d) is what closes it. Read the two tasks as one change.
+
 ---
 
 ### Task G1: One queue counter — the duplicate is not created, and the survivor gains G's pins
@@ -10276,7 +10388,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task G2: Strip ownership + the in-flight label (pure rules)
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — insert after `processingTimerRunsIn` (currently ends at line 167), before `class FloatingBubbleService` at line 169.
+- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — insert after `processingTimerRunsIn`, before `class FloatingBubbleService`. **By symbol; this section carries no line numbers — see the G-SECTION CLOSE banner.**
 - Create `app/src/test/java/com/whispereverywhere/service/InFlightStripTest.kt`
 
 **Interfaces:**
@@ -10356,7 +10468,7 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
 `e: ...InFlightStripTest.kt:14:20 Unresolved reference: deltaOwnsPreviewStrip` and
 `e: ...InFlightStripTest.kt:30:21 Unresolved reference: inFlightStripLabel`
 
-- [ ] **Step 3: Minimal implementation** — in `FloatingBubbleService.kt`, insert between the end of `processingTimerRunsIn` (line 167, `        state == FloatingBubbleService.BubbleState.FINALIZING`) and the blank line before `class FloatingBubbleService` (line 169):
+- [ ] **Step 3: Minimal implementation** — in `FloatingBubbleService.kt`, insert between the end of `processingTimerRunsIn` (its last line is `        state == FloatingBubbleService.BubbleState.FINALIZING`) and the blank line before `class FloatingBubbleService`:
 
 ```kotlin
 
@@ -10424,7 +10536,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task G3: Hang the in-flight strip off the commit funnel
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — add `commitAdvancesQueueDepth` beside the Task G2 rules (after `inFlightStripLabel`); ONE edit to the funnel `commitSegment` (landed in Task F7, grown in F8/F9); the `renderInFlightStrip()` stub after it. **No reset is added:** Task F7 already established the per-session `segmentQueueDepth.reset()` at line 2152.
+- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — add `commitAdvancesQueueDepth` beside the Task G2 rules (after `inFlightStripLabel`); ONE edit to the funnel `commitSegment` (landed in Task F7, grown in F8/F9); the `renderInFlightStrip()` stub after it. **No reset is added:** Task F7 already established the per-session `segmentQueueDepth.reset()` — find it beside `perceivedLatency.reset()` and the `SegmentOrderer` construction, never by line.
 - Modify `app/src/test/java/com/whispereverywhere/service/InFlightStripTest.kt` — add the funnel rule's assertions.
 
 **Interfaces:**
@@ -10434,7 +10546,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 **What this task does NOT do.** It does not create a funnel, a counter, a field **or a reset**:
 Workstream F landed all four, the five call sites already route through `commitSegment`, every commit
 already updates `segmentQueueDepth` and emits `queue: depth=`, and the per-session
-`segmentQueueDepth.reset()` already sits at line 2152 beside the orderer's. What is missing is the
+`segmentQueueDepth.reset()` already sits beside the orderer's. What is missing is the
 SCREEN — the number is in the log and nowhere else. So this task adds exactly one line to the funnel
 (a Main-hop repaint) plus the guard that decides when a repaint is worth posting. One task, one edit
 to the funnel, no second writer.
@@ -10518,7 +10630,7 @@ and, immediately after the funnel, the stub that Task G4 replaces with the real 
 ```
 
 **No third edit: the per-session reset already exists.** Task F7 landed
-`segmentQueueDepth.reset()` at line 2152, immediately after
+`segmentQueueDepth.reset()` immediately after
 `segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()`, for the same reason the
 orderer is recreated there — a depth carried over from a torn-down session would render a phantom
 backlog on the next one's first commit, and the strip reads `depth()` on every session's first
@@ -10553,7 +10665,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task G4: Paint the in-flight line, and kill the per-utterance reclamp churn
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — add `StripVisibility` + `inFlightStripVisibility` beside the Task G2 / G3 rules (after `commitAdvancesQueueDepth`, which Task G3 adds); replace the `renderInFlightStrip()` stub from Task G3; fix `estimatedWindowSize` line **1321**.
+- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — add `StripVisibility` + `inFlightStripVisibility` beside the Task G2 / G3 rules (after `commitAdvancesQueueDepth`, which Task G3 adds); replace the `renderInFlightStrip()` stub from Task G3; fix `estimatedWindowSize`'s strip allowance (by symbol).
 - Modify `app/src/test/java/com/whispereverywhere/service/InFlightStripTest.kt`
 
 **Interfaces:**
@@ -10661,10 +10773,10 @@ with:
      */
     private fun renderInFlightStrip() {
         if (currentState != BubbleState.RECORDING) return
-        if (deltaOwnsPreviewStrip(sessionIsLive)) return
-        val label = inFlightStripLabel(segmentQueueDepth.depth())
+        if (deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return
+        val label = inFlightStripLabel(depth = segmentQueueDepth.depth())
         val wasHidden = transcriptionDeltaText.visibility == View.GONE
-        when (inFlightStripVisibility(label, wasHidden)) {
+        when (inFlightStripVisibility(label = label, currentlyHidden = wasHidden)) {
             StripVisibility.HIDDEN -> return
             StripVisibility.OCCUPYING_BLANK -> {
                 transcriptionDeltaText.text = ""
@@ -10680,7 +10792,7 @@ with:
     }
 ```
 
-(c) `estimatedWindowSize`, line **1321** — an INVISIBLE strip still occupies its height, so the estimate must allow for it. Replace:
+(c) `estimatedWindowSize`, at its `stripAllowance` — an INVISIBLE strip still occupies its height, so the estimate must allow for it. Replace:
 
 ```kotlin
             if (transcriptionDeltaText.visibility == View.VISIBLE) (100 * density).toInt() else 0
@@ -10721,7 +10833,7 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task G5: Re-route — local deltas off the strip, resolutions onto it
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — `resolvedTextClearsStrip` beside the other rules; `onDelta` at lines **2262–2297**; `onSegmentResolved` at lines **2298–2306**; `deliverReleasedText` at lines **2591–2595**.
+- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — `resolvedTextClearsStrip` beside the other rules; the `onDelta`, `onSegmentResolved` and `deliverReleasedText` bodies. **All four by symbol.** (The anchors this line used to carry drifted +299, +304 and +458 lines respectively and had never been re-measured — see the G-SECTION CLOSE banner.)
 - Modify `app/src/test/java/com/whispereverywhere/service/InFlightStripTest.kt`
 
 **Interfaces:**
@@ -10779,10 +10891,10 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
  * for the whole drain (the pre-existing 3.6.0 D guard, preserved verbatim).
  */
 internal fun resolvedTextClearsStrip(sessionIsLive: Boolean, isFinalizing: Boolean): Boolean =
-    !isFinalizing && deltaOwnsPreviewStrip(sessionIsLive)
+    !isFinalizing && deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)
 ```
 
-(b) `onDelta`, line **2262** — insert the gate as the first statement of the method, leaving the whole existing body byte-identical below it. Replace:
+(b) `onDelta` — insert the gate as the first statement of the method, leaving the whole existing body byte-identical below it. Replace:
 
 ```kotlin
             override fun onDelta(text: String) {
@@ -10793,11 +10905,14 @@ with:
 
 ```kotlin
             override fun onDelta(text: String) {
-                // 3.7 G: LOCAL deltas no longer drive the strip — the commit/resolve in-flight
-                // line does. The callback itself, DeltaThrottle and transcribeStreaming's JNI
-                // plumbing are deliberately left running: CLOUD_LIVE still renders from here, and
-                // the local stream stays available for the next surface that wants it.
-                if (!deltaOwnsPreviewStrip(sessionIsLive)) return
+                // 3.7 G: deltas no longer drive the strip for any NON-LIVE session — the
+                // commit/resolve in-flight line does. In practice the only deltas turned away here
+                // are the local engine's, because cloud batch emits none at all; the gate is
+                // written on the session kind rather than on the engine so it matches the render's.
+                // The callback itself, DeltaThrottle and transcribeStreaming's JNI plumbing are
+                // deliberately left running: CLOUD_LIVE still renders from here, and the local
+                // stream stays available for the next surface that wants it.
+                if (!deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return
                 // Local partial streaming (3.6.0 D) joined cloud-live here. The unified preview
 ```
 
@@ -10852,9 +10967,16 @@ with:
                     // delivery. The SegmentOrderer's release rules are untouched — this only names
                     // its result.
                     val release = segmentOrderer.onResolved(seq, outcome)
-                    // 3.7 G: the queue drops BEFORE delivery and independently of it — an
-                    // EmptyExpected or a Lost segment resolves without releasing any text, and
-                    // the backlog must still count down or the strip sticks at a phantom depth.
+                    // 3.7 G: the decrement runs ahead of BOTH painters — this one and the one
+                    // inside deliverReleasedText — because either would otherwise paint a
+                    // PRE-decrement depth and show a backlog one deeper than it is. (The decrement
+                    // itself was never at risk of being skipped: it lives inside this log call, and
+                    // deliverReleasedText's blank guard returns from THAT METHOD, not from this
+                    // coroutine. The `queue:` line moves as the decrement's passenger, not as the
+                    // reason.) The repaint lives HERE, and not only in delivery, for the blank
+                    // case: an EmptyExpected or a Lost segment releases no text, delivery's painter
+                    // sits below its blank guard, and without this call that resolution would
+                    // count down in logcat while the strip stayed at the old depth.
                     android.util.Log.i(
                         "WE-DIAG",
                         EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),
@@ -10866,8 +10988,9 @@ with:
                     // (CloudTranscriptionEngine runs Semaphore(3) and completes in network order),
                     // so an overtaking seq reaches here while the orderer still holds it and its
                     // release is blank. Consuming the stamp there would drop that seq's number AND
-                    // prune its predecessor's, losing BOTH perceived: lines. G5 moves the queue
-                    // line and the repaint; it must NOT move or re-shape this gate, which
+                    // prune its predecessor's, losing BOTH perceived: lines — measured, and pinned
+                    // by PerceivedLatencyTest's resolution-order rows. G5 moves the queue line and
+                    // the repaint; it must NOT move or re-shape this gate, which
                     // PerceivedStampPinTest#theStampIsConsumedOnlyOnANonBlankRelease pins verbatim.
                     if (release.text.isNotBlank()) {
                         perceivedLatency.onVisible(seq, System.currentTimeMillis())?.let { waited ->
@@ -10877,7 +11000,7 @@ with:
                 }
 ```
 
-(d) `deliverReleasedText`, lines **2591–2595** — replace:
+(d) `deliverReleasedText` — replace its non-FINALIZING strip reset:
 
 ```kotlin
         if (currentState != BubbleState.FINALIZING) {
@@ -10890,14 +11013,23 @@ with:
 with:
 
 ```kotlin
-        if (resolvedTextClearsStrip(sessionIsLive, currentState == BubbleState.FINALIZING)) {
+        val finalizing = currentState == BubbleState.FINALIZING
+        if (resolvedTextClearsStrip(sessionIsLive = sessionIsLive, isFinalizing = finalizing)) {
             transcriptionDeltaText.text = ""
             transcriptionDeltaText.scrollTo(0, 0)
             transcriptionDeltaText.visibility = View.GONE
-        } else if (currentState != BubbleState.FINALIZING) {
+        } else if (!finalizing) {
             // 3.7 G: the strip is carrying the in-flight line, whose truth is the queue depth —
-            // repaint it, never hide it. This is also where the per-utterance scrollTo(0,0) goes
-            // away: the line is one short string, so there is nothing to scroll.
+            // repaint it, never hide it. Returning it to GONE here is what made Task G4's reveal
+            // cost a reclamp per UTTERANCE rather than one per session: GONE is exactly the state
+            // the anti-churn rule reads as "not revealed yet", so every commit paid the reveal
+            // again. NOT hiding is this branch's real contribution; the resolve path above has
+            // usually already painted the same depth, and a second identical paint is free.
+            // This branch is also what covers the four flush() sites that never go through
+            // onSegmentResolved at all. And it is where the per-utterance scrollTo(0, 0) goes away
+            // — the in-flight line is one short string, and in a NON-LIVE session (local or cloud
+            // batch) nothing scrolls this strip any more now that onDelta is gated: the CONNECTING
+            // label already reset it to the top and no delta ever reaches it.
             renderInFlightStrip()
         }
 ```
