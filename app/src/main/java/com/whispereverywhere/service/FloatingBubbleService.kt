@@ -166,6 +166,34 @@ internal fun processingTimerRunsIn(state: FloatingBubbleService.BubbleState): Bo
     state == FloatingBubbleService.BubbleState.PROCESSING ||
         state == FloatingBubbleService.BubbleState.FINALIZING
 
+/**
+ * Whether a WALL-CAP cut consumes the session's first-cap window (3.7, Workstream D — the
+ * predicate only; the `else if` branch it sits under is unchanged).
+ *
+ * A cap cut on silence-only audio still commits the buffer — that part is unconditional. What is
+ * conditional is the bookkeeping:
+ *  - real speech (any session): consume the window and restart the clock;
+ *  - CLOUD silence: also consume — the 4 s window must NEVER re-open on cloud, because a 4 s
+ *    cloud cut is an extra billable provider request and `cap=4000ms` in a cloud session is the
+ *    documented regression signature;
+ *  - LOCAL silence: re-arm, so a user who pauses to think still gets the 4 s first cut on their
+ *    first real speech (3.5.0 parity guarantee).
+ *
+ * Pure and JVM-pinned (CapCutBookkeepingTest). This matters more under 3.7 than it did under
+ * 3.6.0: `hasPendingSpeech()` becomes HONEST — the soft talker in a noisy room, permanently false
+ * under the amplitude segmenter, now reports true — so this branch changes behaviour for exactly
+ * the users it was mis-serving, with no edit to the branch itself.
+ *
+ * That honest-input assumption has ONE documented breach, which whoever edits this branch must
+ * know: once [com.whispereverywhere.audio.SileroEndpointer.isProbeCutout] latches, every predicate
+ * on that endpointer freezes and the first post-latch commit/reset pins `hasPendingSpeech()` FALSE
+ * for the rest of the session, so each later LOCAL cap cut arrives here as `(false, false)` and
+ * re-arms the 4 s window perpetually — see that function's KDoc, which carries the D8/D9 charge to
+ * close it (amplitude fallback on cutout, or a cutout-aware branch).
+ */
+internal fun capCutConsumesWindow(hasPendingSpeech: Boolean, isCloudSession: Boolean): Boolean =
+    hasPendingSpeech || isCloudSession
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
@@ -1713,7 +1741,11 @@ class FloatingBubbleService : Service(),
                 //    session is the bug signature);
                 //  - LOCAL silence: re-arm the window so a user who pauses to think still gets the
                 //    4s first cut on their first real speech (3.5.0 parity guarantee).
-                if (speechSegmenter.hasPendingSpeech() || cloudWrapper != null) {
+                if (capCutConsumesWindow(
+                        hasPendingSpeech = speechSegmenter.hasPendingSpeech(),
+                        isCloudSession = cloudWrapper != null,
+                    )
+                ) {
                     segmentCapPolicy.onCommit(now)
                 } else {
                     segmentCapPolicy.onSessionStart(now)
