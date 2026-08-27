@@ -107,14 +107,45 @@ class WhisperCatalogHelpersTest {
         val ids = WhisperCatalog.pickable.map { it.id }
         assertFalse(ids.contains("extreme"))
         assertFalse(ids.contains("ultra"))
+        // 3.7 Workstream H (owner decision 2026-08-20): the 60 MB tiers join them. "Pretty much
+        // useless at this point… because of the accuracy."
+        assertFalse(ids.contains("eco"))
+        assertFalse(ids.contains("base"))
     }
 
-    @Test fun pickable_is_exactly_the_four_fast_tiers() {
-        assertEquals(listOf("eco", "base", "pro", "multi"), WhisperCatalog.pickable.map { it.id })
+    @Test fun pickable_is_exactly_pro_and_multi() {
+        // The post-3.7 lineup: pro = the English flagship, multi = the international tier.
+        assertEquals(listOf("pro", "multi"), WhisperCatalog.pickable.map { it.id })
     }
 
-    @Test fun default_is_eco() {
-        assertEquals("eco", WhisperCatalog.DEFAULT_MODEL_ID)
+    @Test fun the_sixty_megabyte_tiers_stay_resolvable_after_retirement() {
+        // Same rule that protects extreme/ultra: byId() must keep answering or every installed
+        // eco/base user's installedModel() goes null and the app-wide gate force-marches them
+        // into onboarding with their model file orphaned on disk.
+        assertNotNull(WhisperCatalog.byId("eco"))
+        assertNotNull(WhisperCatalog.byId("base"))
+    }
+
+    @Test fun retiring_a_tier_does_not_by_itself_declare_it_unsupported() {
+        // THE 3.7 split. `retired` hides a tier from the chooser (fresh installs only);
+        // `unsupported` is what drives Settings' migration card. eco/base are retired but
+        // perfectly usable, so their installed users must see nothing at all — the spec's
+        // "existing users unaffected; no re-download forced". extreme/ultra keep both flags.
+        assertFalse(WhisperCatalog.byId("eco")!!.unsupported)
+        assertFalse(WhisperCatalog.byId("base")!!.unsupported)
+        assertTrue(WhisperCatalog.byId("extreme")!!.unsupported)
+        assertTrue(WhisperCatalog.byId("ultra")!!.unsupported)
+    }
+
+    @Test fun every_unsupported_tier_is_also_retired() {
+        // Offering a tier the app wants to migrate people OFF of would be incoherent.
+        WhisperCatalog.entries.filter { it.unsupported }.forEach {
+            assertTrue("'${it.id}' is unsupported but still offered", it.retired)
+        }
+    }
+
+    @Test fun default_is_pro() {
+        assertEquals("pro", WhisperCatalog.DEFAULT_MODEL_ID)
         assertNotNull(WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID))
     }
 

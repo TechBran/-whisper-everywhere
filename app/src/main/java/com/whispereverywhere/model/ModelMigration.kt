@@ -32,7 +32,7 @@ object ModelMigration {
     fun targetIdFor(scope: ModelScope): String =
         if (scope == ModelScope.MULTILINGUAL) MULTILINGUAL_TARGET_ID else WhisperCatalog.DEFAULT_MODEL_ID
 
-    private const val MULTILINGUAL_TARGET_ID = "base"
+    private const val MULTILINGUAL_TARGET_ID = "multi"
 
     fun decide(
         selectedId: String?,
@@ -41,7 +41,10 @@ object ModelMigration {
         online: Boolean,
     ): Action {
         val selected = selectedId?.let { WhisperCatalog.byId(it) } ?: return Action.None
-        if (!selected.retired) return Action.None
+        // `unsupported`, not `retired` (3.7 Workstream H): a merely retired tier is hidden from
+        // the chooser and otherwise left completely alone — its installed users are not prompted,
+        // not migrated, and never asked to re-download.
+        if (!selected.unsupported) return Action.None
         val target = targetIdFor(selected.scope)
         // Target on disk wins regardless of connectivity — nothing left to download.
         if (targetInstalled) return Action.SwapAndDelete(selected.id, target)

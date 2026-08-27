@@ -23,12 +23,25 @@ data class WhisperModel(
     val scope: ModelScope,
     val minRamBytes: Long,
     /**
-     * A tier that is no longer offered but must remain RESOLVABLE. Removing an entry outright
+     * A tier that is no longer OFFERED but must remain RESOLVABLE. Removing an entry outright
      * makes [WhisperCatalog.byId] return null for anyone who selected it, which makes
      * `installedModel()` return null, which trips the app-wide gate and force-marches that user
      * into onboarding — with their model file orphaned on disk. Retire; never delete.
+     *
+     * Retirement alone says nothing about the tier still working. It hides the card from fresh
+     * installs and nothing more; see [unsupported] for the stronger claim.
      */
     val retired: Boolean = false,
+    /**
+     * A retired tier the app also wants users OFF of — the only thing that raises Settings'
+     * "This model is no longer supported" migration card ([ModelMigration]). 3.7 splits this out
+     * of [retired]: the 60 MB tiers are retired for accuracy (owner decision 2026-08-20) but keep
+     * working perfectly for everyone who has one, so prompting them to swap a working 60 MB model
+     * for a 190 MB download would be both unrequested and — since pro is SLOWER than eco — a
+     * false claim in the card's own copy. extreme/ultra keep both flags: their targets really are
+     * faster, so that card stays true.
+     */
+    val unsupported: Boolean = false,
 )
 
 /**
@@ -72,6 +85,8 @@ object WhisperCatalog {
             sha256 = SHA256_ECO,
             scope = ModelScope.ENGLISH,
             minRamBytes = 0L,
+            // 3.7 Workstream H: retired, NOT unsupported — installed users keep it, untouched.
+            retired = true,
         ),
         WhisperModel(
             id = "base",
@@ -83,6 +98,8 @@ object WhisperCatalog {
             sha256 = SHA256_BASE,
             scope = ModelScope.MULTILINGUAL,
             minRamBytes = 0L,
+            // 3.7 Workstream H: retired, NOT unsupported — installed users keep it, untouched.
+            retired = true,
         ),
         WhisperModel(
             id = "pro",
@@ -106,6 +123,7 @@ object WhisperCatalog {
             // gate mislabels genuine 6 GB devices. 5.5e9 keeps the intent (6 GB-class hardware).
             minRamBytes = 5_500_000_000L,
             retired = true,
+            unsupported = true,
         ),
         WhisperModel(
             id = "multi",
@@ -128,6 +146,7 @@ object WhisperCatalog {
             // See extreme tier note: 7.0e9 = genuine 8 GB-class hardware after totalMem slack.
             minRamBytes = 7_000_000_000L,
             retired = true,
+            unsupported = true,
         ),
     )
 
@@ -135,11 +154,14 @@ object WhisperCatalog {
     val pickable: List<WhisperModel> = entries.filter { !it.retired }
 
     /**
-     * Default tier on first run. Eco (base.en) since 2026-07-27: on-device testing found it fast
-     * enough for real-time dictation, and Play reviews cite latency on the larger tiers. It is
-     * also a 60 MB first-run download instead of 190 MB.
+     * Default tier on first run. **pro (small.en) since 2026-08-20 (3.7 Workstream H):** eco and
+     * base are retired for accuracy, leaving pro as the English flagship and multi as the
+     * international tier. The chooser offers [pickable] and the user picks explicitly; this
+     * constant is the fallback for every path with no pick on record — the auto-setup re-entry in
+     * OnboardingSetupViewModel, the download-phase re-resolve in OnboardingFlowScreen, and
+     * ModelMigration's ENGLISH target.
      */
-    const val DEFAULT_MODEL_ID = "eco"
+    const val DEFAULT_MODEL_ID = "pro"
 
     fun byId(id: String?): WhisperModel? = entries.firstOrNull { it.id == id }
 

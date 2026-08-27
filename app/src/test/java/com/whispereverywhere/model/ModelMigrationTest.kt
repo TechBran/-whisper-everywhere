@@ -14,7 +14,19 @@ class ModelMigrationTest {
 
     @Test fun a_current_tier_needs_no_migration() {
         assertEquals(ModelMigration.Action.None, decide("pro"))
+        assertEquals(ModelMigration.Action.None, decide("multi"))
+    }
+
+    @Test fun a_retired_but_supported_tier_is_left_completely_alone() {
+        // 3.7 Workstream H: eco and base are retired (hidden from the chooser) but still work.
+        // Raising the migration card for them would ask a user with a working 60 MB model to
+        // download 190 MB they never asked for — and the card's own copy ("much faster") would
+        // be false, since pro is slower than eco. This is the test that forces decide() to gate
+        // on `unsupported` rather than `retired`, in the same task that retires them.
         assertEquals(ModelMigration.Action.None, decide("eco"))
+        assertEquals(ModelMigration.Action.None, decide("base"))
+        assertEquals(ModelMigration.Action.None, decide("eco", online = false))
+        assertEquals(ModelMigration.Action.None, decide("base", targetInstalled = true))
     }
 
     @Test fun no_selection_needs_no_migration() {
@@ -39,10 +51,10 @@ class ModelMigrationTest {
     }
 
     @Test fun swap_only_happens_once_the_target_is_actually_on_disk() {
-        // "ultra" is MULTILINGUAL, so its target is "base", not the ENGLISH default "eco" —
+        // "ultra" is MULTILINGUAL, so its target is "multi", not the ENGLISH default "pro" —
         // see the MF3 tests below pinning the scope-aware mapping.
         assertEquals(
-            ModelMigration.Action.SwapAndDelete("ultra", "base"),
+            ModelMigration.Action.SwapAndDelete("ultra", "multi"),
             decide("ultra", targetInstalled = true),
         )
     }
@@ -50,7 +62,7 @@ class ModelMigrationTest {
     @Test fun swap_happens_offline_too_once_the_target_is_installed() {
         // No network needed to swap a file that is already downloaded.
         assertEquals(
-            ModelMigration.Action.SwapAndDelete("extreme", "eco"),
+            ModelMigration.Action.SwapAndDelete("extreme", "pro"),
             decide("extreme", targetInstalled = true, online = false),
         )
     }
@@ -61,18 +73,20 @@ class ModelMigrationTest {
     }
 
     // MF3: the target must match the retired model's language scope. "ultra" is MULTILINGUAL
-    // (large-v3-turbo) — routing it to the ENGLISH-only default ("eco") silently breaks
-    // dictation in every other language. "extreme" is ENGLISH, so "eco" is correct for it.
+    // (large-v3-turbo) — routing it to the ENGLISH-only default silently breaks dictation in every
+    // other language. "extreme" is ENGLISH, so the English default is correct for it. Since 3.7 the
+    // lineup is two tiers, so those targets are "multi" and "pro".
     // Replaces the old `migration_target_is_the_catalog_default`, which assumed every retired
     // tier maps to WhisperCatalog.DEFAULT_MODEL_ID regardless of scope — that assumption is the
     // bug MF3 fixes.
-    @Test fun a_multilingual_retired_tier_migrates_to_base_not_the_english_default() {
+    @Test fun a_multilingual_unsupported_tier_migrates_to_multi_not_the_english_default() {
         val a = decide("ultra", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
-        assertEquals("base", a.toId)
+        assertEquals("multi", a.toId)
     }
 
-    @Test fun an_english_retired_tier_migrates_to_eco() {
+    @Test fun an_english_unsupported_tier_migrates_to_pro() {
         val a = decide("extreme", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
         assertEquals(WhisperCatalog.DEFAULT_MODEL_ID, a.toId)
+        assertEquals("pro", a.toId)
     }
 }
