@@ -22,10 +22,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * through. The last pins the steady state's non-blocking read, which is a performance property the
  * other five cannot see: delete the early return and every frame queues behind the teardown.
  *
- * Every wait here is BOUNDED and every ordering is established by a latch rather than by a sleep,
- * so nothing below can pass or fail on scheduling luck. `releaseNeverFreesAContextThatIsStillBeing`
- * `Created` is deliberately race-TOLERANT in the same spirit: both admissible interleavings of its
- * two workers produce the same `[init-enter, init-exit, free]` order once the monitor exists.
+ * Every wait here is BOUNDED. Every ordering but one is established by a latch:
+ * `releaseNeverFreesAContextThatIsStillBeingCreated` keeps the brief's `Thread.sleep(50)` at `:99`,
+ * which needs the init worker to have entered `probe.init` within 50 ms of signalling `initStarted`
+ * — a wide margin against a 300 ms init, but a sleep and not a fence. Its three orderings: release
+ * landing inside the init and release landing after it both produce
+ * `[init-enter, init-exit, free]`; release landing BEFORE `init-enter` would read `ARMED`, skip the
+ * free and red — which is exactly what the 50 ms buys against.
  */
 class VadProbeLifecycleConcurrencyTest {
 

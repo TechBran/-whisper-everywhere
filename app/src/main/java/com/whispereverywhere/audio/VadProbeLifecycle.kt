@@ -55,6 +55,16 @@ import java.util.concurrent.atomic.AtomicLong
  * alternative: E2's finding is that the join's outcome is unobservable, so an ordering that cannot
  * be observed cannot be constructed.
  *
+ * **IT IS A SESSION GENERATION, AND THAT IS A REAL LIMIT, NOT A PHRASING.** `switchSource`
+ * (`FloatingBubbleService.kt:1812`) swaps capturers WITHIN one session — same bounded
+ * `stopThenJoin`, same unobservable outcome — and never re-arms, so the epoch does not move. A mic
+ * thread that outlives that join holds a token that is still CURRENT, passes both gates, and writes
+ * D8's one shared direct buffer alongside the device-audio thread: T8 torn frames in an
+ * INTRA-session form this class cannot see by construction. D8/D9/D10 must either bump the epoch at
+ * `switchSource` — the natural site, which already resets the endpointer at
+ * `FloatingBubbleService.kt:1819` — or show the switch's stop-then-join makes the survivor
+ * impossible within T2-SHARPENED's best-effort bounds. Decided there; not closable here.
+ *
  * **THE WIRING D8 MUST USE** — the ungated [ensureReady] overload is exactly the route a stale
  * thread would take, so the capture path must not use it. The token has to be snapshotted ONCE PER
  * SESSION on the capture side and never re-read per frame: a per-frame read hands the stale thread
@@ -72,16 +82,33 @@ import java.util.concurrent.atomic.AtomicLong
  * }
  * ```
  *
- * Two preconditions that wiring rests on. Both hold today; both are worth an assertion if the
- * capture side is ever restructured. (1) `StreamingAudioRecorder` starts a FRESH `Thread` per
- * session (`:70`, `:101`, nulled at `:148`), so a capture thread cannot be carrying a PREVIOUS
- * session's snapshot: a new session's thread takes its own epoch, and only a thread that outlived
- * its join holds a stale one. Were capture threads ever POOLED this inverts — a reused thread would
- * keep session N's snapshot and be refused for the whole of N+1, which is VAD silently off rather
- * than corrupt (a permanent [VadProbe.NO_VERDICT] is "keep the previous state", T10), but it is
- * still a regression and the pooling change would have to re-bind. (2) `probeArm` runs before the
- * session's first frame, which `SileroEndpointer` gives by construction: it fires from
- * `onSessionStart` (`:421`) and the probe lambda is reachable only from `onFrame`.
+ * THREE preconditions that wiring rests on. All three hold today; all three are worth an assertion
+ * if the capture side is ever restructured — and note that (1) and (2) fail CLOSED while (3) fails
+ * OPEN, which is the one that costs something.
+ *
+ * (1) BOTH capture sources start a FRESH `Thread` per session — `StreamingAudioRecorder` at `:70`,
+ * `:101`, nulled at `:148`, and `PlaybackAudioCapturer` at `:64`, `:88`, nulled at `:100`; both
+ * feed the same `onAudioChunk`. So a capture thread cannot be carrying a PREVIOUS session's
+ * snapshot: a new session's thread takes its own epoch, and only a thread that outlived its join
+ * holds a stale one. Were capture threads ever POOLED this inverts — a reused thread would keep
+ * session N's snapshot and be refused for the whole of N+1, which is VAD silently off rather than
+ * corrupt (a permanent [VadProbe.NO_VERDICT] is "keep the previous state", T10), but it is still a
+ * regression and the pooling change would have to re-bind.
+ *
+ * (2) `probeArm` runs before the session's first frame. `SileroEndpointer` fires it from
+ * `onSessionStart` (`:421`), and the ordering that actually carries this is a THREAD START, not the
+ * lambda's reachability: `onOpen`'s Main body runs `onSessionStart` at
+ * `FloatingBubbleService.kt:2224` and only then `startAudioInput()` at `:2239`, which spawns the
+ * capture thread.
+ *
+ * (3) A capture thread's FIRST probe call must land while its OWN session is still open. `mine.get()`
+ * initialises at the first call, not at thread start, so a thread that produced NO probe frames
+ * during its own session and then delivers one after the next [arm] snapshots the NEW epoch and is
+ * ADMITTED — **the gate fails open here, not closed.** It needs a whole session with zero probe
+ * frames (blocked in `record.read()` throughout a very short session) plus a timed-out join, so it
+ * is narrower than the hazard the epoch closes; but it is the direction that costs something.
+ * Closing it needs a capture-thread-ENTRY binding — `CaptureThreadPolicy.enterCaptureThread()` is
+ * the natural site — which is D10's change, not D8's.
  *
  * **THE MAIN-BLOCK BUDGET, stated rather than assumed (D4 review, teardown-bill T1 RESIDUAL).**
  * The monitor makes Main's [release] wait out a whole in-flight `vadProbeInit`, and it lands on
@@ -199,6 +226,9 @@ class VadProbeLifecycle(private val probe: VadProbe) {
      * no-concurrent-refill rule stay D8's alone (T7/T8), exactly as they are for
      * [NativeVadProbe.frame]. This adds two volatile reads and no lock.
      *
+     * No `try`/`catch`, deliberately and asymmetrically with [ensureReady]: the extern's contract is
+     * a sentinel rather than a throw, and an unpinned catch on the audio thread is worse than none.
+     *
      * @return the probe's probability, or [VadProbe.NO_VERDICT] for a stale [session] or a probe
      *   that is not `READY` — with the probe untouched. NEVER 0.0f: "no verdict" is not silence
      *   (T10), and a stale frame that read as confident silence would cut a live utterance.
@@ -209,7 +239,22 @@ class VadProbeLifecycle(private val probe: VadProbe) {
         return probe.frame(pcm, nBytes)
     }
 
-    /** One of the five reset sites, or the endpointer's own post-commit reset. */
+    /**
+     * One of the five reset sites, or the endpointer's own post-commit reset.
+     *
+     * UNGATED, deliberately, and this is the one capture-path route the epoch does not watch.
+     * `probeReset` is fired from BOTH Main (`onSessionStart` and three of the four service reset
+     * sites) and the CAPTURE thread (the wall-cap cut at `FloatingBubbleService.kt:1722` /
+     * `plan:8349`, inside `onAudioChunk`), so no single token binding can be correct for both
+     * callers: binding it to the capture thread's snapshot would cache MAIN's token forever and
+     * refuse Main's resets for every later session, and binding it to the currently-armed epoch
+     * gates nothing. A stale capture thread reaching the cap branch therefore clears the LIVE next
+     * session's LSTM. That is strictly milder than what the epoch closes — a cleared recurrence
+     * costs a few frames of re-warm, where a FED one poisons every frame after it (T9) — and it
+     * rides a commit a stale thread could already trigger before 3.7. Named, not gated. How
+     * capture-thread resets are finally routed is D8/D9's call and must be made explicitly; see the
+     * D5 report's handoff.
+     */
     fun reset() {
         if (currentState == State.READY) runCatching { probe.reset() }
     }
