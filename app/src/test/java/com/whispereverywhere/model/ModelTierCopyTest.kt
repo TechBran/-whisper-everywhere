@@ -89,12 +89,18 @@ class ModelTierCopyTest {
     @Test fun no_offered_tier_names_a_retired_one() {
         // "Noticeably slower than Eco" was true and is now a dangling reference to a card the
         // user can no longer see. Copy may not describe a tier by comparison to a dead one.
+        // The match is WORD-ANCHORED (H3 review, m1): retired ids are short common substrings —
+        // "record"/"recording" contains "eco", "based"/"database" contains "base" — so a plain
+        // `contains` fails ordinary dictation copy while naming a reference that is not there.
         val retiredIds = WhisperCatalog.entries.filter { it.retired }.map { it.id.lowercase() }
         WhisperCatalog.pickable.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             val all = (copy.headline + " " + copy.body + " " + copy.badges.joinToString(" ")).lowercase()
             retiredIds.forEach { r ->
-                assertFalse("tier '${model.id}' copy names retired tier '$r'", all.contains(r))
+                assertFalse(
+                    "tier '${model.id}' copy names retired tier '$r'",
+                    Regex("\\b" + Regex.escape(r) + "\\b").containsMatchIn(all),
+                )
             }
         }
     }
@@ -130,6 +136,29 @@ class ModelTierCopyTest {
         assertEquals("Best match for your language", ModelTierCopy.STEER_BADGE)
         listOf("faster", "fastest", "quicker", "instant").forEach {
             assertFalse(ModelTierCopy.STEER_BADGE.lowercase().contains(it))
+        }
+    }
+
+    @Test fun the_steered_tier_is_offered_first() {
+        assertEquals(listOf("pro", "multi"), ModelTierCopy.orderedForLanguageTag("en-US"))
+        assertEquals(listOf("multi", "pro"), ModelTierCopy.orderedForLanguageTag("bn-BD"))
+    }
+
+    @Test fun the_order_is_always_a_permutation_of_the_pickable_catalog() {
+        // A future tier that nobody remembered to mention here must still reach the chooser —
+        // dropping one silently would make it undownloadable.
+        val pickable = WhisperCatalog.pickable.map { it.id }
+        listOf("en", "bn", "de-AT", "").forEach { tag ->
+            val ordered = ModelTierCopy.orderedForLanguageTag(tag)
+            assertEquals("'$tag' lost or duplicated a tier", pickable.size, ordered.size)
+            assertEquals("'$tag' is not a permutation", pickable.toSet(), ordered.toSet())
+        }
+    }
+
+    @Test fun every_ordered_id_resolves_and_has_copy() {
+        ModelTierCopy.orderedForLanguageTag("en").forEach {
+            assertNotNull(WhisperCatalog.byId(it))
+            assertNotNull(ModelTierCopy.forId(it))
         }
     }
 }

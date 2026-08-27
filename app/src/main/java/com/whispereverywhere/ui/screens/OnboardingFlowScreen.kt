@@ -396,15 +396,22 @@ private fun EnginesStep(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(16.dp))
-        WhisperCatalog.pickable.forEach { model ->
-            TierChoiceCard(
-                model = model,
-                copy = ModelTierCopy.forId(model.id),
-                selected = pickedTierId == model.id,
-                onClick = { onPick(model.id) },
-            )
-            Spacer(Modifier.height(12.dp))
-        }
+        // 3.7 Workstream H: the steered tier first — English locale -> pro, everything else ->
+        // multi. A steer, not a lock: both cards stay tappable and TIER_SWITCH_HINT below still
+        // promises the switch.
+        val languageTag = java.util.Locale.getDefault().toLanguageTag()
+        val steerId = ModelTierCopy.steerIdForLanguageTag(languageTag)
+        ModelTierCopy.orderedForLanguageTag(languageTag).mapNotNull { WhisperCatalog.byId(it) }
+            .forEach { model ->
+                TierChoiceCard(
+                    model = model,
+                    copy = ModelTierCopy.forId(model.id),
+                    steered = model.id == steerId,
+                    selected = pickedTierId == model.id,
+                    onClick = { onPick(model.id) },
+                )
+                Spacer(Modifier.height(12.dp))
+            }
         Text(
             OnboardingLogic.TIER_SWITCH_HINT,
             style = MaterialTheme.typography.bodySmall,
@@ -443,6 +450,7 @@ private fun EnginesStep(
 private fun TierChoiceCard(
     model: WhisperModel,
     copy: ModelTierCopy.TierCopy?,
+    steered: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -482,7 +490,8 @@ private fun TierChoiceCard(
             copy?.let { c ->
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    c.badges.forEach { badge ->
+                    val chips = if (steered) listOf(ModelTierCopy.STEER_BADGE) + c.badges else c.badges
+                    chips.forEach { badge ->
                         Surface(
                             color = Primary.copy(alpha = 0.12f),
                             shape = RoundedCornerShape(8.dp),

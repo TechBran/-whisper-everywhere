@@ -51,6 +51,18 @@ object ModelTierCopy {
         else "multi"
 
     /**
+     * Every offered tier id with the [steerIdForLanguageTag] one FIRST (3.7, Workstream H). Both
+     * chooser surfaces render this list, so the steer is one rule rather than two. It is a
+     * permutation of [WhisperCatalog.pickable] by construction — a tier this object has never
+     * heard of still reaches the user, just not at the top.
+     */
+    fun orderedForLanguageTag(languageTag: String): List<String> {
+        val steer = steerIdForLanguageTag(languageTag)
+        val ids = WhisperCatalog.pickable.map { it.id }
+        return ids.filter { it == steer } + ids.filter { it != steer }
+    }
+
+    /**
      * The chip marking the steered card. Names the REASON — "Default" alone never explained why
      * this card and not the other one, and for a non-English user the catalog default and the
      * right answer are different tiers.

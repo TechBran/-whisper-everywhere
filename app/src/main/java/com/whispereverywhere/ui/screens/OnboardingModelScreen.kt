@@ -41,8 +41,12 @@ fun OnboardingModelScreen(
     val app = WhisperEverywhereApp.getInstance()
     val manager = app.whisperModelManager
     // Only tiers still offered — retired tiers stay resolvable via WhisperCatalog.byId for
-    // existing users but must not be selectable by anyone new.
-    val models = WhisperCatalog.pickable
+    // existing users but must not be selectable by anyone new. 3.7 Workstream H orders them by
+    // locale: the steered tier is first and carries the badge.
+    val languageTag = java.util.Locale.getDefault().toLanguageTag()
+    val steerId = ModelTierCopy.steerIdForLanguageTag(languageTag)
+    val models = ModelTierCopy.orderedForLanguageTag(languageTag)
+        .mapNotNull { WhisperCatalog.byId(it) }
 
     val state by viewModel.state.collectAsState()
 
@@ -88,13 +92,19 @@ fun OnboardingModelScreen(
 
             models.forEach { model ->
                 val recommended = manager.isRecommendedForDevice(model)
-                val isDefault = model.id == WhisperCatalog.DEFAULT_MODEL_ID
+                // The highlighted card is the STEERED one, not the catalog default: for a
+                // non-English user those are different tiers, and highlighting the English-only
+                // default is exactly the mistake the Bengali review reported. The flag is named
+                // `isSteered` rather than the old `isDefault` because that is now what it means
+                // (H3 review, m2b) — a parameter whose name contradicts its value outlives every
+                // comment that apologises for it.
+                val isSteered = model.id == steerId
                 val isActive = activeModelId == model.id
 
                 ModelTierCard(
                     model = model,
                     recommended = recommended,
-                    isDefault = isDefault,
+                    isSteered = isSteered,
                     state = if (isActive) state else DownloadState.Idle,
                     onSelect = {
                         activeModelId = model.id
@@ -118,7 +128,7 @@ fun OnboardingModelScreen(
 private fun ModelTierCard(
     model: WhisperModel,
     recommended: Boolean,
-    isDefault: Boolean,
+    isSteered: Boolean,
     state: DownloadState,
     onSelect: () -> Unit,
     onRetry: () -> Unit
@@ -138,7 +148,7 @@ private fun ModelTierCard(
 
     val borderColor = when {
         done -> Success
-        isDefault -> Primary
+        isSteered -> Primary
         else -> MaterialTheme.colorScheme.outline
     }
 
@@ -149,12 +159,12 @@ private fun ModelTierCard(
                 if (!isBusy) Modifier.clickable(onClick = onSelect) else Modifier
             ),
         colors = CardDefaults.cardColors(
-            containerColor = if (isDefault)
+            containerColor = if (isSteered)
                 Primary.copy(alpha = 0.05f)
             else
                 MaterialTheme.colorScheme.surface
         ),
-        border = BorderStroke(if (isDefault || done) 2.dp else 1.dp, borderColor),
+        border = BorderStroke(if (isSteered || done) 2.dp else 1.dp, borderColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -224,8 +234,8 @@ private fun ModelTierCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (isDefault) {
-                    TierBadge(text = "Default", color = Primary)
+                if (isSteered) {
+                    TierBadge(text = ModelTierCopy.STEER_BADGE, color = Primary)
                 }
                 if (recommended) {
                     TierBadge(text = "Recommended for your device", color = Success)
