@@ -7045,7 +7045,28 @@ object CommitCadencePolicy {
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.service.CommitCadencePolicyTest" --no-daemon
 ```
-Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+13 delta** for this task (`CommitCadencePolicyTest`).
+Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+13 delta** for this task (`CommitCadencePolicyTest`). **Shipped: +13, suite 1201.**
+
+> **THE D-SECTION'S RUNNING SUITE TOTALS, as shipped.** Recorded once here so the per-task lines
+> below can stay as each task wrote them. Four tasks shipped MORE tests than planned — fix rounds
+> and review findings added them — and the plan's per-task deltas are left untouched as the record
+> of what each task set out to add. No absolute total is asserted in any D section; Task S5 computes
+> the branch's totals once, from a purged results directory.
+>
+> | Task | Planned delta | Shipped delta | Suite after | Classes |
+> |---|---|---|---|---|
+> | D3 | +13 | **+13** | **1201** | — |
+> | D4 | +8 | **+9** | **1210** | — |
+> | D5 | +3 | **+6** | **1216** | 108 |
+> | D6 | +5 | **+9** | **1225** | — |
+> | D7 | +4 | **+4** | **1229** | 110 |
+> | D8 | +5 | **+11** | **1240** | 111 |
+> | D9 | +7 | **+7** | **1247** | 112 |
+> | D10 | +7 | **+7** | **1254** | 113 |
+>
+> The one worth knowing is **D8: planned 1234, shipped 1240.** Its fix round added six tests, so any
+> later section that reasons "D8 leaves the suite at 1234" is doing arithmetic on a number that
+> never existed.
 
 - [ ] **Step 5: Commit.**
 ```powershell
@@ -7340,7 +7361,7 @@ class VadProbeLifecycle(private val probe: VadProbe) {
         return ok
     }
 
-    /** One of the five reset sites, or the endpointer's own post-commit reset. */
+    /** One of the three service-side reset sites, or the endpointer's own post-commit reset. */
     fun reset() {
         if (currentState == State.READY) runCatching { probe.reset() }
     }
@@ -7358,7 +7379,7 @@ class VadProbeLifecycle(private val probe: VadProbe) {
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.VadProbeLifecycleTest" --no-daemon
 ```
-Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+8 delta** for this task (`VadProbeLifecycleTest`).
+Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+8 delta** for this task (`VadProbeLifecycleTest`). **Shipped: +9, suite 1210** (see the running table at Task D3).
 
 - [ ] **Step 5: Commit.**
 ```powershell
@@ -7576,7 +7597,7 @@ only ever calls into a context whose existence is already established.)
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.VadProbeLifecycle*" --no-daemon
 ```
-Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+3 delta** for this task (`VadProbeLifecycleConcurrencyTest`).
+Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+3 delta** for this task (`VadProbeLifecycleConcurrencyTest`). **Shipped: +6, suite 1216 across 108 classes** (see the running table at Task D3).
 
 - [ ] **Step 5: Commit.**
 ```powershell
@@ -7820,7 +7841,7 @@ and add the override immediately after `commit()`'s closing brace (:240):
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.transcription.*" --no-daemon
 ```
-Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+5 delta** for this task (`LocalWhisperEngineCapSplitTest`).
+Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+5 delta** for this task (`LocalWhisperEngineCapSplitTest`). **Shipped: +9, suite 1225** (see the running table at Task D3).
 
 - [ ] **Step 5: Commit.**
 ```powershell
@@ -7843,8 +7864,24 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 ### Task D7: `capCutConsumesWindow` — the cap-cut bookkeeping predicate, JVM-pinned
 
+> **BANNER, not respliced — this section is D7's own record and its call site is an illustration of
+> a line D7 did not own.** Step 3's closing snippet still reads
+> `capCutConsumesWindow(speechSegmenter.hasPendingSpeech(), cloudWrapper != null)`, which was true
+> when D7 ran: the field was still `speechSegmenter` (Task D9 renamed it to `endpointer` and deleted
+> the old one) and the CUTOUT term did not exist yet (Task D9 added
+> `|| (endpointer as? SileroEndpointer)?.isProbeCutout() == true`). It is left as D7 wrote it under
+> the rule at Task C2, because the sentence beside it is what tells the next implementer what this
+> predicate was for — and because a re-extraction fails LOUDLY here (`Unresolved reference:
+> speechSegmenter`) rather than silently. **The form that actually ships is in Task D9's Step 3,
+> respliced.** The predicate itself — the `internal fun` and its 4-row truth table — is unchanged
+> and still exact; the cutout term is deliberately OR-ed in at the CALL SITE so this function stays
+> SYMMETRIC.
+>
+> Line numbers in this section are stale (D7, D9, D10 and the D10 fix round all moved this file);
+> anchor on the statements.
+
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` (add a top-level `internal fun` after `processingTimerRunsIn` ends at :167, before `class FloatingBubbleService` at :169; use it at :1716)
+- Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` (add a top-level `internal fun` after `processingTimerRunsIn` ends and before `class FloatingBubbleService` begins; use it inside the `else if (segmentCapPolicy.capExceeded(now))` wall-cap branch)
 - Create `app/src/test/java/com/whispereverywhere/service/CapCutBookkeepingTest.kt`
 
 **Interfaces:**
@@ -7945,16 +7982,19 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
 internal fun capCutConsumesWindow(hasPendingSpeech: Boolean, isCloudSession: Boolean): Boolean =
     hasPendingSpeech || isCloudSession
 ```
-Then at :1716 replace the inline expression, leaving every surrounding line byte-identical:
+Then, inside the wall-cap `else if`, replace the inline expression, leaving every surrounding line
+byte-identical:
 ```kotlin
                 if (capCutConsumesWindow(speechSegmenter.hasPendingSpeech(), cloudWrapper != null)) {
 ```
+*(D7's form. Task D9 renames the field to `endpointer`, moves both arguments to NAMED form and ORs
+in the cutout term — see D9's Step 3 for the shipped line. Do not copy this one forward.)*
 
 - [ ] **Step 4: Run tests green.**
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.service.*" --no-daemon
 ```
-Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+4 delta** for this task (`CapCutBookkeepingTest`).
+Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the **+4 delta** for this task (`CapCutBookkeepingTest`). **Shipped: +4 as planned, suite 1229 across 110 classes.**
 
 - [ ] **Step 5: Commit.**
 ```powershell
@@ -8149,7 +8189,7 @@ internal object EndpointerFactory {
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.audio.*" --no-daemon
 ```
 Then the full suite + the aggregation command from Global Constraints. Expected: `failures=0 errors=0`
-and the **+5 delta** for this task (`EndpointerFactoryTest`).
+and the **+5 delta** for this task (`EndpointerFactoryTest`). **Shipped: +11, suite 1240 across 111 classes** — this task's fix round added six. Anything downstream that assumes 1234 is using a number that never existed.
 
 - [ ] **Step 5: Commit.**
 ```powershell
@@ -8175,12 +8215,39 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 ---
 
-### Task D9: Wire the seam at `FloatingBubbleService.kt:1689–1724` — verdict swap + cap-cut split
+### Task D9: Wire the seam in `onAudioChunk`'s client-VAD block — verdict swap + cap-cut split
+
+> **PARTLY SUPERSEDED — two snippets RESPLICED, every line number stale.** Under the rebase rule
+> (see the banner at Task C2): a snippet that faithfully records a stub gets a banner; a snippet
+> that contradicts discipline already in force gets RESPLICED from the shipped source.
+>
+> **Respliced, because a re-extraction of the originals would reinstate defects that were caught
+> and fixed:** (1) `capCutConsumesWindow(endpointer.hasPendingSpeech(), cloudWrapper != null)`
+> appeared POSITIONALLY in both Step 1's needle and Step 3's body, against the settled
+> named-argument ruling for two same-typed parameters — and it omitted the **CUTOUT term** D9
+> actually shipped (`|| (endpointer as? SileroEndpointer)?.isProbeCutout() == true`), without which
+> a latched session re-arms the 4 s first-cap window on every later cap cut: a perpetual 4 s
+> cadence, ~3.75x the encoder passes, on exactly the device that could not afford the probe.
+> (2) `CommitCadencePolicy.capCutRetainMs(now, endpointer.pendingCutPointMs())` appeared
+> POSITIONALLY in the same two places; two same-typed `Long`s whose swap returns `0L` for EVERY
+> input, and `commitRetainingTailMs(0)` **is** `engine.commit()` — the whole D6 split reverts to
+> 3.6.0 silently, with the suite green. D2's M22 survived exactly that. Both are now the named
+> forms the tree ships and `CapSeamPinTest` pins.
+>
+> **Line numbers: all of them are stale, and deliberately not renumbered.** This file moved under
+> D7, D9, D10 and its fix round. Anchor on the STATEMENTS — the `if (endpointer.onFrame(chunk, amp,
+> now))` verdict, the `} else if (segmentCapPolicy.capExceeded(now)) {` wall cap, and the named
+> `speechSegmenter` → `endpointer` rename sites in `switchSource` / `onOpen` / `stopRecording`.
+> That is what D7's and D9's own sweeps concluded, and the tree now holds no `FBS.kt:N` reference
+> at all (verified by `grep -rnE "(FloatingBubbleService|FBS)[A-Za-z.]*:[0-9]" --include=*.kt app/src`).
+> **`onOpen`'s rename site no longer exists as a reset** — Task D10 replaced it with
+> `onSessionStart`; see D10's banner.
 
 **Files:**
 - Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt`
-  (import :47; field :250; seam :1691, :1716, :1721–1722; the three surviving
-  `speechSegmenter.reset()` call sites at :1819, :2224, :2393 — **rename only**)
+  (the `Endpointer` import; the `endpointer` field beside `segmentCapPolicy`; the client-VAD seam
+  inside `onAudioChunk`; the three surviving `speechSegmenter.reset()` call sites in `switchSource`,
+  `onOpen` and `stopRecording` — **rename only**)
 - Create `app/src/test/java/com/whispereverywhere/service/CapSeamPinTest.kt`
 
 **Interfaces:**
@@ -8257,7 +8324,12 @@ class CapSeamPinTest {
     fun theCapBranchKeepsItsBookkeepingAndItsUnconditionalCommit() {
         val cap = indexOfOrFail("            } else if (segmentCapPolicy.capExceeded(now)) {")
         val bookkeeping = indexOfOrFail(
-            "                if (capCutConsumesWindow(endpointer.hasPendingSpeech(), cloudWrapper != null)) {"
+            "                if (capCutConsumesWindow(\n" +
+                "                        hasPendingSpeech = endpointer.hasPendingSpeech() ||\n" +
+                "                            (endpointer as? SileroEndpointer)?.isProbeCutout() == true,\n" +
+                "                        isCloudSession = cloudWrapper != null,\n" +
+                "                    )\n" +
+                "                ) {"
         )
         val commit = indexOfOrFail("                engine.commitRetainingTailMs(retainMs)")
         val reset = text.indexOf("                endpointer.reset()", commit)
@@ -8269,7 +8341,7 @@ class CapSeamPinTest {
     @Test
     fun theCapCutAsksTheCadencePolicyForItsRetainWindow() {
         indexOfOrFail(
-            "                val retainMs = CommitCadencePolicy.capCutRetainMs(now, endpointer.pendingCutPointMs())"
+            "                val retainMs = CommitCadencePolicy.capCutRetainMs(nowMs = now, cutPointMs = endpointer.pendingCutPointMs())"
         )
     }
 
@@ -8326,14 +8398,20 @@ place them immediately after `import com.whispereverywhere.WhisperEverywhereApp`
         EndpointerFactory.create(com.whispereverywhere.transcription.VadModel.path())
 ```
 
-(c) The seam. Line 1691 becomes the endpointer call; lines 1716 and 1721–1722 take the cap-cut
-split. Every other line in :1689–1724 — including the entire comment block at :1696–1720 and the
-`else if` itself — stays byte-identical:
+(c) The seam. The `speechSegmenter.shouldCommit(...)` call becomes the endpointer verdict; the
+bookkeeping predicate and the commit inside the `else if` take the cap-cut split. Every other line
+in the client-VAD block — including the entire cap-branch comment and the `else if` itself — stays
+byte-identical:
 ```kotlin
             if (endpointer.onFrame(chunk, amp, now)) {
 ```
 ```kotlin
-                if (capCutConsumesWindow(endpointer.hasPendingSpeech(), cloudWrapper != null)) {
+                if (capCutConsumesWindow(
+                        hasPendingSpeech = endpointer.hasPendingSpeech() ||
+                            (endpointer as? SileroEndpointer)?.isProbeCutout() == true,
+                        isCloudSession = cloudWrapper != null,
+                    )
+                ) {
                     segmentCapPolicy.onCommit(now)
                 } else {
                     segmentCapPolicy.onSessionStart(now)
@@ -8344,16 +8422,16 @@ split. Every other line in :1689–1724 — including the entire comment block a
                 // unrepairable. capCutRetainMs returns 0 for no offer, a stale offer, and for the
                 // amplitude endpointer always; commitRetainingTailMs(0) IS engine.commit(). So an
                 // endpointer that never fires leaves this branch byte-identical to 3.6.0.
-                val retainMs = CommitCadencePolicy.capCutRetainMs(now, endpointer.pendingCutPointMs())
+                val retainMs = CommitCadencePolicy.capCutRetainMs(nowMs = now, cutPointMs = endpointer.pendingCutPointMs())
                 engine.commitRetainingTailMs(retainMs)
                 endpointer.reset()
 ```
-Also update the comment at :1705 to name the new call:
-`// hasPendingSpeech() is read BEFORE endpointer.reset(), which clears the flag.`
+Also update the read-before-reset comment in the cap branch to name the new call:
+`// hasPendingSpeech() and pendingCutPointMs() are both read BEFORE endpointer.reset(), which clears them.`
 
 (d) **The three remaining `speechSegmenter.reset()` call sites — rename, nothing more.** Deleting the
-field in (b) without these leaves `switchSource` (:1819), `onOpen` (:2224) and `stopRecording`
-(:2393) referencing a field that no longer exists, so `compileDebugKotlin` fails with three
+field in (b) without these leaves `switchSource`, `onOpen` and `stopRecording`
+referencing a field that no longer exists, so `compileDebugKotlin` fails with three
 `Unresolved reference: speechSegmenter` and this task's own
 `theAmplitudeSegmenterIsNoLongerCalledDirectly` cannot reach 0. At each of the three, replace:
 
@@ -8367,8 +8445,8 @@ with:
         endpointer.reset()
 ```
 
-(matching each site's existing indentation — 8 spaces at :1819 and :2393, 20 inside `onOpen`'s
-coroutine at :2224). **Rename only.** The comment extension at `switchSource`, the per-session
+(matching each site's existing indentation — 8 spaces in `switchSource` and `stopRecording`, 20
+inside `onOpen`'s coroutine). **Rename only.** The comment extension at `switchSource`, the per-session
 cadence handover in `onOpen` and the `onSessionEnd()` teardown in `stopRecording` are Task D10's, and
 none of them is landed here.
 
@@ -8377,7 +8455,8 @@ none of them is landed here.
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --no-daemon; .\gradlew.bat :app:assembleDebug --no-daemon
 ```
 Then the aggregation command from Global Constraints. Expected: `failures=0 errors=0` and the
-**+7 delta** for this task (`CapSeamPinTest`), and `BUILD SUCCESSFUL` for `assembleDebug` (the seam
+**+7 delta** for this task (`CapSeamPinTest`) — **shipped: +7 as planned, suite 1247 across 112
+classes** — and `BUILD SUCCESSFUL` for `assembleDebug` (the seam
 now references four new units and the native probe externs — this is the first task where the whole
 graph must link).
 
@@ -8399,21 +8478,54 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 
 ---
 
-### Task D10: The five reset sites + the per-session cadence and probe lifecycle
+### Task D10: The service-side reset sites + the per-session cadence and probe lifecycle
+
+> **SUPERSEDED IN ONE DECISION, and it changes the count in this section's title, its test and its
+> Step 3.** `onOpen` was planned as a fourth service-side reset site with `onSessionStart` inserted
+> BESIDE it (a JOIN). It shipped as a **REPLACE**: `onOpen`'s `endpointer.reset()` is DELETED and
+> `endpointer.onSessionStart(...)` takes its place. `SileroEndpointer.onSessionStart` is a
+> documented strict superset of `reset()` — its own KDoc says "Everything [reset] clears, plus…",
+> and it ends `probeArm(); clearForNextSegment()` — so a JOIN would clear twice and put two
+> `probeReset()` calls in a row inside one session open. Three documents in the tree already
+> described the REPLACE, one of them carrying the COUNT
+> (`SileroEndpointerConcurrencyTest`: "Main mutates the same fields from three sites"), which a JOIN
+> would have falsified. **There are THREE service-side reset sites, not four or five:** the wall-cap
+> cut in `onAudioChunk`, `switchSource`, `stopRecording` — plus the endpointer's own internal
+> post-commit reset (Workstream C, required by `Endpointer.onFrame`'s contract), which is not a
+> service site at all.
+>
+> **RESPLICED under the rule at Task C2, because re-extraction of the originals would reinstate
+> corrected defects:** Step 1's census (`assertEquals(4, count("endpointer.reset()"))`), its
+> `onOpen` test's reset ordering, and Step 3(b)'s JOIN insertion. The census needle is now the
+> **LF form** on LF-NORMALISED text, and that is not fussiness: the bare count is **5 on both sides
+> of the REPLACE** (4 calls + 1 comment before, 3 calls + 2 comments after), so a bare-count census
+> would have stayed GREEN while an entire reset site was deleted. Step 1 also gains
+> `.replace("\r\n", "\n")` at its single read site — `core.autocrlf=true` checks this repo out with
+> CRLF and two of the needles cannot match without it.
+>
+> **Step 2's prediction was wrong in BOTH directions and is corrected below:** 5 of 7 red (not 4),
+> with the census RED (not "already green"), and the `stopRecording` test failing at *"the probe is
+> freed after the reset"* — the normalisation is what keeps it from failing earlier at the flush
+> needle.
+>
+> Line numbers throughout are stale and deliberately not renumbered; anchor on the statements.
+> See `task-D10-report.md` §2, §4 and §13.
 
 **Files:**
 - Modify `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt`
-  (:1819 switchSource, :2224 + :2238 onOpen, :2393 stopRecording)
+  (`switchSource`'s reset comment; `onOpen`'s reset → `onSessionStart`, after the cloud first-cap
+  suppression and before `startAudioInput()`; `stopRecording`'s `onSessionEnd()` teardown)
 - Create `app/src/test/java/com/whispereverywhere/service/EndpointerLifecyclePinTest.kt`
 
 **Interfaces:**
-- Consumes: `Endpointer.reset()`, `Endpointer.onSessionStart(nowMs, minCommitIntervalMs)`, `Endpointer.onSessionEnd()` (Task D2); `CommitCadencePolicy.minCommitIntervalMs(tierId, isCloudBatch)` (Task D3); the existing local `val installedModel = app.whisperModelManager.installedModel()` at :2211, which is in scope inside the `object : TranscriptionEngine.Listener` at :2219.
+- Consumes: `Endpointer.reset()`, `Endpointer.onSessionStart(nowMs, minCommitIntervalMs)`, `Endpointer.onSessionEnd()` (Task D2); `CommitCadencePolicy.minCommitIntervalMs(tierId, isCloudBatch)` (Task D3); the existing local `val installedModel = app.whisperModelManager.installedModel()` resolved just before `engine.connect(...)`, which is in scope inside the `object : TranscriptionEngine.Listener` passed to it.
 - Produces: nothing new — this task closes the lifecycle.
 
-The five reset sites, all reached through `endpointer.reset()` so `vadProbeReset()` follows:
-`:1722` cap cut (Task D9) · `:1819` switchSource · `:2224` onOpen · `:2393` stopRecording ·
+The THREE service-side reset sites, all reached through `endpointer.reset()` so `vadProbeReset()`
+follows: the wall-cap cut in `onAudioChunk` (Task D9) · `switchSource` · `stopRecording` — plus
 the endpointer's own post-commit reset (Workstream C, required by `Endpointer.onFrame`'s contract).
-`:1819` is the one that is a **correctness** bug if missed: `switchSource` swaps mic ↔ device
+`onOpen` carries `onSessionStart` instead, which reaches `probeReset` through `clearForNextSegment`.
+`switchSource` is the one that is a **correctness** bug if missed: it swaps mic ↔ device
 audio mid-session, and carrying LSTM recurrence across an acoustic-source change is wrong.
 
 - [ ] **Step 1: Write the failing test.** Create `app/src/test/java/com/whispereverywhere/service/EndpointerLifecyclePinTest.kt`:
@@ -8426,9 +8538,13 @@ import org.junit.Test
 import java.io.File
 
 /**
- * All five reset sites, the per-session cadence handover and the probe teardown, pinned on the
- * source (see CapSeamPinTest for why the pin is structural). Site 5 — the endpointer's own
- * post-commit reset — is a contract on Endpointer.onFrame and is pinned in Workstream C.
+ * The endpointer's SERVICE-SIDE lifecycle, pinned on the source: every reset site, the per-session
+ * cadence handover and the probe teardown (see CapSeamPinTest for why the pin is structural). The
+ * endpointer's own post-commit reset is a contract on Endpointer.onFrame and is pinned in
+ * Workstream C, not here.
+ *
+ * The source is read LF-NORMALISED. core.autocrlf=true checks this repo out with CRLF, so a needle
+ * written with a bare \n finds nothing and every assertion would pass or fail for the wrong reason.
  */
 class EndpointerLifecyclePinTest {
 
@@ -8443,8 +8559,11 @@ class EndpointerLifecyclePinTest {
         throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
     }
 
+    /** The ONE read site, LF-normalised so every `\n` needle below is checkout-independent. */
     private val text: String by lazy {
-        source("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt").readText()
+        source("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt")
+            .readText()
+            .replace("\r\n", "\n")
     }
 
     private fun count(needle: String) = text.split(needle).size - 1
@@ -8455,10 +8574,29 @@ class EndpointerLifecyclePinTest {
         return i
     }
 
+    /**
+     * THREE service-side resets: the wall-cap cut in onAudioChunk, switchSource, stopRecording. A
+     * fourth reset lives INSIDE the endpointer (the post-commit reset Endpointer.onFrame's contract
+     * requires) and is pinned in Workstream C. onOpen used to be the fourth service site; it is now
+     * endpointer.onSessionStart(...), a documented strict superset of reset().
+     *
+     * The count is on the LF form, deliberately. TWO comments in FloatingBubbleService quote the
+     * call verbatim (D9's read-before-reset note in the cap branch, and D10's REPLACE note at
+     * onOpen) and neither copy ends its line, so the BARE needle reads two high. That is not an
+     * off-by-one: the bare count is 5 BEFORE this task (4 calls + 1 comment) and 5 AFTER it
+     * (3 calls + 2 comments), so a bare-count census would have stayed GREEN straight through the
+     * REPLACE. Fix the TEST, never the comments. Indentation-anchoring does not work either — D9's
+     * comment shares the cap cut's 16-space indent and the three real calls sit at 16 / 8 / 8.
+     */
     @Test
-    fun thereAreExactlyFourServiceSideResetSites() {
-        // cap cut, switchSource, onOpen, stopRecording. The fifth lives inside the endpointer.
-        assertEquals(4, count("endpointer.reset()"))
+    fun thereAreExactlyThreeServiceSideResetSites() {
+        assertEquals(3, count("endpointer.reset()\n"))
+        // onOpen's old 20-space site, superseded by onSessionStart. Nothing may re-add it.
+        assertEquals(
+            "onOpen's reset is superseded by onSessionStart and must not come back",
+            0,
+            count("                    endpointer.reset()"),
+        )
     }
 
     @Test
@@ -8469,14 +8607,12 @@ class EndpointerLifecyclePinTest {
     }
 
     @Test
-    fun onOpenResetsAndHandsOverThisSessionsCadence() {
-        val reset = indexOfOrFail("                    endpointer.reset()")
+    fun onOpenHandsOverThisSessionsCadenceBeforeTheFirstFrame() {
         val cadence = indexOfOrFail("                    endpointer.onSessionStart(")
         val anchor = indexOfOrFail("                        nowMs = sessionOpenMs,")
         val tier = indexOfOrFail("                            tierId = installedModel?.id,")
         val cloud = indexOfOrFail("                            isCloudBatch = cloudWrapper != null,")
         val startInput = text.indexOf("                    val started = startAudioInput()", cadence)
-        assertTrue(reset < cadence)
         assertTrue(cadence < anchor && anchor < tier && tier < cloud)
         assertTrue("the endpointer must be armed BEFORE the first frame can arrive", cloud < startInput)
         assertEquals(1, count("endpointer.onSessionStart("))
@@ -8504,10 +8640,16 @@ class EndpointerLifecyclePinTest {
     @Test
     fun theProbeIsFreedOnlyAfterBothCaptureSourcesHaveJoined() {
         // SCOPED TO stopRecording, deliberately. Both capture-stop anchors also occur, at the same
-        // 8-space indentation, inside onDestroy far above (FloatingBubbleService.kt:764-765). An
-        // unscoped indexOf() would therefore compare onDestroy's offsets against stopRecording's
-        // teardown and pass unconditionally — pinning nothing, while the hazard it claims to pin
-        // (vadProbeFree running with a frame still inside vadProbeFrame) stayed wide open.
+        // 8-space indentation, inside onDestroy far above. An unscoped indexOf() would therefore
+        // compare onDestroy's offsets against stopRecording's teardown and pass unconditionally —
+        // pinning nothing, while the hazard it claims to pin (vadProbeFree running with a frame
+        // still inside vadProbeFrame) stayed wide open. Symbols, not line numbers: this file's
+        // offsets have already moved several times inside Workstream D.
+        //
+        // What this pins is ORDER IN SOURCE. It does NOT claim the join GUARANTEES exclusion —
+        // T2-SHARPENED: Thread.join(ms) returns identically on termination and on timeout, so the
+        // safety of a late free is the bound lambda's obligation (VadProbeLifecycle), not this
+        // ordering's.
         val stopFn = indexOfOrFail("    private fun stopRecording() {")
         val recorderStop = text.indexOf("        audioRecorder.stop()", stopFn)
         val playbackStop = text.indexOf("        stopPlaybackCapturer()", stopFn)
@@ -8531,38 +8673,50 @@ class EndpointerLifecyclePinTest {
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.service.EndpointerLifecyclePinTest" --no-daemon
 ```
-Expected: **4 of the 7 fail, and three are already green.** Task D9 renamed all four service-side
-reset sites, so the three tests that only assert the rename pass immediately — record them as
-already-green guards (the same shape as the guards in Tasks H5 and G1), not as a miss:
+Expected: **5 of the 7 fail, and two are already green.** *(The original text predicted 4 red / 3
+green with the census among the green. Both numbers were wrong — the census is RED, because the
+REPLACE below has not happened yet. Corrected here from the observed run; see
+`task-D10-report.md` §4.)* Task D9 renamed the service-side reset sites, so the two tests that only
+assert the rename pass immediately — record them as already-green guards (the same shape as the
+guards in Tasks H5 and G1), not as a miss:
 
-- already green: `thereAreExactlyFourServiceSideResetSites`,
-  `switchSourceResetsBeforeSwappingTheAcousticSource`, `theOldSegmenterFieldIsGoneEverywhere`.
-- still red, all four for the same missing pair (`endpointer.onSessionStart(` /
-  `endpointer.onSessionEnd()`, which this task lands):
-  - `onOpenResetsAndHandsOverThisSessionsCadence FAILED — java.lang.AssertionError: missing from FloatingBubbleService.kt: <<                    endpointer.onSessionStart(>>`
+- already green: `switchSourceResetsBeforeSwappingTheAcousticSource`,
+  `theOldSegmenterFieldIsGoneEverywhere`.
+- still red:
+  - `thereAreExactlyThreeServiceSideResetSites FAILED — java.lang.AssertionError: expected:<3> but was:<4>` (the REPLACE has not happened; `onOpen` is still a reset site)
+  - `onOpenHandsOverThisSessionsCadenceBeforeTheFirstFrame FAILED — java.lang.AssertionError: missing from FloatingBubbleService.kt: <<                    endpointer.onSessionStart(>>`
   - `theCloudFirstCapSuppressionIsUntouchedAndStillPrecedesTheCadence FAILED — java.lang.AssertionError: missing from FloatingBubbleService.kt: <<                    endpointer.onSessionStart(>>`
   - `stopRecordingFlushesUnconditionallyThenResetsThenFreesTheProbe FAILED — java.lang.AssertionError: the probe is freed after the reset` (the `onSessionEnd()` search returns -1)
   - `theProbeIsFreedOnlyAfterBothCaptureSourcesHaveJoined FAILED — java.lang.AssertionError: stopRecording must end the endpointer session`
 
-- [ ] **Step 3: Minimal implementation.** Three edits to `FloatingBubbleService.kt`. **None of them
-renames anything** — Task D9 already swapped all four `speechSegmenter.reset()` calls to
-`endpointer.reset()`; what is missing is the lifecycle around them.
+**The `.replace("\r\n", "\n")` in Step 1 is what puts that fourth failure where it is.** Without the
+normalisation the flush needle `"        transcriptionEngine?.commit()\n        android.util.Log.i("`
+cannot match a CRLF checkout at all, so `stopRecordingFlushes…` fails EARLIER, at `indexOfOrFail`,
+with a "missing from" message — and `switchSourceResets…` fails at its own needle instead of being
+a guard. Both target structures exist in the tree; only the line endings differ.
 
-(a) `switchSource`, line 1819 — the reset already reads `endpointer.reset()`:
+- [ ] **Step 3: Minimal implementation.** Three edits to `FloatingBubbleService.kt`. **None of them
+renames anything** — Task D9 already swapped the `speechSegmenter.reset()` calls to
+`endpointer.reset()`; what is missing is the lifecycle around them. Two of the three edits add a
+lifecycle call; the third, at `onOpen`, REPLACES a reset.
+
+(a) `switchSource` — the reset already reads `endpointer.reset()`:
 ```kotlin
         transcriptionEngine?.commit()
         endpointer.reset()
 ```
-This task only extends the comment above it (:1815–1817) with one sentence:
+This task only extends the comment above it with one sentence:
 ```kotlin
         // ...the same mechanism stopRecording's tail commit uses. The endpointer reset is a
         // CORRECTNESS requirement, not hygiene: this line swaps mic <-> device audio, and the
         // streaming VAD's LSTM recurrence must never carry across an acoustic-source change.
 ```
 
-(b) `onOpen`, line 2224 — the reset already reads `endpointer.reset()` (Task D9). Insert the cadence
-handover immediately after the cloud-suppression line at :2238 and before
-`val started = startAudioInput()` at :2239:
+(b) `onOpen` — **DELETE the `endpointer.reset()` there** (Task D9 had renamed it; this task removes
+it) and put the cadence handover in its place, immediately after the cloud-suppression line and
+before `val started = startAudioInput()`. This is a REPLACE, not a JOIN: `onSessionStart` clears
+everything `reset()` clears and re-arms besides, so keeping both would clear twice and run two
+`probeReset()` calls in a row. `count("                    endpointer.reset()")` must end at **0**:
 ```kotlin
                     if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionOpenMs)
                     // 3.7 (Workstream D3): the endpointer's paced-commit floor is the MEASURED
@@ -8573,6 +8727,21 @@ handover immediately after the cloud-suppression line at :2238 and before
                     // startAudioInput() so the first captured frame already sees this session's
                     // cadence; the native probe itself initialises lazily on that first frame,
                     // i.e. on the capture thread, never here on Main.
+                    //
+                    // This REPLACES the endpointer.reset() that used to open the session here,
+                    // rather than joining it: onSessionStart is a documented strict superset of
+                    // reset() ("Everything [reset] clears, plus…" — its KDoc), so a pair would
+                    // clear twice and put two probeResets inside one session open.
+                    //
+                    // NAMED arguments, not positional: onSessionStart takes two same-typed Longs
+                    // whose order nothing else pins, and minCommitIntervalMs takes a nullable
+                    // String beside a Boolean. EndpointerLifecyclePinTest quotes these names.
+                    //
+                    // isCloudBatch = (cloudWrapper != null) is BROADER than "batch": it is also
+                    // true for CLOUD_LIVE. That is harmless only because LiveTurnPolicy
+                    // .runClientVad(sessionIsLive) is FALSE for CLOUD_LIVE, so onFrame never runs
+                    // in a live session and this cadence is never consulted. A future task that
+                    // ever runs client VAD in a live session must split this predicate first.
                     endpointer.onSessionStart(
                         nowMs = sessionOpenMs,
                         minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(
@@ -8583,15 +8752,28 @@ handover immediately after the cloud-suppression line at :2238 and before
                     val started = startAudioInput()
 ```
 
-(c) `stopRecording`, line 2393 — the reset already reads `endpointer.reset()` (Task D9). Add the
-teardown immediately after it:
+(c) `stopRecording` — the reset already reads `endpointer.reset()` (Task D9). Add the
+teardown immediately after it. **The comment may not claim the join guarantees exclusion** —
+T2-SHARPENED forbids it, and the original draft of this snippet did exactly that (*"so no frame can
+be inside vadProbeFrame while vadProbeFree runs"*). Respliced to the shipped form, which pins the
+order and names who owns the rest:
 ```kotlin
         endpointer.reset()
-        // 3.7 (Workstream D5/D8): the probe's native context is freed HERE, and only here.
-        // audioRecorder.stop() and stopPlaybackCapturer() above have already JOINED their capture
-        // threads, so no frame can be inside vadProbeFrame while vadProbeFree runs — and the
-        // unconditional flush above still belongs to this session, so freeing any earlier would
-        // race the audio it is flushing.
+        // 3.7 (Workstream D5/D8/D10, teardown bill T12): the probe's native context is freed HERE,
+        // and only here on the record-stop path.
+        //
+        // The POSITION is the pin, and it is a position in SOURCE, not a proof. Above this line,
+        // audioRecorder.stop() and stopPlaybackCapturer() have each asked their capture thread to
+        // stop and joined it, and the unconditional flush above still belongs to this session — so
+        // freeing any earlier would race the audio it is flushing. What the ordering does NOT
+        // give is exclusion: T2-SHARPENED — Thread.join(ms) returns identically on termination and
+        // on timeout and stopThenJoin returns Unit, so the join is BEST-EFFORT and its outcome is
+        // unobservable from here. A late free landing after the NEXT session's vadProbeInit is an
+        // ownership hazard the BOUND LAMBDA must survive (VadProbeLifecycle, Tasks D4/D5).
+        //
+        // Main-thread budget (T1 RESIDUAL): the two capture stops above are COMPOSITE, not one
+        // join — 2 x CaptureThreadPolicy.CAPTURE_JOIN_MS, ~4 s worst case, under the 5 s
+        // input-dispatch ANR window with ~1 s headroom.
         endpointer.onSessionEnd()
 ```
 
@@ -8601,20 +8783,27 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :
 ```
 Then the aggregation command from Global Constraints. Expected: `failures=0 errors=0`, the **+7
 delta** for this task (`EndpointerLifecyclePinTest`), zero pre-existing tests modified since Task D1,
-and `BUILD SUCCESSFUL`.
+and `BUILD SUCCESSFUL`. **Shipped:** +7 as planned — `1254 tests / 0 failures / 0 errors` across
+113 classes, which is the D-section's last row (see the running table at Task D3's Step 4). No
+absolute total is asserted here; Task S5 computes the branch's totals once, from a purged results
+directory.
 
 - [ ] **Step 5: Commit.**
 ```powershell
 git add app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt app/src/test/java/com/whispereverywhere/service/EndpointerLifecyclePinTest.kt; git commit -m @'
-feat(vad): all five reset sites, per-session cadence, probe teardown
+feat(vad): three reset sites, per-session cadence, probe teardown
 
-switchSource, onOpen, stopRecording and the cap cut all reset through the
-endpointer, so vadProbeReset() follows each — switchSource is the correctness
-one, since LSTM recurrence must not carry across a mic<->device-audio swap.
-onOpen hands over this session's measured cadence floor (tier + cloud) before
-startAudioInput, so the first frame already sees it. stopRecording frees the
-probe only after both capture threads have joined and after the unconditional
-flush. The cloud 4s suppression is untouched and still precedes the handover.
+switchSource, stopRecording and the cap cut all reset through the endpointer,
+so vadProbeReset() follows each — switchSource is the correctness one, since
+LSTM recurrence must not carry across a mic<->device-audio swap. onOpen's reset
+is REPLACED by onSessionStart rather than joined: onSessionStart is a documented
+strict superset of reset(), so a pair would clear twice and double the
+probeReset inside one session open. onOpen hands over this session's measured
+cadence floor (tier + cloud) before startAudioInput, so the first frame already
+sees it. stopRecording frees the probe only after both capture stops and after
+the unconditional flush — an order in source, not a claim that the join excludes
+a late frame. The cloud 4s suppression is untouched and still precedes the
+handover.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
@@ -8628,6 +8817,47 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT
 ---
 
 ### Task F7: The commit funnel — capture the five discarded `commit()` seqs + `queue: depth=`
+
+> **BEFORE YOU START — two corrections from the D-close, and one of them changes code you are about
+> to write.**
+>
+> **1. Step 3(f)'s cap-cut call must use NAMED arguments.** It is written below as
+> `commitSegment(engine, EndpointDiag.CAP, retainMs, now)` — two adjacent same-typed `Long`s
+> (`retainMs`, `nowMs`), positional, with the only guard an exact-match source needle written in the
+> same session. **Write it as `commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now)`
+> and quote the names in Step 3(l)'s needle.** A swap does NOT retain the whole buffer — D6's
+> `if (cut <= 0)` guard in `LocalWhisperEngine.commitRetainingTailMs` clamps and degrades to a plain
+> full commit — so the damage is silent in two ways: every cap cut reverts to 3.6.0's arbitrary
+> mid-word cut with the suite green (log signature `retainedTailBytes=0 retainedMs=0`), and `nowMs`
+> receives a 0–3000 ms value that wrecks Task F9's `perceived:` arithmetic. This is the same hazard
+> class as D2's M22 and the `capCutRetainMs` resplice in Task D9.
+>
+> **2. Every `FloatingBubbleService.kt` line number in this section is stale by +46 to +157.**
+> Workstream D grew that file repeatedly. Anchor on the STATEMENTS; the numbers below are kept only
+> as a reading aid. Measured at the D-close (`git show HEAD:<path> | grep -n`, tree verified clean —
+> re-measure before editing, because this file moves under every task):
+>
+> | This section says | Anchor | At the D-close |
+> |---|---|---|
+> | `:307` | `private val segmentCapPolicy = SegmentCapPolicy()` | **353** |
+> | `:915` | projection-consent `transcriptionEngine?.commit()` | **961** |
+> | `:1694` | `engine.commit()` inside the `onFrame` branch | **1740** |
+> | `:1721` | `engine.commitRetainingTailMs(retainMs)` | **1795** |
+> | `:1818` | `switchSource`'s `transcriptionEngine?.commit()` | **1914** |
+> | `:2152` | `segmentOrderer = …SegmentOrderer()` | **2248** |
+> | `:2298-2306` | `override fun onSegmentResolved(` | **2428** |
+> | `:2388` | the stop flush `transcriptionEngine?.commit()` | **2518** |
+> | `:2576` | `private fun deliverReleasedText(` | **2733** |
+>
+> The three `transcriptionEngine?.commit()` sites are **not** distinguishable by their own text —
+> edits (d), (g) and (h) each need a two-line anchor.
+>
+> **3. Step 3(l)'s two `EndpointerLifecyclePinTest` literals are correct as written.** That class
+> reads the source LF-NORMALISED, so bare `\n` literals match. Keep the flush literal FIRST in
+> `stopRecording`'s teardown — it is the scoping origin for that test's `reset` and `end` searches,
+> and an 8-space needle matches inside a 16-space indent. Note the class's tests were renamed at
+> Task D10: the census is `thereAreExactlyThreeServiceSideResetSites` and the cadence test is
+> `onOpenHandsOverThisSessionsCadenceBeforeTheFirstFrame`.
 
 **Files:**
 - Create `app/src/main/java/com/whispereverywhere/service/EndpointDiag.kt`
