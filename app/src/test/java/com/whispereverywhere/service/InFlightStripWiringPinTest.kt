@@ -183,10 +183,13 @@ class InFlightStripWiringPinTest {
 
     @Test
     fun localDeltasAreTurnedAwayAtTheTopOfOnDelta() {
-        // Task G5's headline: the native new_segment stream stops driving the LOCAL strip. The
-        // plumbing below is deliberately left running — CLOUD_LIVE still renders from it — so the
-        // ONLY thing standing between a local session and the old per-frame set-and-clear burst is
-        // this one early return. Deleted, the commit's whole premise is gone with a green suite.
+        // Task G5's headline: the native new_segment stream stops driving the strip. The gate is
+        // written on the SESSION KIND — every non-live session — so it matches the render's own
+        // guard, though in practice only the local engine emits deltas for it to turn away (cloud
+        // batch emits none). The plumbing below is deliberately left running, since CLOUD_LIVE
+        // still renders from it, so the ONLY thing standing between a local session and the old
+        // per-frame set-and-clear burst is this one early return. Deleted, the commit's whole
+        // premise is gone with a green suite.
         val gate = "                if (!deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return\n"
         val gateAt = indexOfOrFail(onDelta, gate)
         // FIRST statement, ahead of the Main hop: gating inside the coroutine would still schedule
@@ -200,18 +203,26 @@ class InFlightStripWiringPinTest {
     @Test
     fun theResolvePathCountsDownAndRepaintsBeforeItDelivers() {
         // The first of Task G5's two bare painters, plus the ORDER that makes it mean anything.
-        // Deleting it leaves the strip stuck at whatever depth the last commit painted: the queue
-        // counts down in logcat while the user watches "Transcribing… (3 in queue)" forever.
+        // Deleting it leaves a blank release with no repaint at all: an EmptyExpected or a Lost
+        // segment resolves without text, delivery's painter sits below its blank guard, and the
+        // queue counts down in logcat while the user watches "Transcribing… (3 in queue)".
+        //
+        // NOTE, corrected at the G5 gate: the DECREMENT was never the fragile part. It lives
+        // inside the log call below and `deliverReleasedText`'s `if (text.isBlank()) return`
+        // returns from that METHOD, not from this coroutine, so it always ran — before G5 and
+        // after. What the ordering actually protects is the PAINTERS: neither may read a
+        // pre-decrement depth. The test's name is kept because what it names — count down, repaint,
+        // then deliver — is exactly what is asserted and is true for the corrected reason.
         val counted =
             indexOfOrFail(onResolved, "EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),")
         val painted = indexOfOrFail(onResolved, "                    renderInFlightStrip()\n")
         val delivered = indexOfOrFail(onResolved, "                    deliverReleasedText(release.text)\n")
         assertTrue("the repaint reads the depth AFTER this seq has been taken out of it", counted < painted)
-        // Both AHEAD of delivery, and that is the point of the reorder: deliverReleasedText
-        // early-returns on blank, and an EmptyExpected or a Lost segment resolves without
-        // releasing any text at all. Behind delivery, those resolutions would never count down.
-        assertTrue("the backlog counts down independently of whether text was released", counted < delivered)
-        assertTrue("so does the repaint", painted < delivered)
+        // Delivery PAINTS TOO (its non-live branch calls the render), so the decrement has to
+        // precede it as well or that paint shows a backlog one deeper than it is.
+        assertTrue("delivery paints too, so the decrement precedes delivery as well", counted < delivered)
+        // And the resolve painter reports the countdown before the words land, rather than after.
+        assertTrue("the backlog signal updates ahead of the text it is counting", painted < delivered)
         assertEquals(
             "the resolve path paints once — a second call here would repaint the same depth twice",
             1,
@@ -220,11 +231,17 @@ class InFlightStripWiringPinTest {
     }
 
     @Test
-    fun deliveryRepaintsTheLocalStripInsteadOfHidingIt() {
+    fun deliveryRepaintsTheStripInsteadOfHidingIt() {
         // The second bare painter, and the completion of Task G4's churn kill. The pre-3.7 body
         // hid the strip on EVERY non-FINALIZING release; that GONE is what `inFlightStripVisibility`
         // reads as `currentlyHidden`, so the next commit paid the reveal — and its reclampNow() —
         // all over again, once per utterance. Reverting this branch restores that cost invisibly.
+        //
+        // NOT-hiding is this branch's real contribution: on the onSegmentResolved path the resolve
+        // painter has usually already painted the same depth, so the repaint here is a second
+        // identical paint. It earns its place on the FOUR flush() sites that never reach
+        // onSegmentResolved at all — onDestroy, the fatal-onError drain, the finalize flush and
+        // teardown — where it is the only painter there is.
         indexOfOrFail(
             delivery,
             "        if (resolvedTextClearsStrip(sessionIsLive = sessionIsLive, " +

@@ -255,9 +255,16 @@ internal fun speechEndMs(nowMs: Long, ec: EndpointCut): Long = nowMs - ec.trailM
  *
  * D4's plumbing stays exactly where it is — `transcribeStreaming`, the JNI new-segment callback
  * and [com.whispereverywhere.transcription.DeltaThrottle] are untouched and still feed CLOUD_LIVE;
- * only this render decision moved. Cloud BATCH is unaffected either way: it emits no deltas
+ * only this render decision moved. Cloud BATCH loses nothing here: it emits no deltas
  * (its `CloudRelay` forwards a callback its engine never fires, and the fallback's `LocalRelay`
  * swallows the rescue engine's).
+ *
+ * **What this rule hands over is EVERY NON-LIVE SESSION, not just the local one.** `false` here
+ * means [renderInFlightStrip] owns the strip, and `sessionIsLive` is false for CLOUD_WITH_FALLBACK
+ * (batch) as well as for local. So a cloud-batch session now shows "Transcribing… (N in queue)"
+ * where 3.6.0 showed nothing at all — intended, and the reason [inFlightStripLabel] names no
+ * provider and makes no speed claim. `commitSegment` is the one funnel for every engine, so the
+ * depth is as true on the batch path as on the local one.
  *
  * Pure so the rule is a pinned contract rather than a buried `if` ([InFlightStripTest]), the same
  * discipline as [connectingStatusLabel], [processingTimerRunsIn] and
@@ -266,8 +273,8 @@ internal fun speechEndMs(nowMs: Long, ec: EndpointCut): Long = nowMs - ec.trailM
 internal fun deltaOwnsPreviewStrip(sessionIsLive: Boolean): Boolean = sessionIsLive
 
 /**
- * The LOCAL in-flight line for [depth] committed-but-unresolved segments, or null when the queue
- * is empty (3.7, Workstream G).
+ * The in-flight line for [depth] committed-but-unresolved segments, or null when the queue
+ * is empty (3.7, Workstream G). Shown in every NON-LIVE session — local AND cloud batch.
  *
  * Under VAD endpointing there is a genuinely new repeating state that did not exist before:
  * "the endpoint fired, this sentence is in flight", lasting ~1.3–4.3 s and recurring ~16×/minute,
@@ -305,6 +312,13 @@ internal enum class StripVisibility { HIDDEN, OCCUPYING_BLANK, SHOWING }
  * therefore post `reclampNow()` — on every single utterance. Under the 15 s wall cap that
  * happened once per cap window; the delta strip's own show/hide did it per segment boundary.
  * Revealing once per session and then only swapping text is what removes it.
+ *
+ * Reachability, measured at the G-section close: SHOWING and OCCUPYING_BLANK both occur in
+ * production; **HIDDEN does not**. It needs an empty queue AND a still-GONE strip, and the funnel's
+ * repaint for a seq is always enqueued on Main before any resolution for that seq can be, so the
+ * first paint of a session is always the reveal. HIDDEN is kept as the defensive no-op for that
+ * ordering assumption — it is a bare `return`, and a rule with a hole where its third row should be
+ * is worse than one unreachable row. All three rows stay pinned by [InFlightStripTest].
  */
 internal fun inFlightStripVisibility(label: String?, currentlyHidden: Boolean): StripVisibility =
     when {
@@ -2559,10 +2573,13 @@ class FloatingBubbleService : Service(),
                 }
             }
             override fun onDelta(text: String) {
-                // 3.7 G: LOCAL deltas no longer drive the strip — the commit/resolve in-flight
-                // line does. The callback itself, DeltaThrottle and transcribeStreaming's JNI
-                // plumbing are deliberately left running: CLOUD_LIVE still renders from here, and
-                // the local stream stays available for the next surface that wants it.
+                // 3.7 G: deltas no longer drive the strip for any NON-LIVE session — the
+                // commit/resolve in-flight line does. In practice the only deltas turned away here
+                // are the local engine's, because cloud batch emits none at all; the gate is
+                // written on the session kind rather than on the engine so it matches the render's.
+                // The callback itself, DeltaThrottle and transcribeStreaming's JNI plumbing are
+                // deliberately left running: CLOUD_LIVE still renders from here, and the local
+                // stream stays available for the next surface that wants it.
                 if (!deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return
                 // Local partial streaming (3.6.0 D) joined cloud-live here. The unified preview
                 // (W2) keeps the container up for EVERY session context, so the strip renders
@@ -2615,9 +2632,16 @@ class FloatingBubbleService : Service(),
                     // delivery. The SegmentOrderer's release rules are untouched — this only names
                     // its result.
                     val release = segmentOrderer.onResolved(seq, outcome)
-                    // 3.7 G: the queue drops BEFORE delivery and independently of it — an
-                    // EmptyExpected or a Lost segment resolves without releasing any text, and
-                    // the backlog must still count down or the strip sticks at a phantom depth.
+                    // 3.7 G: the decrement runs ahead of BOTH painters — this one and the one
+                    // inside deliverReleasedText — because either would otherwise paint a
+                    // PRE-decrement depth and show a backlog one deeper than it is. (The decrement
+                    // itself was never at risk of being skipped: it lives inside this log call, and
+                    // deliverReleasedText's blank guard returns from THAT METHOD, not from this
+                    // coroutine. The `queue:` line moves as the decrement's passenger, not as the
+                    // reason.) The repaint lives HERE, and not only in delivery, for the blank
+                    // case: an EmptyExpected or a Lost segment releases no text, delivery's painter
+                    // sits below its blank guard, and without this call that resolution would
+                    // count down in logcat while the strip stayed at the old depth.
                     android.util.Log.i(
                         "WE-DIAG",
                         EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),
@@ -3002,7 +3026,13 @@ class FloatingBubbleService : Service(),
     }
 
     /**
-     * Paint the LOCAL in-flight line onto the preview strip (3.7, Workstream G). Main thread only.
+     * Paint the in-flight line onto the preview strip (3.7, Workstream G). Main thread only.
+     *
+     * **Runs for EVERY NON-LIVE session — LOCAL and cloud BATCH alike**, because the guard below is
+     * [deltaOwnsPreviewStrip] and `sessionIsLive` is false for CLOUD_WITH_FALLBACK too. A
+     * cloud-batch session therefore gains an in-flight line it did not have in 3.6.0. That is
+     * deliberate: the backlog is real on that path (the same `commitSegment` funnel counts it), and
+     * the label names no provider and claims no speed, so it reads the same either way.
      *
      * Phase ownership, exactly as CONNECTING and FINALIZING already practise it on this same
      * TextView: this paints only while RECORDING, so `connectingStatusLabel`'s "Loading speech
@@ -3065,9 +3095,13 @@ class FloatingBubbleService : Service(),
             // repaint it, never hide it. Returning it to GONE here is what made Task G4's reveal
             // cost a reclamp per UTTERANCE rather than one per session: GONE is exactly the state
             // the anti-churn rule reads as "not revealed yet", so every commit paid the reveal
-            // again. This is also where the per-utterance scrollTo(0, 0) goes away — the in-flight
-            // line is one short string, and in a LOCAL session nothing scrolls this strip any more
-            // now that onDelta is gated (the CONNECTING label already reset it to the top).
+            // again. NOT hiding is this branch's real contribution; the resolve path above has
+            // usually already painted the same depth, and a second identical paint is free.
+            // This branch is also what covers the four flush() sites that never go through
+            // onSegmentResolved at all. And it is where the per-utterance scrollTo(0, 0) goes away
+            // — the in-flight line is one short string, and in a NON-LIVE session (local or cloud
+            // batch) nothing scrolls this strip any more now that onDelta is gated: the CONNECTING
+            // label already reset it to the top and no delta ever reaches it.
             renderInFlightStrip()
         }
         handleTranscriptionResult(text)

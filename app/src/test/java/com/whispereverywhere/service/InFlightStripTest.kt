@@ -48,7 +48,15 @@ class InFlightStripTest {
     }
 
     @Test fun the_line_makes_no_speed_claim_and_names_no_provider() {
-        // Same copy discipline as HowToGuide and every other user-facing string.
+        // Same copy discipline as HowToGuide and every other user-facing string — and doubly load
+        // bearing since Task G5, because this line now shows in CLOUD BATCH sessions too, where a
+        // provider name or a speed word would be a claim about someone else's service.
+        //
+        // NOT redundant with the equality rows, and the 9 is why (G2 review m1/m7, folded here at
+        // G5 — the last task to open this file). The assertEquals/assertNull rows pin -1, 0, 1, 2
+        // and 7; depth 9 is probed ONLY by this scan. The G2 reviewer smuggled "instant" into a
+        // `depth == 9` branch and this test was the SOLE killer. Do not trim the 9 to the pinned
+        // depths: it is the one depth where a banned word has nowhere else to die.
         listOf(0, 1, 2, 9).forEach { d ->
             val text = (inFlightStripLabel(d) ?: "").lowercase()
             listOf("faster", "fastest", "quicker", "quickest", "instant", "real-time")
