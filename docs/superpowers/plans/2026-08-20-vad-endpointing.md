@@ -9648,7 +9648,7 @@ the `endpoint:` line here without touching a single branch again:
 ```kotlin
                     transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }   // :915
                 commitSegment(engine, EndpointDiag.VAD, nowMs = now)                      // :1694
-                commitSegment(engine, EndpointDiag.CAP, retainMs, now)                    // :1721
+                commitSegment(engine, EndpointDiag.CAP, retainMs = retainMs, nowMs = now)  // :1721
         transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }               // :1818
         transcriptionEngine?.let { commitSegment(it, EndpointDiag.STOP) }                 // :2388
 ```
