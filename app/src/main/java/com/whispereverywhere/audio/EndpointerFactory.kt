@@ -65,7 +65,9 @@ import java.util.concurrent.atomic.AtomicLong
  * the frame hazard — a cleared recurrence costs a few frames of re-warm where a FED one poisons
  * every frame after it (T9) — but reachable: a stale thread can never COMMIT (its verdicts are
  * [VadProbe.NO_VERDICT], which can neither open nor close the Schmitt gate), yet it CAN reach the
- * cap branch's `endpointer.reset()`.
+ * cap branch's `endpointer.reset()` — and note the gate protects only the native probe: the seven
+ * decision-state writes above `probeReset()` inside `SileroEndpointer.reset()` are outside this
+ * factory's reach and are D9's to weigh.
  *
  * **One precondition is carried forward UNCLOSED, and it fails OPEN** (D5's precondition 3): a
  * capture thread that produced ZERO probe frames during its own session and then delivers one
@@ -139,6 +141,12 @@ internal object EndpointerFactory {
             probeArm = {
                 val opened = lifecycle.arm(vadModelPath)
                 armed.set(opened)
+                // MAIN-ONLY, and the whole reset gate rests on it: `Endpointer.onSessionStart`'s
+                // contract confines this lambda to Main, so the line below binds MAIN's
+                // thread-local and no other thread's. It is also the first ALLOCATING statement
+                // here (a boxed Long, possibly materialising this thread's ThreadLocalMap) in a
+                // lambda SileroEndpointer.kt:403-409 requires not to throw — which is why it sits
+                // AFTER `armed.set`, so the epoch is published before anything can fail.
                 mine.set(opened)                  // MAIN's own snapshot, kept current for probeReset
             },
             probeTeardown = { lifecycle.release() },

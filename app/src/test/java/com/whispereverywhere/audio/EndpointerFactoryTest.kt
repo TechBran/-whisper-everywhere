@@ -20,16 +20,16 @@ private const val JOIN_MS = 5_000L
  * session byte-identical to 3.6.0. This is not a new failure mode — `VadModel.path()` already
  * returns null and already logs "running without VAD".
  *
- * The four tests after the brief's five pin the OTHER half of this task, which no selection test can
+ * The SIX tests after the brief's five pin the OTHER half of this task, which no selection test can
  * see: the SESSION EPOCH binding (Task D5). D5's gates live inside `VadProbeLifecycle`, but the
  * token that drives them is snapshotted HERE, once per capture thread, and a factory that ignored
  * the token would pass all five of the tests above while leaving the gate doing nothing at all.
- * So three of the four drive REAL THREADS — one per session, which is what
+ * So FOUR OF THE SIX drive REAL THREADS — one per session, which is what
  * `StreamingAudioRecorder` (`:70`, `:101`, `:148`) and `PlaybackAudioCapturer` (`:64`, `:88`,
- * `:100`) both do — and the fourth reads the factory's source for the one constant no behavioural
- * test can reach (`ProbeStats` keeps its budget private).
+ * `:100`) both do — one pins the ONE reused direct buffer by identity (teardown-bill T7/T8), and
+ * the last reads the factory's source for the one constant no behavioural test can reach.
  *
- * THREADING STANDARD (C9), stated because three tests below start threads. Every wait is bounded by
+ * THREADING STANDARD (C9), stated because four tests below start threads. Every wait is bounded by
  * [JOIN_MS] and every ordering is established by a `CountDownLatch` or a `join`, never by a sleep —
  * so no assertion here can pass or fail on scheduling luck. Those same latch and join edges are what
  * publish [FakeVadProbe]'s plain `Int` counters to the asserting thread: the stale thread's
@@ -52,6 +52,13 @@ class EndpointerFactoryTest {
         )
         assertEquals("the probe must not be touched at all", 0, probe.initCalls)
         assertEquals(0, probe.freeCalls)
+        // ADDED beyond the brief (review m7), never in place of it: the two lines above pin two of
+        // the four counters, and "untouched" deserves to be pinned literally. `calls` logs
+        // init/reset/free — Task D8 deliberately left `frame` out of it so D4's call-order alphabet
+        // stays exactly as `freeOnlyEverFollowsASuccessfulInit` asserts it — which is why frameCalls
+        // is asserted beside it rather than folded into it.
+        assertTrue(probe.calls.isEmpty())
+        assertEquals(0, probe.frameCalls)
     }
 
     @Test
@@ -360,18 +367,26 @@ class EndpointerFactoryTest {
      * `EndpointerTuning.PROBE_BUDGET_US` exists as "ONE conversion for the whole seam", and its
      * KDoc names the three consumers that must agree — the third being "the `ProbeStats`
      * `EndpointerFactory` (Task D8) passes in". `SileroEndpointer` calls that same site "the third
-     * site is the one this class cannot reach": `ProbeStats` keeps its budget PRIVATE, so no
-     * `require`, no getter and no behavioural assertion can catch a mismatch, and both spellings
-     * evaluate to 8000L today — so a `PROBE_BUDGET_MS * 1_000L` here would be latent, invisible and
-     * green, right up until a retune of the conversion split the cutout latch from the `probe:`
-     * line in a commit that looked like a tidy-up.
+     * site is the one this class cannot reach", and three things together are what put it out of
+     * behavioural reach — privacy alone does NOT, since `overruns()` reflects the budget on a
+     * directly-constructed instance (review m5). They are: `ProbeStats` keeps `budgetUs` private
+     * with no getter; **the instance this factory builds is reachable from nothing** —
+     * `SileroEndpointer` holds it as a `private val` and surfaces it only through `diag`, which the
+     * factory leaves defaulted to `android.util.Log.i`, a no-op under `returnDefaultValues`; and
+     * both spellings are the SAME compile-time constant (`PROBE_BUDGET_US` is literally
+     * `PROBE_BUDGET_MS * 1_000L`), so the emitted bytecode is identical. A wrong budget here would
+     * therefore be latent, invisible and green, right up until a retune of the conversion split the
+     * cutout latch from the `probe:` line in a commit that looked like a tidy-up.
      *
      * Prose was the whole enforcement until this test (C10 pinned the SENTENCE in
      * `SileroEndpointer.kt`, which is an obligation ON this file, not a guard over it). So this
      * reads the source, in the same shape and for the same reason as
      * `VadProbeLifecycleTest.theFrameContractConstantsAreAliasesNotSecondLiterals` — including its
      * lesson: line endings are normalised to LF at the single read site, so a CRLF checkout cannot
-     * defeat the match.
+     * defeat the match, and including its INSTRUMENT: exact equality on the extracted
+     * right-hand side, never a `contains`. A substring test passes
+     * `EndpointerTuning.PROBE_BUDGET_US * 2L` — the reviewer demonstrated exactly that escape
+     * surviving 11/0/0 — because a scaled budget still carries the alias.
      */
     @Test
     fun theProbeStatsBudgetIsTheSingleOwnedConversionAndNeverASecondOne() {
@@ -383,10 +398,13 @@ class EndpointerFactoryTest {
             1,
             constructions.size,
         )
-        assertTrue(
+        assertEquals(
             "EndpointerFactory.kt constructs ProbeStats with something other than " +
-                "EndpointerTuning.PROBE_BUDGET_US: ${constructions.single()}",
-            constructions.single().contains("EndpointerTuning.PROBE_BUDGET_US"),
+                "EndpointerTuning.PROBE_BUDGET_US — or the construction was wrapped across lines, " +
+                "which this guard is line-based by design and so fails CLOSED on: " +
+                "${constructions.single()}",
+            "EndpointerTuning.PROBE_BUDGET_US",
+            constructions.single().substringAfter("budgetUs =").substringBefore(")").trim(),
         )
         assertEquals(
             "EndpointerFactory.kt spells the millisecond budget in CODE. That is the second " +
