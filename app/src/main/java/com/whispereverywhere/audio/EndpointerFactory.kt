@@ -43,7 +43,8 @@ import java.util.concurrent.atomic.AtomicLong
  * lambda is built once and shared by every session, so a per-frame read of `armed` would hand the
  * stale thread the CURRENT epoch and the gate would do nothing at all. `mine` is what makes the
  * token per-session, and it works because BOTH capture sources start a fresh `Thread` per session
- * (`StreamingAudioRecorder.kt:70/:101/:148`, `PlaybackAudioCapturer.kt:64/:88/:100`): a new
+ * (`StreamingAudioRecorder` and `PlaybackAudioCapturer` both build the thread in `start()` and
+ * null it in `stop()`): a new
  * session's thread has no binding and takes its own epoch, so only a thread that outlived its join
  * can be holding a stale one. Were capture threads ever POOLED this inverts — a reused thread
  * would keep session N's snapshot and be refused for all of N+1, which is VAD silently OFF rather
@@ -67,7 +68,10 @@ import java.util.concurrent.atomic.AtomicLong
  * [VadProbe.NO_VERDICT], which can neither open nor close the Schmitt gate), yet it CAN reach the
  * cap branch's `endpointer.reset()` — and note the gate protects only the native probe: the seven
  * decision-state writes above `probeReset()` inside `SileroEndpointer.reset()` are outside this
- * factory's reach and are D9's to weigh.
+ * factory's reach. D9 weighed them and left them OPEN, deliberately: the cap-branch reset comment
+ * in `onAudioChunk` (FloatingBubbleService) now states the residue in full — eight fields, two of
+ * them that branch's own inputs — and routes the fix to the C-side cleanup, since it lives inside
+ * `SileroEndpointer.reset()` where neither this factory nor the service can reach it.
  *
  * **One precondition is carried forward UNCLOSED, and it fails OPEN** (D5's precondition 3): a
  * capture thread that produced ZERO probe frames during its own session and then delivers one
@@ -75,6 +79,13 @@ import java.util.concurrent.atomic.AtomicLong
  * probe frames plus a timed-out join, and closing it needs a capture-thread-ENTRY binding
  * (`CaptureThreadPolicy.enterCaptureThread()`), which is D10's change and not reachable from
  * inside a lambda here.
+ *
+ * **The CUTOUT FREEZE was D9's, and is CLOSED.** This factory returns a [SileroEndpointer]; the
+ * wall-cap branch in `onAudioChunk` (FloatingBubbleService) ORs [SileroEndpointer.isProbeCutout]
+ * into `capCutConsumesWindow`'s `hasPendingSpeech` through the established
+ * `(endpointer as? SileroEndpointer)` downcast, so a latched session consumes the window instead
+ * of re-arming the 4 s one, and the predicate itself stays SYMMETRIC.
+ * [SileroEndpointer.isProbeCutout]'s KDoc records the discharge and points at the call site.
  *
  * ## What is NOT decided here
  *
@@ -85,15 +96,10 @@ import java.util.concurrent.atomic.AtomicLong
  *   thread off the buffer entirely. It is NOT discharged INTRA-session: `switchSource`
  *   (FloatingBubbleService) swaps capturers without re-arming, so a mic thread outliving
  *   that bounded join holds a token that is still CURRENT and can refill this buffer alongside the
- *   device-audio thread. D9/D10 must either bump the epoch at that boundary or show the survivor is
+ *   device-audio thread. D10 must either bump the epoch at that boundary or show the survivor is
  *   impossible — and note the tension: a bump alone fails CLOSED, because `armed` is published by
  *   `probeArm`, which `switchSource` does not call, so every post-switch frame would be refused for
  *   the rest of the session. Pairing the bump with a re-publish means re-invoking the arm path.
- * - **The CUTOUT FREEZE is D9's.** This factory returns a [SileroEndpointer], and
- *   [SileroEndpointer.isProbeCutout] carries the charge: once it latches, every predicate on that
- *   endpointer freezes, `hasPendingSpeech()` freezes FALSE, and each later LOCAL cap cut re-arms the
- *   4 s window instead of consuming it. D9's cap branch must consult it through the established
- *   `(endpointer as? SileroEndpointer)` downcast — a log line is not a fallback.
  * - **Cadence.** Per session, per tier: `CommitCadencePolicy.minCommitIntervalMs` reaches the
  *   endpointer through [Endpointer.onSessionStart], wired by D10, and never through a constructor.
  * - **Probe initialisation.** Per session, on the capture thread: [VadProbeLifecycle.ensureReady]
@@ -143,8 +149,8 @@ internal object EndpointerFactory {
                 // contract confines this lambda to Main, so the line below binds MAIN's
                 // thread-local and no other thread's. It is also the first ALLOCATING statement
                 // here (a boxed Long, possibly materialising this thread's ThreadLocalMap) in a
-                // lambda SileroEndpointer.kt:403-409 requires not to throw — which is why it sits
-                // AFTER `armed.set`, so the epoch is published before anything can fail.
+                // lambda `SileroEndpointer.onSessionStart`'s KDoc requires not to throw — which is
+                // why it sits AFTER `armed.set`, so the epoch is published before anything fails.
                 mine.set(opened)                  // MAIN's own snapshot, kept current for probeReset
             },
             probeTeardown = { lifecycle.release() },

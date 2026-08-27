@@ -863,7 +863,7 @@ class SileroEndpointerTest {
         // pass against an implementation that re-anchored on nothing at all.
         ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)
         pump.run(0.9f, 20)                             // last frame at BASE+608
-        ep.reset()                                     // the wall-cap cut at FBS.kt:1722
+        ep.reset()                                     // the wall-cap cut in onAudioChunk (FBS)
         assertFalse(ep.hasPendingSpeech())
         pump.run(0.9f, 11)
         assertFalse(

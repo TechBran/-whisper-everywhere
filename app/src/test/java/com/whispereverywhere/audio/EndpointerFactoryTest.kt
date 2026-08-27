@@ -25,8 +25,9 @@ private const val JOIN_MS = 5_000L
  * token that drives them is snapshotted HERE, once per capture thread, and a factory that ignored
  * the token would pass all five of the tests above while leaving the gate doing nothing at all.
  * So FOUR OF THE SIX drive REAL THREADS — one per session, which is what
- * `StreamingAudioRecorder` (`:70`, `:101`, `:148`) and `PlaybackAudioCapturer` (`:64`, `:88`,
- * `:100`) both do — one pins the ONE reused direct buffer by identity (teardown-bill T7/T8), and
+ * `StreamingAudioRecorder` and `PlaybackAudioCapturer` both do (each builds the thread in
+ * `start()` and nulls it in `stop()`) — one pins the ONE reused direct buffer by identity
+ * (teardown-bill T7/T8), and
  * the last reads the factory's source for the one constant no behavioural test can reach.
  *
  * THREADING STANDARD (C9), stated because four tests below start threads. Every wait is bounded by
@@ -226,7 +227,7 @@ class EndpointerFactoryTest {
      * one poisons every frame after it (T9) — and gated here rather than argued away, because the
      * unreachability argument runs out at exactly one site: a stale thread cannot COMMIT (its
      * verdicts are NO_VERDICT, which can neither open nor close the Schmitt gate), but it CAN reach
-     * the cap branch's `endpointer.reset()`, which is a real call site D9 is about to wire.
+     * the cap branch's `endpointer.reset()`, which D9 wired and which is now a real call site.
      */
     @Test
     fun aStaleCaptureThreadsResetCannotClearTheLiveSessionsRecurrence() {

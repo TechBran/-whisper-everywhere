@@ -1748,7 +1748,8 @@ class FloatingBubbleService : Service(),
                 )
                 // A cap cut on SILENCE-ONLY audio still commits the buffer (bounded, and whisper's
                 // VAD returns empty fast); only the policy bookkeeping below is conditional.
-                // hasPendingSpeech() is read BEFORE endpointer.reset(), which clears the flag.
+                // hasPendingSpeech() and pendingCutPointMs() are both read BEFORE
+                // endpointer.reset(), which clears them.
                 // The SegmentCapPolicy contract is unchanged (any onCommit consumes the window);
                 // the silence exception lives here at the call site.
                 //
@@ -1762,7 +1763,7 @@ class FloatingBubbleService : Service(),
                 //
                 // 3.7 (Workstream D) — the CUTOUT term, and why it is an OR here rather than a
                 // third parameter: see SileroEndpointer.isProbeCutout()'s KDoc. Once that latch
-                // throws, every predicate on the endpointer freezes and hasPendingSpeech() is
+                // trips, every predicate on the endpointer freezes and hasPendingSpeech() is
                 // pinned FALSE for the rest of the session, so without this term every later LOCAL
                 // cap cut arrives as (false, false) and RE-ARMS the 4 s first-cap window —
                 // a perpetual 4 s cadence, ~3.75x the encoder passes, on exactly the device that

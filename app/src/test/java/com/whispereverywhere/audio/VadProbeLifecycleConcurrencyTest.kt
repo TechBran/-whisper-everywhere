@@ -136,8 +136,9 @@ class VadProbeLifecycleConcurrencyTest {
     /**
      * The stale capture thread, half one: it must not BUILD the next session's context.
      *
-     * `StreamingAudioRecorder.kt:132-140` names this case in tree — "the `vadProbeInit` of the NEXT
-     * session starting while the previous capture thread is still unwinding" — and the monitor
+     * The bounded-join warning in `StreamingAudioRecorder.stop()` names this case in tree — "the
+     * `vadProbeInit` of the NEXT session starting while the previous capture thread is still
+     * unwinding" — and the monitor
      * cannot refuse it, because by then the lifecycle is legitimately `ARMED` for session N+1 and
      * the stale thread takes the lock like any other caller. Only the epoch can tell them apart.
      */

@@ -21,7 +21,8 @@ import java.util.concurrent.atomic.AtomicLong
  *    joined — but that intent is NOT a guarantee this class may lean on, and it does not claim
  *    one: `Thread.join(ms)` returns identically on termination and on timeout and
  *    `CaptureThreadPolicy.stopThenJoin` returns Unit, so nothing on the teardown path can tell
- *    the two apart. The warning lives in tree at `StreamingAudioRecorder.kt:131-138`;
+ *    the two apart. The warning lives in tree as the bounded-join note in
+ *    `StreamingAudioRecorder.stop()`;
  *    the obligation is teardown-bill T1 + T2 as SHARPENED by Task E2.
  *
  * CONCURRENCY (Task D5). Two mechanisms, and they answer two different questions.
@@ -40,7 +41,8 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * **The epoch answers "whose session is this".** The monitor alone would LEGITIMISE the one
  * hazard that is actually reachable across sessions: a session-N capture thread that outlived its
- * best-effort join (`StreamingAudioRecorder.kt:132-140` names this case by name — "the
+ * best-effort join (the bounded-join warning in `StreamingAudioRecorder.stop()` names this case by
+ * name — "the
  * `vadProbeInit` of the NEXT session starting while the previous capture thread is still
  * unwinding") calls back in after session N+1 has [arm]ed. It sees `ARMED`, takes the monitor
  * legitimately, and creates session N+1's context; once N+1 is `READY` it would go on feeding N+1's
@@ -86,8 +88,8 @@ import java.util.concurrent.atomic.AtomicLong
  * if the capture side is ever restructured — and note that (1) and (2) fail CLOSED while (3) fails
  * OPEN, which is the one that costs something.
  *
- * (1) BOTH capture sources start a FRESH `Thread` per session — `StreamingAudioRecorder` at `:70`,
- * `:101`, nulled at `:148`, and `PlaybackAudioCapturer` at `:64`, `:88`, nulled at `:100`; both
+ * (1) BOTH capture sources start a FRESH `Thread` per session — `StreamingAudioRecorder` and
+ * `PlaybackAudioCapturer` both build the thread in `start()` and null it in `stop()`; both
  * feed the same `onAudioChunk`. So a capture thread cannot be carrying a PREVIOUS session's
  * snapshot: a new session's thread takes its own epoch, and only a thread that outlived its join
  * holds a stale one. Were capture threads ever POOLED this inverts — a reused thread would keep
@@ -96,7 +98,7 @@ import java.util.concurrent.atomic.AtomicLong
  * regression and the pooling change would have to re-bind.
  *
  * (2) `probeArm` runs before the session's first frame. `SileroEndpointer` fires it from
- * `onSessionStart` (`:421`), and the ordering that actually carries this is a THREAD START, not the
+ * `onSessionStart`, and the ordering that actually carries this is a THREAD START, not the
  * lambda's reachability: `onOpen`'s Main body (FloatingBubbleService) runs `onSessionStart` and
  * only then `startAudioInput()`, which spawns the capture thread.
  *
@@ -251,8 +253,11 @@ class VadProbeLifecycle(private val probe: VadProbe) {
      * session's LSTM. That is strictly milder than what the epoch closes — a cleared recurrence
      * costs a few frames of re-warm, where a FED one poisons every frame after it (T9) — and it
      * rides a commit a stale thread could already trigger before 3.7. Named, not gated. How
-     * capture-thread resets are finally routed is D8/D9's call and must be made explicitly; see the
-     * D5 report's handoff.
+     * capture-thread resets are finally routed WAS decided, explicitly, in D8: `EndpointerFactory`
+     * gates `probeReset` factory-locally on the caller's own epoch snapshot, so a stale capture
+     * thread's reset is skipped while Main's is never refused. The residue that gate does NOT
+     * cover — the decision-state writes above `probeReset()` in `SileroEndpointer.reset()` — is
+     * named at D9's cap-branch reset site and routed to the C-side cleanup.
      */
     fun reset() {
         if (currentState == State.READY) runCatching { probe.reset() }
