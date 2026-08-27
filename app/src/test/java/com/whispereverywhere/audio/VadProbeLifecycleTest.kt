@@ -18,12 +18,34 @@ class FakeVadProbe(
     var freeCalls = 0
     var lastPath: String? = null
 
+    // The FRAME-side observations, added by Task D8 and read only by `EndpointerFactoryTest`.
+    // Purely additive: no test in this file calls `frame`, and `calls` is deliberately left
+    // untouched here so the call-order assertions below keep their exact alphabet.
+    var frameCalls = 0
+    var lastNBytes = 0
+
+    /**
+     * A COPY of `[0, nBytes)`, read ABSOLUTELY — position and limit are ignored, exactly as the
+     * native side ignores them when it reads from `GetDirectBufferAddress`.
+     */
+    var lastFrame: ByteArray? = null
+
+    /** IDENTITY set: the factory promises ONE direct buffer for the endpointer's whole life. */
+    val buffersSeen: MutableSet<ByteBuffer> =
+        java.util.Collections.newSetFromMap(java.util.IdentityHashMap())
+
     override fun init(modelPath: String): Boolean {
         initCalls++; lastPath = modelPath; calls += "init"
         if (initThrows) throw RuntimeException("probe init blew up")
         return initReturns
     }
-    override fun frame(pcm: ByteBuffer, nBytes: Int): Float = 0.9f
+    override fun frame(pcm: ByteBuffer, nBytes: Int): Float {
+        frameCalls++
+        lastNBytes = nBytes
+        buffersSeen += pcm
+        lastFrame = ByteArray(nBytes) { pcm.get(it) }
+        return 0.9f
+    }
     override fun reset() { resetCalls++; calls += "reset" }
     override fun free() { freeCalls++; calls += "free" }
 }
