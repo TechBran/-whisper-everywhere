@@ -156,7 +156,8 @@ object WhisperCatalog {
     /**
      * Default tier on first run. **pro (small.en) since 2026-08-20 (3.7 Workstream H):** eco and
      * base are retired for accuracy, leaving pro as the English flagship and multi as the
-     * international tier. The chooser offers [pickable] and the user picks explicitly; this
+     * international tier. The chooser offers [pickable], steers a fresh install toward one of them
+     * by locale ([ModelTierCopy.steerIdForLanguageTag]), and the user picks explicitly; this
      * constant is the fallback for every path with no pick on record — the auto-setup re-entry in
      * OnboardingSetupViewModel, the download-phase re-resolve in OnboardingFlowScreen, and
      * ModelMigration's ENGLISH target.

@@ -1,6 +1,7 @@
 package com.whispereverywhere.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -71,8 +72,6 @@ class ModelTierCopyTest {
     }
 
     @Test fun the_owner_approved_headlines_are_pinned_exactly() {
-        assertEquals("Fastest", ModelTierCopy.forId("eco")!!.headline)
-        assertEquals("Fast", ModelTierCopy.forId("base")!!.headline)
         assertEquals("Best English accuracy", ModelTierCopy.forId("pro")!!.headline)
         assertEquals("Best multilingual accuracy", ModelTierCopy.forId("multi")!!.headline)
     }
@@ -81,6 +80,56 @@ class ModelTierCopyTest {
         // Retired tiers stay resolvable in WhisperCatalog but are not offered — no copy required.
         assertNull(ModelTierCopy.forId("extreme"))
         assertNull(ModelTierCopy.forId("ultra"))
+        // 3.7 Workstream H: the 60 MB tiers joined them.
+        assertNull(ModelTierCopy.forId("eco"))
+        assertNull(ModelTierCopy.forId("base"))
         assertNull(ModelTierCopy.forId("nope"))
+    }
+
+    @Test fun no_offered_tier_names_a_retired_one() {
+        // "Noticeably slower than Eco" was true and is now a dangling reference to a card the
+        // user can no longer see. Copy may not describe a tier by comparison to a dead one.
+        val retiredIds = WhisperCatalog.entries.filter { it.retired }.map { it.id.lowercase() }
+        WhisperCatalog.pickable.forEach { model ->
+            val copy = ModelTierCopy.forId(model.id)!!
+            val all = (copy.headline + " " + copy.body + " " + copy.badges.joinToString(" ")).lowercase()
+            retiredIds.forEach { r ->
+                assertFalse("tier '${model.id}' copy names retired tier '$r'", all.contains(r))
+            }
+        }
+    }
+
+    @Test fun english_locales_are_steered_to_pro() {
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTag("en"))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTag("en-US"))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTag("en_GB"))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTag("EN-au"))
+    }
+
+    @Test fun every_other_locale_is_steered_to_multi() {
+        // The Bengali review is the reason this rule exists at all: an English-only tier must
+        // never be the thing a non-English speaker lands on by default.
+        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("bn"))
+        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("bn-BD"))
+        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("fr-CA"))
+        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("zh-Hans-CN"))
+        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag(""))
+    }
+
+    @Test fun the_steer_always_lands_on_a_pickable_tier_of_the_right_scope() {
+        val pickableIds = WhisperCatalog.pickable.map { it.id }
+        listOf("en-US", "bn-BD", "de", "").forEach { tag ->
+            val id = ModelTierCopy.steerIdForLanguageTag(tag)
+            assertTrue("steer '$id' for '$tag' is not pickable", pickableIds.contains(id))
+        }
+        assertEquals(ModelScope.ENGLISH, WhisperCatalog.byId(ModelTierCopy.steerIdForLanguageTag("en"))!!.scope)
+        assertEquals(ModelScope.MULTILINGUAL, WhisperCatalog.byId(ModelTierCopy.steerIdForLanguageTag("bn"))!!.scope)
+    }
+
+    @Test fun the_steer_badge_is_pinned_exactly_and_claims_nothing_about_speed() {
+        assertEquals("Best match for your language", ModelTierCopy.STEER_BADGE)
+        listOf("faster", "fastest", "quicker", "instant").forEach {
+            assertFalse(ModelTierCopy.STEER_BADGE.lowercase().contains(it))
+        }
     }
 }
