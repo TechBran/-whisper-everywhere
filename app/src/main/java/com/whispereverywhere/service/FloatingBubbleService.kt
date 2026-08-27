@@ -244,6 +244,42 @@ internal fun capCutRetainWindowMs(nowMs: Long, endpointer: Endpointer): Long =
  */
 internal fun speechEndMs(nowMs: Long, ec: EndpointCut): Long = nowMs - ec.trailMs
 
+/**
+ * Who owns the preview strip's TextView (3.7, Workstream G). Only a SERVER-DRIVEN LIVE session
+ * still streams deltas onto it: its partials arrive as the words are spoken, which is the whole
+ * point of the surface. A LOCAL session's native deltas all arrive in one burst at ~100 % of the
+ * transcribe's wall time — whisper.cpp fires `new_segment_callback` after the window's decode —
+ * and `LocalWhisperEngine` follows them with a terminal `onDelta("")`, so at utterance cadence
+ * the strip was set and hidden inside a single Choreographer frame. That is the "flicker" H2
+ * filed as accepted cosmetic; it is the render being pointless, not slow.
+ *
+ * D4's plumbing stays exactly where it is — `transcribeStreaming`, the JNI new-segment callback
+ * and [com.whispereverywhere.transcription.DeltaThrottle] are untouched and still feed CLOUD_LIVE;
+ * only this render decision moved. Cloud BATCH is unaffected either way: it emits no deltas
+ * (its `CloudRelay` forwards a callback its engine never fires, and the fallback's `LocalRelay`
+ * swallows the rescue engine's).
+ *
+ * Pure so the rule is a pinned contract rather than a buried `if` ([InFlightStripTest]), the same
+ * discipline as [connectingStatusLabel], [processingTimerRunsIn] and
+ * [com.whispereverywhere.transcription.live.LiveTurnPolicy].
+ */
+internal fun deltaOwnsPreviewStrip(sessionIsLive: Boolean): Boolean = sessionIsLive
+
+/**
+ * The LOCAL in-flight line for [depth] committed-but-unresolved segments, or null when the queue
+ * is empty (3.7, Workstream G).
+ *
+ * Under VAD endpointing there is a genuinely new repeating state that did not exist before:
+ * "the endpoint fired, this sentence is in flight", lasting ~1.3–4.3 s and recurring ~16×/minute,
+ * during which nothing on screen changes. The depth suffix appears only past one, and it is the
+ * only surface that makes a growing backlog visible WHILE it grows rather than at stop.
+ */
+internal fun inFlightStripLabel(depth: Int): String? = when {
+    depth <= 0 -> null
+    depth == 1 -> "Transcribing…"
+    else -> "Transcribing… ($depth in queue)"
+}
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
