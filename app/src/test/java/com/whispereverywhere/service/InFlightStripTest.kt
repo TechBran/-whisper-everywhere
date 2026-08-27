@@ -114,4 +114,25 @@ class InFlightStripTest {
             inFlightStripVisibility(label = "Transcribing… (3 in queue)", currentlyHidden = false),
         )
     }
+
+    // ------------------------------------------------------------- resolution vs the strip
+
+    @Test fun a_live_resolution_still_clears_the_words_it_was_streaming() {
+        // Unchanged 3.6.0 behaviour: the resolved turn moves into the accumulating window, so the
+        // strip must reset or the finished words linger UNDER the next utterance as it streams.
+        assertTrue(resolvedTextClearsStrip(sessionIsLive = true, isFinalizing = false))
+    }
+
+    @Test fun a_local_resolution_repaints_the_in_flight_line_instead_of_clearing() {
+        // The strip is not carrying this utterance's words any more — it is carrying the queue.
+        // Clearing it here would blank the backlog signal on every single resolution.
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = false, isFinalizing = false))
+    }
+
+    @Test fun finalizing_owns_the_strip_in_every_session_kind() {
+        // The stop tap writes "Finishing transcript…" / "Finishing… (waiting on provider)" and
+        // THEN flushes the tail; nothing released during the drain may overwrite that line.
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = true, isFinalizing = true))
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = false, isFinalizing = true))
+    }
 }

@@ -313,6 +313,23 @@ internal fun inFlightStripVisibility(label: String?, currentlyHidden: Boolean): 
         else -> StripVisibility.OCCUPYING_BLANK
     }
 
+/**
+ * Should a released segment's text CLEAR the preview strip (3.7, Workstream G)?
+ *
+ * Only when deltas own it: there the strip was carrying this very utterance's words and leaving
+ * them would read as duplicated text under the next one. When the in-flight line owns it, the
+ * caller repaints from the queue depth instead — clearing would blank the backlog signal on every
+ * resolution. FINALIZING never clears in either case: the stop tap's status line owns the strip
+ * for the whole drain (the pre-existing 3.6.0 D guard, preserved verbatim).
+ *
+ * This is also the other half of [inFlightStripVisibility]'s anti-churn rule. Hiding the strip here
+ * put it back to `currentlyHidden`, so every commit paid the reveal — and its `reclampNow()` — all
+ * over again; the rule can only cost one geometry change per session if nothing returns the strip
+ * to GONE mid-session.
+ */
+internal fun resolvedTextClearsStrip(sessionIsLive: Boolean, isFinalizing: Boolean): Boolean =
+    !isFinalizing && deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
@@ -2542,6 +2559,11 @@ class FloatingBubbleService : Service(),
                 }
             }
             override fun onDelta(text: String) {
+                // 3.7 G: LOCAL deltas no longer drive the strip — the commit/resolve in-flight
+                // line does. The callback itself, DeltaThrottle and transcribeStreaming's JNI
+                // plumbing are deliberately left running: CLOUD_LIVE still renders from here, and
+                // the local stream stays available for the next surface that wants it.
+                if (!deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return
                 // Local partial streaming (3.6.0 D) joined cloud-live here. The unified preview
                 // (W2) keeps the container up for EVERY session context, so the strip renders
                 // wherever deltas exist — no context gate. Resolved turns accumulate into the
@@ -2593,6 +2615,14 @@ class FloatingBubbleService : Service(),
                     // delivery. The SegmentOrderer's release rules are untouched — this only names
                     // its result.
                     val release = segmentOrderer.onResolved(seq, outcome)
+                    // 3.7 G: the queue drops BEFORE delivery and independently of it — an
+                    // EmptyExpected or a Lost segment resolves without releasing any text, and
+                    // the backlog must still count down or the strip sticks at a phantom depth.
+                    android.util.Log.i(
+                        "WE-DIAG",
+                        EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),
+                    )
+                    renderInFlightStrip()
                     deliverReleasedText(release.text)
                     // The stamp is consumed ONLY on a non-blank release, and that gate is load
                     // bearing rather than cosmetic. Resolutions arrive OUT OF ORDER on cloud
@@ -2600,16 +2630,14 @@ class FloatingBubbleService : Service(),
                     // so an overtaking seq reaches here while the orderer still holds it and its
                     // release is blank. Consuming the stamp there would drop that seq's number AND
                     // prune its predecessor's, losing BOTH perceived: lines — measured, and pinned
-                    // by PerceivedLatencyTest's resolution-order rows.
+                    // by PerceivedLatencyTest's resolution-order rows. G5 moves the queue line and
+                    // the repaint; it must NOT move or re-shape this gate, which
+                    // PerceivedStampPinTest#theStampIsConsumedOnlyOnANonBlankRelease pins verbatim.
                     if (release.text.isNotBlank()) {
                         perceivedLatency.onVisible(seq, System.currentTimeMillis())?.let { waited ->
                             android.util.Log.i("WE-DIAG", EndpointDiag.perceivedLine(seq, waited))
                         }
                     }
-                    android.util.Log.i(
-                        "WE-DIAG",
-                        EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),
-                    )
                 }
             }
             override fun onError(message: String) {
@@ -2982,7 +3010,15 @@ class FloatingBubbleService : Service(),
      * live session never reaches the body — its deltas own the strip.
      *
      * The reveal is the session's ONE geometry change; from then on the line swaps text or goes
-     * INVISIBLE, so nothing re-measures and no reclamp is posted per utterance.
+     * INVISIBLE, so nothing re-measures and no reclamp is posted per utterance. That last clause
+     * only became true at Task G5: while [deliverReleasedText] still returned the strip to GONE on
+     * every release, the next commit read `currentlyHidden` and paid the reveal again, so the cost
+     * was one reclamp per UTTERANCE. Delivery now repaints through here instead of hiding, which is
+     * what makes "once per session" the measured behaviour rather than the intended one.
+     *
+     * ONE body, MANY callers: the funnel posts it (it can be called from the capture thread), and
+     * the resolve path and delivery call it bare, both already on Main. All three are pinned —
+     * `CommitFunnelPinTest` for the posted one, `InFlightStripWiringPinTest` for the bare pair.
      */
     private fun renderInFlightStrip() {
         if (currentState != BubbleState.RECORDING) return
@@ -3019,10 +3055,20 @@ class FloatingBubbleService : Service(),
         // in, reading as duplicated text. Held during FINALIZING, where the strip carries the
         // "finishing transcript" status instead. Scroll reset too, so the next turn starts at
         // the top of the panel rather than wherever the last one left it parked.
-        if (currentState != BubbleState.FINALIZING) {
+        val finalizing = currentState == BubbleState.FINALIZING
+        if (resolvedTextClearsStrip(sessionIsLive = sessionIsLive, isFinalizing = finalizing)) {
             transcriptionDeltaText.text = ""
             transcriptionDeltaText.scrollTo(0, 0)
             transcriptionDeltaText.visibility = View.GONE
+        } else if (!finalizing) {
+            // 3.7 G: the strip is carrying the in-flight line, whose truth is the queue depth —
+            // repaint it, never hide it. Returning it to GONE here is what made Task G4's reveal
+            // cost a reclamp per UTTERANCE rather than one per session: GONE is exactly the state
+            // the anti-churn rule reads as "not revealed yet", so every commit paid the reveal
+            // again. This is also where the per-utterance scrollTo(0, 0) goes away — the in-flight
+            // line is one short string, and in a LOCAL session nothing scrolls this strip any more
+            // now that onDelta is gated (the CONNECTING label already reset it to the top).
+            renderInFlightStrip()
         }
         handleTranscriptionResult(text)
     }
