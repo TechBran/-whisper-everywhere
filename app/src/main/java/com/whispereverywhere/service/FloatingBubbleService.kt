@@ -295,6 +295,24 @@ internal fun inFlightStripLabel(depth: Int): String? = when {
  */
 internal fun commitAdvancesQueueDepth(seq: Long): Boolean = seq >= 0L
 
+/** What the preview strip should be doing for a given in-flight line (3.7, Workstream G). */
+internal enum class StripVisibility { HIDDEN, OCCUPYING_BLANK, SHOWING }
+
+/**
+ * The anti-churn rule. Once the in-flight line has revealed the strip, an empty queue leaves it
+ * OCCUPYING_BLANK (View.INVISIBLE) rather than hidden: at utterance cadence the queue empties and
+ * refills roughly every 2.4 s, so a VISIBLE↔GONE flap would change the window's height — and
+ * therefore post `reclampNow()` — on every single utterance. Under the 15 s wall cap that
+ * happened once per cap window; the delta strip's own show/hide did it per segment boundary.
+ * Revealing once per session and then only swapping text is what removes it.
+ */
+internal fun inFlightStripVisibility(label: String?, currentlyHidden: Boolean): StripVisibility =
+    when {
+        label != null -> StripVisibility.SHOWING
+        currentlyHidden -> StripVisibility.HIDDEN
+        else -> StripVisibility.OCCUPYING_BLANK
+    }
+
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
     WhisperAccessibilityService.OnClipboardChangedListener,
@@ -1473,7 +1491,10 @@ class FloatingBubbleService : Service(),
         // without this allowance the estimate UNDER-shoots in live mode and a mid-resize
         // clamp could leave the window bottom off-screen.
         val stripAllowance =
-            if (transcriptionDeltaText.visibility == View.VISIBLE) (100 * density).toInt() else 0
+            // != GONE, not == VISIBLE: 3.7's in-flight line parks the strip at INVISIBLE between
+            // utterances, which still occupies its height in the layout. Reading that as "no
+            // strip" would UNDER-shoot the estimate — the unsafe direction for a clamp.
+            if (transcriptionDeltaText.visibility != View.GONE) (100 * density).toInt() else 0
         val panelH = ((heightDp + 48f) * density).toInt() + stripAllowance
         return Pair(maxOf(pillEstimate, panelW), pillEstimate + panelH)
     }
@@ -2952,8 +2973,36 @@ class FloatingBubbleService : Service(),
         return seq
     }
 
-    /** Painted in Task G4; the funnel calls it from the first commit onward. */
-    private fun renderInFlightStrip() = Unit
+    /**
+     * Paint the LOCAL in-flight line onto the preview strip (3.7, Workstream G). Main thread only.
+     *
+     * Phase ownership, exactly as CONNECTING and FINALIZING already practise it on this same
+     * TextView: this paints only while RECORDING, so `connectingStatusLabel`'s "Loading speech
+     * model…" and stopRecording's "Finishing transcript…" keep the strip in their own phases. A
+     * live session never reaches the body — its deltas own the strip.
+     *
+     * The reveal is the session's ONE geometry change; from then on the line swaps text or goes
+     * INVISIBLE, so nothing re-measures and no reclamp is posted per utterance.
+     */
+    private fun renderInFlightStrip() {
+        if (currentState != BubbleState.RECORDING) return
+        if (deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return
+        val label = inFlightStripLabel(depth = segmentQueueDepth.depth())
+        val wasHidden = transcriptionDeltaText.visibility == View.GONE
+        when (inFlightStripVisibility(label = label, currentlyHidden = wasHidden)) {
+            StripVisibility.HIDDEN -> return
+            StripVisibility.OCCUPYING_BLANK -> {
+                transcriptionDeltaText.text = ""
+                transcriptionDeltaText.visibility = View.INVISIBLE
+            }
+            StripVisibility.SHOWING -> {
+                transcriptionDeltaText.text = label
+                transcriptionDeltaText.visibility = View.VISIBLE
+                // Posted ONLY on the reveal — the one time the window actually grew.
+                if (wasHidden) bubbleView.post { reclampNow() }
+            }
+        }
+    }
 
     /**
      * The ONE routing point for text the [segmentOrderer] releases — used by onSegmentResolved and

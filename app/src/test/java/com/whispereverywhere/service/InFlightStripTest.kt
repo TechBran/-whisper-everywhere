@@ -78,4 +78,40 @@ class InFlightStripTest {
         assertTrue(commitAdvancesQueueDepth(1L))
         assertTrue(commitAdvancesQueueDepth(4_096L))
     }
+
+    // ------------------------------------------------------------- the anti-churn rule
+
+    @Test fun the_first_line_of_a_session_reveals_the_strip() {
+        assertEquals(
+            StripVisibility.SHOWING,
+            inFlightStripVisibility(label = "Transcribing…", currentlyHidden = true),
+        )
+    }
+
+    @Test fun an_empty_queue_before_the_first_commit_leaves_the_strip_hidden() {
+        // showSessionPreview() starts it GONE. Going GONE -> INVISIBLE would grow the window
+        // for a line with nothing in it.
+        assertEquals(
+            StripVisibility.HIDDEN,
+            inFlightStripVisibility(label = null, currentlyHidden = true),
+        )
+    }
+
+    @Test fun an_emptied_queue_keeps_the_strip_occupying_its_space() {
+        // THE anti-churn rule. Once the strip has been revealed it never returns to GONE for the
+        // rest of the session: at utterance cadence the queue empties and refills every ~2.4 s,
+        // and a VISIBLE<->GONE flap would re-measure the window and post a reclamp every single
+        // utterance — the exact churn G exists to remove (previously one reclamp per 15 s cap).
+        assertEquals(
+            StripVisibility.OCCUPYING_BLANK,
+            inFlightStripVisibility(label = null, currentlyHidden = false),
+        )
+    }
+
+    @Test fun a_deepening_queue_repaints_without_a_geometry_change() {
+        assertEquals(
+            StripVisibility.SHOWING,
+            inFlightStripVisibility(label = "Transcribing… (3 in queue)", currentlyHidden = false),
+        )
+    }
 }

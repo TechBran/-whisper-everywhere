@@ -20,12 +20,23 @@ import java.io.File
  *
  * `FloatingBubbleService` is an Android Service and cannot be instantiated in a JVM test, so the
  * pin is on the SOURCE — the same instrument and the same reasoning as `CapSeamPinTest` and
- * `EndpointerLifecyclePinTest`, whose KDocs carry the full argument. Task G3 extends the funnel's
- * BODY and nothing here constrains that; Task F9's own body addition — the speech-end stamp — is
- * pinned in `PerceivedStampPinTest`, deliberately not here, because half of that contract lives in
- * `onSegmentResolved`. What is pinned is narrower and permanent: there is ONE funnel, the five
- * sites reach the engine only through it, it records the seq the engine actually returned, it
- * reads the endpointer's cut record ONLY on a `cut=vad` commit, and it emits both of its lines.
+ * `EndpointerLifecyclePinTest`, whose KDocs carry the full argument. Task F9's own body addition —
+ * the speech-end stamp — is pinned in `PerceivedStampPinTest`, deliberately not here, because half
+ * of that contract lives in `onSegmentResolved`. What is pinned is narrower and permanent: there is
+ * ONE funnel, the five sites reach the engine only through it, it records the seq the engine
+ * actually returned, it reads the endpointer's cut record ONLY on a `cut=vad` commit, it emits both
+ * of its lines, and — Task G4's addition — it posts the in-flight strip's repaint, guarded.
+ *
+ * **The strip-repaint pins are Task G4 closing a debt Task G3 recorded rather than forced.** G3
+ * wired the funnel to a `renderInFlightStrip() = Unit` stub and ran two mutants against that wiring
+ * — the call deleted, and the guard inverted. Both survived a green 1316-test suite, correctly: a
+ * no-op that never runs is indistinguishable from a no-op that runs on the wrong commits, so G3
+ * deferred them to the task that makes the render real instead of manufacturing a kill against a
+ * stub. G4 made it real — and both mutants survived again, for the OTHER reason named in this
+ * class's opening paragraph: `FloatingBubbleService` is an Android Service, this project has no
+ * Robolectric, and no JVM test can reach `renderInFlightStrip`'s body at all. That is exactly the
+ * shape Task F8's fourth mutant had — the `endpoint:` emission whose deletion passed 1276 tests —
+ * and it gets exactly F8's remedy: pin the CALL, structurally, not the thing being called.
  *
  * **That last one is Task F8's addition, and it is the one body constraint this class carries on
  * purpose.** `SileroEndpointer.lastCut()` is not a "current state" accessor: it holds the LAST vad
@@ -182,6 +193,47 @@ class CommitFunnelPinTest {
         // onSegmentResolved. A third would mean the depth is being reported from somewhere that
         // did not change it.
         assertEquals(2, count("EndpointDiag.queueLine("))
+    }
+
+    @Test
+    fun theFunnelActuallyPostsTheStripRepaint() {
+        // Task G3's deferred M3, killed here. The funnel is the ONE writer of the queue depth, so
+        // it is also where the screen learns the depth changed; deleting this line leaves the
+        // in-flight strip permanently blank while `queue:` keeps reporting a growing backlog to
+        // logcat — a green suite and a user watching nothing happen for four seconds an utterance.
+        //
+        // The needle carries its thread hop on purpose. `commitSegment` is callable from the
+        // CAPTURE thread (the endpoint and cap cuts), so the funnel's repaint MUST be posted; the
+        // painters Task G5 adds at the resolve path and at delivery are already on Main and call
+        // it bare, which is why this counts the launch-wrapped form rather than the bare one and
+        // stays at exactly 1 as G5 lands. A second launch-wrapped call means a second thread hop
+        // appeared, and this file is where that gets decided — deliberately (the D10 discipline).
+        assertEquals(
+            "the funnel POSTS the strip repaint — the render existing is not the same claim as " +
+                "the funnel calling it",
+            1,
+            count("serviceScope.launch(Dispatchers.Main) { renderInFlightStrip() }"),
+        )
+        // One painter declaration, many callers. G5 adds call sites, never a second body.
+        assertEquals(1, count("    private fun renderInFlightStrip() {"))
+    }
+
+    @Test
+    fun theFunnelSkipsTheStripRepaintForACommitThatCutNothing() {
+        // Task G3's deferred M4, killed here — and a SEPARATE test from the emission above, per
+        // this file's standing rule: deleting the repaint and repainting on the wrong commits are
+        // different defects and must name different tests.
+        //
+        // `commitAdvancesQueueDepth` is pinned byte-for-byte in InFlightStripTest, but until this
+        // assertion nothing said the funnel USED it. Inverted, every real segment stops repainting
+        // and every `-1` no-op — the unconditional stop flush, switchSource on a drained buffer —
+        // posts a repaint that cannot correspond to any depth change.
+        indexOfOrFail("        if (commitAdvancesQueueDepth(seq)) serviceScope.launch(")
+        assertEquals(
+            "the guard is never negated: the repaint is for commits that CUT something",
+            0,
+            count("if (!commitAdvancesQueueDepth"),
+        )
     }
 
     @Test
