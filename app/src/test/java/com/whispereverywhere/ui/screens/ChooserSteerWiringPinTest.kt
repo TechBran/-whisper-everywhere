@@ -96,6 +96,18 @@ class ChooserSteerWiringPinTest {
             1,
             count(flow, "java.util.Locale.getDefault().toLanguageTag()"),
         )
+        // H4 review, n1. Everything else in this class pins what `steerId` DRIVES. Without this
+        // needle, rebinding it to `WhisperCatalog.DEFAULT_MODEL_ID` (or the bare literal "pro")
+        // compiles clean, leaves `languageTag` live — the ordering call still consumes it, so not
+        // even an unused-variable warning — and kills nothing. The badge and the highlight then
+        // land on the English-only tier for every user on earth while the ORDERING stays correct:
+        // half-right, and harder to diagnose than the original Bengali-review defect.
+        assertEquals(
+            "the guided flow's steerId comes from steerIdForLanguageTag, not a catalog default " +
+                "or a hardcoded tier id",
+            1,
+            count(flow, "val steerId = ModelTierCopy.steerIdForLanguageTag(languageTag)"),
+        )
     }
 
     @Test
@@ -167,6 +179,16 @@ class ChooserSteerWiringPinTest {
             "the steer reads the device's full language tag, not a bare language code",
             1,
             count(picker, "java.util.Locale.getDefault().toLanguageTag()"),
+        )
+        // H4 review, n1 — the picker half. `theSettingsPickerHighlightsTheSteerAndNeverTheCatalog
+        // Default` forbids the DEFAULT_MODEL_ID *spelling* in this file, but a string literal
+        // (`val steerId = "pro"`) evades it entirely. This needle pins the source of the value,
+        // so both spellings of the same defect die here.
+        assertEquals(
+            "the Settings picker's steerId comes from steerIdForLanguageTag, not a catalog " +
+                "default or a hardcoded tier id",
+            1,
+            count(picker, "val steerId = ModelTierCopy.steerIdForLanguageTag(languageTag)"),
         )
     }
 
