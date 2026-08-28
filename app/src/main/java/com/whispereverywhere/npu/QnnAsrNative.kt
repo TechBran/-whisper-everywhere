@@ -116,6 +116,10 @@ object QnnAsrNative {
      *        refused by capacity rather than half-read.
      * @return `""` on success, else `"encode: <detail>"`.
      *
+     * On success this also arms the decode side: the encode-validity flag [nativeDecodeSegment] and
+     * [nativeDetectLanguage] check is set here and **only** here. It is cleared on entry, so a
+     * failed encode leaves the tier refusing to decode rather than decoding half a segment.
+     *
      * On success the encoder's 24 cross-KV output buffers hold this segment's state **and are
      * already the decoder's bound cross-KV inputs** — nothing is copied between the two passes,
      * which is what keeps a ~100-token decode from moving 2.6 GB. Call `nativeDecodeSegment` (Q4)
@@ -143,8 +147,19 @@ object QnnAsrNative {
      * self-KV — and 199 is the termination threshold, not an executing position. The loop ends on
      * [WhisperTokens.EOT], on [maxTokens], or at the position cap, whichever comes first.
      *
-     * Call [nativeEncode] first: the decoder reads that segment's cross-KV **in place**, so a
-     * decode without a preceding encode transcribes whatever the last encode left there.
+     * **[nativeEncode] must have succeeded first, and this is enforced, not documented.** The
+     * decoder reads that segment's cross-KV **in place**, so a decode without a preceding encode
+     * would transcribe whatever the last encode left there — fluently, with no other symptom.
+     * Native holds an encode-validity flag: set by a successful [nativeEncode], cleared on entry to
+     * every [nativeEncode] (a failed execute may leave the cross-KV half written), cleared by
+     * [nativeRelease] and by a fresh [nativeInit]. Without it this returns `-1` and
+     * `"decode: no encoded segment …"`.
+     *
+     * **A decode does NOT consume that flag.** One encode may serve a [nativeDetectLanguage] pass
+     * and then one or more [nativeDecodeSegment] calls — which is the tier's actual flow (encode →
+     * detect → decode against the same encode), and is also what makes a retry with a different
+     * prompt possible without re-encoding. The flag says "the cross-KV holds a real segment", not
+     * "a decode is still owed".
      *
      * @param prompt `NpuDecodePolicy.promptTokens(lang)`.
      * @param suppress `NpuDecodePolicy.suppressList` — applied to the logits at **every** generated
@@ -177,7 +192,11 @@ object QnnAsrNative {
      * winner was a language at all. Feed the result to [WhisperTokens.codeForToken], which returns
      * `null` for anything outside that block.
      *
-     * Requires a preceding [nativeEncode] — this reads that segment's cross-KV.
+     * **Requires a successful preceding [nativeEncode], enforced the same way** — this reads that
+     * segment's cross-KV in place and would otherwise detect the *previous* segment's language,
+     * which then becomes this segment's prompt. Returns `-1` and `"detect: no encoded segment …"`
+     * without one. It does **not** consume the encode: call [nativeDecodeSegment] next against the
+     * same encode, which is exactly what this function exists for.
      *
      * @return a `<|xx|>` token id in `50259..50357`, or `< 0` with the reason in [nativeLastError].
      */

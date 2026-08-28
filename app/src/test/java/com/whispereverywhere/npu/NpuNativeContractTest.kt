@@ -303,6 +303,27 @@ class NpuNativeContractTest {
             liveOffsets(body, "if (applyBegin)").isNotEmpty()
         )
 
+        // AND THE CALL SITE, which is the same mistake one level up. Everything above scopes to
+        // suppressThenArgmax's own body; none of it says nativeDecodeSegment ever CALLS it.
+        // Replacing that one call with `argmaxInRange(logits, 0, g.vocab)` compiles, reintroduces
+        // C2 in full, and leaves every assertion above satisfied — exactly the shape of Q3's N1,
+        // where the guard was present and the call was gone.
+        val loop = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
+        assertTrue(
+            "nativeDecodeSegment must CALL suppressThenArgmax on a live line. The mask and the " +
+                "scan being correctly ordered inside a function nobody calls is not a defence.",
+            liveOffsets(loop, "suppressThenArgmax(").isNotEmpty()
+        )
+        assertTrue(
+            "the begin-suppress predicate must be `position == promptLen - 1` on a live line in " +
+                "nativeDecodeSegment. This is the brief's own named defect: BEGIN_SUPPRESS applies " +
+                "at the FIRST GENERATED step, which is promptLen - 1, and NOT at position == 0 " +
+                "(where the model is still being fed the prompt and its argmax is discarded). " +
+                "`position == 0` compiles and mutes 220/EOT at a step whose output is thrown away, " +
+                "leaving the real first token unguarded.",
+            liveOffsets(loop, "position == promptLen - 1").isNotEmpty()
+        )
+
         // The decode loop needs EOT for itself: the contract's argument list is fixed and a
         // terminator smuggled in through a data array is a terminator nobody can see. That makes
         // kEotToken a SECOND reading of an asset fact whose first reading is WhisperTokens.EOT,
@@ -318,6 +339,151 @@ class NpuNativeContractTest {
                 "decode loop terminates on an id the tokenizer does not call end-of-text and the " +
                 "transcript runs to the position cap. Found: ${eot.first()}",
             eot.first().contains("= ${WhisperTokens.EOT};")
+        )
+    }
+
+    /**
+     * The decode loop's four single-point invariants — each one line, each with no host-visible
+     * signal, none of them defended before this pin existed.
+     *
+     * `position` is the single counter and every one of these edits compiles, runs, and produces a
+     * plausible transcript:
+     *  - `lastPosition = maskLen - 2` → `- 1` lets position 199 execute, one past the 199-slot
+     *    self-KV. That is the brief's named overrun;
+     *  - deleting the prompt-prefill swap makes every prompt step read set 0 and write set 1, so
+     *    the prefill cache is thrown away and only the last prompt token's state survives;
+     *  - deleting `next = tok` feeds the same token forever — the model repeats one word to the
+     *    position cap;
+     *  - deleting either terminator (`EOT`, the budget) removes the loop's ability to stop early.
+     *
+     * None of these is a defect in the shipped code. The pin exists because all four are a single
+     * line, and Q10a is the first execution.
+     */
+    @Test
+    fun theDecodeLoopsSinglePointInvariantsArePinned() {
+        val loop = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
+        assertTrue(
+            "the last EXECUTING position must be `g.maskLen - 2` on a live line — 198 for this " +
+                "asset. `- 1` runs position 199, one past the 199-slot self-KV, with the graph " +
+                "doing the indexing and nothing on either side reporting it. Live lines " +
+                "mentioning lastPosition: " + liveLines(loop, "lastPosition"),
+            liveOffsets(loop, "const uint32_t lastPosition = g.maskLen - 2;").isNotEmpty()
+        )
+        val swaps = liveOffsets(loop, "bindSelfKvLocked(1 - g.selfInSet);")
+        assertTrue(
+            "the loop must swap the self-KV ping-pong on BOTH paths — after a discarded " +
+                "prompt-prefill step and after an emitted token. Found ${swaps.size} live sites, " +
+                "expected 2. Dropping the prefill swap makes every prompt step read set 0 and " +
+                "write set 1, so three quarters of the prompt's cache is overwritten before the " +
+                "first generated token ever sees it.",
+            swaps.size >= 2
+        )
+        assertTrue(
+            "the loop must feed the emitted token back as the next input (`next = tok;`) on a " +
+                "live line. Without it `next` stays at prompt[0] and the model is asked to " +
+                "continue from <|startoftranscript|> at every position.",
+            liveOffsets(loop, "next = tok;").isNotEmpty()
+        )
+        assertTrue(
+            "the loop must terminate on EOT on a live line — it is the only terminator short of " +
+                "the position cap.",
+            liveOffsets(loop, "if (tok == kEotToken)").isNotEmpty()
+        )
+        assertTrue(
+            "the loop must terminate on the token budget on a live line, AFTER writing the token " +
+                "that filled it.",
+            liveOffsets(loop, "if (count >= maxTokens) break;").isNotEmpty()
+        )
+    }
+
+    /**
+     * The decoder's load-time guards on the asset's own numbers — step 1's doctrine applied to the
+     * four facts the loop rests on besides the cross-KV alias, plus the encode-validity flag.
+     *
+     * Each of these is a guard whose deletion is a one-line edit with no host-visible signal, and
+     * each defends a failure that presents as **fluent wrong text** rather than as an error:
+     *  - **dtype equality, not byte width.** `elementSize()` collapses signed/unsigned/float, so an
+     *    `SFIXED_POINT_16` `logits` re-export passes every size check and inverts the raw-code
+     *    ordering the whole argmax argument rests on;
+     *  - **the mask codes**, checked against `attention_mask`'s own quantisation. If a re-export
+     *    flips its offset, 65535 becomes the *blocked* code and the decoder attends to nothing;
+     *  - **the self-KV depth**, checked against the mask width. `lastPosition` is derived from one
+     *    tensor and the "exact fit" claim is about another, and nothing else compares them;
+     *  - **the encode-validity flag.** The decoder reads the cross-KV in place, so a decode with no
+     *    preceding encode transcribes the *previous segment* — the worst failure shape in the tier
+     *    and its most likely integration mistake.
+     */
+    @Test
+    fun theDecodersLoadTimeGuardsOnTheAssetsOwnNumbersCannotBeDeletedSilently() {
+        val bind = functionBody(cpp, "std::string bindDecoderLocked()")
+        assertTrue(
+            "bindDecoderLocked must assert the exact Qnn data TYPE of input_ids and position_ids " +
+                "(QNN_DATATYPE_INT_32), not merely their 4-byte width — elementSize() maps " +
+                "INT_32, UINT_32, SFIXED_32, UFIXED_32 and FLOAT_32 all to 4.",
+            liveOffsets(bind, "QNN_DATATYPE_INT_32").size >= 2
+        )
+        assertTrue(
+            "bindDecoderLocked must assert QNN_DATATYPE_UFIXED_POINT_16 for BOTH attention_mask " +
+                "and logits. UNSIGNED is the load-bearing half: dequantisation is scale x (q - zp) " +
+                "with scale > 0, so an argmax over the raw codes is exact — read as signed two's " +
+                "complement the ordering inverts and every token this file picks is wrong, with " +
+                "every size, bind and buffer still correct. Found " +
+                "${liveOffsets(bind, "QNN_DATATYPE_UFIXED_POINT_16").size} live mentions, " +
+                "expected 2.",
+            liveOffsets(bind, "QNN_DATATYPE_UFIXED_POINT_16").size >= 2
+        )
+        assertTrue(
+            "bindDecoderLocked must CALL checkMaskCodesLocked() on a live line — the two mask " +
+                "codes are written 199 times per segment and were, until this guard, a comment.",
+            liveOffsets(bind, "checkMaskCodesLocked()").isNotEmpty()
+        )
+        val mask = functionBody(cpp, "std::string checkMaskCodesLocked()")
+        assertTrue(
+            "checkMaskCodesLocked must actually DEQUANTISE both codes through the tensor's own " +
+                "scale and offset and compare the results. A guard that reads the quant params " +
+                "and asserts nothing about them is decoration.",
+            liveOffsets(mask, "kMaskAttend) + offset) * scale").isNotEmpty() &&
+                liveOffsets(mask, "kMaskBlocked) + offset) * scale").isNotEmpty() &&
+                liveOffsets(mask, "attend > -0.01 && attend < 0.01").isNotEmpty() &&
+                liveOffsets(mask, "blocked <= -1.0").isNotEmpty()
+        )
+        assertTrue(
+            "bindDecoderLocked must compare the self-KV cache DEPTH against the mask width on a " +
+                "live line. lastPosition comes from attention_mask; the 'exact fit' is a claim " +
+                "about the self-KV; nothing else in the file relates the two.",
+            liveOffsets(bind, "depth != g.maskLen - 1").isNotEmpty()
+        )
+
+        val enc = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(")
+        assertTrue(
+            "nativeEncode must SET the encode-validity flag on a live line, and only after a " +
+                "successful graphExecute.",
+            liveOffsets(enc, "g.encoded = true;").isNotEmpty()
+        )
+        assertTrue(
+            "nativeEncode must CLEAR the flag on entry on a live line — a graphExecute that " +
+                "failed part way may have written some of the 24 cross-KV buffers, and half a " +
+                "segment decodes as fluently as a whole one.",
+            liveOffsets(enc, "g.encoded = false;").isNotEmpty()
+        )
+        val decode = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
+        assertTrue(
+            "nativeDecodeSegment must refuse a decode with no encoded segment, on a live line. " +
+                "Without it the decoder reads the previous segment's cross-KV in place and " +
+                "transcribes it — no crash, no error, no way for the caller to tell.",
+            liveOffsets(decode, "if (!g.encoded)").isNotEmpty()
+        )
+        val detect = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(")
+        assertTrue(
+            "nativeDetectLanguage must refuse the same way — detecting off the previous segment's " +
+                "encoder state picks the wrong prompt language for this one.",
+            liveOffsets(detect, "if (!g.encoded)").isNotEmpty()
+        )
+        val release = functionBody(cpp, "void releaseLocked()")
+        assertTrue(
+            "releaseLocked must clear the flag on a live line, so a torn-down session cannot be " +
+                "decoded against.",
+            liveOffsets(release, "g.encoded = false;").isNotEmpty()
         )
     }
 

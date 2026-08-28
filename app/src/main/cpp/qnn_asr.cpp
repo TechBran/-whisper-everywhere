@@ -483,6 +483,22 @@ struct NpuState {
     uint32_t maskLen = 0;
     uint32_t vocab = 0;
 
+    /// THE ENCODE VALIDITY FLAG. True only while the 24 cross-KV buffers hold a segment that a
+    /// successful nativeEncode put there.
+    ///
+    /// The decoder reads those buffers IN PLACE - that is the whole zero-copy design - so a decode
+    /// without a preceding encode does not fail, does not crash and does not return garbage: it
+    /// transcribes the PREVIOUS segment, fluently, or (before the first encode) AlignedBuf's zeros.
+    /// A caller cannot detect that from the outside, which makes it the worst failure shape in this
+    /// tier and the most likely integration mistake in it.
+    ///
+    /// IT IS A VALIDITY FLAG, NOT A ONE-SHOT TOKEN: a decode does NOT consume it. Q6's flow is one
+    /// encode, then nativeDetectLanguage, then nativeDecodeSegment against that same encode, and a
+    /// detect pass that consumed the flag would break the only sequence the tier actually runs.
+    /// Cleared on entry to nativeEncode (a FAILED execute may have left the cross-KV half written),
+    /// set on its success, and cleared by releaseLocked and by a fresh nativeInit.
+    bool encoded = false;
+
     std::string lastError;
 };
 
@@ -1157,6 +1173,67 @@ std::string readEncoderInputQuantLocked() {
 
 // ---------------------------------------------------------------- the decoder's binding (Q4)
 
+/// THE MASK CODES, VERIFIED AGAINST THE ASSET'S OWN QUANTISATION - step 1's argument applied to the
+/// one tensor this loop rewrites 199 times per segment.
+///
+/// `kMaskAttend` (65535) and `kMaskBlocked` (0) were a PLAN-TIME OBSERVATION: the asset's
+/// attention_mask is quantised scale 0.0015259021893143654, zero point 65535, so code 65535
+/// dequantises to 0.0 (no penalty, attend) and code 0 to -100.0 (masked). That is precisely the
+/// class of fact the C7 guard exists to distrust. If a re-export flips this tensor's offset, 65535
+/// becomes the BLOCKED code, the decoder attends to nothing at every position, and the symptom is
+/// fluent wrong text with no error anywhere - the same failure shape, on a tensor we rewrite two
+/// hundred times a segment instead of binding once.
+///
+/// So the two literals are checked against the metadata that defines them, at load, before the
+/// first execute. QNN's convention is `float = (q + offset) * scale`.
+std::string checkMaskCodesLocked() {
+    const Qnn_Tensor_t &t = g.dec.inputs[g.decMaskIdx];
+    const Qnn_QuantizeParams_t *q = tensorQuantParams(t);
+    if (!q) return "mask: attention_mask quantize params unreadable (unknown tensor version)";
+    if (q->encodingDefinition != QNN_DEFINITION_DEFINED) {
+        return "mask: attention_mask carries no defined quantization encoding (encodingDefinition " +
+               std::to_string(static_cast<int>(q->encodingDefinition)) + ")";
+    }
+    if (q->quantizationEncoding != QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+        return std::string("mask: attention_mask encoding is ") +
+               encodingName(q->quantizationEncoding) +
+               ", not per-tensor scale-offset; its two codes cannot be checked";
+    }
+    const float scale = q->scaleOffsetEncoding.scale;
+    const int32_t offset = q->scaleOffsetEncoding.offset;
+    if (!(scale > 0.0f) || !std::isfinite(scale)) {
+        char b[128];
+        snprintf(b, sizeof(b), "mask: attention_mask scale %.9g is not strictly positive and finite",
+                 static_cast<double>(scale));
+        return b;
+    }
+
+    const double attend = (static_cast<double>(kMaskAttend) + offset) * scale;
+    const double blocked = (static_cast<double>(kMaskBlocked) + offset) * scale;
+    char buf[256];
+    // The attend code must be a NO-OP additive mask. A tolerance rather than == 0.0 because a
+    // re-calibration that moved the zero point by a code or two is harmless; an inversion is not,
+    // and an inversion puts +100 here, four orders of magnitude outside this window.
+    if (!(attend > -0.01 && attend < 0.01)) {
+        snprintf(buf, sizeof(buf),
+                 "mask: code %u is supposed to ATTEND but dequantises to %.4f (scale %.12g, offset "
+                 "%d). If the mask's offset flipped, this seam attends to nothing at every position "
+                 "and the transcript is fluent and wrong.", kMaskAttend, attend,
+                 static_cast<double>(scale), offset);
+        return buf;
+    }
+    if (!(blocked <= -1.0)) {
+        snprintf(buf, sizeof(buf),
+                 "mask: code %u is supposed to BLOCK but dequantises to %.4f (scale %.12g, offset "
+                 "%d), which masks nothing.", kMaskBlocked, blocked, static_cast<double>(scale),
+                 offset);
+        return buf;
+    }
+    LOGI("mask: attention_mask scale %.12g offset %d -> attend code %u = %.4f, blocked code %u = "
+         "%.4f", static_cast<double>(scale), offset, kMaskAttend, attend, kMaskBlocked, blocked);
+    return "";
+}
+
 /// Binds EVERY decoder tensor - all 51 inputs and all 25 outputs - BY NAME, exactly once, at load.
 ///
 /// Three different kinds of binding live here, and the differences are the design:
@@ -1183,19 +1260,28 @@ std::string bindDecoderLocked() {
     std::vector<bool> outDone(d.outputs.size(), false);
 
     // Allocate + bind one tensor we own the storage for, looked up by name.
+    //
+    // THE TYPE CHECK IS AN EQUALITY ON dataType, NOT ON elementSize(). Those are not the same
+    // question and the difference is the monotonic-argmax argument. elementSize() collapses
+    // INT_32 / UINT_32 / SFIXED_32 / UFIXED_32 / FLOAT_32 to 4 and the five 16-bit types to 2, so a
+    // width-only check accepts an asset re-export that made `logits` SFIXED_POINT_16 - and read as
+    // signed two's complement the raw-code ordering INVERTS, so every argmax in this file is
+    // silently wrong while every size, every bind and every buffer stays correct. Likewise a
+    // FLOAT_32 `input_ids` would take our int32 store as a denormal. Four comparisons.
     auto own = [&](const char *nm, std::vector<Qnn_Tensor_t> &ts, std::vector<AlignedBuf> &bufs,
                    std::map<std::string, size_t> &index, std::vector<bool> &done, const char *what,
-                   size_t &idxOut, uint32_t wantElemBytes) -> std::string {
+                   size_t &idxOut, Qnn_DataType_t wantType) -> std::string {
         auto it = index.find(nm);
         if (it == index.end()) {
             return std::string("decoder ") + what + " '" + nm + "' not found by name";
         }
         idxOut = it->second;
         const Qnn_DataType_t dt = tensorDataType(ts[idxOut]);
-        if (elementSize(dt) != wantElemBytes) {
-            return std::string("decoder ") + what + " '" + nm + "' is " + dtypeName(dt) + " (" +
-                   std::to_string(elementSize(dt)) + " B/element), expected " +
-                   std::to_string(wantElemBytes) + " B/element";
+        if (dt != wantType) {
+            return std::string("decoder ") + what + " '" + nm + "' is " + dtypeName(dt) +
+                   ", expected " + dtypeName(wantType) +
+                   " (same width is not the same type: a signed or float re-export keeps every "
+                   "size correct and inverts the raw-code ordering the argmax depends on)";
         }
         const uint64_t need = tensorBytes(ts[idxOut]);
         if (need == 0 || need > 0xFFFFFFFFull) {
@@ -1214,15 +1300,20 @@ std::string bindDecoderLocked() {
     };
 
     // input_ids and position_ids are PLAIN int32 - un-quantised, written as integers. The decoder
-    // takes the token id and the position as numbers, not as codes.
+    // takes the token id and the position as numbers, not as codes. attention_mask and logits are
+    // ufixed16: the mask because its two codes are quantised (see checkMaskCodesLocked), the logits
+    // because UNSIGNED fixed point is what makes an argmax over the raw codes exact.
     std::string err = own(kInputIds, d.inputs, d.inBufs, d.inIndex, inDone, "IN",
-                          g.decInputIdsIdx, 4);
+                          g.decInputIdsIdx, QNN_DATATYPE_INT_32);
     if (!err.empty()) return err;
-    err = own(kPositionIds, d.inputs, d.inBufs, d.inIndex, inDone, "IN", g.decPositionIdsIdx, 4);
+    err = own(kPositionIds, d.inputs, d.inBufs, d.inIndex, inDone, "IN", g.decPositionIdsIdx,
+              QNN_DATATYPE_INT_32);
     if (!err.empty()) return err;
-    err = own(kAttentionMask, d.inputs, d.inBufs, d.inIndex, inDone, "IN", g.decMaskIdx, 2);
+    err = own(kAttentionMask, d.inputs, d.inBufs, d.inIndex, inDone, "IN", g.decMaskIdx,
+              QNN_DATATYPE_UFIXED_POINT_16);
     if (!err.empty()) return err;
-    err = own(kLogits, d.outputs, d.outBufs, d.outIndex, outDone, "OUT", g.decLogitsIdx, 2);
+    err = own(kLogits, d.outputs, d.outBufs, d.outIndex, outDone, "OUT", g.decLogitsIdx,
+              QNN_DATATYPE_UFIXED_POINT_16);
     if (!err.empty()) return err;
 
     // THE POSITION BOUND AND THE ARGMAX BOUND COME FROM THE ASSET, not from a constant here. The
@@ -1240,6 +1331,11 @@ std::string bindDecoderLocked() {
                " does not contain this tokenizer's special ids (EOT " + std::to_string(kEotToken) +
                ", last language token " + std::to_string(kLangTokenLast) + ")";
     }
+
+    // The two mask codes this loop writes 199 times per segment, checked against the asset's own
+    // quantisation rather than against a comment.
+    err = checkMaskCodesLocked();
+    if (!err.empty()) return err;
 
     // ---- the 24 cross-KV inputs: ALIASED ONTO THE ENCODER'S OUTPUT BUFFERS, zero copy ----------
     for (uint32_t layer = 0; layer < kCrossKvLayers; ++layer) {
@@ -1270,12 +1366,37 @@ std::string bindDecoderLocked() {
     g.selfKv[1].clear();
     g.selfKvBytes = 0;
     for (const char *kind : {"k_cache_self_", "v_cache_self_"}) {
+        const bool isK = (kind[0] == 'k');
         for (uint32_t layer = 0; layer < kCrossKvLayers; ++layer) {
             const std::string base = std::string(kind) + std::to_string(layer);
             auto iit = d.inIndex.find(base + "_in");
             if (iit == d.inIndex.end()) return "decoder self-KV '" + base + "_in' not found";
             auto oit = d.outIndex.find(base + "_out");
             if (oit == d.outIndex.end()) return "decoder self-KV '" + base + "_out' not found";
+
+            // THE "EXACT FIT" IS A RELATION BETWEEN TWO DIFFERENT TENSORS, SO IT IS CHECKED
+            // BETWEEN THEM. `lastPosition` is derived from attention_mask (maskLen - 2 = 198), and
+            // the whole "positions 0..198 write cache slots 0..198, an exact fit" argument depends
+            // on the self-KV being maskLen - 1 = 199 deep. Nothing else in this file compares the
+            // two: g.selfKvBytes is only checked for consistency ACROSS the 24 buffers, so a
+            // re-export that changed the cache depth without changing the mask width would drive
+            // the loop past the end of the cache with the graph doing the indexing and no signal
+            // at load or on the host.
+            // k is [heads, 1, headDim, depth]; v is [heads, 1, depth, headDim].
+            const uint32_t rank = tensorRank(d.inputs[iit->second]);
+            const uint32_t *sdims = tensorDims(d.inputs[iit->second]);
+            if (rank < 3 || !sdims) {
+                return "decoder self-KV '" + base + "_in' has rank " + std::to_string(rank) +
+                       "; the cache depth cannot be located";
+            }
+            const uint32_t depth = isK ? sdims[rank - 1] : sdims[rank - 2];
+            if (depth != g.maskLen - 1) {
+                return "decoder self-KV '" + base + "_in' is " + std::to_string(depth) +
+                       " deep but attention_mask is " + std::to_string(g.maskLen) +
+                       " wide; positions 0.." + std::to_string(g.maskLen - 2) +
+                       " execute and the cache must be exactly " + std::to_string(g.maskLen - 1) +
+                       " deep for that to be an exact fit";
+            }
 
             // THE SECOND ALIAS THIS DESIGN RESTS ON, and it gets the same treatment as the first.
             // The ping-pong hands step N's `_out` buffer to step N+1 as its `_in`, which is only
@@ -1651,6 +1772,7 @@ void releaseLocked() {
     g.decLogitsIdx = 0;
     g.maskLen = 0;
     g.vocab = 0;
+    g.encoded = false;
 
     if (g.device) g.qnn.deviceFree(g.device);
     g.device = nullptr;
@@ -1794,6 +1916,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
     armSustainedVoteLocked();
 
     g.initialised = true;
+    // A fresh session has encoded nothing. Stated rather than inherited from releaseLocked, so the
+    // invariant is readable at the point the session becomes usable.
+    g.encoded = false;
     g.lastError.clear();
     LOGI("nativeInit OK - encoder graph '%s' (%zu in / %zu out), decoder graph '%s' "
          "(%zu in / %zu out)",
@@ -1850,6 +1975,9 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
         JNIEnv *env, jobject /* this */, jobject jMel) {
     std::lock_guard<std::mutex> lock(g.mu);
+    // Cleared FIRST, on every path. A graphExecute that fails part way may have written some of the
+    // 24 cross-KV buffers, and half a segment decodes as fluently as a whole one.
+    g.encoded = false;
     if (!g.initialised) {
         return env->NewStringUTF(failure("encode: session not initialised").c_str());
     }
@@ -1889,6 +2017,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
         return env->NewStringUTF(failure("encode: graphExecute " + qnnErr(e)).c_str());
     }
     LOGI("encode: graphExecute OK in %.1f ms (vote: %s)", ms, g.voteNote.c_str());
+    // The 24 cross-KV buffers now hold THIS segment, and they are already the decoder's bound
+    // inputs. Only now may a decode run.
+    g.encoded = true;
     g.lastError.clear();
     return env->NewStringUTF("");
 }
@@ -1915,6 +2046,16 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     }
     if (!jPrompt || !jOut) {
         failure("decode: prompt and out must not be null");
+        return -1;
+    }
+    // The cross-KV is read IN PLACE. Without an encode this would transcribe the previous segment,
+    // fluently, with nothing else wrong. Refused rather than trusted - the same standard the `out`
+    // bounds check below applies to a caller who got the array size wrong.
+    if (!g.encoded) {
+        failure("decode: no encoded segment - call nativeEncode first. The decoder reads the "
+                "encoder's 24 cross-KV buffers in place, so decoding without an encode transcribes "
+                "whatever the previous segment left there (or silence, before the first encode) - "
+                "fluently, and with no other symptom.");
         return -1;
     }
 
@@ -2027,6 +2168,15 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         failure("detect: session not initialised");
         return -1;
     }
+    // Same in-place cross-KV read as nativeDecodeSegment, same refusal. Detecting a language off
+    // the PREVIOUS segment's encoder state would then pick the prompt language for this one.
+    if (!g.encoded) {
+        failure("detect: no encoded segment - call nativeEncode first. This reads the encoder's "
+                "cross-KV in place and would otherwise detect the previous segment's language.");
+        return -1;
+    }
+    // NOT consumed: the flag stays set, so the caller may detect and then decode against the same
+    // encode. That sequence - encode, detect, decode - is the tier's actual flow.
 
     zeroSelfKvLocked();
     const std::string err = decodeStepLocked(kSotToken, 0);
