@@ -167,6 +167,20 @@ class UnsupportedTierGatePinTest {
             1,
             count(predicate, "model.pairedArtifact ?: return true"),
         )
+        // ORDER, not merely presence — the same rule this branch has now hit four times. Hoisting
+        // the early return above the primary gate satisfies every count above and is a different
+        // function: `isInstalled` would return TRUE for all six ggml tiers with nothing on disk,
+        // because the only file check left runs after a return that always fires for them. The
+        // early return is a shortcut past work already done, so it must come second.
+        assertTrue(
+            "the primary file's size gate runs BEFORE the no-paired-artefact early return: hoisting " +
+                "that return makes isInstalled() true for every single-file tier with no file on disk",
+            indexOfOrFail(
+                predicate,
+                "isInstalled",
+                "WhisperCatalog.sizeWithinTolerance(f.length(), model.primaryBytes)",
+            ) < indexOfOrFail(predicate, "isInstalled", "model.pairedArtifact ?: return true"),
+        )
     }
 
     @Test

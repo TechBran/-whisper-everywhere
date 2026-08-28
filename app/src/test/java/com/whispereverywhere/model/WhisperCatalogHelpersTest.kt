@@ -196,6 +196,11 @@ class WhisperCatalogHelpersTest {
         val npu = WhisperCatalog.byId("npu")!!
         assertEquals(ModelScope.MULTILINGUAL, npu.scope)      // same whisper-small weights as multi
         assertEquals(0L, npu.minRamBytes)                     // the SoC gate is the real gate
+        // OWNER-PENDING, and pinned for exactly that reason: nothing else in app/src names this
+        // string, so without this line it could be reworded — or emptied — with a green suite. It
+        // is the DownloadManager notification title and Settings' tier list entry; the card itself
+        // renders ModelTierCopy, which is pinned separately.
+        assertEquals("Multilingual on NPU (small)", npu.displayName)
         assertTrue(npu.gated)
         assertFalse(npu.retired)
         assertFalse(npu.unsupported)
