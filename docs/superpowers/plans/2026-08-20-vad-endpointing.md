@@ -11057,15 +11057,78 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 
 ## Workstream H — Tier retirement and the GPU row
 
+> ## SECTION CLOSED — read this before reading anything below
+>
+> **Workstream H is complete.** Five tasks, five commits, `a93107b..abbe140`, plus the close-out
+> commits. **The TREE is authoritative on every line of this section**; what follows is the plan as
+> written *before* the work, corrected where it would actively mislead.
+>
+> | Task | Commit | Suite after | Classes | Δ |
+> | --- | --- | --- | --- | --- |
+> | BASE (G-close) | `a93107b` | 1332 | 121 | — |
+> | H1 | `6fb273d` | 1336 | 121 | +4 / +0 |
+> | H2 | `a53c287` | 1340 | 122 | +4 / +1 |
+> | H3 | `4819730` | 1345 | 122 | +5 / +0 |
+> | H4 | `d8cd80f` | 1354 | 123 | +9 / +1 |
+> | H5 | `abbe140` | **1357** | **124** | +3 / +1 |
+>
+> **Section total: 1332 → 1357 (+25 tests), 121 → 124 (+3 classes)**, zero failures at every step,
+> `assembleDebug` green throughout. Each baseline was independently re-measured by that task's
+> reviewer. Flake counter **16** going into S1 (the pre-existing
+> `LiveTranscriptionEngineTest#commit_while_the_socket_is_down_resolves_Lost_not_dangling` timing
+> flake; isolate-rerun 21/0; the file is untouched by this entire section).
+>
+> ### What the close-out changed in this section, and why
+>
+> 1. **Every line number is deleted, not corrected.** Anchors are now symbol-scoped throughout.
+>    They had drifted by up to ~155 lines across this branch, and H5's own 14-line deletion moved
+>    `SettingsScreen.kt` anchors by −1 (above the removed row) and −14 (below it). The H2 anchors
+>    were correct at close-out time only by the accident of that −1 shift, and the next edit to the
+>    file would have broken them again. This matches the ruling the G-close already bound this
+>    section to. **Find things by symbol; the numbers were the bug.**
+> 2. **Three `Files:` blocks under-counted and are corrected** (review I2). H2, H3 and H4 each
+>    shipped one file the plan did not list — including the section's two largest new test classes,
+>    `UnsupportedTierGatePinTest` (161 lines) and `ChooserSteerWiringPinTest` (230 lines), which are
+>    **+2 of the section's +3 classes**. H5's block gains the n1 needles' file. Each added entry is
+>    marked inline.
+> 3. **Two snippets are RESPLICED from the shipped source**, marked inline as `H-D5` and `H-D6`,
+>    under the standing rule from the C-close: *would a re-extraction reinstate a corrected defect?*
+>    Both answer yes — H-D5 would restore a bare `readText()` in a CRLF checkout plus the one build
+>    warning this section introduced; H-D6 would restore a needle **measured green** while the harm
+>    it names occurred.
+> 4. **One snippet is BANNERED, not respliced** (`H-D7`): Step 3 of H5 quotes the code it deletes,
+>    which is a record with no shipped counterpart.
+>
+> ### Two findings named `m4` — do not confuse them
+>
+> - **`m4-cohort`** (H1 verdict) — the deleted-file cohort asymmetry: a user who has lost their
+>   eco/base model file is offered a **60 MB restore** on one surface and a **190 MB adoption** on
+>   the other, depending which they reach first. Pre-existing in shape, but H1 moved it from a
+>   RAM-gated minority to the entire former-default cohort. **OPEN. Unowned. Needs an owner
+>   decision, not merely a sheet row — the section's largest open item.**
+> - **`m4-speedword`** (H3 verdict → H4 report) — whether `ModelTierCopy`'s class doc falls under
+>   the app-wide speed-word ban. **CLOSED**, accept as recorded: the bans are surface-scoped, tier
+>   copy is affirmatively exempted, and a ban would contradict the currently-green
+>   `every_tier_takes_a_speed_vs_accuracy_position`. **Do not reopen.**
+>
+> ### The GPU experiment toggle never shipped
+>
+> H5 retired the Settings row and deliberately left the machinery inert — `GpuPolicy` still reads
+> the preference, so the surface is preserved for the NPU era. A one-time migration to clear a
+> stored `true` was designed and then **withdrawn**: the owner confirmed on 2026-08-27 that the
+> toggle never reached users (Play carries 3.3.0; 3.4–3.6 are local owner-pending merges), so the
+> stranded cohort is empty and the migration would have guarded nobody. The preference is
+> **vestigial and reads false everywhere**. See the S3 preamble, which was corrected to match.
+
 ---
 
 ### Task H1: Retire eco + base — split "not offered" from "not supported"
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/model/WhisperModel.kt` — the `retired` KDoc + new `unsupported` field (lines 25–31); `entries` (lines 63–132); `DEFAULT_MODEL_ID` (line 142).
-- Modify `app/src/main/java/com/whispereverywhere/model/ModelMigration.kt` — line 35 (the target constant) and line 44 (the gate). **Two surgical edits, no block replacement.**
-- Modify `app/src/test/java/com/whispereverywhere/model/WhisperCatalogHelpersTest.kt` — lines 106–124.
-- Modify `app/src/test/java/com/whispereverywhere/model/ModelMigrationTest.kt` — lines 15–18, 41–56, 63–77.
+- Modify `app/src/main/java/com/whispereverywhere/model/WhisperModel.kt` — the `retired` KDoc + new `unsupported` field; the `entries` list; `DEFAULT_MODEL_ID`.
+- Modify `app/src/main/java/com/whispereverywhere/model/ModelMigration.kt` — `MULTILINGUAL_TARGET_ID` (the target constant) and `decide`'s gate. **Two surgical edits, no block replacement.**
+- Modify `app/src/test/java/com/whispereverywhere/model/WhisperCatalogHelpersTest.kt` — the `retired_tiers_are_not_pickable` … `default_is_pickable` block.
+- Modify `app/src/test/java/com/whispereverywhere/model/ModelMigrationTest.kt` — `a_current_tier_needs_no_migration`; `swap_only_happens_once_the_target_is_actually_on_disk` and its neighbour; the MF3 comment and its two tests.
 
 **Why the migration gate lands HERE and not in Task H2.** Retiring eco/base and flipping
 `DEFAULT_MODEL_ID` to "pro" while `ModelMigration.decide` still reads `if (!selected.retired)` puts
@@ -11078,7 +11141,7 @@ follow-up — Task H2 keeps the rename, the Settings wiring and the `targetIdFor
 - Consumes: nothing.
 - Produces: `WhisperModel.unsupported: Boolean` (default `false`); `WhisperCatalog.pickable == [pro, multi]`; `WhisperCatalog.DEFAULT_MODEL_ID == "pro"`; `ModelMigration.decide` gated on `unsupported`; `ModelMigration.MULTILINGUAL_TARGET_ID == "multi"` (private).
 
-- [ ] **Step 1: Write the failing tests** — two files. First `WhisperCatalogHelpersTest.kt`, replace lines 106–124 (`retired_tiers_are_not_pickable` through `default_is_pickable`) with:
+- [ ] **Step 1: Write the failing tests** — two files. First `WhisperCatalogHelpersTest.kt`, replace the block running from `retired_tiers_are_not_pickable` through `default_is_pickable` with:
 
 ```kotlin
     @Test fun retired_tiers_are_not_pickable() {
@@ -11136,7 +11199,7 @@ follow-up — Task H2 keeps the rename, the Settings wiring and the `targetIdFor
 Then `ModelMigrationTest.kt` — three replacements. **The line numbers are the file's ORIGINAL ones,
 so apply them bottom-up** (63–77 first, then 41–56, then 15–18).
 
-replace lines 15–18 (`a_current_tier_needs_no_migration`) with:
+replace `a_current_tier_needs_no_migration` with:
 
 ```kotlin
     @Test fun a_current_tier_needs_no_migration() {
@@ -11157,7 +11220,7 @@ replace lines 15–18 (`a_current_tier_needs_no_migration`) with:
     }
 ```
 
-replace lines 41–56 (`swap_only_happens_once_the_target_is_actually_on_disk` and
+replace `swap_only_happens_once_the_target_is_actually_on_disk` and
 `swap_happens_offline_too_once_the_target_is_installed`) with:
 
 ```kotlin
@@ -11179,7 +11242,7 @@ replace lines 41–56 (`swap_only_happens_once_the_target_is_actually_on_disk` a
     }
 ```
 
-replace lines 63–77 (the MF3 comment and its two tests) with:
+replace the MF3 comment and its two tests with:
 
 ```kotlin
     // MF3: the target must match the retired model's language scope. "ultra" is MULTILINGUAL
@@ -11206,7 +11269,7 @@ replace lines 63–77 (the MF3 comment and its two tests) with:
 `$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.model.*" --no-daemon`
 
 Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
-`e: ...WhisperCatalogHelpersTest.kt:124:38 Unresolved reference: unsupported`
+`e: ...WhisperCatalogHelpersTest.kt Unresolved reference: unsupported`
 
 That compile failure is the whole red for Step 2 — the test source set does not build, so none of the
 migration assertions run yet. They are the SECOND red, and they only become visible once Step 3(a)
@@ -11223,7 +11286,7 @@ and stop, that three-red set is exactly what you will see.
 
 - [ ] **Step 3: Minimal implementation** — in `WhisperModel.kt`:
 
-(a) replace the `retired` doc + field (lines 25–31) with:
+(a) replace the `retired` doc + field with:
 
 ```kotlin
     /**
@@ -11248,23 +11311,23 @@ and stop, that three-red set is exactly what you will see.
     val unsupported: Boolean = false,
 ```
 
-(b) in `entries`, add `retired = true,` to the `eco` block (after `minRamBytes = 0L,`, line 74) and to the `base` block (after `minRamBytes = 0L,`, line 85), each preceded by the note:
+(b) in `entries`, add `retired = true,` to the `eco` block (after its `minRamBytes = 0L,`) and to the `base` block (after its `minRamBytes = 0L,`), each preceded by the note:
 
 ```kotlin
             // 3.7 Workstream H: retired, NOT unsupported — installed users keep it, untouched.
             retired = true,
 ```
 
-(c) in the `extreme` block, change line 108 `            retired = true,` to:
+(c) in the `extreme` block, change its `            retired = true,` line to:
 
 ```kotlin
             retired = true,
             unsupported = true,
 ```
 
-and identically in the `ultra` block (line 130).
+and identically in the `ultra` block.
 
-(d) replace `DEFAULT_MODEL_ID` (lines 137–142) with:
+(d) replace `DEFAULT_MODEL_ID` — its KDoc and the constant — with:
 
 ```kotlin
     /**
@@ -11279,13 +11342,13 @@ and identically in the `ultra` block (line 130).
 
 (e) `ModelMigration.kt` — two surgical edits, the ones that keep this task's own suite green.
 
-Line 35 — the multilingual target follows the new lineup:
+`MULTILINGUAL_TARGET_ID` — the multilingual target follows the new lineup:
 
 ```kotlin
     private const val MULTILINGUAL_TARGET_ID = "multi"
 ```
 
-Line 44 — the gate reads the flag this task just split out. Replace
+`decide`'s gate reads the flag this task just split out. Replace
 `        if (!selected.retired) return Action.None` with:
 
 ```kotlin
@@ -11329,10 +11392,11 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task H2: Migration follows the split — the rename, the card wiring and the documentation
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/model/ModelMigration.kt` — **lines 26–31 only** (the `targetIdFor` KDoc block; the constant on line 35 and the gate on line 44 landed in Task H1). The block replaced is the KDoc alone, so no brace moves and none is duplicated.
-- Modify `app/src/main/java/com/whispereverywhere/model/WhisperModelManager.kt` — lines 53–60.
-- Modify `app/src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt` — lines 166–168, 211–215.
+- Modify `app/src/main/java/com/whispereverywhere/model/ModelMigration.kt` — **the `targetIdFor` KDoc block only** (the target constant and the gate landed in Task H1). The block replaced is the KDoc alone, so no brace moves and none is duplicated.
+- Modify `app/src/main/java/com/whispereverywhere/model/WhisperModelManager.kt` — the `retiredInstalledModel` function.
+- Modify `app/src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt` — the `retiredModel` derivation and the MF3 comment block.
 - Modify `app/src/test/java/com/whispereverywhere/model/ModelMigrationTest.kt` — append one test.
+- Create `app/src/test/java/com/whispereverywhere/model/UnsupportedTierGatePinTest.kt` — **added by the H-section close-out (review I2).** A new 161-line class, the structural pin for the card's gate; H2 shipped it and this block did not list it.
 
 **What Task H1 already did.** The gate (`if (!selected.unsupported)`), the target constant
 (`MULTILINGUAL_TARGET_ID = "multi"`) and every affected assertion in `ModelMigrationTest` moved into
@@ -11382,10 +11446,10 @@ it fails the compile, and nothing else would catch it.
 
 - [ ] **Step 3: Minimal implementation** —
 
-(a) `ModelMigration.kt`, replace **lines 26–31** — the `targetIdFor` KDoc block, and only that. It
+(a) `ModelMigration.kt`, replace **the `targetIdFor` KDoc block** — and only that. It
 still describes the pre-3.7 lineup ("base" as the multilingual counterpart to the ENGLISH default
 "eco") while the code beneath it, since Task H1, returns "multi" and "pro". The block starts at the
-`/**` on line 26 and ends at the `*/` on line 31; the function signature on line 32 and everything
+`/**` and ends at the matching `*/`; the function signature below it and everything
 below it — including `MULTILINGUAL_TARGET_ID` and the whole of `decide` — is untouched, so no brace
 is moved or duplicated:
 
@@ -11399,7 +11463,7 @@ is moved or duplicated:
      */
 ```
 
-(b) `WhisperModelManager.kt`, replace lines 53–60 with:
+(b) `WhisperModelManager.kt`, replace the `retiredInstalledModel` function with:
 
 ```kotlin
     /**
@@ -11414,12 +11478,12 @@ is moved or duplicated:
     }
 ```
 
-(c) `SettingsScreen.kt`, line **166–168** — replace:
+(c) `SettingsScreen.kt`, the `retiredModel` derivation — replace:
 
 ```kotlin
     // Retired-tier migration (model catalog trim): non-null when the selected tier is retired.
 ```
-…and line 168's `val retiredModel = remember(modelRefreshKey) { modelManager.retiredInstalledModel() }` with:
+…and the `val retiredModel = remember(modelRefreshKey) { modelManager.retiredInstalledModel() }` line with:
 
 ```kotlin
     // Unsupported-tier migration: non-null only for extreme/ultra. Merely retired tiers
@@ -11427,7 +11491,7 @@ is moved or duplicated:
     val retiredModel = remember(modelRefreshKey) { modelManager.unsupportedInstalledModel() }
 ```
 
-(d) `SettingsScreen.kt`, lines **212–214** — replace the MF3 comment with:
+(d) `SettingsScreen.kt`, the MF3 comment — replace it with:
 
 ```kotlin
                     // MF3: the target must match the retired model's scope — a multilingual
@@ -11472,14 +11536,15 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task H3: Tier copy — drop the retired cards, steer by locale
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/model/ModelTierCopy.kt` — the class doc, `copyById` (lines 21–43), and new members after `forId`.
-- Modify `app/src/test/java/com/whispereverywhere/model/ModelTierCopyTest.kt` — lines 73–**86** plus additions.
+- Modify `app/src/main/java/com/whispereverywhere/model/ModelTierCopy.kt` — the class doc, `copyById`, and new members after `forId`.
+- Modify `app/src/test/java/com/whispereverywhere/model/ModelTierCopyTest.kt` — the `the_owner_approved_headlines_are_pinned_exactly` … `retired_and_unknown_tiers_have_no_copy` block, plus additions.
+- Modify `app/src/main/java/com/whispereverywhere/model/WhisperModel.kt` — **added by the H-section close-out (review I2).** The `DEFAULT_MODEL_ID` KDoc cross-reference to `steerIdForLanguageTag`, restored in the same commit that creates the symbol (see the excision-then-restoration note in the close-out banner).
 
 **Interfaces:**
 - Consumes: `WhisperCatalog.pickable`, `WhisperModel.retired` (Task H1).
 - Produces: `ModelTierCopy.steerIdForLanguageTag(languageTag: String): String` and `const val ModelTierCopy.STEER_BADGE: String = "Best match for your language"`.
 
-- [ ] **Step 1: Write the failing test** — in `ModelTierCopyTest.kt`, replace lines **73–86** (`the_owner_approved_headlines_are_pinned_exactly` and `retired_and_unknown_tiers_have_no_copy`, **through the class-closing `}` on line 86**) with the block below. The replacement ends with its own class-closing `}`, so the range must include the old one — replacing 73–85 would leave a duplicate brace and a syntax error:
+- [ ] **Step 1: Write the failing test** — in `ModelTierCopyTest.kt`, replace `the_owner_approved_headlines_are_pinned_exactly` and `retired_and_unknown_tiers_have_no_copy`, **through the class-closing `}`**, with the block below. The replacement ends with its own class-closing `}`, so the range must include the old one — stopping just short of it would leave a duplicate brace and a syntax error:
 
 ```kotlin
     @Test fun the_owner_approved_headlines_are_pinned_exactly() {
@@ -11553,12 +11618,12 @@ and add `import org.junit.Assert.assertFalse` to the imports.
 `$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.model.ModelTierCopyTest" --no-daemon`
 
 Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
-`e: ...ModelTierCopyTest.kt:106:37 Unresolved reference: steerIdForLanguageTag` and
-`e: ...ModelTierCopyTest.kt:137:37 Unresolved reference: STEER_BADGE`
+`e: ...ModelTierCopyTest.kt Unresolved reference: steerIdForLanguageTag` and
+`e: ...ModelTierCopyTest.kt Unresolved reference: STEER_BADGE`
 
 - [ ] **Step 3: Minimal implementation** — in `ModelTierCopy.kt`:
 
-(a) replace `copyById` (lines 21–43) with:
+(a) replace `copyById` with:
 
 ```kotlin
     private val copyById: Map<String, TierCopy> = mapOf(
@@ -11578,7 +11643,7 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
     )
 ```
 
-(b) after `forId` (line 46), add:
+(b) after `forId`, add:
 
 ```kotlin
 
@@ -11636,9 +11701,10 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 
 **Files:**
 - Modify `app/src/main/java/com/whispereverywhere/model/ModelTierCopy.kt` — add `orderedForLanguageTag` after `steerIdForLanguageTag`.
-- Modify `app/src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt` — lines 399–407, 443–448, 482–485.
-- Modify `app/src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt` — lines 43–45, 89–92, 227–229.
+- Modify `app/src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt` — the tier card loop, the `TierChoiceCard` signature, and the chip row.
+- Modify `app/src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt` — the `models` derivation, the highlight binding, and the `"Default"` chip.
 - Modify `app/src/test/java/com/whispereverywhere/model/ModelTierCopyTest.kt`
+- Create `app/src/test/java/com/whispereverywhere/ui/screens/ChooserSteerWiringPinTest.kt` — **added by the H-section close-out (review I2).** A new 230-line class: both screens are `@Composable` and JVM-unreachable, so the *wiring* is pinned structurally. H4 shipped it and this block did not list it.
 
 **Interfaces:**
 - Consumes: `ModelTierCopy.steerIdForLanguageTag`, `ModelTierCopy.STEER_BADGE` (Task H3).
@@ -11681,7 +11747,7 @@ that closes it, exactly as the G-section tasks spell out. Appending a `}` here w
 `$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'; .\gradlew.bat :app:testDebugUnitTest --tests "com.whispereverywhere.model.ModelTierCopyTest" --no-daemon`
 
 Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
-`e: ...ModelTierCopyTest.kt:150:44 Unresolved reference: orderedForLanguageTag`
+`e: ...ModelTierCopyTest.kt Unresolved reference: orderedForLanguageTag`
 
 - [ ] **Step 3: Minimal implementation** —
 
@@ -11702,7 +11768,7 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
     }
 ```
 
-(b) `OnboardingFlowScreen.kt`, replace lines 399–407 with:
+(b) `OnboardingFlowScreen.kt`, replace the tier card loop with:
 
 ```kotlin
         // 3.7 Workstream H: the steered tier first — English locale -> pro, everything else ->
@@ -11723,7 +11789,7 @@ Expected: `> Task :app:compileDebugUnitTestKotlin FAILED` with
             }
 ```
 
-(c) `OnboardingFlowScreen.kt`, replace the `TierChoiceCard` signature (lines 441–448) with:
+(c) `OnboardingFlowScreen.kt`, replace the `TierChoiceCard` signature with:
 
 ```kotlin
 /** One selectable tier card rendering [ModelTierCopy] — the same copy Settings' picker shows. */
@@ -11737,7 +11803,7 @@ private fun TierChoiceCard(
 ) {
 ```
 
-(d) `OnboardingFlowScreen.kt`, replace lines 482–485 with:
+(d) `OnboardingFlowScreen.kt`, replace the chip row with:
 
 ```kotlin
             copy?.let { c ->
@@ -11747,7 +11813,7 @@ private fun TierChoiceCard(
                     chips.forEach { badge ->
 ```
 
-(e) `OnboardingModelScreen.kt`, replace lines 43–45 with:
+(e) `OnboardingModelScreen.kt`, replace the `models` derivation with:
 
 ```kotlin
     // Only tiers still offered — retired tiers stay resolvable via WhisperCatalog.byId for
@@ -11759,7 +11825,7 @@ private fun TierChoiceCard(
         .mapNotNull { WhisperCatalog.byId(it) }
 ```
 
-(f) `OnboardingModelScreen.kt`, replace line 91 (`                val isDefault = model.id == WhisperCatalog.DEFAULT_MODEL_ID`) with:
+(f) `OnboardingModelScreen.kt`, replace `                val isDefault = model.id == WhisperCatalog.DEFAULT_MODEL_ID` with:
 
 ```kotlin
                 // The highlighted card is the STEERED one, not the catalog default: for a
@@ -11768,7 +11834,7 @@ private fun TierChoiceCard(
                 val isDefault = model.id == steerId
 ```
 
-(g) `OnboardingModelScreen.kt`, replace lines 227–229 with:
+(g) `OnboardingModelScreen.kt`, replace the `"Default"` chip with:
 
 ```kotlin
                 if (isDefault) {
@@ -11806,12 +11872,13 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 ### Task H5: Remove the GPU-experiment Settings row, keep the machinery inert
 
 **Files:**
-- Modify `app/src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt` — line **147**, lines **592–604**.
+- Modify `app/src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt` — the `gpuMultilingualExperiment` observer and the GPU experiment row.
 - Create `app/src/test/java/com/whispereverywhere/ui/screens/GpuExperimentRowRetiredTest.kt`
+- Modify `app/src/test/java/com/whispereverywhere/ui/screens/ChooserSteerWiringPinTest.kt` — **added by the H-section close-out (review I2).** Two needles anchoring `steerId` to `steerIdForLanguageTag`, one per chooser (the H4 review's n1). Count-neutral — they join existing test methods.
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: nothing new. **Explicitly preserved:** `PreferencesManager.isGpuMultilingualExperimentEnabled(): Boolean`, `PreferencesManager.setGpuMultilingualExperiment(Boolean)`, `PreferencesManager.gpuMultilingualExperiment: StateFlow<Boolean>`, and `GpuPolicy.decideUseGpuForLoad`'s read of it at `GpuPolicy.kt:195-198` — all left in place, returning the stored value.
+- Produces: nothing new. **Explicitly preserved:** `PreferencesManager.isGpuMultilingualExperimentEnabled(): Boolean`, `PreferencesManager.setGpuMultilingualExperiment(Boolean)`, `PreferencesManager.gpuMultilingualExperiment: StateFlow<Boolean>`, and `GpuPolicy.decideUseGpuForLoad`'s read of it inside the `if (!isGpuSafeModel(m))` branch — all left in place, returning the stored value.
 
 - [ ] **Step 1: Write the failing test** — create `app/src/test/java/com/whispereverywhere/ui/screens/GpuExperimentRowRetiredTest.kt`:
 
@@ -11837,20 +11904,29 @@ import java.io.File
  */
 class GpuExperimentRowRetiredTest {
 
+    // RESPLICED from the shipped source by the H-section close-out (debt row H-D5). The original
+    // snippet walked up from `File(".")` with no `app/$relative` fallback — the one spelling no
+    // green test in this repo uses — and read with a bare `readText()`. `core.autocrlf=true`
+    // checks this repo out with CRLF, so a needle written with a bare `\n` finds nothing; the
+    // needles here are single-line TODAY, which is exactly the it-happens-to-be-safe argument the
+    // standing rule beats. The original also assigned the platform type `File!` to a non-null
+    // `File`, which was the only build warning Workstream H introduced.
     private fun source(relative: String): File {
-        var dir = File(".").absoluteFile
-        while (dir.parentFile != null &&
-            !File(dir, "src/main/java/com/whispereverywhere").isDirectory
-        ) {
+        var dir: File? = File(System.getProperty("user.dir")!!).absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(File(dir, relative), File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate
+            }
             dir = dir.parentFile
         }
-        val f = File(dir, "src/main/java/$relative")
-        assertTrue("cannot locate $relative from ${File(".").absolutePath}", f.isFile)
-        return f
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
     }
 
+    private fun read(relative: String): String =
+        source(relative).readText().replace("\r\n", "\n")
+
     @Test fun settings_no_longer_offers_the_multilingual_gpu_toggle() {
-        val text = source("com/whispereverywhere/ui/screens/SettingsScreen.kt").readText()
+        val text = read("src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt")
         assertFalse(
             "the GPU experiment row is back in SettingsScreen",
             text.contains("Try GPU for multilingual"),
@@ -11866,7 +11942,7 @@ class GpuExperimentRowRetiredTest {
     }
 
     @Test fun the_preference_stays_readable_so_existing_true_values_still_mean_something() {
-        val prefs = source("com/whispereverywhere/data/local/PreferencesManager.kt").readText()
+        val prefs = read("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt")
         assertTrue(
             "the GPU experiment getter was deleted — an existing `true` is now unreadable",
             prefs.contains("fun isGpuMultilingualExperimentEnabled()"),
@@ -11875,10 +11951,21 @@ class GpuExperimentRowRetiredTest {
             "the GPU experiment preference KEY was deleted",
             prefs.contains("KEY_GPU_MULTI_EXPERIMENT"),
         )
+        // RESPLICED by the H-section close-out (debt row H-D6). The name-only needle above was
+        // measured GREEN while the key's stored string was renamed — H5 battery row (f), both
+        // directions. The constant's NAME is a proxy; the STORED STRING is what a device's
+        // SharedPreferences is actually keyed by, so a value rename orphans every `true` already
+        // written while the assertion above notices nothing.
+        assertTrue(
+            "the GPU experiment preference key's STORED STRING changed — every `true` already " +
+                "written on a shipped device is now orphaned, which reads as a silent opt-out " +
+                "rather than the preserved state this retirement promised",
+            prefs.contains("\"gpu_multilingual_experiment\""),
+        )
     }
 
     @Test fun gpu_policy_still_consults_the_stored_value() {
-        val policy = source("com/whispereverywhere/transcription/GpuPolicy.kt").readText()
+        val policy = read("src/main/java/com/whispereverywhere/transcription/GpuPolicy.kt")
         assertTrue(
             "GpuPolicy no longer reads the experiment preference — the machinery is not inert, " +
                 "it is changed",
@@ -11904,13 +11991,18 @@ The other two tests pass already — they are the guard, not the change.
 
 - [ ] **Step 3: Minimal implementation** — two deletions in `SettingsScreen.kt`, and nothing else anywhere.
 
-(a) delete line **147**:
+> **BANNERED, not respliced, by the H-section close-out (debt row H-D7).** The Kotlin quoted through
+> the end of this step is the code that was **deleted**, recorded so a reader can see what left the
+> file. There is no shipped counterpart to splice in — `grep -i gpu` over `SettingsScreen.kt`
+> returns nothing at `abbe140`. Read it as a record, not as an instruction to re-add anything.
+
+(a) delete the `gpuMultilingualExperiment` observer:
 
 ```kotlin
     val gpuMultiExperiment by app.preferencesManager.gpuMultilingualExperiment.collectAsState()
 ```
 
-(b) delete lines **592–604** entirely (the comment block and the whole `SettingsSwitchItem`), so the `SettingsSection` closes straight after the Vibration Feedback row:
+(b) delete the GPU experiment row entirely (the comment block and the whole `SettingsSwitchItem`), so the `SettingsSection` closes straight after the Vibration Feedback row:
 
 ```kotlin
                 SettingsSwitchItem(
@@ -11923,7 +12015,7 @@ The other two tests pass already — they are the guard, not the change.
             }
 ```
 
-`PreferencesManager`, `GpuPolicy`, `GpuCanaryPolicy`, the canary asset and every latch are left **byte-identical**: the toggle can no longer be turned on, an already-stored `true` is still returned by `isGpuMultilingualExperimentEnabled()` and still consulted at `GpuPolicy.kt:195-198`, and the canary still gates it. If `Icons.Filled.Memory` becomes an unused import after the deletion, remove that import line too.
+`PreferencesManager`, `GpuPolicy`, `GpuCanaryPolicy`, the canary asset and every latch are left **byte-identical**: the toggle can no longer be turned on, an already-stored `true` is still returned by `isGpuMultilingualExperimentEnabled()` and still consulted inside `decideUseGpuForLoad`'s `if (!isGpuSafeModel(m))` branch, and the canary still gates it. `Icons.Filled.Memory` does **not** become an unused import — `SettingsScreen.kt` imports `androidx.compose.material.icons.filled.*` as a wildcard, so there is no per-icon import line to remove.
 
 - [ ] **Step 4: Run tests green** —
 
@@ -11959,10 +12051,10 @@ Claude-Session: https://claude.ai/code/session_01MVWn31XgwtTFfbj5KjkTJT"
 
 | Untouchable | Where this section comes near it | Status |
 |---|---|---|
-| Wall caps in the `else if` at `FBS.kt:1695` | Task G3 adds a Main-hopped repaint inside the funnel Task F7 already routed that branch through | Branch structure, predicate and ordering unchanged; the funnel makes the same call the branch made before it, and `commitRetainingTailMs(0)` IS `commit()`. Byte-identical with a never-firing endpointer. |
-| Cloud 4 s-cap suppression at `:2238` | not touched | unchanged |
-| Unconditional stop flush at `:2388` | not touched by G (Task F7 routed it through the funnel) | still unconditional, still first in the flush block |
-| `sendAudio` at `:1668` unconditional and first | not touched | unchanged |
+| Wall caps in the `else if` in `FloatingBubbleService` | Task G3 adds a Main-hopped repaint inside the funnel Task F7 already routed that branch through | Branch structure, predicate and ordering unchanged; the funnel makes the same call the branch made before it, and `commitRetainingTailMs(0)` IS `commit()`. Byte-identical with a never-firing endpointer. |
+| Cloud 4 s-cap suppression | not touched | unchanged |
+| Unconditional stop flush | not touched by G (Task F7 routed it through the funnel) | still unconditional, still first in the flush block |
+| `sendAudio` unconditional and first | not touched | unchanged |
 | `no_context = true` final-only commit | not touched | unchanged |
 | Live bypass (`RealtimeTurnPolicy`) | Task G5 reads `sessionIsLive` for RENDER ownership only | the VAD/commit bypass predicate is untouched |
 | `EmptyExpected` / `FallbackPolicy.reconcile` | Task G5 decrements the queue on every resolution, including `EmptyExpected` and `Lost` | outcome semantics unread and unchanged; only the counter moves |
@@ -12444,12 +12536,19 @@ Run the whole BEFORE column on the installed 77 FIRST. Then build and install th
 
 **Read this before anything else: versionCode 78 CLEARS every GPU canary latch.** `GpuPolicy` keys
 its permanent verdicts on `BuildConfig.VERSION_CODE`, so the 3.6.0 `GPU-VERDICT: BAN
-reason=slower` latch for multi does not carry into 78. With the experimental multilingual-GPU
-toggle OFF — the shipped default, and the state the owner left the device in on 2026-08-20 —
-nothing re-runs and multi stays on CPU. If the toggle is ON, the canary runs once more on the
-first cold multi load and can re-latch ALLOW (it is a corruption screen, not a speed test, and
-"correct but 9x slower" passes it). **Leave the toggle off for this grid**, or every multi number
-below measures a backend the release does not ship.
+reason=slower` latch for multi does not carry into 78. Multi stays on CPU regardless: nothing
+re-runs the canary, because the preference that used to arm it now reads false everywhere.
+
+**RESPLICED by the H-section close-out.** This paragraph used to end *"Leave the toggle off for
+this grid"* — an instruction about a control that **no longer exists.** Task H5 removed the
+"Try GPU for multilingual (experimental)" Settings row, and the toggle **never shipped to users**
+in the first place (owner confirmation 2026-08-27: Play carries 3.3.0; 3.4–3.6 were local
+owner-pending merges). So there is no cohort carrying a stored `true`, the preference is
+**vestigial and unread-false everywhere**, and the multilingual GPU path cannot arm itself. The
+machinery — the key, the getter, `GpuPolicy`'s read and the canary gate — is deliberately
+preserved inert for the NPU era, and is pinned in that state by `GpuExperimentRowRetiredTest`.
+**No GPU instruction is needed for this grid** beyond the canary section's existing
+ASSET-ABSENT / ASSET-PRESENT paths.
 
 Hygiene, unchanged from the 3.6.0 sheet: `& $adb logcat -c` between sessions; no batch
 file-transcription job running (the compute gate is shared and inflates transcribe-ms); cloud OFF
@@ -12611,6 +12710,19 @@ RESULT: PENDING
       history records the session; the resize handle works; the how-to guide reads unchanged.
 - [ ] **Tier retirement (Workstream H):** eco/base are gone from the chooser, an already-installed
       eco/base still resolves and transcribes, and nothing forces a re-download.
+- [ ] **Migration card, the positive half (Workstream H):** an installed **extreme/ultra** user
+      still sees the migration card and can still complete `SwapAndDelete`. The line above covers
+      only the eco/base *negative* half; nothing on device confirms the card still renders for the
+      cohort H2 narrowed it to.
+- [ ] **GPU row retired (Workstream H):** Settings shows no "Try GPU for multilingual
+      (experimental)" row anywhere. `GpuExperimentRowRetiredTest` pins this at the source level
+      only — it proves the code is absent from `SettingsScreen.kt`, and cannot prove no toggle
+      renders. This line is the substitute for the instrumented test the environment forbids.
+- [ ] **Steer (Workstream H):** on an English device the English tier is the top card and carries
+      "Best match for your language"; switch the system language to a non-English one and confirm
+      the multilingual tier takes the top card and the badge — both cards remain tappable. The
+      wiring pins prove the ordered list is *computed, passed and named*; only this confirms Compose
+      lays the steered card out first.
 - [ ] Device-audio (`switchSource`) mid-session: swap mic <-> playback and confirm the next
       `endpoint:` line reads sensibly. Carrying LSTM state across an acoustic-source change is a
       correctness bug; this is the check for it.
