@@ -302,12 +302,12 @@ re-verify the count.)
 add-back gate below has actually been cleared. It contains no comparative, so it needs no
 "measured against our own previous version" closing and it cannot go stale while the ship gate holds.
 
-> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer — and a long unbroken stretch is cut at a small pause rather than mid-word. A new line shows what's being transcribed and how many are queued, on device and with cloud providers alike. The two lightest model tiers are retired; models you already installed are untouched.
+> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer — and a long unbroken stretch is cut at a small pause rather than mid-word. A new line shows what's being transcribed and how many are queued, on device and in the cloud once you stop talking. The two lightest model tiers are retired; models you already installed are untouched.
 
-(**460 chars.** Re-count every variant in this file after ANY edit — an em dash flattened to a
+(**468 chars.** Re-count every variant in this file after ANY edit — an em dash flattened to a
 hyphen or a lost `'` changes the count:
 `@(Get-Content docs\PLAY-LISTING.md -Encoding UTF8 | Where-Object { $_ -like '> Dictation now cuts*' }) | ForEach-Object { $_.Substring(2).Length }`
-→ expected `460`, `482`, `490`.)
+→ expected `468`, `490`, `498`.)
 
 ### Claim tracing — every clause, and what it rests on
 
@@ -316,7 +316,7 @@ hyphen or a lost `'` changes the count:
 | "Dictation now cuts where you stop talking" / "a real voice-activity model listens frame by frame" | **Feature, not a speed claim.** `audio/SileroEndpointer.kt` — a streaming per-frame Silero probe; `endpointer: silero (streaming probe)` is the session's construction line (`EndpointerFactory.kt:121`). The owner's 2026-08-27 session measured the probe at p50 2.3-2.4 ms / p99 5.8-6.1 ms with 0.2-0.3% of frames overrunning — it runs, and it runs well inside its 8 ms budget. |
 | "instead of waiting on a timer" | **Mechanism, no number.** The 3.6.0 wall caps still exist and still bound a stretch nothing else cut (`SegmentCapPolicy`, `FIRST_SEGMENT_WALL_MS = 4_000L` / `MAX_SEGMENT_WALL_MS = 15_000L`, byte-identical to `main`); what changed is that a real endpoint now usually gets there first. The caps stayed in the `else if` branch on purpose — an S5 untouchable. |
 | "a long unbroken stretch is cut at a small pause rather than mid-word" | **Behavioural, no number.** `CommitCadencePolicy.capCutRetainMs` via `capCutRetainWindowMs` (`FloatingBubbleService.kt:225-226`), applied in the cap branch at `:1943-1954`; pinned by `CapCutRetainWindowTest`. Deliberately NOT "never mid-word": the retain window is bounded by `CAP_CUT_MAX_RETAIN_MS = 3_000L`, and with no offer inside it the cap commits exactly as 3.6.0 did. |
-| "A new line shows what's being transcribed and how many are queued, on device and with cloud providers alike" | **New behaviour (Workstream G), named for BOTH paths on purpose.** Labels at `FloatingBubbleService.kt:286-287` — `"Transcribing…"` and `"Transcribing… ($depth in queue)"`; the cloud-BATCH path now shows it too (`:264`), where 3.6.0 showed an empty strip. Names no provider and claims no speed — the same copy rule the label itself is pinned against. Without this line the owner reads the cloud strip as a regression. |
+| "A new line shows what's being transcribed and how many are queued, on device and in the cloud once you stop talking" | **New behaviour (Workstream G), scoped to the two paths that actually show it.** Labels at `FloatingBubbleService.kt:286-287` — `"Transcribing…"` and `"Transcribing… ($depth in queue)"`. Local and **cloud-BATCH** sessions show it (`:264`), where 3.6.0 showed an empty strip on batch. **A live/streaming cloud session does NOT**: `renderInFlightStrip()` returns early on `deltaOwnsPreviewStrip(sessionIsLive)` (`:3055`, `:273`), because the delta stream owns that strip — and such a session never runs the endpointer either (`LiveTurnPolicy.runClientVad` is false at `:1896`; the server cuts turns). That path is not fringe: `CLOUD_LIVE` is chosen whenever `liveMode && isRealtimeStt(...)` (`:115`) and **3 of the 4 `ProviderCatalog` entries carry `supportsStreaming = true`** (`:45,81,101`). Hence "once you stop talking", which excludes streaming by its own terms — never "with cloud providers alike", which those users could falsify by looking at their screen. Names no provider and claims no speed. |
 | "The two lightest model tiers are retired" | **Workstream H.** `eco` and `base` carry `retired = true` (`model/WhisperModel.kt:89,102`); `WhisperCatalog.pickable = entries.filter { !it.retired }`, so both leave the chooser. Both are 60 MB — "the two lightest" is literal. |
 | "models you already installed are untouched" | **The cohort walk, verified from source in Workstreams H1/H2.** `retired` and `unsupported` are separate flags (`WhisperModel.kt:34-44`); eco/base take `retired` only. `ModelMigration.decide("eco")` returns `None` (no prompt, no re-download), and Settings' "no longer supported" card gates on `unsupported` via `WhisperModelManager.unsupportedInstalledModel()` — which eco/base never satisfy. Nothing on the eco/base path changes. |
 
@@ -354,9 +354,9 @@ and pacing work held" — which is a reason to ship, not a sentence to print.
    `speechEndToVisible=` at all), or the 3.6.0-era figures from the 2026-08-20 session, cited as
    such.
 
-> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer — text lands sooner, and at a steady pace. A new line shows what's being transcribed and how many are queued, on device and with cloud providers alike. The two lightest model tiers are retired; models you already installed are untouched. Measured against our own previous version, same phone.
+> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer — text lands sooner, and at a steady pace. A new line shows what's being transcribed and how many are queued, on device and in the cloud once you stop talking. The two lightest model tiers are retired; models you already installed are untouched. Measured against our own previous version, same phone.
 
-(**482 chars.** The mid-word clause pays for it; the closing disclaimer comes back with the
+(**490 chars.** The mid-word clause pays for it; the closing disclaimer comes back with the
 comparative, because the house rule is that every comparative says outright what it is measured
 against.)
 
@@ -366,15 +366,44 @@ stop flush, and that "before" figure cited from where it was measured. The condi
 is load-bearing and must not be dropped: the win is that the tail is pure silence and returns before
 the encoder runs, and it does NOT apply when a real backlog exists.
 
-> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer. A new line shows what's being transcribed and how many are queued, on device and with cloud providers alike. The two lightest model tiers are retired; models you already installed are untouched. Stopping is quicker when nothing is still queued. Measured against our own previous version, same phone.
+> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer. A new line shows what's being transcribed and how many are queued, on device and in the cloud once you stop talking. The two lightest model tiers are retired; models you already installed are untouched. Stopping is quicker when nothing is still queued. Measured against our own previous version, same phone.
 
-(**490 chars.**)
+(**498 chars** — only 2 to spare. Re-count in the Console's own counter before saving.)
 
-**B and C do not both fit — together they are 532 chars.** The budget admits at most ONE measured
+**B and C do not both fit — together they are 540 chars.** The budget admits at most ONE measured
 comparative. Paste the one that actually has a measurement behind it; if both clear, B is the
 headline (it is the release's whole point) and C waits for 3.7.1. Multilingual stays out of every
 variant on purpose: it is measurably the slower tier (owner's own 3.6-4.3 s typical), and the notes
 must not imply otherwise.
+
+### One dependency that can falsify variant A before it is ever pasted
+
+**If the pending m4 owner ruling restores a 60 MB tier, sentence 4 goes false and MUST be re-edited
+first.** The ruling is open at `docs/superpowers/specs/2026-08-20-i-owner-acceptance.md`
+(`OWNER RULING: PENDING` — the deleted-file cohort asymmetry: restore the 60 MB tier / force the
+190 MB adoption / offer both). Two of those three outcomes put a light tier back in
+`WhisperCatalog.pickable`, and "The two lightest model tiers are retired" is then a false statement
+in the store. This is flagged HERE, not only in the task report, because the ship gate is open-ended
+by design: the ruling can land months after the report stops being read, and this file is what gets
+opened at submission. **Check that marker before pasting any variant.**
+
+### Three imprecisions, noted and deliberately kept
+
+So a later editor does not re-derive them as findings, or "fix" them into something worse:
+
+1. **"the moment you finish it" elides the hangover.** The endpoint fires after a trailing hangover
+   the owner measured at `trailMs` 512-539 ms, not instantly. The verb carries it: the sentence says
+   the segment *goes to be transcribed* (enters the queue), not that it *is transcribed*, and the
+   clause's job is the contrast with a timer. Kept.
+2. **The mid-word clause states a conditional behaviour without a hedge.** It holds only when the
+   endpointer has a remembered micro-pause inside `CAP_CUT_MAX_RETAIN_MS = 3_000L`; with none,
+   `capCutRetainMs` returns `0` and the cap commits exactly as 3.6.0 did. A hedge costs 8-18 chars
+   the budget no longer has, and the failure mode is benign — no regression, only no benefit. Kept
+   unhedged, on purpose.
+3. **"silence costs nothing" is re-asserted in the release that gives silence a cost.** Every frame
+   of silence now runs a Silero probe (p50 2.3-2.4 ms measured). The user-facing meaning — no
+   encoder run, no cloud spend — is unchanged, and the half-clause is carried verbatim from the
+   bullet being replaced. Not a new claim.
 
 ## Listing delta — 3.7.0 (owner applies in the Console, SAME release as the 78 AAB)
 
@@ -400,8 +429,15 @@ larger, conservative figure is used here), so the projection is **3,960 of the 4
 top-accuracy tier the chooser no longer offers: `WhisperCatalog.pickable` is exactly `pro`
 (small.en) and `multi` (small, 90+ languages). `extreme` and `ultra` have been `retired` since
 3.6.0 and 3.7 adds `unsupported = true` to both; `eco` and `base` retire here. Two tiers is the
-truth, and "sharpest English" matches the in-app card copy ("The sharpest on-device English
-dictation this app ships.", `ModelTierCopy`).
+truth.
+
+**"Sharpest English" is a TRUNCATION of the in-app copy, and the prefix is what makes it safe.** The
+source reads *"The sharpest on-device English dictation **this app ships**."* (`ModelTierCopy`); the
+bullet drops the scoping tail, which is exactly the clause that keeps an unqualified superlative
+inside the file's own no-absolutes rule. It survives here only because the bullet's own
+`Two on-device model tiers:` prefix supplies both the comparison set and the on-device scope, so the
+sentence reads "the sharper of our two". **Do not reuse the bare phrase anywhere that prefix is
+absent** — restore the full clause instead.
 
 **Optional — the locale steer, if the owner wants it in the listing.** Replace the first NEW bullet
 with `• Two on-device model tiers: sharpest English, or 90+ languages — steered by your language`
