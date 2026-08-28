@@ -238,6 +238,34 @@ class LiveTranscriptionEngine(
             turnHasAudio = false
             turnShed = false
             turnAudioBytes = 0
+            // REGISTER THE TURN BEFORE ITS COMMIT OP CAN BE DEQUEUED. [senderLoop] takes ops off
+            // [sendQueue] under THIS lock and, on a false sendCommit (socket down), resolves the seq
+            // INLINE on the sender thread. Registering after the enqueue — as this did until S0 —
+            // left a window between `addLast` and the registration in which the sender could dequeue
+            // the op, fail to send, and call [resolveOnce] while `pending` was still empty.
+            // resolveOnce no-ops on an unknown seq, so the ONLY resolution this turn would ever be
+            // offered was silently dropped: the seq then sat in `pending` forever, unclaimed —
+            // exactly the dangling seq (off-by-one poisoning + tail-stall / awaitIdle timeout) this
+            // path exists to prevent. That is a genuine hole in property 3, not a test artefact; it
+            // surfaced 16 times as the "socket-down flake" only because the window is a few
+            // instructions wide and needs the sender thread scheduled precisely inside it.
+            //
+            // Holding [bufferLock] across the registration closes it: the sender cannot dequeue
+            // until this block exits, so registration always happens-before any possible inline
+            // resolution. This restores the ordering [com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine.commit]
+            // states in its own comment ("register before the body can run") and gets structurally
+            // from `CoroutineStart.LAZY` + register + start. The socket port lost it because its
+            // resolver is not a job it starts last but a QUEUE the sender drains — so the ENQUEUE is
+            // the start, and it had been moved ahead of the registration.
+            //
+            // Lock order is bufferLock -> correlationLock, the only nesting in this class. No path
+            // takes bufferLock while holding correlationLock ([resolveOnce] invokes the listener
+            // OUTSIDE the lock), so it cannot deadlock. correlationLock is never held across a
+            // callback, so the added hold is a bounded map write and property 1 (sendAudio never
+            // blocks) still stands — pinned by sendAudio_never_blocks_capture_thread.
+            synchronized(correlationLock) {
+                pending[seq] = PendingTurn(seq, owner, bindable = latched == null && !shed && !tooShort)
+            }
             // Only a deliverable turn tells the server to finalize. A shed, fatal, or too-short turn
             // sends no commit — its audio is gone, its session is dead, or the server would reject it
             // — so the server raises no item, and this turn owns no bindable slot. Server mode NEVER
@@ -246,8 +274,6 @@ class LiveTranscriptionEngine(
         }
         val deliverable = latched == null && !shed && !tooShort
         if (deliverable) wakeups.trySend(Unit)
-
-        synchronized(correlationLock) { pending[seq] = PendingTurn(seq, owner, bindable = deliverable) }
 
         // Resolve the dead-on-arrival turns OFF this thread. Doing it inline would fire the owner's
         // callback before FallbackTranscriptionEngine.commit() (which is calling us under its mirror

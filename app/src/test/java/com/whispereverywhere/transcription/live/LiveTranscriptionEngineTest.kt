@@ -62,6 +62,13 @@ class LiveTranscriptionEngineTest {
         @Volatile var open = true
         /** When set, sendAppend returns false (network backpressure / socket-down) without recording. */
         @Volatile var refuseAppends = false
+        /**
+         * When set, sendCommit returns false while appends still land — the reconnect-gap shape in
+         * which a turn is resolved Lost from INSIDE the sender loop rather than off commit()'s own
+         * deferral. That is the only path that resolves a seq the committing thread has just
+         * allocated, so it is the one the S0 registration-order pin needs.
+         */
+        @Volatile var refuseCommits = false
         @Volatile private var gate: CountDownLatch? = null
 
         fun stall() { gate = CountDownLatch(1) }
@@ -76,7 +83,7 @@ class LiveTranscriptionEngineTest {
             return true
         }
         override fun sendCommit(): Boolean {
-            if (!open) return false
+            if (!open || refuseCommits) return false
             commits.incrementAndGet(); return true
         }
         override fun close() { closes++; open = false }
@@ -363,12 +370,57 @@ class LiveTranscriptionEngineTest {
         assertTrue("a fully-dropped turn resolves Lost, rescued locally — never dangles", outcome is SegmentOutcome.Lost)
 
         // The orphan is gone from `pending`: no tail-stall, no awaitIdle timeout, nothing to mis-bind.
-        // 10 s, not 2 s: the assertion is about EXISTENCE (a dangling seq fails at any timeout),
-        // so the budget buys only load-tolerance — this test failed twice under a parallel native
-        // build (2026-08-01) with the pool threads starved, and passed alone both times.
+        // 10 s, not 2 s: the assertion is about EXISTENCE (a dangling seq fails at any timeout), so
+        // the budget buys only load-tolerance.
+        //
+        // S0 (2026-08-27): the earlier note here blamed "the pool threads starved" for this test's
+        // intermittent failures. That was wrong, and the wrong diagnosis is why the flake survived
+        // 16 recordings. It was never a scheduling shortage: commit() enqueued this turn's
+        // SendOp.Commit and only THEN registered the turn in `pending`, so a sender that dequeued
+        // inside that window resolved a seq the engine did not yet know about — resolveOnce no-ops
+        // on an unknown seq and the resolution was DROPPED, leaving the seq dangling exactly as this
+        // test forbids. Root-caused and fixed in LiveTranscriptionEngine.commit(); the budgets below
+        // are untouched, because the bound was never the problem. See the pin directly below.
         assertTrue("no seq dangles after a socket-down commit", h.engine.awaitIdle(10_000))
         h.transport.listener.onCompleted("it_orphan", "ignored") // cannot resolve or bind the vanished turn
         assertEquals(1, h.l.all.size)
+    }
+
+    @Test fun no_socket_down_commit_loses_its_resolution_to_the_registration_race() {
+        // THE S0 REGRESSION PIN, and the reason the flake above is a PRODUCT bug rather than a slow
+        // test. commit() must register a turn in `pending` before its SendOp.Commit can be dequeued:
+        // the sender resolves a failed commit INLINE, and resolveOnce silently no-ops on a seq it has
+        // never seen. Register after the enqueue and every such turn is a coin-flip whose losing side
+        // drops the turn's ONE resolution forever.
+        //
+        // The test above exposes a SINGLE turn to that window, which is why it only ever failed
+        // ~1 run in 7. Here every turn takes it — appends land (so nothing is shed onto commit()'s
+        // safe deferral) and only the commit frame fails, the reconnect-gap shape — so a regression
+        // that moves the registration back outside bufferLock loses at least one turn with
+        // near-certainty rather than rarely. maxBacklog is raised so the sender can never fall far
+        // enough behind to shed a turn onto that safe path and mask the hole.
+        val h = connected(maxBacklog = 4_096)
+        h.transport.refuseCommits = true
+        val turns = 300
+        repeat(turns) {
+            h.engine.sendAudio(byteArrayOf(1, 2))
+            assertTrue("every turn allocates a real seq", h.engine.commit() >= 0)
+        }
+
+        // awaitIdle is the direct probe: a dropped resolution leaves its turn in `pending` unclaimed
+        // forever, so a false here IS the dangle. Condition-based — it returns the moment `pending`
+        // drains, so the budget is only the failure bound.
+        assertTrue("no seq may dangle after a socket-down commit", h.engine.awaitIdle(10_000))
+        assertEquals("every committed seq reaches the listener", turns, h.l.all.size)
+        assertEquals(
+            "and exactly once each",
+            turns, h.l.all.map { it.first }.toSet().size,
+        )
+        assertTrue(
+            "each resolves Lost so the mirror rescues it locally",
+            h.l.all.all { it.second is SegmentOutcome.Lost },
+        )
+        assertEquals("no commit frame ever reached the socket", 0, h.transport.commits.get())
     }
 
     // ---------------------------------------------------------------- backpressure
