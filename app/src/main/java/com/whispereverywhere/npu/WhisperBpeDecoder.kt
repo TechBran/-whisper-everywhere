@@ -77,7 +77,19 @@ import kotlinx.serialization.json.Json
  *
  * A missing asset never reaches this class at all — `AssetManager.open` throws `IOException` first.
  */
-class WhisperBpeDecoder(private val vocab: List<String>) {
+class WhisperBpeDecoder(vocabulary: List<String>) {
+
+    /**
+     * A **defensive copy**, and it is what makes the immutability this class advertises true.
+     *
+     * `List<String>` is a read-only *interface*, not an immutable type: the caller may still hold
+     * the `ArrayList` behind it. Storing that reference would leave every guarantee below — the
+     * entry count, the byte-level alphabet, "no asset-dependent failure mode after construction" —
+     * checked once at a moment the caller can undo afterwards, and the symptom would be the same
+     * fluent wrong text as a wrong asset, arriving later and from further away. The copy is taken
+     * BEFORE the checks run, so what is validated and what is read are the same list.
+     */
+    private val vocab: List<String> = vocabulary.toList()
 
     init {
         check(vocab.size == WhisperTokens.VOCAB) {

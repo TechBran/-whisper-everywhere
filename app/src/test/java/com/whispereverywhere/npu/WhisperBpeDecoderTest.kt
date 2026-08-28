@@ -183,6 +183,22 @@ class WhisperBpeDecoderTest {
                 expected.message!!.contains(WhisperBpeDecoder.ASSET_NAME),
             )
         }
+
+        // THE THIRD CONSTRUCTOR GUARANTEE, and the one the other two rest on: the decoder must not
+        // alias the caller's list. `List<String>` is a read-only INTERFACE, not an immutable type —
+        // without a defensive copy the size check and the alphabet walk above are both verdicts
+        // about a moment the caller can undo afterwards, and the decoder would go on rendering
+        // whatever the list became. Lives in this test rather than its own because it is the same
+        // subject as the other two: what the constructor guarantees about the vocabulary it holds.
+        val caller = ArrayList(List(WhisperTokens.VOCAB) { "a" })
+        val decoderOverCallerList = WhisperBpeDecoder(caller)
+        caller[0] = "zzz"
+        caller[1] = "zzz"
+        assertEquals(
+            "the decoder must hold a copy; mutating the caller's list must not change decode()",
+            "aa",
+            decoderOverCallerList.decode(intArrayOf(0, 1)),
+        )
     }
 
     /**
