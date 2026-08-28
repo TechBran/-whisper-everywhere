@@ -249,6 +249,43 @@ object WhisperNative {
      */
     external fun lastSegmentStats(): IntArray
 
+    /**
+     * Computes the log mel spectrogram of [samples] and writes it into [out] as a dense
+     * `[80][3000]` float32 block — the `input_features` the 4.0 NPU encoder consumes (4.0 Task Q2).
+     *
+     * **Why this exists rather than a mel implementation in Kotlin:** the spec allows exactly one
+     * mel in this app, ever. whisper.cpp already computes the one the CPU and GPU tiers are
+     * accurate with; a second one would be free to drift from them independently, and only a
+     * transcript comparison would ever notice.
+     *
+     * **The two strides are different, and that is the point.** whisper's internal mel is bin-major
+     * with stride `n_len`, which is **6000** for a 30 s window (it appends 30 s of zeros before
+     * framing), while [out] is written with stride **3000**. The fork's `whisper_get_mel_segment`
+     * reconciles them. A flat copy would read bins 0-39 at wrong offsets and never touch bins
+     * 40-79, producing a plausible-looking transcript from structured noise.
+     *
+     * @param ctxPtr a handle from [init]. The mel filterbank is model data (`ctx->model.filters`),
+     *        so a loaded whisper context is structurally required even though nothing else about
+     *        the CPU model is used on this path.
+     * @param samples float32 mono 16 kHz in `[-1,1]` — the backend seam's own type, never PCM16.
+     *        **Zero-padded or truncated to exactly 480,000 samples (30 s)**: the encoder's
+     *        `input_features` is a fixed `[1,80,3000]` and has no say in the matter.
+     * @param out a **direct** ByteBuffer of **exactly 960,000 bytes** (80 × 3000 × 4) whose order
+     *        is `ByteOrder.nativeOrder()`. Native order cannot be checked from JNI and is the
+     *        caller's responsibility: a direct ByteBuffer defaults to BIG_ENDIAN, and reading this
+     *        buffer back as floats without setting native order byte-swaps every one of the 240,000
+     *        values into plausible-looking garbage. A heap buffer, or any other capacity, is
+     *        refused outright.
+     * @return false — with a WE-DIAG line naming the reason — on a null/invalid argument, a model
+     *         whose mel bin count is not 80, a non-direct or wrong-capacity buffer, or a failure
+     *         inside whisper. Never partially valid: false means [out] holds nothing to trust.
+     *
+     * Runs on the caller's thread and takes ~20-40 ms for a 30 s window; it REPLACES the context's
+     * internal mel, so like [transcribeRaw] it must be called under NativeComputeGate and never
+     * concurrently with a transcribe on the same [ctxPtr].
+     */
+    external fun pcmToMel(ctxPtr: Long, samples: FloatArray, out: ByteBuffer): Boolean
+
     /** Frees the native whisper_context. Safe to call once per non-zero handle. */
     external fun free(ctxPtr: Long)
 }

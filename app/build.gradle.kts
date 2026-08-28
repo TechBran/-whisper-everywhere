@@ -204,10 +204,15 @@ android {
 // the JVM test task by default, so an edit confined to any of them leaves this task UP-TO-DATE and
 // the guard passes against stale evidence. The manifest and .gitignore go in the same list as the
 // .cpp files — the rule is about what the tests READ, not about the file extension.
+// (4.0 Q2) The fork's include/whisper.h joins them, and it is the sharpest case yet: the only
+// thing MelExportContractTest can read to know that whisper_get_mel_segment is DECLARED is that
+// header, and "add a declaration to a header" is precisely the shape of the change that would
+// otherwise leave this task UP-TO-DATE. Deleting the declaration would have left the guard green.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
         "src/main/cpp/whisper.cpp/src/whisper.cpp",
+        "src/main/cpp/whisper.cpp/include/whisper.h",
         "src/main/cpp/qnn_asr.cpp",
         "src/main/AndroidManifest.xml",
         rootProject.file(".gitignore"),
@@ -231,6 +236,39 @@ val fetchQnnHeaders = tasks.register<Exec>("fetchQnnHeaders") {
         rootProject.file("tools/fetch_qnn_headers.py").absolutePath,
         qnnHeaderRoot.absolutePath,
     )
+    // I-1 (Q1 review). A plain Exec fails the build on ANY non-zero exit, which made the
+    // "a network outage must not brick the CPU tiers" guarantee undeliverable: the build died
+    // here, configureCMakeDebug never ran, and the `if(EXISTS ${QNN_INCLUDE_DIR}/QnnInterface.h)`
+    // guard in CMakeLists.txt — written for exactly this case — was unreachable dead code on the
+    // only path it existed for. Reproduced: portal unreachable => `> Task :app:fetchQnnHeaders
+    // FAILED / BUILD FAILED`, with a full header tree sitting on disk.
+    //
+    // The two failure classes must stay apart, and the script now exits differently for them:
+    //   3 => could not obtain the headers by any route. The tree is left EMPTY, so CMake skips
+    //        libqnnasr.so and the CPU/GPU tiers — 100% of shipped transcription — still build.
+    //   2 => the headers on disk are NOT the pinned build. STILL FATAL, offline or not: a
+    //        2.45-vs-2.49 header/runtime skew compiles clean and misreads every versioned struct
+    //        on device, which is the entire reason the pin exists.
+    // Anything else is a real defect in the script and is rethrown unchanged.
+    isIgnoreExitValue = true
+    val exitCode = executionResult.map { it.exitValue }
+    doLast {
+        val code = exitCode.get()
+        if (code == 3) {
+            logger.warn(
+                "fetchQnnHeaders: the QAIRT headers could not be obtained (see the warning " +
+                    "above). The NPU tier is SKIPPED for this build; the CPU and GPU tiers are " +
+                    "unaffected. Restore network access, or copy the header tree manually, and " +
+                    "re-run to build libqnnasr.so."
+            )
+        } else if (code != 0) {
+            throw GradleException(
+                "fetchQnnHeaders failed with exit code $code — see the FATAL line above. Exit 2 " +
+                    "means the QNN headers on disk are not the pinned build id; that is a " +
+                    "silent-ABI hazard and is deliberately not tolerated."
+            )
+        }
+    }
 }
 
 // Ordered before CMAKE, not merely before preBuild. `preBuild` gates the compile* tasks; it does

@@ -491,6 +491,109 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastSegmentStats(
 }
 
 // ---------------------------------------------------------------------------------------------
+// 4.0 NPU tier (Task Q2): the mel export.
+//
+// The NPU encoder's input_features tensor is ufixed16 [1,80,3000] - 80 mel bins over a fixed 30 s
+// window. whisper.cpp already computes exactly that spectrogram, with the filterbank the CPU and
+// GPU tiers are accurate with, so the NPU tier READS that one. A second mel implementation on the
+// Kotlin or QNN side would be free to drift from the other two tiers independently, and nothing
+// short of a transcript comparison would notice.
+//
+// THE STRIDE IS THE WHOLE JOB, and it is done on the far side of this call, in the fork's
+// whisper_get_mel_segment: whisper's internal mel is bin-major with stride mel.n_len, which is
+// 6000 for a 30 s window because log_mel_spectrogram appends 30 s of zeros before framing, while
+// the destination stride is 3000. A flat copy of the first 80*3000 floats would read bins 0-39 at
+// wrong offsets and never touch bins 40-79 - structured noise rather than an error. Q10a's
+// `mel: bins=80 frames=3000 row0=.. row40=.. row79=..` line is the first place a human sees it.
+//
+// samples arrive as float32 in [-1,1], the backend seam's own type. No PCM16 round trip: it would
+// be lossy for no reason, and whisper_pcm_to_mel takes const float * anyway.
+//
+// NOT internally serialised. whisper_pcm_to_mel REPLACES ctx->state->mel, so it must not race a
+// transcribeRaw on the same ctx - and it cannot: every caller runs inside the Kotlin-side
+// NativeComputeGate, and the NPU backend tears the CPU tier's context down before arming itself.
+// ---------------------------------------------------------------------------------------------
+static constexpr int   kNpuMelBins    = 80;
+static constexpr int   kNpuMelFrames  = 3000;
+static constexpr int   kNpuMelSamples = 480000;                                  // 30 s at 16 kHz
+static constexpr jlong kNpuMelBytes   = (jlong) kNpuMelBins * kNpuMelFrames * 4; // 960,000
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_pcmToMel(
+        JNIEnv *env, jobject /* this */, jlong ctxPtr, jfloatArray samples, jobject melBuf) {
+    auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
+    if (ctx == nullptr || samples == nullptr || melBuf == nullptr) {
+        LOGDIAGE("pcmToMel: null argument (ctx=%d samples=%d out=%d)",
+                 ctx != nullptr, samples != nullptr, melBuf != nullptr);
+        return JNI_FALSE;
+    }
+
+    // The bin count is the other way this ships silently wrong. There is no WHISPER_N_MEL macro in
+    // this whisper.cpp version to catch it at compile time, and a large-v3 model (128 bins) would
+    // overrun a destination sized for 80 - so the model is asked, every call, and refused.
+    if (whisper_model_n_mels(ctx) != kNpuMelBins) {
+        LOGDIAGE("pcmToMel: model has %d mel bands, the NPU encoder needs exactly %d",
+                 whisper_model_n_mels(ctx), kNpuMelBins);
+        return JNI_FALSE;
+    }
+
+    // GetDirectBufferAddress returns null for a heap ByteBuffer, which is the check that matters:
+    // a heap buffer would otherwise be "written" to memory the JVM never shows the caller, and the
+    // encoder would quantise 960 KB of zeros without complaint.
+    void *base = env->GetDirectBufferAddress(melBuf);
+    if (base == nullptr) {
+        LOGDIAGE("pcmToMel: out is not a direct ByteBuffer");
+        return JNI_FALSE;
+    }
+    if (env->GetDirectBufferCapacity(melBuf) != kNpuMelBytes) {
+        LOGDIAGE("pcmToMel: out capacity is %lld bytes, need exactly %lld (%d bins x %d frames x 4)",
+                 (long long) env->GetDirectBufferCapacity(melBuf), (long long) kNpuMelBytes,
+                 kNpuMelBins, kNpuMelFrames);
+        return JNI_FALSE;
+    }
+    if ((reinterpret_cast<uintptr_t>(base) % alignof(float)) != 0) {
+        LOGDIAGE("pcmToMel: out is not float-aligned");
+        return JNI_FALSE;
+    }
+    auto *out = static_cast<float *>(base);
+
+    // Zero-pad or truncate to the encoder's fixed window. The asset has no say in this:
+    // input_features is a fixed [1,80,3000], so 30 s is the only length it accepts. Whisper's own
+    // pipeline pads short segments the same way.
+    const jsize n    = env->GetArrayLength(samples);
+    const jsize take = (n < kNpuMelSamples) ? n : kNpuMelSamples;
+    std::vector<float> pcm(kNpuMelSamples, 0.0f);
+    if (take > 0) {
+        env->GetFloatArrayRegion(samples, 0, take, pcm.data());
+    }
+    if (n > kNpuMelSamples) {
+        LOGDIAG("pcmToMel: %d samples truncated to the encoder's %d-sample window", n, kNpuMelSamples);
+    }
+
+    // The same cap transcribeRaw uses, for the same reason: on mobile big.LITTLE, ggml's per-op
+    // barriers make extra efficiency-core threads a net loss.
+    int cores = static_cast<int>(std::thread::hardware_concurrency());
+    if (cores <= 0) {
+        cores = 4;
+    }
+    const int threads = (cores < 4) ? cores : 4;
+
+    if (whisper_pcm_to_mel(ctx, pcm.data(), kNpuMelSamples, threads) != 0) {
+        LOGDIAGE("pcmToMel: whisper_pcm_to_mel failed");
+        return JNI_FALSE;
+    }
+
+    // kNpuMelFrames (3000), NOT mel.n_len (6000). Reconciling those two numbers is the entire
+    // reason whisper_get_mel_segment exists rather than a memcpy here; see its contract in the
+    // fork's include/whisper.h. Offset 0: one 30 s segment, no windowing on this tier.
+    if (whisper_get_mel_segment(ctx, out, kNpuMelFrames, 0) != 0) {
+        LOGDIAGE("pcmToMel: whisper_get_mel_segment failed");
+        return JNI_FALSE;
+    }
+    return JNI_TRUE;
+}
+
+// ---------------------------------------------------------------------------------------------
 // 3.6.0 Workstream D: incremental new-segment delivery. whisper_full invokes
 // new_segment_callback ON THE CALLING THREAD (the engine's single native-executor thread) after
 // each accepted segment; we forward the FULL running text of THIS call to Kotlin — the same

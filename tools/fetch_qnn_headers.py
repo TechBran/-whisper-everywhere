@@ -26,6 +26,23 @@ prevents is silent:
    copy exists locally, it is copied with a warning; if it does not, the error names that path as
    the manual source rather than leaving the reader to guess.
 
+THE TWO FAILURE CLASSES ARE DIFFERENT AND EXIT DIFFERENTLY (Q1 review, I-1). Collapsing them into
+one non-zero exit is what made the "a network outage must not brick the CPU tiers" guarantee
+undeliverable: the Gradle task died before configureCMake ever ran, so CMakeLists' `if(EXISTS
+QnnInterface.h)` guard - written precisely for this - was unreachable dead code on the only path it
+existed for.
+
+    0   the headers on disk are the pinned build. Nothing to do, or the fetch/fallback produced it.
+    2   FATAL. The headers on disk are NOT the pinned build, or an extraction produced something
+        unusable. This is the silent-ABI hazard the whole pin exists for: a 2.45-vs-2.49 skew
+        COMPILES CLEAN and then misreads every versioned struct on device. It must fail the build,
+        offline or not.
+    3   TOLERABLE. The headers could not be obtained by ANY route (no network, no local copy) -
+        the fresh-clone / CI case. The output tree is left EMPTY so that CMakeLists skips the
+        libqnnasr.so target with a loud message, and the caller is expected to warn and continue.
+        The CPU and GPU tiers are 100% of shipped transcription today and must not be brickable by
+        a vendor download portal.
+
 Usage:  python fetch_qnn_headers.py [OUT_DIR]
         OUT_DIR defaults to <repo>/app/src/main/cpp/include; headers land in OUT_DIR/QNN/**.
 """
@@ -67,9 +84,32 @@ DEFAULT_OUT = os.path.join(REPO_ROOT, "app", "src", "main", "cpp", "include")
 WANT = re.compile(rb"/include/QNN/.*\.(h|hpp)$")
 
 
+CANNOT_FETCH = 3
+
+
 def die(msg):
     print("FATAL: " + msg, file=sys.stderr)
     sys.exit(2)
+
+
+def cannot_fetch(qnn_dir, why):
+    """No route to the headers at all. Exit 3 and leave nothing behind that could be mistaken
+    for a verified tree."""
+    if os.path.isdir(qnn_dir):
+        # Whatever is here has no readable QnnSdkBuildId.h - main() checked before fetching - so
+        # it cannot be proved to match the runtime. A partial tree still containing QnnInterface.h
+        # would satisfy CMakeLists' EXISTS() guard and compile libqnnasr.so against unverifiable
+        # headers, which is the same silent-ABI failure the pin exists to prevent, reached by a
+        # different door. The tree is gitignored and re-fetchable; removing it costs nothing.
+        shutil.rmtree(qnn_dir, ignore_errors=True)
+        print("removed the unverifiable partial tree at %s" % qnn_dir, file=sys.stderr)
+    print("WARNING: %s\n"
+          "        The NPU tier is SKIPPED for this build - CMakeLists drops the libqnnasr.so\n"
+          "        target when the headers are absent. The CPU and GPU tiers are unaffected.\n"
+          "        Manual source: %s\n"
+          "        Copy that directory to %s (it is QAIRT %s), or restore network access to %s."
+          % (why, SPIKE_HEADERS, qnn_dir, BUILD_ID_NEEDLE, URL), file=sys.stderr)
+    sys.exit(CANNOT_FETCH)
 
 
 def build_id_of(qnn_dir):
@@ -230,10 +270,17 @@ def main():
     except Exception as exc:                                    # noqa: BLE001 - any failure falls back
         print("WARNING: portal fetch failed (%s: %s)" % (type(exc).__name__, exc), file=sys.stderr)
         if not os.path.isdir(SPIKE_HEADERS):
-            die("could not fetch the QNN headers and no local copy exists.\n"
-                "        Manual source: %s\n"
-                "        Copy that directory to %s (it is QAIRT %s), or restore network access "
-                "to %s." % (SPIKE_HEADERS, qnn_dir, BUILD_ID_NEEDLE, URL))
+            if existing is not None:
+                # A tree IS on disk and it is the WRONG version. That stays FATAL even with no
+                # route to correct it: degrading to "tolerable" here would leave CMake compiling
+                # libqnnasr.so against, say, 2.45 headers for the 2.49 runtime - the precise skew
+                # the pin exists to catch, now waved through by an unrelated network outage.
+                die("the headers at %s are %s but the pin is %s, and neither the portal nor a "
+                    "local copy is reachable to correct them.\n"
+                    "        Delete that directory and re-run with network access. Do NOT build "
+                    "the NPU tier against a version the bundled runtime does not match."
+                    % (qnn_dir, existing, BUILD_ID_NEEDLE))
+            cannot_fetch(qnn_dir, "could not fetch the QNN headers and no local copy exists.")
         print("WARNING: falling back to the local spike copy at %s" % SPIKE_HEADERS,
               file=sys.stderr)
         copy_from_spike(qnn_dir)
