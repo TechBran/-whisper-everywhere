@@ -250,6 +250,35 @@ object WhisperNative {
     external fun lastSegmentStats(): IntArray
 
     /**
+     * Loads **only the mel filterbank** from a ggml whisper model and returns a context that can do
+     * nothing but compute mels (4.0 Task Q2b). Returns 0L on failure.
+     *
+     * **Use this, not [init], for the NPU tier's mel.** [init] holds a full set of weights resident
+     * — 60-190 MB for the tiers this app ships — and the NPU path needs none of them: it runs its
+     * own encoder and decoder on the HTP and wants whisper.cpp only for the spectrogram, so that
+     * its accuracy is the accuracy the CPU and GPU tiers were measured at. This reads roughly
+     * **64 KB** from the head of the file (magic, hparams, filterbank) and stops before the vocab
+     * and before a single tensor. That is the difference between ~190 MB and ~64 KB sitting beside
+     * the NPU's own ~376 MiB, on the one path whose design is to never be co-resident with the CPU
+     * tiers.
+     *
+     * **Any installed 80-bin model's file will do.** The filterbank is a deterministic function of
+     * sample rate, n_fft and n_mel, so every 80-bin whisper model carries the same 80x201 matrix —
+     * verified byte-for-byte across `ggml-tiny-q5_1`, `ggml-small-q5_1` and `ggml-small.en-q5_1`
+     * (sha256 `85818f15…`, 64,320 bytes) across different sizes, quantisations, and English-only vs
+     * multilingual. `large-v3-turbo` is **128**-bin and carries a different matrix — [pcmToMel]
+     * refuses it, and callers should prefer an 80-bin tier's file when one is installed.
+     *
+     * The returned handle is an ordinary whisper context: release it with [free], like any other.
+     * It is valid ONLY for [pcmToMel]; [transcribeRaw] and [detectedLanguage] would be wrong to
+     * call on it, because there are no weights behind it.
+     *
+     * Returns 0L — with a WE-DIAG line — for a missing file, a bad magic, an implausible or
+     * self-contradictory header, or a file that ends early.
+     */
+    external fun initMelOnly(modelPath: String): Long
+
+    /**
      * Computes the log mel spectrogram of [samples] and writes it into [out] as a dense
      * `[80][3000]` float32 block — the `input_features` the 4.0 NPU encoder consumes (4.0 Task Q2).
      *

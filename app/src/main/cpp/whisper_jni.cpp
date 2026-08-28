@@ -518,6 +518,44 @@ static constexpr int   kNpuMelFrames  = 3000;
 static constexpr int   kNpuMelSamples = 480000;                                  // 30 s at 16 kHz
 static constexpr jlong kNpuMelBytes   = (jlong) kNpuMelBins * kNpuMelFrames * 4; // 960,000
 
+// Loads ONLY the mel filterbank, for a context that will never do anything but compute mels.
+//
+// THE RESIDENCY IS THE ENTIRE POINT. `init` above holds a full set of weights - 60-190 MB for the
+// tiers this app ships - and the NPU path needs none of them: it runs its own encoder and decoder
+// on the HTP and wants whisper.cpp only for the spectrogram, so that its accuracy is the accuracy
+// the CPU and GPU tiers were measured at. Holding `multi` resident just to reach an 80x201 matrix
+// would put ~190 MB beside the NPU's own ~376 MiB on the one path whose design (I11) is to never
+// be co-resident with the CPU tiers. This reads ~64 KB from the head of the file instead.
+//
+// The model file is only a filterbank donor, so ANY installed 80-bin tier's file serves - tiny,
+// small and small.en were verified to carry a byte-identical matrix. large-v3-turbo is 128-bin and
+// does NOT; pcmToMel's whisper_model_n_mels check below is what refuses it.
+//
+// The handle is an ordinary whisper_context: free it with the same `free` every other handle uses.
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_initMelOnly(
+        JNIEnv *env, jobject /* this */, jstring modelPath) {
+    we_install_native_logging();
+    if (modelPath == nullptr) {
+        LOGDIAGE("initMelOnly: null model path");
+        return 0;
+    }
+    const char *path = env->GetStringUTFChars(modelPath, nullptr);
+    if (path == nullptr) {
+        return 0;
+    }
+    whisper_context *ctx = whisper_init_from_file_mel_only(path);
+    if (ctx == nullptr) {
+        LOGDIAGE("initMelOnly: no usable mel filterbank in %s", path);
+        env->ReleaseStringUTFChars(modelPath, path);
+        return 0;
+    }
+    env->ReleaseStringUTFChars(modelPath, path);
+    LOGDIAG("initMelOnly: mel-only context ready (%d bands, no weights)",
+            whisper_model_n_mels(ctx));
+    return reinterpret_cast<jlong>(ctx);
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_pcmToMel(
         JNIEnv *env, jobject /* this */, jlong ctxPtr, jfloatArray samples, jobject melBuf) {

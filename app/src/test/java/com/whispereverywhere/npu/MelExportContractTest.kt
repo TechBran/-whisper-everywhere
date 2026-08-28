@@ -233,6 +233,94 @@ class MelExportContractTest {
     }
 
     @Test
+    fun theMelPathLoadsTheFilterbankOnlyNeverTheWholeModel() {
+        assertTrue(
+            "the fork's include/whisper.h must declare whisper_init_from_file_mel_only. Without " +
+                "it the only way to compute a mel is whisper_init_from_file, which holds a full " +
+                "set of weights - 60-190 MB for the tiers this app ships - resident purely to " +
+                "use an 80x201 filterbank.",
+            liveOffsets(forkHdr, "whisper_init_from_file_mel_only(").isNotEmpty()
+        )
+        val body = functionBody(
+            jni,
+            "Java_com_whispereverywhere_whisper_WhisperNative_initMelOnly(",
+            "whisper_jni.cpp",
+        )
+        assertTrue(
+            "initMelOnly must call whisper_init_from_file_mel_only.",
+            liveOffsets(body, "whisper_init_from_file_mel_only(").isNotEmpty()
+        )
+        // THE ANTI-REINTRODUCTION ASSERTION, and the residency of the whole NPU tier rests on it.
+        // Swapping this one call for whisper_init_from_file_with_params compiles, runs, returns a
+        // handle that pcmToMel accepts, and produces a byte-identical mel - while silently putting
+        // ~190 MB of CPU weights beside the NPU's own ~376 MiB, on the exact path whose design
+        // (I11) is that the two are never co-resident. Nothing downstream would report it; the
+        // first symptom would be an LMK kill on a mid-range device.
+        assertTrue(
+            "the mel path must NEVER take a full-weight load. whisper_init_from_file / " +
+                "whisper_init_from_file_with_params inside initMelOnly would hold the entire " +
+                "model resident to reach a 64 KB filterbank, which is the one thing this entry " +
+                "point exists to avoid, and it would do so invisibly - the mel would be correct. " +
+                "Found: " + liveOffsets(body, "whisper_init_from_file_with_params"),
+            liveOffsets(body, "whisper_init_from_file_with_params").isEmpty()
+        )
+        val kt = source("src/main/java/com/whispereverywhere/whisper/WhisperNative.kt")
+        assertTrue(
+            "WhisperNative must declare `external fun initMelOnly(`.",
+            liveOffsets(kt, "external fun initMelOnly(").isNotEmpty()
+        )
+    }
+
+    @Test
+    fun theMelOnlyLoaderRefusesAFileItCannotVouchFor() {
+        val load = functionBody(
+            forkSrc,
+            "static bool whisper_model_load_mel_only(",
+            "the whisper.cpp fork's src/whisper.cpp",
+        )
+        assertTrue(
+            "the mel-only loader must reject a bad magic - it is the only thing standing between " +
+                "an arbitrary file and 64 KB of it being read as float32 filter coefficients.",
+            liveOffsets(load, "GGML_FILE_MAGIC").isNotEmpty()
+        )
+        assertTrue(
+            "the mel-only loader must bound the filterbank dimensions. The FULL loader can trust " +
+                "them because a corrupt header trips over the tensor pass moments later; a " +
+                "mel-only load has no tensor pass, so a garbage n_mel*n_fft would be allocated " +
+                "before anything else noticed.",
+            liveOffsets(load, "filters.n_mel > 1024").isNotEmpty()
+        )
+        assertTrue(
+            "the mel-only loader must check hparams.n_mels against filters.n_mel. Nothing in the " +
+                "full loader compares them, because nothing in the full path depends on them " +
+                "agreeing - but a mel-only context is handed to exactly the two functions that " +
+                "read one each (whisper_model_n_mels gates the caller, log_mel_spectrogram " +
+                "indexes with the other), so a disagreement becomes a wrong mel with nothing to " +
+                "attribute it to.",
+            liveOffsets(load, "hparams.n_mels != filters.n_mel").isNotEmpty()
+        )
+        val init = functionBody(
+            forkSrc,
+            "struct whisper_context * whisper_init_from_file_mel_only(",
+            "the whisper.cpp fork's src/whisper.cpp",
+        )
+        assertTrue(
+            "whisper_init_from_file_mel_only must detect a file that ended early. The loader's " +
+                "read callback returns read_size without ever consulting gcount, so a truncated " +
+                "file yields a filterbank of zeros and, later, a mel of pure silence - a wrong " +
+                "transcript with no error anywhere. The stream state is the only witness left.",
+            liveOffsets(init, "loaded && !fin").isNotEmpty()
+        )
+        assertTrue(
+            "whisper_init_from_file_mel_only must zero the state's batch. whisper_batch has no " +
+                "default member initialisers, so its five pointers are indeterminate in a fresh " +
+                "state and whisper_free_state's whisper_batch_free would free() them. This one " +
+                "line is what lets a mel-only context be torn down by the ordinary whisper_free.",
+            liveOffsets(init, "state->batch = {};").isNotEmpty()
+        )
+    }
+
+    @Test
     fun theKotlinExternTakesFloatArrayNotPcm16() {
         val kt = source("src/main/java/com/whispereverywhere/whisper/WhisperNative.kt")
         // SCOPED TO THE DECLARATION LINE, and that is not a stylistic preference: `transcribeRaw`
