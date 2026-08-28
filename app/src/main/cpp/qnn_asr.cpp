@@ -18,9 +18,11 @@
 // helpers encode four lessons that each cost a device round trip; the comments naming them are part
 // of the port and must not be trimmed.
 //
-// SCOPE OF THIS FILE TODAY (Q1): probe, load, enumerate, log. nativeEncode / nativeInputQuant land
-// in Q3; nativeDetectLanguage / nativeDecodeSegment in Q4. What exists here is deliberately the
-// part that can be reasoned about before any of it has run on device, which happens at Q10a.
+// SCOPE OF THIS FILE TODAY (Q3): probe, load, enumerate, log, ALIAS-GUARD, vote, encode.
+// nativeDetectLanguage / nativeDecodeSegment land in Q4, and with them the decoder's own buffers
+// (self-KV ping-pong, ids, mask, logits) and the cross-KV bind that consumes the encoder's output
+// buffers in place. What exists here is deliberately the part that can be reasoned about before
+// any of it has run on device, which happens at Q10a.
 
 #include <android/log.h>
 #include <dlfcn.h>
@@ -29,9 +31,11 @@
 #include <cerrno>
 #include <chrono>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -54,8 +58,12 @@
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
 #include "System/QnnSystemContext.h"
-// HTP/QnnHtpDevice.h + HTP/QnnHtpPerfInfrastructure.h arrive in Q3 with the sustained power vote.
-// Q1 reaches the HTP entirely through the generic provider table, so it needs neither.
+// The two HTP-specific headers, and the ONLY two things in this file that are not generic QNN:
+// the power vote is a Hexagon concept and has no equivalent in the backend-agnostic API. Everything
+// else - contexts, graphs, tensors, execute - still goes through the provider table, so a
+// non-HTP backend would fail only at the vote, which is a warning rather than an error (below).
+#include "HTP/QnnHtpDevice.h"
+#include "HTP/QnnHtpPerfInfrastructure.h"
 
 #define TAG "WE-NPU"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -176,6 +184,18 @@ Qnn_DataType_t tensorDataType(const Qnn_Tensor_t &t) {
     return QNN_DATATYPE_UNDEFINED;
 }
 
+/// The tensor's quantisation parameters, read through the version tag like every other accessor
+/// here. Null on an unknown version - callers must treat that as an error, never as "unquantised".
+///
+/// This is the ONLY source of `input_features`' scale and zero point (Q3 step 3) and the field the
+/// C7 alias guard compares across the encoder/decoder boundary. Both graphs are w8a16: a tensor
+/// whose encoding cannot be read is not a tensor this seam can drive.
+const Qnn_QuantizeParams_t *tensorQuantParams(const Qnn_Tensor_t &t) {
+    if (t.version == QNN_TENSOR_VERSION_1) return &t.v1.quantizeParams;
+    if (t.version == QNN_TENSOR_VERSION_2) return &t.v2.quantizeParams;
+    return nullptr;
+}
+
 /// Point a copied descriptor at storage WE own, so it survives systemContextFree().
 void tensorRepoint(Qnn_Tensor_t &t, std::string &name, std::vector<uint32_t> &dims) {
     if (t.version == QNN_TENSOR_VERSION_1) {
@@ -190,10 +210,9 @@ void tensorRepoint(Qnn_Tensor_t &t, std::string &name, std::vector<uint32_t> &di
     }
 }
 
-/// Unused in Q1 - Q3 binds the encoder's mel and cross-KV buffers with it, Q4 re-binds the
-/// decoder's self-KV ping-pong 48 times per token. Ported now because it belongs with the accessors
-/// above and carries the same versioned-union discipline.
-[[maybe_unused]] void tensorSetClientBuf(Qnn_Tensor_t &t, void *data, uint32_t bytes) {
+/// Q3 binds the encoder's mel and cross-KV buffers with it; Q4 re-binds the decoder's self-KV
+/// ping-pong 48 times per token. Same versioned-union discipline as the accessors above.
+void tensorSetClientBuf(Qnn_Tensor_t &t, void *data, uint32_t bytes) {
     if (t.version == QNN_TENSOR_VERSION_1) {
         t.v1.memType = QNN_TENSORMEMTYPE_RAW;
         t.v1.clientBuf.data = data;
@@ -259,6 +278,18 @@ uint64_t tensorBytes(const Qnn_Tensor_t &t) {
     return n * elementSize(tensorDataType(t));
 }
 
+/// Names the quantisation encoding family so an unexpected one is readable rather than an integer.
+const char *encodingName(Qnn_QuantizationEncoding_t enc) {
+    switch (enc) {
+        case QNN_QUANTIZATION_ENCODING_SCALE_OFFSET:      return "scale-offset";
+        case QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET: return "axis-scale-offset";
+        case QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET:   return "bw-scale-offset";
+        case QNN_QUANTIZATION_ENCODING_BLOCK:             return "block";
+        case QNN_QUANTIZATION_ENCODING_UNDEFINED:         return "undefined";
+        default:                                          return "other";
+    }
+}
+
 std::string shapeStr(const Qnn_Tensor_t &t) {
     std::string s = "[";
     uint32_t rank = tensorRank(t);
@@ -288,6 +319,18 @@ struct GraphSlot {
     std::vector<std::string> ownedNames;
     std::vector<std::vector<uint32_t>> ownedDims;
 
+    /// Client buffers, one per tensor, index-parallel with `inputs` / `outputs`. Empty until the
+    /// slot is bound - Q3 binds the encoder's; the decoder's are Q4's, and are NOT this shape
+    /// (its 24 cross-KV inputs alias `enc.outBufs` and allocate nothing of their own).
+    std::vector<AlignedBuf> inBufs;
+    std::vector<AlignedBuf> outBufs;
+
+    /// LESSON 5: name -> index, never a positional constant. The decoder has 51 inputs, and an
+    /// off-by-one there is a silent wrong answer rather than a crash. Built once at load for both
+    /// graphs, because the alias guard has to look tensors up by name on both sides of the seam.
+    std::map<std::string, size_t> inIndex;
+    std::map<std::string, size_t> outIndex;
+
     GraphSlot() = default;
     GraphSlot(const GraphSlot &) = delete;
     GraphSlot &operator=(const GraphSlot &) = delete;
@@ -300,6 +343,11 @@ struct GraphSlot {
         outputs.clear();
         ownedNames.clear();
         ownedDims.clear();
+        // Frees every client buffer: AlignedBuf is RAII and vector::clear destroys its elements.
+        inBufs.clear();
+        outBufs.clear();
+        inIndex.clear();
+        outIndex.clear();
     }
 };
 
@@ -318,6 +366,15 @@ struct GraphExpectation {
 constexpr GraphExpectation kEncoderExpectation{"encoder", 1, 24, 480000, 27648000};
 constexpr GraphExpectation kDecoderExpectation{"decoder", 51, 25, 31316376, 3771698};
 
+/// The encoder's one input. Looked up by name (lesson 5), never by index, even though there is
+/// only one of it: "there is only one" is an asset fact, and asset facts are what change.
+constexpr const char *kInputFeatures = "input_features";
+
+/// The 24 cross-attention KV tensors, per layer: `k_cache_cross_0..11`, `v_cache_cross_0..11`.
+/// Encoder OUTPUTS and decoder INPUTS carry the same 24 names, and the whole zero-copy design
+/// rests on the two sides being the same tensor in every respect. See aliasGuardLocked.
+constexpr uint32_t kCrossKvLayers = 12;
+
 struct NpuState {
     std::mutex mu;
 
@@ -334,6 +391,22 @@ struct NpuState {
     GraphSlot enc;
     GraphSlot dec;
     bool initialised = false;
+
+    // ---- the sustained power vote (Q3 step 2) ------------------------------------------------
+    // Armed ONCE per session in nativeInit and released in nativeRelease - not per segment. The
+    // config it holds is a governor SETTING, not a clock pin: it costs nothing while idle, which
+    // is precisely what makes it holdable for the length of a dictation session.
+    QnnHtpDevice_PerfInfrastructure_t perf{};
+    bool perfAvailable = false;
+    uint32_t powerConfigId = 0;
+    bool voted = false;
+    /// Human-readable outcome of the vote, always logged, never silently empty (lesson 6).
+    std::string voteNote = "not attempted";
+
+    // ---- the encoder's input quantisation, read from metadata at load (Q3 step 3) --------------
+    size_t encInputIdx = 0;
+    float encInputScale = 0.0f;
+    int32_t encInputZeroPoint = 0;
 
     std::string lastError;
 };
@@ -476,6 +549,29 @@ std::string readWholeFile(const std::string &path, std::vector<uint8_t> &out) {
     if (got != out.size()) {
         return "fread: " + path + " short read " + std::to_string(got) + "/" +
                std::to_string(out.size());
+    }
+    return "";
+}
+
+/// name -> index over one tensor list. LESSON 5: everything downstream binds by name.
+///
+/// A DUPLICATE NAME IS A HARD ERROR, not a last-one-wins overwrite. `map::emplace` keeps the first
+/// and reports the collision; if two tensors ever shared a name, silently binding one of them
+/// twice and the other never is the exact class of failure - correct-looking, wrong answer - that
+/// binding by name exists to prevent. Better to refuse the asset.
+std::string buildNameIndex(const std::vector<Qnn_Tensor_t> &ts, std::map<std::string, size_t> &out,
+                           const char *label, const char *what) {
+    out.clear();
+    for (size_t i = 0; i < ts.size(); ++i) {
+        const char *nm = tensorName(ts[i]);
+        if (!nm || !*nm) {
+            return std::string(label) + " " + what + "[" + std::to_string(i) + "]: unnamed tensor";
+        }
+        auto r = out.emplace(nm, i);
+        if (!r.second) {
+            return std::string(label) + " " + what + ": duplicate tensor name '" + nm +
+                   "' at indices " + std::to_string(r.first->second) + " and " + std::to_string(i);
+        }
     }
     return "";
 }
@@ -700,6 +796,15 @@ std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
         }
     }
 
+    // ---- name -> index, both directions ---------------------------------------------------
+    // Built from the REPOINTED descriptors, so the keys are copies of strings we own rather than
+    // views into the system context. Built here rather than at first use because the alias guard
+    // runs before anything binds and needs both graphs already mapped.
+    err = buildNameIndex(slot.inputs, slot.inIndex, expect.label, "input");
+    if (!err.empty()) return err;
+    err = buildNameIndex(slot.outputs, slot.outIndex, expect.label, "output");
+    if (!err.empty()) return err;
+
     // ---- deserialise ---------------------------------------------------------------------
     t0 = Clock::now();
     e = g.qnn.contextCreateFromBinary(g.backend, g.device, nullptr,
@@ -723,16 +828,407 @@ std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
     return "";
 }
 
+// ---------------------------------------------------------------- C7: the cross-KV alias guard
+
+/// One cross-KV pair, compared field by field. Returns "" when the two descriptors are the SAME
+/// TENSOR in every respect that matters to an alias, or an `alias: <name> <field> <a> != <b>`
+/// string naming exactly what diverged.
+std::string aliasCompare(const std::string &name, const Qnn_Tensor_t &e, const Qnn_Tensor_t &d) {
+    char buf[224];
+
+    if (tensorDataType(e) != tensorDataType(d)) {
+        snprintf(buf, sizeof(buf), "alias: %s dtype %s != %s", name.c_str(),
+                 dtypeName(tensorDataType(e)), dtypeName(tensorDataType(d)));
+        return buf;
+    }
+
+    const uint32_t re = tensorRank(e), rd = tensorRank(d);
+    if (re != rd) {
+        snprintf(buf, sizeof(buf), "alias: %s rank %u != %u", name.c_str(), re, rd);
+        return buf;
+    }
+    const uint32_t *de = tensorDims(e);
+    const uint32_t *dd = tensorDims(d);
+    if (!de || !dd || re == 0) return "alias: " + name + " has no readable dimensions";
+    for (uint32_t i = 0; i < re; ++i) {
+        if (de[i] != dd[i]) {
+            snprintf(buf, sizeof(buf), "alias: %s dim[%u] %u != %u", name.c_str(), i, de[i], dd[i]);
+            return buf;
+        }
+    }
+
+    const Qnn_QuantizeParams_t *qe = tensorQuantParams(e);
+    const Qnn_QuantizeParams_t *qd = tensorQuantParams(d);
+    if (!qe || !qd) return "alias: " + name + " quantize params unreadable (unknown tensor version)";
+    if (qe->encodingDefinition != QNN_DEFINITION_DEFINED ||
+        qd->encodingDefinition != QNN_DEFINITION_DEFINED) {
+        snprintf(buf, sizeof(buf), "alias: %s encodingDefinition %d != %d (both must be DEFINED)",
+                 name.c_str(), static_cast<int>(qe->encodingDefinition),
+                 static_cast<int>(qd->encodingDefinition));
+        return buf;
+    }
+    if (qe->quantizationEncoding != qd->quantizationEncoding) {
+        snprintf(buf, sizeof(buf), "alias: %s encoding %s != %s", name.c_str(),
+                 encodingName(qe->quantizationEncoding), encodingName(qd->quantizationEncoding));
+        return buf;
+    }
+    // Anything but per-tensor scale-offset means the two sides could agree on the fields below and
+    // still disagree on the transform (a per-axis encoding hides its scales behind a pointer this
+    // comparison never reads). Refuse rather than compare the wrong thing.
+    if (qe->quantizationEncoding != QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+        snprintf(buf, sizeof(buf),
+                 "alias: %s encoding %s is not per-tensor scale-offset; the alias cannot be "
+                 "verified", name.c_str(), encodingName(qe->quantizationEncoding));
+        return buf;
+    }
+    // EXACT float equality, deliberately. There is no tolerance that is correct here: the two
+    // descriptors are supposed to have been produced by the same export of the same tensor, so any
+    // difference at all - however small - means they no longer are, and the alias is unsound.
+    if (qe->scaleOffsetEncoding.scale != qd->scaleOffsetEncoding.scale) {
+        snprintf(buf, sizeof(buf), "alias: %s scale %.8f != %.8f", name.c_str(),
+                 qe->scaleOffsetEncoding.scale, qd->scaleOffsetEncoding.scale);
+        return buf;
+    }
+    if (qe->scaleOffsetEncoding.offset != qd->scaleOffsetEncoding.offset) {
+        snprintf(buf, sizeof(buf), "alias: %s offset %d != %d", name.c_str(),
+                 qe->scaleOffsetEncoding.offset, qd->scaleOffsetEncoding.offset);
+        return buf;
+    }
+    return "";
+}
+
+/// THE ALIAS GUARD (C7). Runs at load, after both graphs are enumerated and BEFORE anything binds.
+///
+/// The whole zero-copy design of this tier rests on one claim: the encoder's 24 cross-KV OUTPUT
+/// buffers can be handed to the decoder as its 24 cross-KV INPUTS untouched, because the two sides
+/// describe the same tensor. Re-feeding them instead would move 26.4 MiB x ~100 tokens per segment.
+///
+/// THAT CLAIM WAS A PLAN-TIME OBSERVATION - read out of the asset's metadata.json by hand, once.
+/// If a future asset regeneration shifts one side's scale, the alias feeds the decoder cross-KV
+/// under the wrong affine transform. The result is not a crash and not garbage: it is PLAUSIBLE
+/// WRONG TEXT, the worst possible failure for a dictation app and the one a single-sentence
+/// acceptance test is least likely to catch. So the observation becomes a guard, and the guard
+/// runs before the first bind rather than after the first transcript.
+std::string aliasGuardLocked() {
+    uint32_t checked = 0;
+    for (uint32_t layer = 0; layer < kCrossKvLayers; ++layer) {
+        for (const char *kind : {"k_cache_cross_", "v_cache_cross_"}) {
+            const std::string name = std::string(kind) + std::to_string(layer);
+
+            auto eit = g.enc.outIndex.find(name);
+            if (eit == g.enc.outIndex.end()) {
+                return "alias: " + name + " missing from the encoder's outputs";
+            }
+            auto dit = g.dec.inIndex.find(name);
+            if (dit == g.dec.inIndex.end()) {
+                return "alias: " + name + " missing from the decoder's inputs";
+            }
+
+            const std::string err = aliasCompare(name, g.enc.outputs[eit->second],
+                                                 g.dec.inputs[dit->second]);
+            if (!err.empty()) return err;
+            ++checked;
+        }
+    }
+    // The loop above verifies the 24 tensors this seam KNOWS ABOUT. It cannot, by construction,
+    // say anything about a 25th - and a whisper variant with more than 12 layers would carry one.
+    // Its extra cross-KV tensors would be aliased by Q4's bind-by-name pass and never checked here,
+    // which is the guard silently covering less than it appears to. So count both sides too: the
+    // number of cross-KV tensors present must be exactly the number verified.
+    auto countCross = [](const std::map<std::string, size_t> &idx) {
+        uint32_t n = 0;
+        for (const auto &kv : idx) {
+            if (kv.first.find("_cache_cross_") != std::string::npos) ++n;
+        }
+        return n;
+    };
+    const uint32_t encCross = countCross(g.enc.outIndex);
+    const uint32_t decCross = countCross(g.dec.inIndex);
+    if (encCross != checked || decCross != checked) {
+        char buf[224];
+        snprintf(buf, sizeof(buf),
+                 "alias: verified %u pairs but the asset carries %u cross-KV encoder outputs and "
+                 "%u cross-KV decoder inputs; %u layers assumed", checked, encCross, decCross,
+                 kCrossKvLayers);
+        return buf;
+    }
+    LOGI("alias guard: %u cross-KV pairs identical across encoder-out/decoder-in "
+         "(dtype, rank, every dim, scale, offset)", checked);
+    return "";
+}
+
+// ---------------------------------------------------------------- buffers and input quantisation
+
+/// Allocate one 64-byte-aligned client buffer per tensor, sized EXACTLY from dims x dtype, and bind
+/// it. Ported from the spike's `bindAll`.
+///
+/// This is the SIMPLE case, and it is the encoder's case only. The decoder's binding (Q4) is not
+/// this shape: its 24 cross-KV inputs alias `g.enc.outBufs` and allocate nothing, and its self-KV
+/// inputs/outputs ping-pong between two sets that are re-bound every step. Calling this over
+/// `dec.inputs` would quietly allocate 26.4 MiB of buffers the decoder must not read from.
+std::string allocateAndBind(std::vector<Qnn_Tensor_t> &ts, std::vector<AlignedBuf> &bufs,
+                            const char *label, const char *what) {
+    bufs.clear();
+    bufs.resize(ts.size());
+    for (size_t i = 0; i < ts.size(); ++i) {
+        const uint64_t need = tensorBytes(ts[i]);
+        const char *nm = tensorName(ts[i]) ? tensorName(ts[i]) : "?";
+        if (need == 0) {
+            return std::string(label) + " bind " + what + "[" + std::to_string(i) + "] '" + nm +
+                   "': computed 0 bytes";
+        }
+        // clientBuf.dataSize is a uint32_t; a tensor that does not fit one would be bound with a
+        // truncated size and overrun on the DSP side. 27 MiB is nowhere near it, but the cast is
+        // where it would happen, so the check lives on the cast.
+        if (need > 0xFFFFFFFFull) {
+            return std::string(label) + " bind " + what + "[" + std::to_string(i) + "] '" + nm +
+                   "': " + std::to_string(need) + " B exceeds the 32-bit clientBuf size";
+        }
+        if (!bufs[i].alloc(static_cast<size_t>(need))) {
+            return std::string(label) + " bind " + what + "[" + std::to_string(i) + "] '" + nm +
+                   "': alloc " + std::to_string(need) + " B failed";
+        }
+        tensorSetClientBuf(ts[i], bufs[i].p, static_cast<uint32_t>(need));
+        LOGI("  bind %s %s[%2zu] %-24s %9" PRIu64 " B @ %p", label, what, i, nm, need, bufs[i].p);
+    }
+    return "";
+}
+
+/// Reads `input_features`' scale and zero point off the encoder's OWN tensor metadata and caches
+/// them for nativeInputQuant. Q3 step 3, and the reason that step exists at all.
+///
+/// The quantisation parameters belong to the asset. A hardcoded scale in the Kotlin quantiser
+/// would survive an asset re-export unchanged, keep running, and feed the encoder a spectrogram
+/// scaled by the wrong constant - which it transcribes fluently into different words. Nothing
+/// downstream can detect that, so the numbers travel from the metadata to the quantiser and are
+/// never written down anywhere in between.
+///
+/// Read at LOAD, not per segment: if the asset cannot supply them, the tier must decline while the
+/// backend selector can still fall back, not mid-dictation.
+std::string readEncoderInputQuantLocked() {
+    auto it = g.enc.inIndex.find(kInputFeatures);
+    if (it == g.enc.inIndex.end()) {
+        return std::string("quant: '") + kInputFeatures +
+               "' not found among the encoder's inputs (found " +
+               std::to_string(g.enc.inputs.size()) + " inputs)";
+    }
+    g.encInputIdx = it->second;
+    const Qnn_Tensor_t &t = g.enc.inputs[g.encInputIdx];
+
+    // The DOMAIN - 0..65535 - is a compile-time constant in NpuQuantize, so it is native's job to
+    // refuse anything else. An 8-bit input tensor would be clamped against rails 256 times too
+    // wide and every loud bin would wrap into a quiet one.
+    if (tensorDataType(t) != QNN_DATATYPE_UFIXED_POINT_16) {
+        return std::string("quant: '") + kInputFeatures + "' is " +
+               dtypeName(tensorDataType(t)) +
+               ", not ufixed16; NpuQuantize's 0..65535 rails would be wrong for it";
+    }
+
+    const Qnn_QuantizeParams_t *q = tensorQuantParams(t);
+    if (!q) {
+        return std::string("quant: '") + kInputFeatures +
+               "' quantize params unreadable (unknown tensor version)";
+    }
+    if (q->encodingDefinition != QNN_DEFINITION_DEFINED) {
+        return std::string("quant: '") + kInputFeatures +
+               "' carries no defined quantization encoding (encodingDefinition " +
+               std::to_string(static_cast<int>(q->encodingDefinition)) + ")";
+    }
+    if (q->quantizationEncoding != QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+        return std::string("quant: '") + kInputFeatures + "' encoding is " +
+               encodingName(q->quantizationEncoding) +
+               ", not per-tensor scale-offset; one (scale, zeroPoint) pair cannot describe it";
+    }
+
+    const float scale = q->scaleOffsetEncoding.scale;
+    const int32_t offset = q->scaleOffsetEncoding.offset;
+    if (!(scale > 0.0f) || !std::isfinite(scale)) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "quant: '%s' scale %.9g is not strictly positive and finite",
+                 kInputFeatures, static_cast<double>(scale));
+        return buf;
+    }
+
+    // TWO CONVENTIONS, AND THEY DIFFER BY A SIGN. QNN's header states
+    // `float_value = (quantized_value + offset) * scale`, while the AI Hub metadata, ONNX and the
+    // Kotlin quantiser all use `float_value = scale * (q - zero_point)`. So zeroPoint = -offset,
+    // and the shipped encoder's offset of -32072 is the published zero_point of 32072.
+    //
+    // The range check below is the whole defence against that sign being wrong. If a future QAIRT
+    // ever emitted the offset in the other convention, -offset would be -32072: outside the
+    // uint16 domain, caught here, loudly - instead of quantising every mel value to the bottom
+    // rail and producing a confident transcript of silence.
+    const int64_t zeroPoint = -static_cast<int64_t>(offset);
+    if (zeroPoint < 0 || zeroPoint > 65535) {
+        return std::string("quant: '") + kInputFeatures + "' zero point " +
+               std::to_string(zeroPoint) + " (from QNN offset " + std::to_string(offset) +
+               ") is outside the ufixed16 domain 0..65535";
+    }
+
+    g.encInputScale = scale;
+    g.encInputZeroPoint = static_cast<int32_t>(zeroPoint);
+    LOGI("quant: %s %s %s scale %.12g zeroPoint %d (QNN offset %d), %" PRIu64 " B",
+         kInputFeatures, dtypeName(tensorDataType(t)), shapeStr(t).c_str(),
+         static_cast<double>(scale), g.encInputZeroPoint, offset, tensorBytes(t));
+    return "";
+}
+
+// ---------------------------------------------------------------- the sustained power vote
+
+/// Acquire the HTP perf infrastructure. Never fatal: a device that will not offer it runs at the
+/// governor's default clocks, which is slow (the spike measured 1007 ms unvoted against 405 ms
+/// voted) but correct. Slow and right beats refusing to transcribe.
+void acquirePerfInfrastructureLocked() {
+    g.perfAvailable = false;
+    QnnDevice_Infrastructure_t devInfra = nullptr;
+    if (!g.qnn.deviceGetInfrastructure) {
+        g.voteNote = "UNAVAILABLE (backend exposes no deviceGetInfrastructure)";
+        return;
+    }
+    Qnn_ErrorHandle_t e = g.qnn.deviceGetInfrastructure(&devInfra);
+    if (e != QNN_SUCCESS || !devInfra) {
+        g.voteNote = "UNAVAILABLE (deviceGetInfrastructure " + qnnErr(e) + ")";
+        return;
+    }
+    auto *htp = reinterpret_cast<QnnHtpDevice_Infrastructure_t *>(devInfra);
+    if (htp->infraType != QNN_HTP_DEVICE_INFRASTRUCTURE_TYPE_PERF ||
+        !htp->perfInfra.createPowerConfigId || !htp->perfInfra.setPowerConfig) {
+        g.voteNote = "UNAVAILABLE (infraType " + std::to_string(static_cast<int>(htp->infraType)) +
+                     ", perf entry points missing)";
+        return;
+    }
+    g.perf = htp->perfInfra;
+    g.perfAvailable = true;
+}
+
+/// THE SUSTAINED VOTE, exactly as measured (spike run 9: 404.6 ms sustained vs 369.2 ms burst,
+/// +9.6% - and that 9.6% is the accepted trade, not a defect to tune out).
+///
+/// Every field below is a decision, and the burst recipe differs in every one of them:
+///   dcvsEnable = 1        DCVS STAYS ON. Between segments the governor may drop the clock, which
+///                         is the entire point of a config that gets held for MINUTES. Pinning the
+///                         clock is what burns the battery, and a dictation session is not a
+///                         benchmark loop.
+///   powerMode PERFORMANCE the header's "lower thresholds for maximum performance": DCVS still
+///                         governs, but ramps eagerly, so a segment arriving after idle does not
+///                         spend its first inference climbing.
+///   corners min = SVS     real headroom to fall to while idle.
+///   corners target/max    TURBO, NOT MAX_VOLTAGE_CORNER. The top corner is a burst affordance;
+///                         TURBO is the highest corner a phone can actually hold.
+///   sleepDisable = 0      sleep explicitly ALLOWED (set-flag on, value off): the DSP may idle
+///                         between segments.
+///   setSleepLatency = 0   leave the platform default rather than force 40 us.
+///   rpcControlLatency     100 us. Costs nothing when idle and removes a per-call FastRPC wake.
+///   NO RPC POLLING        polling spins to avoid interrupt latency and burns power continuously,
+///                         process-wide. It is strictly a burst trick and it is not here.
+std::string applySustainedVoteLocked(uint32_t id) {
+    std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> cfgs;
+
+    QnnHtpPerfInfrastructure_PowerConfig_t dcvs{};
+    dcvs.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
+    auto &d = dcvs.dcvsV3Config;
+    d.contextId = id;
+    d.setDcvsEnable = 1;
+    d.dcvsEnable = 1;
+    d.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_PERFORMANCE_MODE;
+    d.setSleepLatency = 0;
+    d.setSleepDisable = 1;
+    d.sleepDisable = 0;
+    d.setBusParams = 1;
+    d.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS;
+    d.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_TURBO;
+    d.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_TURBO;
+    d.setCoreParams = 1;
+    d.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS;
+    d.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_TURBO;
+    d.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_TURBO;
+    cfgs.push_back(dcvs);
+
+    QnnHtpPerfInfrastructure_PowerConfig_t lat{};
+    lat.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_CONTROL_LATENCY;
+    lat.rpcControlLatencyConfig = 100;
+    cfgs.push_back(lat);
+
+    std::vector<const QnnHtpPerfInfrastructure_PowerConfig_t *> ptrs;
+    ptrs.reserve(cfgs.size() + 1);
+    for (auto &c : cfgs) ptrs.push_back(&c);
+    ptrs.push_back(nullptr);  // the list is null-terminated, not counted
+
+    Qnn_ErrorHandle_t e = g.perf.setPowerConfig(id, ptrs.data());
+    if (e != QNN_SUCCESS) return qnnErr(e);
+    return "";
+}
+
+/// Arms the vote ONCE for the session and LOGS THE RESULT ON ITS OWN LINE (lesson 6).
+///
+/// The log line is not decoration. Spike run 7 measured 1007 ms with a median spread of 838-1275 ms
+/// because the vote had silently not been applied - and an unvoted Hexagon is indistinguishable
+/// from slow silicon from the outside. Whatever happens here, `vote:` appears in logcat exactly
+/// once per session with the reason in it, so Q10a never has to guess which of the two it is
+/// looking at.
+///
+/// A failed vote NEVER fails nativeInit. The vote is a performance request; the session is correct
+/// without it.
+void armSustainedVoteLocked() {
+    acquirePerfInfrastructureLocked();
+    if (g.perfAvailable) {
+        Qnn_ErrorHandle_t ce = g.perf.createPowerConfigId(0, 0, &g.powerConfigId);
+        if (ce != QNN_SUCCESS) {
+            g.voteNote = "CREATE_FAILED " + qnnErr(ce);
+        } else {
+            const std::string ve = applySustainedVoteLocked(g.powerConfigId);
+            if (!ve.empty()) {
+                g.voteNote = "SET_FAILED " + ve;
+                if (g.perf.destroyPowerConfigId) g.perf.destroyPowerConfigId(g.powerConfigId);
+                g.powerConfigId = 0;
+            } else {
+                g.voted = true;
+                g.voteNote = "OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO "
+                             "sleepAllowed defaultSleepLatency rpc=100us NO-polling";
+            }
+        }
+    }
+    LOGI("vote: %s", g.voteNote.c_str());
+    if (!g.voted) {
+        LOGW("the HTP is running UNVOTED - expect roughly 2.5x the measured encode latency "
+             "(spike run 7: 1007 ms unvoted vs 405 ms sustained). This is a power-saver floor, "
+             "not slow silicon.");
+    }
+}
+
+/// Releases the vote. Called from teardown BEFORE anything else, so the config id is handed back
+/// while the backend that issued it is still alive.
+void releaseSustainedVoteLocked() {
+    if (g.voted && g.perfAvailable && g.perf.destroyPowerConfigId) {
+        Qnn_ErrorHandle_t de = g.perf.destroyPowerConfigId(g.powerConfigId);
+        LOGI("vote: released (%s)", de == QNN_SUCCESS ? "OK" : qnnErr(de).c_str());
+    }
+    g.voted = false;
+    g.powerConfigId = 0;
+    g.perfAvailable = false;
+    g.perf = {};
+    g.voteNote = "not attempted";
+}
+
 // ---------------------------------------------------------------- teardown
 
 /// Releases everything in reverse order of creation. Safe to call on a partially-built state (every
 /// handle is null-checked) and safe to call twice, which is what makes the failure paths in
 /// nativeInit able to just call it and return.
 void releaseLocked() {
+    // The vote goes first: it is a session-scoped request against the backend that is about to be
+    // freed, and handing the config id back afterwards would be handing it to a dead backend.
+    releaseSustainedVoteLocked();
+
     if (g.enc.context) g.qnn.contextFree(g.enc.context, nullptr);
     if (g.dec.context) g.qnn.contextFree(g.dec.context, nullptr);
+    // Frees the client buffers too - the contexts that could have been executing against them are
+    // gone by this line, and the order matters in that direction only.
     g.enc.clear();
     g.dec.clear();
+    g.encInputIdx = 0;
+    g.encInputScale = 0.0f;
+    g.encInputZeroPoint = 0;
 
     if (g.device) g.qnn.deviceFree(g.device);
     g.device = nullptr;
@@ -830,12 +1326,133 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
         return env->NewStringUTF(failure("init: " + err).c_str());
     }
 
+    // C7 — BEFORE ANYTHING BINDS. Both graphs are now enumerated and name-indexed; nothing has been
+    // allocated yet. If the 24 cross-KV pairs are not identical, the zero-copy alias the whole tier
+    // is built on is unsound, and the symptom would be plausible wrong text rather than an error.
+    err = aliasGuardLocked();
+    if (!err.empty()) {
+        releaseLocked();
+        return env->NewStringUTF(failure("init: " + err).c_str());
+    }
+
+    // The encoder's quantisation parameters, read from its own metadata and cached for
+    // nativeInputQuant. Read before the buffers so a session that cannot be fed correctly is
+    // refused before it allocates 27 MiB.
+    err = readEncoderInputQuantLocked();
+    if (!err.empty()) {
+        releaseLocked();
+        return env->NewStringUTF(failure("init: " + err).c_str());
+    }
+
+    // Session-scoped buffers, allocated ONCE. The 24 output buffers are the cross-KV, and Q4 binds
+    // the decoder's cross-KV inputs to these very pointers - never a copy, never re-fed per token.
+    // That is why they are owned by the session rather than by an encode call.
+    err = allocateAndBind(g.enc.inputs, g.enc.inBufs, kEncoderExpectation.label, "IN");
+    if (!err.empty()) {
+        releaseLocked();
+        return env->NewStringUTF(failure("init: " + err).c_str());
+    }
+    err = allocateAndBind(g.enc.outputs, g.enc.outBufs, kEncoderExpectation.label, "OUT");
+    if (!err.empty()) {
+        releaseLocked();
+        return env->NewStringUTF(failure("init: " + err).c_str());
+    }
+
+    // Armed ONCE, here, at the end - not per segment, and not before the 342 MB deserialise (which
+    // the spike also measured unvoted, so the 525 ms cold-load figure still means what it says).
+    // Released in nativeRelease. Never fails the init.
+    armSustainedVoteLocked();
+
     g.initialised = true;
     g.lastError.clear();
     LOGI("nativeInit OK - encoder graph '%s' (%zu in / %zu out), decoder graph '%s' "
          "(%zu in / %zu out)",
          g.enc.name.c_str(), g.enc.inputs.size(), g.enc.outputs.size(),
          g.dec.name.c_str(), g.dec.inputs.size(), g.dec.outputs.size());
+    return env->NewStringUTF("");
+}
+
+/// The encoder's input quantisation as `[scale, zeroPoint]`, read from `input_features`' own
+/// `Qnn_QuantizeParams_t` at load. Empty array on failure, with the reason in nativeLastError.
+///
+/// THIS TRANSPORT IS THE POINT OF Q3 STEP 3. The Kotlin quantiser needs two numbers that belong to
+/// the asset; without a declared way to fetch them, "read them from metadata, never hardcode" is
+/// an instruction with no mechanism, and the two literals from the plan's baked-facts block end up
+/// pasted into NpuQuantize where they will outlive the asset that produced them.
+///
+/// `zeroPoint` is exactly representable as a float (integers below 2^24 are), so the FloatArray
+/// carries it without loss.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_whispereverywhere_npu_QnnAsrNative_nativeInputQuant(
+        JNIEnv *env, jobject /* this */) {
+    std::lock_guard<std::mutex> lock(g.mu);
+    if (!g.initialised) {
+        failure("quant: session not initialised");
+        return env->NewFloatArray(0);
+    }
+    jfloatArray out = env->NewFloatArray(2);
+    if (!out) {
+        failure("quant: NewFloatArray(2) failed");
+        return nullptr;
+    }
+    const jfloat v[2] = {g.encInputScale, static_cast<jfloat>(g.encInputZeroPoint)};
+    env->SetFloatArrayRegion(out, 0, 2, v);
+    return out;
+}
+
+/// One encoder pass. [jMel] is the ALREADY-QUANTISED `ufixed16` block NpuQuantize produced - not
+/// the float mel - and it is copied into the bound `input_features` buffer, then executed.
+///
+/// After this returns "", the 24 cross-KV output buffers hold this segment's encoder state AND ARE
+/// ALREADY THE DECODER'S BOUND CROSS-KV INPUTS (Q4). There is nothing further to move: the decode
+/// loop reads them in place.
+///
+/// ~405 ms on a voted 8 Gen 3 (spike run 9, 9-run median). Never call this from Main; it holds the
+/// session mutex for the whole execute.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
+        JNIEnv *env, jobject /* this */, jobject jMel) {
+    std::lock_guard<std::mutex> lock(g.mu);
+    if (!g.initialised) {
+        return env->NewStringUTF(failure("encode: session not initialised").c_str());
+    }
+    if (!jMel) {
+        return env->NewStringUTF(failure("encode: quantised mel buffer is null").c_str());
+    }
+    void *src = env->GetDirectBufferAddress(jMel);
+    const jlong cap = env->GetDirectBufferCapacity(jMel);
+    if (!src || cap < 0) {
+        // GetDirectBufferAddress returns null for a heap ByteBuffer, and a heap buffer is the one
+        // mistake that would otherwise reach here silently - allocate() and allocateDirect() differ
+        // by four characters. NpuQuantize.newInputFeaturesBuffer() exists so nobody types either.
+        return env->NewStringUTF(failure(
+                "encode: quantised mel is not a direct ByteBuffer (use "
+                "NpuQuantize.newInputFeaturesBuffer())").c_str());
+    }
+    if (g.encInputIdx >= g.enc.inBufs.size()) {
+        return env->NewStringUTF(failure("encode: input_features is not bound").c_str());
+    }
+    AlignedBuf &dst = g.enc.inBufs[g.encInputIdx];
+    if (!dst.p || static_cast<jlong>(dst.n) != cap) {
+        return env->NewStringUTF(failure(
+                "encode: quantised mel is " + std::to_string(static_cast<long long>(cap)) +
+                " B, input_features needs " + std::to_string(dst.n) +
+                " B (the 960,000 B float mel is not this buffer)").c_str());
+    }
+    memcpy(dst.p, src, dst.n);
+
+    auto t0 = Clock::now();
+    Qnn_ErrorHandle_t e = g.qnn.graphExecute(
+            g.enc.graph,
+            g.enc.inputs.data(), static_cast<uint32_t>(g.enc.inputs.size()),
+            g.enc.outputs.data(), static_cast<uint32_t>(g.enc.outputs.size()),
+            nullptr, nullptr);
+    const double ms = msSince(t0);
+    if (e != QNN_SUCCESS) {
+        return env->NewStringUTF(failure("encode: graphExecute " + qnnErr(e)).c_str());
+    }
+    LOGI("encode: graphExecute OK in %.1f ms (vote: %s)", ms, g.voteNote.c_str());
+    g.lastError.clear();
     return env->NewStringUTF("");
 }
 

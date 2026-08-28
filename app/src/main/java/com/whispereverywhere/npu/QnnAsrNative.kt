@@ -34,7 +34,6 @@ package com.whispereverywhere.npu
  * ARRIVING LATER, and deliberately not declared yet — an `external fun` with no native
  * implementation links fine and fails only when someone calls it, which is exactly the kind of
  * "surface that looks finished" this project keeps paying for:
- *  - Q3: `nativeInputQuant(): FloatArray`, `nativeEncode(mel: java.nio.ByteBuffer): String`
  *  - Q4: `nativeDetectLanguage(): Int`, `nativeDecodeSegment(prompt: IntArray, suppress: IntArray,
  *    beginSuppress: IntArray, maxTokens: Int, out: IntArray): Int`
  */
@@ -71,6 +70,21 @@ object QnnAsrNative {
      * Costs ~342 MiB of resident memory and (spike-measured, encoder) ~525 ms of cold load; the
      * decoder's cost is first measured on device at Q10a. Never call this from Main.
      *
+     * It also does everything else the session needs, exactly once:
+     *  - runs the **cross-KV alias guard** (C7) before anything binds — the 24 `k/v_cache_cross_N`
+     *    tensors must be identical in dtype, rank, every dimension, scale and offset between the
+     *    encoder's outputs and the decoder's inputs, because the decoder is fed those buffers in
+     *    place. A shifted scale after an asset re-export is not a crash; it is a fluent, confident,
+     *    wrong transcript, so it fails here with `init: alias: <tensor> scale <a> != <b>`;
+     *  - reads `input_features`' quantisation parameters from the tensor's own metadata (see
+     *    [nativeInputQuant]) and refuses a session it cannot feed correctly;
+     *  - allocates and binds the encoder's client buffers, including the 24 cross-KV outputs that
+     *    Q4's decoder will read in place;
+     *  - **arms the sustained power vote once**, and logs its outcome on a `vote:` line whatever
+     *    that outcome is. A vote that failed silently is indistinguishable from slow silicon —
+     *    the spike measured 1007 ms unvoted against 405 ms voted and spent a device round trip
+     *    finding out which it was looking at. A failed vote does NOT fail this call.
+     *
      * Idempotent: an already-initialised session is released first, so a model swap or a restarted
      * session cannot leak a context.
      *
@@ -79,14 +93,59 @@ object QnnAsrNative {
     external fun nativeInit(encoderPath: String, decoderPath: String, libDir: String): String
 
     /**
+     * The encoder's input quantisation as `[scale, zeroPoint]`, or an **empty array** on failure
+     * (with the reason in [nativeLastError]). Valid only while a session is initialised.
+     *
+     * Feed both straight to [NpuQuantize.melToU16]. They come from `input_features`' own
+     * `Qnn_QuantizeParams_t`, read once at [nativeInit].
+     *
+     * **This exists so that "from metadata, never hardcoded" is enforceable rather than
+     * aspirational.** The two numbers are also written down in the plan's baked-facts block, and
+     * without a declared transport for them the shortest path from that block to working code is
+     * to paste the literals into the quantiser — where they would survive an asset re-export
+     * unchanged and silently scale every spectrogram wrongly. There is no accuracy check anywhere
+     * downstream that would notice; the encoder simply transcribes the wrong input fluently.
+     *
+     * `zeroPoint` arrives as a `Float` because integers below 2^24 are exact in one; take it with
+     * `.toInt()`. Note the sign convention: QNN's metadata stores `offset = -zeroPoint`, and the
+     * conversion (plus a range check that catches the convention flipping under us) happens native
+     * side, so what arrives here is already the zero point [NpuQuantize] wants.
+     */
+    external fun nativeInputQuant(): FloatArray
+
+    /**
+     * Runs the encoder over one 30 s segment.
+     *
+     * @param quantisedMel the **already-quantised** `ufixed16` block — 480,000 bytes, direct,
+     *        native order — produced by [NpuQuantize.melToU16] into
+     *        [NpuQuantize.newInputFeaturesBuffer]. **Not** the 960,000-byte float mel; that one is
+     *        refused by capacity rather than half-read.
+     * @return `""` on success, else `"encode: <detail>"`.
+     *
+     * On success the encoder's 24 cross-KV output buffers hold this segment's state **and are
+     * already the decoder's bound cross-KV inputs** — nothing is copied between the two passes,
+     * which is what keeps a ~100-token decode from moving 2.6 GB. Call `nativeDecodeSegment` (Q4)
+     * next; the cross-KV survives until the next `nativeEncode` overwrites it.
+     *
+     * ~405 ms on a voted Snapdragon 8 Gen 3. Holds the session mutex for the whole execute, so it
+     * must never run on Main and never concurrently with a decode.
+     */
+    external fun nativeEncode(quantisedMel: java.nio.ByteBuffer): String
+
+    /**
      * The last `"stage: detail"` recorded by any entry point, or `""` if none. Exists because Q4's
      * decode loop reports failure as a negative token count and needs somewhere to put the words.
      */
     external fun nativeLastError(): String
 
     /**
-     * Releases the contexts, device and backend, and frees the system context that owns the tensor
-     * metadata. Safe to call twice and safe to call on a partially-initialised session.
+     * Releases the sustained power vote, the client buffers, the contexts, the device and the
+     * backend, and frees the system context that owns the tensor metadata — in that order. Safe to
+     * call twice and safe to call on a partially-initialised session.
+     *
+     * The vote goes first because it is a request held against the backend that is about to be
+     * freed. Everything the session holds is session-scoped, so this is also the only place any of
+     * it is released: there is no per-segment allocation to reclaim.
      *
      * The QNN libraries themselves stay mapped on purpose: dlclose on a backend holding process-wide
      * FastRPC state is not something the API promises is safe, and re-arming the tier is free.
