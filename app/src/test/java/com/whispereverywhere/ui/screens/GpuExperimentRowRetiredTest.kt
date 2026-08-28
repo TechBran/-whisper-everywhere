@@ -25,23 +25,30 @@ import java.io.File
  */
 class GpuExperimentRowRetiredTest {
 
+    /**
+     * The house walk-up idiom, shared with `ChooserSteerWiringPinTest`,
+     * `UnsupportedTierGatePinTest`, `EndpointerFactoryTest`, `EndpointerTuningTest`,
+     * `SileroEndpointerTest` and `VadProbeLifecycleTest`. The plan's H5 variant walked up from
+     * `File(".")` with no `app/$relative` fallback and assigned the platform type `File!` to a
+     * non-null `File`, which compiled with a `Java type mismatch` warning — the only warning
+     * Workstream H introduced (H4 review o2, H5 close-out).
+     */
     private fun source(relative: String): File {
-        var dir = File(".").absoluteFile
-        while (dir.parentFile != null &&
-            !File(dir, "src/main/java/com/whispereverywhere").isDirectory
-        ) {
+        var dir: File? = File(System.getProperty("user.dir")!!).absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(File(dir, relative), File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate
+            }
             dir = dir.parentFile
         }
-        val f = File(dir, "src/main/java/$relative")
-        assertTrue("cannot locate $relative from ${File(".").absolutePath}", f.isFile)
-        return f
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
     }
 
     private fun read(relative: String): String =
         source(relative).readText().replace("\r\n", "\n")
 
     @Test fun settings_no_longer_offers_the_multilingual_gpu_toggle() {
-        val text = read("com/whispereverywhere/ui/screens/SettingsScreen.kt")
+        val text = read("src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt")
         assertFalse(
             "the GPU experiment row is back in SettingsScreen",
             text.contains("Try GPU for multilingual"),
@@ -57,7 +64,7 @@ class GpuExperimentRowRetiredTest {
     }
 
     @Test fun the_preference_stays_readable_so_existing_true_values_still_mean_something() {
-        val prefs = read("com/whispereverywhere/data/local/PreferencesManager.kt")
+        val prefs = read("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt")
         assertTrue(
             "the GPU experiment getter was deleted — an existing `true` is now unreadable",
             prefs.contains("fun isGpuMultilingualExperimentEnabled()"),
@@ -80,7 +87,7 @@ class GpuExperimentRowRetiredTest {
     }
 
     @Test fun gpu_policy_still_consults_the_stored_value() {
-        val policy = read("com/whispereverywhere/transcription/GpuPolicy.kt")
+        val policy = read("src/main/java/com/whispereverywhere/transcription/GpuPolicy.kt")
         assertTrue(
             "GpuPolicy no longer reads the experiment preference — the machinery is not inert, " +
                 "it is changed",
