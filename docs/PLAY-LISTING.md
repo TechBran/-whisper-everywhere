@@ -284,3 +284,134 @@ re-verify the count.)
 > Our biggest on-device speed release. Words now appear in the bubble while the model is still transcribing — no more silent wait. The first line of a session lands sooner, multilingual mode no longer re-detects your language every segment, and switching models warms the new one in the background. Stopping now counts up while it finishes. Every claim is against our own previous version, measured on the same phone.
 
 (415 chars)
+
+---
+
+# 3.7.0 — release notes + listing delta (PREPARED, NOT PUBLISHED)
+
+> **Ship gate.** `versionCode 78` / `versionName 3.7.0` certifies the BRANCH. The Play release
+> itself gates on the NPU track (owner ruling), so nothing below promises a date, says "now
+> available", or assumes a rollout window — this copy is written to stay true however long that gate
+> holds. When it does ship, the checklist rule at `:185-187` applies as always: this file and the
+> Console are two copies of the same copy, and the listing delta goes in the SAME release as the
+> 78 AAB.
+
+## Release notes — 3.7.0 (within 500 chars)
+
+**Variant A — the default, and the only one backed by evidence in hand.** Paste this one unless the
+add-back gate below has actually been cleared. It contains no comparative, so it needs no
+"measured against our own previous version" closing and it cannot go stale while the ship gate holds.
+
+> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer — and a long unbroken stretch is cut at a small pause rather than mid-word. A new line shows what's being transcribed and how many are queued, on device and with cloud providers alike. The two lightest model tiers are retired; models you already installed are untouched.
+
+(**460 chars.** Re-count every variant in this file after ANY edit — an em dash flattened to a
+hyphen or a lost `'` changes the count:
+`@(Get-Content docs\PLAY-LISTING.md -Encoding UTF8 | Where-Object { $_ -like '> Dictation now cuts*' }) | ForEach-Object { $_.Substring(2).Length }`
+→ expected `460`, `482`, `490`.)
+
+### Claim tracing — every clause, and what it rests on
+
+| Clause in variant A | What it traces to |
+| --- | --- |
+| "Dictation now cuts where you stop talking" / "a real voice-activity model listens frame by frame" | **Feature, not a speed claim.** `audio/SileroEndpointer.kt` — a streaming per-frame Silero probe; `endpointer: silero (streaming probe)` is the session's construction line (`EndpointerFactory.kt:121`). The owner's 2026-08-27 session measured the probe at p50 2.3-2.4 ms / p99 5.8-6.1 ms with 0.2-0.3% of frames overrunning — it runs, and it runs well inside its 8 ms budget. |
+| "instead of waiting on a timer" | **Mechanism, no number.** The 3.6.0 wall caps still exist and still bound a stretch nothing else cut (`SegmentCapPolicy`, `FIRST_SEGMENT_WALL_MS = 4_000L` / `MAX_SEGMENT_WALL_MS = 15_000L`, byte-identical to `main`); what changed is that a real endpoint now usually gets there first. The caps stayed in the `else if` branch on purpose — an S5 untouchable. |
+| "a long unbroken stretch is cut at a small pause rather than mid-word" | **Behavioural, no number.** `CommitCadencePolicy.capCutRetainMs` via `capCutRetainWindowMs` (`FloatingBubbleService.kt:225-226`), applied in the cap branch at `:1943-1954`; pinned by `CapCutRetainWindowTest`. Deliberately NOT "never mid-word": the retain window is bounded by `CAP_CUT_MAX_RETAIN_MS = 3_000L`, and with no offer inside it the cap commits exactly as 3.6.0 did. |
+| "A new line shows what's being transcribed and how many are queued, on device and with cloud providers alike" | **New behaviour (Workstream G), named for BOTH paths on purpose.** Labels at `FloatingBubbleService.kt:286-287` — `"Transcribing…"` and `"Transcribing… ($depth in queue)"`; the cloud-BATCH path now shows it too (`:264`), where 3.6.0 showed an empty strip. Names no provider and claims no speed — the same copy rule the label itself is pinned against. Without this line the owner reads the cloud strip as a regression. |
+| "The two lightest model tiers are retired" | **Workstream H.** `eco` and `base` carry `retired = true` (`model/WhisperModel.kt:89,102`); `WhisperCatalog.pickable = entries.filter { !it.retired }`, so both leave the chooser. Both are 60 MB — "the two lightest" is literal. |
+| "models you already installed are untouched" | **The cohort walk, verified from source in Workstreams H1/H2.** `retired` and `unsupported` are separate flags (`WhisperModel.kt:34-44`); eco/base take `retired` only. `ModelMigration.decide("eco")` returns `None` (no prompt, no re-download), and Settings' "no longer supported" card gates on `unsupported` via `WhisperModelManager.unsupportedInstalledModel()` — which eco/base never satisfy. Nothing on the eco/base path changes. |
+
+### Deliberately absent
+
+- **Any comparative at all**, and therefore no closing disclaimer. See the add-back gate below.
+- **The GPU experiment.** Ships off for multilingual (the 2026-08-20 bench banned it there); not
+  mentioned either way.
+- **Any request-count or billing statement about cloud**, and any comparison to another app.
+- **Locale steering in the chooser** (`ModelTierCopy.steerIdForLanguageTag`,
+  `STEER_BADGE = "Best match for your language"`, both choosers, Workstream H3/H4). True and
+  claimable — cut for character budget only, and it is a first-run surface that updating users
+  mostly do not revisit. The listing delta below carries an optional bullet variant for it.
+
+### ADD-BACK GATE — this REPLACES the plan's deletion contingency
+
+The plan's S4 contingency read: *if the AFTER p50/p95 do not beat the BEFORE column, delete the
+latency clauses.* **That gate is unusable in both directions and must not be run as written.** The
+phone's installed vc77 is **preview.2** (`b65f4b7`) — a 3.7 build wearing a 3.6.0 version string —
+so the acceptance sheet's BEFORE column is a 3.7-against-3.7 comparison. It can neither FIRE the
+contingency (on a false BEFORE ≈ AFTER) nor CLEAR it (the mirror-image error).
+**No column on `docs/superpowers/specs/2026-08-20-i-owner-acceptance.md` measures a 3.6.0 build.**
+
+So the gate is inverted: the comparatives are OUT by default, and go IN only against a named
+measurement. What the sheet CAN license on its own is "no regression since preview.2, and the tuning
+and pacing work held" — which is a reason to ship, not a sentence to print.
+
+**Variant B — restores "text lands sooner, and at a steady pace".** Requires BOTH:
+
+1. Check 2's AFTER grid recorded and holding (`RESULT: PENDING` today). The result is the
+   *variance*: on 3.6.0 the later-segment wait was spread over 0-15 s depending on where in the cap
+   window you stopped; a p95 tight against p50 is the finding even if p50 barely moves.
+2. **A genuine 3.6.0 comparison**, which the sheet does not contain — either a real 3.6.0 build
+   measured deliberately (by stopwatch and `wall-clock cap` lines: a 3.6.0 build cannot emit
+   `speechEndToVisible=` at all), or the 3.6.0-era figures from the 2026-08-20 session, cited as
+   such.
+
+> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer — text lands sooner, and at a steady pace. A new line shows what's being transcribed and how many are queued, on device and with cloud providers alike. The two lightest model tiers are retired; models you already installed are untouched. Measured against our own previous version, same phone.
+
+(**482 chars.** The mid-word clause pays for it; the closing disclaimer comes back with the
+comparative, because the house rule is that every comparative says outright what it is measured
+against.)
+
+**Variant C — restores "Stopping is quicker when nothing is still queued".** Requires Check 3
+(`RESULT: PENDING`) to show the idle-queue stop returning in tens of ms against the amplitude-era
+stop flush, and that "before" figure cited from where it was measured. The condition in the sentence
+is load-bearing and must not be dropped: the win is that the tail is pure silence and returns before
+the encoder runs, and it does NOT apply when a real backlog exists.
+
+> Dictation now cuts where you stop talking. A real voice-activity model listens frame by frame, so each sentence goes to be transcribed the moment you finish it instead of waiting on a timer. A new line shows what's being transcribed and how many are queued, on device and with cloud providers alike. The two lightest model tiers are retired; models you already installed are untouched. Stopping is quicker when nothing is still queued. Measured against our own previous version, same phone.
+
+(**490 chars.**)
+
+**B and C do not both fit — together they are 532 chars.** The budget admits at most ONE measured
+comparative. Paste the one that actually has a measurement behind it; if both clear, B is the
+headline (it is the release's whole point) and C waits for 3.7.1. Multilingual stays out of every
+variant on purpose: it is measurably the slower tier (owner's own 3.6-4.3 s typical), and the notes
+must not imply otherwise.
+
+## Listing delta — 3.7.0 (owner applies in the Console, SAME release as the 78 AAB)
+
+The FINAL 3.3.0 full description above is what is LIVE and stays as the record of it. Two bullets in
+the `⚡ Built for speed` block go stale in 3.7.0 — the tier list (eco/base retired) and the VAD
+bullet (the amplitude gate replaced by real endpointing). Replace exactly these two lines, nothing
+else:
+
+OLD:
+• Model tiers from light-and-quick to maximum accuracy, including multilingual
+• Voice activity detection: silence costs nothing
+
+NEW:
+• Two on-device model tiers: sharpest English, or 90+ languages
+• Real voice-activity detection: your sentence is transcribed when you stop talking, and silence costs nothing
+
+Arithmetic: **127 chars out, 173 in, +46**. The live full description measures **3,914 chars** as it
+stands in this file (its own heading says 3,907 — a 7-char discrepancy in the older count; the
+larger, conservative figure is used here), so the projection is **3,960 of the 4,000-char limit —
+40 to spare.** Any further listing edit this release must re-count first.
+
+**Why the first bullet is not a ladder.** A "from light-and-quick to maximum accuracy" list claims a
+top-accuracy tier the chooser no longer offers: `WhisperCatalog.pickable` is exactly `pro`
+(small.en) and `multi` (small, 90+ languages). `extreme` and `ultra` have been `retired` since
+3.6.0 and 3.7 adds `unsupported = true` to both; `eco` and `base` retire here. Two tiers is the
+truth, and "sharpest English" matches the in-app card copy ("The sharpest on-device English
+dictation this app ships.", `ModelTierCopy`).
+
+**Optional — the locale steer, if the owner wants it in the listing.** Replace the first NEW bullet
+with `• Two on-device model tiers: sharpest English, or 90+ languages — steered by your language`
+(90 chars): the delta becomes **+73 → 3,987, only 13 to spare.** That is a thin margin on a hard
+Play limit and the count MUST be re-verified against the Console's own character counter before
+saving. The default bullet above is the safe one.
+
+Untouched on purpose: the GPU bullet ("GPU-accelerated Whisper on Snapdragon (Adreno)") stays true —
+the 2026-08-20 bench validated the GPU default for the English tier while banning it for
+multilingual, and the bullet claims neither tier. The short description, the privacy block and every
+disclosure text are unchanged: 3.7.0 adds no permission, no data flow and no cloud behaviour — the
+VAD probe consumes the same mic stream the session already records, and "no declaration and no
+permission moved on this branch" is one of the S5 certification untouchables.
