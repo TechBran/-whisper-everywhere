@@ -483,6 +483,14 @@ timings in **milliseconds**. So:
       so a latched session normally ends with at least one `cut=stop`. The amplitude *fallback* is
       the opposite shape — it still commits, as **`endpointer: amplitude` + `cut=vad p=-1.00`**
       (Check 7). One session cannot be both.
+- [ ] **Take every `probe:` reading above from a LOCAL or CLOUD-BATCH session. A cloud-LIVE session
+      emits `probe: frames=0 p50=0µs p99=0µs overruns=0`, and that zero line is CORRECT, not a dead
+      probe.** `onSessionStart`/`onSessionEnd` run unconditionally for every session
+      (`FloatingBubbleService.kt:2545,2774`) and `onSessionEnd` emits `probeStats.line()`
+      unconditionally (`SileroEndpointer.kt:458-461`), but `LiveTurnPolicy.runClientVad` is false for
+      `CLOUD_LIVE`, so the probe is armed and freed **without ever being fed a frame**. Confirm you
+      see the zero line on a live session and do not report it; a zero line is simply not a Check 6
+      measurement.
 
 ## Check 7 — Which endpointer is live, and how the fallback is discharged
 
@@ -604,6 +612,25 @@ RESULT: PENDING
 - [ ] Device-audio (`switchSource`) mid-session: swap mic <-> playback and confirm the next
       `endpoint:` line reads sensibly. Carrying LSTM state across an acoustic-source change is a
       correctness bug; this is the check for it.
+- [ ] **First launch after an install: no visible hitch when the bubble service starts.** The
+      service's `endpointer` field initialiser calls `VadModel.path()`, which **copies the 885 KB
+      Silero asset on the FIRST service construction after an install, on Main**
+      (`FloatingBubbleService.kt:438-442`; every later call returns a cached `@Volatile` path). It is
+      a one-time cost on a fresh install only, and no measurement of it exists on any device. Force
+      it (clear app storage or install fresh — **note that clearing storage also deletes the
+      downloaded whisper/Kokoro models**, so prefer a spare device or accept the re-download), start
+      the bubble, and report whether the first start is perceptibly slower than a later one. A
+      *measured* hitch is a finding for the NPU-era work, not a merge blocker.
+- [ ] **Memory returns after a session ended by DESTROYING the service, not only after a clean
+      stop.** `endpointer.onSessionEnd()` exists at exactly ONE site — `stopRecording`
+      (`FloatingBubbleService.kt:2774`, `count == 1`) — and `onDestroy` (`:951`) does **not** call it,
+      so a destroy-terminated session (including the programmatic restarts a bubble-mode toggle does)
+      leaves the native probe context orphaned until the next session's `vadProbeInit` frees it.
+      Bounded at **one** orphan by construction — `vadProbeInit` is idempotent and "a second call
+      frees the previous context first, so a session restart or model swap cannot leak ~2.6 MB"
+      (`WhisperNative.kt:134`) — so what this checks is that the bound holds in practice: toggle
+      bubble mode off and on a few times mid-session and confirm RSS returns rather than climbing.
+      Teardown item T12 is discharged for the **record-stop path only**; this line is the device half.
 
 ## OPEN — awaiting an OWNER RULING (not a check; a decision)
 
@@ -627,10 +654,30 @@ the cheap tier, force the adoption, or offer both explicitly — not just a row 
 
 ## Certification (filled by the branch-certification task, not by the owner)
 
-    suites=      tests=      failures=      errors=      skipped=
-    assembleDebug:             PENDING
-    assembleDebugAndroidTest:  PENDING
-    untouchable contracts:     PENDING
+    suites=125 tests=1359 failures=0 errors=0 skipped=0   (forced fresh run, 2026-08-28)
+    assembleDebug:             BUILD SUCCESSFUL
+    assembleDebugAndroidTest:  BUILD SUCCESSFUL
+    untouchable contracts:     7/7 (sendAudio-first, caps-in-else-if, cloud-4s-suppression,
+                               stop-flush-uncond, final-only-commit, segment-timing-prepend,
+                               play-declarations-unchanged)
+    jni-name-pairing:          11 matched (the 8th probe, added by Task N6's fix round)
+    baseline for comparison:   branch base 93186f6 = 94 suites / 1041 tests / 0 failures
+
+**How to read those numbers, and what they are not.** The tuple is the aggregation of every
+`TEST-*.xml` in `app\test-results\testDebugUnitTest` after that directory was **deleted** and
+`:app:testDebugUnitTest --rerun-tasks` was run once — never a Gradle task count and never a green
+console line. The task is confirmed **executed, not UP-TO-DATE**, and all 125 files carry the same
+run timestamp (`staleXml=0`). The `1041 / 94` baseline is the branch's own recorded starting point at
+`93186f6`, cited from the SDD ledger; the purge that produces the certified number is exactly what
+makes it un-re-measurable here, so it is a citation and not a re-measurement. **Nothing on this
+branch measures a 3.6.0 build** — see the Report section for what that does and does not license.
+
+Both APK targets returned `BUILD SUCCESSFUL`. `assembleDebug` re-ran and its CMake output
+(`libwhisper_jni.so`) is newer than `whisper_jni.cpp`, which is what makes the `jni-name-pairing`
+row trustworthy rather than a reading of a stale artifact; `assembleDebugAndroidTest` was
+`UP-TO-DATE` against an APK already on disk, which is Gradle asserting the artifact is current with
+its inputs, not a skipped build. That APK is the one that carries `VadProbeBenchTest` to the device
+for Check 1.
 
 ## Report
 
