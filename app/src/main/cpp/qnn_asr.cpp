@@ -18,11 +18,20 @@
 // helpers encode four lessons that each cost a device round trip; the comments naming them are part
 // of the port and must not be trimmed.
 //
-// SCOPE OF THIS FILE TODAY (Q3): probe, load, enumerate, log, ALIAS-GUARD, vote, encode.
-// nativeDetectLanguage / nativeDecodeSegment land in Q4, and with them the decoder's own buffers
-// (self-KV ping-pong, ids, mask, logits) and the cross-KV bind that consumes the encoder's output
-// buffers in place. What exists here is deliberately the part that can be reasoned about before
-// any of it has run on device, which happens at Q10a.
+// SCOPE OF THIS FILE TODAY (Q4): probe, load, enumerate, log, ALIAS-GUARD, vote, encode, BIND THE
+// DECODER BY NAME, and the whole greedy decode loop - suppression mask applied to the logits before
+// the argmax is scanned, self-KV ping-ponged by re-binding, cross-KV aliased onto the encoder's
+// output buffers with nothing copied between the passes.
+//
+// WHY THE DECODE LOOP IS NATIVE, AND IT IS NOT A PERFORMANCE ARGUMENT (C2). Whisper's suppression
+// is by construction a PRE-ARGMAX mask. A Kotlin loop calling a per-step native `decodeStep` would
+// receive only the argmax, and an argmax has no runner-up: on discovering that the winner is a
+// suppressed token the caller can do nothing useful, because re-running the step is deterministic
+// and returns the same token. Such a loop either emits the suppressed token or hangs. The JNI
+// crossing was never the issue - a two-int transition is ~100 ns against a ~4.5 ms graphExecute -
+// the boundary was simply in the wrong place for correctness.
+//
+// Q10a is still the first execution of any of this on device.
 
 #include <android/log.h>
 #include <dlfcn.h>
@@ -375,6 +384,43 @@ constexpr const char *kInputFeatures = "input_features";
 /// rests on the two sides being the same tensor in every respect. See aliasGuardLocked.
 constexpr uint32_t kCrossKvLayers = 12;
 
+// ---- the decoder's four non-KV tensors, all looked up BY NAME (lesson 5) ---------------------
+//
+// The decoder has 51 inputs. A positional constant among 51 is not a crash when it slips, it is a
+// silent wrong answer: the graph executes happily against whatever tensor index 37 happens to be
+// this export. Every one of them is bound through g.dec.inIndex / g.dec.outIndex.
+constexpr const char *kInputIds = "input_ids";
+constexpr const char *kPositionIds = "position_ids";
+constexpr const char *kAttentionMask = "attention_mask";
+constexpr const char *kLogits = "logits";
+
+/// `attention_mask` codes. Its quantisation is exact - scale 0.0015259021893143654, zero point
+/// 65535 - so code 65535 dequantises to 0.0 (attend) and code 0 to -100.0 (masked). These are the
+/// two codes the asset was calibrated for; anything between them is a partially-attended position,
+/// which is not a thing whisper has.
+constexpr uint16_t kMaskAttend = 65535;
+constexpr uint16_t kMaskBlocked = 0;
+
+/// The bottom of the `ufixed16` logits domain, and this seam's `-inf`.
+///
+/// Dequantisation is `scale x (q - zeroPoint)` with `scale > 0`, i.e. strictly monotonic, so the
+/// smallest code IS the smallest logit and an argmax over the raw codes is the argmax over the real
+/// values - exactly, not approximately. Writing 0 into a suppressed slot therefore cannot make it
+/// win unless every other slot is also 0, which is a dead graph output and is reported as one.
+constexpr uint16_t kLogitFloor = 0;
+
+// ---- token ids native has to know for itself ------------------------------------------------
+//
+// These four are the SECOND reading of an asset fact whose first reading is `WhisperTokens` in
+// Kotlin. They are not passed in because the contract's argument list is fixed (prompt, suppress,
+// beginSuppress, maxTokens, out) and because a terminator smuggled in through a data array is a
+// terminator nobody can see. NpuNativeContractTest cross-checks kEotToken against
+// WhisperTokens.EOT by source text, so the two copies cannot drift apart silently.
+constexpr int32_t kEotToken = 50257;        // <|endoftext|>
+constexpr int32_t kSotToken = 50258;        // <|startoftranscript|>
+constexpr int32_t kLangTokenFirst = 50259;  // <|en|>
+constexpr int32_t kLangTokenLast = 50357;   // <|su|>, 50259 + 98
+
 struct NpuState {
     std::mutex mu;
 
@@ -407,6 +453,35 @@ struct NpuState {
     size_t encInputIdx = 0;
     float encInputScale = 0.0f;
     int32_t encInputZeroPoint = 0;
+
+    // ---- the decoder's binding (Q4) -----------------------------------------------------------
+    // Every one of these is filled by bindDecoderLocked() at init and is stable for the session.
+    bool decBound = false;
+    size_t decInputIdsIdx = 0;
+    size_t decPositionIdsIdx = 0;
+    size_t decMaskIdx = 0;
+    size_t decLogitsIdx = 0;
+
+    /// The 24 self-KV tensor indices, `k_cache_self_0..11` then `v_cache_self_0..11`, into
+    /// `dec.inputs` (`_in`) and `dec.outputs` (`_out`). Parallel: entry i of one names the same
+    /// layer and kind as entry i of the other.
+    std::vector<size_t> selfInIdx;
+    std::vector<size_t> selfOutIdx;
+
+    /// THE PING-PONG. Two sets of 24 buffers; each step binds one set as the decoder's self-KV
+    /// INPUTS and the other as its OUTPUTS, then swaps. QNN cannot alias one buffer as both, and
+    /// the alternative - one set plus a memcpy - would move 3.6 MB per token, ~350 MB per segment,
+    /// to achieve precisely nothing.
+    std::vector<AlignedBuf> selfKv[2];
+    uint32_t selfKvBytes = 0;
+    /// Which set is currently bound as the INPUT side.
+    int selfInSet = 0;
+
+    /// Read from the asset, never assumed: `attention_mask`'s length (200) and `logits`' vocabulary
+    /// (51,865). The decode loop's position bound and argmax bound both come from here, so a
+    /// re-exported asset with a different context window drives a loop that matches it.
+    uint32_t maskLen = 0;
+    uint32_t vocab = 0;
 
     std::string lastError;
 };
@@ -885,8 +960,15 @@ std::string aliasCompare(const std::string &name, const Qnn_Tensor_t &e, const Q
     // descriptors are supposed to have been produced by the same export of the same tensor, so any
     // difference at all - however small - means they no longer are, and the alias is unsound.
     if (qe->scaleOffsetEncoding.scale != qd->scaleOffsetEncoding.scale) {
-        snprintf(buf, sizeof(buf), "alias: %s scale %.8f != %.8f", name.c_str(),
-                 qe->scaleOffsetEncoding.scale, qd->scaleOffsetEncoding.scale);
+        // %.8f is the brief's mandated text; the %.9g pair after it is not decoration. The
+        // comparison above is EXACT, so the two values can differ by a single ulp far below the
+        // eighth decimal - and the message would then read "scale 0.06918466 != 0.06918466",
+        // which is a bug report nobody can act on. %.9g round-trips a float exactly.
+        snprintf(buf, sizeof(buf), "alias: %s scale %.8f != %.8f (exact: %.9g != %.9g)",
+                 name.c_str(),
+                 qe->scaleOffsetEncoding.scale, qd->scaleOffsetEncoding.scale,
+                 static_cast<double>(qe->scaleOffsetEncoding.scale),
+                 static_cast<double>(qd->scaleOffsetEncoding.scale));
         return buf;
     }
     if (qe->scaleOffsetEncoding.offset != qd->scaleOffsetEncoding.offset) {
@@ -1073,6 +1155,328 @@ std::string readEncoderInputQuantLocked() {
     return "";
 }
 
+// ---------------------------------------------------------------- the decoder's binding (Q4)
+
+/// Binds EVERY decoder tensor - all 51 inputs and all 25 outputs - BY NAME, exactly once, at load.
+///
+/// Three different kinds of binding live here, and the differences are the design:
+///
+///   * `input_ids`, `position_ids`, `attention_mask`, `logits` - we own the buffer. Tiny.
+///   * the 24 cross-KV inputs - **bound straight onto `g.enc.outBufs`**. Zero copy, allocated
+///     nothing, never rewritten. Re-feeding them per token would move 26.4 MiB x ~100 tokens
+///     = 2.6 GB per segment. `aliasGuardLocked()` has already proved the two sides are the same
+///     tensor in dtype, rank, every dimension, scale and offset; this function is what consumes
+///     that proof, which is why the guard runs first and the init fails before reaching here.
+///   * the 24 self-KV `_in`/`_out` pairs - bound to the ping-pong sets, re-bound every step.
+///
+/// AND IT CHECKS THAT NOTHING WAS MISSED. Every input and output index is marked as it is bound and
+/// the unmarked ones are named in the failure. An unbound QNN tensor is not a null-pointer crash:
+/// `clientBuf.data` is whatever the deserialised descriptor came with, and the graph executes
+/// against it. With 51 inputs, "I bound the ones I thought of" is not a claim worth making.
+std::string bindDecoderLocked() {
+    GraphSlot &d = g.dec;
+    d.inBufs.clear();
+    d.inBufs.resize(d.inputs.size());
+    d.outBufs.clear();
+    d.outBufs.resize(d.outputs.size());
+    std::vector<bool> inDone(d.inputs.size(), false);
+    std::vector<bool> outDone(d.outputs.size(), false);
+
+    // Allocate + bind one tensor we own the storage for, looked up by name.
+    auto own = [&](const char *nm, std::vector<Qnn_Tensor_t> &ts, std::vector<AlignedBuf> &bufs,
+                   std::map<std::string, size_t> &index, std::vector<bool> &done, const char *what,
+                   size_t &idxOut, uint32_t wantElemBytes) -> std::string {
+        auto it = index.find(nm);
+        if (it == index.end()) {
+            return std::string("decoder ") + what + " '" + nm + "' not found by name";
+        }
+        idxOut = it->second;
+        const Qnn_DataType_t dt = tensorDataType(ts[idxOut]);
+        if (elementSize(dt) != wantElemBytes) {
+            return std::string("decoder ") + what + " '" + nm + "' is " + dtypeName(dt) + " (" +
+                   std::to_string(elementSize(dt)) + " B/element), expected " +
+                   std::to_string(wantElemBytes) + " B/element";
+        }
+        const uint64_t need = tensorBytes(ts[idxOut]);
+        if (need == 0 || need > 0xFFFFFFFFull) {
+            return std::string("decoder ") + what + " '" + nm + "': computed " +
+                   std::to_string(need) + " B, which cannot be bound";
+        }
+        if (!bufs[idxOut].alloc(static_cast<size_t>(need))) {
+            return std::string("decoder ") + what + " '" + nm + "': alloc " +
+                   std::to_string(need) + " B failed";
+        }
+        tensorSetClientBuf(ts[idxOut], bufs[idxOut].p, static_cast<uint32_t>(need));
+        done[idxOut] = true;
+        LOGI("  bind decoder %s %-16s %-9s %-20s %" PRIu64 " B @ %p", what, nm, dtypeName(dt),
+             shapeStr(ts[idxOut]).c_str(), need, bufs[idxOut].p);
+        return "";
+    };
+
+    // input_ids and position_ids are PLAIN int32 - un-quantised, written as integers. The decoder
+    // takes the token id and the position as numbers, not as codes.
+    std::string err = own(kInputIds, d.inputs, d.inBufs, d.inIndex, inDone, "IN",
+                          g.decInputIdsIdx, 4);
+    if (!err.empty()) return err;
+    err = own(kPositionIds, d.inputs, d.inBufs, d.inIndex, inDone, "IN", g.decPositionIdsIdx, 4);
+    if (!err.empty()) return err;
+    err = own(kAttentionMask, d.inputs, d.inBufs, d.inIndex, inDone, "IN", g.decMaskIdx, 2);
+    if (!err.empty()) return err;
+    err = own(kLogits, d.outputs, d.outBufs, d.outIndex, outDone, "OUT", g.decLogitsIdx, 2);
+    if (!err.empty()) return err;
+
+    // THE POSITION BOUND AND THE ARGMAX BOUND COME FROM THE ASSET, not from a constant here. The
+    // mask is [1,1,1,200] and the self-KV is 199 deep: positions 0..198 execute, which is 199 of
+    // the mask's 200 columns and an exact fit for the cache.
+    g.maskLen = static_cast<uint32_t>(d.inBufs[g.decMaskIdx].n / 2);
+    g.vocab = static_cast<uint32_t>(d.outBufs[g.decLogitsIdx].n / 2);
+    if (g.maskLen < 2) {
+        return "decoder attention_mask is " + std::to_string(g.maskLen) +
+               " positions wide; a decode needs at least 2";
+    }
+    if (g.vocab == 0) return "decoder logits carries no vocabulary";
+    if (kLangTokenLast >= static_cast<int32_t>(g.vocab) || kEotToken >= static_cast<int32_t>(g.vocab)) {
+        return "decoder logits vocabulary " + std::to_string(g.vocab) +
+               " does not contain this tokenizer's special ids (EOT " + std::to_string(kEotToken) +
+               ", last language token " + std::to_string(kLangTokenLast) + ")";
+    }
+
+    // ---- the 24 cross-KV inputs: ALIASED ONTO THE ENCODER'S OUTPUT BUFFERS, zero copy ----------
+    for (uint32_t layer = 0; layer < kCrossKvLayers; ++layer) {
+        for (const char *kind : {"k_cache_cross_", "v_cache_cross_"}) {
+            const std::string name = std::string(kind) + std::to_string(layer);
+            auto dit = d.inIndex.find(name);
+            if (dit == d.inIndex.end()) return "decoder cross-KV '" + name + "' not found by name";
+            auto eit = g.enc.outIndex.find(name);
+            if (eit == g.enc.outIndex.end()) return "encoder cross-KV '" + name + "' not found";
+            AlignedBuf &src = g.enc.outBufs[eit->second];
+            if (!src.p) return "cross-KV '" + name + "': the encoder's buffer is not allocated";
+            const uint64_t need = tensorBytes(d.inputs[dit->second]);
+            if (need != src.n) {
+                return "cross-KV '" + name + "': the decoder wants " + std::to_string(need) +
+                       " B but the encoder's bound buffer is " + std::to_string(src.n) + " B";
+            }
+            tensorSetClientBuf(d.inputs[dit->second], src.p, static_cast<uint32_t>(need));
+            inDone[dit->second] = true;
+        }
+    }
+    LOGI("  bind decoder cross-KV: %u tensors aliased onto the encoder's output buffers (0 B copied)",
+         kCrossKvLayers * 2);
+
+    // ---- the 24 self-KV pairs and the two ping-pong sets ---------------------------------------
+    g.selfInIdx.clear();
+    g.selfOutIdx.clear();
+    g.selfKv[0].clear();
+    g.selfKv[1].clear();
+    g.selfKvBytes = 0;
+    for (const char *kind : {"k_cache_self_", "v_cache_self_"}) {
+        for (uint32_t layer = 0; layer < kCrossKvLayers; ++layer) {
+            const std::string base = std::string(kind) + std::to_string(layer);
+            auto iit = d.inIndex.find(base + "_in");
+            if (iit == d.inIndex.end()) return "decoder self-KV '" + base + "_in' not found";
+            auto oit = d.outIndex.find(base + "_out");
+            if (oit == d.outIndex.end()) return "decoder self-KV '" + base + "_out' not found";
+
+            // THE SECOND ALIAS THIS DESIGN RESTS ON, and it gets the same treatment as the first.
+            // The ping-pong hands step N's `_out` buffer to step N+1 as its `_in`, which is only
+            // sound if the two descriptors are the same tensor - same dtype, same shape, same
+            // affine transform. If a re-export ever gave the two sides different scales, the
+            // decoder would read its own cache back under the wrong transform every step: not a
+            // crash, not garbage, just steadily wrong attention and a fluent wrong transcript.
+            const std::string cmp = aliasCompare(base, d.inputs[iit->second],
+                                                 d.outputs[oit->second]);
+            if (!cmp.empty()) return cmp + " (self-KV _in vs _out; the ping-pong requires them to " +
+                                     "be the same tensor)";
+
+            const uint64_t need = tensorBytes(d.inputs[iit->second]);
+            if (need == 0 || need > 0xFFFFFFFFull) {
+                return "decoder self-KV '" + base + "': computed " + std::to_string(need) + " B";
+            }
+            if (g.selfKvBytes == 0) {
+                g.selfKvBytes = static_cast<uint32_t>(need);
+            } else if (g.selfKvBytes != need) {
+                return "decoder self-KV '" + base + "' is " + std::to_string(need) +
+                       " B but the others are " + std::to_string(g.selfKvBytes) +
+                       " B; the ping-pong sets are one size";
+            }
+            g.selfInIdx.push_back(iit->second);
+            g.selfOutIdx.push_back(oit->second);
+            inDone[iit->second] = true;
+            outDone[oit->second] = true;
+        }
+    }
+    const size_t selfCount = g.selfInIdx.size();
+    for (int s = 0; s < 2; ++s) {
+        g.selfKv[s].resize(selfCount);
+        for (size_t i = 0; i < selfCount; ++i) {
+            if (!g.selfKv[s][i].alloc(g.selfKvBytes)) {
+                return "decoder self-KV set " + std::to_string(s) + " buffer " +
+                       std::to_string(i) + ": alloc " + std::to_string(g.selfKvBytes) + " B failed";
+            }
+        }
+    }
+    LOGI("  bind decoder self-KV: 2 sets x %zu x %u B = %zu B ping-pong", selfCount, g.selfKvBytes,
+         2 * selfCount * static_cast<size_t>(g.selfKvBytes));
+
+    // ---- nothing may be left unbound ----------------------------------------------------------
+    for (size_t i = 0; i < inDone.size(); ++i) {
+        if (!inDone[i]) {
+            const char *nm = tensorName(d.inputs[i]);
+            return std::string("decoder input '") + (nm ? nm : "?") +
+                   "' (index " + std::to_string(i) + " of " + std::to_string(inDone.size()) +
+                   ") was never bound; the graph would execute against whatever its descriptor "
+                   "arrived with";
+        }
+    }
+    for (size_t i = 0; i < outDone.size(); ++i) {
+        if (!outDone[i]) {
+            const char *nm = tensorName(d.outputs[i]);
+            return std::string("decoder output '") + (nm ? nm : "?") +
+                   "' (index " + std::to_string(i) + " of " + std::to_string(outDone.size()) +
+                   ") was never bound";
+        }
+    }
+
+    g.decBound = true;
+    LOGI("decoder bound: %zu inputs / %zu outputs, all by name; mask %u positions, vocab %u, "
+         "positions 0..%u execute", d.inputs.size(), d.outputs.size(), g.maskLen, g.vocab,
+         g.maskLen - 2);
+    return "";
+}
+
+/// Points the 24 self-KV inputs at set [inSet] and the 24 outputs at the other one. 48
+/// `tensorSetClientBuf` calls per token, and not one byte moved.
+void bindSelfKvLocked(int inSet) {
+    const int outSet = 1 - inSet;
+    for (size_t i = 0; i < g.selfInIdx.size(); ++i) {
+        tensorSetClientBuf(g.dec.inputs[g.selfInIdx[i]], g.selfKv[inSet][i].p, g.selfKvBytes);
+        tensorSetClientBuf(g.dec.outputs[g.selfOutIdx[i]], g.selfKv[outSet][i].p, g.selfKvBytes);
+    }
+    g.selfInSet = inSet;
+}
+
+/// Zeroes BOTH ping-pong sets and re-binds set 0 as the input side.
+///
+/// The zero is a quantisation code, not the value zero - but every cache slot above the current
+/// position is masked out by `attention_mask` anyway, so what is in them cannot reach the
+/// attention. Zeroing is about determinism: the previous segment's cache must not be able to leak
+/// into this one through a slot that was written once and then masked inconsistently.
+void zeroSelfKvLocked() {
+    for (int s = 0; s < 2; ++s) {
+        for (auto &b : g.selfKv[s]) {
+            if (b.p) memset(b.p, 0, b.n);
+        }
+    }
+    bindSelfKvLocked(0);
+}
+
+// ---------------------------------------------------------------- C2: mask, THEN argmax
+
+/// THE SUPPRESSION MASK IS APPLIED TO THE LOGITS, AND ONLY THEN IS THE ARGMAX SCANNED.
+///
+/// This ordering is the reason the whole decode loop lives on this side of the JNI boundary. Both
+/// halves have to be here, in this order, in one function: a caller that receives an argmax has
+/// already lost the information it would need to honour a mask, because the runner-up is gone.
+///
+/// The mask writes [kLogitFloor] rather than subtracting or skipping, because a skip-list inside
+/// the scan is O(vocab x suppress) and a "mask" that the scan consults is the same construct
+/// spelled in a way that lets a future edit move the two apart.
+///
+/// Returns the winning token id, or -1 when every logit is at the floor - which is a dead graph
+/// output, not a token.
+int32_t suppressThenArgmax(uint16_t *logits, uint32_t vocab,
+                           const std::vector<int32_t> &suppress,
+                           const std::vector<int32_t> &beginSuppress,
+                           bool applyBegin) {
+    // ---- the mask, first. Every id was range-checked once, before the loop started.
+    for (int32_t id : suppress) {
+        logits[id] = kLogitFloor;
+    }
+    if (applyBegin) {
+        for (int32_t id : beginSuppress) {
+            logits[id] = kLogitFloor;
+        }
+    }
+    // ---- and only now the scan.
+    int32_t best = -1;
+    uint16_t bestVal = kLogitFloor;
+    for (uint32_t i = 0; i < vocab; ++i) {
+        if (logits[i] > bestVal) {
+            bestVal = logits[i];
+            best = static_cast<int32_t>(i);
+        }
+    }
+    return best;
+}
+
+/// Argmax restricted to `[lo, hi)`, for the language-detect pass.
+///
+/// A range restriction is strictly simpler than the 1589-entry mask above, and it sits on the SAME
+/// side of the boundary for the same reason: the caller must never be handed an unrestricted argmax
+/// and asked to decide whether it counts.
+int32_t argmaxInRange(const uint16_t *logits, uint32_t lo, uint32_t hi) {
+    int32_t best = -1;
+    uint16_t bestVal = kLogitFloor;
+    for (uint32_t i = lo; i < hi; ++i) {
+        if (logits[i] > bestVal) {
+            bestVal = logits[i];
+            best = static_cast<int32_t>(i);
+        }
+    }
+    return best;
+}
+
+/// One decoder execute at [position] with [tokenId] as `input_ids`. Writes the three step inputs
+/// and runs the graph; the caller owns the argmax and the ping-pong swap.
+std::string decodeStepLocked(int32_t tokenId, uint32_t position) {
+    *static_cast<int32_t *>(g.dec.inBufs[g.decInputIdsIdx].p) = tokenId;
+    *static_cast<int32_t *>(g.dec.inBufs[g.decPositionIdsIdx].p) = static_cast<int32_t>(position);
+
+    // Attend to 0..position inclusive, block everything above. At the last executing position
+    // (maskLen - 2) that is maskLen - 1 columns; the final column is never used, which is the
+    // arithmetic behind "199 positions in a 200-wide mask".
+    uint16_t *mask = static_cast<uint16_t *>(g.dec.inBufs[g.decMaskIdx].p);
+    for (uint32_t i = 0; i < g.maskLen; ++i) {
+        mask[i] = (i <= position) ? kMaskAttend : kMaskBlocked;
+    }
+
+    Qnn_ErrorHandle_t e = g.qnn.graphExecute(
+            g.dec.graph,
+            g.dec.inputs.data(), static_cast<uint32_t>(g.dec.inputs.size()),
+            g.dec.outputs.data(), static_cast<uint32_t>(g.dec.outputs.size()),
+            nullptr, nullptr);
+    if (e != QNN_SUCCESS) {
+        return "graphExecute at position " + std::to_string(position) + ": " + qnnErr(e);
+    }
+    return "";
+}
+
+/// Copies a Java `int[]` into a vector. A null array is an empty vector, deliberately: an empty
+/// suppression list is a legitimate (if unwise) configuration, while a null one is the caller
+/// having nothing to say.
+std::vector<int32_t> jintsToVector(JNIEnv *env, jintArray a) {
+    std::vector<int32_t> v;
+    if (!a) return v;
+    const jsize n = env->GetArrayLength(a);
+    if (n <= 0) return v;
+    v.resize(static_cast<size_t>(n));
+    env->GetIntArrayRegion(a, 0, n, reinterpret_cast<jint *>(v.data()));
+    return v;
+}
+
+/// Every id the mask will write must be a valid index into the logits buffer. Checked ONCE per
+/// segment rather than per token: `suppressThenArgmax` writes `logits[id]` unguarded, so an
+/// out-of-range id is a heap write past a 103,730-byte buffer roughly a hundred times over.
+std::string checkTokenIdsLocked(const std::vector<int32_t> &ids, const char *what) {
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (ids[i] < 0 || ids[i] >= static_cast<int32_t>(g.vocab)) {
+            return std::string(what) + "[" + std::to_string(i) + "] = " + std::to_string(ids[i]) +
+                   " is outside the vocabulary 0.." + std::to_string(g.vocab - 1);
+        }
+    }
+    return "";
+}
+
 // ---------------------------------------------------------------- the sustained power vote
 
 /// Acquire the HTP perf infrastructure. Never fatal: a device that will not offer it runs at the
@@ -1230,6 +1634,24 @@ void releaseLocked() {
     g.encInputScale = 0.0f;
     g.encInputZeroPoint = 0;
 
+    // The decoder's own state. The ping-pong sets are freed here and NOT by GraphSlot::clear() -
+    // they are not one-per-tensor and never lived in dec.inBufs/outBufs, precisely because the
+    // 24 cross-KV inputs must never own a buffer (they alias the encoder's, which g.enc.clear()
+    // above has just freed - so nothing may still be pointing at them after this line).
+    g.selfKv[0].clear();
+    g.selfKv[1].clear();
+    g.selfInIdx.clear();
+    g.selfOutIdx.clear();
+    g.selfKvBytes = 0;
+    g.selfInSet = 0;
+    g.decBound = false;
+    g.decInputIdsIdx = 0;
+    g.decPositionIdsIdx = 0;
+    g.decMaskIdx = 0;
+    g.decLogitsIdx = 0;
+    g.maskLen = 0;
+    g.vocab = 0;
+
     if (g.device) g.qnn.deviceFree(g.device);
     g.device = nullptr;
     if (g.backend) g.qnn.backendFree(g.backend);
@@ -1358,6 +1780,14 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
         return env->NewStringUTF(failure("init: " + err).c_str());
     }
 
+    // Every decoder tensor, by name, once. This is where the 24 cross-KV inputs are pointed at the
+    // encoder's output buffers - the bind the alias guard above exists to make safe.
+    err = bindDecoderLocked();
+    if (!err.empty()) {
+        releaseLocked();
+        return env->NewStringUTF(failure("init: " + err).c_str());
+    }
+
     // Armed ONCE, here, at the end - not per segment, and not before the 342 MB deserialise (which
     // the spike also measured unvoted, so the 525 ms cold-load figure still means what it says).
     // Released in nativeRelease. Never fails the init.
@@ -1392,11 +1822,18 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInputQuant(
     }
     jfloatArray out = env->NewFloatArray(2);
     if (!out) {
+        // EMPTY, never null. The KDoc promises "an empty array on failure", and Kotlin's
+        // `FloatArray` return type is non-nullable: handing back nullptr here makes a
+        // platform-type null cross the boundary and the caller's `.size` throws a
+        // NullPointerException from a line that reads like it cannot throw.
         failure("quant: NewFloatArray(2) failed");
-        return nullptr;
+        return env->NewFloatArray(0);
     }
     const jfloat v[2] = {g.encInputScale, static_cast<jfloat>(g.encInputZeroPoint)};
     env->SetFloatArrayRegion(out, 0, 2, v);
+    // Success must not leave an older stage's message readable from nativeLastError() - a caller
+    // that checks the error text after a call that worked would read someone else's failure.
+    g.lastError.clear();
     return out;
 }
 
@@ -1456,7 +1893,167 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
     return env->NewStringUTF("");
 }
 
-/// The last "stage: detail" recorded by any entry point, or "" if none. Q4's nativeDecodeSegment
+/// THE WHOLE GREEDY DECODE LOOP FOR ONE SEGMENT, in one JNI call.
+///
+/// [jPrompt] is `[SOT, <|lang|>, TRANSCRIBE, NO_TIMESTAMPS]` from `NpuDecodePolicy`; [jSuppress] is
+/// the always-on mask (88 generation-config ids + 1501 timestamps); [jBeginSuppress] is `[220,
+/// EOT]`, applied at the FIRST GENERATED step only. Writes at most [maxTokens] ids into [jOut] and
+/// returns the count, or a negative number with the reason in `nativeLastError()`.
+///
+/// `position` is the single counter and the prompt consumes it too: positions 0..promptLen-1 feed
+/// the prompt through the same execute path, and the argmax produced at `position == promptLen - 1`
+/// is the FIRST GENERATED TOKEN. Positions 0..maskLen-2 execute (0..198 for this asset - an exact
+/// fit for the 199-deep self-KV); maskLen-1 is the termination threshold and never runs.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
+        JNIEnv *env, jobject /* this */, jintArray jPrompt, jintArray jSuppress,
+        jintArray jBeginSuppress, jint maxTokens, jintArray jOut) {
+    std::lock_guard<std::mutex> lock(g.mu);
+    if (!g.initialised || !g.decBound) {
+        failure("decode: session not initialised");
+        return -1;
+    }
+    if (!jPrompt || !jOut) {
+        failure("decode: prompt and out must not be null");
+        return -1;
+    }
+
+    const std::vector<int32_t> prompt = jintsToVector(env, jPrompt);
+    const std::vector<int32_t> suppress = jintsToVector(env, jSuppress);
+    const std::vector<int32_t> beginSuppress = jintsToVector(env, jBeginSuppress);
+
+    // The last position that EXECUTES. 198 for this asset.
+    const uint32_t lastPosition = g.maskLen - 2;
+    if (prompt.empty() || prompt.size() > lastPosition) {
+        failure("decode: prompt is " + std::to_string(prompt.size()) +
+                " tokens; it must be 1.." + std::to_string(lastPosition) +
+                " so at least one position is left to generate in");
+        return -1;
+    }
+    std::string err = checkTokenIdsLocked(prompt, "prompt");
+    if (err.empty()) err = checkTokenIdsLocked(suppress, "suppress");
+    if (err.empty()) err = checkTokenIdsLocked(beginSuppress, "beginSuppress");
+    if (!err.empty()) {
+        failure("decode: " + err);
+        return -1;
+    }
+    if (maxTokens <= 0) {
+        failure("decode: maxTokens is " + std::to_string(maxTokens) +
+                "; a non-positive budget returns zero tokens, which reads exactly like silence");
+        return -1;
+    }
+    // BOUNDS-CHECKED, NOT TRUSTED. The caller is supposed to size `out` from
+    // NpuDecodePolicy.maxTokensFor(prompt.size); this is the line that turns a caller who did not
+    // into a readable refusal rather than a write past the end of a Java array.
+    const jsize outLen = env->GetArrayLength(jOut);
+    if (outLen < maxTokens) {
+        failure("decode: out has room for " + std::to_string(static_cast<long long>(outLen)) +
+                " ids but maxTokens is " + std::to_string(maxTokens) +
+                " (size it with NpuDecodePolicy.maxTokensFor(prompt.size))");
+        return -1;
+    }
+
+    // Both sets, on entry. Cross-KV is NOT touched: it belongs to the current segment's encode and
+    // survives across as many decodes as the caller runs against it.
+    zeroSelfKvLocked();
+
+    uint16_t *logits = static_cast<uint16_t *>(g.dec.outBufs[g.decLogitsIdx].p);
+    const uint32_t promptLen = static_cast<uint32_t>(prompt.size());
+    std::vector<int32_t> out(static_cast<size_t>(maxTokens), 0);
+    int32_t count = 0;
+    int32_t next = prompt[0];
+    bool hitEot = false;
+    const auto t0 = Clock::now();
+
+    for (uint32_t position = 0; position <= lastPosition; ++position) {
+        const int32_t tokenIn = (position < promptLen) ? prompt[position] : next;
+        err = decodeStepLocked(tokenIn, position);
+        if (!err.empty()) {
+            failure("decode: " + err);
+            return -2;
+        }
+
+        if (position + 1 < promptLen) {
+            // Still feeding the prompt. This step's argmax is discarded - the self-KV slot it just
+            // wrote is the whole reason the step ran. BEGIN_SUPPRESS deliberately does NOT apply
+            // here: it belongs to the first GENERATED step, which is position promptLen - 1, not
+            // position 0.
+            bindSelfKvLocked(1 - g.selfInSet);
+            continue;
+        }
+
+        const int32_t tok = suppressThenArgmax(logits, g.vocab, suppress, beginSuppress,
+                                               position == promptLen - 1);
+        if (tok < 0) {
+            failure("decode: every logit is at the bottom rail at position " +
+                    std::to_string(position) + "; the graph produced no token");
+            return -3;
+        }
+        if (tok == kEotToken) {
+            hitEot = true;
+            break;
+        }
+        out[static_cast<size_t>(count)] = tok;
+        ++count;
+        if (count >= maxTokens) break;
+        next = tok;
+        bindSelfKvLocked(1 - g.selfInSet);
+    }
+
+    if (count > 0) env->SetIntArrayRegion(jOut, 0, count, reinterpret_cast<const jint *>(out.data()));
+    const double ms = msSince(t0);
+    LOGI("decode: %d tokens in %.1f ms (%.2f ms/token), terminated by %s (vote: %s)",
+         count, ms, count > 0 ? ms / count : 0.0,
+         hitEot ? "EOT" : (count >= maxTokens ? "the token budget" : "the position cap"),
+         g.voteNote.c_str());
+    g.lastError.clear();
+    return count;
+}
+
+/// ONE decode step at position 0 with `input_ids = SOT`, argmax RESTRICTED to the language block
+/// 50259..50357, then both self-KV sets zeroed so the real loop starts clean.
+///
+/// The restriction is on this side of the boundary for the same reason the suppression mask is: an
+/// unrestricted argmax handed to Kotlin would already have thrown away the information needed to
+/// decide whether the winner was a language at all.
+///
+/// @return the winning `<|xx|>` token id, or < 0 with the reason in nativeLastError().
+extern "C" JNIEXPORT jint JNICALL
+Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
+        JNIEnv *env, jobject /* this */) {
+    (void) env;
+    std::lock_guard<std::mutex> lock(g.mu);
+    if (!g.initialised || !g.decBound) {
+        failure("detect: session not initialised");
+        return -1;
+    }
+
+    zeroSelfKvLocked();
+    const std::string err = decodeStepLocked(kSotToken, 0);
+    if (!err.empty()) {
+        failure("detect: " + err);
+        return -2;
+    }
+    const uint16_t *logits = static_cast<const uint16_t *>(g.dec.outBufs[g.decLogitsIdx].p);
+    const int32_t best = argmaxInRange(logits, static_cast<uint32_t>(kLangTokenFirst),
+                                       static_cast<uint32_t>(kLangTokenLast) + 1);
+
+    // The step above wrote a self-KV slot for position 0 into set 1. Leave nothing behind: the
+    // real decode is entitled to assume it starts from an empty cache, and a detect pass that
+    // primed position 0 with SOT would silently give the transcript a phantom first token.
+    zeroSelfKvLocked();
+
+    if (best < 0) {
+        failure("detect: every language logit is at the bottom rail; no language was produced");
+        return -3;
+    }
+    LOGI("detect: language token %d (offset %d in the language block)", best,
+         best - kLangTokenFirst);
+    g.lastError.clear();
+    return best;
+}
+
+/// The last "stage: detail" recorded by any entry point, or "" if none. nativeDecodeSegment
 /// reports failure as a negative return value and leans on this for the text.
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_whispereverywhere_npu_QnnAsrNative_nativeLastError(

@@ -67,6 +67,13 @@ class NpuNativeContractTest {
         return out
     }
 
+    /** The LIVE (non-comment) lines of [scope] containing [needle], trimmed. */
+    private fun liveLines(scope: String, needle: String): List<String> =
+        scope.split("\n").map { it.trimStart() }.filter { line ->
+            !(line.startsWith("//") || line.startsWith("/*") || line.startsWith("*")) &&
+                line.contains(needle)
+        }
+
     /** One free function's body: every function in `qnn_asr.cpp` closes at column 0. */
     private fun functionBody(cpp: String, anchor: String): String {
         val start = cpp.indexOf(anchor)
@@ -179,6 +186,247 @@ class NpuNativeContractTest {
                 "while explaining why it must not run early, and a raw search would measure the " +
                 "comment and report the ordering of code that does not exist.",
             free.first() > repoint.last()
+        )
+    }
+
+    /**
+     * C7 — the cross-KV alias guard, and the bind that consumes its proof.
+     *
+     * The whole zero-copy design rests on one claim: the encoder's 24 cross-KV output buffers can
+     * be handed to the decoder as its cross-KV inputs untouched, because the two sides describe the
+     * same tensor. If a future asset re-export shifts one side's scale, the decoder reads them
+     * under the wrong affine transform — not a crash, not garbage, **plausible wrong text**, which
+     * is the worst failure a dictation app has and the one a single-sentence acceptance run is
+     * least likely to catch.
+     *
+     * MEASURED, NOT ASSUMED: at Q3 a mutant that deleted the whole `aliasGuardLocked()` call from
+     * `nativeInit` compiled green and left the suite at 128/1379/0. This test is what makes that
+     * mutation fail, and it asserts THREE things because each defeats a different edit:
+     *  - **presence** — an ordering-only pin is vacuously satisfied when site A is deleted;
+     *  - **order** — the guard must run before the bind, not after the first transcript;
+     *  - **the population check** — the loop verifies the 24 pairs it knows about and can say
+     *    nothing about a 25th, so both sides are counted and the count must equal the number
+     *    verified. Deleting that ratified check would leave the guard silently covering less than
+     *    it appears to, while presence and order still hold.
+     */
+    @Test
+    fun theAliasGuardRunsBeforeTheCrossKvBindAndStillCountsTheWholePopulation() {
+        val init = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(")
+        val guard = liveOffsets(init, "aliasGuardLocked()")
+        assertTrue(
+            "nativeInit must CALL aliasGuardLocked() on a live line. Presence is asserted " +
+                "separately from ordering because \"A precedes B\" is trivially true when there is " +
+                "no A — deleting the call is exactly the mutation measured green at Q3.",
+            guard.isNotEmpty()
+        )
+        val bind = liveOffsets(init, "bindDecoderLocked()")
+        assertTrue(
+            "nativeInit must CALL bindDecoderLocked() on a live line — that is where the 24 " +
+                "cross-KV inputs are pointed at the encoder's output buffers.",
+            bind.isNotEmpty()
+        )
+        assertTrue(
+            "aliasGuardLocked() must run BEFORE bindDecoderLocked() (guard at ${guard.first()}, " +
+                "bind at ${bind.first()}). Verifying the alias after aliasing on it is not a " +
+                "guard; and running it before the buffers are even allocated is why a refusal " +
+                "costs nothing rather than 27 MiB.",
+            guard.first() < bind.first()
+        )
+
+        val body = functionBody(cpp, "std::string aliasGuardLocked()")
+        assertTrue(
+            "aliasGuardLocked must compare the 24 pairs field by field via aliasCompare() on a " +
+                "live line",
+            liveOffsets(body, "aliasCompare(").isNotEmpty()
+        )
+        assertTrue(
+            "aliasGuardLocked must still COUNT the cross-KV population — the pair loop verifies " +
+                "the 24 tensors this seam knows about and is silent about a 25th, which a whisper " +
+                "variant with more than 12 layers would carry and which bindDecoderLocked's " +
+                "bind-by-name pass would happily alias unchecked. Expected a live countCross " +
+                "definition scanning for the shared name fragment.",
+            liveOffsets(body, "countCross = [](").isNotEmpty() &&
+                liveOffsets(body, "_cache_cross_").isNotEmpty()
+        )
+        assertTrue(
+            "countCross must be applied to BOTH sides — the encoder's outputs and the decoder's " +
+                "inputs. Counting one side cannot detect an extra tensor on the other. Found " +
+                "${liveOffsets(body, "countCross(").size} live call sites.",
+            liveOffsets(body, "countCross(").size >= 2
+        )
+        assertTrue(
+            "the counted population must be ASSERTED equal to the number of pairs verified, on a " +
+                "live line. Counting without comparing is decoration. Live lines mentioning " +
+                "encCross: " + liveLines(body, "encCross"),
+            liveOffsets(body, "encCross != checked || decCross != checked").isNotEmpty()
+        )
+    }
+
+    /**
+     * C2 — the suppression mask is applied to the logits, and only THEN is the argmax scanned.
+     *
+     * Whisper's suppression is by construction a pre-argmax mask. Reverse these two and the code
+     * still compiles, still runs, and still returns a token every step — it just returns the
+     * suppressed one, because a scan that has already picked a winner has thrown the runner-up
+     * away. Re-running the step is deterministic, so a caller holding only the argmax can neither
+     * fix it nor detect it: the loop emits the suppressed token or hangs. That is the entire reason
+     * the decode loop lives on the native side of the JNI boundary at all, and this is the pin that
+     * keeps the two halves from drifting apart into a "helpful" per-step API.
+     */
+    @Test
+    fun theSuppressionMaskIsAppliedToTheLogitsBeforeTheArgmaxIsScanned() {
+        val body = functionBody(cpp, "int32_t suppressThenArgmax(")
+        val mask = liveOffsets(body, "logits[id] = kLogitFloor;")
+        assertTrue(
+            "suppressThenArgmax must WRITE the mask into the logits buffer on a live line — both " +
+                "for the always-on list and for the begin-suppress list. Found ${mask.size}, " +
+                "expected at least 2.",
+            mask.size >= 2
+        )
+        val scan = liveOffsets(body, "if (logits[i] > bestVal)")
+        assertTrue(
+            "suppressThenArgmax must scan the logits for the argmax on a live line",
+            scan.isNotEmpty()
+        )
+        assertTrue(
+            "the LAST mask write (${mask.last()}) must come before the FIRST scan comparison " +
+                "(${scan.first()}). Both offsets are live lines, never indexOf: this file's prose " +
+                "names the ordering several times while explaining why it matters, and a raw " +
+                "search would measure the comment.",
+            mask.last() < scan.first()
+        )
+        assertTrue(
+            "the begin-suppress list must be applied CONDITIONALLY inside the same function — it " +
+                "belongs to the first generated step only, and hoisting it into the always-on " +
+                "list would mask EOT at every step and leave the loop with no terminator short of " +
+                "the position cap.",
+            liveOffsets(body, "if (applyBegin)").isNotEmpty()
+        )
+
+        // The decode loop needs EOT for itself: the contract's argument list is fixed and a
+        // terminator smuggled in through a data array is a terminator nobody can see. That makes
+        // kEotToken a SECOND reading of an asset fact whose first reading is WhisperTokens.EOT,
+        // and two readings that can drift are one reading with extra steps.
+        val eot = liveLines(cpp, "constexpr int32_t kEotToken")
+        assertTrue(
+            "qnn_asr.cpp must define kEotToken on exactly one live line; found: $eot",
+            eot.size == 1
+        )
+        assertTrue(
+            "native's kEotToken and Kotlin's WhisperTokens.EOT (${WhisperTokens.EOT}) are two " +
+                "readings of the same asset fact and must agree. If they ever disagree, the " +
+                "decode loop terminates on an id the tokenizer does not call end-of-text and the " +
+                "transcript runs to the position cap. Found: ${eot.first()}",
+            eot.first().contains("= ${WhisperTokens.EOT};")
+        )
+    }
+
+    /**
+     * THE SUSTAINED VOTE, exactly as measured — and the highest-consequence invariant in this tier
+     * that nothing else can see.
+     *
+     * An unvoted or mis-voted session is ~2.5x slower and is **indistinguishable from slow
+     * silicon** from outside: spike run 7 measured a 1007 ms median with an 838–1275 ms spread and
+     * cost a device round trip to explain. Every needle below was a one-line "improvement" that
+     * compiles green and can only be caught on a device:
+     *  - `dcvsEnable = 0` pins the clock (the burst recipe) and burns battery for +9.6% — which is
+     *    the accepted trade, in the other direction, for a config held for minutes;
+     *  - `MAX_VOLTAGE_CORNER` instead of `TURBO` asks for a corner a phone cannot hold;
+     *  - an `RPC_POLLING_TIME` entry spins to dodge interrupt latency and burns power
+     *    continuously, process-wide. It is a burst trick and it is not here;
+     *  - deleting the `vote:` log line is what made run 7 unreadable in the first place.
+     *
+     * Plus the ordering: the vote is armed at the END of `nativeInit`, after the contexts are
+     * loaded. The spike measured its 525 ms cold load **unvoted**, so hoisting the arm above
+     * `loadGraphSlot` would make our cold load faster than the figure the plan quotes and quietly
+     * invalidate it.
+     */
+    @Test
+    fun theSustainedVoteIsTheMeasuredRecipeAndItsOutcomeIsAlwaysLogged() {
+        val vote = functionBody(cpp, "std::string applySustainedVoteLocked(")
+        assertTrue(
+            "the vote must leave DCVS ENABLED (`d.dcvsEnable = 1`) on a live line. dcvsEnable = 0 " +
+                "is the burst recipe: it pins the clock, which is exactly what must not happen to " +
+                "a config held for the length of a dictation session. Live dcvs lines: " +
+                liveLines(vote, "dcvsEnable"),
+            liveOffsets(vote, "d.dcvsEnable = 1;").isNotEmpty()
+        )
+        assertTrue(
+            "the vote must request PERFORMANCE_MODE on a live line — DCVS still governs but ramps " +
+                "eagerly, so a segment arriving after idle does not spend its first inference " +
+                "climbing.",
+            liveOffsets(vote, "POWERMODE_PERFORMANCE_MODE").isNotEmpty()
+        )
+        assertTrue(
+            "the vote must target the TURBO corner (DCVS_VOLTAGE_VCORNER_TURBO) on live lines — " +
+                "bus and core, target and max, four of them.",
+            liveOffsets(vote, "DCVS_VOLTAGE_VCORNER_TURBO").size >= 4
+        )
+        assertTrue(
+            "MAX_VOLTAGE_CORNER must appear NOWHERE in applySustainedVoteLocked. The top corner " +
+                "is a burst affordance; TURBO is the highest corner a phone can actually hold, " +
+                "and the +9.6% against burst is the accepted trade rather than a defect to tune " +
+                "out.",
+            !vote.contains("MAX_VOLTAGE_CORNER")
+        )
+        assertTrue(
+            "RPC_POLLING_TIME must appear NOWHERE in applySustainedVoteLocked. Polling spins to " +
+                "avoid interrupt latency and burns power continuously, process-wide.",
+            !vote.contains("RPC_POLLING_TIME")
+        )
+
+        val arm = functionBody(cpp, "void armSustainedVoteLocked()")
+        assertTrue(
+            "armSustainedVoteLocked must emit the `vote:` result line on a live line, " +
+                "unconditionally. Without it an unvoted Hexagon and slow silicon are the same " +
+                "observation, which is what cost the spike run 7.",
+            liveOffsets(arm, "LOGI(\"vote: %s\"").isNotEmpty()
+        )
+
+        val init = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(")
+        val loads = liveOffsets(init, "loadGraphSlot(")
+        val armed = liveOffsets(init, "armSustainedVoteLocked()")
+        assertTrue("nativeInit must load both graph slots on live lines", loads.size >= 2)
+        assertTrue("nativeInit must arm the vote on a live line", armed.isNotEmpty())
+        assertTrue(
+            "armSustainedVoteLocked() (${armed.first()}) must come AFTER the last loadGraphSlot " +
+                "(${loads.last()}). The spike acquired the perf infrastructure before " +
+                "contextCreateFromBinary but did not VOTE until after it, so its 525 ms cold-load " +
+                "figure is an unvoted one — arming earlier would make our cold load faster than " +
+                "the number the plan quotes and silently invalidate it. A failed init also never " +
+                "leaves a vote armed.",
+            armed.first() > loads.last()
+        )
+    }
+
+    /**
+     * The vote is released FIRST in teardown, before the backend that issued it is freed.
+     *
+     * `destroyPowerConfigId` hands a handle back to the HTP perf infrastructure obtained from the
+     * device/backend. Relocating that line below `backendFree` is a use-after-free of the power
+     * config against a dead backend — a one-line move, no compiler signal, and a crash that only
+     * ever reproduces on teardown of a session that actually got a vote.
+     */
+    @Test
+    fun theVoteIsReleasedBeforeTheBackendThatIssuedItIsFreed() {
+        val body = functionBody(cpp, "void releaseLocked()")
+        val vote = liveOffsets(body, "releaseSustainedVoteLocked();")
+        assertTrue(
+            "releaseLocked must CALL releaseSustainedVoteLocked() on a live line. A session that " +
+                "armed a vote and never released it holds a governor setting for the life of the " +
+                "process, long after the tier it was for has been torn down.",
+            vote.isNotEmpty()
+        )
+        val backend = liveOffsets(body, "backendFree(")
+        assertTrue(
+            "releaseLocked must free the backend on a live line",
+            backend.isNotEmpty()
+        )
+        assertTrue(
+            "releaseSustainedVoteLocked() (${vote.first()}) must precede backendFree() " +
+                "(${backend.first()}). The vote is a session-scoped request held against that " +
+                "backend; handing the config id back afterwards is handing it to a dead one.",
+            vote.first() < backend.first()
         )
     }
 

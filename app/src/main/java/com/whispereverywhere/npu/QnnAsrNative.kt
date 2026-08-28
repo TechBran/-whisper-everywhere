@@ -30,12 +30,6 @@ package com.whispereverywhere.npu
  * `libqnnasr.so` on the unit-test classpath, so merely naming `QnnAsrNative` in a test kills it.
  * `NpuNativeContractTest` therefore asserts over SOURCE TEXT, and the real behaviour is verified
  * on device at Q10a.
- *
- * ARRIVING LATER, and deliberately not declared yet — an `external fun` with no native
- * implementation links fine and fails only when someone calls it, which is exactly the kind of
- * "surface that looks finished" this project keeps paying for:
- *  - Q4: `nativeDetectLanguage(): Int`, `nativeDecodeSegment(prompt: IntArray, suppress: IntArray,
- *    beginSuppress: IntArray, maxTokens: Int, out: IntArray): Int`
  */
 object QnnAsrNative {
     init {
@@ -133,8 +127,67 @@ object QnnAsrNative {
     external fun nativeEncode(quantisedMel: java.nio.ByteBuffer): String
 
     /**
-     * The last `"stage: detail"` recorded by any entry point, or `""` if none. Exists because Q4's
-     * decode loop reports failure as a negative token count and needs somewhere to put the words.
+     * Decodes one segment: **the entire greedy loop runs native**, in this one call.
+     *
+     * **That boundary placement is a correctness requirement, not a performance one.** Whisper's
+     * suppression is by construction a *pre-argmax* mask. A Kotlin loop calling a per-step native
+     * `decodeStep` would only ever receive the argmax, and an argmax has no runner-up: on finding
+     * that the winner is suppressed, the caller can do nothing useful, because re-running the step
+     * is deterministic and returns the same token. Such a loop either emits the suppressed token or
+     * hangs. (The JNI crossing was never the issue — a two-int transition is ~100 ns against a
+     * ~4.5 ms `graphExecute`.)
+     *
+     * `position` is the single counter and the prompt consumes it: positions `0..promptLen-1` feed
+     * the prompt through the same execute path, and the argmax at `position == promptLen - 1` is
+     * the **first generated token**. Positions `0..198` execute — an exact fit for the 199-deep
+     * self-KV — and 199 is the termination threshold, not an executing position. The loop ends on
+     * [WhisperTokens.EOT], on [maxTokens], or at the position cap, whichever comes first.
+     *
+     * Call [nativeEncode] first: the decoder reads that segment's cross-KV **in place**, so a
+     * decode without a preceding encode transcribes whatever the last encode left there.
+     *
+     * @param prompt `NpuDecodePolicy.promptTokens(lang)`.
+     * @param suppress `NpuDecodePolicy.suppressList` — applied to the logits at **every** generated
+     *        step, before the argmax scan.
+     * @param beginSuppress `NpuDecodePolicy.beginSuppressList` — applied at the first generated
+     *        step **only**.
+     * @param maxTokens `NpuDecodePolicy.maxTokensFor(prompt.size)`.
+     * @param out receives the generated ids; must have `size >= maxTokens`. Bounds-checked native
+     *        side rather than trusted, and untouched beyond the returned count.
+     * @return the number of ids written (`>= 0`), or `< 0` on failure with the text in
+     *         [nativeLastError]. `0` is a legitimate answer: it means EOT came first, i.e. silence.
+     *
+     * Holds the session mutex for the whole loop — never on Main, never concurrent with an encode.
+     */
+    external fun nativeDecodeSegment(
+        prompt: IntArray,
+        suppress: IntArray,
+        beginSuppress: IntArray,
+        maxTokens: Int,
+        out: IntArray
+    ): Int
+
+    /**
+     * One decode step at `position = 0` with `input_ids = <|startoftranscript|>`, with the argmax
+     * **restricted to the language block** `50259..50357`, then both self-KV sets are zeroed so a
+     * following [nativeDecodeSegment] starts from an empty cache.
+     *
+     * The restriction lives native for the same reason the suppression mask does: an unrestricted
+     * argmax handed back to Kotlin has already lost the information needed to decide whether the
+     * winner was a language at all. Feed the result to [WhisperTokens.codeForToken], which returns
+     * `null` for anything outside that block.
+     *
+     * Requires a preceding [nativeEncode] — this reads that segment's cross-KV.
+     *
+     * @return a `<|xx|>` token id in `50259..50357`, or `< 0` with the reason in [nativeLastError].
+     */
+    external fun nativeDetectLanguage(): Int
+
+    /**
+     * The last `"stage: detail"` recorded by any entry point, or `""` if none. Exists because
+     * [nativeDecodeSegment] and [nativeDetectLanguage] report failure as a negative number and need
+     * somewhere to put the words. Cleared by every entry point that succeeds, so it is never a
+     * stale message from an earlier stage.
      */
     external fun nativeLastError(): String
 
