@@ -37,8 +37,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 77
-        versionName = "3.6.0"  // local speed: streaming deltas, first-segment cap, session language pin, drain floor
+        versionCode = 78
+        versionName = "3.7.0"  // VAD endpointing: Silero cuts at real pauses, per-tier commit cadence, eco/base retired
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
