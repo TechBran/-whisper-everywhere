@@ -432,10 +432,25 @@ class NpuNativeContractTest {
                 "expected 2.",
             liveOffsets(bind, "QNN_DATATYPE_UFIXED_POINT_16").size >= 2
         )
+        val maskBind = liveOffsets(bind, "own(kAttentionMask,")
+        val maskCheck = liveOffsets(bind, "checkMaskCodesLocked()")
         assertTrue(
             "bindDecoderLocked must CALL checkMaskCodesLocked() on a live line — the two mask " +
                 "codes are written 199 times per segment and were, until this guard, a comment.",
-            liveOffsets(bind, "checkMaskCodesLocked()").isNotEmpty()
+            maskCheck.isNotEmpty()
+        )
+        assertTrue(
+            "bindDecoderLocked must bind attention_mask through own(kAttentionMask, …) on a live " +
+                "line — that call is what sets g.decMaskIdx.",
+            maskBind.isNotEmpty()
+        )
+        assertTrue(
+            "checkMaskCodesLocked() (${maskCheck.first()}) must be called AFTER own(kAttentionMask, " +
+                "…) (${maskBind.first()}). The guard reads g.dec.inputs[g.decMaskIdx], and that " +
+                "index is set BY that own() call: run it first and it inspects whatever tensor " +
+                "index 0 happens to be, so a guard that looks like it passed would have checked " +
+                "the wrong tensor's quantisation.",
+            maskCheck.first() > maskBind.first()
         )
         val mask = functionBody(cpp, "std::string checkMaskCodesLocked()")
         assertTrue(
@@ -455,10 +470,24 @@ class NpuNativeContractTest {
         )
 
         val enc = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(")
+        val armed = liveOffsets(enc, "g.encoded = true;")
+        val executed = liveOffsets(enc, "graphExecute")
         assertTrue(
-            "nativeEncode must SET the encode-validity flag on a live line, and only after a " +
-                "successful graphExecute.",
-            liveOffsets(enc, "g.encoded = true;").isNotEmpty()
+            "nativeEncode must SET the encode-validity flag on a live line.",
+            armed.isNotEmpty()
+        )
+        assertTrue(
+            "nativeEncode must run the encoder's graphExecute on a live line.",
+            executed.isNotEmpty()
+        )
+        assertTrue(
+            "the flag must be set (${armed.first()}) AFTER graphExecute (${executed.first()}), " +
+                "not before. Presence alone is not the invariant: hoisting that one line above " +
+                "the execute is a one-line move that reinstates exactly what the flag prevents — " +
+                "an execute that fails part way leaves the flag SET, and the next decode reads " +
+                "half-written cross-KV and transcribes it fluently. Same ordering discipline as " +
+                "the mask-before-scan and guard-before-bind pins, and for the same reason.",
+            armed.first() > executed.first()
         )
         assertTrue(
             "nativeEncode must CLEAR the flag on entry on a live line — a graphExecute that " +
