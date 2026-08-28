@@ -469,15 +469,20 @@ timings in **milliseconds**. So:
       contention signal and is what would justify promoting the probe to its own thread — a measured
       decision,
       explicitly not a default.
-- [ ] **The latched cutout must not have fired.** If it did, `endpoint: cut=` goes **all-`cap`** and
-      the cutout logs once. Report it if seen.
+- [ ] **The latched cutout must not have fired.** If it did, the VAD cuts stop and `endpoint: cut=`
+      becomes **cap-only** for the rest of the session. **The latch is silent — the cut mix and the
+      construction line are the only evidence.** Nothing is logged when it trips
+      (`SileroEndpointer.kt:512` sets the flag with no diagnostic; `isProbeCutout()` is only ever
+      read as a predicate), so do not go looking for a cutout line. Report it if the cut mix shows it.
 
       **Do not confuse the cutout with the fallback tier — they look different on purpose.** Once
       `probeCutout` latches, `SileroEndpointer.onFrame` returns `false` for the rest of the session
-      (`SileroEndpointer.kt:266`), so nothing can VAD-commit again and every remaining cut is a wall
-      cap: **`endpointer: silero` + all-`cut=cap`**. The amplitude *fallback* is the opposite shape —
-      it still commits, as **`endpointer: amplitude` + `cut=vad p=-1.00`** (Check 7). One session
-      cannot be both.
+      (`SileroEndpointer.kt:266`), so nothing can VAD-commit again and **no further `cut=vad` can
+      appear**: the remaining *endpointer-driven* cuts are all wall caps, giving
+      **`endpointer: silero` + cap-only** — though `stop` and `switch` still emit their own reasons,
+      so a latched session normally ends with at least one `cut=stop`. The amplitude *fallback* is
+      the opposite shape — it still commits, as **`endpointer: amplitude` + `cut=vad p=-1.00`**
+      (Check 7). One session cannot be both.
 
 ## Check 7 — Which endpointer is live, and how the fallback is discharged
 
