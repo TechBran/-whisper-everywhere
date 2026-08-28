@@ -1,6 +1,7 @@
 package com.whispereverywhere.npu
 
 import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.transcription.LanguagePin
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -798,5 +799,139 @@ class NpuDecodePolicyTest {
                 )
             }
         }
+    }
+
+    // ------------------------------------------------- what may cross the detectedLanguage seam
+
+    /**
+     * An ANSWER may be reported upward; a GUESS may not.
+     *
+     * `WhisperBackend.detectedLanguage(ctx)` means "ISO code whisper auto-detected", and
+     * `LocalWhisperEngine` feeds it straight to `LanguagePin`, which latches the first usable code
+     * for the whole session. A device-locale or English fallback is this tier deciding that the
+     * prompt needs *some* token — it is not a detection, and reporting it as one is how a guess
+     * becomes a session-wide fact.
+     */
+    @Test
+    fun onlyASelectionOrARealDetectionMayCrossTheSeamAsADetectedLanguage() {
+        assertEquals(
+            "an explicit selection reports the selected code — WhisperNativeBackend answers the " +
+                "same way (whisper sets lang_id to the language it was told to use), so the member " +
+                "means the same thing on both tiers",
+            "es",
+            NpuDecodePolicy.resolveLangToken("es", -1, "de-DE").reportable
+        )
+        assertEquals(
+            "a real detection reports the detected code",
+            "fr",
+            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken("fr"), "de-DE").reportable
+        )
+        assertNull(
+            "a device-locale guess reports NOTHING. It is the phone's setting, not the speech — " +
+                "and letting it through pins the session to a language nobody detected.",
+            NpuDecodePolicy.resolveLangToken(null, -1, "de-DE").reportable
+        )
+        assertNull(
+            "and the English fallback reports NOTHING, which is the row this gate exists for: one " +
+                "failed detect pass on segment 1 would otherwise become a session pinned to English",
+            NpuDecodePolicy.resolveLangToken(null, -1, "xx-XX").reportable
+        )
+        // The provenance is a field, not a spelling of the note — so the two cannot drift.
+        assertEquals(
+            listOf(
+                NpuDecodePolicy.LangSource.SELECTED,
+                NpuDecodePolicy.LangSource.DETECTED,
+                NpuDecodePolicy.LangSource.LOCALE,
+                NpuDecodePolicy.LangSource.FALLBACK,
+            ),
+            listOf(
+                NpuDecodePolicy.resolveLangToken("es", -1, "de-DE").source,
+                NpuDecodePolicy.resolveLangToken(null, 50265, "de-DE").source,
+                NpuDecodePolicy.resolveLangToken(null, -1, "de-DE").source,
+                NpuDecodePolicy.resolveLangToken(null, -1, "xx-XX").source,
+            )
+        )
+        WhisperTokens.LANGUAGE_CODES.forEach { code ->
+            assertEquals(
+                "every one of the 99 detections reports its own code, not just the common few",
+                code,
+                NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken(code), null).reportable
+            )
+        }
+        // The four English answers again — this time through the gate rather than the note.
+        assertEquals(
+            "the four English rows are one selection, one detection and two guesses, and the gate " +
+                "must separate them exactly there",
+            listOf("en", "en", null, null),
+            listOf(
+                NpuDecodePolicy.resolveLangToken("en", -1, "de-DE").reportable,
+                NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken("en"), "de-DE").reportable,
+                NpuDecodePolicy.resolveLangToken(null, -1, "en-GB").reportable,
+                NpuDecodePolicy.resolveLangToken(null, -1, "xx-XX").reportable,
+            )
+        )
+    }
+
+    /**
+     * THE LATCHING RULE, driven through the real [LanguagePin] the engine uses.
+     *
+     * The sequence is the failure the gate prevents, run forwards: segment 1's detect pass fails,
+     * segment 2's succeeds. Segment 1 must resolve to `auto->en(fallback)` and pin NOTHING, so
+     * segment 2 still arrives with `lang == null` and pays for a real detection — which then latches
+     * and serves the rest of the session.
+     *
+     * Without the gate, segment 1 reports `en`, the pin latches it, `languageFor(null)` returns
+     * `"en"` forever, the detect pass never runs again, and every later diag line prints the bare
+     * `en` note that this file's own tests assert means the user chose English.
+     */
+    @Test
+    fun aFailedThenSuccessfulDetectionLatchesTheLanguagePinOnlyOnTheRealDetection() {
+        val pin = LanguagePin()
+        val sessionLanguage: String? = null      // "auto" — the shipped default
+
+        // --- segment 1: the detect pass fails, the locale maps to nothing.
+        val first = NpuDecodePolicy.resolveLangToken(
+            requested = pin.languageFor(sessionLanguage), detected = -1, deviceLocale = "xx-XX"
+        )
+        assertEquals("segment 1 is an English FALLBACK and says so", "auto->en(fallback)", first.note)
+        pin.onDetected(sessionLanguage = sessionLanguage, detected = first.reportable)
+        assertNull(
+            "segment 1 must pin NOTHING — a guess is not a detection, and LanguagePin latches the " +
+                "first usable code forever (`if (pinned != null) return`)",
+            pin.languageFor(sessionLanguage)
+        )
+
+        // --- segment 2: still auto, so the detect pass runs again — and succeeds.
+        val second = NpuDecodePolicy.resolveLangToken(
+            requested = pin.languageFor(sessionLanguage),
+            detected = WhisperTokens.langToken("fr"),
+            deviceLocale = "xx-XX",
+        )
+        assertEquals("segment 2 is a real DETECTION and says so", "auto->fr(detected)", second.note)
+        assertEquals("and it prompts French", WhisperTokens.langToken("fr"), second.token)
+        pin.onDetected(sessionLanguage = sessionLanguage, detected = second.reportable)
+        assertEquals(
+            "NOW the pin latches — on the detection, which is the only thing that earned it",
+            "fr",
+            pin.languageFor(sessionLanguage)
+        )
+
+        // --- segment 3: the pin supplies the language, so the resolution is an explicit selection.
+        val third = NpuDecodePolicy.resolveLangToken(
+            requested = pin.languageFor(sessionLanguage), detected = -1, deviceLocale = "xx-XX"
+        )
+        assertEquals("segment 3 runs pinned, with no detect pass at all", "fr", third.note)
+        assertEquals(WhisperTokens.langToken("fr"), third.token)
+
+        // And the counterfactual, so this test cannot pass by the pin simply never latching:
+        // feeding it the bare code instead of the gated one pins English on segment 1.
+        val laundering = LanguagePin()
+        laundering.onDetected(sessionLanguage = null, detected = first.code)
+        assertEquals(
+            "this is the defect, demonstrated: the bare `code` of a (fallback) resolution pins the " +
+                "whole session to English on the strength of one failed detect pass",
+            "en",
+            laundering.languageFor(null)
+        )
     }
 }

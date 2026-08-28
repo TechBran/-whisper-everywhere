@@ -204,7 +204,11 @@ class NpuNativeContractTest {
         )
         val release = kotlinMemberBody(backend, "private fun releaseEverything() {")
         val npuSide = liveOffsets(release, "releaseNpuResources()")
-        val cpuSide = liveOffsets(release, "fallbackBackend?.let")
+        // The CPU release moved from `fallbackBackend?.let { … }` to a local, so the guard can be
+        // cleared BEFORE the handle is freed (the publication order I2 added, pinned separately in
+        // theFallbackFunnelIsAtMostOnce…). The needle follows the statement; the invariant this
+        // assertion carries — NPU side first — is unchanged.
+        val cpuSide = liveOffsets(release, "previous?.release(fallbackCtx)")
         assertTrue("releaseEverything must free the NPU side on a live line", npuSide.isNotEmpty())
         assertTrue(
             "releaseEverything must release the CPU tier it fell back to, on a live line",
@@ -654,6 +658,140 @@ class NpuNativeContractTest {
                 "decoded against.",
             liveOffsets(release, "g.encoded = false;").isNotEmpty()
         )
+    }
+
+    /**
+     * I1 — the seam gate. What leaves this tier as a "detected language" must be
+     * `LangResolution.reportable`, never the bare `code`.
+     *
+     * `LocalWhisperEngine` hands `detectedLanguage(ctx)` straight to `LanguagePin.onDetected`, which
+     * latches the FIRST usable code and never revises it. One character — `.reportable` to `.code` —
+     * turns one failed detect pass on segment 1 into a session pinned to English: the detect pass
+     * then stops running, and every later diag line prints the bare `en` note that
+     * `NpuDecodePolicyTest` asserts means *the user chose English*. The policy's central invariant,
+     * enforced carefully inside `NpuDecodePolicy` and discarded one call further out.
+     *
+     * The negative half is the sharper one: **`resolution.code` has no legitimate use in this
+     * file.** The prompt takes `.token`, the diag line takes `.note`, the seam takes `.reportable`.
+     * A live mention of `.code` anywhere is the laundering, whatever it is assigned to.
+     */
+    @Test
+    fun theTiersReportedLanguageCrossesTheSeamOnlyWhenItWasActuallyDetected() {
+        assertTrue(
+            "the backend must store LangResolution.reportable for the seam, on a live line. " +
+                "Live lines mentioning lastReportedLanguage: " +
+                liveLines(backend, "lastReportedLanguage"),
+            liveOffsets(backend, "lastReportedLanguage = resolution.reportable").isNotEmpty()
+        )
+        assertTrue(
+            "`resolution.code` must appear on NO live line of NpuWhisperBackend.kt. The prompt uses " +
+                ".token, the diag line uses .note, and the seam uses .reportable — there is nothing " +
+                "left for the bare code to be right for, so any live use of it is a guess being " +
+                "reported as a detection. Found: " + liveLines(backend, "resolution.code"),
+            liveOffsets(backend, "resolution.code").isEmpty()
+        )
+        val detect = kotlinMemberBody(backend, "override fun detectedLanguage(ctx: Long): String? {")
+        assertTrue(
+            "detectedLanguage must answer from the gated field on a live line — it is the only " +
+                "value in this class whose provenance has been checked.",
+            liveOffsets(detect, "lastReportedLanguage").isNotEmpty()
+        )
+    }
+
+    /**
+     * I2 — the routing state: published guard-last, read under the gate, and armed AT MOST ONCE.
+     *
+     * `fallbackBackend` and `fallbackCtx` are the only shared mutable state two threads can reach
+     * simultaneously, and all three failures below are silent:
+     *
+     *  - **read outside the gate** — two threads both observe `fallbackBackend == null`, both fall
+     *    back, and the second `WhisperNativeBackend.load` overwrites a live handle. A whole CPU
+     *    tier, 60-190 MB, leaked for the life of the process;
+     *  - **guard published first** — a reader sees a non-null backend beside a still-zero handle and
+     *    calls `transcribe(0L, …)`. `whisper_jni` guards the null ctx, so it is not a crash: it is a
+     *    silently lost utterance on a dictation path;
+     *  - **no at-most-once guard** — the same overwrite, reachable without any race at all if a
+     *    future caller reaches the funnel twice.
+     *
+     * All three are ORDER or at-most-once claims, not presence claims: the statements are all still
+     * there in every one of them. Same discipline as the mask-before-scan, guard-before-bind and
+     * flag-after-execute pins, and for the same reason.
+     */
+    @Test
+    fun theFallbackFunnelIsAtMostOnceAndItsRoutingStateIsPublishedGuardLast() {
+        listOf(
+            "@Volatile\n    private var fallbackCtx: Long = 0L",
+            "@Volatile\n    private var fallbackBackend: WhisperBackend? = null",
+        ).forEach { declaration ->
+            assertTrue(
+                "both routing fields must be @Volatile, declared exactly as:\n$declaration\n" +
+                    "The gate gives mutual exclusion; @Volatile gives publication. Neither is the " +
+                    "other, and the fields the hot path branches on need both.",
+                backend.contains(declaration)
+            )
+        }
+
+        val fallback = kotlinMemberBody(
+            backend, "private fun fallBackToCpuTier(stage: String, detail: String): Long {"
+        )
+        val guard = liveOffsets(fallback, "if (fallbackBackend != null) return HANDLE")
+        val cpuLoad = liveOffsets(fallback, "WhisperNativeBackend.load(")
+        assertTrue(
+            "fallBackToCpuTier must open with an at-most-once guard on a live line. Without it a " +
+                "second entry calls load again and overwrites fallbackCtx, and releaseEverything " +
+                "only ever frees the current handle — the first whisper context is leaked.",
+            guard.isNotEmpty()
+        )
+        assertTrue("the funnel must load the CPU tier on a live line", cpuLoad.isNotEmpty())
+        assertTrue(
+            "the guard (${guard.first()}) must precede the load (${cpuLoad.first()}). Presence is " +
+                "not the invariant: a guard that runs after the load has already leaked the handle " +
+                "it was meant to protect.",
+            guard.first() < cpuLoad.first()
+        )
+        val handleWrite = liveOffsets(fallback, "fallbackCtx = handle")
+        val guardWrite = liveOffsets(fallback, "fallbackBackend = WhisperNativeBackend")
+        assertTrue("the funnel must record the handle on a live line", handleWrite.isNotEmpty())
+        assertTrue("the funnel must arm the guard on a live line", guardWrite.isNotEmpty())
+        assertTrue(
+            "the handle (${handleWrite.first()}) must be published BEFORE the guard " +
+                "(${guardWrite.first()}). fallbackBackend is what every reader branches on, so it " +
+                "must never become visible before the handle it implies — the same written-first / " +
+                "tag-last discipline as WhisperNativeBackend's lastStats/lastStatsCtx.",
+            handleWrite.first() < guardWrite.first()
+        )
+
+        val release = kotlinMemberBody(backend, "private fun releaseEverything() {")
+        val guardClear = liveOffsets(release, "fallbackBackend = null")
+        val handleRelease = liveOffsets(release, "previous?.release(fallbackCtx)")
+        assertTrue("teardown must clear the guard on a live line", guardClear.isNotEmpty())
+        assertTrue("teardown must release the CPU handle on a live line", handleRelease.isNotEmpty())
+        assertTrue(
+            "teardown is the MIRROR: the guard (${guardClear.first()}) is cleared BEFORE the handle " +
+                "is released (${handleRelease.first()}), so no reader can route onto a handle that " +
+                "is already being freed.",
+            guardClear.first() < handleRelease.first()
+        )
+
+        // Both entry points read the routing state INSIDE the hold, not in front of it.
+        listOf(
+            "override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {",
+            "override fun detectedLanguage(ctx: Long): String? {",
+        ).forEach { anchor ->
+            val body = kotlinMemberBody(backend, anchor)
+            val gate = liveOffsets(body, "NativeComputeGate.serialized {")
+            val read = liveOffsets(body, "fallbackBackend?.let")
+            assertTrue("$anchor must take NativeComputeGate on a live line", gate.isNotEmpty())
+            assertTrue("$anchor must consult the routing state on a live line", read.isNotEmpty())
+            assertTrue(
+                "in $anchor the gate (${gate.first()}) must be taken BEFORE the routing state is " +
+                    "read (${read.first()}). Hoisting the short-circuit in front of the hold is a " +
+                    "one-line move that compiles, keeps both statements, and reinstates the " +
+                    "stale-null read that leaks a whole whisper context. The lock is reentrant, so " +
+                    "reading inside it costs nothing on the delegating path.",
+                gate.first() < read.first()
+            )
+        }
     }
 
     /**

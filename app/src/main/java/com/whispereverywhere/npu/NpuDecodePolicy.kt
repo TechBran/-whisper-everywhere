@@ -123,6 +123,18 @@ object NpuDecodePolicy {
     // ---------------------------------------------------------------- the language policy (NEW-C2)
 
     /**
+     * How a language was arrived at. **The provenance is a field, not a spelling of the note**, so
+     * that the one consumer who must branch on it — the `detectedLanguage(ctx)` seam — branches on
+     * a closed set the compiler checks rather than on a string it has to parse.
+     *
+     * The distinction it exists to keep is the difference between an ANSWER and a GUESS.
+     * [SELECTED] and [DETECTED] are answers: a user said so, or the model did. [LOCALE] and
+     * [FALLBACK] are guesses this tier makes because the prompt needs *some* language token and
+     * whisper has no "unknown" one — and a guess must never be reported upward as a detection.
+     */
+    enum class LangSource { SELECTED, DETECTED, LOCALE, FALLBACK }
+
+    /**
      * Which language the tier will prompt with, **and the note that says how it was decided**.
      *
      * The note is not decoration and it is not a log format that happens to live here: it is
@@ -132,12 +144,49 @@ object NpuDecodePolicy {
      * would have to change this type to compile.
      *
      * @param token the `<|xx|>` id to put in the prompt's language slot.
-     * @param code the whisper language code for [token] — what `detectedLanguage(ctx)` reports back
-     *        to the app's existing language plumbing.
+     * @param code the whisper language code for [token].
      * @param note the `lang=` field of the `npu:` diag line. Exactly one of four shapes; see
      *        [resolveLangToken].
+     * @param source the provenance. See [reportable] — this is the field that stops a guess being
+     *        laundered into a session-wide pin.
      */
-    data class LangResolution(val token: Int, val code: String, val note: String)
+    data class LangResolution(
+        val token: Int,
+        val code: String,
+        val note: String,
+        val source: LangSource,
+    ) {
+        /**
+         * The code that may cross the `WhisperBackend.detectedLanguage(ctx)` seam, or **null when
+         * this tier merely guessed**.
+         *
+         * WHY THE GATE EXISTS, in the words of the failure it prevents. `LocalWhisperEngine` calls
+         * `detectedLanguage(ctx)` after a non-blank auto-language segment and feeds the answer to
+         * `LanguagePin.onDetected`, which latches the **first** usable code and never revises it.
+         * `lang == null` is this policy's own shipped premise, so that path is the normal one. Let a
+         * `(fallback)` guess through and a single failed detect pass on segment 1 — one
+         * `graphExecute` hiccup, one near-silent utterance — becomes a session-wide pin on English:
+         * every later segment is prompted `en`, the detect pass stops running at all, and the diag
+         * line starts printing the **bare** `en` note that this file's own tests assert means *the
+         * user chose English*. The policy's central invariant, enforced carefully one call earlier
+         * and then thrown away.
+         *
+         * `null` is exactly what `LanguagePin.onDetected`'s `isNullOrBlank()` branch is for, and it
+         * restores `WhisperBackend.detectedLanguage`'s own documented meaning — "ISO code whisper
+         * auto-detected" — which a device-locale guess does not satisfy.
+         *
+         * [SELECTED][LangSource.SELECTED] reports the code and is not a leak: `WhisperNativeBackend`
+         * answers the same way (whisper sets `lang_id` to the language it was told to use), and the
+         * engine's own guard means this value is only ever *read* on an auto session, where the
+         * resolution cannot be `SELECTED` in the first place. It is here so the member means the
+         * same thing on both tiers.
+         */
+        val reportable: String?
+            get() = when (source) {
+                LangSource.SELECTED, LangSource.DETECTED -> code
+                LangSource.LOCALE, LangSource.FALLBACK -> null
+            }
+    }
 
     /**
      * THE LANGUAGE POLICY. `requested == null` is the **shipped default**, not an edge case:
@@ -183,19 +232,26 @@ object NpuDecodePolicy {
     ): LangResolution {
         if (requested != null) {
             // Throws on an unknown code rather than falling back — see WhisperTokens.langToken.
-            return LangResolution(WhisperTokens.langToken(requested), requested, requested)
+            return LangResolution(
+                WhisperTokens.langToken(requested), requested, requested, LangSource.SELECTED
+            )
         }
         val detectedCode = WhisperTokens.codeForToken(detected)
         if (detectedCode != null) {
-            return LangResolution(detected, detectedCode, "auto->$detectedCode(detected)")
+            return LangResolution(
+                detected, detectedCode, "auto->$detectedCode(detected)", LangSource.DETECTED
+            )
         }
         val localeCode = whisperCodeForLocale(deviceLocale)
         if (localeCode != null) {
             return LangResolution(
-                WhisperTokens.langToken(localeCode), localeCode, "auto->$localeCode(locale)"
+                WhisperTokens.langToken(localeCode), localeCode, "auto->$localeCode(locale)",
+                LangSource.LOCALE
             )
         }
-        return LangResolution(WhisperTokens.langToken(EN), EN, "auto->$EN(fallback)")
+        return LangResolution(
+            WhisperTokens.langToken(EN), EN, "auto->$EN(fallback)", LangSource.FALLBACK
+        )
     }
 
     /** `"en"`, named once so the fallback row and its note cannot drift apart. */

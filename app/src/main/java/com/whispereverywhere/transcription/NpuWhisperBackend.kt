@@ -88,14 +88,34 @@ class NpuWhisperBackend(
 
     /**
      * The CPU tier this session fell back to, or null while the NPU is live. Non-null is the whole
-     * of the routing decision: every entry point checks it first and delegates.
+     * of the routing decision: every entry point checks it and delegates.
+     *
+     * **Two mechanisms, and they are one mechanism.** Both fields are `@Volatile` AND every read
+     * and write of them happens inside [NativeComputeGate], because they need two different
+     * guarantees. The gate gives mutual exclusion, so the pair cannot be half-updated while another
+     * thread routes on it; `@Volatile` gives publication, so the pair a reader sees is the pair a
+     * writer wrote. Neither alone is enough and neither is redundant — dropping the gate lets two
+     * threads both observe `null` and both fall back (leaking a whole 60-190 MB whisper context),
+     * and dropping `@Volatile` lets a reader see a non-null backend beside a stale `0L` handle and
+     * silently lose a segment on `transcribe(0L, …)`.
+     *
+     * [fallbackBackend] is the GUARD: it is written LAST when arming and cleared FIRST when tearing
+     * down, so a reader that sees it non-null is guaranteed to see the handle that goes with it.
+     * Same discipline, and the same reason, as `WhisperNativeBackend`'s `lastStats`/`lastStatsCtx`.
      */
-    private var fallbackBackend: WhisperBackend? = null
+    @Volatile
     private var fallbackCtx: Long = 0L
 
-    /** The last resolved language code, so [detectedLanguage] can answer for real. */
     @Volatile
-    private var lastLangCode: String? = null
+    private var fallbackBackend: WhisperBackend? = null
+
+    /**
+     * What [detectedLanguage] may report for the last segment — [NpuDecodePolicy.LangResolution.reportable],
+     * never the bare `code`. A device-locale or English fallback is a guess this tier made, and
+     * reporting it as a detection is how it becomes a session-wide language pin; see that property.
+     */
+    @Volatile
+    private var lastReportedLanguage: String? = null
 
     /**
      * `"<stage>: <detail>"` for the stage that declined, or null while the tier is live. Read by
@@ -205,13 +225,19 @@ class NpuWhisperBackend(
      * said, and trimming the samples before the mel would only move silence from one end of a
      * zero-padded window to the other.
      *
-     * Held under [NativeComputeGate] end to end. `pcmToMel` REPLACES the mel context's internal
+     * Held under [NativeComputeGate] end to end — **including the fallback short-circuit**, which
+     * is inside the hold rather than in front of it. `pcmToMel` REPLACES the mel context's internal
      * state, so two segments on this one handle would race each other; the QNN session is a single
-     * process-global behind its own mutex and must not see an encode and a decode interleaved.
+     * process-global behind its own mutex and must not see an encode and a decode interleaved; and
+     * the routing decision itself is shared mutable state, so reading it outside the hold is how
+     * two threads both decide to fall back and one 60-190 MB whisper context is leaked. The lock is
+     * reentrant and the delegate takes it again, which costs nothing.
      */
     override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
-        fallbackBackend?.let { return it.transcribe(fallbackCtx, samples, lang, useVad) }
         return NativeComputeGate.serialized {
+            fallbackBackend?.let {
+                return@serialized it.transcribe(fallbackCtx, samples, lang, useVad)
+            }
             val mel = melBuffer
             val quantised = quantBuffer
             val bpe = decoder
@@ -285,7 +311,14 @@ class NpuWhisperBackend(
             // outside 0 until 51865 was written, which is a contract breach between this file and
             // native — not an asset problem, and not something to bury in the fallback path.
             val text = bpe.decode(out.copyOf(written))
-            lastLangCode = resolution.code
+
+            // `.reportable`, NEVER `.code`. A (locale) or (fallback) resolution is a guess this
+            // tier made, and the engine feeds whatever crosses this seam to LanguagePin, which
+            // latches the first usable code for the whole session and never revises it. Reporting
+            // a guess there turns one failed detect pass on segment 1 into a session pinned to
+            // English — after which the detect pass stops running at all and the diag line prints
+            // the BARE `en` note that means "the user chose this". See LangResolution.reportable.
+            lastReportedLanguage = resolution.reportable
 
             // ONE line per segment, and `tokens` is native's returned count rather than the text's
             // length: the count exists before the text does, and reading it off the string would be
@@ -298,13 +331,24 @@ class NpuWhisperBackend(
     }
 
     /**
-     * ISO code of the language the LAST segment was transcribed under — a real answer rather than
-     * this member's `null` default, which is what keeps the app's existing language plumbing
-     * working on this tier. Null before the first segment.
+     * ISO code the LAST segment's language was **answered** with — by the user's selection or by
+     * the model's own detection pass — or `null` when this tier only guessed.
+     *
+     * The null is the contract, not a gap. `LocalWhisperEngine` hands this straight to
+     * `LanguagePin.onDetected`, which latches the first usable code for the rest of the session, so
+     * the only codes that may cross here are ones something actually decided. A `(locale)` or
+     * `(fallback)` resolution answers `null`, which is precisely the case `onDetected`'s
+     * `isNullOrBlank()` branch exists for: the pin stays open and **the next segment re-attempts
+     * detection**, which is the behaviour a failed detect pass should produce.
+     *
+     * Also null before the first segment. Under the gate because the routing fields it reads are
+     * shared mutable state; see their declaration.
      */
     override fun detectedLanguage(ctx: Long): String? {
-        fallbackBackend?.let { return it.detectedLanguage(fallbackCtx) }
-        return lastLangCode
+        return NativeComputeGate.serialized {
+            fallbackBackend?.let { return@serialized it.detectedLanguage(fallbackCtx) }
+            lastReportedLanguage
+        }
     }
 
     // ---------------------------------------------------------------- teardown and fallback
@@ -328,13 +372,20 @@ class NpuWhisperBackend(
         armed = false
     }
 
-    /** The NPU side plus any CPU tier this session had already fallen back to. */
+    /**
+     * The NPU side plus any CPU tier this session had already fallen back to.
+     *
+     * The guard is cleared FIRST and the handle after it — the mirror of the arming order in
+     * [fallBackToCpuTier], and for the same reason: no reader may ever see a non-null
+     * [fallbackBackend] beside a handle that is no longer valid.
+     */
     private fun releaseEverything() {
         releaseNpuResources()
-        fallbackBackend?.let { it.release(fallbackCtx) }
+        val previous = fallbackBackend
         fallbackBackend = null
+        previous?.release(fallbackCtx)
         fallbackCtx = 0L
-        lastLangCode = null
+        lastReportedLanguage = null
     }
 
     /**
@@ -346,18 +397,36 @@ class NpuWhisperBackend(
      * devices most likely to reach it. Two statements, one order, pinned as an ORDER invariant by
      * `NpuNativeContractTest` — presence alone would be satisfied by swapping them.
      *
-     * @return [HANDLE] when the CPU tier came up, else 0L — the caller sees a working backend or a
-     *         failed load, never a half-armed one.
+     * **AT MOST ONCE per session, and the guard is the first statement.** A second entry is a no-op
+     * that returns the live fallback rather than a second `WhisperNativeBackend.load` — which is a
+     * decision, so here is the reasoning. Without the guard, a second entry overwrites [fallbackCtx]
+     * with a fresh handle and the previous whisper context — a whole CPU tier, 60-190 MB — is
+     * leaked for the life of the process, because `releaseEverything` only ever frees the current
+     * one. Release-before-overwrite would close the leak but is the wrong repair: the first fallback
+     * is already serving this session, so replacing it drops a live handle mid-session and emits a
+     * second `npu: unavailable` line for a tier that declined once. Idempotence keeps
+     * [unavailableReason] naming the FIRST stage that declined, which is the one that is true.
+     *
+     * Reachable twice only by a race, since [transcribe] short-circuits to the fallback before any
+     * NPU stage can run — which is exactly why the guard is here rather than in the callers: a
+     * funnel that can silently discard a live native handle is a sharp edge whatever the threading
+     * turns out to be.
+     *
+     * @return [HANDLE] when the CPU tier came up (or was already up), else 0L — the caller sees a
+     *         working backend or a failed load, never a half-armed one.
      */
     private fun fallBackToCpuTier(stage: String, detail: String): Long {
+        if (fallbackBackend != null) return HANDLE
         releaseNpuResources()
         unavailableReason = "$stage: $detail"
         android.util.Log.w(NpuDiag.TAG, NpuDiag.unavailable(stage, detail))
         val cpuPath = paths.cpuTierModelPath() ?: return 0L
         val handle = WhisperNativeBackend.load(cpuPath)
         if (handle == 0L) return 0L
-        fallbackBackend = WhisperNativeBackend
+        // Handle FIRST, guard LAST: fallbackBackend is what every reader branches on, so it must
+        // never become visible before the handle it implies.
         fallbackCtx = handle
+        fallbackBackend = WhisperNativeBackend
         return HANDLE
     }
 
