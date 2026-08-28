@@ -34,12 +34,35 @@ object NpuDecodePolicy {
      * @throws IllegalArgumentException if [languageCode] is not one of whisper's 99 codes. There is
      *         no English fallback here, deliberately: see [WhisperTokens.langToken].
      */
-    fun promptTokens(languageCode: String): IntArray = intArrayOf(
-        WhisperTokens.SOT,
-        WhisperTokens.langToken(languageCode),
-        WhisperTokens.TRANSCRIBE,
-        WhisperTokens.NO_TIMESTAMPS
-    )
+    fun promptTokens(languageCode: String): IntArray =
+        promptTokens(WhisperTokens.langToken(languageCode))
+
+    /**
+     * The same four-token prompt, built from an already-resolved `<|xx|>` **token id**.
+     *
+     * This is the overload the tier actually calls, because [resolveLangToken] answers in ids: the
+     * auto-detect path's answer *is* an id (`nativeDetectLanguage` argmaxes over the language
+     * block), and routing it back through a code and forward through [WhisperTokens.langToken]
+     * would be two lookups that can disagree.
+     *
+     * @throws IllegalArgumentException if [langToken] is outside `50259..50357`. The language slot
+     *         of the prompt is not a place a stray id may land: `<|transcribe|>` or a timestamp
+     *         there is not a crash and not garbage — the model reads whatever embedding row it
+     *         points at and produces fluent text under it.
+     */
+    fun promptTokens(langToken: Int): IntArray {
+        require(WhisperTokens.codeForToken(langToken) != null) {
+            "$langToken is not a <|xx|> language token (${WhisperTokens.LANG_FIRST}.." +
+                "${WhisperTokens.LANG_LAST}). Putting a non-language id in the prompt's language " +
+                "slot does not fail: the decoder reads that embedding row and transcribes under it."
+        }
+        return intArrayOf(
+            WhisperTokens.SOT,
+            langToken,
+            WhisperTokens.TRANSCRIBE,
+            WhisperTokens.NO_TIMESTAMPS
+        )
+    }
 
     /**
      * The always-on mask: `generation_config.json`'s 88 `suppress_tokens` **plus all 1501 timestamp
@@ -95,5 +118,120 @@ object NpuDecodePolicy {
                 "non-positive budget returns zero tokens, which is indistinguishable from silence."
         }
         return WhisperTokens.MAX_POSITIONS - promptLen
+    }
+
+    // ---------------------------------------------------------------- the language policy (NEW-C2)
+
+    /**
+     * Which language the tier will prompt with, **and the note that says how it was decided**.
+     *
+     * The note is not decoration and it is not a log format that happens to live here: it is
+     * carried in the same value the token is, decided in the same expression, and asserted in the
+     * same test. That is what turns *"no path silently yields English"* from a claim in prose into
+     * a property the suite enforces — a fallback that produced `en` without saying `(fallback)`
+     * would have to change this type to compile.
+     *
+     * @param token the `<|xx|>` id to put in the prompt's language slot.
+     * @param code the whisper language code for [token] — what `detectedLanguage(ctx)` reports back
+     *        to the app's existing language plumbing.
+     * @param note the `lang=` field of the `npu:` diag line. Exactly one of four shapes; see
+     *        [resolveLangToken].
+     */
+    data class LangResolution(val token: Int, val code: String, val note: String)
+
+    /**
+     * THE LANGUAGE POLICY. `requested == null` is the **shipped default**, not an edge case:
+     * `PreferencesManager` defaults the selected language to `"auto"` and maps `"auto"` to `null`,
+     * so every user who has not explicitly picked a language arrives here with a null.
+     *
+     * ```
+     * requested != null                       -> use it directly       lang=es
+     * requested == null, detection succeeded   -> the detected token    lang=auto->fr(detected)
+     * requested == null, detection failed,
+     *                    device locale maps    -> the locale's token    lang=auto->de(locale)
+     * requested == null, neither               -> en                    lang=auto->en(fallback)
+     * ```
+     *
+     * **Detection rather than device locale first.** The locale is a poor proxy for the language
+     * being *spoken*, and precisely for this tier's audience: a multilingual user on an
+     * English-locale phone is the normal case, not the exception. Guessing from the locale would
+     * mis-transcribe them fluently with only a diagnostic line as consolation — the GPU-trap shape
+     * this project has already paid for once. The detection pass costs one extra `graphExecute`,
+     * ~4.5 ms against a ~405 ms encode.
+     *
+     * **English is reachable, but never silently.** The fourth row exists because the prompt needs
+     * *some* language token and there is no "unknown" one; what it may not do is arrive without
+     * saying so, which is why `en` from this row carries `(fallback)` and `en` from an explicit
+     * selection carries the bare code.
+     *
+     * @param requested the user's explicit selection, or null for auto. **Must be a whisper code**
+     *        — `"auto"` is not one and is refused by [WhisperTokens.langToken] like any other
+     *        unknown string, because a caller that got as far as passing the literal `"auto"` has
+     *        skipped the mapping that turns it into a null.
+     * @param detected `QnnAsrNative.nativeDetectLanguage()`'s return: a token id, or a negative
+     *        number on failure. **Any id outside the language block is treated as failure**, not
+     *        trusted — that gate is [WhisperTokens.codeForToken], and it is what stops a decoder
+     *        that argmaxed to `<|transcribe|>` from smuggling that id into the prompt.
+     * @param deviceLocale an IETF tag such as `de-DE`, or null. Only its primary subtag is read.
+     * @throws IllegalArgumentException if [requested] is non-null and not one of whisper's 99
+     *         codes. Deliberate: a user who told us the answer must never be quietly overridden.
+     */
+    fun resolveLangToken(
+        requested: String?,
+        detected: Int,
+        deviceLocale: String?,
+    ): LangResolution {
+        if (requested != null) {
+            // Throws on an unknown code rather than falling back — see WhisperTokens.langToken.
+            return LangResolution(WhisperTokens.langToken(requested), requested, requested)
+        }
+        val detectedCode = WhisperTokens.codeForToken(detected)
+        if (detectedCode != null) {
+            return LangResolution(detected, detectedCode, "auto->$detectedCode(detected)")
+        }
+        val localeCode = whisperCodeForLocale(deviceLocale)
+        if (localeCode != null) {
+            return LangResolution(
+                WhisperTokens.langToken(localeCode), localeCode, "auto->$localeCode(locale)"
+            )
+        }
+        return LangResolution(WhisperTokens.langToken(EN), EN, "auto->$EN(fallback)")
+    }
+
+    /** `"en"`, named once so the fallback row and its note cannot drift apart. */
+    private const val EN = "en"
+
+    /**
+     * whisper's 99 codes are not quite the JDK's, and the differences are all in this tier's own
+     * audience. `java.util.Locale` still normalises three languages to their pre-1989 ISO 639
+     * codes on the way in, and Android reports them that way; two more are simply spelled
+     * differently by whisper than by CLDR.
+     *
+     * Every entry here is a language the app's own picker offers, so getting one wrong is a user
+     * who selected nothing, speaks Hebrew, and is transcribed as English with `(fallback)` in a log
+     * they will never read.
+     */
+    private val LOCALE_ALIASES: Map<String, String> = mapOf(
+        "iw" to "he",   // Locale("he").language == "iw" — the JDK's legacy Hebrew code
+        "in" to "id",   // …and legacy Indonesian
+        "ji" to "yi",   // …and legacy Yiddish
+        "jv" to "jw",   // whisper spells Javanese jw; ISO 639-1 and CLDR spell it jv
+        "nb" to "no",   // Bokmål is the written standard; whisper's table has no/nn, not nb
+        "fil" to "tl",  // Android reports Filipino as fil; whisper's table has tl
+    )
+
+    /**
+     * The whisper code for a device locale tag, or null when it maps to nothing.
+     *
+     * Only the **primary subtag** is read — `de-DE`, `de_DE`, `de` and `de-Latn-AT` all answer
+     * `de`, because whisper's table is per-language and has no regional entries. A tag whose
+     * primary subtag is not one of the 99 (`xx-XX`, `""`, a script-only tag) answers null, which
+     * is the row that hands the decision to the `en` fallback — and to its `(fallback)` note.
+     */
+    internal fun whisperCodeForLocale(deviceLocale: String?): String? {
+        if (deviceLocale.isNullOrBlank()) return null
+        val primary = deviceLocale.substringBefore('-').substringBefore('_').lowercase()
+        val code = LOCALE_ALIASES[primary] ?: primary
+        return if (WhisperTokens.LANGUAGE_CODES.contains(code)) code else null
     }
 }

@@ -217,6 +217,14 @@ android {
 // this list, corrupting one language code in the asset (`"<|sl|>"` -> `"<|XX|>"`) produced
 // "Task :app:testDebugUnitTest UP-TO-DATE / BUILD SUCCESSFUL" without running a single test, so the
 // three tests that exist to catch a wrong or edited vocabulary all "passed" against stale evidence.
+// (4.0 Q6) NpuWhisperBackend.kt is the first KOTLIN file in this list, and it is here for a
+// narrower reason than the rest. Kotlin main sources normally need no entry: they are compiled into
+// the test task's classpath, so any real edit invalidates it. The exception is a COMMENT-only edit,
+// which produces byte-identical .class files and leaves the task UP-TO-DATE — and the residency pin
+// on this file is a NEGATIVE assertion over the whole file INCLUDING comments (`WhisperNative.init(`
+// must appear nowhere at all, so that the KDoc cannot re-teach the 190 MB mistake it exists to
+// forbid). Without this line, the single mutation that pin is for is the single mutation that never
+// re-runs it.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -225,6 +233,7 @@ tasks.withType<Test>().configureEach {
         "src/main/cpp/qnn_asr.cpp",
         "src/main/AndroidManifest.xml",
         "src/main/assets/whisper_vocab.json",
+        "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
 }

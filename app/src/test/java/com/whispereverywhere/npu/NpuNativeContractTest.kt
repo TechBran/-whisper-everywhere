@@ -21,10 +21,13 @@ import java.io.File
  * happily as the call, which is the false-green shape already proved twice on
  * `NativeVadSourceContractTest`.
  *
- * `src/main/cpp/qnn_asr.cpp`, `src/main/AndroidManifest.xml` and the root `.gitignore` are declared
- * as explicit inputs of the test task in `app/build.gradle.kts` — without that, an edit confined to
- * any of them leaves `:app:testDebugUnitTest` UP-TO-DATE and these guards pass against stale
- * evidence.
+ * `src/main/cpp/qnn_asr.cpp`, `src/main/AndroidManifest.xml`, the root `.gitignore` and (4.0 Q6)
+ * `NpuWhisperBackend.kt` are declared as explicit inputs of the test task in `app/build.gradle.kts`
+ * — without that, an edit confined to any of them leaves `:app:testDebugUnitTest` UP-TO-DATE and
+ * these guards pass against stale evidence. The Kotlin file is in that list for a narrower reason
+ * than the others: its residency pin is a NEGATIVE assertion over the whole file INCLUDING
+ * comments, and a comment-only edit produces identical bytecode, so without the entry the one
+ * mutation the pin exists to catch is the one that never re-runs it.
  */
 class NpuNativeContractTest {
 
@@ -94,7 +97,144 @@ class NpuNativeContractTest {
         return body.substringBefore("\n}\n")
     }
 
+    /**
+     * One Kotlin member function's body. Class members in `NpuWhisperBackend.kt` close at a
+     * four-space indent, so [functionBody]'s column-0 rule does not apply to them; the same two
+     * loud failures are kept, for the same two reasons.
+     */
+    private fun kotlinMemberBody(kt: String, anchor: String): String {
+        val start = kt.indexOf(anchor)
+        assertTrue(
+            "anchor \"$anchor\" is missing from NpuWhisperBackend.kt. indexOf() returns -1 when " +
+                "the anchor is absent, so substring(start) would silently rebase the scope to the " +
+                "top of the file and every claim below would be answered by unrelated code " +
+                "instead of failing.",
+            start >= 0
+        )
+        val body = kt.substring(start)
+        assertTrue(
+            "no four-space-indented \"\\n    }\\n\" follows \"$anchor\". substringBefore() returns " +
+                "its RECEIVER when the delimiter is absent, so a re-indented closing brace would " +
+                "silently widen the scope into the FOLLOWING member and the assertions would pass " +
+                "on a neighbour's code.",
+            body.contains("\n    }\n")
+        )
+        return body.substringBefore("\n    }\n")
+    }
+
     private val cpp: String by lazy { source("src/main/cpp/qnn_asr.cpp") }
+
+    private val backend: String by lazy {
+        source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+    }
+
+    /**
+     * THE RESIDENCY CONTRACT — the one invariant in this tier that has only ever been protected by
+     * prose, and the one whose violation is byte-identical to correct behaviour.
+     *
+     * Three claims, each defending a different edit, and each of them an edit that compiles, runs,
+     * and produces exactly the right transcript on a development device:
+     *
+     *  1. **`initMelOnly`, never the full loader.** The mel filterbank is model data, so the NPU
+     *     tier needs a `whisper_context` for it. `initMelOnly` reads the contiguous
+     *     magic -> hparams -> filterbank prefix — 64,320 B — and stops before a single tensor. The
+     *     full loader returns a handle `pcmToMel` accepts just as happily and produces a
+     *     **byte-identical mel**, while holding 60-190 MB of weights resident beside the NPU's own
+     *     376 MiB. Nothing downstream can see the difference. The first symptom is an LMK kill on a
+     *     mid-range device, months later, in a crash report with no stack. Measured at Q2b: the
+     *     swap passed the entire suite green.
+     *  2. **teardown BEFORE the CPU tier is loaded.** Presence is not the invariant here; ORDER is —
+     *     the third time this branch has learned that (Q3's deleted guard call, Q4's swapped call
+     *     site, Q4's hoisted flag write). Both statements are present either way round; the wrong
+     *     order loads a 190 MB whisper model while 376 MiB of NPU contexts and a sustained power
+     *     vote are still held, a ~570 MB+ transient on the one path that exists to be safe.
+     *  3. **the SoC gate before the probe.** Also order. `nativeProbe` dlopens two Qualcomm
+     *     backends and answers "is the HTP stack here", which a 7-series Snapdragon also answers
+     *     yes to; only `NpuGate` can tell one Hexagon from another. Swapping the operands of the
+     *     `&&` makes every device on earth dlopen a vendor backend to reach a foregone answer.
+     *
+     * Source-anchored because it can be nothing else: `NpuWhisperBackend` touches `QnnAsrNative`,
+     * whose `init` block runs `System.loadLibrary("qnnasr")`, so naming the class from any JVM test
+     * kills that test outright.
+     */
+    @Test
+    fun theNpuBackendsResidencyAndTeardownOrderingArePinnedInSource() {
+        assertTrue(
+            "NpuWhisperBackend must obtain its mel context through WhisperNative.initMelOnly on a " +
+                "live line — that is the 64 KB loader, and it is the only one this tier may use.",
+            liveOffsets(backend, "WhisperNative.initMelOnly(").isNotEmpty()
+        )
+        assertTrue(
+            "WhisperNative.init( must appear NOWHERE in NpuWhisperBackend.kt — not in code, not " +
+                "in a comment. It is whisper.cpp's FULL model loader: it returns a handle pcmToMel " +
+                "accepts, yields a byte-identical mel, and silently restores 60-190 MB of resident " +
+                "weights beside the NPU's 376 MiB. There is no downstream check that can catch it " +
+                "and no test that can observe it; this line is the whole defence. Found: " +
+                backend.lineSequence().filter { it.contains("WhisperNative.init(") }.toList(),
+            !backend.contains("WhisperNative.init(")
+        )
+        assertTrue(
+            "the mel context must be FREED, on a live line — 64 KB held for the life of the " +
+                "process is small, but the handle is also what makes a re-arm safe",
+            liveOffsets(backend, "WhisperNative.free(").isNotEmpty()
+        )
+
+        val fallback = kotlinMemberBody(
+            backend, "private fun fallBackToCpuTier(stage: String, detail: String): Long {"
+        )
+        val teardown = liveOffsets(fallback, "releaseNpuResources()")
+        val cpuLoad = liveOffsets(fallback, "WhisperNativeBackend.load(")
+        assertTrue(
+            "fallBackToCpuTier must CALL releaseNpuResources() on a live line. Presence is " +
+                "asserted separately from ordering because \"A precedes B\" is trivially true when " +
+                "there is no A.",
+            teardown.isNotEmpty()
+        )
+        assertTrue(
+            "fallBackToCpuTier must load the CPU tier on a live line — a fallback that releases " +
+                "the NPU and brings nothing up is not a fallback",
+            cpuLoad.isNotEmpty()
+        )
+        assertTrue(
+            "releaseNpuResources() (${teardown.first()}) must run BEFORE WhisperNativeBackend.load " +
+                "(${cpuLoad.first()}). Swapping two adjacent statements compiles, keeps both " +
+                "present, and puts a 190 MB whisper model beside 376 MiB of still-held NPU " +
+                "contexts — ~570 MB+ transient, on the exact path whose purpose is to be safe.",
+            teardown.first() < cpuLoad.first()
+        )
+        val release = kotlinMemberBody(backend, "private fun releaseEverything() {")
+        val npuSide = liveOffsets(release, "releaseNpuResources()")
+        val cpuSide = liveOffsets(release, "fallbackBackend?.let")
+        assertTrue("releaseEverything must free the NPU side on a live line", npuSide.isNotEmpty())
+        assertTrue(
+            "releaseEverything must release the CPU tier it fell back to, on a live line",
+            cpuSide.isNotEmpty()
+        )
+        assertTrue(
+            "the NPU side (${npuSide.first()}) must be freed before the CPU tier (" +
+                "${cpuSide.first()}), for the same reason and in the same direction as the " +
+                "fallback path: whichever way round it happened, two model-sized things resident " +
+                "at once is the thing this tier's whole design avoids.",
+            npuSide.first() < cpuSide.first()
+        )
+
+        val available = kotlinMemberBody(
+            backend,
+            "fun isTierAvailable(socModel: String?, socManufacturer: String?, libDir: String): Boolean ="
+        )
+        val gate = liveOffsets(available, "NpuGate.isSocSupported(")
+        val probe = liveOffsets(available, "QnnAsrNative.nativeProbe(")
+        assertTrue("tier visibility must consult NpuGate on a live line", gate.isNotEmpty())
+        assertTrue("tier visibility must consult nativeProbe on a live line", probe.isNotEmpty())
+        assertTrue(
+            "NpuGate.isSocSupported (${gate.first()}) must be the LEFT operand, evaluated before " +
+                "nativeProbe (${probe.first()}). The && short circuit is the mechanism: reversed, " +
+                "every Tensor, Exynos and MediaTek device dlopens libQnnHtp.so to be told no, and " +
+                "a 7-series Snapdragon is told yes by a probe that cannot tell one Hexagon from " +
+                "another.",
+            gate.first() < probe.first()
+        )
+    }
 
     /**
      * Lesson 3 — the one that cost a device round trip on the spike's run 6. `QNN_TENSOR_VERSION_1`

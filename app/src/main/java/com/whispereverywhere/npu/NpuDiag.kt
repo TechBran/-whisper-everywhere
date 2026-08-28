@@ -1,0 +1,63 @@
+package com.whispereverywhere.npu
+
+/**
+ * The NPU tier's two diagnostic lines, as pure string builders.
+ *
+ * WHY THEY ARE FUNCTIONS AND NOT INLINE `Log.i` FORMAT STRINGS. Unit tests run with
+ * `unitTests.isReturnDefaultValues = true`, so `android.util.Log` is a no-op on the JVM and **no
+ * test can observe the string a call site actually produces**. Splitting the format out (the same
+ * F-rule split `SegmentTiming` already uses) makes the text assertable here, and leaves the call
+ * site itself to be pinned by source text — format and emission, both guarded, because either one
+ * alone is decoration.
+ *
+ * WHY IT MATTERS ENOUGH TO GUARD. The owner has no adb. These two lines are the only evidence this
+ * tier produces about itself: whether the NPU ran at all, how the ~405 ms encode and the ~4.5 ms/
+ * token decode actually behaved on the device, and — the one that is not a number — **which
+ * language the segment was transcribed under and how that was decided**. A wrong language is a
+ * fluent, confident, wrong transcript, and `lang=` is the only place it is ever visible.
+ *
+ * **Never transcript content.** Lengths, counts, language codes and milliseconds only. `tokens=`
+ * is `nativeDecodeSegment`'s returned count, not the decoded string's length — the count exists
+ * before the text does, and reading it off the text would be one step from logging the text.
+ */
+object NpuDiag {
+
+    /** The house diagnostic tag, so a grep for one tier's lines is a grep for the app's. */
+    const val TAG = "WE-DIAG"
+
+    /**
+     * `npu: encode=405 decode=168 tokens=37 lang=auto->fr(detected)` — one line per segment.
+     *
+     * The `npu: encode=` prefix is a **single contiguous literal** in this file, and there is a
+     * test that says so. Building it from parts (`"npu: " + "encode="`, a `TAG` constant spliced
+     * into the middle, a `buildString`) is invisible to the compiler and invisible in review, and
+     * it breaks every grep and every parser written against the shipped format.
+     *
+     * @param encodeMs wall time of `nativeEncode`, including the mel and the quantisation — what
+     *        the user waits for, not what the graph bills.
+     * @param decodeMs wall time of the language pass plus `nativeDecodeSegment`.
+     * @param tokens `nativeDecodeSegment`'s returned count. `0` is a legitimate value: EOT first,
+     *        i.e. silence. A failure never reaches this line — it goes to [unavailable].
+     * @param langNote [NpuDecodePolicy.LangResolution.note]: `es`, `auto->fr(detected)`,
+     *        `auto->de(locale)` or `auto->en(fallback)`, and never anything else.
+     */
+    fun line(encodeMs: Long, decodeMs: Long, tokens: Int, langNote: String): String =
+        "npu: encode=$encodeMs decode=$decodeMs tokens=$tokens lang=$langNote"
+
+    /**
+     * `npu: unavailable stage=encode detail=encode: graphExecute failed at 0` — emitted once, on
+     * the path where the tier declines and the session falls back to the CPU model.
+     *
+     * **This line is the doctrine.** A silent fallback that quietly runs on the CPU while the tier
+     * card still says "AI chip" is the failure this project has already paid for once, so the
+     * fallback is not allowed to be quiet: the stage is named, the native detail is carried
+     * verbatim from `nativeLastError()`, and Q8's card reads the same fact.
+     *
+     * @param stage which step declined — `mel-donor`, `mel-init`, `mel`, `assets`, `init`,
+     *        `quant`, `encode`, `decode`. One word, greppable, never a sentence.
+     * @param detail `QnnAsrNative.nativeLastError()` or an equivalent one-line reason. Never
+     *        transcript content: every producer of this string is a stage name and a native error.
+     */
+    fun unavailable(stage: String, detail: String): String =
+        "npu: unavailable stage=$stage detail=$detail"
+}

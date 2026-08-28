@@ -126,6 +126,30 @@ data class NativeSegmentStats(
 /** Thin seam over the native layer so the engine can be tested without JNI. */
 interface WhisperBackend {
     fun load(modelPath: String): Long
+
+    /**
+     * Load a tier whose model is TWO artifacts (4.0, npu: a 127 MB encoder and a 215 MB decoder
+     * context binary). Default: delegate to the one-path [load], so every existing backend and
+     * every fake is untouched.
+     *
+     * **A new member with a default BODY, never a widened parameter list**, and the distinction is
+     * the whole reason this comment exists. `load(modelPath: String, companionPath: String? = null)`
+     * looks equivalent and is not: a Kotlin default PARAMETER value helps CALLERS, not
+     * IMPLEMENTORS — an override must still declare the full parameter list — so that spelling
+     * would leave 23 `override fun load(modelPath: String)` across 10 files overriding nothing at
+     * all, silently, with the interface's own body running instead of theirs. The house precedent
+     * is this one, three times over in this same interface: [detectedLanguage],
+     * [transcribeStreaming] and [lastSegmentStats].
+     *
+     * Chosen over a delimited pair (paths that cannot be parsed back apart) and over a directory
+     * path (which loses the per-file size and hash checks the import flow needs).
+     *
+     * @param companionPath the paired artifact, or null when the provider has none — which a
+     *        two-artifact backend must treat as "this tier cannot come up", not as a missing
+     *        optional extra.
+     */
+    fun load(modelPath: String, companionPath: String?): Long = load(modelPath)
+
     /**
      * @param useVad true (live default) runs the Silero VAD before the encoder to suppress noise
      *   hallucination on always-open mic capture. Batch passes FALSE: a user-chosen file is
@@ -471,4 +495,39 @@ object WhisperNativeBackend : WhisperBackend {
  */
 interface ModelPathProvider {
     fun installedModelPath(): String?
+
+    /**
+     * The PAIRED artifact of a two-artifact tier — npu's decoder context binary, where
+     * [installedModelPath] is its encoder. Null for every one-file tier, which is all six of the
+     * whisper.cpp ones.
+     *
+     * A default body, for the same reason [WhisperBackend.load]'s two-arg member has one: every
+     * existing implementor and every test fake keeps compiling untouched. Introduced here because
+     * Q6 is the first task that needs it; `WhisperModelManager` supplies the real answer at Q8.
+     */
+    fun companionModelPath(): String? = null
+
+    /**
+     * The installed **CPU-tier whisper ggml model** (`multi`), which the NPU tier needs for two
+     * distinct things and which is one file for both:
+     *
+     *  1. **the mel filterbank donor.** The NPU tier computes its spectrogram with whisper.cpp's
+     *     mel and no other — the spec allows exactly one mel in this app, and a second one would
+     *     be free to drift from the accuracy the CPU and GPU tiers were measured at. That needs a
+     *     `whisper_context`, because the filterbank is model data; `WhisperNative.initMelOnly`
+     *     reads ~64 KB from the head of the file for it and stops before a single tensor. **Any
+     *     installed 80-bin tier's file serves** — the 80x201 matrix is byte-identical across
+     *     tiny / small / small.en, measured, not assumed — and `large-v3-turbo` does NOT, being
+     *     128-bin, which `pcmToMel` refuses by bin count;
+     *  2. **the backend this session falls back to** when an NPU stage declines.
+     *
+     * They are deliberately one member rather than two: the donor requirement (an installed 80-bin
+     * ggml) is a strict subset of the fallback requirement, so a device that can fall back can
+     * always compute a mel, and two members could be answered with two different files without
+     * anything noticing.
+     *
+     * Null means the NPU tier cannot come up at all — which is a clean refusal at load, before any
+     * of the 358 MB of NPU assets is touched. `WhisperModelManager` supplies the real answer at Q8.
+     */
+    fun cpuTierModelPath(): String? = null
 }

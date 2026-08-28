@@ -3,6 +3,7 @@ package com.whispereverywhere.npu
 import com.whispereverywhere.data.local.PreferencesManager
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -465,6 +466,337 @@ class NpuDecodePolicyTest {
                 WhisperTokens.langToken(code),
                 prompt[1]
             )
+        }
+    }
+
+    // ---------------------------------------------------------------- the language policy (NEW-C2)
+
+    /**
+     * `requested != null` wins over everything, including a confident disagreeing detection.
+     *
+     * A user who opened the picker and chose Spanish has told us the answer. Letting a detection
+     * pass over one 30 s window override that is the same class of defect as an `?: EN` fallback,
+     * arriving from the opposite direction: fluent, confident, wrong, and unreportable.
+     */
+    @Test
+    fun explicitSelectionWinsOverEveryDetectionAndLocale() {
+        val spanishWithAFrenchDetection = NpuDecodePolicy.resolveLangToken(
+            requested = "es", detected = WhisperTokens.langToken("fr"), deviceLocale = "de-DE"
+        )
+        assertEquals("the token is Spanish's", WhisperTokens.langToken("es"), spanishWithAFrenchDetection.token)
+        assertEquals("and so is the code", "es", spanishWithAFrenchDetection.code)
+        assertEquals(
+            "the note is the bare code — an explicit selection needs no explanation, and the " +
+                "absence of a parenthesised reason is precisely what distinguishes it from a " +
+                "fallback that happened to land on the same language",
+            "es",
+            spanishWithAFrenchDetection.note
+        )
+        // The detect pass does not even run for an explicit selection, so the sentinel the backend
+        // passes in that case must not be able to change the answer.
+        assertEquals(
+            "a not-run detection sentinel cannot disturb an explicit selection",
+            NpuDecodePolicy.resolveLangToken("es", -1, null),
+            spanishWithAFrenchDetection
+        )
+        // And an explicit code the asset cannot name is REFUSED, never coerced.
+        for (bogus in listOf("auto", "xx", "en-US", "EN")) {
+            try {
+                val got = NpuDecodePolicy.resolveLangToken(bogus, -1, "en-US")
+                fail(
+                    "resolveLangToken(\"$bogus\", …) must throw; it returned $got. \"auto\" in " +
+                        "particular means the caller skipped PreferencesManager's auto->null " +
+                        "mapping, and silently transcribing that user in English is the bug this " +
+                        "whole policy exists to prevent."
+                )
+            } catch (expected: IllegalArgumentException) {
+                // exactly right
+            }
+        }
+    }
+
+    /**
+     * `auto` plus a successful detection uses the detection — the shipped default path.
+     *
+     * `PreferencesManager` defaults the selected language to `"auto"` and maps it to null, so this
+     * row and the two below it are what MOST users get, not what an edge case gets.
+     */
+    @Test
+    fun autoWithASuccessfulDetectionUsesTheDetectedToken() {
+        val french = NpuDecodePolicy.resolveLangToken(
+            requested = null, detected = WhisperTokens.langToken("fr"), deviceLocale = "en-US"
+        )
+        assertEquals("the detected token passes through unchanged", 50265, french.token)
+        assertEquals("fr", french.code)
+        assertEquals("auto->fr(detected)", french.note)
+        assertEquals(
+            "the detection beats the device locale, which is the whole reason a detect pass is " +
+                "worth one extra graphExecute: a multilingual user on an English-locale phone is " +
+                "this tier's normal case, not its exception",
+            "fr",
+            french.code
+        )
+        val japanese =
+            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken("ja"), "de-DE")
+        assertEquals("auto->ja(detected)", japanese.note)
+        assertEquals(WhisperTokens.langToken("ja"), japanese.token)
+    }
+
+    /**
+     * `auto`, detection failed, and the device locale maps: use the locale and say so.
+     *
+     * A failed detect pass is a real outcome — `nativeDetectLanguage` returns `< 0` on a
+     * `graphExecute` failure — and the locale is a better guess than English for the audience this
+     * tier is steered at. It is still a GUESS, which is what `(locale)` in the note is for.
+     */
+    @Test
+    fun autoWithAFailedDetectionFallsBackToADeviceLocaleThatMaps() {
+        val german = NpuDecodePolicy.resolveLangToken(
+            requested = null, detected = -1, deviceLocale = "de-DE"
+        )
+        assertEquals(WhisperTokens.langToken("de"), german.token)
+        assertEquals("de", german.code)
+        assertEquals("auto->de(locale)", german.note)
+        for (failure in listOf(-1, -2, -3, Int.MIN_VALUE)) {
+            assertEquals(
+                "every negative return of nativeDetectLanguage is a failure, not a token: $failure",
+                "auto->de(locale)",
+                NpuDecodePolicy.resolveLangToken(null, failure, "de-DE").note
+            )
+        }
+    }
+
+    /**
+     * `auto`, detection failed, locale unmappable: English — **and the note says why**.
+     *
+     * The prompt needs some language token and whisper has no "unknown" one, so English is
+     * reachable. What it may never be is silent, and the difference between this row and an
+     * explicit `en` is one word in a log line the owner can actually grep for.
+     */
+    @Test
+    fun autoWithNeitherFallsBackToEnglishAndSaysSo() {
+        val fallback = NpuDecodePolicy.resolveLangToken(
+            requested = null, detected = -1, deviceLocale = "xx-XX"
+        )
+        assertEquals(WhisperTokens.langToken("en"), fallback.token)
+        assertEquals("en", fallback.code)
+        assertEquals("auto->en(fallback)", fallback.note)
+        assertEquals(
+            "a null locale reaches the same row — a device that reports no locale at all is not " +
+                "evidence for English either",
+            "auto->en(fallback)",
+            NpuDecodePolicy.resolveLangToken(null, -1, null).note
+        )
+        assertEquals("and a blank one", "auto->en(fallback)", NpuDecodePolicy.resolveLangToken(null, -1, "").note)
+        assertNotEquals(
+            "and it must NOT render as a bare \"en\" — that is the explicit-selection note, and " +
+                "collapsing the two makes a guess indistinguishable from a user's own answer",
+            "en",
+            fallback.note
+        )
+    }
+
+    /**
+     * A detected id outside `50259..50357` is a FAILURE, not a language.
+     *
+     * `nativeDetectLanguage` restricts its argmax to the language block, so this should never
+     * happen — which is exactly why it is checked here rather than trusted. A `<|transcribe|>` or a
+     * timestamp id smuggled into the prompt's language slot is not an error: the model reads that
+     * embedding row and transcribes fluently under it.
+     */
+    @Test
+    fun aDetectedIdOutsideTheLanguageBlockIsTreatedAsFailureNotTrusted() {
+        val outside = listOf(
+            0, 220, WhisperTokens.EOT, WhisperTokens.SOT,
+            WhisperTokens.LANG_FIRST - 1, WhisperTokens.LANG_LAST + 1,
+            WhisperTokens.TRANSLATE, WhisperTokens.TRANSCRIBE, WhisperTokens.NO_TIMESTAMPS,
+            WhisperTokens.TIMESTAMP_BEGIN, WhisperTokens.VOCAB, Int.MAX_VALUE
+        )
+        outside.forEach { id ->
+            val resolved = NpuDecodePolicy.resolveLangToken(null, id, "de-DE")
+            assertEquals(
+                "detected id $id is outside the language block and must be discarded, leaving the " +
+                    "locale row to answer",
+                "auto->de(locale)",
+                resolved.note
+            )
+            assertEquals("and the token must be the LOCALE's, never $id", WhisperTokens.langToken("de"), resolved.token)
+        }
+        assertEquals(
+            "both boundaries of the block ARE trusted: 50259 is <|en|>",
+            "auto->en(detected)",
+            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.LANG_FIRST, "de-DE").note
+        )
+        assertEquals(
+            "and 50357 is <|su|> — this pair is what stops the test above passing on an " +
+                "off-by-one block that rejects everything",
+            "auto->su(detected)",
+            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.LANG_LAST, "de-DE").note
+        )
+    }
+
+    /**
+     * THE CENSUS: no path silently yields English.
+     *
+     * Every resolution that lands on `en` must carry a note that says how it got there, and the
+     * four notes must be four distinct shapes. This is the assertion that makes step 2's promise
+     * mechanical: a future "simplification" that returns `en` with the bare note fails here.
+     */
+    @Test
+    fun noResolutionPathSilentlyYieldsEnglish() {
+        val rows = listOf(
+            NpuDecodePolicy.resolveLangToken("en", -1, "de-DE"),
+            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken("en"), "de-DE"),
+            NpuDecodePolicy.resolveLangToken(null, -1, "en-GB"),
+            NpuDecodePolicy.resolveLangToken(null, -1, "xx-XX"),
+        )
+        assertEquals(
+            listOf("en", "auto->en(detected)", "auto->en(locale)", "auto->en(fallback)"),
+            rows.map { it.note }
+        )
+        assertEquals(
+            "all four are English, which is the point: the token cannot distinguish them and the " +
+                "note is the only thing that can",
+            listOf(50259, 50259, 50259, 50259),
+            rows.map { it.token }
+        )
+        assertEquals("four rows, four distinct notes", 4, rows.map { it.note }.toSet().size)
+        rows.drop(1).forEach {
+            assertTrue(
+                "every auto-derived English answer must name its reason in parentheses: ${it.note}",
+                it.note.startsWith("auto->en(") && it.note.endsWith(")")
+            )
+        }
+    }
+
+    /**
+     * The token and the code in a resolution always name the same language, for all 99 — through
+     * the detection path, which is the one that answers in ids and could drift.
+     */
+    @Test
+    fun theResolvedTokenAndCodeAlwaysAgree() {
+        WhisperTokens.LANGUAGE_CODES.forEach { code ->
+            val viaDetection = NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken(code), null)
+            assertEquals("detected $code: token", WhisperTokens.langToken(code), viaDetection.token)
+            assertEquals("detected $code: code", code, viaDetection.code)
+            assertEquals("detected $code: note", "auto->$code(detected)", viaDetection.note)
+
+            val viaSelection = NpuDecodePolicy.resolveLangToken(code, -1, null)
+            assertEquals("selected $code: token", WhisperTokens.langToken(code), viaSelection.token)
+            assertEquals("selected $code: code", code, viaSelection.code)
+
+            assertEquals(
+                "and the prompt built from a resolution's token is the same prompt the code builds",
+                NpuDecodePolicy.promptTokens(code).toList(),
+                NpuDecodePolicy.promptTokens(viaDetection.token).toList()
+            )
+        }
+    }
+
+    /**
+     * Only the locale's PRIMARY SUBTAG is read: whisper's table is per-language and has no regional
+     * entries. Both separators are accepted because both reach this code in practice —
+     * `Locale.toLanguageTag()` produces `de-DE` and `Locale.toString()` produces `de_DE`.
+     */
+    @Test
+    fun theDeviceLocaleIsReadAsItsPrimarySubtagOnly() {
+        listOf("de", "de-DE", "de_DE", "de-Latn-AT", "DE-de").forEach {
+            assertEquals(
+                "\"$it\" must resolve through its primary subtag to German",
+                "auto->de(locale)",
+                NpuDecodePolicy.resolveLangToken(null, -1, it).note
+            )
+        }
+        assertEquals(
+            "zh-Hans-CN is Chinese; the script and region subtags are not languages",
+            "auto->zh(locale)",
+            NpuDecodePolicy.resolveLangToken(null, -1, "zh-Hans-CN").note
+        )
+        listOf("xx-XX", "xx", "", "   ", "-DE", "und").forEach {
+            assertEquals(
+                "\"$it\" maps to no whisper language and must reach the English fallback row",
+                "auto->en(fallback)",
+                NpuDecodePolicy.resolveLangToken(null, -1, it).note
+            )
+        }
+        assertNull("a null locale maps to nothing", NpuDecodePolicy.whisperCodeForLocale(null))
+        assertEquals("and a bare code maps to itself", "sl", NpuDecodePolicy.whisperCodeForLocale("sl-SI"))
+    }
+
+    /**
+     * The JDK still normalises three languages to their pre-1989 ISO 639 codes, and whisper spells
+     * three more differently from CLDR. Every one of them is a language the app's own picker
+     * offers.
+     *
+     * Getting these wrong is not a crash: it is a Hebrew-speaking user who selected nothing being
+     * transcribed as English, with `(fallback)` in a log they will never read.
+     */
+    @Test
+    fun theJdkLegacyLanguageCodesMapToWhispersSpelling() {
+        val expected = mapOf(
+            "iw" to "he",   // java.util.Locale("he").language == "iw"
+            "in" to "id",
+            "ji" to "yi",
+            "jv" to "jw",   // whisper spells Javanese jw
+            "nb" to "no",   // Bokmal; whisper's table has no/nn and no nb
+            "fil" to "tl",  // Android reports Filipino as fil
+        )
+        expected.forEach { (tag, code) ->
+            assertEquals(
+                "\"$tag\" is what the platform reports and \"$code\" is what whisper calls it",
+                code,
+                NpuDecodePolicy.whisperCodeForLocale("$tag-XX")
+            )
+            assertEquals(
+                "and it must survive the whole resolution, not just the mapping helper",
+                "auto->$code(locale)",
+                NpuDecodePolicy.resolveLangToken(null, -1, "$tag-XX").note
+            )
+        }
+        expected.keys.forEach {
+            assertNull(
+                "the legacy spelling \"$it\" must NOT itself be a whisper code — if it ever " +
+                    "becomes one, this alias is silently shadowing a real language",
+                WhisperTokens.LANGUAGE_CODES.firstOrNull { code -> code == it }
+            )
+        }
+        expected.values.forEach {
+            assertNotNull("\"$it\" must be a real whisper code", WhisperTokens.codeForToken(WhisperTokens.langToken(it)))
+        }
+    }
+
+    /**
+     * `promptTokens(Int)` is the overload the tier calls, and its language slot is not a place a
+     * stray id may land. It refuses anything outside the block for the same reason
+     * `WhisperTokens.langToken` refuses an unknown code: the failure is a fluent transcript, not an
+     * error.
+     */
+    @Test
+    fun promptTokensFromAResolvedIdRefusesAnythingOutsideTheLanguageBlock() {
+        assertArrayEquals(
+            "the id overload builds the identical prompt the code overload does",
+            intArrayOf(50258, 50262, 50359, 50363),
+            NpuDecodePolicy.promptTokens(WhisperTokens.langToken("es"))
+        )
+        val outside = listOf(
+            WhisperTokens.SOT, WhisperTokens.EOT, WhisperTokens.TRANSCRIBE, WhisperTokens.TRANSLATE,
+            WhisperTokens.NO_TIMESTAMPS, WhisperTokens.TIMESTAMP_BEGIN,
+            WhisperTokens.LANG_FIRST - 1, WhisperTokens.LANG_LAST + 1, 0, -1, WhisperTokens.VOCAB
+        )
+        outside.forEach { id ->
+            try {
+                val got = NpuDecodePolicy.promptTokens(id)
+                fail(
+                    "promptTokens($id) must throw; it returned ${got.toList()}. An id in the " +
+                        "language slot that is not a language is not an error to the model — it " +
+                        "reads that embedding row and transcribes under it."
+                )
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(
+                    "the refusal must name the offending id. Got: ${expected.message}",
+                    expected.message?.contains("$id") == true
+                )
+            }
         }
     }
 }
