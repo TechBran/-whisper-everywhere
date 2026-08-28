@@ -114,3 +114,10 @@ keystore.properties
 *.jks
 *.keystore
 .superpowers/
+
+# Qualcomm QNN / QAIRT C API headers (4.0 NPU tier). FETCHED, NEVER COMMITTED.
+# Every file under this tree carries "Confidential and Proprietary - Qualcomm Technologies, Inc."
+# Compiling against them is what they are shipped for; redistributing them is not permitted, and
+# this repo has a public remote. tools/fetch_qnn_headers.py re-fetches the pinned version on demand
+# (and falls back to the local spike copy offline), so nothing is lost by keeping them out.
+app/src/main/cpp/include/QNN/

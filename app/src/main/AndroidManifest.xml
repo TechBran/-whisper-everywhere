@@ -67,6 +67,20 @@
             android:name="libOpenCL.so"
             android:required="false" />
 
+        <!-- FastRPC, for the 4.0 NPU tier (Hexagon HTP via QNN). libQnnHtp.so reaches the DSP
+             through these two vendor libraries, and on Android 12+ the platform refuses to resolve
+             a vendor native library the manifest does not name. Without these declarations the HTP
+             never comes up and the failure is SILENT — no exception, no crash, no log the app can
+             see, indistinguishable from unsupported silicon. It cost a device round trip to learn.
+             required="false" on both: this APK installs on every device, and a required library the
+             vendor does not ship would make it uninstallable there. -->
+        <uses-native-library
+            android:name="libcdsprpc.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libadsprpc.so"
+            android:required="false" />
+
         <!-- Main Activity -->
         <activity
             android:name=".MainActivity"

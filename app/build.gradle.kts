@@ -157,6 +157,31 @@ android {
             excludes += "**/libsherpa-onnx-c-api.so"
             excludes += "**/libsherpa-onnx-cxx-api.so"
             excludes += "**/libparakeet.so"
+
+            // QNN/QAIRT runtime (4.0 NPU tier). The AAR ships every backend for every Hexagon
+            // architecture; this app deserialises ONE precompiled context binary built for
+            // SM8650 / HTP v75, and AI Hub context binaries are not portable across HTP arch
+            // anyway. Everything below is dead weight in the APK.
+            //
+            // libQnnHtpPrepare.so alone is 79 MB and exists only to COMPILE a graph on device —
+            // we never compile one.
+            excludes += "**/libQnnHtpPrepare.so"
+            // Non-HTP backends: unused.
+            excludes += "**/libQnnDsp.so"
+            excludes += "**/libQnnDspV66Skel.so"
+            excludes += "**/libQnnDspV66Stub.so"
+            excludes += "**/libQnnGpu.so"
+            // Other HTP architectures. V75 is the only one kept.
+            excludes += "**/libQnnHtpV68Skel.so"
+            excludes += "**/libQnnHtpV68Stub.so"
+            excludes += "**/libQnnHtpV69Skel.so"
+            excludes += "**/libQnnHtpV69Stub.so"
+            excludes += "**/libQnnHtpV73Skel.so"
+            excludes += "**/libQnnHtpV73Stub.so"
+            excludes += "**/libQnnHtpV79Skel.so"
+            excludes += "**/libQnnHtpV79Stub.so"
+            excludes += "**/libQnnHtpV81Skel.so"
+            excludes += "**/libQnnHtpV81Stub.so"
         }
     }
 
@@ -174,12 +199,48 @@ android {
 // 27 actionable tasks: 27 up-to-date / BUILD SUCCESSFUL" without running a single test — which is
 // precisely the shape of an upstream merge that re-promotes the demoted VAD logs. Declaring the two
 // guarded files as explicit test inputs makes that change invalidate the task, so the guard fires.
+// (4.0) NpuNativeContractTest asserts over qnn_asr.cpp, the manifest and the root .gitignore for
+// exactly the same reason and with exactly the same blind spot: none of the three is an input to
+// the JVM test task by default, so an edit confined to any of them leaves this task UP-TO-DATE and
+// the guard passes against stale evidence. The manifest and .gitignore go in the same list as the
+// .cpp files — the rule is about what the tests READ, not about the file extension.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
         "src/main/cpp/whisper.cpp/src/whisper.cpp",
+        "src/main/cpp/qnn_asr.cpp",
+        "src/main/AndroidManifest.xml",
+        rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
 }
+
+// QNN/QAIRT C API headers (4.0 NPU tier). PROPRIETARY — fetched, never committed (.gitignore:
+// app/src/main/cpp/include/QNN/). The script pins the version as a literal and asserts the fetched
+// QnnSdkBuildId.h matches it, because a silent 2.45-vs-2.49 header/runtime skew COMPILES CLEAN;
+// same discipline as fetchSherpaAar's sha256 check below.
+val qnnHeaderRoot = file("src/main/cpp/include")
+val fetchQnnHeaders = tasks.register<Exec>("fetchQnnHeaders") {
+    description = "Fetches the pinned QAIRT (QNN) C API headers into src/main/cpp/include/QNN."
+    inputs.file(rootProject.file("tools/fetch_qnn_headers.py"))
+    outputs.dir(file("src/main/cpp/include/QNN"))
+    // Absolute interpreter: `python` is not on PATH here, and CMake in this same build already
+    // pins Python3_EXECUTABLE to this exact binary for the same reason (the Windows-Store alias
+    // stub resolves first otherwise).
+    commandLine(
+        "C:/Users/bastr/AppData/Local/Programs/Python/Python313/python.exe",
+        rootProject.file("tools/fetch_qnn_headers.py").absolutePath,
+        qnnHeaderRoot.absolutePath,
+    )
+}
+
+// Ordered before CMAKE, not merely before preBuild. `preBuild` gates the compile* tasks; it does
+// NOT gate AGP's configureCMake*/buildCMake* tasks, and those are the ones that actually need the
+// headers on disk — configureCMake evaluates the EXISTS() guard in CMakeLists.txt that decides
+// whether libqnnasr.so is built at all. preBuild is wired too, so a build that never reaches CMake
+// still leaves the tree populated.
+tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }
+    .configureEach { dependsOn(fetchQnnHeaders) }
+tasks.named("preBuild") { dependsOn(fetchQnnHeaders) }
 
 // sherpa-onnx AAR (on-device TTS, Track F): no official Maven coordinates exist (verified
 // 2026-07-18) and *.aar is gitignored, so the pinned upstream release asset is fetched on
@@ -234,6 +295,13 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // QNN/QAIRT runtime (4.0 NPU tier): libQnnHtp.so, libQnnSystem.so, libQnnHtpV75Skel/Stub.so.
+    // These are dlopen()ed by our own libqnnasr.so — never linked at build time — so no import
+    // library is needed, only the headers (fetched by fetchQnnHeaders above, never committed).
+    // The version MUST stay in step with the pinned literal in tools/fetch_qnn_headers.py.
+    // Most of the AAR's payload is excluded in packaging.jniLibs above; see the note there.
+    implementation("com.qualcomm.qti:qnn-runtime:2.49.0")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.1.1")
