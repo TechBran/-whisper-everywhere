@@ -208,6 +208,15 @@ android {
 // thing MelExportContractTest can read to know that whisper_get_mel_segment is DECLARED is that
 // header, and "add a declaration to a header" is precisely the shape of the change that would
 // otherwise leave this task UP-TO-DATE. Deleting the declaration would have left the guard green.
+// (4.0 Q5) whisper_vocab.json is the first ASSET in this list and it belongs here for exactly the
+// reason stated above — the rule is about what the tests READ. Unit tests run with
+// `unitTests.isIncludeAndroidResources` at its default (false), so assets are NOT on the test
+// classpath and WhisperBpeDecoderTest reads the file straight out of the source tree with the house
+// `source(relative)` walker. That is what lets it pin the SHIPPED vocabulary rather than a fixture —
+// and without this line the pin is decoration. MEASURED, not assumed: with the file absent from
+// this list, corrupting one language code in the asset (`"<|sl|>"` -> `"<|XX|>"`) produced
+// "Task :app:testDebugUnitTest UP-TO-DATE / BUILD SUCCESSFUL" without running a single test, so the
+// three tests that exist to catch a wrong or edited vocabulary all "passed" against stale evidence.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -215,6 +224,7 @@ tasks.withType<Test>().configureEach {
         "src/main/cpp/whisper.cpp/include/whisper.h",
         "src/main/cpp/qnn_asr.cpp",
         "src/main/AndroidManifest.xml",
+        "src/main/assets/whisper_vocab.json",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
 }
