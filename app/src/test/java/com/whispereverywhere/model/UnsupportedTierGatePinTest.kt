@@ -46,6 +46,11 @@ import java.io.File
  *
  * **Everything here is SYMBOL-SCOPED and no line numbers are used** — every anchor this workstream
  * inherited from the plan had drifted, by up to ~155 lines.
+ *
+ * **4.0 (Q7a) adds a second manager predicate for the same reason.** `isInstalled` decides whether a
+ * tier is on disk, and the npu tier is the first one made of TWO files; the mutation that reverts it
+ * to the single-file, `approxBytes` form survived Q7a's full 1448-test battery. Same class because it
+ * is the same hole — a `Context`-bound predicate the suite cannot execute — and the same instrument.
  */
 class UnsupportedTierGatePinTest {
 
@@ -117,6 +122,50 @@ class UnsupportedTierGatePinTest {
             "the old name is gone, so no caller can be left on the retired-flag gate",
             0,
             count(manager, "retiredInstalledModel"),
+        )
+    }
+
+    @Test
+    fun theInstalledPredicateSizeGatesEachFileAgainstItsOwnBytes() {
+        // 4.0 (Q7a). The same instrument, the same argument, one method further down the SAME class
+        // — and a mutation the Q7a battery measured surviving a full 1448-test suite (row R14).
+        //
+        // npu is the first PAIRED tier: `fileName` is the encoder (132,927,488 B) and `approxBytes`
+        // is the pair (358,244,352 B). Gate the primary against `approxBytes` — which is exactly
+        // what this method did before Q7a, and exactly what a "simplification" would restore — and
+        // the encoder is 63% under the ±5% window, so `isInstalled(npu)` is false FOREVER, on a
+        // device where the owner imported both files correctly. The tier never arms, and Q8's card
+        // tells the user their device is the problem.
+        //
+        // The catalog half is pinned in WhisperCatalogHelpersTest, which can execute. This half
+        // cannot: the manager needs a Context (see this class's KDoc), so the CALL is pinned instead.
+        val predicate = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    fun isInstalled(model: WhisperModel): Boolean {",
+        )
+        assertEquals(
+            "the primary file is size-gated against primaryBytes, which is the file it names",
+            1,
+            count(predicate, "WhisperCatalog.sizeWithinTolerance(f.length(), model.primaryBytes)"),
+        )
+        assertEquals(
+            "isInstalled never gates a file against approxBytes: for a paired tier that is the SUM " +
+                "of two files, and no single file on disk can ever match it",
+            0,
+            count(predicate, "f.length(), model.approxBytes"),
+        )
+        assertEquals(
+            "the paired artefact is required too, at ITS own size — half an npu install is not an " +
+                "install, and arming the tier on a missing decoder is a native-side failure",
+            1,
+            count(predicate, "WhisperCatalog.sizeWithinTolerance(pf.length(), paired.approxBytes)"),
+        )
+        assertEquals(
+            "a tier with no paired artefact still answers on its primary alone, so the six ggml " +
+                "tiers keep the predicate they have always had",
+            1,
+            count(predicate, "model.pairedArtifact ?: return true"),
         )
     }
 

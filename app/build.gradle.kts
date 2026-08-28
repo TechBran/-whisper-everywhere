@@ -225,6 +225,12 @@ android {
 // must appear nowhere at all, so that the KDoc cannot re-teach the 190 MB mistake it exists to
 // forbid). Without this line, the single mutation that pin is for is the single mutation that never
 // re-runs it.
+// (4.0 Q7a) The two files UnsupportedTierGatePinTest reads join for the same reason, and it was
+// MEASURED here rather than inferred: with WhisperModelManager.kt absent from this list, a
+// comment-only edit to it produced "Task :app:testDebugUnitTest UP-TO-DATE" — so that class's
+// negative assertions (`model.retired` must appear nowhere; `f.length(), model.approxBytes` must
+// appear nowhere in isInstalled) could be broken by a KDoc line that never re-runs them. The pins
+// predate this entry; the gap was found by Q7a's battery and is closed for both files at once.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -234,6 +240,8 @@ tasks.withType<Test>().configureEach {
         "src/main/AndroidManifest.xml",
         "src/main/assets/whisper_vocab.json",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
+        "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",
+        "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
 }
