@@ -7,11 +7,37 @@ import kotlin.math.abs
 enum class ModelScope { ENGLISH, MULTILINGUAL }
 
 /**
+ * A SECOND file a tier needs on disk beside [WhisperModel.fileName]. Deliberately NOT called
+ * `companion`: that word already names a Kotlin construct, and this plan uses "companion" for the
+ * decoder path handed across the backend seam ([com.whispereverywhere.transcription.ModelPathProvider]).
+ *
+ * The 4.0 npu tier is the only user: its model is a PAIR of precompiled QAIRT context binaries
+ * (encoder + decoder) that ship inside one zip, so no single [WhisperModel.fileName] can describe
+ * it. [approxBytes] is this file's own size, checked with the same ±[WhisperCatalog.SIZE_TOLERANCE]
+ * gate as the primary; [sha256] is the digest of the EXTRACTED file, not of the zip.
+ *
+ * @param url provenance of the artefact, i.e. where a human obtains it. For a [WhisperModel.gated]
+ *   tier this is not a DownloadManager source — see [WhisperModel.url].
+ */
+data class PairedArtifact(
+    val fileName: String,
+    val url: String,
+    val sha256: String,
+    val approxBytes: Long,
+)
+
+/**
  * A downloadable whisper.cpp model tier.
  *
- * @param approxBytes advertised download size; used as a size gate before sha256 verification.
+ * @param approxBytes the size the tier ADVERTISES — for a single-file tier this is also the file
+ *   on disk, but for a paired tier it is the sum of both files, because that is what the user
+ *   actually downloads and what the size badge must state. Never compare a file length to this
+ *   without checking [primaryBytes] first.
  * @param sha256 lowercased hex digest of the downloaded file (see WhisperCatalog SHA256_* consts).
  * @param minRamBytes minimum device RAM to *recommend* this model (0 = recommended on any device).
+ * @param url where the artefact comes from. Every ggml tier is fetched from this URL by
+ *   DownloadManager; a [gated] tier is not fetched at all (npu is SAF-imported from a zip), so its
+ *   URL records provenance and nothing hands it to `download()`.
  */
 data class WhisperModel(
     val id: String,
@@ -42,6 +68,28 @@ data class WhisperModel(
      * faster, so that card stays true.
      */
     val unsupported: Boolean = false,
+    /**
+     * A tier only SOME devices may be offered — 4.0's npu, which is a precompiled QAIRT graph for
+     * one HTP architecture and is meaningless anywhere else. Orthogonal to [retired]: retired means
+     * "we stopped offering this to anyone", gated means "this device decides".
+     *
+     * A gated tier is out of [WhisperCatalog.pickable] unconditionally and only enters the chooser
+     * through [WhisperCatalog.pickableFor], whose argument is the caller's gate answer. That split
+     * is what keeps the census/copy blast radius to the entries list alone.
+     */
+    val gated: Boolean = false,
+    /**
+     * The size of the file at [fileName] specifically. Defaults to [approxBytes], so every
+     * single-file tier is untouched and the two are the same number.
+     *
+     * It exists because `WhisperModelManager.isInstalled` size-gates `models/<fileName>` at ±5%,
+     * and npu's [approxBytes] is the PAIR (358,244,352) while its [fileName] is the encoder alone
+     * (132,927,488). Gating the encoder against the sum is 63% out — `isInstalled(npu)` would have
+     * been false forever, whatever the owner imported.
+     */
+    val primaryBytes: Long = approxBytes,
+    /** The second file this tier needs on disk, or null for the ordinary single-file tiers. */
+    val pairedArtifact: PairedArtifact? = null,
 )
 
 /**
@@ -70,6 +118,23 @@ object WhisperCatalog {
     private const val SHA256_EXTREME = "76733e26ad8fe1c7a5bf7531a9d41917b2adc0f20f2e4f5531688a8c6cd88eb0"
     private const val SHA256_MULTI = "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
     private const val SHA256_ULTRA = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+
+    // The 4.0 npu tier's two context binaries. MEASURED sha256s of the EXTRACTED files (the spike
+    // staged and hashed both), not of the zip that carries them — nothing here is a placeholder.
+    private const val SHA256_NPU_ENCODER = "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec"
+    private const val SHA256_NPU_DECODER = "fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4"
+
+    /**
+     * Provenance of the npu pair: Qualcomm AI Hub's public precompiled QNN-ONNX release for
+     * whisper_small_quantized on Snapdragon 8 Gen 3, the zip the spike measured. BOTH context
+     * binaries live inside this ONE archive, which is why both entries carry the same URL and why
+     * neither is a DownloadManager source — Q8 imports the extracted files through SAF, and the
+     * gate keeps the tier out of every download path (see [pickable]).
+     */
+    private const val NPU_ASSET_ZIP_URL =
+        "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/" +
+            "whisper_small_quantized/releases/v0.61.0/" +
+            "whisper_small_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3.zip"
 
     private fun urlFor(fileName: String): String = BASE_URL + fileName
 
@@ -148,10 +213,54 @@ object WhisperCatalog {
             retired = true,
             unsupported = true,
         ),
+        WhisperModel(
+            id = "npu",
+            displayName = "Multilingual on NPU (small)",
+            // The ENCODER context binary. The decoder is the pairedArtifact below; both come out
+            // of the same zip and both must be on disk before the tier is installed.
+            fileName = "encoder_qairt_context.bin",
+            url = NPU_ASSET_ZIP_URL,
+            // The PAIR — 132,927,488 + 225,316,864. This is the number the size badge states,
+            // because it is what the owner downloads and what the storage costs.
+            approxBytes = 358_244_352L,
+            sha256 = SHA256_NPU_ENCODER,
+            // Same whisper-small weights as `multi`, quantised for the Hexagon: 90+ languages,
+            // not an English-only tier.
+            scope = ModelScope.MULTILINGUAL,
+            // No RAM gate: the SoC gate (NpuGate) already restricts this tier to 8 Gen 3-class
+            // hardware, which is never RAM-poor, and a second gate would only raise the chooser's
+            // "high-end devices only" note on devices that had already passed the real test.
+            minRamBytes = 0L,
+            gated = true,
+            primaryBytes = 132_927_488L,
+            pairedArtifact = PairedArtifact(
+                fileName = "decoder_qairt_context.bin",
+                url = NPU_ASSET_ZIP_URL,
+                sha256 = SHA256_NPU_DECODER,
+                approxBytes = 225_316_864L,
+            ),
+        ),
     )
 
-    /** Tiers offered to users. Retired tiers stay in [entries] so byId() keeps resolving them. */
-    val pickable: List<WhisperModel> = entries.filter { !it.retired }
+    /**
+     * Tiers offered to users. Retired tiers stay in [entries] so byId() keeps resolving them;
+     * [WhisperModel.gated] tiers are excluded here **unconditionally** and reach the chooser only
+     * through [pickableFor], so every caller that cannot answer the gate question keeps the
+     * device-independent lineup it has always had.
+     */
+    val pickable: List<WhisperModel> = entries.filter { !it.retired && !it.gated }
+
+    /**
+     * [pickable] plus the npu tier when [npuAvailable] — the caller's answer to
+     * `NpuWhisperBackend.isTierAvailable(soc, mfr, libDir) && WhisperModelManager.isInstalled(npu)`
+     * (Q6 handoff §9.1: capability AND the 358 MB actually on disk). Computed once per process,
+     * never in a recomposition — the capability half dlopens two libraries on its first call.
+     *
+     * Only `npu` is named: a future gated tier stays hidden until someone decides what its own gate
+     * is, rather than inheriting this one by accident.
+     */
+    fun pickableFor(npuAvailable: Boolean): List<WhisperModel> =
+        if (npuAvailable) entries.filter { !it.retired && (!it.gated || it.id == "npu") } else pickable
 
     /**
      * Default tier on first run. **pro (small.en) since 2026-08-20 (3.7 Workstream H):** eco and

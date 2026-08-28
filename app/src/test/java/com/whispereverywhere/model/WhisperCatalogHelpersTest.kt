@@ -11,9 +11,13 @@ class WhisperCatalogHelpersTest {
 
     @Test
     fun catalog_hasFiveEntries_withExpectedIds() {
+        // 4.0: 6 -> 7. The census pin fired when `npu` was added and is resolved here rather than
+        // relaxed — the whole point of the pin is that a tier cannot arrive unannounced. `npu` is
+        // last because entries order is chronological, and it is GATED, so this list growing does
+        // not change what any device is offered (see the pickable/pickableFor pair below).
         val ids = WhisperCatalog.entries.map { it.id }
-        assertEquals(6, WhisperCatalog.entries.size)
-        assertEquals(listOf("eco", "base", "pro", "extreme", "multi", "ultra"), ids)
+        assertEquals(7, WhisperCatalog.entries.size)
+        assertEquals(listOf("eco", "base", "pro", "extreme", "multi", "ultra", "npu"), ids)
     }
 
     @Test
@@ -166,13 +170,82 @@ class WhisperCatalogHelpersTest {
 
     @Test fun every_entry_has_a_distinct_id_and_filename() {
         assertEquals(WhisperCatalog.entries.size, WhisperCatalog.entries.map { it.id }.toSet().size)
-        assertEquals(WhisperCatalog.entries.size, WhisperCatalog.entries.map { it.fileName }.toSet().size)
+        // Paired artefacts land in the SAME models dir as the primaries, so the distinctness rule
+        // covers every file name any tier writes there — two tiers sharing one file on disk would
+        // make one of them delete the other's model.
+        val files = WhisperCatalog.entries.flatMap { listOfNotNull(it.fileName, it.pairedArtifact?.fileName) }
+        assertEquals(files.size, files.toSet().size)
     }
 
     @Test fun every_sha256_is_lowercase_hex_of_the_right_length() {
-        WhisperCatalog.entries.forEach {
-            assertEquals("${it.id} sha256 length", 64, it.sha256.length)
-            assertTrue("${it.id} sha256 must be lowercase hex", it.sha256.matches(Regex("[0-9a-f]{64}")))
+        // Reads the PAIRED artefact's digest too (4.0): npu's decoder is 225 MB of the 358 MB the
+        // user installs, and a "PENDING"/placeholder digest there would have been unverifiable
+        // bytes shipped under a verified tier's name.
+        val digests = WhisperCatalog.entries.flatMap { m ->
+            listOfNotNull(m.id to m.sha256, m.pairedArtifact?.let { "${m.id}:${it.fileName}" to it.sha256 })
         }
+        digests.forEach { (who, sha) ->
+            assertEquals("$who sha256 length", 64, sha.length)
+            assertTrue("$who sha256 must be lowercase hex", sha.matches(Regex("[0-9a-f]{64}")))
+        }
+    }
+
+    @Test fun the_npu_tier_states_the_asset_pair_it_actually_needs() {
+        // Both digests are MEASURED off the extracted files (the spike staged and hashed them),
+        // not placeholders — the tier ships verified or not at all.
+        val npu = WhisperCatalog.byId("npu")!!
+        assertEquals(ModelScope.MULTILINGUAL, npu.scope)      // same whisper-small weights as multi
+        assertEquals(0L, npu.minRamBytes)                     // the SoC gate is the real gate
+        assertTrue(npu.gated)
+        assertFalse(npu.retired)
+        assertFalse(npu.unsupported)
+        assertEquals("encoder_qairt_context.bin", npu.fileName)
+        assertEquals("3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec", npu.sha256)
+        assertEquals(132_927_488L, npu.primaryBytes)
+
+        val decoder = npu.pairedArtifact!!
+        assertEquals("decoder_qairt_context.bin", decoder.fileName)
+        assertEquals("fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4", decoder.sha256)
+        assertEquals(225_316_864L, decoder.approxBytes)
+
+        // The advertised size is the PAIR: what the user downloads, stores, and reads on the badge.
+        assertEquals(358_244_352L, npu.approxBytes)
+        assertEquals(npu.approxBytes, npu.primaryBytes + decoder.approxBytes)
+        // Both files come out of one archive, so one URL is the honest answer for both.
+        assertEquals(npu.url, decoder.url)
+    }
+
+    @Test fun the_encoder_is_size_gated_against_its_own_bytes_not_the_pairs() {
+        // THE reason primaryBytes exists. isInstalled() size-gates models/<fileName> — the ENCODER
+        // — and npu.approxBytes is the sum of both files. Gate the encoder against the sum and the
+        // tier reads "not installed" forever, whatever the owner imports.
+        val npu = WhisperCatalog.byId("npu")!!
+        assertFalse(
+            "the encoder's own length must NOT satisfy the pair's advertised size",
+            WhisperCatalog.sizeWithinTolerance(npu.primaryBytes, npu.approxBytes),
+        )
+        assertTrue(WhisperCatalog.sizeWithinTolerance(npu.primaryBytes, npu.primaryBytes))
+        // Every single-file tier is untouched: primaryBytes defaults to approxBytes.
+        WhisperCatalog.entries.filter { it.pairedArtifact == null }.forEach {
+            assertEquals("${it.id} primaryBytes drifted from approxBytes", it.approxBytes, it.primaryBytes)
+        }
+    }
+
+    @Test fun a_gated_tier_is_never_pickable_and_is_never_the_default() {
+        // The offered lineup must not change on any device that cannot answer the gate question,
+        // and the fallback every no-pick-on-record path lands on must stay device-independent.
+        assertEquals(listOf("npu"), WhisperCatalog.entries.filter { it.gated }.map { it.id })
+        assertFalse(WhisperCatalog.pickable.any { it.gated })
+        assertFalse(WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!.gated)
+        assertEquals("multi", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
+    }
+
+    @Test fun pickableFor_offers_npu_only_when_the_gate_passes() {
+        // false is the every-other-device answer and must be byte-identical to `pickable`.
+        assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(npuAvailable = false))
+        assertEquals(listOf("pro", "multi"), WhisperCatalog.pickableFor(false).map { it.id })
+        // true ADDS the tier, changing nothing else — retired tiers stay retired.
+        assertEquals(listOf("pro", "multi", "npu"), WhisperCatalog.pickableFor(true).map { it.id })
+        assertTrue(WhisperCatalog.pickableFor(true).containsAll(WhisperCatalog.pickable))
     }
 }

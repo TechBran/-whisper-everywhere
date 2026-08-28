@@ -38,10 +38,21 @@ class WhisperModelManager(
 
     private fun fileFor(model: WhisperModel): File = File(modelsDir(), model.fileName)
 
-    /** Installed = file present on disk with a size within tolerance of approxBytes. */
+    /**
+     * Installed = every file this tier needs is present at its own size, within ±5%.
+     *
+     * The primary is gated against [WhisperModel.primaryBytes], NOT `approxBytes`: for a paired
+     * tier (npu) `approxBytes` is the sum of both files, and comparing the encoder alone against
+     * the pair's total is 63% out — the tier would read as "not installed" forever no matter what
+     * the owner imported. For every single-file tier the two are the same number, so this is the
+     * predicate it has always been.
+     */
     fun isInstalled(model: WhisperModel): Boolean {
         val f = fileFor(model)
-        return f.exists() && WhisperCatalog.sizeWithinTolerance(f.length(), model.approxBytes)
+        if (!f.exists() || !WhisperCatalog.sizeWithinTolerance(f.length(), model.primaryBytes)) return false
+        val paired = model.pairedArtifact ?: return true
+        val pf = File(modelsDir(), paired.fileName)
+        return pf.exists() && WhisperCatalog.sizeWithinTolerance(pf.length(), paired.approxBytes)
     }
 
     /** The selected model, if it is actually installed on disk. */

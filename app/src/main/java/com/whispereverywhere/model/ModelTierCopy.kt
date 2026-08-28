@@ -33,9 +33,26 @@ object ModelTierCopy {
             badges = listOf("90+ languages", "190 MB"),
             body = "The pick for non-English dictation.",
         ),
+        // 4.0: the gated tier. Only devices that pass the SoC gate AND have both context binaries
+        // installed ever see this card, so the copy may speak about "this device" in the present
+        // tense. The comparison is OUR OWN before/after on THAT device — same model as Multilingual,
+        // different processor — never a claim about another app and never an absolute ("instant",
+        // "real-time"), which the app-wide no-speed-claims rule forbids everywhere.
+        "npu" to TierCopy(
+            headline = "Fastest multilingual",
+            // 358 MB = the PAIR (encoder 132,927,488 + decoder 225,316,864). The badge states what
+            // the user downloads and stores, not the one file WhisperModel.fileName names.
+            badges = listOf("90+ languages", "358 MB"),
+            body = "Runs on your phone's AI chip. Same model as Multilingual, much faster on this device.",
+        ),
     )
 
-    /** Copy for an offered tier id; null for retired or unknown ids (callers fall back). */
+    /**
+     * Copy for an offered tier id; null for retired or unknown ids (callers fall back).
+     *
+     * "Offered" includes the gated `npu` tier, which is out of [WhisperCatalog.pickable] by design
+     * — copy exists for every tier a chooser can render, and the gate decides whether it renders.
+     */
     fun forId(id: String): TierCopy? = copyById[id]
 
     /**

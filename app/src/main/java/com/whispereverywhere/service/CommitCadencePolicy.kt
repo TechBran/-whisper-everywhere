@@ -15,6 +15,8 @@ import com.whispereverywhere.audio.Endpointer
  *   the same encoder cost as a 2.4 s one, so merging strictly beats committing.
  * - multi: F = 2.3 s (CPU) -> N <= ~10.7 commits/min -> a 6 s floor. Predictable ~2.8 s
  *   speech-end-to-text at the paced boundary, and no 15 s walls.
+ * - npu (4.0): the same small weights as multi, but the encoder runs on the Hexagon — ~0.4 s
+ *   sustained in the spike, so it pays for the FAST row. See [minCommitIntervalMs].
  * - extreme/ultra (539-574 MB): UNMEASURED. 8 s is the conservative placeholder; H2 may revise it.
  * - cloud batch: every commit is one HTTP POST (Semaphore(3) in flight, shed at 24). Same
  *   reasoning that made the 4 s first cap LOCAL-only.
@@ -72,7 +74,13 @@ object CommitCadencePolicy {
     fun minCommitIntervalMs(tierId: String?, isCloudBatch: Boolean): Long {
         if (isCloudBatch) return MIN_COMMIT_INTERVAL_CLOUD_MS
         return when (tierId) {
-            "eco", "base", "pro" -> MIN_COMMIT_INTERVAL_FAST_MS
+            // npu rides the FAST row, not multi's 6 s, even though it is the same whisper-small
+            // weights: the work moves to the Hexagon, where the spike measured the encoder at
+            // ~405 ms sustained (1007 ms unvoted — a power-saver floor, not slow silicon) against
+            // multi's 2.3 s fixed cost, and the decode is bounded at 196 tokens. Pacing a 0.4 s
+            // encoder at a 6 s floor would discard the entire reason the tier exists. Provisional
+            // on ONE spike-measured encoder pass; Q10a is the first full-tier device measurement.
+            "eco", "base", "pro", "npu" -> MIN_COMMIT_INTERVAL_FAST_MS
             "multi" -> MIN_COMMIT_INTERVAL_MULTI_MS
             "extreme", "ultra" -> MIN_COMMIT_INTERVAL_LARGE_MS
             else -> MIN_COMMIT_INTERVAL_LARGE_MS

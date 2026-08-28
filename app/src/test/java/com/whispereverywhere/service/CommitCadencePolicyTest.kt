@@ -119,9 +119,15 @@ class CommitCadencePolicyTest {
     fun everyCatalogTierIsNamedExplicitly() {
         // A tier added to the catalog without a cadence decision silently inherits the 8 s
         // conservative default and nobody notices. This is the alarm for that.
+        // 4.0: npu joined the catalog and this pin fired, exactly as designed. The decision it
+        // asked for: 1_200L — the FAST row. Same whisper-small weights as multi, but the encoder
+        // runs on the Hexagon at ~405 ms sustained (spike-measured) against multi's 2.3 s fixed
+        // cost, and the decode is bounded at 196 tokens; the 6 s floor would have thrown the win
+        // away. Provisional on one spike pass — Q10a measures the full tier on device.
         val expected = mapOf(
             "eco" to 1_200L, "base" to 1_200L, "pro" to 1_200L,
             "multi" to 6_000L, "extreme" to 8_000L, "ultra" to 8_000L,
+            "npu" to 1_200L,
         )
         assertEquals(
             "a catalog tier gained or lost an entry — decide its cadence",

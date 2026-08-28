@@ -12,14 +12,25 @@ class ModelTierCopyTest {
     // The discipline that would have prevented the Bengali review: nobody can add or reword an
     // offered tier without stating a size, a speed-vs-accuracy position, and language coverage.
 
-    @Test fun every_pickable_tier_has_copy() {
-        WhisperCatalog.pickable.forEach { model ->
+    /**
+     * Every tier a chooser can render — [WhisperCatalog.pickable] PLUS the gated 4.0 `npu`, which
+     * gate-passing devices see and which `pickable` therefore cannot reach.
+     *
+     * The census loops below iterate THIS list, not `pickable`: the copy rules are properties of a
+     * card the user reads, and the gate decides whether the card renders, not whether the rules
+     * apply. Iterating `pickable` would have let npu's copy say anything at all with the suite
+     * still green.
+     */
+    private val offeredTiers = WhisperCatalog.entries.filter { !it.retired }
+
+    @Test fun every_offered_tier_has_copy() {
+        offeredTiers.forEach { model ->
             assertNotNull("no copy for offered tier '${model.id}'", ModelTierCopy.forId(model.id))
         }
     }
 
     @Test fun every_tier_states_its_size_as_a_badge() {
-        WhisperCatalog.pickable.forEach { model ->
+        offeredTiers.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             assertTrue(
                 "tier '${model.id}' has no size badge",
@@ -29,8 +40,9 @@ class ModelTierCopyTest {
     }
 
     @Test fun the_size_badge_tells_the_truth_about_the_download() {
-        // 60 MB tiers say 60, 190 MB tiers say 190 — the badge must track approxBytes.
-        WhisperCatalog.pickable.forEach { model ->
+        // 60 MB tiers say 60, 190 MB tiers say 190 — the badge must track approxBytes. For a
+        // PAIRED tier that is the sum of both files, which is what the user actually downloads.
+        offeredTiers.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             val expectedMb = (model.approxBytes / 1_000_000L).toInt()
             val statedMb = copy.badges.first { it.endsWith(" MB") }.removeSuffix(" MB").toInt()
@@ -42,8 +54,8 @@ class ModelTierCopyTest {
     }
 
     @Test fun every_tier_takes_a_speed_vs_accuracy_position() {
-        val positionWords = listOf("fastest", "fast", "slower", "accuracy")
-        WhisperCatalog.pickable.forEach { model ->
+        val positionWords = POSITION_WORDS
+        offeredTiers.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             val all = (copy.headline + " " + copy.body).lowercase()
             assertTrue(
@@ -56,7 +68,7 @@ class ModelTierCopyTest {
     @Test fun language_coverage_is_a_badge_matching_the_catalog_scope() {
         // Coverage renders as a badge — visually impossible to miss. "English only" on every
         // ENGLISH tier; "90+ languages" on every MULTILINGUAL tier.
-        WhisperCatalog.pickable.forEach { model ->
+        offeredTiers.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             when (model.scope) {
                 ModelScope.ENGLISH -> assertTrue(
@@ -93,7 +105,7 @@ class ModelTierCopyTest {
         // "record"/"recording" contains "eco", "based"/"database" contains "base" — so a plain
         // `contains` fails ordinary dictation copy while naming a reference that is not there.
         val retiredIds = WhisperCatalog.entries.filter { it.retired }.map { it.id.lowercase() }
-        WhisperCatalog.pickable.forEach { model ->
+        offeredTiers.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             val all = (copy.headline + " " + copy.body + " " + copy.badges.joinToString(" ")).lowercase()
             retiredIds.forEach { r ->
@@ -160,5 +172,85 @@ class ModelTierCopyTest {
             assertNotNull(WhisperCatalog.byId(it))
             assertNotNull(ModelTierCopy.forId(it))
         }
+    }
+
+    // ---------------------------------------------------------------- the 4.0 gated tier
+    //
+    // npu is the first tier the census loops above could not have reached through `pickable`, so
+    // 3.7's discipline is restated here explicitly against the owner-approved strings.
+
+    @Test fun the_npu_headline_is_pinned_exactly_and_takes_a_position() {
+        val copy = ModelTierCopy.forId("npu")!!
+        assertEquals("Fastest multilingual", copy.headline)
+        // The position is stated where the eye lands first, not buried in the body.
+        assertTrue(
+            "the npu headline takes no speed-vs-accuracy position",
+            POSITION_WORDS.any { copy.headline.lowercase().contains(it) },
+        )
+    }
+
+    @Test fun the_npu_badges_state_coverage_and_the_size_of_the_whole_pair() {
+        val copy = ModelTierCopy.forId("npu")!!
+        assertEquals(listOf("90+ languages", "358 MB"), copy.badges)
+        // Not "English only" and not a bespoke wording: the SAME string every multilingual tier
+        // carries, so the two cards are comparable at a glance.
+        assertTrue(copy.badges.contains("90+ languages"))
+        // 358 MB is the PAIR (encoder + decoder). A future edit that badges only the encoder's
+        // 132 MB — or a catalog edit that changes the pair — fires here.
+        val npu = WhisperCatalog.byId("npu")!!
+        val statedMb = copy.badges.first { it.endsWith(" MB") }.removeSuffix(" MB").toInt()
+        val expectedMb = (npu.approxBytes / 1_000_000L).toInt()
+        assertTrue(
+            "npu badge says $statedMb MB but the install is ~$expectedMb MB",
+            kotlin.math.abs(statedMb - expectedMb) <= 5,
+        )
+        assertTrue("the badge must state the pair, not just the encoder", statedMb > npu.primaryBytes / 1_000_000L)
+    }
+
+    @Test fun no_offered_tiers_copy_compares_this_app_to_another_one() {
+        // The claim rules: our own before/after is fair game, another product is not — nobody has
+        // measured one. Universal, so it is a loop; npu is simply the first tier whose copy had a
+        // reason to reach for a comparison at all.
+        val crossApp = listOf(
+            "other app", "any app", "every app", "any other", "than other", "competitor",
+            "gboard", "google", "apple", "siri", "otter", "dragon", "whisperkit",
+        )
+        offeredTiers.forEach { model ->
+            val copy = ModelTierCopy.forId(model.id)!!
+            val all = (copy.headline + " " + copy.body + " " + copy.badges.joinToString(" ")).lowercase()
+            crossApp.forEach { needle ->
+                assertFalse("tier '${model.id}' copy compares this app to '$needle'", all.contains(needle))
+            }
+        }
+    }
+
+    @Test fun the_npu_body_is_our_own_tier_on_this_device_and_claims_no_absolute() {
+        val copy = ModelTierCopy.forId("npu")!!
+        assertEquals(
+            "Runs on your phone's AI chip. Same model as Multilingual, much faster on this device.",
+            copy.body,
+        )
+        // The comparison is OUR tier, and the claim is scoped to the hardware in the user's hand —
+        // the two things that make "much faster" a statement someone could check.
+        assertTrue(copy.body.contains("Multilingual"))
+        assertTrue(copy.body.contains("this device"))
+        // No absolutes, anywhere in the offered lineup. "Fastest multilingual" positions npu
+        // within OUR lineup; "instant" or "real-time" would be a claim about the world.
+        val absolutes = listOf(
+            "instant", "real-time", "realtime", "no delay", "no lag", "zero lag",
+            "guaranteed", "always", "never", "unlimited",
+        )
+        offeredTiers.forEach { model ->
+            val c = ModelTierCopy.forId(model.id)!!
+            val all = (c.headline + " " + c.body + " " + c.badges.joinToString(" ")).lowercase()
+            absolutes.forEach { needle ->
+                assertFalse("tier '${model.id}' copy makes the absolute claim '$needle'", all.contains(needle))
+            }
+        }
+    }
+
+    private companion object {
+        /** The 3.7 census's position vocabulary, shared so the npu pin cannot drift from the loop. */
+        val POSITION_WORDS = listOf("fastest", "fast", "slower", "accuracy")
     }
 }
