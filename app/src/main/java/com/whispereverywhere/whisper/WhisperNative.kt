@@ -293,9 +293,13 @@ object WhisperNative {
      * reconciles them. A flat copy would read bins 0-39 at wrong offsets and never touch bins
      * 40-79, producing a plausible-looking transcript from structured noise.
      *
-     * @param ctxPtr a handle from [init]. The mel filterbank is model data (`ctx->model.filters`),
-     *        so a loaded whisper context is structurally required even though nothing else about
-     *        the CPU model is used on this path.
+     * @param ctxPtr a handle from **[initMelOnly]**. The mel filterbank is model data
+     *        (`ctx->model.filters`), so *some* whisper context is structurally required — but
+     *        **[init] is the wrong one here.** It loads the full model, silently holding 60-190 MB
+     *        of weights resident beside the NPU's own ~376 MiB purely to reach a 64 KB filterbank;
+     *        the mel it produces is byte-identical, so nothing downstream would report the
+     *        mistake, and it would surface first as an LMK kill on a mid-range device.
+     *        [initMelOnly] reads ~64 KB and returns a handle this function accepts unchanged.
      * @param samples float32 mono 16 kHz in `[-1,1]` — the backend seam's own type, never PCM16.
      *        **Zero-padded or truncated to exactly 480,000 samples (30 s)**: the encoder's
      *        `input_features` is a fixed `[1,80,3000]` and has no say in the matter.

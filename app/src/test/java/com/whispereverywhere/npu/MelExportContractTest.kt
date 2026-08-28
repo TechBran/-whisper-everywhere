@@ -191,6 +191,31 @@ class MelExportContractTest {
     }
 
     @Test
+    fun theExportRefusesAModelWhoseBandCountsDisagree() {
+        // The destination is sized by the CALLER on whisper_model_n_mels(ctx) - hparams.n_mels -
+        // while this loop writes mel.n_mel * n_frames_out, and mel.n_mel comes from filters.n_mel.
+        // Two different fields, and nothing on a whisper_init_from_file* context compares them:
+        // upstream's only check is an assert() in whisper_encode_internal, compiled out in release.
+        // A model declaring hparams.n_mels = 80 over a 128-band filterbank therefore satisfies
+        // pcmToMel's bin-count gate and then memsets 1,536,000 bytes into a 960,000-byte direct
+        // ByteBuffer - a 576 KB out-of-bounds heap write, not a wrong transcript. Guarding only
+        // against filters.n_mel (which this function did until the Q2 review) is near-tautological
+        // on the pcm_to_mel path and catches none of it.
+        assertTrue(
+            "the export must compare the mel's band count against hparams.n_mels - the field " +
+                "whisper_model_n_mels() reports and the caller sizes its destination from. " +
+                "Without it the header's sizing contract is advisory rather than enforced, and a " +
+                "self-contradicting model header becomes an out-of-bounds heap write.",
+            liveOffsets(exportBody, "mel.n_mel != ctx->model.hparams.n_mels").isNotEmpty()
+        )
+        assertTrue(
+            "the export must ALSO keep comparing against filters.n_mel, so both directions of a " +
+                "header/filterbank skew are refused by the same guard.",
+            liveOffsets(exportBody, "mel.n_mel != ctx->model.filters.n_mel").isNotEmpty()
+        )
+    }
+
+    @Test
     fun theDestinationIsZeroFilledBeforeTheCopy() {
         assertTrue(
             "the export must memset the destination before copying, mirroring the in-tree " +

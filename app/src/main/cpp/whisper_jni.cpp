@@ -509,9 +509,15 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastSegmentStats(
 // samples arrive as float32 in [-1,1], the backend seam's own type. No PCM16 round trip: it would
 // be lossy for no reason, and whisper_pcm_to_mel takes const float * anyway.
 //
-// NOT internally serialised. whisper_pcm_to_mel REPLACES ctx->state->mel, so it must not race a
-// transcribeRaw on the same ctx - and it cannot: every caller runs inside the Kotlin-side
-// NativeComputeGate, and the NPU backend tears the CPU tier's context down before arming itself.
+// NOT internally serialised, and since Q2b it does not need to be. whisper_pcm_to_mel REPLACES
+// ctx->state->mel, so it must not race a transcribeRaw on the SAME ctx - but the mel context is a
+// separate 64 KB handle from initMelOnly below, with no weights and no other entry point that
+// touches it, so no transcribeRaw can be holding it and the race is structurally impossible rather
+// than merely avoided by scheduling. (The Q2-era rationale here was "the NPU backend tears the CPU
+// tier's context down before arming itself" - true then, obsolete now, and it would have invited a
+// reader to pass a full-load handle in.) Two pcmToMel calls on one mel handle would still race
+// each other; every caller runs inside the Kotlin-side NativeComputeGate, which is what settles
+// that.
 // ---------------------------------------------------------------------------------------------
 static constexpr int   kNpuMelBins    = 80;
 static constexpr int   kNpuMelFrames  = 3000;
