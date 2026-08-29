@@ -51,11 +51,17 @@
     <div class="license"><b>OpenAI Whisper models</b> — MIT License. The speech-recognition
         model weights (all tiers).</div>
     <div class="license"><b>OpenAI Whisper tokenizer vocabulary</b> — Apache License 2.0. The
-        byte-level BPE vocabulary bundled with this app (built from
-        <code>vocab.json</code> and <code>added_tokens.json</code> of the
+        byte-level BPE vocabularies bundled with this app. The <code>whisper-small</code> one is
+        built from <code>vocab.json</code> and <code>added_tokens.json</code> of the
         <code>openai/whisper-small</code> model repository, whose model card declares
-        <code>license: apache-2.0</code>). This is tokenizer <i>data</i>, not model weights, and it
-        is licensed separately from the weights above.
+        <code>license: apache-2.0</code>. The <code>large-v3-turbo</code> one
+        (<code>whisper_vocab_turbo.json</code>) is a <i>derived work</i>: the two model families
+        share their 50,257-token base table, so it is the whisper-small vocabulary above with the
+        turbo family's special-token layout (one added language, <code>&lt;|yue|&gt;</code>), and
+        it is verified at build time against the <code>vocab.bin</code> tokenizer table published
+        in Qualcomm AI Hub's <code>whisper-large-v3-turbo</code> package (also Apache License 2.0).
+        This is tokenizer <i>data</i>, not model weights, and it is licensed separately from the
+        weights above.
         <a href="https://huggingface.co/openai/whisper-small">huggingface.co/openai/whisper-small</a></div>
     <div class="license"><b>OpenAI Whisper mel filterbank (128-band)</b> — MIT License for the
         model data, Apache License 2.0 for the ggml conversion tooling that produced its layout.

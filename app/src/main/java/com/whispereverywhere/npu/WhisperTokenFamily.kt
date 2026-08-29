@@ -48,6 +48,13 @@ package com.whispereverywhere.npu
  * [WhisperTokens.EOT] — two independent transcriptions of one asset fact, and a disagreement that
  * is visible instead of silent.
  *
+ * Both families SHIP as of 4.1 L4, as handles on [WhisperTokens]: [WhisperTokens.SMALL]
+ * (`langCount = 99`) and [WhisperTokens.LARGE_V3] (`langCount = 100`). `LARGE_V3` has no literal
+ * table to compare against — this object *is* whisper-small's — so its second, independent reading
+ * is the shipped `whisper_vocab_turbo.json` itself, and `TurboVocabAssetTest` is that comparison:
+ * every special id the derivation claims, asserted against the token string at that index in the
+ * file the APK carries.
+ *
  * @param langCount how many `<|xx|>` tokens this vocabulary carries — 99 for `whisper-small`, 100
  *        for `large-v3` and `large-v3-turbo`. Every id above the table is derived from it.
  * @param maxPositions the decoder's context window, i.e. `attention_mask`'s width. **It lives here

@@ -1003,7 +1003,8 @@ class NpuDecodePolicyTest {
         // every one of them. This is THE hazard of the whole task in two lines: `promptTokens`
         // reading `WhisperTokens.TRANSCRIBE` instead of `family.transcribe` is invisible for the
         // small family (they are the same 50359) and puts the OTHER model in translate mode.
-        val largeV3 = WhisperTokenFamily(langCount = 100, maxPositions = 200)
+        // (Since 4.1 L4 the second family is the SHIPPED handle, not a local derivation.)
+        val largeV3 = WhisperTokens.LARGE_V3
         assertArrayEquals(
             "a large-v3 prompt must carry LARGE-V3's task and timestamp tokens — 50360 and 50364, " +
                 "one above whisper-small's. Built from whisper-small's ids instead, the task slot " +
@@ -1056,7 +1057,7 @@ class NpuDecodePolicyTest {
     @Test
     fun suppressListAnswersPerFamilyRatherThanPerProcess() {
         val small = WhisperTokens.SMALL
-        val largeV3 = WhisperTokenFamily(langCount = 100, maxPositions = 200)
+        val largeV3 = WhisperTokens.LARGE_V3
 
         val smallList = NpuDecodePolicy.suppressList(small)
         val largeList = NpuDecodePolicy.suppressList(largeV3)
@@ -1097,7 +1098,7 @@ class NpuDecodePolicyTest {
     @Test
     fun beginSuppressListAnswersPerFamilyEvenWhereTheAnswerCoincides() {
         val small = WhisperTokens.SMALL
-        val largeV3 = WhisperTokenFamily(langCount = 100, maxPositions = 200)
+        val largeV3 = WhisperTokens.LARGE_V3
         assertArrayEquals(intArrayOf(220, 50257), NpuDecodePolicy.beginSuppressList(small))
         assertArrayEquals(
             "220 is a BPE id and EOT sits below the language table, so this pair does NOT move — " +
@@ -1150,6 +1151,84 @@ class NpuDecodePolicyTest {
                 )
             }
         }
+    }
+
+    /**
+     * The two SHIPPED families' prompts, side by side: `[50258, <lang>, 50360, 50364]` under
+     * `LARGE_V3` against `[50258, <lang>, 50359, 50363]` under `SMALL` (4.1 L4).
+     *
+     * For any code both families carry, the SOT and language slots are IDENTICAL — the shared
+     * table is a strict prefix, so `es` is 50262 in both — and the task and timestamp slots sit
+     * exactly one apart. That adjacency is the trap: a prompt built from the wrong family is four
+     * legal ids, three of them right, and the model runs the wrong TASK rather than failing.
+     */
+    @Test
+    fun promptsUnderTheTwoShippedFamiliesDifferOnlyInTheSlotsAboveTheLanguageBand() {
+        val smallPrompt = NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "es")
+        val largePrompt = NpuDecodePolicy.promptTokens(WhisperTokens.LARGE_V3, "es")
+        assertArrayEquals(intArrayOf(50258, 50262, 50359, 50363), smallPrompt)
+        assertArrayEquals(intArrayOf(50258, 50262, 50360, 50364), largePrompt)
+        assertEquals("slot 0 (SOT) is shared", smallPrompt[0], largePrompt[0])
+        assertEquals("slot 1 (the language) is shared for a shared code", smallPrompt[1], largePrompt[1])
+        assertEquals("slot 2 (the task) sits one apart", smallPrompt[2] + 1, largePrompt[2])
+        assertEquals("slot 3 (timestamps) sits one apart", smallPrompt[3] + 1, largePrompt[3])
+
+        // `yue` exists in exactly one family: a prompt for it under LARGE_V3 carries 50358 in the
+        // language slot, and under SMALL there is nothing to build — the refusal, not a fallback.
+        assertArrayEquals(
+            intArrayOf(50258, 50358, 50360, 50364),
+            NpuDecodePolicy.promptTokens(WhisperTokens.LARGE_V3, "yue")
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "yue")
+        }
+    }
+
+    /**
+     * **Id 50358, asserted under both shipped families with its two different meanings** — the
+     * sharpest cross-family confusion in the branch, and no per-id check can catch it.
+     *
+     * `50358` is not invalid in either family; it is *valid in both and means different things*:
+     * `<|translate|>` under `SMALL` (a task token) and `<|yue|>` — Cantonese — under `LARGE_V3`
+     * (a language token). A validity guard — `require(codeForToken(id) != null)`, exactly the one
+     * `promptTokens` already carries — passes under one family and fails under the other for the
+     * *same* id, so it cannot be the thing that keeps them apart. The family has to be threaded
+     * to every caller, which is why L2 made it a required parameter with no default. Refusing
+     * 50358 at the turbo family would break Cantonese; asserting it under `SMALL` alone would
+     * prove nothing.
+     */
+    @Test
+    fun id50358IsATaskTokenToOneShippedFamilyAndCantoneseToTheOther() {
+        // codeForToken: null under SMALL (not a language), "yue" under LARGE_V3.
+        assertNull(
+            "under whisper-small, 50358 is <|translate|> and must NOT resolve as a language",
+            WhisperTokens.SMALL.codeForToken(50358)
+        )
+        assertEquals(
+            "under large-v3, the same integer IS a language",
+            "yue",
+            WhisperTokens.LARGE_V3.codeForToken(50358)
+        )
+        // promptTokens: refused by one family, accepted by the other — same id, same call.
+        assertThrows(IllegalArgumentException::class.java) {
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, 50358)
+        }
+        assertEquals(
+            "promptTokens(LARGE_V3, 50358) must ACCEPT the id into the language slot — refusing " +
+                "it here is how a Cantonese speaker loses their language to an over-general guard",
+            50358,
+            NpuDecodePolicy.promptTokens(WhisperTokens.LARGE_V3, 50358)[1]
+        )
+        // And the detect-pass gate agrees from the other side: a detected 50358 is a FAILURE
+        // under SMALL (falls through to locale/fallback) and a real detection under LARGE_V3.
+        assertEquals(
+            "auto->en(fallback)",
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, 50358, null).note
+        )
+        assertEquals(
+            "auto->yue(detected)",
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.LARGE_V3, null, 50358, null).note
+        )
     }
 
     // ---------------------------------------------------------------- source-reading helpers

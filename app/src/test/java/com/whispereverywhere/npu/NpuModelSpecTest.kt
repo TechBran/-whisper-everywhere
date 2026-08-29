@@ -38,32 +38,13 @@ class NpuModelSpecTest {
     private val small = NpuModelSpec.SMALL
 
     /**
-     * `npu-turbo`'s scalars, HAND-COMPUTED here and deliberately not a shipped row.
-     *
-     * `NpuModelSpec` has exactly one row today and `forTier` says so; L4 lands `TURBO` and replaces
-     * this local with it. Until then it is the second input the formula is exercised at, because a
-     * derivation checked at one point is a table of constants with extra steps — a transposed
-     * factor (`heads` for `decLayers`, say) survives every assertion made at a row where the two
-     * happen to be equal, and for `whisper-small` they are both 12.
-     *
-     * Every expected value below comes from the plan's asset block, which read them out of turbo's
-     * own `metadata.json`.
+     * `npu-turbo`'s row — since 4.1 L4 this is the SHIPPED `TURBO`, replacing the hand-computed
+     * local that stood in for it from L2 (per that task's handoff: replace, do not add a second
+     * copy). The expected values below are unchanged from the local's day one: they come from the
+     * plan's asset block, which read them out of turbo's own `metadata.json`, so the assertions
+     * against them are what make the shipped row a reading of the asset rather than a guess.
      */
-    private val turboShaped = NpuModelSpec(
-        tierId = "hand-computed-second-row",
-        melBins = 128,
-        melFrames = NpuModelSpec.MEL_FRAMES,
-        decLayers = 4,
-        heads = 20,
-        headDim = NpuModelSpec.HEAD_DIM,
-        audioCtx = NpuModelSpec.AUDIO_CTX,
-        tokens = WhisperTokenFamily(langCount = 100, maxPositions = 200),
-        // 4.1 L3. A 128-bin tier has no donor — the only 128-bin model in the catalog is `ultra`,
-        // 574 MB and not necessarily installed — so its filterbank ships as an asset. `melAsset`
-        // has no default for the same reason `spec` and `family` have none: a row that does not
-        // say where its mel comes from is a row whose author did not decide.
-        melAsset = NpuModelSpec.MELBANK_128_ASSET,
-    )
+    private val turboShaped = NpuModelSpec.TURBO
 
     // ---------------------------------------------------------------- the shipped census
 
@@ -245,27 +226,94 @@ class NpuModelSpecTest {
         spec.melFloatBytes, spec.inputFeaturesBytes,
     )
 
+    /**
+     * The `TURBO` row binds its assets, its family and its tier id — the strings and references
+     * the census arithmetic above cannot see (4.1 L4).
+     *
+     * `tokens` is `assertSame`, not equals: the row must carry THE `LARGE_V3` handle, because
+     * `NpuDecodePolicy` and the decoder are threaded per family and a second, equal-but-distinct
+     * family object would be a second home for the layout — the drift shape `maxPositions`'s
+     * one-home rule exists to forbid, one field over.
+     */
+    @Test
+    fun theTurboRowBindsItsAssetsItsFamilyAndItsTierId() {
+        val turbo = NpuModelSpec.TURBO
+        assertEquals("npu-turbo", turbo.tierId)
+        assertSame(
+            "the row must carry the one shipped LARGE_V3 handle, not a re-derivation",
+            WhisperTokens.LARGE_V3,
+            turbo.tokens
+        )
+        assertEquals(
+            "the bundled 128-bin filterbank — this row is the first live caller the mel-asset " +
+                "staging arm has ever had",
+            NpuModelSpec.MELBANK_128_ASSET,
+            turbo.melAsset
+        )
+        assertEquals("whisper_vocab_turbo.json", turbo.vocabAsset)
+        assertEquals(
+            "…and the SMALL row names the 4.0 vocabulary, unchanged",
+            "whisper_vocab.json",
+            NpuModelSpec.SMALL.vocabAsset
+        )
+        assertSame(
+            "SMALL's family binding is unchanged too",
+            WhisperTokens.SMALL,
+            NpuModelSpec.SMALL.tokens
+        )
+    }
+
+    /**
+     * A blank `vocabAsset` is refused at construction — the row-level half of the no-default
+     * rule. The field being required stops a row from OMITTING the decision; this stops a row
+     * from making it vacuously, where the failure would otherwise be an IOException at load on a
+     * device, at stage=vocab, for a fact the row already knew.
+     */
+    @Test
+    fun aBlankVocabularyAssetIsRefusedAtConstruction() {
+        listOf("", "   ").forEach { blank ->
+            try {
+                val got = NpuModelSpec.SMALL.copy(vocabAsset = blank)
+                fail("vocabAsset '$blank' must be refused; got a spec naming '${got.vocabAsset}'")
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(
+                    "the refusal must name the field. Got: ${expected.message}",
+                    expected.message.orEmpty().contains("vocabAsset")
+                )
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- the tier table
 
     /**
-     * `forTier` answers for the one tier that exists TODAY, and null for everything else.
+     * `forTier` answers for the two npu-class tiers that exist today, and null for everything else.
      *
-     * **A red here at L4 is that task's own signal**, not a break: `npu-turbo` is in the list below
-     * precisely so that adding the row makes this fail and the failure is read as the row landing.
+     * The `npu-turbo` entry that used to sit in the null list below was **L4's tripwire**, placed
+     * by L2 so that adding the row made this test fail and the failure read as the row landing. It
+     * fired exactly there — the planned red, observed on the run that introduced `TURBO` — and was
+     * resolved per its own failure message: the entry deleted, the positive assertion added.
      *
      * The null arm is what `NpuBackendSelector` routes on: a tier id with no spec cannot construct
      * `NpuWhisperBackend` at all, because that constructor takes a spec with no default.
      */
     @Test
-    fun forTierAnswersForTheNpuTierAndNothingElseToday() {
+    fun forTierAnswersForTheNpuClassTiersAndNothingElseToday() {
         assertSame("the `npu` tier resolves to the SMALL row", small, NpuModelSpec.forTier("npu"))
+        assertSame(
+            "and `npu-turbo` resolves to the TURBO row (4.1 L4) — through the row's own tierId, " +
+                "which is the string the catalog entry L5 adds must carry exactly",
+            NpuModelSpec.TURBO,
+            NpuModelSpec.forTier(NpuModelSpec.TURBO.tierId)
+        )
+        assertSame(NpuModelSpec.TURBO, NpuModelSpec.forTier("npu-turbo"))
         listOf(
-            "npu-turbo", "turbo", "multi", "pro", "eco", "base", "ultra", "", "NPU", "npu ", null
+            "turbo", "multi", "pro", "eco", "base", "ultra", "", "NPU", "npu ", "npu-turbo ",
+            "NPU-TURBO", null
         ).forEach {
             assertNull(
-                "`$it` has no spec today. If this went red because `npu-turbo` gained one, that is " +
-                    "4.1 L4 landing its row — delete this entry from the list rather than " +
-                    "loosening the assertion.",
+                "`$it` has no spec. The null is the routing decision: it answers " +
+                    "WhisperNativeBackend, never a wrong census.",
                 NpuModelSpec.forTier(it)
             )
         }

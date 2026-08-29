@@ -37,13 +37,15 @@ class WhisperTokenFamilyTest {
     private val small = WhisperTokens.SMALL
 
     /**
-     * `whisper-large-v3`'s layout, derived here and NOT named as a shipped row: `NpuModelSpec` has
-     * one row today and `forTier` answers null for everything else (4.1 L4 lands the second).
+     * `whisper-large-v3`'s layout — since 4.1 L4 this is the SHIPPED handle, the same object
+     * `NpuModelSpec.TURBO.tokens` carries, not a local derivation that happens to agree with it.
      *
-     * It exists because a derivation exercised at exactly one input is indistinguishable from a
-     * table of constants with extra steps.
+     * It began (4.1 L2) as a local, because a derivation exercised at exactly one input is
+     * indistinguishable from a table of constants with extra steps; now that the second family is
+     * a row, asserting the handle itself is the stronger claim — a drift in what the app actually
+     * threads to the decoder fails here, not just a drift in the formula.
      */
-    private val largeV3 = WhisperTokenFamily(langCount = 100, maxPositions = 200)
+    private val largeV3 = WhisperTokens.LARGE_V3
 
     // ---------------------------------------------------------------- the twelve ids
 
@@ -248,6 +250,13 @@ class WhisperTokenFamilyTest {
         assertEquals("<|yue|> is index 99 of the canonical order", "yue", largeV3.languageCodes[99])
         assertEquals("…and small's table stops one short of it", 99, small.languageCodes.size)
 
+        // The three ids BELOW the divergence do not move — the boundary the L2 micro-round
+        // corrected: whisper-small's table is a strict PREFIX, so every id the two share agrees.
+        assertEquals("<|endoftext|> sits below the table in every family", 50257, largeV3.eot)
+        assertEquals("<|startoftranscript|> likewise", 50258, largeV3.sot)
+        assertEquals("and both bands start at <|en|>", 50259, largeV3.langFirst)
+        assertEquals("turbo's mask is the same [1,1,1,200]", 200, largeV3.maxPositions)
+
         assertEquals("the band is one wider", 50358, largeV3.langLast)
         assertEquals(50359, largeV3.translate)
         assertEquals(50360, largeV3.transcribe)
@@ -283,6 +292,116 @@ class WhisperTokenFamilyTest {
             )
         )
         assertEquals("…so its suppress list is 88 entries too", 88, largeV3.suppress.size)
+    }
+
+    /**
+     * The `LARGE_V3` table is bidirectional over all 100 codes, and it is the small table plus
+     * exactly one entry.
+     *
+     * The cross-reading is against [WhisperTokens.LANGUAGE_CODES] — 4.0's literal transcription —
+     * plus `"yue"`, not against [WhisperTokenFamily.CANONICAL_LANGUAGE_CODES], which is what
+     * `languageCodes` is *built from* and would make the comparison a list against itself.
+     */
+    @Test
+    fun theLargeV3TableCarriesTheHundredCodesInIdOrderAndRoundTrips() {
+        assertEquals(100, largeV3.languageCodes.size)
+        assertEquals(
+            "the 100 codes must be 4.0's literal 99 plus `yue` appended — the same order, one " +
+                "longer. Any other relationship between the two tables means one of them prompts " +
+                "some language with another language's embedding row.",
+            WhisperTokens.LANGUAGE_CODES + listOf("yue"),
+            largeV3.languageCodes
+        )
+        largeV3.languageCodes.forEach { code ->
+            assertEquals(code, largeV3.codeForToken(largeV3.langToken(code)))
+        }
+        assertEquals(
+            "every id in the band names a distinct language",
+            100,
+            (largeV3.langFirst..largeV3.langLast).mapNotNull { largeV3.codeForToken(it) }
+                .toSet().size
+        )
+        assertEquals("`yue` maps to the id whisper-small uses for <|translate|>",
+            50358, largeV3.langToken("yue"))
+        listOf(
+            largeV3.langFirst - 1, largeV3.langLast + 1, largeV3.eot, largeV3.sot,
+            largeV3.translate, largeV3.timestampBegin, largeV3.vocab, -1
+        ).forEach {
+            assertNull("$it is outside this family's band and must answer null",
+                largeV3.codeForToken(it))
+        }
+    }
+
+    /**
+     * **Both shipped families' boundary ids, pinned as absolute numbers in one place** (4.1 L4,
+     * step 6). Everything else in this suite compares readings against each other; these six are
+     * the anchor a symmetrical drift cannot survive — if both derivations moved together, the
+     * comparisons above stay green and these go red.
+     */
+    @Test
+    fun bothShippedFamiliesBoundaryIdsArePinnedExplicitly() {
+        assertEquals(50259, WhisperTokens.SMALL.langFirst)
+        assertEquals("<|su|>", 50357, WhisperTokens.SMALL.langLast)
+        assertEquals(50259, WhisperTokens.LARGE_V3.langFirst)
+        assertEquals("<|yue|>", 50358, WhisperTokens.LARGE_V3.langLast)
+        assertEquals(51865, WhisperTokens.SMALL.vocab)
+        assertEquals(51866, WhisperTokens.LARGE_V3.vocab)
+        assertEquals(
+            "one added language, one wider logits layer — the whole difference between the " +
+                "families is this single integer",
+            WhisperTokens.LARGE_V3.vocab - WhisperTokens.SMALL.vocab,
+            WhisperTokens.LARGE_V3.langCount - WhisperTokens.SMALL.langCount
+        )
+    }
+
+    /**
+     * The two suppress lists share their 82-id BPE base **element for element** and differ by
+     * exactly one at each of the five control ids that move.
+     *
+     * `sot` is the sixth derived id and deliberately NOT in the moving five: it sits below the
+     * language table, so it is 50258 in both. Asserting the shift per id — rather than as a set
+     * difference — is what catches a list that moved the wrong id by one.
+     */
+    @Test
+    fun theSuppressListsShareTheBaseAndShiftTheFiveMovingControlIdsByOne() {
+        val smallList = WhisperTokens.SMALL.suppress
+        val largeList = WhisperTokens.LARGE_V3.suppress
+        assertEquals("both are 88 entries", 88, smallList.size)
+        assertEquals(88, largeList.size)
+        assertArrayEquals(
+            "the 82 base BPE ids — everything below EOT — must be identical element for element; " +
+                "this half was MEASURED identical across the two published families at plan time",
+            smallList.filter { it < WhisperTokens.SMALL.eot }.toIntArray(),
+            largeList.filter { it < WhisperTokens.LARGE_V3.eot }.toIntArray()
+        )
+        assertEquals("sot does not move — it sits below the language table",
+            WhisperTokens.SMALL.sot, WhisperTokens.LARGE_V3.sot)
+        listOf(
+            "translate" to Pair(WhisperTokens.SMALL.translate, WhisperTokens.LARGE_V3.translate),
+            "transcribe" to Pair(WhisperTokens.SMALL.transcribe, WhisperTokens.LARGE_V3.transcribe),
+            "startOfLm" to Pair(WhisperTokens.SMALL.startOfLm, WhisperTokens.LARGE_V3.startOfLm),
+            "startOfPrev" to Pair(WhisperTokens.SMALL.startOfPrev, WhisperTokens.LARGE_V3.startOfPrev),
+            "noSpeech" to Pair(WhisperTokens.SMALL.noSpeech, WhisperTokens.LARGE_V3.noSpeech),
+        ).forEach { (name, ids) ->
+            assertEquals(
+                "$name must shift by EXACTLY one — the one added language moves every control " +
+                    "id above the band by the same single slot",
+                ids.first + 1,
+                ids.second
+            )
+            assertTrue(
+                "…and both families must suppress their own $name",
+                smallList.contains(ids.first) && largeList.contains(ids.second)
+            )
+        }
+        assertTrue(
+            "50358 is suppressed under whisper-small (<|translate|>, a control token) and NOT " +
+                "under large-v3 (<|yue|>, a language — languages are deliberately unsuppressed " +
+                "because the detect pass argmaxes over them). The same integer, muted by one " +
+                "family and required live by the other: nothing per-id can reconcile that, only " +
+                "the family.",
+            smallList.contains(50358) && !largeList.contains(50358)
+        )
     }
 
     // ---------------------------------------------------------------- the refusals
@@ -328,16 +447,19 @@ class WhisperTokenFamilyTest {
     // ---------------------------------------------------------------- the census alarm
 
     /**
-     * THE CENSUS ALARM, re-homed onto the family (4.1 L2).
+     * THE CENSUS ALARM, extended across BOTH shipped families (4.1 L2 re-homed it here; 4.1 L4
+     * makes it two-family).
      *
      * `NpuDecodePolicyTest` runs the same alarm against `WhisperTokens`' literal table and that
-     * one stays: these are two readings and the alarm has to hold for both, or the tier resolves a
-     * picker language through one of them and not the other. It fires if EITHER list moves, which
-     * is the point — a language added to the picker that the family cannot name is a wrong
-     * transcript, and a language dropped from the family is the same failure from the other side.
+     * one stays: these are independent readings and the alarm has to hold for all of them, or the
+     * tier resolves a picker language through one and not another. The 4.0 lesson it defends: a
+     * partial table passes every spot-check of the common five while transcribing an
+     * explicitly-selected Slovenian user as English — and with two families there are now two ways
+     * to have that failure. A code the picker offers that ONE family cannot name is a user whose
+     * language works on one npu tier and silently becomes English on the other.
      */
     @Test
-    fun everyLanguageTheAppsPickerOffersResolvesThroughTheSmallFamily() {
+    fun everyLanguageTheAppsPickerOffersResolvesThroughBothShippedFamilies() {
         val offered = PreferencesManager.SUPPORTED_LANGUAGES.map { it.first }.filter { it != "auto" }
         assertEquals(
             "the picker offers 55 entries — 54 real languages plus \"auto\". The long tail " +
@@ -351,11 +473,17 @@ class WhisperTokenFamilyTest {
                 "the picker offers `$code` but the SMALL family cannot map it to a <|xx|> token",
                 small.codeForToken(small.langToken(code))
             )
+            assertNotNull(
+                "the picker offers `$code` but the LARGE_V3 family cannot map it to a <|xx|> " +
+                    "token — the silent-wrong-language failure, arriving through the second tier",
+                largeV3.codeForToken(largeV3.langToken(code))
+            )
         }
         assertTrue(
-            "and the whole picker resolves under the larger family too, which is what makes a " +
-                "second npu tier a language-safe change",
-            offered.all { largeV3.codeForToken(largeV3.langToken(it)) != null }
+            "and the two families must agree on the TOKEN for every offered code — the shared " +
+                "table is a strict prefix, so a shared code maps to the same id in both, and a " +
+                "disagreement means one family's table is not in canonical order",
+            offered.all { small.langToken(it) == largeV3.langToken(it) }
         )
     }
 }

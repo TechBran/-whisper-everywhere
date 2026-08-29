@@ -206,4 +206,27 @@ object WhisperTokens {
      * second thing that can drift.
      */
     val SMALL: WhisperTokenFamily = WhisperTokenFamily(langCount = 99, maxPositions = MAX_POSITIONS)
+
+    /**
+     * **The `npu-turbo` tier's token family** — `large-v3`'s 100 languages in the same 200-position
+     * context (4.1 L4).
+     *
+     * `langCount = 100` is the WHOLE difference from [SMALL], and it moves seven ids: the band
+     * grows to `50259..50358` (`<|yue|>` lands on the id [SMALL] uses for `<|translate|>`) and
+     * every control token above it shifts up by one, ending at a 51,866-wide logits layer. See the
+     * hazard table in [WhisperTokenFamily]'s KDoc — no per-id check can tell the two layouts apart,
+     * which is why this handle exists as a value to THREAD rather than a set of constants to copy.
+     *
+     * Unlike [SMALL] there is no literal table above it to compare against: this object is
+     * `whisper-small`'s reading and carries no large-v3 literals. The second, independent reading
+     * for THIS family is the shipped asset itself — `whisper_vocab_turbo.json` — and
+     * `TurboVocabAssetTest` is the comparison: every special id the derivation claims is asserted
+     * against the token string at that index in the file the APK actually carries.
+     *
+     * `maxPositions` is [MAX_POSITIONS] because turbo's own `metadata.json` carries the identical
+     * `attention_mask [1,1,1,200]` and 199-deep self-KV (measured at plan time, and re-checked by
+     * the census guard at load) — the same shift register, not an assumption of sameness.
+     */
+    val LARGE_V3: WhisperTokenFamily =
+        WhisperTokenFamily(langCount = 100, maxPositions = MAX_POSITIONS)
 }

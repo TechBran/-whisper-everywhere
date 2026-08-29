@@ -117,7 +117,7 @@ class NpuWhisperBackend(
     /** The ~64 KB mel-only whisper context, or 0. Held for the tier's lifetime. */
     private var melCtx: Long = 0L
 
-    /** Built once at [load] — 563 KB of JSON and 51,865 strings is not a per-segment cost. */
+    /** Built once at [load], over `spec.vocabAsset` — half a megabyte of JSON and ~52k strings is not a per-segment cost. */
     private var decoder: WhisperBpeDecoder? = null
 
     /** `spec.melFloatBytes` direct, native order. Reused; [WhisperNative.pcmToMel] overwrites all of it. */
@@ -321,19 +321,29 @@ class NpuWhisperBackend(
                 )
             }
 
-            // (4) The vocabulary. IOException = absent from the APK; IllegalStateException = present
-            // and wrong (not JSON, wrong entry count, a token outside the byte-level alphabet).
-            // Those two cover every way this asset can fail, and all of them fire here rather than
-            // under a user who has already pressed record.
+            // (4) The vocabulary — THIS tier's, by name AND by size (4.1 L4). Both halves come off
+            // the one spec object, because they are one fact stated twice: the file at
+            // spec.vocabAsset must resolve exactly spec.tokens.vocab ids — 51,865 for the
+            // whisper-small family, 51,866 for large-v3/turbo — and a decoder built from the
+            // wrong pairing still binds, still decodes, and renders the other family's specials
+            // as text boundaries. IOException = absent from the APK; IllegalStateException =
+            // present and wrong (not JSON, an entry count other than the spec's, a token outside
+            // the byte-level alphabet). Those two cover every way this asset can fail, and all of
+            // them fire here rather than under a user who has already pressed record.
             decoder = try {
                 WhisperBpeDecoder.fromJson(
-                    appContext.assets.open(WhisperBpeDecoder.ASSET_NAME)
-                        .use { it.readBytes().toString(Charsets.UTF_8) }
+                    appContext.assets.open(spec.vocabAsset)
+                        .use { it.readBytes().toString(Charsets.UTF_8) },
+                    expectedSize = spec.tokens.vocab,
                 )
             } catch (cause: java.io.IOException) {
-                return@serialized fallBackToCpuTier("vocab", "${cause.javaClass.simpleName}: ${cause.message}")
+                return@serialized fallBackToCpuTier(
+                    "vocab", "${spec.vocabAsset}: ${cause.javaClass.simpleName}: ${cause.message}"
+                )
             } catch (cause: IllegalStateException) {
-                return@serialized fallBackToCpuTier("vocab", "${cause.javaClass.simpleName}: ${cause.message}")
+                return@serialized fallBackToCpuTier(
+                    "vocab", "${spec.vocabAsset}: ${cause.javaClass.simpleName}: ${cause.message}"
+                )
             }
 
             // (5) 342 MiB and ~525 ms. runCatching, not try/catch on a named type: libqnnasr.so is

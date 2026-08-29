@@ -3173,12 +3173,21 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         }
         const uint16_t bestVal = best >= 0 ? logits[best] : 0;
         const LogitsHealth h = scanLogitsRaw(logits, g.vocab);
+        char bestName[24];
+        char runnerName[24];
         char rawName[24];
-        // Language ids are specials, so best/runnerUp print verbatim by the same rule diagToken
-        // applies - they are metadata about which language, never about what was said.
-        LOGDIAG("npu-debug: detect band=[%d..%d] best=%d val=%u runnerUp=%d val=%u margin=%d "
+        // best and runnerUp go through diagToken like every other id on this tag (4.1 L4, Q10a-D
+        // M4). They used to print raw %d, which was safe by a CALL-SITE property - argmaxInRange
+        // is bounded to the language band, and band ids are specials diagToken prints verbatim
+        // anyway - i.e. safe because of where the caller happened to scan, which is exactly the
+        // shape D1's battery row forbids one function over. The band's top is per-family now, and
+        // the next edit to the scan bounds must not be the thing this line's privacy depends on:
+        // the rule lives in the HELPER. Today's output is byte-identical.
+        LOGDIAG("npu-debug: detect band=[%d..%d] best=%s val=%u runnerUp=%s val=%u margin=%d "
                 "raw[min=%u max=%u argmax=%s]",
-                g.langTokenFirst, g.langTokenLast, best, bestVal, runnerUp, runnerVal,
+                g.langTokenFirst, g.langTokenLast,
+                diagToken(best, bestName, sizeof(bestName)), bestVal,
+                diagToken(runnerUp, runnerName, sizeof(runnerName)), runnerVal,
                 static_cast<int32_t>(bestVal) - static_cast<int32_t>(runnerVal),
                 h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)));
     }
@@ -3192,8 +3201,11 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         failure("detect: every language logit is at the bottom rail; no language was produced");
         return -3;
     }
-    LOGI("detect: language token %d (offset %d in the language block)", best,
-         best - g.langTokenFirst);
+    // Through diagToken too, for the same reason as the echo above: a language id prints
+    // verbatim either way, but WHICH function renders it is the rule, not the outcome.
+    char bestTokenName[24];
+    LOGI("detect: language token %s (offset %d in the language block)",
+         diagToken(best, bestTokenName, sizeof(bestTokenName)), best - g.langTokenFirst);
     g.lastError.clear();
     return best;
 }

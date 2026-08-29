@@ -112,6 +112,23 @@ data class NpuModelSpec(
      * of the wrong width quantised into a buffer of the right size.
      */
     val melAsset: String?,
+    /**
+     * The bundled vocabulary asset this tier detokenises with — `whisper_vocab.json` (51,865
+     * entries) for the `whisper-small` family, `whisper_vocab_turbo.json` (51,866) for
+     * `large-v3`/turbo (4.1 L4).
+     *
+     * The name and [tokens]`.vocab` are ONE FACT stated twice: the file at this name must resolve
+     * exactly that many ids, and `WhisperBpeDecoder`'s constructor refuses any other count.
+     * `NpuWhisperBackend.load` reads BOTH off this row at the one call site, which is what closes
+     * the L2 micro-round's named carry — a decoder whose expected size was a process constant was
+     * correct for exactly as long as one vocabulary existed.
+     *
+     * **No default, and non-blank.** A row that does not say which vocabulary it decodes with is a
+     * row whose author did not decide, and the wrong answer is the quiet kind: both files parse,
+     * both bind, and the mispaired one renders another family's specials as text boundaries —
+     * fluent wrong text, from the first segment, with nothing failing.
+     */
+    val vocabAsset: String,
 ) {
 
     init {
@@ -162,6 +179,17 @@ data class NpuModelSpec(
                 "($MELBANK_128_ASSET, $MELBANK_128_BYTES B), and it is the one every non-null " +
                 "melAsset is staged against — so this row would be refused on device, at " +
                 "stage=mel-asset, for a fact it already carries."
+        }
+
+        // A ROW MUST NAME ITS VOCABULARY, NON-VACUOUSLY (4.1 L4). The field being required stops
+        // a row from omitting the decision; this stops it being made as "". Blank here would
+        // surface as an IOException at load on a device, at stage=vocab, for a fact the row
+        // already knew when it was written — the same reasoning as the melAsset/melBins pairing
+        // guard above.
+        require(vocabAsset.isNotBlank()) {
+            "tier '$tierId' does not name its vocabulary asset (vocabAsset is blank). Every npu " +
+                "tier detokenises through a bundled vocabulary, and which FILE that is decides " +
+                "which family's ids come out as text — it is not a value with a sensible vacuum."
         }
 
         require(widest <= Int.MAX_VALUE) {
@@ -303,6 +331,40 @@ data class NpuModelSpec(
             // resolved for this tier because it is also the CPU fallback. Bundling a second copy
             // of a matrix the device already has would be 64 KB of APK for nothing.
             melAsset = null,
+            vocabAsset = "whisper_vocab.json",
+        )
+
+        /**
+         * **The `npu-turbo` tier** — `large-v3-turbo`'s row, every scalar read out of the asset
+         * pair's own `metadata.json` at plan time and re-checked by the census guard at load
+         * (4.1 L4).
+         *
+         * The formula reproduces the metadata exactly: 1 / 8 / 768,000 / 15,360,000 encoder-side
+         * and 19 / 9 / 17,398,168 / 2,141,492 decoder-side — asserted value by value in
+         * `NpuModelSpecTest`, which until this row landed carried the same numbers as a
+         * hand-computed local precisely so the row could replace it without adding a second copy.
+         *
+         * `decLayers = 4` beside `heads = 20` is the pair that makes this row the formula's real
+         * second input: at `whisper-small` both are 12, so a transposed factor is invisible there
+         * and loud here.
+         */
+        val TURBO: NpuModelSpec = NpuModelSpec(
+            tierId = "npu-turbo",
+            melBins = 128,
+            melFrames = MEL_FRAMES,
+            decLayers = 4,
+            heads = 20,
+            headDim = HEAD_DIM,
+            audioCtx = AUDIO_CTX,
+            tokens = WhisperTokens.LARGE_V3,
+            // The bundled 128-bin filterbank (4.1 L3) — this row is the first live caller the
+            // `mel-asset` staging arm has ever had. A 128-bin tier has no installed donor: the
+            // only 128-bin ggml in the catalog is `ultra`, 574 MB, and it need not be installed.
+            melAsset = MELBANK_128_ASSET,
+            // Built by tools/build_turbo_vocab.py from the shipped base plus the LARGE_V3 special
+            // layout, VERIFIED against turbo's own voice_ai/vocab.bin. 51,866 entries — which is
+            // `tokens.vocab`, and WhisperBpeDecoder refuses any other count at load.
+            vocabAsset = "whisper_vocab_turbo.json",
         )
 
         /**
@@ -315,10 +377,11 @@ data class NpuModelSpec(
          * another model's census, and the best case is a refusal at load while the worst is
          * another model's transcript.
          *
-         * One row today. L4 adds `npu-turbo`.
+         * Two rows since 4.1 L4: `npu` and `npu-turbo`.
          */
         fun forTier(tierId: String?): NpuModelSpec? = when (tierId) {
             SMALL.tierId -> SMALL
+            TURBO.tierId -> TURBO
             else -> null
         }
     }

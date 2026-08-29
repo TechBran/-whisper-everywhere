@@ -845,6 +845,51 @@ class NpuNativeContractTest {
     }
 
     /**
+     * **The detect echo renders its token ids through `diagToken`, like every other id on the
+     * tag** (4.1 L4, folding Q10a-D M4).
+     *
+     * The `npu-debug: detect` line printed `best=%d runnerUp=%d` raw. That was safe by a
+     * CALL-SITE property — `argmaxInRange` is bounded to the language band, and band ids are
+     * specials, which `diagToken` prints verbatim anyway — i.e. safe because of where the caller
+     * happened to scan, which is precisely the shape D1's own battery row exists to forbid one
+     * function over: content-safety is a property of the HELPER, not a fact each call site
+     * re-establishes. The next edit to the scan bounds (and L4 itself moves the band's top,
+     * per-family) would have put raw ids on the line with nothing to notice. Today's OUTPUT is
+     * byte-identical; what moved is which function is responsible for it.
+     */
+    @Test
+    fun theDetectEchoRendersItsTokenIdsThroughTheSameHelperEveryOtherLineUses() {
+        val detect = functionBody(
+            cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage("
+        )
+        assertTrue(
+            "the detect echo must render `best` through diagToken. Live diagToken sites: " +
+                liveLines(detect, "diagToken("),
+            liveOffsets(detect, "diagToken(best,").isNotEmpty()
+        )
+        assertTrue(
+            "…and `runnerUp` — it is an id from the same argmax family and prints on the same " +
+                "line, so an exemption for it is the call-site rule back under a narrower name",
+            liveOffsets(detect, "diagToken(runnerUp,").isNotEmpty()
+        )
+        assertTrue(
+            "no live line of nativeDetectLanguage may format a token id with a raw `%d` — " +
+                "`best=%d` and `runnerUp=%d` are the two this fold removed, and the result line's " +
+                "`language token %d` moved with them. Found: " +
+                (liveLines(detect, "best=%d") + liveLines(detect, "runnerUp=%d") +
+                    liveLines(detect, "language token %d")),
+            liveLines(detect, "best=%d").isEmpty() &&
+                liveLines(detect, "runnerUp=%d").isEmpty() &&
+                liveLines(detect, "language token %d").isEmpty()
+        )
+        assertTrue(
+            "the result line still names the token and its band offset — `language token %s " +
+                "(offset %d` — because the offset is what the L8 sheet reads against g_lang",
+            liveOffsets(detect, "language token %s").isNotEmpty()
+        )
+    }
+
+    /**
      * **THE ATTENTION MASK'S COLUMN ARRANGEMENT — the Q10a defect, and the most consequential
      * single line on this branch.**
      *
@@ -2152,26 +2197,41 @@ class NpuNativeContractTest {
         val load = kotlinMemberBody(
             backend, "override fun load(modelPath: String, companionPath: String?): Long ="
         )
+        // SCOPED TO THE nativeInit CALL, not the whole of load (4.1 L4, and this is the L1/L2
+        // planned-red pattern resolved by STRENGTHENING). The claim was always "read off the spec
+        // AT the nativeInit call" but the needles ran over the whole member — which went red the
+        // moment L4's vocab stage legitimately added `expectedSize = spec.tokens.vocab,` three
+        // stages earlier, and would otherwise have been satisfiable by spec reads anywhere in
+        // load. Narrowing the scope to the call makes the needles mean what the message says.
+        val initCallAt = liveOffsets(load, "QnnAsrNative.nativeInit(")
+        assertTrue(
+            "load must call QnnAsrNative.nativeInit on a live line",
+            initCallAt.isNotEmpty()
+        )
+        val initCall = load.substring(initCallAt.first())
         assertTrue(
             "and the five scalars must be read OFF THAT SPEC at the nativeInit call, in native's " +
                 "own order - melBins, decLayers, heads, vocab, maxPositions. Assembling them from " +
                 "anywhere else is where the transposition gets in. Live lines: " +
-                liveLines(load, "spec."),
-            liveOffsets(load, "spec.melBins,").isNotEmpty() &&
-                liveOffsets(load, "spec.decLayers,").isNotEmpty() &&
-                liveOffsets(load, "spec.heads,").isNotEmpty() &&
-                liveOffsets(load, "spec.tokens.vocab,").isNotEmpty() &&
-                liveOffsets(load, "spec.maxPositions,").isNotEmpty()
+                liveLines(initCall, "spec."),
+            liveOffsets(initCall, "spec.melBins,").isNotEmpty() &&
+                liveOffsets(initCall, "spec.decLayers,").isNotEmpty() &&
+                liveOffsets(initCall, "spec.heads,").isNotEmpty() &&
+                liveOffsets(initCall, "spec.tokens.vocab,").isNotEmpty() &&
+                liveOffsets(initCall, "spec.maxPositions,").isNotEmpty()
         )
         assertTrue(
             "in THAT order: the five arrive as adjacent Ints and native reads them positionally, " +
                 "so a transposed pair is a census for a model nobody has - and decLayers against " +
                 "heads is invisible in the byte totals.",
-            liveOffsets(load, "spec.melBins,").first() < liveOffsets(load, "spec.decLayers,").first() &&
-                liveOffsets(load, "spec.decLayers,").first() < liveOffsets(load, "spec.heads,").first() &&
-                liveOffsets(load, "spec.heads,").first() < liveOffsets(load, "spec.tokens.vocab,").first() &&
-                liveOffsets(load, "spec.tokens.vocab,").first() <
-                    liveOffsets(load, "spec.maxPositions,").first()
+            liveOffsets(initCall, "spec.melBins,").first() <
+                liveOffsets(initCall, "spec.decLayers,").first() &&
+                liveOffsets(initCall, "spec.decLayers,").first() <
+                    liveOffsets(initCall, "spec.heads,").first() &&
+                liveOffsets(initCall, "spec.heads,").first() <
+                    liveOffsets(initCall, "spec.tokens.vocab,").first() &&
+                liveOffsets(initCall, "spec.tokens.vocab,").first() <
+                    liveOffsets(initCall, "spec.maxPositions,").first()
         )
     }
 
@@ -2716,6 +2776,32 @@ class NpuNativeContractTest {
             "and the refusal must still be stage `companion`, because the card and the WE-DIAG " +
                 "line name the stage and moving a check must not rename what declined",
             liveOffsets(load, "\"companion\"").isNotEmpty()
+        )
+
+        // THE VOCABULARY IS THE SPEC'S TOO — name and size both (4.1 L4, closing the L2
+        // micro-round's named carry). Two vocabularies ship now, and the pairing is the whole
+        // decision: `whisper_vocab.json` resolves 51,865 ids and `whisper_vocab_turbo.json`
+        // 51,866, and a decoder built from the wrong pairing still binds, still decodes, and
+        // renders the other family's specials as text boundaries. Both halves are read off the
+        // ONE spec object at the ONE call site, exactly like the five nativeInit scalars below it.
+        assertTrue(
+            "the vocab stage must open the asset the SPEC names — `assets.open(spec.vocabAsset)` " +
+                "on a live line. Live lines: " + liveLines(load, "assets.open("),
+            liveOffsets(load, "assets.open(spec.vocabAsset)").isNotEmpty()
+        )
+        assertTrue(
+            "…and must demand the SPEC's entry count — `expectedSize = spec.tokens.vocab,` on a " +
+                "live line. The decoder no longer remembers a size of its own; a call site that " +
+                "re-supplied 51,865 here would arm the turbo tier against a vocabulary check its " +
+                "own correct asset cannot pass.",
+            liveOffsets(load, "expectedSize = spec.tokens.vocab,").isNotEmpty()
+        )
+        assertTrue(
+            "and NO live line of NpuWhisperBackend.kt may carry a vocabulary asset name as a " +
+                "literal — `whisper_vocab` anywhere live is the spec's decision re-made locally, " +
+                "which is the exact shape the melAsset branch above already forbids for the " +
+                "filterbank. Found: " + liveLines(backend, "whisper_vocab"),
+            liveLines(backend, "whisper_vocab").isEmpty()
         )
     }
 

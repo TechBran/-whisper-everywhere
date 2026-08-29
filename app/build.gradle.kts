@@ -293,6 +293,14 @@ tasks.withType<Test>().configureEach {
         // reports UP-TO-DATE and every one of those assertions passes against the file as it used
         // to be. That is precisely the change being guarded against.
         "src/main/assets/melbank-128.bin",
+        // (4.1 L4) The turbo vocabulary, for exactly the melbank's reason one asset over: a JSON
+        // asset is an input to no compile task, so regenerating it wrongly — from the wrong base,
+        // without <|yue|>, with HF's <|nospeech|> spelling — changes not one .class file.
+        // TurboVocabAssetTest (base identity, special layout, digest, the id-188 NUL token) and
+        // WhisperBpeDecoderTest (golden vectors through the turbo decoder) are its only readers,
+        // and without this entry the task reports UP-TO-DATE and every one of those assertions
+        // passes against the file as it used to be.
+        "src/main/assets/whisper_vocab_turbo.json",
         "src/main/java/com/whispereverywhere/npu/NpuAssetStage.kt",
         // (4.1 L3) NpuModelSpec.kt joins for the same reason L2 added NpuDecodePolicy.kt:
         // MelbankAssetTest now READS it, because the absence of a default on `melAsset` is a
@@ -327,6 +335,11 @@ tasks.withType<Test>().configureEach {
         // claim and the reproducibility claim — and loosening either of those to a threshold is a
         // pure-Python edit that no Kotlin or C++ task would notice.
         rootProject.file("tools/extract_melbank.py"),
+        // (4.1 L4) The vocabulary builder, same rule as the extractor above it: it lives outside
+        // the app module, TurboVocabAssetTest asserts its verification literals (the exact 50,257
+        // base count and the id-188 known mismatch — the pins that stop the cross-check being
+        // loosened to a threshold), and loosening either is a pure-Python edit no compile notices.
+        rootProject.file("tools/build_turbo_vocab.py"),
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a
