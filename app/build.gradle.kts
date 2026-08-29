@@ -264,6 +264,12 @@ android {
 // are all LIVE-line scoped, so a comment-only edit could not break them and this entry is not yet
 // load-bearing. It is here because the rule this list is built on is about what the tests READ, and
 // the next assertion added to that pin is not required to remember the distinction.
+// (4.1 L2) NpuDecodePolicy.kt joins because NpuDecodePolicyTest now READS it: the absence of a
+// default on the `family` parameter is a property of the DECLARATION and no call can observe it —
+// a call that omitted the argument would not compile, and a test cannot assert about code that
+// does not exist. That default is the whole hazard the parameter was added to remove (a turbo
+// prompt built out of whisper-small's ids puts the model in the wrong TASK), so the one mutation
+// this list has to guarantee re-runs the pin is a one-character addition to that line.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -281,6 +287,7 @@ tasks.withType<Test>().configureEach {
         "src/main/assets/oss_licenses.html",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
         "src/main/java/com/whispereverywhere/npu/QnnAsrNative.kt",
+        "src/main/java/com/whispereverywhere/npu/NpuDecodePolicy.kt",
         "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
@@ -297,7 +304,13 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/transcription/batch/BatchTranscriber.kt",
         "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt",
         rootProject.file(".gitignore"),
-    ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
+    // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
+    // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
+    // Kotlin files, and only four of its entries are C++ at all. A property name that describes a
+    // quarter of its contents is a name the next person adding to it reads as a reason NOT to —
+    // which is exactly how a source-reading test ends up passing against stale evidence. L3, L4,
+    // L6 and L8 each add to this list, so it is renamed now, before they do.
+    ).withPropertyName("sourcePinnedInputs").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // QNN/QAIRT C API headers (4.0 NPU tier). PROPRIETARY — fetched, never committed (.gitignore:

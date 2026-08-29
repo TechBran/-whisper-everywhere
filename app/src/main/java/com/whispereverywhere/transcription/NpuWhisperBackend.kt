@@ -8,6 +8,7 @@ import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.npu.NpuQuantize
 import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.npu.QnnAsrNative
+import com.whispereverywhere.npu.NpuModelSpec
 import com.whispereverywhere.npu.WhisperBpeDecoder
 import com.whispereverywhere.whisper.GgmlBackends
 import com.whispereverywhere.whisper.WhisperNative
@@ -52,6 +53,25 @@ import java.util.Locale
  * while the card still promised the AI chip is the exact failure this project has already paid for
  * once.
  *
+ * ### The spec is required, and it has no default
+ *
+ * `spec` says which model's assets these paths point at: its mel width, its layer and head counts,
+ * its vocabulary and its context window. Every one of those is passed to `nativeInit`, which
+ * derives the graph census it refuses a mismatched asset on — so the spec is what makes the F2
+ * guard a guard once more than one npu-class tier exists.
+ *
+ * **It has no default value, deliberately.** A default would let a future call site arm one model's
+ * 358 MB of context binaries under another model's census, and the outcomes run from a refusal at
+ * load (the good case, because the census guard fires) to a decode driven by the wrong token family
+ * — another model's transcript, fluent and confident, with nothing failing. `NpuBackendSelector`
+ * resolves it from the tier id through `NpuModelSpec.forTier`, and answers `WhisperNativeBackend`
+ * when there is no row, so a tier without a spec cannot reach this constructor at all.
+ *
+ * Note what the 4.1 L1 arming epoch does NOT cover here: it identifies the SESSION, not the SPEC.
+ * An instance armed with the wrong model's assets under this spec has a perfectly valid, perfectly
+ * matching epoch. The epoch closes the cross-instance teardown and encode hazards; the required
+ * spec is the only thing that closes this one.
+ *
  * ### Handles
  *
  * [load] returns [HANDLE] on success and `0L` on failure, matching [WhisperNativeBackend]'s
@@ -70,6 +90,7 @@ import java.util.Locale
 class NpuWhisperBackend(
     private val paths: ModelPathProvider,
     private val appContext: Context,
+    private val spec: NpuModelSpec,
 ) : WhisperBackend {
 
     // ---------------------------------------------------------------- session state
@@ -263,8 +284,24 @@ class NpuWhisperBackend(
             // ExceptionInInitializerError / NoClassDefFoundError, because the <clinit> has already
             // failed. Catching the first one by name would crash the tier-unavailable path on the
             // second call rather than the first.
+            // THE FIVE VARYING SCALARS (4.1 L2). Native derives its own census from these and
+            // compares the graphs' own enumeration against it, so a spec that does not describe
+            // the asset on disk is refused HERE — at load, by name — instead of surfacing later as
+            // a session whose buffer sizing and whose model disagree. `headDim`, `audioCtx` and
+            // `melFrames` are deliberately NOT passed: they are identical on every published
+            // Whisper AI Hub asset, and an argument carrying a number that cannot vary is a number
+            // a caller can get wrong.
             val initError = runCatching {
-                QnnAsrNative.nativeInit(modelPath, companionPath, libDir())
+                QnnAsrNative.nativeInit(
+                    modelPath,
+                    companionPath,
+                    libDir(),
+                    spec.melBins,
+                    spec.decLayers,
+                    spec.heads,
+                    spec.tokens.vocab,
+                    spec.maxPositions,
+                )
             }.getOrElse { cause -> "init: ${cause.javaClass.simpleName}: ${cause.message}" }
             if (initError.isNotEmpty()) {
                 return@serialized fallBackToCpuTier("init", initError)
@@ -283,8 +320,8 @@ class NpuWhisperBackend(
             // owner's debug build talks and a release build does not.
             QnnAsrNative.nativeSetDiag(com.whispereverywhere.BuildConfig.DEBUG)
 
-            melBuffer = NpuQuantize.newMelFloatBuffer()
-            quantBuffer = NpuQuantize.newInputFeaturesBuffer()
+            melBuffer = NpuQuantize.newMelFloatBuffer(spec)
+            quantBuffer = NpuQuantize.newInputFeaturesBuffer(spec)
             armed = true
             HANDLE
         }
@@ -363,6 +400,9 @@ class NpuWhisperBackend(
             //   - AFTER pcmToMel returned TRUE. The mel buffer is reused across segments, so a line
             //     emitted above this guard would print the PREVIOUS segment's spectrogram and
             //     attribute it to a segment whose mel was never computed.
+            // The three rows are 0, melBins/2 and melBins-1 — the spec's, not 0/40/79 — because a
+            // fixed 79 names a row that does not exist on a 128-bin tier and, worse, would silently
+            // report a row from the middle of one where the claim is about the last (4.1 L2).
             //   - BEFORE melToU16. This must measure whisper's floats, not anything the quantiser
             //     has been near; a bisector that cannot separate the mel from the quantisation is
             //     not a bisector.
@@ -372,9 +412,10 @@ class NpuWhisperBackend(
             android.util.Log.i(
                 NpuDiag.TAG,
                 NpuDiag.mel(
-                    NpuQuantize.melRowSum(melView, 0),
-                    NpuQuantize.melRowSum(melView, 40),
-                    NpuQuantize.melRowSum(melView, NpuQuantize.MEL_BINS - 1),
+                    spec.melBins,
+                    NpuQuantize.melRowSum(spec, melView, 0),
+                    NpuQuantize.melRowSum(spec, melView, spec.melBins / 2),
+                    NpuQuantize.melRowSum(spec, melView, spec.melBins - 1),
                 ),
             )
 
@@ -387,7 +428,7 @@ class NpuWhisperBackend(
                 return@serialized fallBackAndRun("quant", QnnAsrNative.nativeLastError(), samples, lang, useVad)
             }
             NpuQuantize.melToU16(
-                mel.asFloatBuffer(), quant[0], quant[1].toInt(), quantised.asShortBuffer()
+                spec, mel.asFloatBuffer(), quant[0], quant[1].toInt(), quantised.asShortBuffer()
             )
 
             // Q10a-D2. The KOTLIN half of the encoder read — the same two sums and the same three
@@ -401,16 +442,17 @@ class NpuWhisperBackend(
             // narrating the spectrogram it is working on.
             if (com.whispereverywhere.BuildConfig.DEBUG) {
                 val probe = mel.asFloatBuffer()
-                val half = NpuQuantize.MEL_FRAMES / 2
+                val half = spec.melFrames / 2
                 android.util.Log.i(
                     NpuDiag.TAG,
                     NpuDiag.melProbe(
-                        NpuQuantize.quantisedRowSum(probe, 0, quant[0], quant[1].toInt()),
-                        NpuQuantize.quantisedColumnSum(probe, 0, quant[0], quant[1].toInt()),
+                        spec,
+                        NpuQuantize.quantisedRowSum(spec, probe, 0, quant[0], quant[1].toInt()),
+                        NpuQuantize.quantisedColumnSum(spec, probe, 0, quant[0], quant[1].toInt()),
                         floatArrayOf(
                             probe.get(0),
                             probe.get(half),
-                            probe.get(NpuQuantize.MEL_FRAMES * (NpuQuantize.MEL_BINS / 2) + half),
+                            probe.get(spec.melFrames * (spec.melBins / 2) + half),
                         ),
                         quant[0],
                         quant[1].toInt(),
@@ -431,7 +473,9 @@ class NpuWhisperBackend(
             // segment is what nativeDecodeSegment reads next, in place.
             val detected = if (lang == null) QnnAsrNative.nativeDetectLanguage() else DETECT_NOT_RUN
             val resolution = try {
-                NpuDecodePolicy.resolveLangToken(lang, detected, Locale.getDefault().toLanguageTag())
+                NpuDecodePolicy.resolveLangToken(
+                    spec.tokens, lang, detected, Locale.getDefault().toLanguageTag()
+                )
             } catch (cause: IllegalArgumentException) {
                 // An explicit selection this asset cannot name. Refused rather than coerced to
                 // English — and handed to the CPU tier, which accepts language strings this one
@@ -439,12 +483,12 @@ class NpuWhisperBackend(
                 return@serialized fallBackAndRun("lang", "${cause.message}", samples, lang, useVad)
             }
 
-            val prompt = NpuDecodePolicy.promptTokens(resolution.token)
-            val out = IntArray(NpuDecodePolicy.maxTokensFor(prompt.size))
+            val prompt = NpuDecodePolicy.promptTokens(spec.tokens, resolution.token)
+            val out = IntArray(NpuDecodePolicy.maxTokensFor(spec.tokens, prompt.size))
             val written = QnnAsrNative.nativeDecodeSegment(
                 prompt,
-                NpuDecodePolicy.suppressList,
-                NpuDecodePolicy.beginSuppressList,
+                NpuDecodePolicy.suppressList(spec.tokens),
+                NpuDecodePolicy.beginSuppressList(spec.tokens),
                 out.size,
                 out,
             )

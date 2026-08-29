@@ -141,7 +141,9 @@ class NpuBackendWiringTest {
         npuAvailable: Boolean,
         declined: Boolean = false,
     ): WhisperBackend =
-        NpuBackendSelector.backendFor(tierId, npuAvailable, declined, paths) { StandInNpuBackend }
+        NpuBackendSelector.backendFor(tierId, npuAvailable, declined, paths) { _, _ ->
+            StandInNpuBackend
+        }
 
     /**
      * THE ONE CELL THE WHOLE TASK EXISTS FOR. Everything else on this branch — the backend, the
@@ -651,10 +653,18 @@ class NpuBackendWiringTest {
         // The production overload's single construction call — the fact the executable half of this
         // class deliberately cannot assert, because it may not name the type.
         assertEquals(
-            "the selector's production overload constructs the tier exactly once, from the paths " +
-                "and context it was handed",
+            "the selector's production overload constructs the tier exactly once, from the paths, " +
+                "the context and the SPEC it resolved (4.1 L2). The spec has no default on the " +
+                "constructor, so this is also the assertion that a tier id with no row in " +
+                "NpuModelSpec cannot reach the NPU backend at all.",
             1,
-            count(selector, "NpuWhisperBackend(it, appContext)"),
+            count(selector, "NpuWhisperBackend(p, appContext, spec)"),
+        )
+        assertEquals(
+            "and it takes the spec from NpuModelSpec.forTier, on the npu arm only — a second " +
+                "resolution site would be a second answer to \"which model is this tier\"",
+            1,
+            count(selector, "val spec = NpuModelSpec.forTier(tierId) ?: return WhisperNativeBackend"),
         )
     }
 }

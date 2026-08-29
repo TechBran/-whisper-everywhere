@@ -20,6 +20,9 @@ import java.io.File
  */
 class NpuDiagTest {
 
+    /** The `npu` tier's shape — the numbers these lines used to compile in (4.1 L2). */
+    private val spec = NpuModelSpec.SMALL
+
     @Test
     fun lineMatchesTheGreppableFormatExactly() {
         assertEquals(
@@ -185,21 +188,33 @@ class NpuDiagTest {
      * **What it detects.** whisper's internal mel is bin-major with stride `mel.n_len` — 6000 for a
      * 30 s window, because `log_mel_spectrogram` appends 30 s of zeros before framing — while the
      * destination stride is 3000. A flat copy reads bins 0-39 at wrong offsets and never touches
-     * bins 40-79. Nothing downstream can see it: the encoder accepts structured noise and
-     * transcribes it fluently into different words. `row40 == row79` is the whole diagnosis.
+     * the upper half of the bins. Nothing downstream can see it: the encoder accepts structured
+     * noise and transcribes it fluently into different words. `rowMid == rowLast` is the whole
+     * diagnosis.
+     *
+     * The fields are `rowMid`/`rowLast` and `bins` is a parameter since 4.1 L2, because the rows
+     * are `0`, `melBins/2` and `melBins-1`: on this tier they are still 40 and 79 and every number
+     * below is unchanged, but a fixed `row79` names a row that does not exist on a 128-bin asset.
      */
     @Test
     fun theMelLineIsOneLiteralAndItsRowsAreTheStrideBisector() {
         val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
         assertEquals(
-            "mel: bins=80 frames=3000 row0=1234.568 row40=0.000 row79=0.000",
-            NpuDiag.mel(1234.5678, 0.0, 0.0),
+            "mel: bins=80 frames=3000 row0=1234.568 rowMid=0.000 rowLast=0.000",
+            NpuDiag.mel(spec.melBins, 1234.5678, 0.0, 0.0),
         )
         assertEquals(
             "negatives are ordinary here — a log-mel is mostly negative, and a formatter that " +
                 "mangled the sign would make every row look alike",
-            "mel: bins=80 frames=3000 row0=-91234.500 row40=-88.250 row79=-0.001",
-            NpuDiag.mel(-91234.5, -88.25, -0.001),
+            "mel: bins=80 frames=3000 row0=-91234.500 rowMid=-88.250 rowLast=-0.001",
+            NpuDiag.mel(spec.melBins, -91234.5, -88.25, -0.001),
+        )
+        assertEquals(
+            "the bin count is the SPEC's, printed rather than assumed — this is the line a model " +
+                "lab reads to tell which asset produced a spectrogram, and `frames` stays fixed " +
+                "because 3000 is universal across every published whisper asset",
+            "mel: bins=128 frames=3000 row0=1.000 rowMid=2.000 rowLast=3.000",
+            NpuDiag.mel(128, 1.0, 2.0, 3.0),
         )
         assertEquals(
             "the `mel: bins=` prefix is ONE contiguous literal on one live line. Assembling it " +
@@ -208,8 +223,8 @@ class NpuDiagTest {
             liveLineCount(diag, "\"mel: bins="),
         )
         assertTrue(
-            "and the whole field sequence lives in that one literal, in order — row0, row40, row79",
-            diag.contains("\"mel: bins=%d frames=%d row0=%.3f row40=%.3f row79=%.3f\""),
+            "and the whole field sequence lives in that one literal, in order — row0, rowMid, rowLast",
+            diag.contains("\"mel: bins=%d frames=%d row0=%.3f rowMid=%.3f rowLast=%.3f\""),
         )
         // Locale.US, not the default — ASKED AS A BEHAVIOUR, not counted as a source line.
         //
@@ -226,8 +241,8 @@ class NpuDiagTest {
             assertEquals(
                 "on a comma-decimal device `%.3f` yields `row0=1234,567`, which breaks every " +
                     "parser and is *almost* readable — the kind of defect that survives review",
-                "mel: bins=80 frames=3000 row0=1234.568 row40=0.000 row79=0.000",
-                NpuDiag.mel(1234.5678, 0.0, 0.0),
+                "mel: bins=80 frames=3000 row0=1234.568 rowMid=0.000 rowLast=0.000",
+                NpuDiag.mel(spec.melBins, 1234.5678, 0.0, 0.0),
             )
         } finally {
             java.util.Locale.setDefault(previous)
@@ -242,10 +257,10 @@ class NpuDiagTest {
             liveLineCount(backend, "NpuDiag.mel("),
         )
         assertEquals(
-            "row 79 is taken from MEL_BINS - 1, not a bare 79: the last row IS the claim, and a " +
+            "the last row is taken from `spec.melBins - 1`, not a bare 79: the last row IS the claim, and a " +
                 "future 128-bin tier would leave a literal 79 measuring the middle of the band",
             1,
-            liveLineCount(backend, "NpuQuantize.melRowSum(melView, NpuQuantize.MEL_BINS - 1),"),
+            liveLineCount(backend, "NpuQuantize.melRowSum(spec, melView, spec.melBins - 1),"),
         )
         assertEquals(
             "the view is taken fresh and read absolutely, so the shared direct buffer handed on to " +
@@ -289,6 +304,7 @@ class NpuDiagTest {
             "npu-debug: melprobe qRow0=98304000 qCol0=2621440 cell[0]=-1.500000 " +
                 "cell[1500]=0.000000 cell[121500]=1.234568 scale=4.67700702e-05 zp=32072",
             NpuDiag.melProbe(
+                spec = spec,
                 qRow0 = 98_304_000L,
                 qCol0 = 2_621_440L,
                 cells = floatArrayOf(-1.5f, 0.0f, 1.2345678f),
@@ -303,12 +319,22 @@ class NpuDiagTest {
             liveLineCount(diag, "\"npu-debug: melprobe qRow0="),
         )
         assertTrue(
-            "the cell indices must be DERIVED from MEL_FRAMES/MEL_BINS, never written as 1500 and " +
-                "121500. Native derives its three cells the same way, and a literal here would " +
-                "keep pointing at the old cells the day the geometry changes — while still " +
-                "printing a number beside native's, ready to be compared.",
-            diag.contains("NpuQuantize.MEL_FRAMES / 2") &&
-                diag.contains("NpuQuantize.MEL_FRAMES * (NpuQuantize.MEL_BINS / 2) + i1"),
+            "the cell indices must be DERIVED from the SPEC's melFrames/melBins, never written as " +
+                "1500 and 121500. Native derives its three cells the same way, and a literal here " +
+                "would keep pointing at the old cells the day the geometry changes — while still " +
+                "printing a number beside native's, ready to be compared. Since 4.1 L2 the day the " +
+                "geometry changes is a second TIER rather than a re-export, so the same literal " +
+                "would be wrong for one of two assets in the same build.",
+            diag.contains("spec.melFrames / 2") &&
+                diag.contains("spec.melFrames * (spec.melBins / 2) + i1"),
+        )
+        assertTrue(
+            "and the line answers per spec: a 128-bin tier's middle cell is at a different index, " +
+                "which is the whole reason the indices are printed rather than assumed",
+            NpuDiag.melProbe(
+                NpuModelSpec.SMALL.copy(melBins = 128),
+                1L, 2L, floatArrayOf(0f, 0f, 0f), 1.0f, 0,
+            ).contains("cell[193500]="),
         )
         // Locale.US, asked as a behaviour for the reason the mel line's own assertion now states.
         val previous = java.util.Locale.getDefault()
@@ -317,7 +343,7 @@ class NpuDiagTest {
             assertTrue(
                 "under a comma-decimal default the cells must still render with a dot, or the " +
                     "float this line exists to be compared with native's is unparseable",
-                NpuDiag.melProbe(1L, 2L, floatArrayOf(-1.5f, 0f, 1.25f), 1.0f, 0)
+                NpuDiag.melProbe(spec, 1L, 2L, floatArrayOf(-1.5f, 0f, 1.25f), 1.0f, 0)
                     .contains("cell[0]=-1.500000"),
             )
         } finally {
@@ -328,7 +354,7 @@ class NpuDiagTest {
         // a four-cell caller would otherwise render a line that reads as if it were comparable.
         listOf(floatArrayOf(), floatArrayOf(1f, 2f), floatArrayOf(1f, 2f, 3f, 4f)).forEach { bad ->
             org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
-                NpuDiag.melProbe(0L, 0L, bad, 1.0f, 0)
+                NpuDiag.melProbe(spec, 0L, 0L, bad, 1.0f, 0)
             }
         }
 

@@ -134,7 +134,7 @@ class MelExportContractTest {
         val gradle = source("build.gradle.kts")
         assertTrue(
             "app/build.gradle.kts must list \"src/main/cpp/whisper.cpp/include/whisper.h\" in the " +
-                "nativeSourceContract inputs.files(...) block. This test is the only reader of " +
+                "sourcePinnedInputs inputs.files(...) block. This test is the only reader of " +
                 "that header, and a header-only edit that is not a declared test input leaves the " +
                 "test task UP-TO-DATE - the guard then passes against stale evidence instead of " +
                 "re-running. Same hazard the .cpp entries beside it already close.",

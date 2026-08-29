@@ -881,10 +881,31 @@ class NpuNativeContractTest {
             liveOffsets(step, "g.maskLen - 1 - position").isNotEmpty() &&
                 liveOffsets(step, "(i >= firstLive) ? kMaskAttend : kMaskBlocked").isNotEmpty()
         )
+        // Q10a-D M1 — PIN THE TERNARY, NOT ITS PREFIX (4.1 L2). The claim above matches the
+        // subtraction alone, so deleting the `position < g.maskLen` clamp — which is the branch
+        // that keeps `maskLen - 1 - position` from wrapping a uint32 to ~4e9 at any position past
+        // the mask — still satisfies it. The clamp is unreachable while lastPosition is maskLen-2
+        // and it is the first thing turbo's own mask geometry would come back to, so it is pinned
+        // as the whole expression rather than as the half that reads interesting.
         assertTrue(
-            "the superseded fill `(i <= position) ? kMaskAttend` must appear nowhere live in " +
-                "decodeStepLocked — it is the Q10a defect and it reads as though it were right.",
-            !step.contains("(i <= position) ? kMaskAttend")
+            "the clamp must be pinned WHOLE: `const uint32_t firstLive = (position < g.maskLen) ? " +
+                "(g.maskLen - 1 - position) : 0;`. Without the ternary the subtraction underflows " +
+                "an unsigned type at any position at or past the mask width — every column reads " +
+                "as blocked and the decoder attends to nothing, which is the Q10a symptom exactly.",
+            liveOffsets(
+                step,
+                "const uint32_t firstLive = (position < g.maskLen) ? (g.maskLen - 1 - position) : 0;"
+            ).isNotEmpty()
+        )
+        // Q10a-D M2 — the absence assertion routed through liveOffsets like every sibling (global
+        // constraint rule 3). `contains()` over the raw text measures the KDoc and the file's own
+        // prose, both of which quote the superseded fill in order to explain it: the assertion
+        // could be satisfied by a comment and defeated by one.
+        assertTrue(
+            "the superseded fill `(i <= position) ? kMaskAttend` must appear nowhere LIVE in " +
+                "decodeStepLocked — it is the Q10a defect and it reads as though it were right. " +
+                "Found: " + liveLines(step, "(i <= position) ? kMaskAttend"),
+            liveOffsets(step, "(i <= position) ? kMaskAttend").isEmpty()
         )
     }
 
@@ -1742,18 +1763,53 @@ class NpuNativeContractTest {
                 "the only way Kotlin can learn the epoch it was armed with.",
             liveOffsets(seam, "external fun nativeEpoch(): Long").isNotEmpty()
         )
+        // RE-SPELLED AT L2, EXACTLY AS THE PIN'S OWN MESSAGE INSTRUCTED. The needle used to be the
+        // one-line 4.0 declaration; L2 added the five census scalars and this went red on its
+        // arity, which is what a NAMED TRIGGER is for — the failure said which task would break it
+        // and what to do. The claim is unchanged and it is about the RETURN.
         assertTrue(
             "nativeInit must still ANSWER a String — `\"\"` or `\"stage: detail\"`. Widening it to " +
-                "carry the epoch too is how a stage error becomes a value with two readings and " +
-                "the failure text stops being read. THE NAMED TRIGGER: task L2 adds five scalars " +
-                "to this declaration (melBins, decLayers, heads, vocab, maxPositions), so this " +
-                "needle goes red THERE by construction — re-spell it with L2's parameter list and " +
-                "keep the `: String`, because the claim is about the RETURN, not the arity. Found: " +
+                "carry the epoch, or the derived census, or anything else is how a stage error " +
+                "becomes a value with two readings and the failure text stops being read. If a " +
+                "later task adds a sixth scalar this goes red again: re-spell the block below with " +
+                "the new parameter list and KEEP the `: String`. Found: " +
                 liveLines(seam, "external fun nativeInit"),
-            liveOffsets(
-                seam,
-                "external fun nativeInit(encoderPath: String, decoderPath: String, libDir: String): String"
-            ).isNotEmpty()
+            seam.contains(
+                listOf(
+                    "    external fun nativeInit(",
+                    "        encoderPath: String,",
+                    "        decoderPath: String,",
+                    "        libDir: String,",
+                    "        melBins: Int,",
+                    "        decLayers: Int,",
+                    "        heads: Int,",
+                    "        vocab: Int,",
+                    "        maxPositions: Int,",
+                    "    ): String",
+                ).joinToString("\n")
+            )
+        )
+        assertEquals(
+            "…and there must be exactly ONE nativeInit declaration. A second overload — the 4.0 " +
+                "three-argument form kept for convenience, say — compiles, links to the same " +
+                "unmangled JNI symbol, and reaches native's five-scalar frame with whatever was in " +
+                "the argument registers. That is the L13 shape from the epoch task, one seam along. " +
+                "Found: " + liveLines(seam, "external fun nativeInit"),
+            1,
+            liveLines(seam, "external fun nativeInit").size
+        )
+        assertTrue(
+            "the five scalars must be the five that VARY, in the order native reads them — " +
+                "melBins, decLayers, heads, vocab, maxPositions. They are all Int and adjacent, so " +
+                "a transposition compiles silently and produces a census for a model nobody has: " +
+                "swapping decLayers and heads is invisible in encOutBytes (both are factors of the " +
+                "same product) and visible only in the IO COUNTS, which is why the census guard " +
+                "compares all four figures rather than the bytes alone.",
+            liveLines(seam, "melBins: Int,").isNotEmpty() &&
+                liveLines(seam, "decLayers: Int,").isNotEmpty() &&
+                liveLines(seam, "heads: Int,").isNotEmpty() &&
+                liveLines(seam, "vocab: Int,").isNotEmpty() &&
+                liveLines(seam, "maxPositions: Int,").isNotEmpty()
         )
     }
 
@@ -1961,6 +2017,562 @@ class NpuNativeContractTest {
                 "with no numbers cannot be checked against the WE-DIAG capture, which carries " +
                 "`nativeInit: session armed with epoch N` and the refusal's own two numbers.",
             liveOffsets(body, "sessionReplacedDetail(armedEpoch,").isNotEmpty()
+        )
+    }
+
+    // ================================================================ 4.1 L2 — THE TIER'S CENSUS
+    //
+    // 4.0 compiled its census in: `constexpr GraphExpectation kEncoderExpectation{...}` and its
+    // decoder twin, plus `kCrossKvLayers`, `kLangTokenFirst` and `kLangTokenLast`. Every one of
+    // those is a per-model number, and the F2 guard that compares an asset against them stops being
+    // a guard the moment a second asset exists: `npu-turbo` differs at all of them BY
+    // CONSTRUCTION, so a file-scope constant would fire on a correct asset and the only available
+    // repair would be to weaken the guard.
+    //
+    // So the census becomes SESSION STATE, derived at `nativeInit` from five scalars the caller
+    // passes, and the three factors that are universal across every published Whisper AI Hub asset
+    // — headDim, audioCtx, melFrames — stay native constants and are pinned AGAINST NpuModelSpec's
+    // fields. That pin is what keeps the two derivations one derivation.
+
+    /**
+     * **The five scalars, and the refusal that runs before anything is opened or torn down.**
+     *
+     * `nativeInit` now takes `melBins, decLayers, heads, vocab, maxPositions` and derives both
+     * `GraphExpectation`s from them. Two claims, and the second is the ORDER one:
+     *
+     *  - the derivation exists and is the ONLY source of the two expectations — the `constexpr`
+     *    forms must be gone, because leaving one beside the derived pair is the fix landed and
+     *    bypassed (this branch's L13 shape);
+     *  - **the scalars are validated before `releaseLocked()` and before `loadInterfacesLocked`.**
+     *    A garbage scalar set must not reach an allocation, and it must not tear down a WORKING
+     *    session on its way to being refused either: `nativeInit` is idempotent by releasing first,
+     *    so a refusal taken after that point costs the caller the session it already had.
+     */
+    @Test
+    fun nativeInitTakesTheFiveVaryingScalarsAndRefusesAnImplausibleSetBeforeItTouchesAnything() {
+        val init = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(")
+        assertTrue(
+            "nativeInit must TAKE the five varying scalars as jints. Found: " +
+                liveLines(init, "jint "),
+            liveOffsets(
+                init,
+                "jint melBins, jint decLayers, jint heads, jint vocab, jint maxPositions"
+            ).isNotEmpty()
+        )
+        val derive = liveOffsets(init, "deriveCensus(melBins, decLayers, heads, vocab, maxPositions,")
+        assertTrue(
+            "nativeInit must DERIVE the census from those scalars on a live line — presence " +
+                "asserted separately from ordering, because \"A precedes B\" is trivially true " +
+                "when there is no A. Live lines mentioning deriveCensus: " +
+                liveLines(init, "deriveCensus"),
+            derive.isNotEmpty()
+        )
+        val release = liveOffsets(init, "releaseLocked();")
+        val interfaces = liveOffsets(init, "loadInterfacesLocked(libDir)")
+        assertTrue("nativeInit must still release an existing session", release.isNotEmpty())
+        assertTrue("nativeInit must still load the QNN interfaces", interfaces.isNotEmpty())
+        assertTrue(
+            "the census derivation (${derive.first()}) must run BEFORE the release " +
+                "(${release.first()}) and before the interfaces load (${interfaces.first()}). " +
+                "ORDER, not presence: every statement survives the move, it compiles, and a spec " +
+                "refused after `releaseLocked()` has already destroyed the session the caller had " +
+                "— an implausible scalar would then cost a working tier rather than an error " +
+                "string. It is also what keeps a garbage scalar away from a 27 MiB allocation.",
+            derive.first() < release.first() && derive.first() < interfaces.first()
+        )
+
+        val body = functionBody(cpp, "std::string deriveCensus(")
+        assertTrue(
+            "the derivation must refuse a mel width no published whisper asset uses",
+            liveOffsets(body, "melBins != 80 && melBins != 128").isNotEmpty()
+        )
+        listOf(
+            "decLayers < 1 || decLayers > 64" to "decLayers",
+            "heads < 1 || heads > 64" to "heads",
+            "vocab < 1 || vocab > 65535" to "vocab",
+            "maxPositions < 2 || maxPositions > 1024" to "maxPositions",
+        ).forEach { (needle, factor) ->
+            assertTrue(
+                "the derivation must bound `$factor` on a live line (`$needle`). vocab in " +
+                    "particular bounds a uint16 argmax, so an unbounded one is a scan past the " +
+                    "end of the logits buffer.",
+                liveOffsets(body, needle).isNotEmpty()
+            )
+        }
+        assertTrue(
+            "and every refusal must be a normal `spec: ` stage error, so it routes through " +
+                "fallBackToCpuTier to `npu: unavailable stage=init` and the card, like every other " +
+                "stage. Found ${liveOffsets(body, "\"spec: ").size} live sites.",
+            liveOffsets(body, "\"spec: ").size >= 5
+        )
+
+        // WHERE THE FIVE COME FROM, and it is the other half of the same guard.
+        //
+        // Five adjacent Ints at a JNI boundary is a transposition waiting to happen, and the two
+        // that transpose invisibly are `decLayers` and `heads`: they are both factors of the same
+        // cross-KV product, so swapping them leaves encOutBytes identical and moves only the IO
+        // COUNTS - which is why the census compares all four figures. The defence is that they are
+        // never assembled at a call site: they come from ONE NpuModelSpec, which is a required
+        // constructor parameter with NO DEFAULT.
+        //
+        // The no-default rule is step 7 of this task and it is the same rule as NpuDecodePolicy's
+        // family, for a sharper reason: a defaulted spec lets a future call site arm one model's
+        // 358 MB of context binaries under another model's census. The good case is the census
+        // guard refusing at load; the bad case is a decode driven by the wrong token family, i.e.
+        // another model's transcript with nothing failing.
+        assertTrue(
+            "NpuWhisperBackend must take the spec as a required constructor parameter. Found: " +
+                liveLines(backend, "spec: NpuModelSpec"),
+            liveOffsets(backend, "private val spec: NpuModelSpec,").isNotEmpty()
+        )
+        assertTrue(
+            "…with NO DEFAULT. `spec: NpuModelSpec = NpuModelSpec.SMALL` compiles, keeps every " +
+                "existing call site working, and is exactly the hazard the parameter was added to " +
+                "remove: one model's assets armed under another model's census. Found: " +
+                liveLines(backend, "spec: NpuModelSpec ="),
+            liveLines(backend, "spec: NpuModelSpec =").isEmpty()
+        )
+        val load = kotlinMemberBody(
+            backend, "override fun load(modelPath: String, companionPath: String?): Long ="
+        )
+        assertTrue(
+            "and the five scalars must be read OFF THAT SPEC at the nativeInit call, in native's " +
+                "own order - melBins, decLayers, heads, vocab, maxPositions. Assembling them from " +
+                "anywhere else is where the transposition gets in. Live lines: " +
+                liveLines(load, "spec."),
+            liveOffsets(load, "spec.melBins,").isNotEmpty() &&
+                liveOffsets(load, "spec.decLayers,").isNotEmpty() &&
+                liveOffsets(load, "spec.heads,").isNotEmpty() &&
+                liveOffsets(load, "spec.tokens.vocab,").isNotEmpty() &&
+                liveOffsets(load, "spec.maxPositions,").isNotEmpty()
+        )
+        assertTrue(
+            "in THAT order: the five arrive as adjacent Ints and native reads them positionally, " +
+                "so a transposed pair is a census for a model nobody has - and decLayers against " +
+                "heads is invisible in the byte totals.",
+            liveOffsets(load, "spec.melBins,").first() < liveOffsets(load, "spec.decLayers,").first() &&
+                liveOffsets(load, "spec.decLayers,").first() < liveOffsets(load, "spec.heads,").first() &&
+                liveOffsets(load, "spec.heads,").first() < liveOffsets(load, "spec.tokens.vocab,").first() &&
+                liveOffsets(load, "spec.tokens.vocab,").first() <
+                    liveOffsets(load, "spec.maxPositions,").first()
+        )
+    }
+
+    /**
+     * **The census guard compares against the SESSION's expectation, not a file-scope constant.**
+     *
+     * This is the whole point of the task, stated as the one assertion that would catch its
+     * reversal. `loadGraphSlot` is unchanged in shape — it still enumerates the graph, still logs
+     * the totals, still refuses on a mismatch — and the only difference is where the expectation
+     * comes from. If it came from a constant, the guard would refuse `npu-turbo`'s perfectly
+     * correct asset and the available repair would be to delete the guard.
+     *
+     * The negatives are the sharper half: the two `constexpr GraphExpectation`s must be GONE. Kept
+     * beside the derived pair they compile, and one call site left pointing at the old name is a
+     * tier that silently checks whisper-small's shape against whatever asset it was handed.
+     */
+    @Test
+    fun theCensusGuardReadsTheSessionsExpectationAndNotAFileScopeConstant() {
+        assertTrue(
+            "`constexpr GraphExpectation kEncoderExpectation` must be gone from every live line — " +
+                "it is a per-model number and the model is no longer fixed. Found: " +
+                liveLines(cpp, "kEncoderExpectation"),
+            liveOffsets(cpp, "kEncoderExpectation").isEmpty()
+        )
+        assertTrue(
+            "…and `kDecoderExpectation` with it. Found: " + liveLines(cpp, "kDecoderExpectation"),
+            liveOffsets(cpp, "kDecoderExpectation").isEmpty()
+        )
+        assertTrue(
+            "NpuState must carry the tier's own expectations as session state, set once from the " +
+                "scalars. Found: " + liveLines(cpp, "GraphExpectation enc"),
+            liveOffsets(cpp, "GraphExpectation encExpect").isNotEmpty() &&
+                liveOffsets(cpp, "GraphExpectation decExpect").isNotEmpty()
+        )
+        val init = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(")
+        assertTrue(
+            "nativeInit must load each graph against the SESSION's expectation. Live loadGraphSlot " +
+                "lines: " + liveLines(init, "loadGraphSlot("),
+            liveOffsets(init, "loadGraphSlot(g.enc, encoderPath, g.encExpect)").isNotEmpty() &&
+                liveOffsets(init, "loadGraphSlot(g.dec, decoderPath, g.decExpect)").isNotEmpty()
+        )
+        val slot = functionBody(cpp, "std::string loadGraphSlot(")
+        assertTrue(
+            "and the guard itself is UNCHANGED IN SHAPE — it still compares all four figures and " +
+                "still returns the `io: differs from expected census` stage error. Rewriting it to " +
+                "compare fewer of them is how a tier stops noticing that it was handed the other " +
+                "model's decoder.",
+            liveOffsets(
+                slot,
+                "if (numIn != expect.numIn || numOut != expect.numOut ||"
+            ).isNotEmpty() &&
+                liveOffsets(slot, "io: differs from expected census").isNotEmpty()
+        )
+        assertTrue(
+            "the cross-KV layer count must be session state too — it is `decLayers`, and turbo has " +
+                "four. Found: " + liveLines(cpp, "kCrossKvLayers"),
+            liveOffsets(cpp, "kCrossKvLayers").isEmpty() &&
+                liveOffsets(cpp, "uint32_t crossKvLayers").isNotEmpty()
+        )
+        assertTrue(
+            "and so must the language band's two bounds: `<|su|>` is 50357 in one family and " +
+                "`<|yue|>` is 50358 in the other, so a constant last-language-token silently " +
+                "excludes Cantonese from the detect pass. Found: " +
+                liveLines(cpp, "kLangTokenLast"),
+            liveOffsets(cpp, "kLangTokenLast").isEmpty() &&
+                liveOffsets(cpp, "int32_t langTokenFirst").isNotEmpty() &&
+                liveOffsets(cpp, "int32_t langTokenLast").isNotEmpty()
+        )
+        val release = functionBody(cpp, "void releaseLocked()")
+        assertTrue(
+            "releaseLocked must forget the census with the session that carried it — a torn-down " +
+                "session leaving whisper-small's expectation behind is the file-scope constant " +
+                "back, with an extra step. Live lines: " + liveLines(release, "Expect"),
+            liveOffsets(release, "g.encExpect = GraphExpectation{}").isNotEmpty() &&
+                liveOffsets(release, "g.decExpect = GraphExpectation{}").isNotEmpty() &&
+                liveOffsets(release, "g.crossKvLayers = 0;").isNotEmpty()
+        )
+    }
+
+    /**
+     * **The three factors that stay native, pinned against `NpuModelSpec`'s fields.**
+     *
+     * `headDim = 64`, `audioCtx = 1500` and `melFrames = 3000` are identical across all seven
+     * published Whisper AI Hub assets in the research survey, so they are NOT among `nativeInit`'s
+     * arguments: a parameter carrying a number that cannot vary is a number a caller can get wrong.
+     *
+     * That decision costs something, and this test is the payment. The census now has two
+     * derivations — Kotlin's over eight factors and native's over five — and they agree only if the
+     * three they do not exchange are the same on both sides. Nothing links them at compile time and
+     * nothing would link them on device: a native `kHeadDim` of 32 beside a Kotlin `headDim` of 64
+     * produces two different `encOutBytes`, and the first thing that notices is the census guard
+     * refusing the tier's own asset. So the literals are read out of the C++ and compared to the
+     * spec's fields, here, where it costs a second.
+     */
+    @Test
+    fun theThreeUniversalShapeConstantsStayNativeAndEqualTheKotlinSpecsFields() {
+        listOf(
+            Triple("kHeadDim", 64, NpuModelSpec.SMALL.headDim),
+            Triple("kAudioCtx", 1500, NpuModelSpec.SMALL.audioCtx),
+            Triple("kMelFrames", 3000, NpuModelSpec.SMALL.melFrames),
+        ).forEach { (name, literal, kotlin) ->
+            assertEquals(
+                "NpuModelSpec.SMALL must carry the same $name native compiles in",
+                literal,
+                kotlin
+            )
+            assertTrue(
+                "qnn_asr.cpp must declare `constexpr uint32_t $name = $literal;` on a live line — " +
+                    "the same number NpuModelSpec.SMALL carries as a field ($kotlin). These three " +
+                    "are the factors nativeInit does NOT receive, so this comparison is the only " +
+                    "thing anywhere that relates the two census derivations at them. Live lines: " +
+                    liveLines(cpp, name),
+                liveOffsets(cpp, "constexpr uint32_t $name = $literal;").isNotEmpty()
+            )
+        }
+        assertTrue(
+            "and they must not be smuggled in as arguments after all — the parameter list is the " +
+                "five that VARY, and a sixth carrying 64 is a sixth thing a caller can transpose.",
+            liveOffsets(cpp, "jint headDim").isEmpty() &&
+                liveOffsets(cpp, "jint audioCtx").isEmpty() &&
+                liveOffsets(cpp, "jint melFrames").isEmpty()
+        )
+        assertTrue(
+            "the encoder's cross-KV total must be built from them rather than from a literal: " +
+                "2*decLayers * heads * kHeadDim * kAudioCtx",
+            liveOffsets(
+                functionBody(cpp, "std::string deriveCensus("),
+                "kHeadDim * kAudioCtx"
+            ).isNotEmpty()
+        )
+        val derive = functionBody(cpp, "std::string deriveCensus(")
+        assertTrue(
+            "and the mel block from kMelFrames — `... * kMelFrames * 2` on a live line",
+            liveOffsets(derive, "* kMelFrames * 2").isNotEmpty()
+        )
+        assertTrue(
+            "…with no bare 3000, 1500 or 64 anywhere live in the derivation. A literal there is " +
+                "the same defect as a literal in NpuModelSpec, and it is worse here because this " +
+                "is the side that does not get an assertion of its own: the Kotlin census would " +
+                "keep reading its fields while native quietly used the number it was written with. " +
+                "Found: " + liveLines(derive, "3000") + liveLines(derive, "1500"),
+            liveLines(derive, "3000").isEmpty() &&
+                liveLines(derive, "1500").isEmpty() &&
+                liveLines(derive, "* 64").isEmpty()
+        )
+    }
+
+    /**
+     * The decoder's mask width is read from the asset AND compared against the spec's
+     * `maxPositions` (4.1 L2).
+     *
+     * `g.maskLen` has always come from `attention_mask`'s own buffer, which is right and stays. But
+     * the fifth scalar is the same fact arriving from Kotlin, and it is what `decInBytes` was
+     * derived from — so if the two disagree, the census guard has already passed on a byte total
+     * computed from a number the asset does not carry. Comparing them makes that a named refusal
+     * instead of a session whose position cap and whose buffer sizing describe different assets.
+     */
+    @Test
+    fun theMaskWidthTheAssetCarriesIsCheckedAgainstTheWidthTheSpecPromised() {
+        val bind = functionBody(cpp, "std::string bindDecoderLocked()")
+        assertTrue(
+            "bindDecoderLocked must still read the mask width off the asset's own buffer",
+            liveOffsets(bind, "g.maskLen = static_cast<uint32_t>(d.inBufs[g.decMaskIdx].n / 2);")
+                .isNotEmpty()
+        )
+        assertTrue(
+            "…and compare it against the maxPositions the spec passed. Live lines mentioning " +
+                "maxPositions: " + liveLines(bind, "maxPositions"),
+            liveOffsets(bind, "g.maskLen != g.maxPositions").isNotEmpty()
+        )
+        assertTrue(
+            "the self-KV depth check must still relate the two tensors — it is the only thing in " +
+                "the file that does",
+            liveOffsets(bind, "depth != g.maskLen - 1").isNotEmpty()
+        )
+    }
+
+    /**
+     * **Q4 M1 and the Q10a-D open question, settled on one expression.**
+     *
+     * 4.0 shipped two answers to *"how long may a prompt be?"*: native refused
+     * `promptLen > maskLen - 2` (198) while `NpuDecodePolicy.maxTokensFor(199)` cheerfully answered
+     * 1. A 199-token prompt is not reachable through this tier's four-token one, so nothing had
+     * ever hit it — but a disagreement between the two halves of a boundary is exactly the thing
+     * that is discovered by a caller rather than by a test.
+     *
+     * The settlement: **the prompt cap is `maxPositions - 1` on both sides**, which is the same
+     * statement as `maxTokensFor(promptLen) >= 1`. Positions `0..maxPositions-2` execute (199 of
+     * them, an exact fit for the 199-deep cache), the first generated token lands at
+     * `promptLen - 1`, so a prompt of `maxPositions - 1` generates exactly one token at the last
+     * executing position. Native's old bound was one short of its own loop.
+     *
+     * **And the position cap stays `maxPositions - 2`.** `maxPositions - 1` is arithmetically exact
+     * too — 199 cache slots plus the current token is all 200 mask columns — and it would buy one
+     * token in 196. It is declined, and the reason is in the code: position 199 is the first and
+     * only step in a segment at which the graph's `Slice` discards a REAL cache entry rather than
+     * never-written padding, so it is the first step whose correctness depends on the *direction*
+     * of a Slice that this file's own comment marks as confirmed by elimination and one device run
+     * rather than read out of the asset. A 0.5 % ceiling against re-opening the one inference in
+     * the mask geometry that was not read is the wrong trade, and 4.1 has run nothing on hardware.
+     */
+    @Test
+    fun thePromptCapAndThePositionCapAreOneExpressionOnBothSidesOfTheSeam() {
+        val loop = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
+        assertTrue(
+            "the last EXECUTING position stays `g.maskLen - 2`. The Q10a-D alternative " +
+                "(`maskLen - 1`) is exact and is DECLINED — see the reasoning at the site, which " +
+                "must still be there.",
+            liveOffsets(loop, "const uint32_t lastPosition = g.maskLen - 2;").isNotEmpty()
+        )
+        assertTrue(
+            "the prompt cap must be named separately and be `g.maskLen - 1` — one MORE than the " +
+                "last executing position, because the prompt's final token is fed AT that position " +
+                "and its argmax is the first generated token. Live lines: " +
+                liveLines(loop, "maxPromptLen"),
+            liveOffsets(loop, "const uint32_t maxPromptLen = g.maskLen - 1;").isNotEmpty()
+        )
+        assertTrue(
+            "and the refusal must use it rather than lastPosition — that off-by-one WAS the Q4 M1 " +
+                "finding: native refused a 199-token prompt its own loop would have decoded.",
+            liveOffsets(loop, "prompt.size() > maxPromptLen").isNotEmpty()
+        )
+        assertTrue(
+            "the superseded bound must not come back on a live line",
+            liveOffsets(loop, "prompt.size() > lastPosition").isEmpty()
+        )
+        // The Kotlin half, executed rather than read: one expression, both sides.
+        val family = WhisperTokens.SMALL
+        assertEquals(
+            "maxTokensFor's domain is 1..maxPositions-1, which is native's maxPromptLen exactly",
+            1,
+            NpuDecodePolicy.maxTokensFor(family, family.maxPositions - 1)
+        )
+        assertEquals(
+            "and the four-token prompt still answers 196 — the settlement moved no shipped value",
+            196,
+            NpuDecodePolicy.maxTokensFor(family, 4)
+        )
+    }
+
+    /**
+     * **Q1 N-1 — the descriptor's quantisation is COPIED, not borrowed.**
+     *
+     * `tensorRepoint` owned the name and the dimension array and left `quantizeParams` pointing
+     * wherever the source pointed. For a scalar `SCALE_OFFSET` encoding that is harmless, because
+     * the struct is by value; for an axis encoding it is a pointer into the system context's
+     * storage, and the descriptors outlive nothing today only because `systemContextFree` is
+     * deferred to teardown.
+     *
+     * **That is safety by a lifetime property of a different object**, which is this branch's
+     * signature failure shape and the reason both the alias guard and the arming epoch exist. So
+     * the repoint owns all three, and the load refuses any encoding whose parameters are not
+     * self-contained — an allow-list of the two by-value scalar forms plus `UNDEFINED`, rather than
+     * a deny-list of the axis one, because the pointer-bearing families are the ones QNN keeps
+     * adding.
+     */
+    @Test
+    fun theRepointedDescriptorOwnsItsQuantisationAndNonScalarEncodingsAreRefused() {
+        val repoint = functionBody(cpp, "void tensorRepoint(")
+        assertTrue(
+            "tensorRepoint must take the owned quantisation and assign it into BOTH tensor " +
+                "versions. Live lines: " + liveLines(repoint, "quantizeParams"),
+            liveOffsets(repoint, "t.v1.quantizeParams = quant;").isNotEmpty() &&
+                liveOffsets(repoint, "t.v2.quantizeParams = quant;").isNotEmpty()
+        )
+        assertTrue(
+            "the slot must own the storage it repoints into, beside the names and the dims",
+            liveOffsets(cpp, "std::vector<Qnn_QuantizeParams_t> ownedQuant;").isNotEmpty()
+        )
+        val slot = functionBody(cpp, "std::string loadGraphSlot(")
+        assertTrue(
+            "the reserve that keeps the owned storage from moving between the two deep copies must " +
+                "cover it too — a reallocation there is the run-6 use-after-free with a different " +
+                "field in it",
+            liveOffsets(slot, "slot.ownedQuant.reserve(numIn + numOut);").isNotEmpty() &&
+                liveOffsets(slot, "slot.ownedQuant.data() != quantBase").isNotEmpty()
+        )
+        // THE CALL, NOT THE MESSAGE. This assertion first asked only for a live `quant: ` string in
+        // loadGraphSlot, and battery row N11 SURVIVED against it: the null-params refusal directly
+        // above returns `" quant: '"` too, so deleting the whole encoding check left the needle
+        // answered by its neighbour. That is L1 §4's finding in a different file — a claim
+        // satisfied by something other than the thing it is about — and the repair is to name the
+        // predicate rather than its diagnostics.
+        val guard = liveOffsets(slot, "quantParamsAreSelfContained(qp->quantizationEncoding)")
+        assertTrue(
+            "loadGraphSlot must CALL quantParamsAreSelfContained on every tensor's encoding, on a " +
+                "live line, and refuse when it answers false. Checked against turbo's metadata at " +
+                "plan time: every quantised tensor there is scalar scale-offset, so this refuses " +
+                "nothing that ships — it refuses the re-export that would make tensorRepoint's " +
+                "by-value copy incomplete. Live lines mentioning it: " +
+                liveLines(slot, "quantParamsAreSelfContained"),
+            guard.isNotEmpty()
+        )
+        assertTrue(
+            "…and the refusal must name the tensor and the encoding, as a `quant: ` stage error",
+            liveOffsets(slot, "quant: ").isNotEmpty() &&
+                liveOffsets(slot, "encodingName(qp->quantizationEncoding)").isNotEmpty()
+        )
+        val deepCopy = liveOffsets(slot, "auto deepCopy = [&](")
+        assertTrue("loadGraphSlot must still deep-copy the descriptors", deepCopy.isNotEmpty())
+        assertTrue(
+            "ORDER: the encoding check (${guard.first()}) must run BEFORE the deep copy " +
+                "(${deepCopy.first()}). Both statements survive the swap and it compiles — but a " +
+                "refusal taken after the copy is a refusal taken after the pointer it is about has " +
+                "already been taken into storage this seam claims to own.",
+            guard.first() < deepCopy.first()
+        )
+        assertTrue(
+            "and the axis encoding must not be named inside loadGraphSlot at all — the rule is an " +
+                "ALLOW-LIST in the helper, so a deny-list re-appearing here is the check being " +
+                "narrowed to the one family QNN happened to define first",
+            liveOffsets(slot, "QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET").isEmpty()
+        )
+        val encodings = functionBody(cpp, "bool quantParamsAreSelfContained(")
+        assertTrue(
+            "the allow-list is the two BY-VALUE scalar forms plus UNDEFINED (input_ids and " +
+                "position_ids are plain int32 and carry no quantisation at all)",
+            liveOffsets(encodings, "QNN_QUANTIZATION_ENCODING_SCALE_OFFSET").isNotEmpty() &&
+                liveOffsets(encodings, "QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET").isNotEmpty() &&
+                liveOffsets(encodings, "QNN_QUANTIZATION_ENCODING_UNDEFINED").isNotEmpty()
+        )
+    }
+
+    /**
+     * Two one-line repairs on paths that report or claim something they do not do.
+     *
+     * **Q1 M-3 — `nativeProbe` does not clear `g.lastError`.** Every other entry point clears it on
+     * success, and the two that report failure as a NUMBER (`nativeDecodeSegment`,
+     * `nativeDetectLanguage`) hand the caller `nativeLastError()` to render. So a probe that
+     * succeeded after an earlier `"probe: …"` failure leaves that text readable, and the tier's
+     * `quant` and `decode` fallback paths report a stale reason as THIS segment's — on the card the
+     * owner reads, naming a stage that did not decline.
+     *
+     * **Q4 M3 — `bindDecoderLocked` claims "all by name" before the 48 self-KV tensors are bound.**
+     * The two ping-pong sets are allocated there and pointed at by `bindSelfKvLocked`, which until
+     * now first ran inside `zeroSelfKvLocked` at the first encode. So both the unbound scan and the
+     * log line above it were true only of the tensors bound so far. Binding set 0 as the last act
+     * of the function makes both claims literally true at the moment they are made.
+     */
+    @Test
+    fun theProbeClearsItsStaleErrorAndTheDecoderIsBoundBeforeItSaysSo() {
+        val probe = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeProbe(")
+        val cleared = liveOffsets(probe, "g.lastError.clear();")
+        val ok = liveOffsets(probe, "LOGI(\"probe OK")
+        assertTrue(
+            "nativeProbe must clear the last error on its SUCCESS path, like every other entry " +
+                "point. Left set, a stale `probe: …` is what the quant and decode fallback paths " +
+                "report as this segment's reason — a card naming a stage that did not decline.",
+            cleared.isNotEmpty()
+        )
+        assertTrue("nativeProbe must still log its success", ok.isNotEmpty())
+        assertTrue(
+            "and the clear must be on the success path rather than at the top: clearing on ENTRY " +
+                "would erase the message a caller is about to read after a FAILED probe.",
+            cleared.first() > liveOffsets(probe, "loadInterfacesLocked(libDir)").first()
+        )
+
+        val bind = functionBody(cpp, "std::string bindDecoderLocked()")
+        val bindSelf = liveOffsets(bind, "bindSelfKvLocked(0);")
+        val unboundScan = liveOffsets(bind, "if (!inDone[i]) {")
+        val claim = liveOffsets(bind, "LOGI(\"decoder bound:")
+        assertTrue(
+            "bindDecoderLocked must actually BIND the self-KV ping-pong before it returns. " +
+                "Allocating the two sets and leaving the 48 descriptors pointing at whatever they " +
+                "arrived with is the one thing its own \"nothing may be left unbound\" scan cannot " +
+                "see, because that scan tracks a bool this path never set.",
+            bindSelf.isNotEmpty()
+        )
+        assertTrue("the unbound scan must still run", unboundScan.isNotEmpty())
+        assertTrue("and the claim must still be logged", claim.isNotEmpty())
+        assertTrue(
+            "ORDER: the self-KV bind (${bindSelf.first()}) must precede both the unbound scan " +
+                "(${unboundScan.first()}) and the `all by name` log line (${claim.first()}). A " +
+                "claim made above the work it describes is true only by coincidence, and this one " +
+                "was not even that.",
+            bindSelf.first() < unboundScan.first() && bindSelf.first() < claim.first()
+        )
+    }
+
+    /**
+     * **I3 — the whole file logs on the tag the owner actually captures.**
+     *
+     * `#define TAG "WE-NPU"` put every `LOGI`/`LOGW`/`LOGE` in this file — 41 sites — on a tag
+     * `adb logcat -s WE-DIAG` cannot see. Among them: the graph IO enumeration that is the only
+     * evidence for the bind-by-name design, the cold-load timings, the decode's tokens-per-second
+     * line, and `vote: %s`, whose own design note reads *"always logged, never silently empty
+     * (lesson 6)"* — a line written to be read, on a tag nobody reads. This branch has paid for
+     * that trap three times.
+     *
+     * `LOGDIAG`/`LOGDIAGE` keep their separate identity: they are the `g.diag`-gated pair and their
+     * spelling is deliberately the same string, so one grep finds both halves of the pipeline.
+     *
+     * The negative is whole-file and live-scoped: the prose above `LOGDIAGE` explains the trap by
+     * name and must stay readable, so a `contains()` over the raw text would fail on the
+     * explanation of the thing being fixed.
+     */
+    @Test
+    fun everyLineThisFileEmitsLandsOnTheTagTheOwnerCaptures() {
+        assertTrue(
+            "the house tag must be WE-DIAG",
+            liveOffsets(cpp, "#define TAG \"WE-DIAG\"").isNotEmpty()
+        )
+        assertTrue(
+            "and `WE-NPU` must not appear on ANY live line of qnn_asr.cpp — not as the tag, not as " +
+                "a second tag for \"internal\" lines, not anywhere. Every reintroduction of it is a " +
+                "line the owner's only capture cannot see. Found: " + liveLines(cpp, "WE-NPU"),
+            liveOffsets(cpp, "WE-NPU").isEmpty()
+        )
+        assertTrue(
+            "LOGDIAG and LOGDIAGE keep their own definitions — they are the g.diag-gated pair and " +
+                "collapsing them into LOGI would put the instrumentation into release builds",
+            liveOffsets(cpp, "#define LOGDIAG(...)").isNotEmpty() &&
+                liveOffsets(cpp, "#define LOGDIAGE(...)").isNotEmpty()
+        )
+        assertTrue(
+            "the power vote's outcome line is one of the 41 this moves, and it is the one whose " +
+                "design note says it is always logged — on a tag nobody read",
+            liveOffsets(cpp, "vote: %s").isNotEmpty()
         )
     }
 }

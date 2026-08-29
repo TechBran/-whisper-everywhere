@@ -157,4 +157,53 @@ object WhisperTokens {
      * model must not decline to say anything at all before it has said anything at all.
      */
     val BEGIN_SUPPRESS: IntArray = intArrayOf(220, EOT)
+
+    // ---------------------------------------------------------------- the family (4.1 L2)
+
+    /**
+     * The **82 base BPE ids** of [SUPPRESS] — every entry below [EOT] — transcribed AGAIN, as its
+     * own literal array, and that repetition is the design rather than an oversight.
+     *
+     * [WhisperTokenFamily.suppress] is `BASE_SUPPRESS` plus the six control ids it derives from
+     * `langCount`, which is what lets one derivation serve two vocabularies whose specials sit one
+     * id apart. If that derivation read [SUPPRESS] and filtered it, `WhisperTokenFamilyTest`'s
+     * element-for-element comparison against [SUPPRESS] would be comparing a list with itself —
+     * green under every transcription error either copy could contain. Two literal readings, one
+     * comparison between them: the same discipline as native's `kEotToken` beside Kotlin's [EOT].
+     *
+     * The split point is `< EOT` and it is not arbitrary: everything at or above [EOT] in
+     * `generation_config.json`'s list is a control token whose id MOVES with the language table
+     * ([SOT] is the one exception — it sits below the table — and it is derived with the other five
+     * because it is a control token by kind, which is what the derivation is about).
+     *
+     * **Measured, not assumed**, at plan time: this half is byte-identical between
+     * `openai/whisper-small` and `large-v3-turbo`. Only the six above it shift.
+     */
+    val BASE_SUPPRESS: IntArray = intArrayOf(
+        1, 2, 7, 8, 9, 10, 14, 25, 26, 27,
+        28, 29, 31, 58, 59, 60, 61, 62, 63, 90,
+        91, 92, 93, 359, 503, 522, 542, 873, 893, 902,
+        918, 922, 931, 1350, 1853, 1982, 2460, 2627, 3246, 3253,
+        3268, 3536, 3846, 3961, 4183, 4667, 6585, 6647, 7273, 9061,
+        9383, 10428, 10929, 11938, 12033, 12331, 12562, 13793, 14157, 14635,
+        15265, 15618, 16553, 16604, 18362, 18956, 20075, 21675, 22520, 26130,
+        26161, 26435, 28279, 29464, 31650, 32302, 32470, 36865, 42863, 47425,
+        49870, 50254
+    )
+
+    /**
+     * **The `npu` tier's token family** — `whisper-small`'s 99 languages and 200-position context,
+     * derived rather than transcribed (4.1 L2).
+     *
+     * Everything above is a literal read off the asset; this is the same asset read a second time
+     * through [WhisperTokenFamily]'s formula, and `WhisperTokenFamilyTest` compares the two id by
+     * id, code by code and entry by entry. Neither is the "real" one: a disagreement means one of
+     * the two readings is wrong and says so, which is the only property that survives a second
+     * vocabulary arriving (4.1 L4).
+     *
+     * It lives here rather than on [WhisperTokenFamily] because this object is already the app's
+     * one answer to *"what are whisper-small's token ids"*, and a second home for that answer is a
+     * second thing that can drift.
+     */
+    val SMALL: WhisperTokenFamily = WhisperTokenFamily(langCount = 99, maxPositions = MAX_POSITIONS)
 }

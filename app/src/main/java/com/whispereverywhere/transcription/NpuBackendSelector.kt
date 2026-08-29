@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription
 
 import android.content.Context
 import com.whispereverywhere.npu.NpuAssetImport
+import com.whispereverywhere.npu.NpuModelSpec
 
 /**
  * Which [WhisperBackend] a session runs on — the 4.0 NPU tier's routing decision, as a truth table
@@ -77,16 +78,26 @@ object NpuBackendSelector {
     /**
      * [routesToNpu], resolved to the backend itself. [npuBackend] is invoked **only** on the npu
      * arm, so the CPU path never constructs anything.
+     *
+     * **The spec is resolved here and handed in (4.1 L2).** `NpuWhisperBackend` takes an
+     * [NpuModelSpec] with no default, so a tier id the table has no row for cannot construct one —
+     * and this function answers `WhisperNativeBackend` for it, which is the same answer it gives a
+     * closed gate. That is a second, structural reason the routing decision lives in one place: the
+     * predicate says *may* this tier run on the NPU, and the table says *which model* it would be.
+     * A tier that passed the first and failed the second used to be unrepresentable because there
+     * was one model; it is representable now, and it is a CPU session rather than a wrong census.
      */
     internal fun backendFor(
         tierId: String?,
         npuAvailable: Boolean,
         declinedThisSession: Boolean,
         paths: ModelPathProvider,
-        npuBackend: (ModelPathProvider) -> WhisperBackend,
-    ): WhisperBackend =
-        if (routesToNpu(tierId, npuAvailable, declinedThisSession)) npuBackend(paths)
-        else WhisperNativeBackend
+        npuBackend: (ModelPathProvider, NpuModelSpec) -> WhisperBackend,
+    ): WhisperBackend {
+        if (!routesToNpu(tierId, npuAvailable, declinedThisSession)) return WhisperNativeBackend
+        val spec = NpuModelSpec.forTier(tierId) ?: return WhisperNativeBackend
+        return npuBackend(paths, spec)
+    }
 
     /**
      * The production form.
@@ -104,5 +115,7 @@ object NpuBackendSelector {
         paths: ModelPathProvider,
         appContext: Context,
     ): WhisperBackend =
-        backendFor(tierId, npuAvailable, declinedThisSession, paths) { NpuWhisperBackend(it, appContext) }
+        backendFor(tierId, npuAvailable, declinedThisSession, paths) { p, spec ->
+            NpuWhisperBackend(p, appContext, spec)
+        }
 }

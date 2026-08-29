@@ -6,6 +6,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -45,23 +46,23 @@ class NpuDecodePolicyTest {
         assertArrayEquals(
             "the English prompt must be exactly [SOT, <|en|>, TRANSCRIBE, NO_TIMESTAMPS]",
             intArrayOf(50258, 50259, 50359, 50363),
-            NpuDecodePolicy.promptTokens("en")
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "en")
         )
         assertArrayEquals(
             "the French prompt differs from the English one in the language slot ONLY",
             intArrayOf(50258, 50265, 50359, 50363),
-            NpuDecodePolicy.promptTokens("fr")
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "fr")
         )
         assertArrayEquals(
             "the German prompt differs from the English one in the language slot ONLY",
             intArrayOf(50258, 50261, 50359, 50363),
-            NpuDecodePolicy.promptTokens("de")
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "de")
         )
         assertEquals(
             "every prompt this policy builds is 4 tokens long — maxTokensFor() and the native " +
                 "loop's `position == promptLen - 1` begin-suppress step both key off that length.",
             4,
-            NpuDecodePolicy.promptTokens("es").size
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "es").size
         )
     }
 
@@ -76,7 +77,7 @@ class NpuDecodePolicyTest {
     fun anUnknownLanguageCodeIsRefusedRatherThanQuietlyBecomingEnglish() {
         for (bogus in listOf("xx", "en-US", "EN", "", "eng", "auto")) {
             try {
-                val got = NpuDecodePolicy.promptTokens(bogus)
+                val got = NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, bogus)
                 fail(
                     "promptTokens(\"$bogus\") must throw, but returned ${got.toList()}. A fallback " +
                         "to English here is invisible: the decode succeeds, the text is fluent, " +
@@ -105,9 +106,9 @@ class NpuDecodePolicyTest {
             WhisperTokens.BEGIN_SUPPRESS
         )
         assertArrayEquals(
-            "NpuDecodePolicy.beginSuppressList is that array and nothing else",
+            "NpuDecodePolicy.beginSuppressList(WhisperTokens.SMALL) is that array and nothing else",
             intArrayOf(220, 50257),
-            NpuDecodePolicy.beginSuppressList
+            NpuDecodePolicy.beginSuppressList(WhisperTokens.SMALL)
         )
     }
 
@@ -144,7 +145,7 @@ class NpuDecodePolicyTest {
             50362,
             WhisperTokens.SUPPRESS.last()
         )
-        val policy = NpuDecodePolicy.suppressList.toSet()
+        val policy = NpuDecodePolicy.suppressList(WhisperTokens.SMALL).toSet()
         expected.forEach {
             assertTrue("suppressList is missing generation_config id $it", policy.contains(it))
         }
@@ -157,7 +158,7 @@ class NpuDecodePolicyTest {
      */
     @Test
     fun everyTimestampIdIsSuppressed() {
-        val policy = NpuDecodePolicy.suppressList.toSet()
+        val policy = NpuDecodePolicy.suppressList(WhisperTokens.SMALL).toSet()
         val missing = (WhisperTokens.TIMESTAMP_BEGIN until WhisperTokens.VOCAB)
             .filterNot { policy.contains(it) }
         assertTrue(
@@ -184,13 +185,13 @@ class NpuDecodePolicyTest {
     fun eotIsSuppressedOnlyAtTheFirstGeneratedStepNeverThroughout() {
         assertTrue(
             "EOT (${WhisperTokens.EOT}) is in beginSuppressList",
-            NpuDecodePolicy.beginSuppressList.contains(WhisperTokens.EOT)
+            NpuDecodePolicy.beginSuppressList(WhisperTokens.SMALL).contains(WhisperTokens.EOT)
         )
         assertTrue(
             "EOT (${WhisperTokens.EOT}) must NOT be in the always-on suppressList — it is the " +
                 "decode loop's only terminator short of the 199-position cap, and masking it " +
                 "turns every segment into 196 tokens of filler.",
-            !NpuDecodePolicy.suppressList.contains(WhisperTokens.EOT)
+            !NpuDecodePolicy.suppressList(WhisperTokens.SMALL).contains(WhisperTokens.EOT)
         )
     }
 
@@ -201,7 +202,7 @@ class NpuDecodePolicyTest {
      */
     @Test
     fun languageIdsAreNeitherSuppressedNorTerminal() {
-        val policy = NpuDecodePolicy.suppressList.toSet()
+        val policy = NpuDecodePolicy.suppressList(WhisperTokens.SMALL).toSet()
         val suppressed = (WhisperTokens.LANG_FIRST..WhisperTokens.LANG_LAST)
             .filter { policy.contains(it) }
         assertTrue(
@@ -225,7 +226,7 @@ class NpuDecodePolicyTest {
      */
     @Test
     fun suppressListIsSortedUniqueAndInsideTheVocabulary() {
-        val list = NpuDecodePolicy.suppressList
+        val list = NpuDecodePolicy.suppressList(WhisperTokens.SMALL)
         assertEquals(
             "suppressList is the 88 generation_config ids plus the 1501 timestamps",
             88 + 1501,
@@ -259,7 +260,7 @@ class NpuDecodePolicyTest {
         assertEquals(
             "a 4-token prompt generates at positions 3..198 inclusive = 196 tokens",
             196,
-            NpuDecodePolicy.maxTokensFor(4)
+            NpuDecodePolicy.maxTokensFor(WhisperTokens.SMALL, 4)
         )
         assertEquals(
             "MAX_POSITIONS comes from the asset's [1,1,1,200] mask, not from whisper's 448",
@@ -269,21 +270,21 @@ class NpuDecodePolicyTest {
         assertEquals(
             "a 1-token prompt generates at positions 0..198 = 199 tokens",
             199,
-            NpuDecodePolicy.maxTokensFor(1)
+            NpuDecodePolicy.maxTokensFor(WhisperTokens.SMALL, 1)
         )
         assertEquals(
             "the budget is MAX_POSITIONS - promptLen at every length",
             195,
-            NpuDecodePolicy.maxTokensFor(5)
+            NpuDecodePolicy.maxTokensFor(WhisperTokens.SMALL, 5)
         )
         assertEquals(
             "the last prompt length that can still generate a single token is MAX_POSITIONS - 1",
             1,
-            NpuDecodePolicy.maxTokensFor(WhisperTokens.MAX_POSITIONS - 1)
+            NpuDecodePolicy.maxTokensFor(WhisperTokens.SMALL, WhisperTokens.MAX_POSITIONS - 1)
         )
         for (bad in listOf(0, -1, WhisperTokens.MAX_POSITIONS, WhisperTokens.MAX_POSITIONS + 1)) {
             try {
-                val got = NpuDecodePolicy.maxTokensFor(bad)
+                val got = NpuDecodePolicy.maxTokensFor(WhisperTokens.SMALL, bad)
                 fail(
                     "maxTokensFor($bad) must throw; it returned $got. Silently handing native a " +
                         "non-positive budget makes nativeDecodeSegment return 0 tokens, which " +
@@ -445,14 +446,14 @@ class NpuDecodePolicyTest {
     @Test
     fun everyPromptIsRunnableAndAsksToTranscribeNeverToTranslate() {
         WhisperTokens.LANGUAGE_CODES.forEach { code ->
-            val prompt = NpuDecodePolicy.promptTokens(code)
+            val prompt = NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, code)
             assertTrue(
                 "every prompt id must be inside 0 until VOCAB for \"$code\": ${prompt.toList()}",
                 prompt.all { it in 0 until WhisperTokens.VOCAB }
             )
             assertTrue(
                 "a prompt must leave at least one position to generate in for \"$code\"",
-                NpuDecodePolicy.maxTokensFor(prompt.size) > 0
+                NpuDecodePolicy.maxTokensFor(WhisperTokens.SMALL, prompt.size) > 0
             )
             assertTrue(
                 "the prompt for \"$code\" must carry TRANSCRIBE (${WhisperTokens.TRANSCRIBE})",
@@ -482,6 +483,7 @@ class NpuDecodePolicyTest {
     @Test
     fun explicitSelectionWinsOverEveryDetectionAndLocale() {
         val spanishWithAFrenchDetection = NpuDecodePolicy.resolveLangToken(
+            WhisperTokens.SMALL,
             requested = "es", detected = WhisperTokens.langToken("fr"), deviceLocale = "de-DE"
         )
         assertEquals("the token is Spanish's", WhisperTokens.langToken("es"), spanishWithAFrenchDetection.token)
@@ -497,13 +499,13 @@ class NpuDecodePolicyTest {
         // passes in that case must not be able to change the answer.
         assertEquals(
             "a not-run detection sentinel cannot disturb an explicit selection",
-            NpuDecodePolicy.resolveLangToken("es", -1, null),
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, "es", -1, null),
             spanishWithAFrenchDetection
         )
         // And an explicit code the asset cannot name is REFUSED, never coerced.
         for (bogus in listOf("auto", "xx", "en-US", "EN")) {
             try {
-                val got = NpuDecodePolicy.resolveLangToken(bogus, -1, "en-US")
+                val got = NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, bogus, -1, "en-US")
                 fail(
                     "resolveLangToken(\"$bogus\", …) must throw; it returned $got. \"auto\" in " +
                         "particular means the caller skipped PreferencesManager's auto->null " +
@@ -525,6 +527,7 @@ class NpuDecodePolicyTest {
     @Test
     fun autoWithASuccessfulDetectionUsesTheDetectedToken() {
         val french = NpuDecodePolicy.resolveLangToken(
+            WhisperTokens.SMALL,
             requested = null, detected = WhisperTokens.langToken("fr"), deviceLocale = "en-US"
         )
         assertEquals("the detected token passes through unchanged", 50265, french.token)
@@ -538,7 +541,7 @@ class NpuDecodePolicyTest {
             french.code
         )
         val japanese =
-            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken("ja"), "de-DE")
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, WhisperTokens.langToken("ja"), "de-DE")
         assertEquals("auto->ja(detected)", japanese.note)
         assertEquals(WhisperTokens.langToken("ja"), japanese.token)
     }
@@ -553,6 +556,7 @@ class NpuDecodePolicyTest {
     @Test
     fun autoWithAFailedDetectionFallsBackToADeviceLocaleThatMaps() {
         val german = NpuDecodePolicy.resolveLangToken(
+            WhisperTokens.SMALL,
             requested = null, detected = -1, deviceLocale = "de-DE"
         )
         assertEquals(WhisperTokens.langToken("de"), german.token)
@@ -562,7 +566,7 @@ class NpuDecodePolicyTest {
             assertEquals(
                 "every negative return of nativeDetectLanguage is a failure, not a token: $failure",
                 "auto->de(locale)",
-                NpuDecodePolicy.resolveLangToken(null, failure, "de-DE").note
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, failure, "de-DE").note
             )
         }
     }
@@ -577,6 +581,7 @@ class NpuDecodePolicyTest {
     @Test
     fun autoWithNeitherFallsBackToEnglishAndSaysSo() {
         val fallback = NpuDecodePolicy.resolveLangToken(
+            WhisperTokens.SMALL,
             requested = null, detected = -1, deviceLocale = "xx-XX"
         )
         assertEquals(WhisperTokens.langToken("en"), fallback.token)
@@ -586,9 +591,9 @@ class NpuDecodePolicyTest {
             "a null locale reaches the same row — a device that reports no locale at all is not " +
                 "evidence for English either",
             "auto->en(fallback)",
-            NpuDecodePolicy.resolveLangToken(null, -1, null).note
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, null).note
         )
-        assertEquals("and a blank one", "auto->en(fallback)", NpuDecodePolicy.resolveLangToken(null, -1, "").note)
+        assertEquals("and a blank one", "auto->en(fallback)", NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "").note)
         assertNotEquals(
             "and it must NOT render as a bare \"en\" — that is the explicit-selection note, and " +
                 "collapsing the two makes a guess indistinguishable from a user's own answer",
@@ -614,7 +619,7 @@ class NpuDecodePolicyTest {
             WhisperTokens.TIMESTAMP_BEGIN, WhisperTokens.VOCAB, Int.MAX_VALUE
         )
         outside.forEach { id ->
-            val resolved = NpuDecodePolicy.resolveLangToken(null, id, "de-DE")
+            val resolved = NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, id, "de-DE")
             assertEquals(
                 "detected id $id is outside the language block and must be discarded, leaving the " +
                     "locale row to answer",
@@ -626,13 +631,13 @@ class NpuDecodePolicyTest {
         assertEquals(
             "both boundaries of the block ARE trusted: 50259 is <|en|>",
             "auto->en(detected)",
-            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.LANG_FIRST, "de-DE").note
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, WhisperTokens.LANG_FIRST, "de-DE").note
         )
         assertEquals(
             "and 50357 is <|su|> — this pair is what stops the test above passing on an " +
                 "off-by-one block that rejects everything",
             "auto->su(detected)",
-            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.LANG_LAST, "de-DE").note
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, WhisperTokens.LANG_LAST, "de-DE").note
         )
     }
 
@@ -646,10 +651,10 @@ class NpuDecodePolicyTest {
     @Test
     fun noResolutionPathSilentlyYieldsEnglish() {
         val rows = listOf(
-            NpuDecodePolicy.resolveLangToken("en", -1, "de-DE"),
-            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken("en"), "de-DE"),
-            NpuDecodePolicy.resolveLangToken(null, -1, "en-GB"),
-            NpuDecodePolicy.resolveLangToken(null, -1, "xx-XX"),
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, "en", -1, "de-DE"),
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, WhisperTokens.langToken("en"), "de-DE"),
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "en-GB"),
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "xx-XX"),
         )
         assertEquals(
             listOf("en", "auto->en(detected)", "auto->en(locale)", "auto->en(fallback)"),
@@ -677,19 +682,19 @@ class NpuDecodePolicyTest {
     @Test
     fun theResolvedTokenAndCodeAlwaysAgree() {
         WhisperTokens.LANGUAGE_CODES.forEach { code ->
-            val viaDetection = NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken(code), null)
+            val viaDetection = NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, WhisperTokens.langToken(code), null)
             assertEquals("detected $code: token", WhisperTokens.langToken(code), viaDetection.token)
             assertEquals("detected $code: code", code, viaDetection.code)
             assertEquals("detected $code: note", "auto->$code(detected)", viaDetection.note)
 
-            val viaSelection = NpuDecodePolicy.resolveLangToken(code, -1, null)
+            val viaSelection = NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, code, -1, null)
             assertEquals("selected $code: token", WhisperTokens.langToken(code), viaSelection.token)
             assertEquals("selected $code: code", code, viaSelection.code)
 
             assertEquals(
                 "and the prompt built from a resolution's token is the same prompt the code builds",
-                NpuDecodePolicy.promptTokens(code).toList(),
-                NpuDecodePolicy.promptTokens(viaDetection.token).toList()
+                NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, code).toList(),
+                NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, viaDetection.token).toList()
             )
         }
     }
@@ -705,23 +710,23 @@ class NpuDecodePolicyTest {
             assertEquals(
                 "\"$it\" must resolve through its primary subtag to German",
                 "auto->de(locale)",
-                NpuDecodePolicy.resolveLangToken(null, -1, it).note
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, it).note
             )
         }
         assertEquals(
             "zh-Hans-CN is Chinese; the script and region subtags are not languages",
             "auto->zh(locale)",
-            NpuDecodePolicy.resolveLangToken(null, -1, "zh-Hans-CN").note
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "zh-Hans-CN").note
         )
         listOf("xx-XX", "xx", "", "   ", "-DE", "und").forEach {
             assertEquals(
                 "\"$it\" maps to no whisper language and must reach the English fallback row",
                 "auto->en(fallback)",
-                NpuDecodePolicy.resolveLangToken(null, -1, it).note
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, it).note
             )
         }
-        assertNull("a null locale maps to nothing", NpuDecodePolicy.whisperCodeForLocale(null))
-        assertEquals("and a bare code maps to itself", "sl", NpuDecodePolicy.whisperCodeForLocale("sl-SI"))
+        assertNull("a null locale maps to nothing", NpuDecodePolicy.whisperCodeForLocale(WhisperTokens.SMALL, null))
+        assertEquals("and a bare code maps to itself", "sl", NpuDecodePolicy.whisperCodeForLocale(WhisperTokens.SMALL, "sl-SI"))
     }
 
     /**
@@ -746,12 +751,12 @@ class NpuDecodePolicyTest {
             assertEquals(
                 "\"$tag\" is what the platform reports and \"$code\" is what whisper calls it",
                 code,
-                NpuDecodePolicy.whisperCodeForLocale("$tag-XX")
+                NpuDecodePolicy.whisperCodeForLocale(WhisperTokens.SMALL, "$tag-XX")
             )
             assertEquals(
                 "and it must survive the whole resolution, not just the mapping helper",
                 "auto->$code(locale)",
-                NpuDecodePolicy.resolveLangToken(null, -1, "$tag-XX").note
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "$tag-XX").note
             )
         }
         expected.keys.forEach {
@@ -777,7 +782,7 @@ class NpuDecodePolicyTest {
         assertArrayEquals(
             "the id overload builds the identical prompt the code overload does",
             intArrayOf(50258, 50262, 50359, 50363),
-            NpuDecodePolicy.promptTokens(WhisperTokens.langToken("es"))
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, WhisperTokens.langToken("es"))
         )
         val outside = listOf(
             WhisperTokens.SOT, WhisperTokens.EOT, WhisperTokens.TRANSCRIBE, WhisperTokens.TRANSLATE,
@@ -786,7 +791,7 @@ class NpuDecodePolicyTest {
         )
         outside.forEach { id ->
             try {
-                val got = NpuDecodePolicy.promptTokens(id)
+                val got = NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, id)
                 fail(
                     "promptTokens($id) must throw; it returned ${got.toList()}. An id in the " +
                         "language slot that is not a language is not an error to the model — it " +
@@ -819,22 +824,22 @@ class NpuDecodePolicyTest {
                 "same way (whisper sets lang_id to the language it was told to use), so the member " +
                 "means the same thing on both tiers",
             "es",
-            NpuDecodePolicy.resolveLangToken("es", -1, "de-DE").reportable
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, "es", -1, "de-DE").reportable
         )
         assertEquals(
             "a real detection reports the detected code",
             "fr",
-            NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken("fr"), "de-DE").reportable
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, WhisperTokens.langToken("fr"), "de-DE").reportable
         )
         assertNull(
             "a device-locale guess reports NOTHING. It is the phone's setting, not the speech — " +
                 "and letting it through pins the session to a language nobody detected.",
-            NpuDecodePolicy.resolveLangToken(null, -1, "de-DE").reportable
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "de-DE").reportable
         )
         assertNull(
             "and the English fallback reports NOTHING, which is the row this gate exists for: one " +
                 "failed detect pass on segment 1 would otherwise become a session pinned to English",
-            NpuDecodePolicy.resolveLangToken(null, -1, "xx-XX").reportable
+            NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "xx-XX").reportable
         )
         // The provenance is a field, not a spelling of the note — so the two cannot drift.
         assertEquals(
@@ -845,17 +850,17 @@ class NpuDecodePolicyTest {
                 NpuDecodePolicy.LangSource.FALLBACK,
             ),
             listOf(
-                NpuDecodePolicy.resolveLangToken("es", -1, "de-DE").source,
-                NpuDecodePolicy.resolveLangToken(null, 50265, "de-DE").source,
-                NpuDecodePolicy.resolveLangToken(null, -1, "de-DE").source,
-                NpuDecodePolicy.resolveLangToken(null, -1, "xx-XX").source,
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, "es", -1, "de-DE").source,
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, 50265, "de-DE").source,
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "de-DE").source,
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "xx-XX").source,
             )
         )
         WhisperTokens.LANGUAGE_CODES.forEach { code ->
             assertEquals(
                 "every one of the 99 detections reports its own code, not just the common few",
                 code,
-                NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken(code), null).reportable
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, WhisperTokens.langToken(code), null).reportable
             )
         }
         // The four English answers again — this time through the gate rather than the note.
@@ -864,10 +869,10 @@ class NpuDecodePolicyTest {
                 "must separate them exactly there",
             listOf("en", "en", null, null),
             listOf(
-                NpuDecodePolicy.resolveLangToken("en", -1, "de-DE").reportable,
-                NpuDecodePolicy.resolveLangToken(null, WhisperTokens.langToken("en"), "de-DE").reportable,
-                NpuDecodePolicy.resolveLangToken(null, -1, "en-GB").reportable,
-                NpuDecodePolicy.resolveLangToken(null, -1, "xx-XX").reportable,
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, "en", -1, "de-DE").reportable,
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, WhisperTokens.langToken("en"), "de-DE").reportable,
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "en-GB").reportable,
+                NpuDecodePolicy.resolveLangToken(WhisperTokens.SMALL, null, -1, "xx-XX").reportable,
             )
         )
     }
@@ -891,6 +896,7 @@ class NpuDecodePolicyTest {
 
         // --- segment 1: the detect pass fails, the locale maps to nothing.
         val first = NpuDecodePolicy.resolveLangToken(
+            WhisperTokens.SMALL,
             requested = pin.languageFor(sessionLanguage), detected = -1, deviceLocale = "xx-XX"
         )
         assertEquals("segment 1 is an English FALLBACK and says so", "auto->en(fallback)", first.note)
@@ -903,6 +909,7 @@ class NpuDecodePolicyTest {
 
         // --- segment 2: still auto, so the detect pass runs again — and succeeds.
         val second = NpuDecodePolicy.resolveLangToken(
+            WhisperTokens.SMALL,
             requested = pin.languageFor(sessionLanguage),
             detected = WhisperTokens.langToken("fr"),
             deviceLocale = "xx-XX",
@@ -918,6 +925,7 @@ class NpuDecodePolicyTest {
 
         // --- segment 3: the pin supplies the language, so the resolution is an explicit selection.
         val third = NpuDecodePolicy.resolveLangToken(
+            WhisperTokens.SMALL,
             requested = pin.languageFor(sessionLanguage), detected = -1, deviceLocale = "xx-XX"
         )
         assertEquals("segment 3 runs pinned, with no detect pass at all", "fr", third.note)
@@ -934,4 +942,238 @@ class NpuDecodePolicyTest {
             laundering.languageFor(null)
         )
     }
+
+    // ================================================================ 4.1 L2 — THE TOKEN FAMILY
+
+    /**
+     * **The family parameter has no default, on any of the six members** — and that is not a style
+     * rule, it is the guard.
+     *
+     * A default of `WhisperTokens.SMALL` would let a future call site build a prompt for
+     * `npu-turbo`'s decoder out of `whisper-small`'s ids. The task token would be `50359`, which
+     * under `large-v3` is `<|translate|>` — a valid, unsuppressed, perfectly decodable token that
+     * puts the model in the WRONG TASK. Nothing fails; the user gets a fluent translation of the
+     * words they spoke, from a default nobody typed. And no per-id check can catch it: 50358 and
+     * 50359 are legal ids in both vocabularies with different meanings in each, so only the FAMILY
+     * knows which is intended (see `WhisperTokenFamilyTest`).
+     *
+     * The parameter being required is what forced all 63 call sites in this file to name a family.
+     * A defaulted one would have let every one of them keep compiling while meaning something the
+     * author never chose — which is the whole difference between a compile error and a wrong
+     * transcript.
+     *
+     * Read as SOURCE because a default's absence is not observable at runtime: a call that omitted
+     * the argument simply would not compile, and a test cannot assert about code that does not
+     * exist.
+     */
+    @Test
+    fun everyMemberTakesTheFamilyAndNoneOfThemDefaultsIt() {
+        val policy = source("src/main/java/com/whispereverywhere/npu/NpuDecodePolicy.kt")
+        listOf(
+            "fun promptTokens(family: WhisperTokenFamily, languageCode: String): IntArray",
+            "fun promptTokens(family: WhisperTokenFamily, langToken: Int): IntArray",
+            "fun suppressList(family: WhisperTokenFamily): IntArray",
+            "fun beginSuppressList(family: WhisperTokenFamily): IntArray",
+            "fun maxTokensFor(family: WhisperTokenFamily, promptLen: Int): Int",
+            "family: WhisperTokenFamily,",
+        ).forEach { declaration ->
+            assertTrue(
+                "NpuDecodePolicy must declare `$declaration` on a live line — every member takes " +
+                    "the family, including resolveLangToken, whose own answer feeds the prompt.",
+                liveLines(policy, declaration).isNotEmpty()
+            )
+        }
+        assertTrue(
+            "and NOT ONE of them may default it. `family: WhisperTokenFamily = ` anywhere is the " +
+                "hazard this parameter exists to remove, arriving as a convenience. Found: " +
+                liveLines(policy, "family: WhisperTokenFamily ="),
+            liveLines(policy, "family: WhisperTokenFamily =").isEmpty()
+        )
+        assertTrue(
+            "the two former `val`s must be gone: a per-family array is not a process constant, and " +
+                "leaving `val suppressList` beside `fun suppressList(family)` compiles and lets " +
+                "every existing caller keep reading whisper-small's. Found: " +
+                liveLines(policy, "val suppressList"),
+            liveLines(policy, "val suppressList").isEmpty() &&
+                liveLines(policy, "val beginSuppressList").isEmpty()
+        )
+
+        // AND THE PARAMETER MUST BE USED, NOT MERELY TAKEN — executed, because the assertions
+        // above are all about the declaration and a body that ignored its argument would satisfy
+        // every one of them. This is THE hazard of the whole task in two lines: `promptTokens`
+        // reading `WhisperTokens.TRANSCRIBE` instead of `family.transcribe` is invisible for the
+        // small family (they are the same 50359) and puts the OTHER model in translate mode.
+        val largeV3 = WhisperTokenFamily(langCount = 100, maxPositions = 200)
+        assertArrayEquals(
+            "a large-v3 prompt must carry LARGE-V3's task and timestamp tokens — 50360 and 50364, " +
+                "one above whisper-small's. Built from whisper-small's ids instead, the task slot " +
+                "holds 50359, which under this vocabulary is <|translate|>: legal, unsuppressed, " +
+                "perfectly decodable, and the wrong task. The output is fluent text nobody asked " +
+                "for, and no per-id check anywhere can see it.",
+            intArrayOf(50258, largeV3.langToken("yue"), 50360, 50364),
+            NpuDecodePolicy.promptTokens(largeV3, "yue")
+        )
+        assertEquals(
+            "…and the small family's prompt is unchanged: 50359 / 50363",
+            listOf(50258, WhisperTokens.langToken("es"), 50359, 50363),
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "es").toList()
+        )
+        assertEquals(
+            "the language band is the FAMILY's too: 50358 is a legal <|xx|> slot under large-v3 " +
+                "(<|yue|>) and is <|translate|> under whisper-small, so the same id must be " +
+                "accepted by one and refused by the other. A prompt built with the wrong band " +
+                "puts a TASK token in the language slot and the decoder transcribes under whatever " +
+                "embedding row it names.",
+            50358,
+            NpuDecodePolicy.promptTokens(largeV3, 50358)[1]
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, 50358)
+        }
+        assertEquals(
+            "resolveLangToken reads the family too — `yue` exists in one vocabulary and in no " +
+                "other, so a resolver wired to a fixed table throws on a language the caller's own " +
+                "model can name",
+            "yue",
+            NpuDecodePolicy.resolveLangToken(largeV3, "yue", -1, "en-US").code
+        )
+        assertEquals(
+            "…and its locale arm reads the family's own code list, not a fixed one",
+            "auto->yue(locale)",
+            NpuDecodePolicy.resolveLangToken(largeV3, null, -1, "yue-HK").note
+        )
+    }
+
+    /**
+     * `suppressList` answers per family rather than per process.
+     *
+     * The always-on mask is `generation_config.json`'s 88 ids **plus every timestamp id**, and both
+     * halves move with the vocabulary: the six control ids shift by one and the timestamp block
+     * starts one later and ends one later. A list computed once for `whisper-small` and handed to a
+     * `large-v3` decoder would leave `<|yue|>` (50358) unsuppressed where a task token belongs and
+     * would mask 50364 — which is `<|notimestamps|>` there, i.e. a token the PROMPT carries.
+     */
+    @Test
+    fun suppressListAnswersPerFamilyRatherThanPerProcess() {
+        val small = WhisperTokens.SMALL
+        val largeV3 = WhisperTokenFamily(langCount = 100, maxPositions = 200)
+
+        val smallList = NpuDecodePolicy.suppressList(small)
+        val largeList = NpuDecodePolicy.suppressList(largeV3)
+        assertNotEquals(
+            "the two families must not share one list — every timestamp id and every control id " +
+                "above the language band differs",
+            smallList.toList(),
+            largeList.toList()
+        )
+        assertEquals(
+            "small: 88 generation_config ids + 1501 timestamps, minus the overlap",
+            (WhisperTokens.SUPPRESS.toList() + (50364 until 51865)).distinct().size,
+            smallList.size
+        )
+        assertEquals(
+            "large-v3: the same construction, one id along",
+            (largeV3.suppress.toList() + (50365 until 51866)).distinct().size,
+            largeList.size
+        )
+        assertTrue(
+            "each list must stay inside its OWN vocabulary — native writes logits[id] unguarded, " +
+                "so an id from the other family is a heap write past the end of the buffer",
+            smallList.all { it in 0 until small.vocab } && largeList.all { it in 0 until largeV3.vocab }
+        )
+        assertTrue(
+            "and neither may suppress its own terminator",
+            !smallList.contains(small.eot) && !largeList.contains(largeV3.eot)
+        )
+        assertTrue(
+            "50364 is a TIMESTAMP under whisper-small and <|notimestamps|> under large-v3 — the " +
+                "prompt's own fourth token. Masking it there would suppress a token the prompt " +
+                "feeds, which is the sharpest single value in this whole comparison.",
+            smallList.contains(50364) && !largeList.contains(50364)
+        )
+    }
+
+    /** `beginSuppressList` too — the same question, and the answer happens to coincide. */
+    @Test
+    fun beginSuppressListAnswersPerFamilyEvenWhereTheAnswerCoincides() {
+        val small = WhisperTokens.SMALL
+        val largeV3 = WhisperTokenFamily(langCount = 100, maxPositions = 200)
+        assertArrayEquals(intArrayOf(220, 50257), NpuDecodePolicy.beginSuppressList(small))
+        assertArrayEquals(
+            "220 is a BPE id and EOT sits below the language table, so this pair does NOT move — " +
+                "which is exactly why it has to be asked per family rather than assumed: a value " +
+                "that happens to agree today is not a constant, it is a coincidence, and the next " +
+                "vocabulary is not required to preserve it.",
+            intArrayOf(220, 50257),
+            NpuDecodePolicy.beginSuppressList(largeV3)
+        )
+        assertArrayEquals(
+            "and it is the family's own pair, not a literal minted here",
+            largeV3.beginSuppress,
+            NpuDecodePolicy.beginSuppressList(largeV3)
+        )
+    }
+
+    /** `maxTokensFor` too — the budget is the family's context window, not a process constant. */
+    @Test
+    fun maxTokensForAnswersPerFamilyRatherThanPerProcess() {
+        val small = WhisperTokens.SMALL
+        val wide = WhisperTokenFamily(langCount = 99, maxPositions = 448)
+        assertEquals(
+            "196 for the shipped four-token prompt in a 200-position context",
+            196,
+            NpuDecodePolicy.maxTokensFor(small, 4)
+        )
+        assertEquals(
+            "and 444 for the same prompt in a 448-position one. A budget read off a process " +
+                "constant would hand the wide decoder 196 and silently truncate every segment at " +
+                "44 % of its context — a short transcript, with nothing reporting a fault.",
+            444,
+            NpuDecodePolicy.maxTokensFor(wide, 4)
+        )
+        assertEquals(
+            "the domain moves with it: promptLen may reach maxPositions-1, which generates exactly " +
+                "one token at the last executing position. That is the SAME expression native " +
+                "refuses on (`maxPromptLen = maskLen - 1`), settled together at 4.1 L2 — 4.0's " +
+                "native half refused a 199-token prompt its own loop would have decoded.",
+            1,
+            NpuDecodePolicy.maxTokensFor(wide, 447)
+        )
+        listOf(0, -1, 448, 449).forEach { bad ->
+            try {
+                val got = NpuDecodePolicy.maxTokensFor(wide, bad)
+                fail("promptLen $bad is outside 1..447 for this family; got $got")
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(
+                    "the refusal must name the FAMILY's own bound, not 200. Got: ${expected.message}",
+                    expected.message.orEmpty().contains("447")
+                )
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- source-reading helpers
+
+    /**
+     * Reads a repo file from the test's working directory — the same locator
+     * `NpuNativeContractTest` uses, and here for the same reason: the absence of a default is a
+     * property of the DECLARATION, and no call can observe it.
+     */
+    private fun source(relative: String): String {
+        var dir: java.io.File? = java.io.File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(java.io.File(dir, relative), java.io.File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate.readText().replace("\r\n", "\n")
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
+    }
+
+    /** The LIVE (non-comment) lines of [scope] containing [needle], trimmed. */
+    private fun liveLines(scope: String, needle: String): List<String> =
+        scope.split("\n").map { it.trimStart() }.filter { line ->
+            !(line.startsWith("//") || line.startsWith("/*") || line.startsWith("*")) &&
+                line.contains(needle)
+        }
 }

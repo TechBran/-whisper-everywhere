@@ -14,6 +14,17 @@ package com.whispereverywhere.npu
  *
  * Everything in this object is pure Kotlin with no reference to [QnnAsrNative] — that object
  * carries `System.loadLibrary("qnnasr")` and would kill any JVM test that named it.
+ *
+ * ### Every member takes a [WhisperTokenFamily], and none of them defaults it (4.1 L2)
+ *
+ * A default would be a convenience with one consequence: a call site written for a second npu tier
+ * would silently build its prompt out of `whisper-small`'s ids. Under `large-v3` those ids mean
+ * something else — `50359` is `<|transcribe|>` in one family and `<|translate|>` in the other, and
+ * `50358` is `<|translate|>` in one and `<|yue|>` (Cantonese) in the other. Every one of them is a
+ * legal, unsuppressed, perfectly decodable token in the vocabulary that contains it, so **no
+ * per-id check anywhere can tell the two apart**: the model simply runs the task it was asked for
+ * and returns fluent text nobody wanted. Only the family knows which meaning is intended, so the
+ * family is required, everywhere, with no default — see [WhisperTokenFamily].
  */
 object NpuDecodePolicy {
 
@@ -31,36 +42,41 @@ object NpuDecodePolicy {
      * and take their positions in the budget with them — a short, plausible, word-dropping
      * transcript and no fault reported anywhere.
      *
-     * @throws IllegalArgumentException if [languageCode] is not one of whisper's 99 codes. There is
-     *         no English fallback here, deliberately: see [WhisperTokens.langToken].
+     * @param family the vocabulary these ids belong to. Required, never defaulted — see the
+     *        object KDoc for the wrong-task failure a default produces.
+     * @throws IllegalArgumentException if [languageCode] is not one of [family]'s codes. There is
+     *         no English fallback here, deliberately: see [WhisperTokenFamily.langToken].
      */
-    fun promptTokens(languageCode: String): IntArray =
-        promptTokens(WhisperTokens.langToken(languageCode))
+    fun promptTokens(family: WhisperTokenFamily, languageCode: String): IntArray =
+        promptTokens(family, family.langToken(languageCode))
 
     /**
      * The same four-token prompt, built from an already-resolved `<|xx|>` **token id**.
      *
      * This is the overload the tier actually calls, because [resolveLangToken] answers in ids: the
      * auto-detect path's answer *is* an id (`nativeDetectLanguage` argmaxes over the language
-     * block), and routing it back through a code and forward through [WhisperTokens.langToken]
+     * block), and routing it back through a code and forward through [WhisperTokenFamily.langToken]
      * would be two lookups that can disagree.
      *
-     * @throws IllegalArgumentException if [langToken] is outside `50259..50357`. The language slot
-     *         of the prompt is not a place a stray id may land: `<|transcribe|>` or a timestamp
-     *         there is not a crash and not garbage — the model reads whatever embedding row it
-     *         points at and produces fluent text under it.
+     * @throws IllegalArgumentException if [langToken] is outside [family]'s own language band.
+     *         The band is per-family and that is the point: 50358 is a language token under
+     *         `large-v3` and a TASK token under `whisper-small`, so the same id is accepted here by
+     *         one family and refused by the other. The language slot of the prompt is not a place a
+     *         stray id may land: `<|transcribe|>` or a timestamp there is not a crash and not
+     *         garbage — the model reads whatever embedding row it points at and produces fluent
+     *         text under it.
      */
-    fun promptTokens(langToken: Int): IntArray {
-        require(WhisperTokens.codeForToken(langToken) != null) {
-            "$langToken is not a <|xx|> language token (${WhisperTokens.LANG_FIRST}.." +
-                "${WhisperTokens.LANG_LAST}). Putting a non-language id in the prompt's language " +
-                "slot does not fail: the decoder reads that embedding row and transcribes under it."
+    fun promptTokens(family: WhisperTokenFamily, langToken: Int): IntArray {
+        require(family.codeForToken(langToken) != null) {
+            "$langToken is not a <|xx|> language token of this family (${family.langFirst}.." +
+                "${family.langLast}). Putting a non-language id in the prompt's language slot does " +
+                "not fail: the decoder reads that embedding row and transcribes under it."
         }
         return intArrayOf(
-            WhisperTokens.SOT,
+            family.sot,
             langToken,
-            WhisperTokens.TRANSCRIBE,
-            WhisperTokens.NO_TIMESTAMPS
+            family.transcribe,
+            family.noTimestamps
         )
     }
 
@@ -81,8 +97,8 @@ object NpuDecodePolicy {
      * `logits[id]` for each entry without re-validating, so a duplicate is a wasted store and an
      * out-of-range id is a write past the end of a 103,730-byte buffer.
      */
-    val suppressList: IntArray =
-        (WhisperTokens.SUPPRESS.toList() + (WhisperTokens.TIMESTAMP_BEGIN until WhisperTokens.VOCAB))
+    fun suppressList(family: WhisperTokenFamily): IntArray =
+        (family.suppress.toList() + (family.timestampBegin until family.vocab))
             .distinct().sorted().toIntArray()
 
     /**
@@ -90,7 +106,7 @@ object NpuDecodePolicy {
      * which is not `position == 0`. At position 0 the model is still being fed the prompt and its
      * argmax is discarded.
      */
-    val beginSuppressList: IntArray = WhisperTokens.BEGIN_SUPPRESS
+    fun beginSuppressList(family: WhisperTokenFamily): IntArray = family.beginSuppress
 
     /**
      * How many tokens a prompt of [promptLen] can generate: `MAX_POSITIONS - promptLen`, which is
@@ -111,13 +127,14 @@ object NpuDecodePolicy {
      *         budget would make `nativeDecodeSegment` return zero tokens, which reads exactly like
      *         a segment of silence.
      */
-    fun maxTokensFor(promptLen: Int): Int {
-        require(promptLen in 1 until WhisperTokens.MAX_POSITIONS) {
-            "promptLen $promptLen is outside 1..${WhisperTokens.MAX_POSITIONS - 1}: a prompt that " +
-                "fills the whole 200-position context leaves nothing to generate, and a " +
-                "non-positive budget returns zero tokens, which is indistinguishable from silence."
+    fun maxTokensFor(family: WhisperTokenFamily, promptLen: Int): Int {
+        require(promptLen in 1 until family.maxPositions) {
+            "promptLen $promptLen is outside 1..${family.maxPositions - 1}: a prompt that fills " +
+                "the whole ${family.maxPositions}-position context leaves nothing to generate, " +
+                "and a non-positive budget returns zero tokens, which is indistinguishable from " +
+                "silence."
         }
-        return WhisperTokens.MAX_POSITIONS - promptLen
+        return family.maxPositions - promptLen
     }
 
     // ---------------------------------------------------------------- the language policy (NEW-C2)
@@ -213,44 +230,46 @@ object NpuDecodePolicy {
      * saying so, which is why `en` from this row carries `(fallback)` and `en` from an explicit
      * selection carries the bare code.
      *
+     * @param family the vocabulary every id here belongs to. Required, never defaulted.
      * @param requested the user's explicit selection, or null for auto. **Must be a whisper code**
-     *        — `"auto"` is not one and is refused by [WhisperTokens.langToken] like any other
+     *        — `"auto"` is not one and is refused by [WhisperTokenFamily.langToken] like any other
      *        unknown string, because a caller that got as far as passing the literal `"auto"` has
      *        skipped the mapping that turns it into a null.
      * @param detected `QnnAsrNative.nativeDetectLanguage()`'s return: a token id, or a negative
      *        number on failure. **Any id outside the language block is treated as failure**, not
-     *        trusted — that gate is [WhisperTokens.codeForToken], and it is what stops a decoder
+     *        trusted — that gate is [WhisperTokenFamily.codeForToken], and it is what stops a decoder
      *        that argmaxed to `<|transcribe|>` from smuggling that id into the prompt.
      * @param deviceLocale an IETF tag such as `de-DE`, or null. Only its primary subtag is read.
      * @throws IllegalArgumentException if [requested] is non-null and not one of whisper's 99
      *         codes. Deliberate: a user who told us the answer must never be quietly overridden.
      */
     fun resolveLangToken(
+        family: WhisperTokenFamily,
         requested: String?,
         detected: Int,
         deviceLocale: String?,
     ): LangResolution {
         if (requested != null) {
-            // Throws on an unknown code rather than falling back — see WhisperTokens.langToken.
+            // Throws on an unknown code rather than falling back — see WhisperTokenFamily.langToken.
             return LangResolution(
-                WhisperTokens.langToken(requested), requested, requested, LangSource.SELECTED
+                family.langToken(requested), requested, requested, LangSource.SELECTED
             )
         }
-        val detectedCode = WhisperTokens.codeForToken(detected)
+        val detectedCode = family.codeForToken(detected)
         if (detectedCode != null) {
             return LangResolution(
                 detected, detectedCode, "auto->$detectedCode(detected)", LangSource.DETECTED
             )
         }
-        val localeCode = whisperCodeForLocale(deviceLocale)
+        val localeCode = whisperCodeForLocale(family, deviceLocale)
         if (localeCode != null) {
             return LangResolution(
-                WhisperTokens.langToken(localeCode), localeCode, "auto->$localeCode(locale)",
+                family.langToken(localeCode), localeCode, "auto->$localeCode(locale)",
                 LangSource.LOCALE
             )
         }
         return LangResolution(
-            WhisperTokens.langToken(EN), EN, "auto->$EN(fallback)", LangSource.FALLBACK
+            family.langToken(EN), EN, "auto->$EN(fallback)", LangSource.FALLBACK
         )
     }
 
@@ -284,10 +303,13 @@ object NpuDecodePolicy {
      * primary subtag is not one of the 99 (`xx-XX`, `""`, a script-only tag) answers null, which
      * is the row that hands the decision to the `en` fallback — and to its `(fallback)` note.
      */
-    internal fun whisperCodeForLocale(deviceLocale: String?): String? {
+    internal fun whisperCodeForLocale(
+        family: WhisperTokenFamily,
+        deviceLocale: String?,
+    ): String? {
         if (deviceLocale.isNullOrBlank()) return null
         val primary = deviceLocale.substringBefore('-').substringBefore('_').lowercase()
         val code = LOCALE_ALIASES[primary] ?: primary
-        return if (WhisperTokens.LANGUAGE_CODES.contains(code)) code else null
+        return if (family.languageCodes.contains(code)) code else null
     }
 }

@@ -85,9 +85,39 @@ object QnnAsrNative {
      * Idempotent: an already-initialised session is released first, so a model swap or a restarted
      * session cannot leak a context.
      *
+     * ### The five scalars, and the three that are not here (4.1 L2)
+     *
+     * Native derives the graph census — both `GraphExpectation`s, the cross-KV layer count and the
+     * language band's bounds — from [melBins], [decLayers], [heads], [vocab] and [maxPositions],
+     * and then refuses any asset whose own enumeration disagrees with it. Those five are exactly
+     * the factors that VARY between published Whisper AI Hub assets; `headDim = 64`,
+     * `audioCtx = 1500` and `melFrames = 3000` are identical across all seven surveyed and stay
+     * native `constexpr`s, because an argument carrying a number that cannot vary is a number a
+     * caller can get wrong. [NpuModelSpec] carries all eight so the Kotlin census is complete, and
+     * `NpuNativeContractTest` pins the three native literals against its fields.
+     *
+     * **They are validated before anything is opened or torn down.** An implausible set returns
+     * `"init: spec: …"` without releasing the session the caller already had and without reaching
+     * an allocation. Pass them from a single [NpuModelSpec]; assembling them at the call site is
+     * how one of the five ends up describing a different model from the other four.
+     *
+     * @param melBins 80 or 128. Nothing else is accepted.
+     * @param decLayers the decoder's layer count — 12 for `whisper-small`, 4 for turbo. `1..64`.
+     * @param heads the attention-head count. `1..64`.
+     * @param vocab the `logits` dimension. `1..65535`, because it bounds a `uint16` argmax.
+     * @param maxPositions `attention_mask`'s width. `2..1024`.
      * @return `""` on success, else `"init: <stage>: <detail>"`.
      */
-    external fun nativeInit(encoderPath: String, decoderPath: String, libDir: String): String
+    external fun nativeInit(
+        encoderPath: String,
+        decoderPath: String,
+        libDir: String,
+        melBins: Int,
+        decLayers: Int,
+        heads: Int,
+        vocab: Int,
+        maxPositions: Int,
+    ): String
 
     /**
      * The encoder's input quantisation as `[scale, zeroPoint]`, or an **empty array** on failure

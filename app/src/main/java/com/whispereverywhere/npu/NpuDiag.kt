@@ -45,16 +45,25 @@ object NpuDiag {
         "npu: encode=$encodeMs decode=$decodeMs tokens=$tokens lang=$langNote"
 
     /**
-     * `mel: bins=80 frames=3000 row0=1234.567 row40=890.123 row79=456.789` — one line per segment,
-     * emitted after the spectrogram is computed and before it is quantised (4.0, Q9 fix round, I2).
+     * `mel: bins=80 frames=3000 row0=1234.567 rowMid=890.123 rowLast=456.789` — one line per
+     * segment, emitted after the spectrogram is computed and before it is quantised (4.0, Q9 fix
+     * round, I2).
      *
-     * **`row40 == row79` IS the stride bug**, and that is the whole design of this line. whisper's
-     * internal mel is bin-major with stride `mel.n_len` (6000 for a 30 s window — the loader appends
-     * 30 s of zeros before framing) while the destination stride is 3000, so a flat copy reads bins
-     * 0-39 at wrong offsets and leaves bins 40-79 **untouched**. Nothing downstream can detect that:
-     * the encoder accepts structured noise and transcribes it fluently into different words. Two
-     * equal row sums where the audio had any high-frequency content at all is the bisector, and it
-     * costs 9,000 float adds against a ~405 ms encode.
+     * **`rowMid == rowLast` IS the stride bug**, and that is the whole design of this line.
+     * whisper's internal mel is bin-major with stride `mel.n_len` (6000 for a 30 s window — the
+     * loader appends 30 s of zeros before framing) while the destination stride is 3000, so a flat
+     * copy reads the lower half of the bins at wrong offsets and leaves the upper half
+     * **untouched**. Nothing downstream can detect that: the encoder accepts structured noise and
+     * transcribes it fluently into different words. Two equal row sums where the audio had any
+     * high-frequency content at all is the bisector, and it costs `3 * melFrames` float adds
+     * against a ~405 ms encode.
+     *
+     * **The field names are `rowMid`/`rowLast` rather than `row40`/`row79` (4.1 L2).** The rows are
+     * `0`, `melBins/2` and `melBins-1`, so on an 80-bin tier they are still rows 40 and 79 and the
+     * numbers are unchanged — but with a second bin count in the lineup a fixed `row79` would name
+     * a row that does not exist on one of the two tiers, and the whole value of this line is that
+     * the reader can tell at a glance which halves of the spectrogram were written. `bins=` is a
+     * parameter for the same reason.
      *
      * **This line was promised by three ledger entries and did not exist.** Until this fix it lived
      * only as a comment in `whisper_jni.cpp` and a KDoc in `MelExportContractTest`; the Q10a
@@ -67,12 +76,17 @@ object NpuDiag {
      *
      * The prefix is `mel: `, not `npu: `, and deliberately: this measures whisper.cpp's spectrogram,
      * which the CPU and GPU tiers use too. It is the one line here that is not about the NPU.
+     *
+     * @param bins the tier's [NpuModelSpec.melBins]. `frames` is not a parameter beside it because
+     *        3000 is universal across every published whisper asset — it is the one of the two the
+     *        model lab cannot vary, and a parameter carrying it would be a number a caller can get
+     *        wrong. Same reasoning, and the same three constants, as `nativeInit`'s scalar list.
      */
-    fun mel(row0: Double, row40: Double, row79: Double): String =
+    fun mel(bins: Int, row0: Double, rowMid: Double, rowLast: Double): String =
         String.format(
             java.util.Locale.US,
-            "mel: bins=%d frames=%d row0=%.3f row40=%.3f row79=%.3f",
-            NpuQuantize.MEL_BINS, NpuQuantize.MEL_FRAMES, row0, row40, row79,
+            "mel: bins=%d frames=%d row0=%.3f rowMid=%.3f rowLast=%.3f",
+            bins, NpuModelSpec.MEL_FRAMES, row0, rowMid, rowLast,
         )
 
     /**
@@ -96,18 +110,29 @@ object NpuDiag {
      * **`Locale.US`**, for the reason [mel] states: a comma-decimal device turns `qRow0=1.234` into
      * something every parser and every eye reads wrongly but almost correctly.
      *
+     * @param spec the tier's shape — the two cell indices below are derived from it, never written
+     *        as 1500 and 121500, because on a 128-bin tier those two numbers address a different
+     *        part of the spectrogram than the ones native reports and the pair would be compared
+     *        anyway.
      * @param qRow0 [NpuQuantize.quantisedRowSum] of row 0 — compare with native `sumFirstRow`.
      * @param qCol0 [NpuQuantize.quantisedColumnSum] of column 0 — compare with native `sumColStride`.
-     * @param cells the float mel at indices `0`, `MEL_FRAMES/2` and `MEL_FRAMES*(MEL_BINS/2) +
-     *        MEL_FRAMES/2` — the same three native dequantises. Exactly three, and the caller is
+     * @param cells the float mel at indices `0`, `melFrames/2` and `melFrames*(melBins/2) +
+     *        melFrames/2` — the same three native dequantises. Exactly three, and the caller is
      *        held to it: a line whose cell count drifted from native's would be compared anyway.
      */
-    fun melProbe(qRow0: Long, qCol0: Long, cells: FloatArray, scale: Float, zeroPoint: Int): String {
+    fun melProbe(
+        spec: NpuModelSpec,
+        qRow0: Long,
+        qCol0: Long,
+        cells: FloatArray,
+        scale: Float,
+        zeroPoint: Int,
+    ): String {
         require(cells.size == 3) {
             "melProbe takes exactly the 3 cells native dequantises, got ${cells.size}"
         }
-        val i1 = NpuQuantize.MEL_FRAMES / 2
-        val i2 = NpuQuantize.MEL_FRAMES * (NpuQuantize.MEL_BINS / 2) + i1
+        val i1 = spec.melFrames / 2
+        val i2 = spec.melFrames * (spec.melBins / 2) + i1
         return String.format(
             java.util.Locale.US,
             "npu-debug: melprobe qRow0=%d qCol0=%d cell[0]=%.6f cell[%d]=%.6f cell[%d]=%.6f " +

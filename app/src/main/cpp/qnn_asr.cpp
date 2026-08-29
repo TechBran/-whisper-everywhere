@@ -74,21 +74,33 @@
 #include "HTP/QnnHtpDevice.h"
 #include "HTP/QnnHtpPerfInfrastructure.h"
 
-#define TAG "WE-NPU"
+// THE HOUSE TAG, AND IT USED TO BE A DIFFERENT ONE (4.1 L2, item I3).
+//
+// This file's TAG was `WE-NPU` for the whole of 4.0, which put 41 LOGI/LOGW/LOGE sites on a tag
+// `adb logcat -s WE-DIAG` cannot see - and that command is run-book 9.2's capture, i.e. the ONLY
+// evidence the owner (who has no adb) ever produces about this tier. Among the 41: the graph IO
+// enumeration that is the sole evidence for the bind-by-name design, both cold-load timings, the
+// decode's ms/token line, and `vote: %s`, whose own design note reads "always logged, never
+// silently empty (lesson 6)" - a line written expressly to be read, on a tag nobody reads.
+//
+// This branch had already paid for that trap twice (final review F2, and the census refusal below)
+// by moving individual lines. Moving the tag moves all of them.
+#define TAG "WE-DIAG"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-// The owner has no adb and their acceptance capture is `adb logcat -s WE-DIAG` run by someone else,
-// so an instrumentation line that lands under WE-NPU is a line nobody will ever see. Same tag and
-// same spelling as whisper_jni.cpp's LOGDIAG, deliberately: one grep, one capture, both halves of
-// the pipeline in it.
+// LOGDIAG keeps a definition of its own even though the tag is now the same string, because the
+// two are not the same THING: this pair is the `g.diag`-gated instrumentation, spelled the same way
+// as whisper_jni.cpp's so that one grep finds both halves of the pipeline. Collapsing it into LOGI
+// would put a full-vocabulary scan per token into release builds; collapsing LOGI into it would
+// silence the shipped lines whenever diag is off.
 #define LOGDIAG(...) __android_log_print(ANDROID_LOG_INFO, "WE-DIAG", __VA_ARGS__)
 
 // The error-level twin, and it exists for the same reason the INFO one does: whisper_jni.cpp
 // carries both spellings, and this file had only half the pair, so the one place that needed to
 // report a REFUSAL on the captured tag had nothing to report it with and reached for LOGW instead
-// — i.e. WE-NPU, i.e. invisible (final review F2). Same tag, same spelling as its counterpart.
+// - i.e. the old tag, i.e. invisible (final review F2).
 #define LOGDIAGE(...) __android_log_print(ANDROID_LOG_ERROR, "WE-DIAG", __VA_ARGS__)
 
 namespace {
@@ -235,13 +247,44 @@ Qnn_TensorDataFormat_t tensorDataFormat(const Qnn_Tensor_t &t) {
 }
 
 /// Point a copied descriptor at storage WE own, so it survives systemContextFree().
-void tensorRepoint(Qnn_Tensor_t &t, std::string &name, std::vector<uint32_t> &dims) {
+/// Whether a quantisation encoding's parameters are entirely BY VALUE inside
+/// `Qnn_QuantizeParams_t` (4.1 L2, Q1 N-1).
+///
+/// An ALLOW-LIST of the two scalar forms plus UNDEFINED, rather than a deny-list of the axis one,
+/// and that direction is deliberate: QNN keeps adding encodings (block, blockwise expansion,
+/// vector, array-of, microscaling), most of them carry a POINTER to per-channel data owned by the
+/// system context, and a deny-list would silently admit each new one. `input_ids` and
+/// `position_ids` are plain int32 and carry UNDEFINED, which is why it is on the list.
+///
+/// Checked against turbo's own metadata at plan time: every quantised tensor there is scalar
+/// scale-offset, so this refuses nothing that ships. What it refuses is the re-export that would
+/// make tensorRepoint's copy below incomplete.
+bool quantParamsAreSelfContained(Qnn_QuantizationEncoding_t enc) {
+    return enc == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET ||
+           enc == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET ||
+           enc == QNN_QUANTIZATION_ENCODING_UNDEFINED;
+}
+
+/// Point a copied descriptor at storage WE own, so it survives systemContextFree().
+///
+/// THREE fields, not two (4.1 L2, Q1 N-1). `quantizeParams` used to be left exactly as the shallow
+/// struct copy delivered it, which was safe for one reason only: the system context is held to
+/// teardown, so nothing it points into is ever freed while a descriptor still refers to it. That is
+/// SAFETY BY A LIFETIME PROPERTY OF A DIFFERENT OBJECT - this branch's signature failure shape, and
+/// the reason both the cross-KV alias guard and the arming epoch exist. So the repoint owns all
+/// three, and loadGraphSlot refuses any encoding quantParamsAreSelfContained() does not accept, so
+/// that the by-value copy is complete by construction rather than by the encodings that happen to
+/// be in today's assets.
+void tensorRepoint(Qnn_Tensor_t &t, std::string &name, std::vector<uint32_t> &dims,
+                   const Qnn_QuantizeParams_t &quant) {
     if (t.version == QNN_TENSOR_VERSION_1) {
         t.v1.name = name.c_str();
         t.v1.dimensions = dims.empty() ? nullptr : dims.data();
+        t.v1.quantizeParams = quant;
     } else if (t.version == QNN_TENSOR_VERSION_2) {
         t.v2.name = name.c_str();
         t.v2.dimensions = dims.empty() ? nullptr : dims.data();
+        t.v2.quantizeParams = quant;
         // Dynamic dimensions and sparsity are not used by these graphs; null them rather than
         // leave dangling pointers into the freed system context.
         t.v2.isDynamicDimensions = nullptr;
@@ -367,6 +410,8 @@ struct GraphSlot {
     std::vector<Qnn_Tensor_t> outputs;
     std::vector<std::string> ownedNames;
     std::vector<std::vector<uint32_t>> ownedDims;
+    /// The third thing a descriptor points at, owned here for the reason tensorRepoint states.
+    std::vector<Qnn_QuantizeParams_t> ownedQuant;
 
     /// Client buffers, one per tensor, index-parallel with `inputs` / `outputs`. Empty until the
     /// slot is bound - Q3 binds the encoder's; the decoder's are Q4's, and are NOT this shape
@@ -392,6 +437,7 @@ struct GraphSlot {
         outputs.clear();
         ownedNames.clear();
         ownedDims.clear();
+        ownedQuant.clear();
         // Frees every client buffer: AlignedBuf is RAII and vector::clear destroys its elements.
         inBufs.clear();
         outBufs.clear();
@@ -400,10 +446,16 @@ struct GraphSlot {
     }
 };
 
-/// What the plan's asset analysis says each graph must look like. Logged and compared, not
-/// enforced: an AI Hub asset regenerated with a different IO shape should produce a loud, named
-/// warning here rather than a hard failure in a build that has not yet reached the device.
-/// Lesson 4's addendum - verify every precondition the design rests on, not just the versioned ones.
+/// What THIS TIER's asset must look like: the graph census, derived per session (4.1 L2).
+///
+/// 4.0 carried two `constexpr` instances of this struct - whisper-small's, checked at load. Every
+/// number in them is a property of that one model, so the guard they feed stops being a guard the
+/// moment a second asset exists: `npu-turbo` has 8 cross-KV outputs rather than 24, a 768,000-byte
+/// mel rather than 480,000, and a 51,866-entry vocabulary, so a file-scope constant would refuse a
+/// perfectly correct asset and the only available repair would be to delete the check.
+///
+/// So the expectation is SESSION STATE now (`g.encExpect` / `g.decExpect`), derived by
+/// deriveCensus() from the five scalars nativeInit receives. The guard itself is unchanged.
 struct GraphExpectation {
     const char *label;
     uint32_t numIn;
@@ -412,17 +464,47 @@ struct GraphExpectation {
     uint64_t outBytes;
 };
 
-constexpr GraphExpectation kEncoderExpectation{"encoder", 1, 24, 480000, 27648000};
-constexpr GraphExpectation kDecoderExpectation{"decoder", 51, 25, 31316376, 3771698};
+/// THE THREE FACTORS THAT ARE NOT PASSED IN, and the reason they are not (4.1 L2).
+///
+/// All seven published Whisper AI Hub assets in the model-lab research survey carry these three
+/// identically: 64-wide attention heads, a 1500-frame encoder output for the 30 s window, and a
+/// 3000-frame mel. A fourth and fifth `nativeInit` argument carrying a number that cannot vary is a
+/// number a caller can get wrong, so they stay here.
+///
+/// That is a trade, and the payment is a test: NpuModelSpec carries the same three as FIELDS (its
+/// census needs all eight factors), and NpuNativeContractTest asserts these literals equal those
+/// fields. Nothing else relates the two derivations at these three, and nothing would notice on
+/// device - a kHeadDim of 32 beside a Kotlin headDim of 64 simply produces two different
+/// encOutBytes, and the first thing to see it is this file refusing the tier's own asset.
+constexpr uint32_t kHeadDim = 64;
+constexpr uint32_t kAudioCtx = 1500;
+constexpr uint32_t kMelFrames = 3000;
+
+/// Everything deriveCensus() computes, in one value, so the derivation can be PURE.
+///
+/// It is a separate type rather than six out-parameters or six assignments into `g` because of an
+/// ordering requirement: the scalars have to be refused before nativeInit releases the session the
+/// caller already has, and `g`'s copy of them is written after that release. One value carries the
+/// result across those two statements without either of them being able to half-apply it.
+struct SpecCensus {
+    GraphExpectation enc{};
+    GraphExpectation dec{};
+    uint32_t crossKvLayers = 0;
+    uint32_t maxPositions = 0;
+    int32_t langTokenFirst = 0;
+    int32_t langTokenLast = 0;
+};
 
 /// The encoder's one input. Looked up by name (lesson 5), never by index, even though there is
 /// only one of it: "there is only one" is an asset fact, and asset facts are what change.
 constexpr const char *kInputFeatures = "input_features";
 
-/// The 24 cross-attention KV tensors, per layer: `k_cache_cross_0..11`, `v_cache_cross_0..11`.
-/// Encoder OUTPUTS and decoder INPUTS carry the same 24 names, and the whole zero-copy design
-/// rests on the two sides being the same tensor in every respect. See aliasGuardLocked.
-constexpr uint32_t kCrossKvLayers = 12;
+// The cross-attention KV tensors, per decoder layer: `k_cache_cross_N`, `v_cache_cross_N`.
+// Encoder OUTPUTS and decoder INPUTS carry the same names, and the whole zero-copy design rests on
+// the two sides being the same tensor in every respect. See aliasGuardLocked.
+//
+// The COUNT is `g.crossKvLayers`, session state, because it is `decLayers`: 12 for whisper-small
+// and 4 for turbo (4.1 L2). It used to be `constexpr uint32_t kCrossKvLayers = 12`.
 
 // ---- the decoder's four non-KV tensors, all looked up BY NAME (lesson 5) ---------------------
 //
@@ -451,15 +533,29 @@ constexpr uint16_t kLogitFloor = 0;
 
 // ---- token ids native has to know for itself ------------------------------------------------
 //
-// These four are the SECOND reading of an asset fact whose first reading is `WhisperTokens` in
-// Kotlin. They are not passed in because the contract's argument list is fixed (prompt, suppress,
+// These are the SECOND reading of an asset fact whose first reading is `WhisperTokens` in Kotlin.
+// They are not passed in because the contract's argument list is fixed (prompt, suppress,
 // beginSuppress, maxTokens, out) and because a terminator smuggled in through a data array is a
 // terminator nobody can see. NpuNativeContractTest cross-checks kEotToken against
 // WhisperTokens.EOT by source text, so the two copies cannot drift apart silently.
-constexpr int32_t kEotToken = 50257;        // <|endoftext|>
-constexpr int32_t kSotToken = 50258;        // <|startoftranscript|>
-constexpr int32_t kLangTokenFirst = 50259;  // <|en|>
-constexpr int32_t kLangTokenLast = 50357;   // <|su|>, 50259 + 98
+//
+// THE THREE BELOW ARE THE ONES THAT DO NOT MOVE (4.1 L2). Whisper appends its specials in a fixed
+// order - EOT, SOT, the language table, six control tokens, 1501 timestamps - so everything BELOW
+// the language table is the same id in every published family and everything above it shifts with
+// the table's size. The band's own bounds are therefore session state (`g.langTokenFirst` /
+// `g.langTokenLast`), derived from `vocab`, and NOT constants: <|su|> is 50357 in whisper-small
+// while 50358 is <|yue|> in large-v3, so a constant last-language-token would silently exclude
+// Cantonese from the detect pass on one asset and admit a TASK token on the other.
+constexpr int32_t kEotToken = 50257;       // <|endoftext|>
+constexpr int32_t kSotToken = 50258;       // <|startoftranscript|>
+constexpr int32_t kLangTokenBase = 50259;  // <|en|> - every family's table starts here
+
+/// <|0.00|> through <|30.00|> at whisper's 0.02 s granularity. Fixed across families.
+constexpr int32_t kTimestampSlots = 1501;
+
+/// translate, transcribe, startoflm, startofprev, nospeech, notimestamps - the six control tokens
+/// that sit between the language table and the timestamps, and that shift with the table.
+constexpr int32_t kSpecialsAboveLangBand = 6;
 
 struct NpuState {
     std::mutex mu;
@@ -536,6 +632,33 @@ struct NpuState {
     /// re-exported asset with a different context window drives a loop that matches it.
     uint32_t maskLen = 0;
     uint32_t vocab = 0;
+
+    // ---- THE TIER'S CENSUS (4.1 L2) ----------------------------------------------------------
+    //
+    // Everything here was a file-scope `constexpr` in 4.0 and is now derived per session, once, by
+    // deriveCensus() from nativeInit's five scalars. The reason is the same for all of them and it
+    // is worth stating once: each is a property of ONE model, and the guards they feed exist to
+    // refuse an asset that is not the model this tier meant to run. With a second npu-class tier
+    // in the catalog, a constant makes the guard fire on a correct asset - at which point the only
+    // repair anybody reaches for is to weaken the guard.
+    //
+    // `maskLen` and `vocab` above stay READ FROM THE ASSET. They are the second, independent
+    // reading; `maxPositions` below is what the caller PROMISED, and bindDecoderLocked compares
+    // them. Two readings, one comparison, as everywhere else in this file.
+    GraphExpectation encExpect{};
+    GraphExpectation decExpect{};
+
+    /// `decLayers` - the cross-KV pair count per layer, and half the decoder's own IO.
+    uint32_t crossKvLayers = 0;
+
+    /// `attention_mask`'s width AS THE SPEC DECLARED IT. Compared against `maskLen` at bind.
+    uint32_t maxPositions = 0;
+
+    /// The language band, derived from `vocab`. `<|su|>` is the last for 99 languages and `<|yue|>`
+    /// for 100, so a constant here admits a TASK token to the detect pass on one family or excludes
+    /// Cantonese on the other - and both are legal ids that decode into fluent text.
+    int32_t langTokenFirst = 0;
+    int32_t langTokenLast = 0;
 
     /// THE ENCODE VALIDITY FLAG. True only while the 24 cross-KV buffers hold a segment that a
     /// successful nativeEncode put there.
@@ -749,6 +872,92 @@ std::string buildNameIndex(const std::vector<Qnn_Tensor_t> &ts, std::map<std::st
 /// The binary describes itself; nothing here guesses at the IO. What Q3 and Q4 build on top is a
 /// name -> index map over slot.inputs / slot.outputs (lesson 5: the decoder has 51 inputs and
 /// binding by index would be a silent mis-wire).
+/// THE CENSUS, DERIVED FROM THE FIVE SCALARS nativeInit RECEIVES (4.1 L2).
+///
+/// PURE, and that is the whole reason it takes an out-parameter instead of writing `g` directly.
+/// nativeInit is idempotent by releasing any existing session first, so a refusal taken after that
+/// point costs the caller a working tier on its way to reporting a typo. This function validates
+/// and computes into a local; nativeInit refuses on its return value BEFORE it releases anything or
+/// opens a file, and copies the result into `g` afterwards.
+///
+/// THE FORMULA, factor by factor - the same eight NpuModelSpec computes in Kotlin, and the same
+/// values, which NpuModelSpecTest asserts against 4.0's shipped constants:
+///
+///   encIn       = 1                                                      1          1
+///   encOut      = 2*decLayers                                           24          8
+///   encInBytes  = melBins * kMelFrames * 2                         480,000    768,000
+///   encOutBytes = 2*decLayers * heads * kHeadDim * kAudioCtx    27,648,000 15,360,000
+///   decIn       = 3 + 4*decLayers                                       51         19
+///   decOut      = 1 + 2*decLayers                                       25          9
+///   selfKv      = 2*decLayers * heads * kHeadDim * (maxPositions-1)
+///                                                                3,667,968  2,037,760
+///   decInBytes  = 4 + 4 + maxPositions*2 + selfKv + encOutBytes 31,316,376 17,398,168
+///   decOutBytes = vocab*2 + selfKv                               3,771,698  2,141,492
+///
+/// `2*decLayers` is k and v per layer; `heads * kHeadDim` is d_model; `maxPositions - 1` is the
+/// self-KV depth, and the minus one is load-bearing - the mask's last column is the CURRENT token's
+/// own key, which is not in the cache. The `4 + 4` is input_ids and position_ids, one int32 each.
+///
+/// THE REFUSAL TABLE. Five bounds, and each one is a garbage value that would otherwise reach an
+/// allocation: melBins picks the mel buffer, decLayers and heads multiply into a 27 MiB cross-KV,
+/// vocab bounds a uint16 argmax over the logits buffer, and maxPositions sizes the self-KV. They
+/// are returned as a normal `spec: ` stage error, so they route through fallBackToCpuTier to
+/// `npu: unavailable stage=init`, the tier card and a CPU session that still works - the same path
+/// every other refusal in this file takes.
+std::string deriveCensus(int32_t melBins, int32_t decLayers, int32_t heads, int32_t vocab,
+                         int32_t maxPositions, SpecCensus &out) {
+    if (melBins != 80 && melBins != 128) {
+        return "spec: melBins is " + std::to_string(melBins) +
+               "; every published whisper asset is 80 or 128, so a third value is a typo that "
+               "would size a spectrogram buffer no graph wants";
+    }
+    if (decLayers < 1 || decLayers > 64) {
+        return "spec: decLayers is " + std::to_string(decLayers) + "; expected 1..64";
+    }
+    if (heads < 1 || heads > 64) {
+        return "spec: heads is " + std::to_string(heads) + "; expected 1..64";
+    }
+    if (vocab < 1 || vocab > 65535) {
+        return "spec: vocab is " + std::to_string(vocab) +
+               "; expected 1..65535, because it bounds a uint16 argmax over the logits buffer";
+    }
+    if (maxPositions < 2 || maxPositions > 1024) {
+        return "spec: maxPositions is " + std::to_string(maxPositions) + "; expected 2..1024";
+    }
+
+    // The language band, from the vocabulary. Whisper appends its specials in a fixed order, so
+    // `vocab = kLangTokenBase + langCount + kSpecialsAboveLangBand + kTimestampSlots` and the count
+    // falls out of it. 51,865 gives 99 (last <|su|>); 51,866 gives 100 (last <|yue|>).
+    const int32_t langCount =
+            vocab - kTimestampSlots - kSpecialsAboveLangBand - kLangTokenBase;
+    if (langCount < 1) {
+        return "spec: vocab " + std::to_string(vocab) +
+               " leaves no language band above " + std::to_string(kLangTokenBase) +
+               " once the " + std::to_string(kSpecialsAboveLangBand) + " control tokens and " +
+               std::to_string(kTimestampSlots) + " timestamps are accounted for";
+    }
+
+    const uint64_t crossKvBytes = 2ull * static_cast<uint64_t>(decLayers) *
+                                  static_cast<uint64_t>(heads) * kHeadDim * kAudioCtx;
+    const uint64_t selfKvBytes = 2ull * static_cast<uint64_t>(decLayers) *
+                                 static_cast<uint64_t>(heads) * kHeadDim *
+                                 static_cast<uint64_t>(maxPositions - 1);
+    const uint64_t melBytes = static_cast<uint64_t>(melBins) * kMelFrames * 2;
+
+    out.crossKvLayers = static_cast<uint32_t>(decLayers);
+    out.maxPositions = static_cast<uint32_t>(maxPositions);
+    out.langTokenFirst = kLangTokenBase;
+    out.langTokenLast = kLangTokenBase + langCount - 1;
+    out.enc = GraphExpectation{"encoder", 1u, static_cast<uint32_t>(2 * decLayers),
+                               melBytes, crossKvBytes};
+    out.dec = GraphExpectation{"decoder", static_cast<uint32_t>(3 + 4 * decLayers),
+                               static_cast<uint32_t>(1 + 2 * decLayers),
+                               4ull + 4ull + static_cast<uint64_t>(maxPositions) * 2ull +
+                                       selfKvBytes + crossKvBytes,
+                               static_cast<uint64_t>(vocab) * 2ull + selfKvBytes};
+    return "";
+}
+
 std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
                           const GraphExpectation &expect) {
     std::vector<uint8_t> blob;
@@ -942,10 +1151,37 @@ std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
     //      then repointed), and
     //   2. do not free the system context until teardown - the only systemContextFree in this
     //      file is in releaseLocked() below, and NpuNativeContractTest pins that ordering.
+    // EVERY TENSOR'S QUANTISATION MUST BE SELF-CONTAINED BEFORE ANY OF IT IS COPIED (4.1 L2,
+    // Q1 N-1). An axis or block encoding stores its per-channel parameters behind a POINTER into
+    // the system context's storage, and a struct copy of the descriptor copies the pointer. Today
+    // that would still work, because the system context is held to teardown - which is precisely
+    // the "safe by a property of a different object" shape this file refuses everywhere else. The
+    // refusal is here, once, at the enumeration, so tensorRepoint's by-value copy below is complete
+    // by construction.
+    for (uint32_t i = 0; i < numIn + numOut; ++i) {
+        const Qnn_Tensor_t &t = (i < numIn) ? gIn[i] : gOut[i - numIn];
+        const Qnn_QuantizeParams_t *qp = tensorQuantParams(t);
+        if (!qp) {
+            return expect.label + std::string(" quant: '") +
+                   (tensorName(t) ? tensorName(t) : "?") +
+                   "': quantisation parameters unreadable at this tensor version";
+        }
+        if (!quantParamsAreSelfContained(qp->quantizationEncoding)) {
+            return expect.label + std::string(" quant: '") +
+                   (tensorName(t) ? tensorName(t) : "?") + "' uses " +
+                   encodingName(qp->quantizationEncoding) +
+                   " encoding, whose parameters live behind a pointer into the system context. "
+                   "This seam copies descriptors by value and outlives that storage only because "
+                   "the context is held to teardown; scalar encodings are the ones it can own.";
+        }
+    }
+
     slot.ownedNames.reserve(numIn + numOut);
     slot.ownedDims.reserve(numIn + numOut);
+    slot.ownedQuant.reserve(numIn + numOut);
     const std::string *namesBase = slot.ownedNames.data();
     const std::vector<uint32_t> *dimsBase = slot.ownedDims.data();
+    const Qnn_QuantizeParams_t *quantBase = slot.ownedQuant.data();
 
     auto deepCopy = [&](const Qnn_Tensor_t *src, uint32_t n) {
         std::vector<Qnn_Tensor_t> v(src, src + n);
@@ -956,6 +1192,8 @@ std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
             const uint32_t *d = tensorDims(v[i]);
             slot.ownedDims.emplace_back(d ? std::vector<uint32_t>(d, d + rank)
                                           : std::vector<uint32_t>());
+            const Qnn_QuantizeParams_t *qp = tensorQuantParams(v[i]);
+            slot.ownedQuant.emplace_back(qp ? *qp : Qnn_QuantizeParams_t{});
         }
         return v;
     };
@@ -966,7 +1204,8 @@ std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
     // two deepCopy calls would move every string and vector the repoint below is about to hand to
     // QNN, and the resulting dangling pointers would look exactly like the run-6 crash we already
     // paid for. Prove it did not happen rather than trusting the arithmetic.
-    if (slot.ownedNames.data() != namesBase || slot.ownedDims.data() != dimsBase) {
+    if (slot.ownedNames.data() != namesBase || slot.ownedDims.data() != dimsBase ||
+        slot.ownedQuant.data() != quantBase) {
         return expect.label + std::string(" deep copy: owned storage reallocated (reserved ") +
                std::to_string(numIn + numOut) + ")";
     }
@@ -975,11 +1214,11 @@ std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
     {
         size_t k = 0;
         for (auto &t : slot.inputs) {
-            tensorRepoint(t, slot.ownedNames[k], slot.ownedDims[k]);
+            tensorRepoint(t, slot.ownedNames[k], slot.ownedDims[k], slot.ownedQuant[k]);
             ++k;
         }
         for (auto &t : slot.outputs) {
-            tensorRepoint(t, slot.ownedNames[k], slot.ownedDims[k]);
+            tensorRepoint(t, slot.ownedNames[k], slot.ownedDims[k], slot.ownedQuant[k]);
             ++k;
         }
     }
@@ -1106,7 +1345,7 @@ std::string aliasCompare(const std::string &name, const Qnn_Tensor_t &e, const Q
 /// runs before the first bind rather than after the first transcript.
 std::string aliasGuardLocked() {
     uint32_t checked = 0;
-    for (uint32_t layer = 0; layer < kCrossKvLayers; ++layer) {
+    for (uint32_t layer = 0; layer < g.crossKvLayers; ++layer) {
         for (const char *kind : {"k_cache_cross_", "v_cache_cross_"}) {
             const std::string name = std::string(kind) + std::to_string(layer);
 
@@ -1125,11 +1364,17 @@ std::string aliasGuardLocked() {
             ++checked;
         }
     }
-    // The loop above verifies the 24 tensors this seam KNOWS ABOUT. It cannot, by construction,
-    // say anything about a 25th - and a whisper variant with more than 12 layers would carry one.
-    // Its extra cross-KV tensors would be aliased by Q4's bind-by-name pass and never checked here,
-    // which is the guard silently covering less than it appears to. So count both sides too: the
-    // number of cross-KV tensors present must be exactly the number verified.
+    // The loop above verifies the tensors this seam KNOWS ABOUT - the 2 x decLayers the SPEC
+    // declared. It cannot, by construction, say anything about one more, and an asset with more
+    // layers than the spec claims would carry them. Those extra cross-KV tensors would be aliased
+    // by Q4's bind-by-name pass and never checked here, which is the guard silently covering less
+    // than it appears to. So count both sides too: the number of cross-KV tensors present must be
+    // exactly the number verified.
+    //
+    // 4.1 L2 made this sharper rather than weaker. The loop's bound is now the spec's decLayers
+    // instead of a compiled-in 12, so this comparison is what catches a spec/asset mismatch in the
+    // layer count specifically - the census guard sees it as a byte total, and this sees it as a
+    // population.
     auto countCross = [](const std::map<std::string, size_t> &idx) {
         uint32_t n = 0;
         for (const auto &kv : idx) {
@@ -1144,7 +1389,7 @@ std::string aliasGuardLocked() {
         snprintf(buf, sizeof(buf),
                  "alias: verified %u pairs but the asset carries %u cross-KV encoder outputs and "
                  "%u cross-KV decoder inputs; %u layers assumed", checked, encCross, decCross,
-                 kCrossKvLayers);
+                 g.crossKvLayers);
         return buf;
     }
     LOGI("alias guard: %u cross-KV pairs identical across encoder-out/decoder-in "
@@ -1359,6 +1604,11 @@ std::string checkMaskCodesLocked() {
 /// the unmarked ones are named in the failure. An unbound QNN tensor is not a null-pointer crash:
 /// `clientBuf.data` is whatever the deserialised descriptor came with, and the graph executes
 /// against it. With 51 inputs, "I bound the ones I thought of" is not a claim worth making.
+/// Forward-declared because bindDecoderLocked() below now calls it as its last binding act
+/// (4.1 L2, Q4 M3) and it is defined after that function, beside zeroSelfKvLocked which is its
+/// other caller. Moving the definition up instead would separate the ping-pong's two halves.
+void bindSelfKvLocked(int inSet);
+
 std::string bindDecoderLocked() {
     GraphSlot &d = g.dec;
     d.inBufs.clear();
@@ -1430,15 +1680,29 @@ std::string bindDecoderLocked() {
     // the mask's 200 columns and an exact fit for the cache.
     g.maskLen = static_cast<uint32_t>(d.inBufs[g.decMaskIdx].n / 2);
     g.vocab = static_cast<uint32_t>(d.outBufs[g.decLogitsIdx].n / 2);
+    // TWO READINGS OF ONE FACT, COMPARED (4.1 L2). `maskLen` is what the ASSET carries; the spec's
+    // `maxPositions` is what the CALLER promised, and `decInBytes` - which the census guard has
+    // already passed - was derived from the promise. So a disagreement here means the guard passed
+    // on a byte total computed from a number this asset does not have, which is a session whose
+    // position cap and whose buffer sizing describe different models. Named refusal rather than a
+    // silent preference for one of the two.
+    if (g.maskLen != g.maxPositions) {
+        return "decoder attention_mask is " + std::to_string(g.maskLen) +
+               " positions wide but the spec declared " + std::to_string(g.maxPositions) +
+               "; the decoder's expected byte census was derived from the spec's number, so these "
+               "two describing different assets is a session that would decode against sizing the "
+               "graph does not share";
+    }
     if (g.maskLen < 2) {
         return "decoder attention_mask is " + std::to_string(g.maskLen) +
                " positions wide; a decode needs at least 2";
     }
     if (g.vocab == 0) return "decoder logits carries no vocabulary";
-    if (kLangTokenLast >= static_cast<int32_t>(g.vocab) || kEotToken >= static_cast<int32_t>(g.vocab)) {
+    if (g.langTokenLast >= static_cast<int32_t>(g.vocab) ||
+        kEotToken >= static_cast<int32_t>(g.vocab)) {
         return "decoder logits vocabulary " + std::to_string(g.vocab) +
                " does not contain this tokenizer's special ids (EOT " + std::to_string(kEotToken) +
-               ", last language token " + std::to_string(kLangTokenLast) + ")";
+               ", last language token " + std::to_string(g.langTokenLast) + ")";
     }
 
     // The two mask codes this loop writes 199 times per segment, checked against the asset's own
@@ -1447,7 +1711,7 @@ std::string bindDecoderLocked() {
     if (!err.empty()) return err;
 
     // ---- the 24 cross-KV inputs: ALIASED ONTO THE ENCODER'S OUTPUT BUFFERS, zero copy ----------
-    for (uint32_t layer = 0; layer < kCrossKvLayers; ++layer) {
+    for (uint32_t layer = 0; layer < g.crossKvLayers; ++layer) {
         for (const char *kind : {"k_cache_cross_", "v_cache_cross_"}) {
             const std::string name = std::string(kind) + std::to_string(layer);
             auto dit = d.inIndex.find(name);
@@ -1466,7 +1730,7 @@ std::string bindDecoderLocked() {
         }
     }
     LOGI("  bind decoder cross-KV: %u tensors aliased onto the encoder's output buffers (0 B copied)",
-         kCrossKvLayers * 2);
+         g.crossKvLayers * 2);
 
     // ---- the 24 self-KV pairs and the two ping-pong sets ---------------------------------------
     g.selfInIdx.clear();
@@ -1476,7 +1740,7 @@ std::string bindDecoderLocked() {
     g.selfKvBytes = 0;
     for (const char *kind : {"k_cache_self_", "v_cache_self_"}) {
         const bool isK = (kind[0] == 'k');
-        for (uint32_t layer = 0; layer < kCrossKvLayers; ++layer) {
+        for (uint32_t layer = 0; layer < g.crossKvLayers; ++layer) {
             const std::string base = std::string(kind) + std::to_string(layer);
             auto iit = d.inIndex.find(base + "_in");
             if (iit == d.inIndex.end()) return "decoder self-KV '" + base + "_in' not found";
@@ -1550,6 +1814,16 @@ std::string bindDecoderLocked() {
     }
     LOGI("  bind decoder self-KV: 2 sets x %zu x %u B = %zu B ping-pong", selfCount, g.selfKvBytes,
          2 * selfCount * static_cast<size_t>(g.selfKvBytes));
+
+    // AND ACTUALLY BIND THEM, HERE, BEFORE ANYTHING CLAIMS THEY ARE BOUND (4.1 L2, Q4 M3).
+    //
+    // The two ping-pong sets were allocated above and the 48 descriptors were left pointing at
+    // whatever they arrived with until the first zeroSelfKvLocked() at encode time. The scan below
+    // could not see that: it tracks the `inDone`/`outDone` flags this function sets, and the self-KV
+    // loop sets them when it records the INDICES, not when a client buffer is attached. So both the
+    // "nothing may be left unbound" pass and the "all by name" log line beneath it were claims
+    // about work that had not happened yet. One statement, and both become literally true.
+    bindSelfKvLocked(0);
 
     // ---- nothing may be left unbound ----------------------------------------------------------
     for (size_t i = 0; i < inDone.size(); ++i) {
@@ -1851,7 +2125,7 @@ U8Stats scanU8Stats(const uint8_t *p, size_t n) {
 /// **The split is printed on the line that uses it, and that is the point.** `NpuQuantize` writes
 /// 80 rows of 3000 because the plan says the tensor is `[1,80,3000]`. If a re-export ever declared
 /// `[1,3000,80]` instead - the NWC form a QAIRT conversion can legitimately produce - the byte count
-/// would be IDENTICAL, `kEncoderExpectation`'s 480,000 B check would still pass, the alias guard
+/// would be IDENTICAL, the encoder census's 480,000 B check would still pass, the alias guard
 /// would still pass, and the encoder would read our row-major block transposed. Nothing in this
 /// codebase would say a word. So the geometry is derived here, reported, and compared against
 /// Kotlin's independent arithmetic by eye.
@@ -2143,6 +2417,18 @@ void releaseLocked() {
     g.vocab = 0;
     g.encoded = false;
 
+    // THE CENSUS DIES WITH THE SESSION THAT CARRIED IT (4.1 L2). A torn-down session that left
+    // whisper-small's expectation standing would be the file-scope constant back with an extra
+    // step: the next nativeInit sets these before it opens a file, but a FAILED init returns
+    // through here, and a stale expectation is exactly what the next load would be checked against
+    // if that assignment ever moved.
+    g.encExpect = GraphExpectation{};
+    g.decExpect = GraphExpectation{};
+    g.crossKvLayers = 0;
+    g.maxPositions = 0;
+    g.langTokenFirst = 0;
+    g.langTokenLast = 0;
+
     if (g.device) g.qnn.deviceFree(g.device);
     g.device = nullptr;
     if (g.backend) g.qnn.backendFree(g.backend);
@@ -2188,6 +2474,14 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeProbe(
     const std::string err = loadInterfacesLocked(libDir);
     if (!err.empty()) return env->NewStringUTF(failure("probe: " + err).c_str());
     LOGI("probe OK (libDir=%s)", libDir.c_str());
+    // SUCCESS CLEARS THE LAST ERROR, like every other entry point (4.1 L2, Q1 M-3). This was the
+    // one that did not, and the consequence is not local to the probe: nativeDecodeSegment and
+    // nativeDetectLanguage report failure as a NUMBER, so the tier renders nativeLastError() as the
+    // reason on its `quant` and `decode` fallback paths. A probe that failed once and then
+    // succeeded left `"probe: ..."` readable there, and the card the owner sees named a stage that
+    // did not decline. Cleared HERE and not on entry: an entry-side clear would erase the message a
+    // caller is about to read after a FAILED probe.
+    g.lastError.clear();
     return env->NewStringUTF("");
 }
 
@@ -2197,18 +2491,47 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeProbe(
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
         JNIEnv *env, jobject /* this */,
-        jstring jEncoderPath, jstring jDecoderPath, jstring jLibDir) {
+        jstring jEncoderPath, jstring jDecoderPath, jstring jLibDir,
+        jint melBins, jint decLayers, jint heads, jint vocab, jint maxPositions) {
     const std::string encoderPath = jstr(env, jEncoderPath);
     const std::string decoderPath = jstr(env, jDecoderPath);
     const std::string libDir = jstr(env, jLibDir);
 
     std::lock_guard<std::mutex> lock(g.mu);
+
+    // THE SPEC IS REFUSED FIRST - before the release below, before the interfaces load, before any
+    // file is opened (4.1 L2). Two reasons, and the second is the one that needs stating:
+    //
+    //   * a garbage scalar must not reach an allocation. decLayers x heads multiplies into a
+    //     27 MiB cross-KV and maxPositions sizes a 3.6 MiB ping-pong twice over;
+    //   * this call is IDEMPOTENT BY RELEASING FIRST. A refusal taken below that release has
+    //     already destroyed the session the caller had, so a mistyped scalar would cost a working
+    //     tier rather than an error string. The derivation is pure precisely so it can run up here.
+    SpecCensus census{};
+    std::string err = deriveCensus(melBins, decLayers, heads, vocab, maxPositions, census);
+    if (!err.empty()) return env->NewStringUTF(failure("init: " + err).c_str());
+
     if (g.initialised) {
         LOGW("nativeInit called on an already-initialised session; releasing it first");
         releaseLocked();
     }
 
-    std::string err = loadInterfacesLocked(libDir);
+    // Only now, because releaseLocked() zeroes these six on its way past.
+    g.encExpect = census.enc;
+    g.decExpect = census.dec;
+    g.crossKvLayers = census.crossKvLayers;
+    g.maxPositions = census.maxPositions;
+    g.langTokenFirst = census.langTokenFirst;
+    g.langTokenLast = census.langTokenLast;
+    LOGI("nativeInit spec: melBins=%d decLayers=%d heads=%d vocab=%d maxPositions=%d -> "
+         "encoder %u in / %u out, %" PRIu64 " B in / %" PRIu64 " B out; decoder %u in / %u out, "
+         "%" PRIu64 " B in / %" PRIu64 " B out; language band %d..%d",
+         melBins, decLayers, heads, vocab, maxPositions,
+         g.encExpect.numIn, g.encExpect.numOut, g.encExpect.inBytes, g.encExpect.outBytes,
+         g.decExpect.numIn, g.decExpect.numOut, g.decExpect.inBytes, g.decExpect.outBytes,
+         g.langTokenFirst, g.langTokenLast);
+
+    err = loadInterfacesLocked(libDir);
     if (!err.empty()) return env->NewStringUTF(failure("init: " + err).c_str());
 
     Qnn_ErrorHandle_t e = g.sys.systemContextCreate(&g.sysCtx);
@@ -2235,12 +2558,12 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
          e == QNN_SUCCESS ? "OK" : "unsupported-on-this-backend (continuing)", msSince(t0));
     if (e != QNN_SUCCESS) g.device = nullptr;
 
-    err = loadGraphSlot(g.enc, encoderPath, kEncoderExpectation);
+    err = loadGraphSlot(g.enc, encoderPath, g.encExpect);
     if (!err.empty()) {
         releaseLocked();
         return env->NewStringUTF(failure("init: " + err).c_str());
     }
-    err = loadGraphSlot(g.dec, decoderPath, kDecoderExpectation);
+    err = loadGraphSlot(g.dec, decoderPath, g.decExpect);
     if (!err.empty()) {
         releaseLocked();
         return env->NewStringUTF(failure("init: " + err).c_str());
@@ -2267,12 +2590,12 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
     // Session-scoped buffers, allocated ONCE. The 24 output buffers are the cross-KV, and Q4 binds
     // the decoder's cross-KV inputs to these very pointers - never a copy, never re-fed per token.
     // That is why they are owned by the session rather than by an encode call.
-    err = allocateAndBind(g.enc.inputs, g.enc.inBufs, kEncoderExpectation.label, "IN");
+    err = allocateAndBind(g.enc.inputs, g.enc.inBufs, g.encExpect.label, "IN");
     if (!err.empty()) {
         releaseLocked();
         return env->NewStringUTF(failure("init: " + err).c_str());
     }
-    err = allocateAndBind(g.enc.outputs, g.enc.outBufs, kEncoderExpectation.label, "OUT");
+    err = allocateAndBind(g.enc.outputs, g.enc.outBufs, g.encExpect.label, "OUT");
     if (!err.empty()) {
         releaseLocked();
         return env->NewStringUTF(failure("init: " + err).c_str());
@@ -2306,10 +2629,11 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
          "(%zu in / %zu out)",
          g.enc.name.c_str(), g.enc.inputs.size(), g.enc.outputs.size(),
          g.dec.name.c_str(), g.dec.inputs.size(), g.dec.outputs.size());
-    // On WE-DIAG, not WE-NPU, and it is one half of a pair: nativeRelease reports its refusals on
-    // that tag with two epoch numbers in them, and a capture carrying the refusal but not the arm
-    // cannot say which session either number belonged to. The owner's only capture is
-    // `adb logcat -s WE-DIAG`, so both halves have to be on it or neither is worth emitting.
+    // LOGDIAG rather than LOGI, and it is one half of a pair: nativeRelease reports its refusals
+    // through the same macro with two epoch numbers in them, and a capture carrying the refusal but
+    // not the arm cannot say which session either number belonged to. (Since 4.1 L2's tag sweep the
+    // whole file lands on WE-DIAG, so this is now about the g.diag GATE rather than about the tag:
+    // both halves of the pair must be gated the same way or the capture carries one of them.)
     LOGDIAG("nativeInit: session armed with epoch %llu", (unsigned long long) g.epoch);
     return env->NewStringUTF("");
 }
@@ -2572,11 +2896,37 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     const std::vector<int32_t> suppress = jintsToVector(env, jSuppress);
     const std::vector<int32_t> beginSuppress = jintsToVector(env, jBeginSuppress);
 
-    // The last position that EXECUTES. 198 for this asset.
+    // THE TWO CAPS, SETTLED TOGETHER ON ONE EXPRESSION (4.1 L2, Q4 M1 + the Q10a-D open question).
+    //
+    // `lastPosition` is the last position that EXECUTES: 198 here. `maxPromptLen` is one MORE than
+    // it, because the prompt's final token is fed AT the last executing position and the argmax it
+    // produces is the first generated token. So a prompt of maskLen-1 = 199 tokens generates
+    // exactly one, and `NpuDecodePolicy.maxTokensFor(199) == 200 - 199 == 1` agrees. It is the same
+    // statement twice: `maxTokensFor(promptLen) >= 1`.
+    //
+    // Q4 M1: 4.0 refused `promptLen > lastPosition`, i.e. refused a 199-token prompt that its own
+    // loop below would have decoded correctly, while Kotlin cheerfully budgeted one token for it.
+    // Nothing had ever reached that boundary through this tier's four-token prompt - which is
+    // exactly why it was a disagreement waiting to be discovered by a caller instead of by a test.
+    //
+    // Q10a-D, THE OPEN QUESTION, AND THE ANSWER TAKEN. `lastPosition = maskLen - 1` (199) is also
+    // arithmetically exact: at p=199 the mask's `firstLive` is 0, so all 200 columns are live -
+    // 199 cache slots holding positions 0..198 plus the current token's own key - and it would buy
+    // one extra token in 196. IT IS DECLINED, and the reason is a property of that position rather
+    // than caution in general: p=199 is the first and only step in a segment at which the graph's
+    // `Slice` discards a REAL cache entry instead of never-written padding, so it is the first step
+    // whose correctness depends on the DIRECTION of that Slice - and this file's own comment in
+    // decodeStepLocked marks the Slice's direction as closed by elimination plus one device run
+    // rather than read out of the asset. Taking it would also move the self-KV "exact fit"
+    // argument, whose refusal message is pinned, and `maxTokensFor` with it. A 0.5 % ceiling
+    // against re-opening the one inference in the mask geometry that was not read is the wrong
+    // trade, and nothing in 4.1 has run on hardware. Revisit it with turbo's own mask geometry
+    // (L4/L8), where the question is being asked again anyway.
     const uint32_t lastPosition = g.maskLen - 2;
-    if (prompt.empty() || prompt.size() > lastPosition) {
+    const uint32_t maxPromptLen = g.maskLen - 1;
+    if (prompt.empty() || prompt.size() > maxPromptLen) {
         failure("decode: prompt is " + std::to_string(prompt.size()) +
-                " tokens; it must be 1.." + std::to_string(lastPosition) +
+                " tokens; it must be 1.." + std::to_string(maxPromptLen) +
                 " so at least one position is left to generate in");
         return -1;
     }
@@ -2793,8 +3143,8 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         return -2;
     }
     const uint16_t *logits = static_cast<const uint16_t *>(g.dec.outBufs[g.decLogitsIdx].p);
-    const int32_t best = argmaxInRange(logits, static_cast<uint32_t>(kLangTokenFirst),
-                                       static_cast<uint32_t>(kLangTokenLast) + 1);
+    const int32_t best = argmaxInRange(logits, static_cast<uint32_t>(g.langTokenFirst),
+                                       static_cast<uint32_t>(g.langTokenLast) + 1);
 
     // THE DETECT ECHO, and the field that matters is `margin`.
     //
@@ -2809,8 +3159,8 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         int32_t runnerUp = -1;
         uint16_t runnerVal = 0;
         bool haveRunner = false;
-        for (uint32_t i = static_cast<uint32_t>(kLangTokenFirst);
-             i <= static_cast<uint32_t>(kLangTokenLast); ++i) {
+        for (uint32_t i = static_cast<uint32_t>(g.langTokenFirst);
+             i <= static_cast<uint32_t>(g.langTokenLast); ++i) {
             if (static_cast<int32_t>(i) == best) continue;
             if (!haveRunner || logits[i] > runnerVal) {
                 runnerVal = logits[i];
@@ -2825,7 +3175,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         // applies - they are metadata about which language, never about what was said.
         LOGDIAG("npu-debug: detect band=[%d..%d] best=%d val=%u runnerUp=%d val=%u margin=%d "
                 "raw[min=%u max=%u argmax=%s]",
-                kLangTokenFirst, kLangTokenLast, best, bestVal, runnerUp, runnerVal,
+                g.langTokenFirst, g.langTokenLast, best, bestVal, runnerUp, runnerVal,
                 static_cast<int32_t>(bestVal) - static_cast<int32_t>(runnerVal),
                 h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)));
     }
@@ -2840,7 +3190,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         return -3;
     }
     LOGI("detect: language token %d (offset %d in the language block)", best,
-         best - kLangTokenFirst);
+         best - g.langTokenFirst);
     g.lastError.clear();
     return best;
 }
@@ -2856,10 +3206,12 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeSetDiag(
     (void) env;
     std::lock_guard<std::mutex> lock(g.mu);
     g.diag = (enabled == JNI_TRUE);
-    // LOGDIAG, not LOGI. This is the one line that says whether the instrumentation is armed, and
-    // under WE-NPU it would be absent from `adb logcat -s WE-DIAG` - the only capture the owner's
-    // sessions produce. An empty capture would then be indistinguishable from a failed arming,
-    // which is the exact confusion this whole round of instrumentation exists to remove.
+    // LOGDIAG, not LOGI. This is the one line that says whether the instrumentation is armed, so
+    // it must be gated the same way as everything it announces: a capture with the other npu-debug
+    // lines but not this one cannot tell an empty run from a failed arming, which is the exact
+    // confusion this whole round of instrumentation exists to remove. (Before 4.1 L2's tag sweep
+    // this note was about the TAG - LOGI went to WE-NPU, which the owner's `adb logcat -s WE-DIAG`
+    // filtered out. It is about the GATE now; the choice of macro is the same either way.)
     LOGDIAG("npu-debug: instrumentation %s", g.diag ? "ENABLED" : "disabled");
 }
 
@@ -2907,9 +3259,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEpoch(
 /// when nothing is live and what an unarmed NpuWhisperBackend holds, so without that arm a torn
 /// down session's `0 == 0` would read as a match and tear down whatever was armed after it.
 ///
-/// Both outcomes are reported on WE-DIAG. The owner's only capture is `adb logcat -s WE-DIAG`, and
-/// under WE-NPU a refused release is indistinguishable from one that found nothing to do - which is
-/// exactly the reading the device A/B has to make.
+/// Both outcomes are reported through LOGDIAG. The owner's only capture is
+/// `adb logcat -s WE-DIAG`, and a refused release that says nothing is indistinguishable from one
+/// that found nothing to do - which is exactly the reading the L8 device A/B has to make.
 ///
 /// The four compute entry points (nativeEncode, nativeDecodeSegment, nativeInputQuant,
 /// nativeDetectLanguage) are deliberately NOT epoch-guarded, and the reason is stated rather than

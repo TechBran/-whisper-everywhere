@@ -28,6 +28,14 @@ import java.nio.ShortBuffer
  */
 class NpuQuantizeTest {
 
+    /**
+     * The `npu` tier's shape — the numbers this file used to read off `NpuQuantize`'s own
+     * constants (4.1 L2). Every expected value below is unchanged, which is the assertion that
+     * parametrising the quantiser moved no arithmetic: the same 240,000 values, the same
+     * 960,000/480,000 byte buffers, the same rows 0/40/79.
+     */
+    private val spec = NpuModelSpec.SMALL
+
     /** The encoder's published scale — exact `float`, exactly as `Qnn_ScaleOffset_t.scale` holds it. */
     private val scale = 4.677007018472068e-05f
 
@@ -200,11 +208,11 @@ class NpuQuantizeTest {
             (scale.toDouble() * (32768 - zeroPoint)).toFloat(),  // code 32768 -> 0x8000 == Short.MIN
             (scale.toDouble() * (65535 - zeroPoint)).toFloat(),  // code 65535 -> 0xFFFF == -1
         )
-        val mel = FloatBuffer.allocate(NpuQuantize.MEL_VALUES)
-        for (i in 0 until NpuQuantize.MEL_VALUES) mel.put(i, values[i % values.size])
-        val out = ShortBuffer.allocate(NpuQuantize.MEL_VALUES)
+        val mel = FloatBuffer.allocate(spec.melValues)
+        for (i in 0 until spec.melValues) mel.put(i, values[i % values.size])
+        val out = ShortBuffer.allocate(spec.melValues)
 
-        NpuQuantize.melToU16(mel, scale, zeroPoint, out)
+        NpuQuantize.melToU16(spec, mel, scale, zeroPoint, out)
 
         val expected = intArrayOf(0, 32072, 32768, 65535)
         for (i in 0 until values.size) {
@@ -238,7 +246,7 @@ class NpuQuantizeTest {
      */
     @Test
     fun melToU16CopiesEveryValueInOrderAndLeavesBufferPositionsAlone() {
-        val melBytes = NpuQuantize.newMelFloatBuffer()
+        val melBytes = NpuQuantize.newMelFloatBuffer(spec)
         assertEquals("the mel buffer is 80 x 3000 float32", 960_000, melBytes.capacity())
         assertEquals(
             "and it must be in native order, or every float read back is byte-swapped",
@@ -246,7 +254,36 @@ class NpuQuantizeTest {
         )
         assertTrue("pcmToMel requires a DIRECT buffer", melBytes.isDirect)
 
-        val quantBytes = NpuQuantize.newInputFeaturesBuffer()
+        // AND THE SHAPE IS THE SPEC'S, NOT THIS TIER'S (4.1 L2). Every assertion in this file runs
+        // at 80 bins, where a hardcoded 240,000 or 80 would be indistinguishable from the derived
+        // value - so the buffers and the refusals are asked once at 128 bins too. A 128-bin mel
+        // quantised through an 80-bin buffer does not throw: it half-fills it and encodes
+        // structured noise, which the graph transcribes fluently into different words.
+        val wide = NpuModelSpec.SMALL.copy(melBins = 128)
+        assertEquals(1_536_000, NpuQuantize.newMelFloatBuffer(wide).capacity())
+        assertEquals(768_000, NpuQuantize.newInputFeaturesBuffer(wide).capacity())
+        assertEquals(384_000, wide.melValues)
+        assertThrows(IllegalArgumentException::class.java) {
+            NpuQuantize.melToU16(
+                wide,
+                FloatBuffer.allocate(spec.melValues),
+                4.677007018472068e-05f,
+                32072,
+                ShortBuffer.allocate(wide.melValues),
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NpuQuantize.melRowSum(spec, FloatBuffer.allocate(spec.melValues), 80)
+        }
+        assertEquals(
+            "…and row 80 IS addressable on the wider tier, which is the same assertion from the " +
+                "other side: the bound is the spec's, not this file's",
+            0.0,
+            NpuQuantize.melRowSum(wide, FloatBuffer.allocate(wide.melValues), 80),
+            0.0,
+        )
+
+        val quantBytes = NpuQuantize.newInputFeaturesBuffer(spec)
         assertEquals("input_features is 80 x 3000 uint16", 480_000, quantBytes.capacity())
         assertEquals(
             "and it must be in native order, or every uint16 reaches the DSP byte-swapped",
@@ -258,11 +295,11 @@ class NpuQuantizeTest {
         val out = quantBytes.asShortBuffer()
         // A different value per index, spread across the window, so a transposition or an
         // off-by-one cannot hide behind a constant fill.
-        for (i in 0 until NpuQuantize.MEL_VALUES) {
+        for (i in 0 until spec.melValues) {
             mel.put(i, (scale.toDouble() * (i % 65536 - zeroPoint)).toFloat())
         }
 
-        NpuQuantize.melToU16(mel, scale, zeroPoint, out)
+        NpuQuantize.melToU16(spec, mel, scale, zeroPoint, out)
 
         assertEquals("melToU16 must not consume the mel buffer", 0, mel.position())
         assertEquals("melToU16 must not consume the output buffer", 0, out.position())
@@ -270,7 +307,7 @@ class NpuQuantizeTest {
             "and it must not disturb the underlying ByteBuffer's position either",
             0, quantBytes.position()
         )
-        for (i in 0 until NpuQuantize.MEL_VALUES) {
+        for (i in 0 until spec.melValues) {
             assertEquals(
                 "index $i must carry its own value, in place",
                 i % 65536,
@@ -296,24 +333,24 @@ class NpuQuantizeTest {
      */
     @Test
     fun theReferenceSumsAgreeExactlyWithTheBufferMelToU16Produces() {
-        val mel = FloatBuffer.allocate(NpuQuantize.MEL_VALUES)
+        val mel = FloatBuffer.allocate(spec.melValues)
         // Distinct per (bin, frame) and non-separable, so no two index sets alias by accident.
-        for (b in 0 until NpuQuantize.MEL_BINS) {
-            for (f in 0 until NpuQuantize.MEL_FRAMES) {
+        for (b in 0 until spec.melBins) {
+            for (f in 0 until spec.melFrames) {
                 val x = (scale.toDouble() * ((b * 7919 + f * 13) % 65536 - zeroPoint)).toFloat()
-                mel.put(b * NpuQuantize.MEL_FRAMES + f, x)
+                mel.put(b * spec.melFrames + f, x)
             }
         }
-        val out = ShortBuffer.allocate(NpuQuantize.MEL_VALUES)
-        NpuQuantize.melToU16(mel, scale, zeroPoint, out)
+        val out = ShortBuffer.allocate(spec.melValues)
+        NpuQuantize.melToU16(spec, mel, scale, zeroPoint, out)
 
         // Row 0 is q[0 .. frames-1]; column 0 is q[0], q[frames], q[2*frames], … — exactly the two
         // index sets native walks as `sumFirstRow` and `sumColStride`.
         var bufRow0 = 0L
-        for (f in 0 until NpuQuantize.MEL_FRAMES) bufRow0 += (out.get(f).toInt() and 0xFFFF).toLong()
+        for (f in 0 until spec.melFrames) bufRow0 += (out.get(f).toInt() and 0xFFFF).toLong()
         var bufCol0 = 0L
-        for (b in 0 until NpuQuantize.MEL_BINS) {
-            bufCol0 += (out.get(b * NpuQuantize.MEL_FRAMES).toInt() and 0xFFFF).toLong()
+        for (b in 0 until spec.melBins) {
+            bufCol0 += (out.get(b * spec.melFrames).toInt() and 0xFFFF).toLong()
         }
 
         assertEquals(
@@ -321,12 +358,12 @@ class NpuQuantizeTest {
                 "are the two sides of the device comparison, and if they can disagree on a host " +
                 "the device reading is uninterpretable.",
             bufRow0,
-            NpuQuantize.quantisedRowSum(mel, 0, scale, zeroPoint),
+            NpuQuantize.quantisedRowSum(spec, mel, 0, scale, zeroPoint),
         )
         assertEquals(
             "quantisedColumnSum(0) must equal the sum of the codes at stride MEL_FRAMES",
             bufCol0,
-            NpuQuantize.quantisedColumnSum(mel, 0, scale, zeroPoint),
+            NpuQuantize.quantisedColumnSum(spec, mel, 0, scale, zeroPoint),
         )
         assertNotEquals(
             "the fixture must make row 0 and column 0 differ — a mel where they agreed would pass " +
@@ -338,23 +375,23 @@ class NpuQuantizeTest {
 
         // A later row and column too, so nothing is special about index 0's arithmetic.
         var bufRow40 = 0L
-        val base = 40 * NpuQuantize.MEL_FRAMES
-        for (f in 0 until NpuQuantize.MEL_FRAMES) {
+        val base = 40 * spec.melFrames
+        for (f in 0 until spec.melFrames) {
             bufRow40 += (out.get(base + f).toInt() and 0xFFFF).toLong()
         }
-        assertEquals(bufRow40, NpuQuantize.quantisedRowSum(mel, 40, scale, zeroPoint))
+        assertEquals(bufRow40, NpuQuantize.quantisedRowSum(spec, mel, 40, scale, zeroPoint))
         var bufCol1500 = 0L
-        for (b in 0 until NpuQuantize.MEL_BINS) {
-            bufCol1500 += (out.get(b * NpuQuantize.MEL_FRAMES + 1500).toInt() and 0xFFFF).toLong()
+        for (b in 0 until spec.melBins) {
+            bufCol1500 += (out.get(b * spec.melFrames + 1500).toInt() and 0xFFFF).toLong()
         }
-        assertEquals(bufCol1500, NpuQuantize.quantisedColumnSum(mel, 1500, scale, zeroPoint))
+        assertEquals(bufCol1500, NpuQuantize.quantisedColumnSum(spec, mel, 1500, scale, zeroPoint))
 
         // Out-of-range indices are refused rather than reading a neighbouring row's memory.
         assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.quantisedRowSum(mel, NpuQuantize.MEL_BINS, scale, zeroPoint)
+            NpuQuantize.quantisedRowSum(spec, mel, spec.melBins, scale, zeroPoint)
         }
         assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.quantisedColumnSum(mel, NpuQuantize.MEL_FRAMES, scale, zeroPoint)
+            NpuQuantize.quantisedColumnSum(spec, mel, spec.melFrames, scale, zeroPoint)
         }
     }
 
@@ -367,11 +404,11 @@ class NpuQuantizeTest {
      */
     @Test
     fun melToU16RefusesBuffersThatAreNotTheEncodersExactShape() {
-        val good = FloatBuffer.allocate(NpuQuantize.MEL_VALUES)
-        val goodOut = ShortBuffer.allocate(NpuQuantize.MEL_VALUES)
+        val good = FloatBuffer.allocate(spec.melValues)
+        val goodOut = ShortBuffer.allocate(spec.melValues)
 
         val shortMel = assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.melToU16(FloatBuffer.allocate(NpuQuantize.MEL_VALUES - 1), scale, zeroPoint, goodOut)
+            NpuQuantize.melToU16(spec, FloatBuffer.allocate(spec.melValues - 1), scale, zeroPoint, goodOut)
         }
         assertTrue(
             "the message must name both counts, or the caller cannot tell which side is wrong: " +
@@ -380,7 +417,7 @@ class NpuQuantizeTest {
         )
 
         val longOut = assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.melToU16(good, scale, zeroPoint, ShortBuffer.allocate(NpuQuantize.MEL_VALUES * 2))
+            NpuQuantize.melToU16(spec, good, scale, zeroPoint, ShortBuffer.allocate(spec.melValues * 2))
         }
         assertTrue("the message must name the output counts: " + longOut.message,
             longOut.message!!.contains("480000") && longOut.message!!.contains("240000"))
@@ -388,26 +425,26 @@ class NpuQuantizeTest {
         // A non-positive scale is the other silent catastrophe: 0f divides every value to an
         // infinity and pins the entire spectrogram to a rail, which looks like a loud signal.
         assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.melToU16(good, 0.0f, zeroPoint, goodOut)
+            NpuQuantize.melToU16(spec, good, 0.0f, zeroPoint, goodOut)
         }
         assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.melToU16(good, -scale, zeroPoint, goodOut)
+            NpuQuantize.melToU16(spec, good, -scale, zeroPoint, goodOut)
         }
         // A zero point outside the domain cannot be honoured by a uint16 buffer at all.
         assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.melToU16(good, scale, -1, goodOut)
+            NpuQuantize.melToU16(spec, good, scale, -1, goodOut)
         }
         assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.melToU16(good, scale, 65536, goodOut)
+            NpuQuantize.melToU16(spec, good, scale, 65536, goodOut)
         }
 
         // The happy path still runs after all that, on the same buffers: a guard that threw must
         // not have consumed, resized or partially written anything it rejected.
-        NpuQuantize.melToU16(good, scale, zeroPoint, goodOut)
+        NpuQuantize.melToU16(spec, good, scale, zeroPoint, goodOut)
         assertEquals("a rejected call must leave the buffers usable", 0, good.position())
         assertEquals("a zero mel quantises to the zero point throughout", zeroPoint,
             goodOut.get(0).toInt() and 0xFFFF)
-        assertEquals(zeroPoint, goodOut.get(NpuQuantize.MEL_VALUES - 1).toInt() and 0xFFFF)
+        assertEquals(zeroPoint, goodOut.get(spec.melValues - 1).toInt() and 0xFFFF)
     }
 
     /**
@@ -415,30 +452,30 @@ class NpuQuantizeTest {
      *
      * `NpuDiag.mel` is only worth emitting if `row40 == row79` really is the copy-stride defect's
      * signature, and that rests entirely on this function reading row-major with stride
-     * [NpuQuantize.MEL_FRAMES]. So the row identity is proved, and then the defect itself is
+     * [spec.melFrames]. So the row identity is proved, and then the defect itself is
      * simulated: a copy that used whisper's internal stride (6000) instead of 3000 fills only the
      * first half of the buffer and leaves rows 40-79 untouched — which is exactly what the line has
      * to make visible on a device with no adb.
      */
     @Test
     fun melRowSumReadsRowMajorAndMakesTheStrideDefectVisible() {
-        val mel = NpuQuantize.newMelFloatBuffer().asFloatBuffer()
+        val mel = NpuQuantize.newMelFloatBuffer(spec).asFloatBuffer()
 
         // Row r filled with the value r: every row sum is r * 3000, so a wrong stride cannot
         // produce a right answer by coincidence.
-        for (b in 0 until NpuQuantize.MEL_BINS) {
-            for (f in 0 until NpuQuantize.MEL_FRAMES) {
-                mel.put(b * NpuQuantize.MEL_FRAMES + f, b.toFloat())
+        for (b in 0 until spec.melBins) {
+            for (f in 0 until spec.melFrames) {
+                mel.put(b * spec.melFrames + f, b.toFloat())
             }
         }
-        assertEquals(0.0, NpuQuantize.melRowSum(mel, 0), 0.0)
-        assertEquals(40.0 * NpuQuantize.MEL_FRAMES, NpuQuantize.melRowSum(mel, 40), 0.0)
-        assertEquals(79.0 * NpuQuantize.MEL_FRAMES, NpuQuantize.melRowSum(mel, 79), 0.0)
+        assertEquals(0.0, NpuQuantize.melRowSum(spec, mel, 0), 0.0)
+        assertEquals(40.0 * spec.melFrames, NpuQuantize.melRowSum(spec, mel, 40), 0.0)
+        assertEquals(79.0 * spec.melFrames, NpuQuantize.melRowSum(spec, mel, 79), 0.0)
         assertNotEquals(
             "rows 40 and 79 must differ on a CORRECTLY strided mel — otherwise the bisector would " +
                 "report the defect on healthy data and mean nothing",
-            NpuQuantize.melRowSum(mel, 40),
-            NpuQuantize.melRowSum(mel, 79),
+            NpuQuantize.melRowSum(spec, mel, 40),
+            NpuQuantize.melRowSum(spec, mel, 79),
         )
         assertEquals("absolute reads only: the shared view's position must not move", 0, mel.position())
 
@@ -447,29 +484,29 @@ class NpuQuantizeTest {
         // "reads bins 0-39 at wrong offsets and NEVER TOUCHES bins 40-79"; whatever the precise
         // arithmetic that produces it, its observable form is an upper band that was never written.
         // Two untouched rows have identical sums, and that equality is what the line surfaces.
-        val broken = NpuQuantize.newMelFloatBuffer().asFloatBuffer()
+        val broken = NpuQuantize.newMelFloatBuffer(spec).asFloatBuffer()
         for (b in 0 until 40) {
-            for (f in 0 until NpuQuantize.MEL_FRAMES) {
-                broken.put(b * NpuQuantize.MEL_FRAMES + f, (b + 1).toFloat())
+            for (f in 0 until spec.melFrames) {
+                broken.put(b * spec.melFrames + f, (b + 1).toFloat())
             }
         }
         assertEquals(
             "rows 40 and 79 are both untouched, so their sums are equal — one glance, on a device, " +
                 "with no adb and no reference transcript to compare against",
-            NpuQuantize.melRowSum(broken, 40),
-            NpuQuantize.melRowSum(broken, 79),
+            NpuQuantize.melRowSum(spec, broken, 40),
+            NpuQuantize.melRowSum(spec, broken, 79),
             0.0,
         )
         assertTrue(
             "while row 0 carries data, so the line cannot be dismissed as an empty buffer — which " +
                 "is the difference between a bisector and a null reading",
-            NpuQuantize.melRowSum(broken, 0) != 0.0,
+            NpuQuantize.melRowSum(spec, broken, 0) != 0.0,
         )
 
         // A row outside the band is a programming error, not a value to report.
-        assertThrows(IllegalArgumentException::class.java) { NpuQuantize.melRowSum(mel, -1) }
+        assertThrows(IllegalArgumentException::class.java) { NpuQuantize.melRowSum(spec, mel, -1) }
         assertThrows(IllegalArgumentException::class.java) {
-            NpuQuantize.melRowSum(mel, NpuQuantize.MEL_BINS)
+            NpuQuantize.melRowSum(spec, mel, spec.melBins)
         }
     }
 }
