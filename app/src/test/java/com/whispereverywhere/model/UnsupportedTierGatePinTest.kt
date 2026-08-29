@@ -302,10 +302,40 @@ class UnsupportedTierGatePinTest {
             1,
             count(manager, "model.id != \"ultra\""),
         )
+        // 4.1 L3. THE NPU EXCLUSION IS STRUCTURAL NOW, AND THIS PIN IS LIVE-SCOPED FOR IT.
+        //
+        // It used to be `count(manager, "model.id != \"npu\"") == 1` — a raw whole-FILE count,
+        // comments included. Two problems, and the second is the one that bit: `npu-turbo` is also
+        // a QAIRT context binary rather than a ggml file, so a literal excluding one id is a
+        // literal somebody has to remember to extend for every npu-class tier that ever ships;
+        // and the moment the KDoc beside the predicate quoted the old clause to explain why it
+        // changed, the whole-file count was satisfied by the COMMENT. Measured: the pin stayed
+        // green across the entire predicate being rewritten. That is this branch's standing lesson
+        // arriving through a third door — an assertion answered by something other than the thing
+        // it is about.
+        //
+        // The claim is therefore the structural clause, on a LIVE line, plus the absence of the
+        // literal from live lines. `NpuModelSpec.forTier(id) == null` asks the question the
+        // exclusion is actually about, at the one table that answers it.
+        liveIndexOfOrFail(
+            manager,
+            "WhisperModelManager.kt — the npu-class exclusion must be STRUCTURAL: " +
+                "`NpuModelSpec.forTier(model.id) == null` asks whether this id is an NPU tier at " +
+                "the single table that knows, so npu-turbo is excluded by the clause that already " +
+                "excludes npu rather than by a second literal nobody remembers to add",
+            "NpuModelSpec.forTier(model.id) == null",
+        )
         assertEquals(
-            "and so is the tier being armed, which is not a ggml file",
-            1,
-            count(manager, "model.id != \"npu\""),
+            "and the id literal must be gone from every LIVE line — left standing beside the " +
+                "structural clause it is the fix landed and bypassed, and it is what made this " +
+                "pin answerable by a comment in the first place",
+            0,
+            manager.lineSequence().count { line ->
+                val trimmed = line.trimStart()
+                val commented = trimmed.startsWith("//") || trimmed.startsWith("/*") ||
+                    trimmed.startsWith("*")
+                !commented && line.contains("model.id != \"npu\"")
+            },
         )
         assertEquals(
             "plus the structural clause that catches the NEXT two-artefact tier nobody thought to " +

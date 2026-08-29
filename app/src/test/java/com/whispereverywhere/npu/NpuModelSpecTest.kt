@@ -58,6 +58,11 @@ class NpuModelSpecTest {
         headDim = NpuModelSpec.HEAD_DIM,
         audioCtx = NpuModelSpec.AUDIO_CTX,
         tokens = WhisperTokenFamily(langCount = 100, maxPositions = 200),
+        // 4.1 L3. A 128-bin tier has no donor — the only 128-bin model in the catalog is `ultra`,
+        // 574 MB and not necessarily installed — so its filterbank ships as an asset. `melAsset`
+        // has no default for the same reason `spec` and `family` have none: a row that does not
+        // say where its mel comes from is a row whose author did not decide.
+        melAsset = NpuModelSpec.MELBANK_128_ASSET,
     )
 
     // ---------------------------------------------------------------- the shipped census

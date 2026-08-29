@@ -90,6 +90,28 @@ data class NpuModelSpec(
     val audioCtx: Int,
     /** This tier's vocabulary and context window. See [WhisperTokenFamily]. */
     val tokens: WhisperTokenFamily,
+    /**
+     * The bundled mel filterbank this tier computes its spectrogram from, or **null when it takes
+     * the filterbank out of an installed ggml model** (4.1 L3).
+     *
+     * There is one mel implementation in this app and there will only ever be one — whisper.cpp's,
+     * because a second would be free to drift from the accuracy the CPU and GPU tiers were measured
+     * at. What differs per tier is where the *data* comes from, and the two arms are equally real:
+     *
+     *  - **null** — `ModelPathProvider.cpuTierModelPath()`. Every 80-bin whisper model carries a
+     *    byte-identical 80x201 matrix, so any installed one is a donor. The `npu` tier's arm, and
+     *    unchanged from 4.0.
+     *  - **an asset name** — [MELBANK_128_ASSET], staged out of the APK by [NpuAssetStage]. A
+     *    128-bin tier has no donor: the only 128-bin model in the catalog is `ultra`, which is
+     *    574 MB and need not be installed, so the filterbank ships instead — 102,968 bytes, which
+     *    is exactly the mel-only prefix of a 128-bin ggml.
+     *
+     * **No default.** A row that does not say where its mel comes from is a row whose author did
+     * not decide, and the wrong answer is silent: an 80-bin donor handed to a 128-bin tier is
+     * refused by `pcmToMel`'s band check (loud, at load), while the reverse would be a spectrogram
+     * of the wrong width quantised into a buffer of the right size.
+     */
+    val melAsset: String?,
 ) {
 
     init {
@@ -125,6 +147,23 @@ data class NpuModelSpec(
             tokens.vocab * 2L + selfKv,
             melBins.toLong() * melFrames * 4L,
         )
+        // A BUNDLED FILTERBANK IS 128-BIN, BECAUSE THERE IS EXACTLY ONE OF THEM (4.1 L3).
+        //
+        // `NpuWhisperBackend` stages every non-null `melAsset` against MELBANK_128_BYTES and
+        // MELBANK_128_SHA256 — the two constants below — because those two numbers describe the one
+        // filterbank this app ships. A row pairing an asset name with any other band count would be
+        // staged against a digest that cannot match, and the tier would decline at `mel-asset` for
+        // a reason THIS ROW already knows. Refused here, where the row is written, rather than at
+        // load on a device. When a second filterbank ships, its length and digest move ONTO the row
+        // and this guard moves with them.
+        require(melAsset == null || melBins == 128) {
+            "tier '$tierId' names a bundled filterbank asset ('$melAsset') but declares $melBins " +
+                "mel bands. The only filterbank this app bundles is the 128-bin one " +
+                "($MELBANK_128_ASSET, $MELBANK_128_BYTES B), and it is the one every non-null " +
+                "melAsset is staged against — so this row would be refused on device, at " +
+                "stage=mel-asset, for a fact it already carries."
+        }
+
         require(widest <= Int.MAX_VALUE) {
             "this spec's census overflows a 32-bit Int: the widest term is $widest B, past " +
                 "${Int.MAX_VALUE}. The factors are individually inside their bounds, which is " +
@@ -209,6 +248,41 @@ data class NpuModelSpec(
         /** Frames in a 30 s window at whisper's hop. Universal, same reasoning as [HEAD_DIM]. */
         const val MEL_FRAMES: Int = 3000
 
+        // -------------------------------------------------------- the bundled 128-bin filterbank
+        //
+        // THREE READINGS OF ONE VALUE, and that is the whole reason these live here (4.1 L3).
+        // `tools/extract_melbank.py` asserts them on the way out, `MelbankAssetTest` asserts them
+        // against the shipped bytes, and `NpuWhisperBackend` stages against them at run time. If
+        // the extractor and the test each carried their own literal, the file could be regenerated
+        // wrongly and the two would simply agree about the wrong thing.
+
+        /** The bundled 128-bin filterbank's asset name — see [melAsset]. */
+        const val MELBANK_128_ASSET: String = "melbank-128.bin"
+
+        /**
+         * 102,968 B — `56 + 128 * 201 * 4`, and every term is load-bearing.
+         *
+         * The ggml layout is magic, hparams, filterbank, vocab, tensors, in that order, so
+         * "everything a mel needs" is a contiguous PREFIX: 4 bytes of magic, eleven `int32`
+         * hparams, `filters.n_mel` and `filters.n_fft` (56 B in total), then `n_mel * n_fft`
+         * float32 coefficients. The fork's `whisper_init_from_file_mel_only` reads exactly that and
+         * stops, so a file truncated at this boundary is not a damaged model — it IS a valid
+         * mel-only ggml.
+         *
+         * A byte in either direction is caught: short, and the fork's `if (loaded && !fin)` guard
+         * refuses the file outright; long, and the digest below does.
+         */
+        const val MELBANK_128_BYTES: Long = 102_968L
+
+        /**
+         * The asset's sha256, and the digest `tools/extract_melbank.py` refuses to write anything
+         * else under. Extracted from the `ultra` tier's own `ggml-large-v3-turbo-q5_0.bin`, whose
+         * sha256 the catalog already pins as `SHA256_ULTRA` — so the provenance is checked against
+         * a value this app ships rather than against the extractor's own opinion.
+         */
+        const val MELBANK_128_SHA256: String =
+            "72814246f9837a7afb189ed3850c20cac8a5736e42993b749f86e96370a5157c"
+
         /**
          * **The `npu` tier**, whose derived census reproduces 4.0's shipped, device-confirmed
          * `kEncoderExpectation` / `kDecoderExpectation` exactly — asserted value by value in
@@ -224,6 +298,11 @@ data class NpuModelSpec(
             headDim = HEAD_DIM,
             audioCtx = AUDIO_CTX,
             tokens = WhisperTokens.SMALL,
+            // NULL, and it stays null: the `npu` tier is 80-bin, every installed 80-bin whisper
+            // model carries a byte-identical filterbank, and `cpuTierModelPath()` is already
+            // resolved for this tier because it is also the CPU fallback. Bundling a second copy
+            // of a matrix the device already has would be 64 KB of APK for nothing.
+            melAsset = null,
         )
 
         /**

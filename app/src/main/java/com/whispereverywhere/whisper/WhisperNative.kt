@@ -262,12 +262,21 @@ object WhisperNative {
      * the NPU's own ~376 MiB, on the one path whose design is to never be co-resident with the CPU
      * tiers.
      *
-     * **Any installed 80-bin model's file will do.** The filterbank is a deterministic function of
-     * sample rate, n_fft and n_mel, so every 80-bin whisper model carries the same 80x201 matrix —
-     * verified byte-for-byte across `ggml-tiny-q5_1`, `ggml-small-q5_1` and `ggml-small.en-q5_1`
-     * (sha256 `85818f15…`, 64,320 bytes) across different sizes, quantisations, and English-only vs
-     * multilingual. `large-v3-turbo` is **128**-bin and carries a different matrix — [pcmToMel]
-     * refuses it, and callers should prefer an 80-bin tier's file when one is installed.
+     * **For an 80-bin tier, any installed 80-bin model's file will do.** The filterbank is a
+     * deterministic function of sample rate, n_fft and n_mel, so every 80-bin whisper model carries
+     * the same 80x201 matrix — verified byte-for-byte across `ggml-tiny-q5_1`, `ggml-small-q5_1` and
+     * `ggml-small.en-q5_1` (sha256 `85818f15…`, 64,320 bytes) across different sizes, quantisations,
+     * and English-only vs multilingual. `large-v3-turbo` is **128**-bin and carries a different
+     * matrix — [pcmToMel] refuses the mismatch either way round, against the bin count the caller
+     * asked for.
+     *
+     * **A 128-bin tier has no donor, so its filterbank is bundled** (4.1 L3). The only 128-bin model
+     * in the catalog is `ultra`, which is 574 MB and need not be installed, so
+     * `NpuModelSpec.MELBANK_128_ASSET` ships in the APK instead: **102,968 bytes**, which is
+     * `56 + 128 * 201 * 4` — exactly the magic → hparams → filterbank prefix this function reads
+     * before it stops. That is not a new file format and needs no second loader. A ggml truncated at
+     * that boundary IS a valid mel-only ggml, and this function accepts it unchanged;
+     * `NpuAssetStage` materialises it under `filesDir` and hands the path in.
      *
      * The returned handle is an ordinary whisper context: release it with [free], like any other.
      * It is valid ONLY for [pcmToMel]; [transcribeRaw] and [detectedLanguage] would be wrong to
@@ -280,7 +289,8 @@ object WhisperNative {
 
     /**
      * Computes the log mel spectrogram of [samples] and writes it into [out] as a dense
-     * `[80][3000]` float32 block — the `input_features` the 4.0 NPU encoder consumes (4.0 Task Q2).
+     * `[melBins][3000]` float32 block — the `input_features` the NPU encoder consumes (4.0 Task Q2;
+     * the bin count became a parameter at 4.1 L3).
      *
      * **Why this exists rather than a mel implementation in Kotlin:** the spec allows exactly one
      * mel in this app, ever. whisper.cpp already computes the one the CPU and GPU tiers are
@@ -303,21 +313,30 @@ object WhisperNative {
      * @param samples float32 mono 16 kHz in `[-1,1]` — the backend seam's own type, never PCM16.
      *        **Zero-padded or truncated to exactly 480,000 samples (30 s)**: the encoder's
      *        `input_features` is a fixed `[1,80,3000]` and has no say in the matter.
-     * @param out a **direct** ByteBuffer of **exactly 960,000 bytes** (80 × 3000 × 4) whose order
-     *        is `ByteOrder.nativeOrder()`. Native order cannot be checked from JNI and is the
-     *        caller's responsibility: a direct ByteBuffer defaults to BIG_ENDIAN, and reading this
-     *        buffer back as floats without setting native order byte-swaps every one of the 240,000
-     *        values into plausible-looking garbage. A heap buffer, or any other capacity, is
-     *        refused outright.
+     * @param out a **direct** ByteBuffer of **exactly `melBins × 3000 × 4` bytes** — 960,000 for an
+     *        80-bin tier, 1,536,000 for a 128-bin one — whose order is `ByteOrder.nativeOrder()`.
+     *        Use `NpuQuantize.newMelFloatBuffer(spec)`, which is both. Native order cannot be
+     *        checked from JNI and is the caller's responsibility: a direct ByteBuffer defaults to
+     *        BIG_ENDIAN, and reading this buffer back as floats without setting native order
+     *        byte-swaps every value into plausible-looking garbage. A heap buffer, or any other
+     *        capacity, is refused outright.
+     * @param melBins the tier's mel band count — `NpuModelSpec.melBins`, and **never a literal**.
+     *        It is checked **twice**, against two different things, with two different messages:
+     *        `whisper_model_n_mels(ctxPtr)` must equal it (the wrong DONOR — an 80-bin filterbank
+     *        under a 128-bin tier), and [out]'s capacity must equal `melBins * 3000 * 4` (the wrong
+     *        BUFFER — a destination sized from the other tier's spec). One combined check would
+     *        name the wrong one half the time. This was a native constant of 80 until 4.1 L3, which
+     *        is a property of `whisper-small` in particular.
      * @return false — with a WE-DIAG line naming the reason — on a null/invalid argument, a model
-     *         whose mel bin count is not 80, a non-direct or wrong-capacity buffer, or a failure
-     *         inside whisper. Never partially valid: false means [out] holds nothing to trust.
+     *         whose mel bin count is not [melBins], a non-direct or wrong-capacity buffer, or a
+     *         failure inside whisper. Never partially valid: false means [out] holds nothing to
+     *         trust.
      *
      * Runs on the caller's thread and takes ~20-40 ms for a 30 s window; it REPLACES the context's
      * internal mel, so like [transcribeRaw] it must be called under NativeComputeGate and never
      * concurrently with a transcribe on the same [ctxPtr].
      */
-    external fun pcmToMel(ctxPtr: Long, samples: FloatArray, out: ByteBuffer): Boolean
+    external fun pcmToMel(ctxPtr: Long, samples: FloatArray, out: ByteBuffer, melBins: Int): Boolean
 
     /** Frees the native whisper_context. Safe to call once per non-zero handle. */
     external fun free(ctxPtr: Long)

@@ -57,6 +57,16 @@
         <code>license: apache-2.0</code>). This is tokenizer <i>data</i>, not model weights, and it
         is licensed separately from the weights above.
         <a href="https://huggingface.co/openai/whisper-small">huggingface.co/openai/whisper-small</a></div>
+    <div class="license"><b>OpenAI Whisper mel filterbank (128-band)</b> — MIT License for the
+        model data, Apache License 2.0 for the ggml conversion tooling that produced its layout.
+        The bundled <code>melbank-128.bin</code> is a <i>derived work</i>: it is the first
+        102,968 bytes of the ggml conversion of
+        <code>openai/whisper-large-v3-turbo</code> — the file header, the model hyper-parameters
+        and the 128&nbsp;&times;&nbsp;201 mel filterbank matrix — and nothing else. It contains no
+        model weights and no vocabulary. It is bundled because the mel spectrogram for the 128-band
+        speech models is computed from this matrix, and shipping it avoids requiring the 574&nbsp;MB
+        model file it was taken from.
+        <a href="https://huggingface.co/openai/whisper-large-v3-turbo">huggingface.co/openai/whisper-large-v3-turbo</a></div>
     <div class="license"><b>Silero VAD</b> — MIT License. Voice-activity detection model.
         <a href="https://github.com/snakers4/silero-vad">github.com/snakers4/silero-vad</a></div>
 

@@ -11,6 +11,7 @@ import androidx.core.net.toUri
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuDiag
+import com.whispereverywhere.npu.NpuModelSpec
 import com.whispereverywhere.transcription.ModelPathProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -193,9 +194,22 @@ class WhisperModelManager(
      * May [model]'s file serve as the 80-bin mel donor and CPU fallback? See [cpuTierModelPath] for
      * why each clause is here; `retired` tiers are deliberately eligible — eco and base are ordinary
      * 80-bin whisper models, and an installed one is a perfectly good donor and a real fallback.
+     *
+     * **The first clause is STRUCTURAL, not a literal** (4.1 L3). It was `model.id != "npu"`, which
+     * excluded exactly one id: `npu-turbo` is also a QAIRT context binary rather than a ggml file,
+     * and a second literal is something somebody has to remember to add for every npu-class tier
+     * that ever ships. `NpuModelSpec.forTier(model.id) == null` asks the question the exclusion is
+     * actually about — *is this an NPU tier?* — at the one table that answers it, so the next row
+     * is excluded by the clause that already excludes this one.
+     *
+     * `ultra` stays excluded **by name**, and that is not an oversight. It is a 128-bin *ggml*,
+     * which is a different fact from being an NPU tier: it is a perfectly real whisper model and a
+     * perfectly good CPU fallback, and it is refused here only because its filterbank is the wrong
+     * width for the 80-bin arm. The real fix is a mel-bin count in the catalog, which is a catalog
+     * change rather than a manager change.
      */
     private fun isMelDonorEligible(model: WhisperModel): Boolean =
-        model.id != "npu" && model.id != "ultra" && model.pairedArtifact == null
+        NpuModelSpec.forTier(model.id) == null && model.id != "ultra" && model.pairedArtifact == null
 
     /** Total device RAM in bytes (ActivityManager.MemoryInfo.totalMem). */
     fun deviceTotalRamBytes(): Long {

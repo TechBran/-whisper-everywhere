@@ -285,6 +285,23 @@ tasks.withType<Test>().configureEach {
         // the gate would pass against the page as it used to be — which is precisely the change
         // being guarded against.
         "src/main/assets/oss_licenses.html",
+        // (4.1 L3) The 128-bin filterbank, and it is the sharpest case this list has. It is a
+        // BINARY asset that is an input to no compile task at all, so regenerating it — wrongly,
+        // from a different model, or at a different truncation — changes not one .class file.
+        // MelbankAssetTest is its only reader (length to the byte, sha256, magic, and the two
+        // header agreements the fork loader itself checks), and without this entry the task
+        // reports UP-TO-DATE and every one of those assertions passes against the file as it used
+        // to be. That is precisely the change being guarded against.
+        "src/main/assets/melbank-128.bin",
+        "src/main/java/com/whispereverywhere/npu/NpuAssetStage.kt",
+        // (4.1 L3) NpuModelSpec.kt joins for the same reason L2 added NpuDecodePolicy.kt:
+        // MelbankAssetTest now READS it, because the absence of a default on `melAsset` is a
+        // property of the DECLARATION and no call can observe it — a construction that omitted the
+        // argument would not compile, so there is nothing to execute. That default is the whole
+        // hazard the required field removes (a 128-bin row silently taking the 80-bin donor arm),
+        // and the one mutation this list has to guarantee re-runs the pin is a five-character
+        // addition to that line.
+        "src/main/java/com/whispereverywhere/npu/NpuModelSpec.kt",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
         "src/main/java/com/whispereverywhere/npu/QnnAsrNative.kt",
         "src/main/java/com/whispereverywhere/npu/NpuDecodePolicy.kt",
@@ -304,6 +321,12 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/transcription/batch/BatchTranscriber.kt",
         "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt",
         rootProject.file(".gitignore"),
+        // (4.1 L3) The extractor, for the same reason as the asset above and one step further out:
+        // it lives outside the app module, so it is not even a candidate input by convention.
+        // MelbankAssetTest asserts it carries BOTH pinned digests as literals — the provenance
+        // claim and the reproducibility claim — and loosening either of those to a threshold is a
+        // pure-Python edit that no Kotlin or C++ task would notice.
+        rootProject.file("tools/extract_melbank.py"),
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a

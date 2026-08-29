@@ -543,10 +543,19 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastSegmentStats(
 // each other; every caller runs inside the Kotlin-side NativeComputeGate, which is what settles
 // that.
 // ---------------------------------------------------------------------------------------------
-static constexpr int   kNpuMelBins    = 80;
+// THE BIN COUNT IS THE CALLER'S, THE WINDOW IS NOT (4.1 L3).
+//
+// `kNpuMelBins = 80` used to sit here beside these two, and it did not belong: 80 is a property of
+// whisper-small in particular, and npu-turbo is 128-bin. A file-scope constant would have refused a
+// perfectly correct 128-bin donor, at which point the only repair anybody reaches for is deleting
+// the check - so the bin count travels with the call, off the caller's NpuModelSpec.
+//
+// These two stay constants because they genuinely do not vary. Both families use whisper's fixed
+// 30 s window: 480,000 samples at 16 kHz, which at whisper's 160-sample hop IS 3000 frames. That is
+// one fact stated twice, measured across every published Whisper AI Hub asset in the 4.1 survey,
+// and it is why `input_features` is [1,melBins,3000] on both rather than a different window shape.
 static constexpr int   kNpuMelFrames  = 3000;
 static constexpr int   kNpuMelSamples = 480000;                                  // 30 s at 16 kHz
-static constexpr jlong kNpuMelBytes   = (jlong) kNpuMelBins * kNpuMelFrames * 4; // 960,000
 
 // Loads ONLY the mel filterbank, for a context that will never do anything but compute mels.
 //
@@ -557,9 +566,16 @@ static constexpr jlong kNpuMelBytes   = (jlong) kNpuMelBins * kNpuMelFrames * 4;
 // would put ~190 MB beside the NPU's own ~376 MiB on the one path whose design (I11) is to never
 // be co-resident with the CPU tiers. This reads ~64 KB from the head of the file instead.
 //
-// The model file is only a filterbank donor, so ANY installed 80-bin tier's file serves - tiny,
-// small and small.en were verified to carry a byte-identical matrix. large-v3-turbo is 128-bin and
-// does NOT; pcmToMel's whisper_model_n_mels check below is what refuses it.
+// For an 80-bin tier the model file is only a filterbank donor, so ANY installed 80-bin tier's file
+// serves - tiny, small and small.en were verified to carry a byte-identical matrix. large-v3-turbo
+// is 128-bin and carries a DIFFERENT matrix; pcmToMel's whisper_model_n_mels check below is what
+// keeps the two apart, against the bin count the CALLER asked for rather than against 80.
+//
+// A 128-bin tier has no donor to borrow from - the only 128-bin model in the catalog is `ultra`,
+// 574 MB, and it need not be installed - so 4.1 L3 bundles the filterbank instead: `melbank-128.bin`
+// is the first 102,968 bytes of that same ggml, which is exactly magic + hparams + filterbank, i.e.
+// precisely what this loader reads before it stops. It is not a new format and needs no new loader;
+// it is the same KIND of file, truncated at the boundary this function already stops at.
 //
 // The handle is an ordinary whisper_context: free it with the same `free` every other handle uses.
 extern "C" JNIEXPORT jlong JNICALL
@@ -588,7 +604,8 @@ Java_com_whispereverywhere_whisper_WhisperNative_initMelOnly(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_whispereverywhere_whisper_WhisperNative_pcmToMel(
-        JNIEnv *env, jobject /* this */, jlong ctxPtr, jfloatArray samples, jobject melBuf) {
+        JNIEnv *env, jobject /* this */, jlong ctxPtr, jfloatArray samples, jobject melBuf,
+        jint melBins) {
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
     if (ctx == nullptr || samples == nullptr || melBuf == nullptr) {
         LOGDIAGE("pcmToMel: null argument (ctx=%d samples=%d out=%d)",
@@ -596,12 +613,23 @@ Java_com_whispereverywhere_whisper_WhisperNative_pcmToMel(
         return JNI_FALSE;
     }
 
-    // The bin count is the other way this ships silently wrong. There is no WHISPER_N_MEL macro in
-    // this whisper.cpp version to catch it at compile time, and a large-v3 model (128 bins) would
-    // overrun a destination sized for 80 - so the model is asked, every call, and refused.
-    if (whisper_model_n_mels(ctx) != kNpuMelBins) {
-        LOGDIAGE("pcmToMel: model has %d mel bands, the NPU encoder needs exactly %d",
-                 whisper_model_n_mels(ctx), kNpuMelBins);
+    // TWO CHECKS, AND THEY MUST BE TWO (4.1 L3).
+    //
+    // The first is about the MODEL: does the context this caller opened actually produce the number
+    // of bands the caller's tier wants? There is no WHISPER_N_MEL macro in this whisper.cpp version
+    // to catch it at compile time, and an 80-bin donor under a 128-bin tier - or the reverse - is a
+    // wrong-sized write rather than an error. The second is about the ALLOCATION: is the
+    // destination the buffer that bin count implies? They fail for different reasons, in different
+    // files, and a single combined condition would name the wrong one half the time on a seam whose
+    // whole value is that its refusals say what to fix.
+    //
+    // The capacity is computed in jlong from melBins, never a literal: 960,000 is the answer for
+    // exactly one tier, and computing it here also makes an absurd melBins harmless - a value that
+    // could overflow the product produces a capacity no real ByteBuffer has, and the second check
+    // refuses it after the first already has.
+    if (whisper_model_n_mels(ctx) != melBins) {
+        LOGDIAGE("pcmToMel: model has %d mel bands, this tier's spec declares %d",
+                 whisper_model_n_mels(ctx), melBins);
         return JNI_FALSE;
     }
 
@@ -613,10 +641,11 @@ Java_com_whispereverywhere_whisper_WhisperNative_pcmToMel(
         LOGDIAGE("pcmToMel: out is not a direct ByteBuffer");
         return JNI_FALSE;
     }
-    if (env->GetDirectBufferCapacity(melBuf) != kNpuMelBytes) {
+    const jlong melBytes = (jlong) melBins * kNpuMelFrames * 4;
+    if (env->GetDirectBufferCapacity(melBuf) != melBytes) {
         LOGDIAGE("pcmToMel: out capacity is %lld bytes, need exactly %lld (%d bins x %d frames x 4)",
-                 (long long) env->GetDirectBufferCapacity(melBuf), (long long) kNpuMelBytes,
-                 kNpuMelBins, kNpuMelFrames);
+                 (long long) env->GetDirectBufferCapacity(melBuf), (long long) melBytes,
+                 melBins, kNpuMelFrames);
         return JNI_FALSE;
     }
     if ((reinterpret_cast<uintptr_t>(base) % alignof(float)) != 0) {

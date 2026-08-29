@@ -2661,4 +2661,138 @@ class NpuNativeContractTest {
             liveOffsets(cpp, "vote: %s").isNotEmpty()
         )
     }
+
+    /**
+     * **THE CHEAPEST REFUSAL IN `load` IS FIRST — and the companion is a null test on a string**
+     * (4.1 L3, folding Q6 M2).
+     *
+     * `load`'s whole shape is an argument about cost: `initMelOnly` before `nativeInit` because
+     * 64 KB declining is better than 358 MB declining, the vocabulary between them because 563 KB
+     * is cheaper than 342 MiB. Every stage is ordered by what it costs to find out.
+     *
+     * Every stage but one. `companionPath.isNullOrBlank()` sat at stage **4**, behind a filesystem
+     * lookup, a 64 KB model load and 563 KB of JSON parsing — and it is *the single most likely
+     * reason this tier does not come up on a real device*, because it is exactly the state of a
+     * device where the two-file import ran halfway or was never run at all. A `String?` null test
+     * costing nanoseconds ran after everything it could have saved.
+     *
+     * **The ORDER is the assertion, and presence would not catch this.** Every statement in `load`
+     * is unchanged by the move; only their sequence differs, so a mutation that put the companion
+     * check back where it was passes every existing pin in this file. And it is not merely a
+     * performance claim: a device with no ggml model installed AND no companion declines at
+     * `mel-donor` today, naming the wrong reason for a state the companion check would have named
+     * exactly.
+     */
+    @Test
+    fun theCheapestRefusalInLoadIsTheOneThatCostsNothingToTake() {
+        val load = kotlinMemberBody(
+            backend, "override fun load(modelPath: String, companionPath: String?): Long ="
+        )
+        val companion = liveOffsets(load, "if (companionPath.isNullOrBlank())")
+        assertTrue(
+            "load must still refuse a missing companion — a two-artefact tier with one artefact " +
+                "is not a degraded tier, it is an uninstalled one. Live lines: " +
+                liveLines(load, "companionPath"),
+            companion.isNotEmpty()
+        )
+        val melStage = liveOffsets(load, "melCtx = WhisperNative.initMelOnly(")
+        val vocab = liveOffsets(load, "WhisperBpeDecoder.fromJson(")
+        val init = liveOffsets(load, "QnnAsrNative.nativeInit(")
+        assertTrue("the mel stage must run on a live line", melStage.isNotEmpty())
+        assertTrue("the vocabulary stage must run on a live line", vocab.isNotEmpty())
+        assertTrue("and nativeInit must run on a live line", init.isNotEmpty())
+        assertTrue(
+            "ORDER: the companion refusal (${companion.first()}) must precede the mel load " +
+                "(${melStage.first()}), the vocabulary (${vocab.first()}) and nativeInit " +
+                "(${init.first()}). It is a null test on a String and the likeliest reason this " +
+                "tier does not come up; behind 563 KB of JSON it is the one place load's own " +
+                "cheapest-refusal-first principle is violated. Presence cannot see this: the move " +
+                "changes no statement, only their sequence.",
+            companion.first() < melStage.first() &&
+                companion.first() < vocab.first() &&
+                companion.first() < init.first()
+        )
+        assertTrue(
+            "and the refusal must still be stage `companion`, because the card and the WE-DIAG " +
+                "line name the stage and moving a check must not rename what declined",
+            liveOffsets(load, "\"companion\"").isNotEmpty()
+        )
+    }
+
+    /**
+     * **The mel context's SOURCE comes off the spec, and `cpuTierModelPath()` is only the 80-bin
+     * arm** (4.1 L3).
+     *
+     * 4.0 had one tier, so "where does the filterbank come from" and "what does this tier fall back
+     * to" were one question with one answer: `cpuTierModelPath()`. They are two questions. Every
+     * 80-bin whisper model carries a byte-identical 80x201 matrix, so an installed one is a donor —
+     * but a **128-bin** tier has no donor at all (the only 128-bin model in the catalog is `ultra`,
+     * 574 MB, and it need not be installed), so its filterbank ships as an asset and is staged out
+     * of the APK.
+     *
+     * `cpuTierModelPath()` therefore stops being the mel donor for a 128-bin tier and **stays the
+     * CPU fallback**, which is what `fallBackToCpuTier` reads. The two readings must be separable
+     * in source, or the next edit collapses them back.
+     *
+     * The pin is the BRANCH, not the call: an implementation that stages the asset and then loads
+     * the donor anyway compiles, arms, and computes an 80-bin mel for a 128-bin encoder — 240,000
+     * floats where 384,000 were wanted, quantised into a half-filled buffer and transcribed
+     * fluently.
+     */
+    @Test
+    fun theMelContextComesFromTheSpecAndTheDonorIsOnlyTheEightyBinArm() {
+        val load = kotlinMemberBody(
+            backend, "override fun load(modelPath: String, companionPath: String?): Long ="
+        )
+        assertTrue(
+            "load must branch on spec.melAsset — null is the installed-donor arm, non-null is the " +
+                "bundled-filterbank arm. Live lines: " + liveLines(load, "melAsset"),
+            liveOffsets(load, "spec.melAsset").isNotEmpty()
+        )
+        assertTrue(
+            "the bundled arm must stage the asset through NpuAssetStage, against the spec's own " +
+                "two constants — MELBANK_128_BYTES and MELBANK_128_SHA256, the same pair " +
+                "tools/extract_melbank.py and MelbankAssetTest assert, so all three readings are " +
+                "one value. Live lines: " + liveLines(load, "NpuAssetStage"),
+            liveOffsets(load, "NpuAssetStage.stagedPath(").isNotEmpty() &&
+                liveOffsets(load, "NpuModelSpec.MELBANK_128_BYTES").isNotEmpty() &&
+                liveOffsets(load, "NpuModelSpec.MELBANK_128_SHA256").isNotEmpty()
+        )
+        assertTrue(
+            "…and it must decline under its own stage name, `mel-asset`. Reusing `mel-donor` " +
+                "would tell the owner's capture that no installed 80-bin model was found, on a " +
+                "tier that never looks for one.",
+            liveOffsets(load, "\"mel-asset\"").isNotEmpty()
+        )
+        assertTrue(
+            "the donor arm must still be cpuTierModelPath() under stage `mel-donor` — unchanged " +
+                "for the npu tier, same message, because nothing about the 80-bin path moved",
+            liveOffsets(load, "paths.cpuTierModelPath()").isNotEmpty() &&
+                liveOffsets(load, "\"mel-donor\"").isNotEmpty()
+        )
+        assertTrue(
+            "and BOTH arms must reach the same initMelOnly. A second loader for the asset arm " +
+                "would be a second mel path, which is the one thing the spec forbids outright: " +
+                "the staged file is the same KIND of file the donor is, which is the entire " +
+                "reason it is 102,968 bytes rather than a bespoke format. Live lines: " +
+                liveLines(load, "initMelOnly("),
+            liveOffsets(load, "WhisperNative.initMelOnly(").size == 1
+        )
+        assertTrue(
+            "cpuTierModelPath() must STILL be the CPU fallback's path — it stopped being the mel " +
+                "donor for one arm, not the fallback for either. Live lines in fallBackToCpuTier: " +
+                liveLines(
+                    kotlinMemberBody(
+                        backend, "private fun fallBackToCpuTier(stage: String, detail: String): Long {"
+                    ),
+                    "cpuTierModelPath"
+                ),
+            liveOffsets(
+                kotlinMemberBody(
+                    backend, "private fun fallBackToCpuTier(stage: String, detail: String): Long {"
+                ),
+                "paths.cpuTierModelPath()"
+            ).isNotEmpty()
+        )
+    }
 }

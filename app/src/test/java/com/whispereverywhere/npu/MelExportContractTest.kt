@@ -73,6 +73,13 @@ class MelExportContractTest {
         return out
     }
 
+    /** The LIVE (non-comment) lines of [scope] containing [needle], trimmed — for failure text. */
+    private fun liveLines(scope: String, needle: String): List<String> =
+        scope.split("\n").map { it.trimStart() }.filter { line ->
+            !(line.startsWith("//") || line.startsWith("/*") || line.startsWith("*")) &&
+                line.contains(needle)
+        }
+
     /**
      * One free function's body. Every free function in `whisper.cpp` and `whisper_jni.cpp` closes at
      * column 0, which is what makes this scoping possible — and scoping is mandatory here, not a
@@ -139,6 +146,48 @@ class MelExportContractTest {
                 "test task UP-TO-DATE - the guard then passes against stale evidence instead of " +
                 "re-running. Same hazard the .cpp entries beside it already close.",
             liveOffsets(gradle, "\"src/main/cpp/whisper.cpp/include/whisper.h\"").isNotEmpty()
+        )
+        // 4.1 L3, folding Q2 M12. The header is the contract the fork PUBLISHES, and it is the one
+        // artefact an upstream rebase forces someone to re-read; a return line narrower than the
+        // guard is a promise the code does not keep. The runtime refusal names all three band
+        // counts by field - mel.n_mel, hparams.n_mels, filters.n_mel - because those are three
+        // different numbers from three different places and "the band counts disagree" does not
+        // tell a caller which pair to look at.
+        //
+        // NOT live-scoped, deliberately, and this is the one place in this file where that is
+        // correct: the subject IS a comment. Every line of the header's contract block starts with
+        // `//`, so liveOffsets would return an empty list for the true state of the world.
+        assertTrue(
+            "include/whisper.h's return line for whisper_get_mel_segment must name all THREE band " +
+                "counts the runtime refusal names - mel.n_mel, hparams.n_mels and filters.n_mel. " +
+                "The guard compares mel.n_mel against BOTH of the others, so a contract that says " +
+                "only \"the band counts disagree\" is narrower than the code and leaves the caller " +
+                "guessing which of the two comparisons fired.",
+            forkHdr.contains("hparams.n_mels") &&
+                forkHdr.contains("filters.n_mel") &&
+                forkHdr.contains("mel.n_mel")
+        )
+        // SCOPED to this function's own contract block, and the scope is mandatory: `whisper.h`
+        // carries six "Returns 0 on success" lines, so an unscoped needle is answered by
+        // whisper_encode's. The anchor is the fork's own block opener, which is unique.
+        val blockAnchor = "// Whisper Everywhere fork (4.0 NPU tier). Reads the log mel spectrogram"
+        assertTrue(
+            "the fork's contract block for whisper_get_mel_segment must still open with its own " +
+                "marker - without it the scope below silently rebases and the claim is answered " +
+                "by an unrelated declaration",
+            forkHdr.contains(blockAnchor)
+        )
+        val block = forkHdr.substringAfter(blockAnchor)
+            .substringBefore("WHISPER_API int whisper_get_mel_segment(")
+        val returns = block.substringAfter("Returns 0 on success")
+        assertTrue(
+            "…and it must name them IN the return line itself, not merely somewhere in the block: " +
+                "the sizing-rule paragraph above already mentions two of the three, so a " +
+                "block-wide needle would be answered by a neighbour. Found after \"Returns 0 on " +
+                "success\": " + returns.trim(),
+            returns.contains("hparams.n_mels") &&
+                returns.contains("filters.n_mel") &&
+                returns.contains("mel.n_mel")
         )
     }
 
@@ -226,8 +275,32 @@ class MelExportContractTest {
         )
     }
 
+    /**
+     * `pcmToMel` takes the bin count and **checks it twice** (4.1 L3, folding Q2 M8).
+     *
+     * `kNpuMelBins = 80` was a file-scope constant, which is a property of `whisper-small` in
+     * particular. `npu-turbo` is 128-bin, so the constant would refuse a perfectly correct donor
+     * and the only available repair would be to widen or delete the check. The bin count is
+     * therefore an argument, read off the caller's `NpuModelSpec`.
+     *
+     * **Two checks, and they must be two.** `whisper_model_n_mels(ctx) != melBins` catches the wrong
+     * DONOR — an 80-bin ggml handed to a 128-bin tier's session. `GetDirectBufferCapacity(out) !=
+     * melBins * kNpuMelFrames * 4` catches the wrong BUFFER — a destination sized from the other
+     * tier's spec. They fail in different places for different reasons, and a single combined check
+     * names the wrong one half the time, on a seam whose whole value is that its refusals say what
+     * to fix.
+     *
+     * The capacity is pinned as the EXPRESSION rather than as a literal, which is the point of the
+     * fold: 960,000 is right for exactly one tier, and a literal here would be a third home for a
+     * number that already has two.
+     *
+     * `kNpuMelFrames` and `kNpuMelSamples` stay constants, because they do NOT vary: both families
+     * use whisper's 30 s window, so 3000 frames and 480,000 samples are the same on either. That
+     * was the one assumption the 4.0 review flagged as *"the turbo asset has a different window
+     * shape"* — it does not, and the measured answer is pinned here rather than left as a comment.
+     */
     @Test
-    fun theJniAsksForThreeThousandFramesAndRefusesAnyBinCountButEighty() {
+    fun theJniAsksForThreeThousandFramesAndRefusesABinCountTheCallerDidNotAskFor() {
         val body = functionBody(
             jni,
             "Java_com_whispereverywhere_whisper_WhisperNative_pcmToMel(",
@@ -236,24 +309,78 @@ class MelExportContractTest {
         assertTrue(
             "pcmToMel must call whisper_get_mel_segment with the NPU frame count and offset 0 - " +
                 "`whisper_get_mel_segment(ctx, out, kNpuMelFrames, 0)`. The encoder's " +
-                "input_features tensor is ufixed16 [1,80,3000]; any other frame count is a shape " +
-                "mismatch the runtime reports far from here.",
+                "input_features tensor is ufixed16 [1,melBins,3000]; any other frame count is a " +
+                "shape mismatch the runtime reports far from here.",
             liveOffsets(body, "whisper_get_mel_segment(ctx, out, kNpuMelFrames, 0)").isNotEmpty()
         )
         assertTrue(
-            "kNpuMelFrames must be 3000 - the destination stride the assertion above passes.",
+            "kNpuMelFrames must be 3000 - the destination stride the assertion above passes, and " +
+                "one of the two window constants that are genuinely the same on BOTH families.",
             liveOffsets(jni, "constexpr int   kNpuMelFrames  = 3000;").isNotEmpty()
         )
         assertTrue(
-            "pcmToMel must refuse any model whose mel bin count is not 80 - " +
-                "`whisper_model_n_mels(ctx) != kNpuMelBins`. There is no WHISPER_N_MEL macro in " +
-                "this version to catch it at compile time, and a large-v3 model (128 bins) would " +
-                "otherwise overrun the 80*3000*4 destination silently.",
-            liveOffsets(body, "whisper_model_n_mels(ctx) != kNpuMelBins").isNotEmpty()
+            "kNpuMelSamples must be 480000 - 30 s at 16 kHz, the window pcmToMel zero-pads or " +
+                "truncates every segment to. Unpinned until now (Q2 M8), and it is what makes the " +
+                "frame count above true: 480,000 samples at whisper's 160-sample hop IS 3000 " +
+                "frames, so the two constants are one fact stated twice.",
+            liveOffsets(jni, "constexpr int   kNpuMelSamples = 480000;").isNotEmpty()
         )
         assertTrue(
-            "kNpuMelBins must be 80.",
-            liveOffsets(jni, "constexpr int   kNpuMelBins    = 80;").isNotEmpty()
+            "`kNpuMelBins` must be GONE from every live line. It is 80 - a property of " +
+                "whisper-small - and left standing it would refuse npu-turbo's perfectly correct " +
+                "128-bin donor, at which point the only repair anybody reaches for is deleting the " +
+                "check. Found: " + liveLines(jni, "kNpuMelBins"),
+            liveOffsets(jni, "kNpuMelBins").isEmpty()
+        )
+        assertTrue(
+            "pcmToMel must refuse a donor whose band count is not the one the CALLER asked for - " +
+                "`whisper_model_n_mels(ctx) != melBins`. This is the wrong-DONOR check: an 80-bin " +
+                "ggml under a 128-bin tier would otherwise overrun a destination sized for 128.",
+            liveOffsets(body, "whisper_model_n_mels(ctx) != melBins").isNotEmpty()
+        )
+        assertTrue(
+            "…and it must refuse a destination whose capacity is not `melBins * kNpuMelFrames * 4` " +
+                "- the wrong-BUFFER check, and a SEPARATE one. Two checks, not one: the first " +
+                "catches the model, the second catches the allocation, and a single combined " +
+                "condition names the wrong one half the time. Live capacity lines: " +
+                liveLines(body, "GetDirectBufferCapacity"),
+            liveOffsets(body, "melBins * kNpuMelFrames * 4").isNotEmpty() ||
+                liveOffsets(body, "melBins * (jlong) kNpuMelFrames * 4").isNotEmpty() ||
+                liveOffsets(body, "(jlong) melBins * kNpuMelFrames * 4").isNotEmpty()
+        )
+        assertTrue(
+            "and the capacity must NOT be a literal 960000 anywhere in this function - that is " +
+                "the 80-bin answer, and it is the shape of constant this whole task exists to " +
+                "remove. Found: " + liveLines(body, "960000"),
+            liveOffsets(body, "960000").isEmpty()
+        )
+        // THE DISTINCTNESS IS PINNED ON THE COMPLETE CONDITION, not on two offsets being unequal,
+        // and the difference was measured rather than reasoned about. Battery row D2 merges the two
+        // into `if (A ||\n B) {` — which spans TWO LINES, so an offset-inequality assertion is
+        // satisfied by it and the row SURVIVES. Requiring each condition to CLOSE on its own line
+        // (`) {`) is the claim that each is a complete refusal with its own message and its own
+        // `return JNI_FALSE`, which is what "two checks, not one" actually means.
+        val nMels = liveOffsets(body, "if (whisper_model_n_mels(ctx) != melBins) {")
+        val capacity = liveOffsets(body, "if (env->GetDirectBufferCapacity(melBuf) != melBytes) {")
+        assertTrue(
+            "the donor check must be a COMPLETE `if` of its own — `if (whisper_model_n_mels(ctx) " +
+                "!= melBins) {` — not one arm of a combined condition. Live lines: " +
+                liveLines(body, "whisper_model_n_mels"),
+            nMels.isNotEmpty()
+        )
+        assertTrue(
+            "…and so must the capacity check. Merged into one `if` they compile, they refuse the " +
+                "same inputs, and the message names whichever of the two the author wrote first — " +
+                "which is the wrong one half the time, on the seam whose whole value is that its " +
+                "refusals say what to fix. Live lines: " + liveLines(body, "GetDirectBufferCapacity"),
+            capacity.isNotEmpty()
+        )
+        assertTrue(
+            "ORDER: the donor check (${nMels.first()}) must precede the capacity check " +
+                "(${capacity.first()}). The capacity is DERIVED from melBins, so a buffer refusal " +
+                "taken first would report a size disagreement on a session whose real problem is " +
+                "that the model has the wrong number of bands.",
+            nMels.first() < capacity.first()
         )
     }
 
@@ -343,6 +470,22 @@ class MelExportContractTest {
                 "line is what lets a mel-only context be torn down by the ordinary whisper_free.",
             liveOffsets(init, "state->batch = {};").isNotEmpty()
         )
+        // 4.1 L3, folding Q2 M2 — the same class of defect as `state->batch = {}` beside it, and
+        // it lands in THIS task because the melbank asset is a new caller of this loader.
+        //
+        // `whisper_context::params` is a plain C struct with no default member initialisers, so on
+        // a context this function allocates it holds whatever the allocation held. Nothing on the
+        // mel path reads it today - which is precisely the shape of assumption this branch has
+        // been defeated by twice ("nobody calls that"). `whisper_init_state(ctx)` DOES read it,
+        // and a mel-only context is an ordinary `whisper_context` that any future code may hand to
+        // any whisper API. One line makes it inert-safe by construction instead.
+        assertTrue(
+            "whisper_init_from_file_mel_only must set ctx->params from " +
+                "whisper_context_default_params(). The struct has no default member initialisers " +
+                "and whisper_init_state reads it; leaving it indeterminate makes the mel-only " +
+                "context safe only by the property that nobody calls that yet.",
+            liveOffsets(init, "ctx->params = whisper_context_default_params();").isNotEmpty()
+        )
     }
 
     @Test
@@ -353,10 +496,15 @@ class MelExportContractTest {
         // NEIGHBOUR's signature. Verified by mutation - rewriting pcmToMel's parameter to
         // ShortArray left a whole-file assertion green, which is the "answered by unrelated code"
         // shape functionBody() above exists to prevent, reached through a different door.
-        val decl = kt.lineSequence().firstOrNull { it.contains("external fun pcmToMel(") }
+        // LIVE-SCOPED (4.1 L3, folding Q2 M7). This used to be a raw `lineSequence().firstOrNull`,
+        // so a commented-out declaration answered every claim below exactly as happily as the real
+        // one - and the file's own KDoc legitimately discusses this signature at length. It is one
+        // word, and it is the exact hole class that let M8 survive its first battery pass: an
+        // assertion answered by something other than the thing it is about.
+        val decl = liveLines(kt, "external fun pcmToMel(").firstOrNull()
         assertTrue(
-            "WhisperNative must declare `external fun pcmToMel(` on a single line - the whole " +
-                "declaration is the scope every assertion below is answered by.",
+            "WhisperNative must declare `external fun pcmToMel(` on a single LIVE line - the " +
+                "whole declaration is the scope every assertion below is answered by.",
             decl != null
         )
         assertTrue(
@@ -376,6 +524,15 @@ class MelExportContractTest {
             "pcmToMel must return Boolean: false means `out` holds nothing to trust, and the " +
                 "caller must not quantise it. Declaration found: ${decl.trim()}",
             decl.contains("): Boolean")
+        )
+        assertTrue(
+            "and it must take `melBins: Int` (4.1 L3). The bin count was a native constant - 80, " +
+                "i.e. whisper-small's - and a 128-bin tier makes it wrong in the direction that " +
+                "does not throw: an 80-bin mel written into a 128-bin buffer fills the first " +
+                "240,000 of 384,000 floats and the encoder transcribes the remainder as whatever " +
+                "the buffer held. The count now travels with the call, off the caller's " +
+                "NpuModelSpec. Declaration found: ${decl.trim()}",
+            decl.contains("melBins: Int")
         )
     }
 }

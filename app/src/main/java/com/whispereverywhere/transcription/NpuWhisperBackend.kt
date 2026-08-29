@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription
 
 import android.content.Context
 import android.os.SystemClock
+import com.whispereverywhere.npu.NpuAssetStage
 import com.whispereverywhere.npu.NpuDecodePolicy
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuGate
@@ -20,7 +21,7 @@ import java.util.Locale
  * on the Hexagon, and one CPU-tier fallback that is never silent.
  *
  * ```
- * load(encoder, decoder)   initMelOnly (64 KB)  ->  vocab  ->  nativeInit (376 MiB) -> nativeEpoch
+ * load(encoder, decoder)   companion? -> mel (64 KB) -> vocab -> nativeInit (376 MiB) -> nativeEpoch
  * transcribe(samples)      nativeEpoch (is this still my session?) -> pcmToMel -> nativeInputQuant
  *                          -> melToU16 -> nativeEncode -> nativeDetectLanguage
  *                          -> nativeDecodeSegment -> WhisperBpeDecoder
@@ -38,6 +39,24 @@ import java.util.Locale
  * NPU's own ~376 MiB, produce a **byte-identical** mel, and surface first as an LMK kill on a
  * mid-range device. Nothing downstream can tell the two apart, which is why the choice is pinned in
  * source by `NpuNativeContractTest` rather than merely explained here.
+ *
+ * ### One mel implementation, two DATA sources (4.1 L3)
+ *
+ * What the tier's spec decides is not how the mel is computed but where its coefficients come from,
+ * and `spec.melAsset` is the whole of that decision:
+ *
+ *  - **null** — an installed 80-bin whisper model, via `paths.cpuTierModelPath()`. Every 80-bin
+ *    model carries a byte-identical 80x201 matrix, so any of them is a donor. The `npu` tier's arm,
+ *    and byte-for-byte the 4.0 path: same stages, same messages.
+ *  - **an asset name** — `melbank-128.bin`, staged out of the APK by [NpuAssetStage]. A 128-bin
+ *    tier has no donor to borrow from, because the only 128-bin model in the catalog is `ultra` at
+ *    574 MB and it need not be installed. The asset is **102,968 bytes** — `56 + 128 * 201 * 4`,
+ *    which is exactly the prefix `initMelOnly` reads — so it is not a second format and needs no
+ *    second loader. **Both arms reach the same `initMelOnly` call.**
+ *
+ * `cpuTierModelPath()` therefore stops being the mel donor for a bundled-filterbank tier and stays
+ * the **CPU fallback**, which is what [fallBackToCpuTier] reads. Those were one question only
+ * because 4.0 had one tier.
  *
  * The mel context is held for the tier's LIFETIME, not per segment: re-reading 64 KB off flash for
  * every utterance is the worse trade by a wide margin. It is freed in [release], and — the part
@@ -101,10 +120,10 @@ class NpuWhisperBackend(
     /** Built once at [load] — 563 KB of JSON and 51,865 strings is not a per-segment cost. */
     private var decoder: WhisperBpeDecoder? = null
 
-    /** 960,000 B direct, native order. Reused; [WhisperNative.pcmToMel] overwrites all of it. */
+    /** `spec.melFloatBytes` direct, native order. Reused; [WhisperNative.pcmToMel] overwrites all of it. */
     private var melBuffer: ByteBuffer? = null
 
-    /** 480,000 B direct, native order — the `ufixed16` block `nativeEncode` copies in. */
+    /** `spec.inputFeaturesBytes` direct, native order — the `ufixed16` block `nativeEncode` copies in. */
     private var quantBuffer: ByteBuffer? = null
 
     /** True once `nativeInit` has succeeded and every artefact is in hand. */
@@ -202,13 +221,17 @@ class NpuWhisperBackend(
     override fun load(modelPath: String): Long = load(modelPath, paths.companionModelPath())
 
     /**
-     * Arms the tier: mel context, vocabulary, then the two QAIRT context binaries.
+     * Arms the tier: the companion check, the mel context, the vocabulary, then the two QAIRT
+     * context binaries.
      *
-     * **The order is the design.** `initMelOnly` is first because it is ~64 KB and its failure is a
-     * clean "tier unavailable" **before** 358 MB of NPU assets have been touched; the vocabulary is
-     * second for the same reason (563 KB, and a decoder that failed to construct does not exist, so
-     * there is nothing to run degraded); `nativeInit` — the expensive, ~342 MiB, ~525 ms one — is
-     * last. Every failure before it costs nothing.
+     * **The order is the design, and it is ordered by cost.** The companion check is first because
+     * it is a null test on a `String?` and is the likeliest reason this tier does not come up
+     * (4.1 L3, Q6 M2 — until then it sat fourth, behind everything it could have saved). The mel
+     * context is next because it is ~64 KB and its failure is a clean "tier unavailable" **before**
+     * 358 MB of NPU assets have been touched; the vocabulary follows for the same reason (563 KB,
+     * and a decoder that failed to construct does not exist, so there is nothing to run degraded);
+     * `nativeInit` — the expensive, ~342 MiB, ~525 ms one — is last. Every failure before it costs
+     * nothing.
      *
      * Must not run on Main: `nativeInit` reads 342 MB from disk and deserialises it.
      *
@@ -239,23 +262,66 @@ class NpuWhisperBackend(
             releaseEverything()
             unavailableReason = null
 
-            // (1) The mel donor. Null here means the tier cannot come up AND cannot fall back —
-            // one file answers both, so its absence is total. See ModelPathProvider.cpuTierModelPath.
-            val donorPath = paths.cpuTierModelPath()
-                ?: return@serialized fallBackToCpuTier(
-                    "mel-donor", "no installed 80-bin whisper model to take the mel filterbank from"
-                )
-
-            // (2) 64 KB, not 190 MB. The full loader is byte-identical downstream and is the one
-            // mistake nothing but a source pin can catch — see the class KDoc.
-            melCtx = WhisperNative.initMelOnly(donorPath)
-            if (melCtx == 0L) {
+            // (1) THE PAIRED ARTIFACT, and it is first because it costs nothing (4.1 L3, Q6 M2).
+            // A two-artifact tier with one artifact is not a degraded tier; it is an uninstalled
+            // one. This is a null test on a String and it is the single likeliest reason this tier
+            // does not come up on a real device — the state of every device where the two-file
+            // import ran halfway or never ran at all. It sat at stage 4 until 4.1, behind a
+            // filesystem lookup, a 64 KB model load and 563 KB of JSON, which is the one place
+            // load's own cheapest-refusal-first ordering was violated.
+            if (companionPath.isNullOrBlank()) {
                 return@serialized fallBackToCpuTier(
-                    "mel-init", "initMelOnly found no usable 80-bin filterbank in $donorPath"
+                    "companion", "the npu tier needs both context binaries and the decoder half is missing"
                 )
             }
 
-            // (3) The vocabulary. IOException = absent from the APK; IllegalStateException = present
+            // (2) THE MEL FILTERBANK, from whichever of the two sources this tier's spec names
+            // (4.1 L3). One mel implementation, two data sources — and the second is not a second
+            // format: `melbank-128.bin` is the magic → hparams → filterbank prefix of a 128-bin
+            // ggml, which is exactly what initMelOnly reads before it stops.
+            //
+            // `cpuTierModelPath()` answers TWO questions in 4.0 — the mel donor and the CPU
+            // fallback — and they were one question only because there was one tier. It stops being
+            // the donor for a bundled-filterbank tier and STAYS the fallback, which is what
+            // fallBackToCpuTier reads below.
+            val melSourcePath: String
+            if (spec.melAsset == null) {
+                // The 80-bin arm, unchanged. Null here means the tier cannot come up AND cannot
+                // fall back — one file answers both, so its absence is total. See
+                // ModelPathProvider.cpuTierModelPath.
+                melSourcePath = paths.cpuTierModelPath()
+                    ?: return@serialized fallBackToCpuTier(
+                        "mel-donor", "no installed 80-bin whisper model to take the mel filterbank from"
+                    )
+            } else {
+                // The bundled arm. A 128-bin tier has no donor to borrow from: the only 128-bin
+                // model in the catalog is `ultra`, 574 MB, and it need not be installed. Staged
+                // against the two constants tools/extract_melbank.py and MelbankAssetTest also
+                // assert, so all three readings are one value.
+                melSourcePath = NpuAssetStage.stagedPath(
+                    appContext,
+                    spec.melAsset,
+                    NpuModelSpec.MELBANK_128_BYTES,
+                    NpuModelSpec.MELBANK_128_SHA256,
+                ) ?: return@serialized fallBackToCpuTier(
+                    "mel-asset",
+                    "${spec.melAsset} could not be staged from the APK — see the WE-DIAG line above"
+                )
+            }
+
+            // (3) 64 KB, not 190 MB. The full loader is byte-identical downstream and is the one
+            // mistake nothing but a source pin can catch — see the class KDoc. ONE loader for both
+            // arms: a second one would be a second mel path, which is the thing the spec forbids
+            // outright.
+            melCtx = WhisperNative.initMelOnly(melSourcePath)
+            if (melCtx == 0L) {
+                return@serialized fallBackToCpuTier(
+                    "mel-init",
+                    "initMelOnly found no usable ${spec.melBins}-bin filterbank in $melSourcePath"
+                )
+            }
+
+            // (4) The vocabulary. IOException = absent from the APK; IllegalStateException = present
             // and wrong (not JSON, wrong entry count, a token outside the byte-level alphabet).
             // Those two cover every way this asset can fail, and all of them fire here rather than
             // under a user who has already pressed record.
@@ -268,14 +334,6 @@ class NpuWhisperBackend(
                 return@serialized fallBackToCpuTier("vocab", "${cause.javaClass.simpleName}: ${cause.message}")
             } catch (cause: IllegalStateException) {
                 return@serialized fallBackToCpuTier("vocab", "${cause.javaClass.simpleName}: ${cause.message}")
-            }
-
-            // (4) The paired artifact. A two-artifact tier with one artifact is not a degraded
-            // tier; it is an uninstalled one.
-            if (companionPath.isNullOrBlank()) {
-                return@serialized fallBackToCpuTier(
-                    "companion", "the npu tier needs both context binaries and the decoder half is missing"
-                )
             }
 
             // (5) 342 MiB and ~525 ms. runCatching, not try/catch on a named type: libqnnasr.so is
@@ -332,7 +390,7 @@ class NpuWhisperBackend(
      * One 30 s segment: mel, quantise, encode, resolve the language, decode, detokenise.
      *
      * [useVad] is IGNORED, and that is correct rather than unimplemented: the encoder's
-     * `input_features` is a fixed `[1,80,3000]`, so the window is 30 s whatever the VAD would have
+     * `input_features` is a fixed `[1,melBins,3000]`, so the window is 30 s whatever the VAD would have
      * said, and trimming the samples before the mel would only move silence from one end of a
      * zero-padded window to the other.
      *
@@ -390,7 +448,7 @@ class NpuWhisperBackend(
 
             // pcmToMel zero-pads or truncates to the encoder's 480,000-sample window itself, so the
             // caller hands it whatever the segment actually was.
-            if (!WhisperNative.pcmToMel(melCtx, samples, mel)) {
+            if (!WhisperNative.pcmToMel(melCtx, samples, mel, spec.melBins)) {
                 return@serialized fallBackAndRun("mel", "pcmToMel refused or failed", samples, lang, useVad)
             }
 
@@ -437,9 +495,12 @@ class NpuWhisperBackend(
             // decides whether the block the graph sees is the block this code wrote, and in which
             // orientation. Emitted BEFORE nativeEncode so the two halves land adjacent in the log.
             //
-            // BuildConfig.DEBUG, like nativeSetDiag above it: 6,000 extra quantise calls and three
-            // float reads are nothing against a ~405 ms encode, but a release build has no business
-            // narrating the spectrogram it is working on.
+            // BuildConfig.DEBUG, like nativeSetDiag above it: `melBins + melFrames` extra quantise
+            // calls — 3,080 on this tier, 3,128 on a 128-bin one — and three float reads, which is
+            // nothing against a ~405 ms encode. (The 4.0 comment here said 6,000; it was double the
+            // real figure, corrected at 4.1 L3. This file's comments are read as measurements and
+            // one wrong measurement devalues the rest.) A release build has no business narrating
+            // the spectrogram it is working on.
             if (com.whispereverywhere.BuildConfig.DEBUG) {
                 val probe = mel.asFloatBuffer()
                 val half = spec.melFrames / 2

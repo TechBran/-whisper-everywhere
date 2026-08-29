@@ -268,7 +268,14 @@ class NpuDiagTest {
             1,
             liveLineCount(backend, "val melView = mel.asFloatBuffer()"),
         )
-        val pcmToMel = offsetOfLive(backend, "if (!WhisperNative.pcmToMel(melCtx, samples, mel)) {")
+        // RE-SPELLED at 4.1 L3, which is where this needle went red BY CONSTRUCTION: pcmToMel
+        // gained a `melBins` argument, so the three-argument call this used to name no longer
+        // exists. The claim is unchanged and is about the ORDER, not the arity — re-spell it with
+        // whatever the call currently is and keep the `if (!` prefix, because the guard is the
+        // subject. THE NEXT TRIGGER, named so nobody has to rediscover it: any further parameter
+        // on pcmToMel (a window length, an offset) breaks this line again in exactly the same way.
+        val pcmToMel =
+            offsetOfLive(backend, "if (!WhisperNative.pcmToMel(melCtx, samples, mel, spec.melBins)) {")
         val melLine = offsetOfLive(backend, "NpuDiag.mel(")
         val quantise = offsetOfLive(backend, "NpuQuantize.melToU16(")
         assertTrue(
