@@ -614,12 +614,15 @@ class ChooserSteerWiringPinTest {
             liveLineCount(app, "WhisperCatalog.byId(\"npu\")"),
         )
         assertEquals(
-            "the 4.0 Boolean view survives as a named-trigger shim over the set — its one " +
-                "remaining consumer is the service's single-tier routing, and 4.1 L8's per-tier " +
-                "re-thread deletes both together. Nothing else may grow a second derivation of " +
-                "the gate",
-            1,
-            count(app, "fun isNpuTierOffered(): Boolean = NpuAssetImport.TIER_ID in offeredNpuTierIds()"),
+            "the 4.0 Boolean shim is GONE — this needle fired at L8 exactly as its own message " +
+                "promised (\"4.1 L8's per-tier re-thread deletes both together\") and is " +
+                "re-specified here as the zero it announced: routing takes the SET now, the " +
+                "shim's one consumer went with it, and a revived Boolean view would be a second " +
+                "derivation of the gate that one bit cannot even express (WHICH of two " +
+                "independently-installed tiers?). Live-zero, so the deletion note in the KDoc " +
+                "can say the name without resurrecting it",
+            0,
+            liveLineCount(app, "isNpuTierOffered"),
         )
     }
 

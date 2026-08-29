@@ -46,8 +46,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 78
-        versionName = "3.7.0"  // VAD endpointing: Silero cuts at real pauses, per-tier commit cadence, eco/base retired
+        versionCode = 80
+        versionName = "4.1.0"  // NPU Model Lab: npu-turbo (large-v3-turbo on the AI chip), per-tier routing/decline, per-utterance language on NPU
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
@@ -338,6 +338,20 @@ tasks.withType<Test>().configureEach {
         // and the one mutation this list has to guarantee re-runs the pin is a five-character
         // addition to that line.
         "src/main/java/com/whispereverywhere/npu/NpuModelSpec.kt",
+        // (4.1 L8) NpuAssetImport.kt joins per the L6 review's rider and this list's own doctrine
+        // (the QnnAsrNative.kt entry above states it): membership follows what tests READ, not
+        // whether today's assertions could be fooled. NpuAssetImportTest reads it (the
+        // PAIRED_TIER_IDS derivation live line, the "npu-turbo" live-zero); all its pins are
+        // live-line-scoped today, so this entry is not yet load-bearing — and the next assertion
+        // added there is not required to remember the distinction.
+        "src/main/java/com/whispereverywhere/npu/NpuAssetImport.kt",
+        // (4.1 L8) NpuBackendSelector.kt — the plan's own found-while-writing hole, the same one
+        // Q7a MEASURED and I3 named, on the one file that carries the routing decision:
+        // NpuBackendWiringTest source-pins this file (the routesToNpu signature, the zero-literal
+        // rule, the production construction site), yet it was never a test input, so a
+        // comment-only edit left the suite UP-TO-DATE and every one of those pins passing against
+        // stale evidence.
+        "src/main/java/com/whispereverywhere/transcription/NpuBackendSelector.kt",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
         // (4.1 L7) LocalWhisperEngine.kt joins because PerUtteranceLanguageTest now READS it:
         // the languageFor-exactly-once-inside-the-conditional claim is what stops a second,
@@ -385,6 +399,12 @@ tasks.withType<Test>().configureEach {
         // base count and the id-188 known mismatch — the pins that stop the cross-check being
         // loosened to a threshold), and loosening either is a pure-Python edit no compile notices.
         rootProject.file("tools/build_turbo_vocab.py"),
+        // (4.1 L8) The delivery-zip repacker, same rule as the two scripts above it: it lives
+        // outside the app module, NpuAssetImportTest asserts it carries both tiers' four delivery
+        // filenames and the catalog's four digests as literals (the census that stops a repack
+        // from quietly renaming or re-hashing a ~GB artefact), and loosening any of that is a
+        // pure-Python edit no compile task would notice.
+        rootProject.file("tools/pack_npu_zip.py"),
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a

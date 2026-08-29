@@ -64,8 +64,9 @@ object ModelTierCopy {
     /**
      * Copy for an offered tier id; null for retired or unknown ids (callers fall back).
      *
-     * "Offered" includes the gated `npu` tier, which is out of [WhisperCatalog.pickable] by design
-     * — copy exists for every tier a chooser can render, and the gate decides whether it renders.
+     * "Offered" includes the gated npu-class tiers (`npu` and `npu-turbo`), which are out of
+     * [WhisperCatalog.pickable] by design — copy exists for every tier a chooser can render, and
+     * the per-tier gate decides whether each renders.
      */
     fun forId(id: String): TierCopy? = copyById[id]
 

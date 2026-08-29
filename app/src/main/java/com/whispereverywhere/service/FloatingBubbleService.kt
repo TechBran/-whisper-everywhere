@@ -388,22 +388,30 @@ class FloatingBubbleService : Service(),
     // provider choice produced.
     private var localEngine: LocalWhisperEngine? = null
 
-    // Which backend [localEngine] was built on (4.0, Q9). It cannot be asked of the engine —
-    // `backend` is a private val there — and it is what makes "the cached engine is still the right
-    // one" a comparison rather than a guess. Main-confined, like localEngine itself.
-    private var localEngineOnNpu: Boolean = false
+    // WHICH npu-class tier [localEngine] was built on, or null for the shared CPU backend
+    // (4.0 Q9 as a Boolean; a tier ID since 4.1 L8). It cannot be asked of the engine — `backend`
+    // is a private val there — and it is what makes "the cached engine is still the right one" a
+    // comparison rather than a guess. An ID rather than a Boolean because a Boolean cannot tell
+    // `npu` from `npu-turbo`: under the old field an npu -> npu-turbo switch read as "no change",
+    // the engine never rebuilt, and the user kept dictating on the tier they had just left while
+    // the card showed the other one. Null deliberately means EVERY CPU tier at once — they all
+    // share WhisperNativeBackend, so a CPU -> CPU switch keeps the cached engine and re-prewarms,
+    // exactly as it always has. Main-confined, like localEngine itself.
+    private var localEngineNpuTierId: String? = null
 
-    // WhisperEverywhereApp.isNpuTierOffered()'s answer, memoised because warmLocalEngine() reads it
-    // on Main and that gate must never be evaluated there. Written only by refreshNpuTierOffer();
-    // false until the first refresh lands, which is the safe direction (the CPU tier always works).
+    // WhisperEverywhereApp.offeredNpuTierIds()'s answer, memoised because warmLocalEngine() reads
+    // it on Main and that gate must never be evaluated there. Written only by
+    // refreshNpuTierOffer(); empty until the first refresh lands, which is the safe direction
+    // (the CPU tier always works). The name is the chooser producers' own — the value carries ONE
+    // name end to end (4.1 L8).
     //
     // @Volatile is DEFENSIVE, not load-bearing, and the earlier comment here claiming otherwise was
     // wrong (Q9 review, M1). `withContext(Dispatchers.IO) { … }` returns to the CALLER's context,
     // and both call sites are `serviceScope.launch { }` on Dispatchers.Main — so today the write
     // and every read are alike Main-confined and no publication is needed. It is kept because it
-    // costs one Boolean read and it is the difference between "correct" and "correct until someone
-    // moves the refresh onto a background scope", which is a one-line change with no other symptom.
-    @Volatile private var npuTierOffered: Boolean = false
+    // costs one reference read and it is the difference between "correct" and "correct until
+    // someone moves the refresh onto a background scope", a one-line change with no other symptom.
+    @Volatile private var npuTierIds: Set<String> = emptySet()
 
     // The cloud wrapper (FallbackTranscriptionEngine) of the CURRENT/previous session, held so it
     // can be close()d — resolving everything it still owes — without shutting down the local engine
@@ -2259,14 +2267,17 @@ class FloatingBubbleService : Service(),
      * is not the live session. A stale teardown is a `WE-DIAG` line rather than a destroyed
      * session, and a stale `transcribe` refuses rather than encoding into another model's session.
      *
-     * **The invariant that still holds TODAY: `routesToNpu` cannot produce an `npu -> npu`
-     * rebuild.** It is a single-tier predicate — one id, one Boolean — so on any npu-to-npu
-     * transition `onNpu == localEngineOnNpu` and the guard above returns the cached engine without
-     * rebuilding at all. `NpuBackendWiringTest` asserts that property directly (the set of tier ids
-     * that route to the NPU has exactly one element), so the ruling that makes two npu tiers
-     * exist — the turbo A/B — trips a red there rather than a heisenbug on a device. That red is
-     * now a *deliberate re-spec* rather than a missing prerequisite, because the structural fix it
-     * used to ask for has landed.
+     * **The invariant that replaced it (4.1 L8): the rebuild guard compares routed tier IDS, not
+     * a Boolean.** Two npu-class tiers route now, so "is the cached engine still right" is no
+     * longer a yes/no about the NPU — it is *which* npu tier, and `routedNpuTierId ==
+     * localEngineNpuTierId` is the comparison that makes an `npu -> npu-turbo` switch a rebuild
+     * instead of a "no change" that leaves the user dictating on the tier they just left. The
+     * `npu -> npu-class` interleaving that made a same-backend rebuild dangerous is closed by the
+     * arming epoch above, which is exactly what it was built for; `NpuBackendWiringTest` asserts
+     * the routing census directly (the set of tier ids that route to the NPU is exactly the two
+     * spec rows), so a third npu-class tier trips a deliberate red there rather than a heisenbug
+     * on a device. The null-vs-null case is deliberately unchanged: every CPU tier shares
+     * `WhisperNativeBackend`, so a CPU -> CPU switch keeps the cached engine and re-prewarms.
      *
      * ### [allowRebuild] — the permission, and why it is a parameter rather than a state check
      *
@@ -2306,17 +2317,26 @@ class FloatingBubbleService : Service(),
      */
     private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {
         val tierId = app.preferencesManager.selectedModelId
-        // Session state, read from the mirror NpuWhisperBackend publishes from its own setter.
-        // Non-null means a stage has already declined, so the tier is not re-armed.
-        val reason = NpuTierStatus.unavailableReason.value
-        val onNpu = NpuBackendSelector.routesToNpu(tierId, npuTierOffered, reason != null)
+        // Process state, read from the mirror NpuWhisperBackend publishes from its own setter —
+        // PER TIER since 4.1 L8: membership means that tier has already declined and is not
+        // re-armed, and one tier's decline says nothing about the other's routing.
+        val declined = NpuTierStatus.declinedTiers
+        // The selector's decision, recorded as WHICH tier routed (null = the shared CPU backend).
+        // The predicate stays the selector's; this line only names the id the yes was about.
+        val routedNpuTierId = if (NpuBackendSelector.routesToNpu(tierId, npuTierIds, declined)) tierId else null
         val cached = localEngine
-        if (cached != null && (onNpu == localEngineOnNpu || !allowRebuild)) return cached
+        if (cached != null && (routedNpuTierId == localEngineNpuTierId || !allowRebuild)) return cached
         if (cached != null) {
-            // ONCE PER SESSION, never once per segment: this fires only on the transition, and the
-            // transition is one-way for as long as the reason stands.
-            if (localEngineOnNpu && reason != null) {
+            // ONCE PER SESSION, never once per segment: these fire only on the transition. Two
+            // narrations for two different events (Q9 M3, folded at 4.1 L8): a rebuild because
+            // the cached engine's OWN npu tier declined keeps its stage-carrying line, and every
+            // other rebuild — a tier switch, which the A/B makes the ordinary path — names the
+            // from-tier and the to-tier instead of happening silently.
+            val reason = NpuTierStatus.reasonFor(localEngineNpuTierId)
+            if (localEngineNpuTierId != null && reason != null) {
                 android.util.Log.w(NpuDiag.TAG, NpuDiag.fallbackRebuild(NpuTierStatus.stageOf(reason)))
+            } else {
+                android.util.Log.i(NpuDiag.TAG, NpuDiag.tierRebuild(localEngineNpuTierId, routedNpuTierId))
             }
             cached.shutdown()
             localEngine = null
@@ -2325,19 +2345,19 @@ class FloatingBubbleService : Service(),
             app.whisperModelManager,
             backend = NpuBackendSelector.backendFor(
                 tierId = tierId,
-                npuAvailable = npuTierOffered,
-                declinedThisSession = reason != null,
+                offeredNpuTierIds = npuTierIds,
+                declinedTiers = declined,
                 paths = app.whisperModelManager,
                 appContext = applicationContext,
             ),
         )
         localEngine = built
-        localEngineOnNpu = onNpu
+        localEngineNpuTierId = routedNpuTierId
         return built
     }
 
     /**
-     * Re-reads [WhisperEverywhereApp.isNpuTierOffered] into [npuTierOffered], off Main.
+     * Re-reads [WhisperEverywhereApp.offeredNpuTierIds] into [npuTierIds], off Main.
      *
      * **The dispatcher hop is the point.** That gate forces the memoised capability probe, which
      * `dlopen`s `libQnnSystem.so` and `libQnnHtp.so` on its first call, and `QnnAsrNative`'s
@@ -2346,15 +2366,15 @@ class FloatingBubbleService : Service(),
      * there, exactly as the two chooser screens do it with `produceState { withContext(IO) { … } }`.
      *
      * **The hop moves the GATE off Main, not the assignment.** `withContext` returns to the
-     * caller's context, so the write to [npuTierOffered] lands back on Main — which is where every
+     * caller's context, so the write to [npuTierIds] lands back on Main — which is where every
      * read of it happens too. Stated because the first version of this KDoc claimed a cross-thread
      * publication that does not exist (Q9 review, M1).
      *
      * Re-read rather than cached forever because the *installed* half can change under a live
-     * service: Q8's importer writes the 358 MB pair while the app is running.
+     * service: Q8's importer writes a gated pair into files/models while the app is running.
      */
     private suspend fun refreshNpuTierOffer() {
-        npuTierOffered = withContext(Dispatchers.IO) { app.isNpuTierOffered() }
+        npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }
     }
 
     /** One shared client for the service's life — see the [httpTransport] field comment. */

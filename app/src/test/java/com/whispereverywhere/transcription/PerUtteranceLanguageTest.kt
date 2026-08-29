@@ -224,6 +224,48 @@ class PerUtteranceLanguageTest {
         )
     }
 
+    /**
+     * THE FALSE->TRUE FLIP — the executed E1 killer (L7 review IMP-1, added at L8 triage).
+     *
+     * E1 (the effective-language conditional deleted, `effectiveLang =
+     * languagePin.languageFor(lang)` unconditionally) is observationally identical in every state
+     * where the pin is EMPTY under a per-utterance answer — which is every state the monotonic
+     * true->false backend can reach, so until this test its only killer was the source pin. The
+     * one state that executes the difference is a pin FED while latching and then a backend that
+     * answers true again: the interface KDoc licenses it ("LIVE, read off the ACTIVE backend per
+     * segment" — nothing forbids false->true), and the L5 I1 offer-line re-arm makes a
+     * recovering backend a contemplated future. The source pin is KEPT regardless — it remains
+     * the only possible killer for E6, a dead unconditional consult being execution-invisible in
+     * principle.
+     */
+    @Test
+    fun aBackendThatRecoversPerUtteranceDetectionEscapesTheLatchItLeftBehind() {
+        val backend = PerUtteranceProbeBackend(script = listOf("hallo", "welt", "hola"))
+            .apply { perUtterance = false }
+        val engine = engineWith(backend)
+        engine.connect(language = null, listener = RecordingListener())
+
+        repeat(2) { engine.sendAudio(pcm); engine.commit() }   // latching: detect once, pin "de"
+        backend.perUtterance = true                            // the backend recovers
+        engine.sendAudio(pcm); engine.commit()                 // per-utterance again
+
+        assertEquals(
+            "segment 3 — the first after the backend answers per-utterance again — must receive " +
+                "the SESSION language (null), not the \"de\" the latch pinned while the backend " +
+                "was latching. An unconditional pin consult (E1) hands it \"de\": the tier's own " +
+                "per-utterance detect pass is silenced by a stale latch and a mid-session " +
+                "language switch transcribes under the old language, fluently and wrongly.",
+            listOf(null, "de", null),
+            backend.langs,
+        )
+        assertEquals(
+            "exactly one detection query — segment 1's latch feed; the recovered phase neither " +
+                "queries nor re-feeds",
+            1,
+            backend.detectQueries,
+        )
+    }
+
     @Test
     fun theReacquiredLatchKeepsTheThreeSevenReDetectRule() {
         val backend = PerUtteranceProbeBackend(

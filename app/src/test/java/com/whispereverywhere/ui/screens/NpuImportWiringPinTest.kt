@@ -276,21 +276,22 @@ class NpuImportWiringPinTest {
     @Test
     fun theUnavailableNoteIsReadFromTheBackendsOwnReasonAndUsesTheWarningSurface() {
         assertEquals(
-            "the tier card subscribes to the process-scoped mirror of " +
-                "NpuWhisperBackend.unavailableReason — Q6 wrote that property for this reader and " +
-                "until now it had none",
+            "the tier cards subscribe to the process-scoped mirror of " +
+                "NpuWhisperBackend.unavailableReason — the per-tier MAP since 4.1 L8, because " +
+                "two npu-class tiers can decline independently and one shared reason wore " +
+                "whichever card asked first",
             1,
-            count(picker, "val npuUnavailableReason by NpuTierStatus.unavailableReason.collectAsState()"),
+            count(picker, "val npuTierReasons by NpuTierStatus.reasons.collectAsState()"),
         )
         assertEquals(
-            "and the note is scoped to the npu tier's card, not shown on every tier",
+            "and each card renders ITS OWN tier's record — reasonFor(model.id) in its Compose " +
+                "spelling — so the note appears on the tier the decline is ABOUT, never on its " +
+                "sibling, and cardNote(null) keeps every undeclined tier silent with no id check " +
+                "to forget when a third npu-class tier arrives",
             1,
             count(
                 picker,
-                block(
-                    "                    unavailableNote = if (model.id == NpuAssetImport.TIER_ID)",
-                    "                        NpuTierStatus.cardNote(npuUnavailableReason) else null,",
-                ),
+                "                    unavailableNote = NpuTierStatus.cardNote(npuTierReasons[model.id]),",
             ),
         )
         assertEquals(

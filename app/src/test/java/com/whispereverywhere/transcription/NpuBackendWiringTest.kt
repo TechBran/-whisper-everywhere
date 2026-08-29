@@ -36,11 +36,11 @@ import java.io.File
  *    flight beside an NPU teardown that has not run — the ~570 MB transient I11 exists to forbid,
  *    arriving through the service instead of through the backend. This is the NINTH
  *    presence-vs-ORDER pin on this branch and the reasoning has not changed once.
- *  - *The offer gate read inline, on Main.* `npuAvailable = app.isNpuTierOffered()` inside
+ *  - *The offer gate read inline, on Main.* `offeredNpuTierIds = app.offeredNpuTierIds()` inside
  *    `warmLocalEngine` compiles and is correct in every respect except that it `dlopen`s two QNN
  *    libraries on the UI thread — the same mutation `ChooserSteerWiringPinTest` closes on the two
  *    chooser screens, arriving at the third surface.
- *  - *The gate re-derived.* `npuCapableDevice && manager.isInstalled(npu)` written out here is a
+ *  - *The gate re-derived.* `npuCapableDevice && manager.isInstalled(…)` written out here is a
  *    second composition of a predicate that already exists, free to drift from it.
  *  - *The fallback line moved into the segment path.* Once per session is the contract; once per
  *    segment buries the `npu: encode=` / `segment-timing:` pair it is supposed to sit beside.
@@ -136,12 +136,28 @@ class NpuBackendWiringTest {
 
     private val paths = FakeModelPathProvider("/models/encoder_qairt_context.bin")
 
+    /**
+     * The single-tier view of the table, for the cells whose question is "does THIS id route
+     * under ITS OWN gate/decline state": `npuAvailable` offers the candidate itself, `declined`
+     * declines it. The independence cells — one tier declined while the OTHER routes — call
+     * [routeWith] with explicit sets instead.
+     */
     private fun route(
         tierId: String?,
         npuAvailable: Boolean,
         declined: Boolean = false,
+    ): WhisperBackend = routeWith(
+        tierId,
+        offered = if (npuAvailable && tierId != null) setOf(tierId) else emptySet(),
+        declined = if (declined && tierId != null) setOf(tierId) else emptySet(),
+    )
+
+    private fun routeWith(
+        tierId: String?,
+        offered: Set<String>,
+        declined: Set<String> = emptySet(),
     ): WhisperBackend =
-        NpuBackendSelector.backendFor(tierId, npuAvailable, declined, paths) { _, _ ->
+        NpuBackendSelector.backendFor(tierId, offered, declined, paths) { _, _ ->
             StandInNpuBackend
         }
 
@@ -161,7 +177,7 @@ class NpuBackendWiringTest {
         )
         assertTrue(
             "the predicate and the resolver must agree — they are one truth table with two readers",
-            NpuBackendSelector.routesToNpu("npu", npuAvailable = true, declinedThisSession = false),
+            NpuBackendSelector.routesToNpu("npu", offeredNpuTierIds = setOf("npu"), declinedTiers = emptySet()),
         )
     }
 
@@ -175,7 +191,7 @@ class NpuBackendWiringTest {
             route(tierId = "npu", npuAvailable = false),
         )
         assertTrue(
-            !NpuBackendSelector.routesToNpu("npu", npuAvailable = false, declinedThisSession = false),
+            !NpuBackendSelector.routesToNpu("npu", offeredNpuTierIds = emptySet(), declinedTiers = emptySet()),
         )
     }
 
@@ -186,10 +202,13 @@ class NpuBackendWiringTest {
         listOf("multi", "pro", "eco", "base", "ultra", "", "NPU", "npu ", null).forEach { tier ->
             listOf(true, false).forEach { available ->
                 assertSame(
-                    "tier `$tier` (gate=$available) must route to whisper.cpp. Only the exact id " +
-                        "`npu` may reach the NPU arm — a prefix, a case variant or a stray space " +
-                        "is a different tier, and `ultra` in particular is a 128-bin model the " +
-                        "NPU tier cannot even take a mel filterbank from.",
+                    "tier `$tier` (gate=$available) must route to whisper.cpp. Only the exact " +
+                        "ids with a spec row — `npu` and `npu-turbo` — may reach the NPU arm; a " +
+                        "prefix, a case variant or a stray space is a different tier. `ultra` in " +
+                        "particular shares turbo's 128-bin mel and even its weights lineage, and " +
+                        "STILL must not route: it is a ggml, not a context binary, and the NPU " +
+                        "backend deserialises QAIRT context blobs — a ggml handed to it is a " +
+                        "refusal at load bought with a 574 MB read.",
                     WhisperNativeBackend,
                     route(tierId = tier, npuAvailable = available),
                 )
@@ -198,60 +217,138 @@ class NpuBackendWiringTest {
     }
 
     /**
-     * THE INVARIANT `warmLocalEngine`'s ORDER PIN ACTUALLY RESTS ON (final review F4 / I1).
-     *
-     * The rebuild `shutdown()`s the stale engine and then constructs the replacement, and that was
-     * documented as excluding the ~570 MB transient. **It does not**: `shutdown()` *queues*
-     * `backend.release` on the stale engine's executor and returns, while the replacement loads on
-     * a different one — source order is not happens-before, and `NativeComputeGate` bounds
-     * concurrency, not order.
-     *
-     * What makes the rebuild *correct* rather than merely tidy is a different property, which
-     * nothing stated until the final review: **`routesToNpu` cannot produce an `npu -> npu`
-     * rebuild.** It matters because the QNN session is a process-global and `nativeInit` releases
-     * any existing one, so that transition has a losing interleaving in which the stale engine's
-     * queued `nativeRelease()` destroys the session the new `nativeInit` just built.
-     *
-     * It is unreachable today only because this predicate is single-tier: one id in, one Boolean
-     * out, so `onNpu == localEngineOnNpu` on every npu-to-npu transition and the rebuild never
-     * fires. **The owner's next ruling — a turbo NPU tier for an in-app A/B — is exactly the change
-     * that makes two npu-class tiers exist**, and this assertion is what turns that from a
-     * heisenbug on a device into a red here.
-     *
-     * **4.1 L1 changed what a red here MEANS.** The structural fix that finding asked for — an
-     * arming epoch, so that a stale instance's release names a session that no longer exists and is
-     * ignored — has landed: `nativeRelease` takes an epoch, `nativeEpoch()` hands one out, and
-     * `NpuWhisperBackend` threads `armedEpoch` through both its teardown and its `transcribe`. This
-     * assertion is therefore no longer *"do that first"*; it is a **containment boundary**. A second
-     * id here is a deliberate re-spec (L8), not an accident, and the message says so — a pin whose
-     * guidance has already been carried out but still says "do this first" is a pin readers learn to
-     * ignore.
+     * THE INDEPENDENCE THE PER-TIER DECLINE BUYS (4.1 L8, step 1's whole reason). Until L8 the
+     * decline record was ONE process-wide reason: a turbo decline — "init: could not deserialise
+     * 740 MB" — fed the same Boolean that gated `npu`, banning the SMALL tier for the rest of the
+     * process. In a lab whose purpose is A/B-ing the two, that is the worst possible coupling:
+     * the first tier to hiccup would have silently removed the other from the comparison.
      */
     @Test
-    fun exactlyOneTierIdRoutesToTheNpuBackend() {
-        // Every id the catalog can name, plus the shapes that are not ids at all.
+    fun aDeclinedNpuTurboNeverBlocksAnOfferedNpu() {
+        val bothOffered = setOf("npu", "npu-turbo")
+        assertSame(
+            "with BOTH tiers offered and turbo declined, `npu` must still route to the NPU arm — " +
+                "turbo's decline is a measurement about turbo, not about the device",
+            StandInNpuBackend,
+            routeWith("npu", offered = bothOffered, declined = setOf("npu-turbo")),
+        )
+        assertSame(
+            "while `npu-turbo` itself — the tier the measurement IS about — stays on the CPU " +
+                "backend for the rest of the process",
+            WhisperNativeBackend,
+            routeWith("npu-turbo", offered = bothOffered, declined = setOf("npu-turbo")),
+        )
+        assertTrue(
+            NpuBackendSelector.routesToNpu("npu", bothOffered, declinedTiers = setOf("npu-turbo")),
+        )
+        assertTrue(
+            !NpuBackendSelector.routesToNpu("npu-turbo", bothOffered, declinedTiers = setOf("npu-turbo")),
+        )
+    }
+
+    @Test
+    fun aDeclinedNpuNeverBlocksAnOfferedNpuTurbo() {
+        val bothOffered = setOf("npu", "npu-turbo")
+        assertSame(
+            "the mirror image: npu declined, turbo offered — turbo routes",
+            StandInNpuBackend,
+            routeWith("npu-turbo", offered = bothOffered, declined = setOf("npu")),
+        )
+        assertSame(
+            "and npu stays on the CPU backend",
+            WhisperNativeBackend,
+            routeWith("npu", offered = bothOffered, declined = setOf("npu")),
+        )
+        // Both declined: both on CPU — the record is per-tier, never per-class.
+        assertSame(
+            WhisperNativeBackend,
+            routeWith("npu", offered = bothOffered, declined = bothOffered),
+        )
+        assertSame(
+            WhisperNativeBackend,
+            routeWith("npu-turbo", offered = bothOffered, declined = bothOffered),
+        )
+        // And a tier offered ALONE routes alone — the offer set is per-tier too (L5).
+        assertSame(
+            "a turbo-only device routes turbo with npu's pair absent from disk",
+            StandInNpuBackend,
+            routeWith("npu-turbo", offered = setOf("npu-turbo")),
+        )
+        assertSame(
+            "and npu selected on that device stays on the CPU backend",
+            WhisperNativeBackend,
+            routeWith("npu", offered = setOf("npu-turbo")),
+        )
+    }
+
+    /**
+     * THE ROUTING CENSUS — the J10 pin, RE-SPECIFIED (4.1 L8), having fired exactly when and for
+     * exactly the reason the 4.0 final review said it would.
+     *
+     * Its 4.0 form asserted `listOf("npu")` and its message promised that a second id would be a
+     * DELIBERATE RE-SPEC once the epoch landed. L8 is that re-spec, and the candidate list lost
+     * its hand-written `"npu-turbo"` literal in the same breath: that literal was planted to arm
+     * this exact tripwire *while the id did not exist*, and L5 put the id in the catalog — so the
+     * candidates carried it twice, `routed` came back `[npu, npu-turbo, npu-turbo]` (checkpoint B
+     * measured exactly that), and a hand copy beside the catalog's would have been a second
+     * source of truth for the thing this test measures. The six non-id shapes stay written out:
+     * `"NPU"`, `"npu "`, `"turbo"`, `""`, `null`, `"nope"` are not ids and never will be, which
+     * is exactly why no catalog can supply them.
+     *
+     * Why two ids are SAFE — the whole argument, carried in one place:
+     *  1. **The arming epoch (4.1 L1).** The QNN session is a process-global and `nativeInit`
+     *     releases any existing one, while `LocalWhisperEngine.shutdown()` QUEUES the stale
+     *     engine's release on another executor — source order does not order two executors'
+     *     effects. The epoch makes the stale release name a session that no longer exists (a
+     *     WE-DIAG line, ignored) and makes a stale `transcribe` a refusal, so the npu -> npu-class
+     *     rebuild's losing interleaving is contained by IDENTITY, not by ordering.
+     *  2. **The rebuild guard compares tier IDS (L8, this task).** `routedNpuTierId ==
+     *     localEngineNpuTierId` — a Boolean could not tell `npu` from `npu-turbo`, so the switch
+     *     read as "no change", never rebuilt, and the user kept dictating on the tier they had
+     *     just left with the card showing the other one.
+     *
+     * A THIRD id is a new spec row (`NpuModelSpec.forTier` is the membership test now) **plus a
+     * deliberate re-spec of this census** — not a widening. Both halves above already hold for
+     * any number of rows; what a third row must bring is its own census, its own vocabulary
+     * decision and its own delivery-name uniqueness, none of which this predicate can check.
+     */
+    @Test
+    fun exactlyTheTwoNpuClassTierIdsRoute() {
+        // Every id the catalog can name, plus the shapes that are not ids at all. No hand-written
+        // real ids: the catalog supplies those (see the KDoc for why the L5-era literal is gone).
         val candidates = com.whispereverywhere.model.WhisperCatalog.entries.map { it.id } +
-            listOf(null, "", "NPU", "npu ", "npu-turbo", "turbo", "nope")
+            listOf(null, "", "NPU", "npu ", "turbo", "nope")
+        // Each candidate is censused under ITS OWN open gate: offered = itself, nothing declined.
+        // The census asks which IDS can route at all, not which are offered on some device.
         val routed = candidates.filter {
-            NpuBackendSelector.routesToNpu(it, npuAvailable = true, declinedThisSession = false)
+            NpuBackendSelector.routesToNpu(
+                it,
+                offeredNpuTierIds = if (it == null) emptySet() else setOf(it),
+                declinedTiers = emptySet(),
+            )
         }
         assertEquals(
-            "EXACTLY ONE tier id may route to the NPU backend TODAY. A second one makes `onNpu` — " +
-                "a Boolean — unable to tell two npu tiers apart, so an npu→npu switch reads as " +
-                "\"no change\" and never rebuilds. If this went red because a turbo NPU tier was " +
-                "added, that is a DELIBERATE RE-SPEC (4.1 L8), not a defect — and the structural " +
-                "half is already done: 4.1 L1 landed the arming epoch, so a stale instance's " +
-                "queued nativeRelease(epoch) can no longer tear down the session a newer " +
-                "nativeInit built. Before widening this list, check the two places that epoch has " +
-                "to be threaded through, because the guard is worthless if either is missed: " +
-                "NpuWhisperBackend.releaseNpuResources must pass `armedEpoch` (not a fresh " +
-                "nativeEpoch() read, which names the SUCCESSOR), and transcribe must compare " +
-                "`armedEpoch` against nativeEpoch() before it touches the mel — otherwise a stale " +
-                "instance encodes into another model's session and returns its transcript. " +
-                "Routed: $routed",
-            listOf("npu"),
+            "EXACTLY the two npu-class tier ids route to the NPU backend: {npu, npu-turbo}, the " +
+                "spec table's own rows. Two are safe BECAUSE the arming epoch (L1) makes a stale " +
+                "instance's queued nativeRelease a no-op and its transcribe a refusal, AND " +
+                "because the service's rebuild guard compares routed tier IDS " +
+                "(routedNpuTierId == localEngineNpuTierId), not a Boolean. A THIRD id here is a " +
+                "new NpuModelSpec row plus a deliberate re-spec of this census — never a " +
+                "widening: the epoch and the id-guard already hold for any number of rows, but a " +
+                "new row's census, vocabulary and delivery filenames are decisions this " +
+                "predicate cannot take. Routed: $routed",
+            listOf("npu", "npu-turbo"),
             routed,
         )
+        // And the set is the SPEC TABLE's, by construction: forTier answers non-null for exactly
+        // the routed ids. Asserted from the value side so the join cannot silently become two
+        // lists that agree today.
+        routed.forEach {
+            assertTrue(
+                "routed id '$it' must have a spec row — the predicate's own membership test",
+                com.whispereverywhere.npu.NpuModelSpec.forTier(it) != null,
+            )
+        }
     }
 
     /**
@@ -268,32 +365,47 @@ class NpuBackendWiringTest {
             route(tierId = "npu", npuAvailable = true, declined = true),
         )
         assertTrue(
-            !NpuBackendSelector.routesToNpu("npu", npuAvailable = true, declinedThisSession = true),
+            !NpuBackendSelector.routesToNpu("npu", offeredNpuTierIds = setOf("npu"), declinedTiers = setOf("npu")),
         )
-        // The decline is a SEPARATE input, never folded into `npuAvailable`. Folding them would
+        // The decline is a SEPARATE input, never folded into the offer set. Folding them would
         // invent a second composition of the offer gate, which is the one thing Q7b's KDoc forbids
-        // by name — and it would make a session-scoped measurement look like a device fact.
+        // by name — and it would make a process-scoped measurement look like a device fact.
         assertEquals(
-            "routesToNpu takes the decline as its own parameter",
+            "routesToNpu takes the per-tier decline set as its own parameter, beside the offer " +
+                "set — the signature is the independence the L8 re-thread bought, spelled out",
             1,
             count(
                 selector,
-                "fun routesToNpu(tierId: String?, npuAvailable: Boolean, declinedThisSession: Boolean)",
+                block(
+                    "    fun routesToNpu(",
+                    "        tierId: String?,",
+                    "        offeredNpuTierIds: Set<String>,",
+                    "        declinedTiers: Set<String>,",
+                    "    ): Boolean =",
+                ),
             ),
         )
-        // And the id it compares against is the app's ONE constant, never a fresh literal. A typo
-        // in a second copy routes silently to the CPU backend, which is the whole tier failing with
-        // nothing to see.
+        // And the routing set is the SPEC TABLE's rows, never a literal or a constant of this
+        // class's own. A second home for "which ids are npu-class" is free to drift from the one
+        // that resolves the census, the vocabulary and the mel source; forTier IS that home.
         assertEquals(
-            "the tier id comes from NpuAssetImport.TIER_ID, the constant WhisperModelManager and " +
-                "the Settings picker already read",
+            "the membership test is NpuModelSpec.forTier — the predicate's first clause, on " +
+                "exactly one live line of the predicate (the resolver's own forTier read below " +
+                "it is the belt-and-braces second)",
             1,
-            count(selector, "tierId == NpuAssetImport.TIER_ID"),
+            count(selector, "NpuModelSpec.forTier(tierId) != null &&"),
         )
         assertEquals(
-            "and the selector mints no `\"npu\"` literal of its own",
+            "the selector mints no `\"npu\"` literal of its own",
             0,
             count(selector, "\"npu\""),
+        )
+        assertEquals(
+            "and no single-tier constant either: the 4.0 `NpuAssetImport.TIER_ID` clause is gone " +
+                "with the single-tier routing it served — a constant naming ONE tier cannot " +
+                "answer a two-tier membership question",
+            0,
+            count(selector, "NpuAssetImport"),
         )
     }
 
@@ -317,17 +429,19 @@ class NpuBackendWiringTest {
             count(warm, "backend = NpuBackendSelector.backendFor("),
         )
         assertEquals(
-            "the arguments are NAMED. backendFor takes `npuAvailable` and `declinedThisSession` " +
-                "adjacently, both Boolean; a positional call that transposed them would compile " +
-                "and would re-arm a declined tier on a device that never offered it.",
+            "the arguments are NAMED — all five. backendFor takes `offeredNpuTierIds` and " +
+                "`declinedTiers` adjacently, both Set<String>; a positional call that transposed " +
+                "them would compile and would route a DECLINED tier on a device that never " +
+                "offered it — the same hazard the 4.0 needle was written for, now with two sets " +
+                "instead of two Booleans.",
             1,
             count(
                 warm,
                 block(
                     "            backend = NpuBackendSelector.backendFor(",
                     "                tierId = tierId,",
-                    "                npuAvailable = npuTierOffered,",
-                    "                declinedThisSession = reason != null,",
+                    "                offeredNpuTierIds = npuTierIds,",
+                    "                declinedTiers = declined,",
                     "                paths = app.whisperModelManager,",
                     "                appContext = applicationContext,",
                     "            ),",
@@ -350,22 +464,23 @@ class NpuBackendWiringTest {
             count(warm, "val tierId = app.preferencesManager.selectedModelId"),
         )
         assertEquals(
-            "the memo keeps its @Volatile. It is DEFENSIVE, not load-bearing, and this message " +
-                "used to claim otherwise: withContext(Dispatchers.IO) returns to the CALLER's " +
-                "context and both callers are on Dispatchers.Main, so the write and every read " +
-                "are alike Main-confined today. It is pinned because it costs one Boolean read and " +
-                "it is the difference between correct and correct-until-someone-moves-the-refresh " +
-                "onto a background scope — a one-line change with no other symptom.",
+            "the memo keeps its @Volatile — and it is the SET now, under the chooser producers' " +
+                "own name, so the value carries one name end to end (L8). @Volatile is " +
+                "DEFENSIVE, not load-bearing: withContext(Dispatchers.IO) returns to the " +
+                "CALLER's context and both callers are on Dispatchers.Main, so the write and " +
+                "every read are alike Main-confined today. It is pinned because it costs one " +
+                "reference read and it is the difference between correct and " +
+                "correct-until-someone-moves-the-refresh onto a background scope.",
             1,
-            count(service, "@Volatile private var npuTierOffered: Boolean = false"),
+            count(service, "@Volatile private var npuTierIds: Set<String> = emptySet()"),
         )
-        // The gate, read from the ONE composed predicate and never re-derived. `isNpuTierOffered()`
-        // is `npuCapableDevice && isInstalled(npu)`; spelling either half out here would be a
-        // second composition, free to drift from the one the two chooser screens obey.
+        // The gate, read from the ONE composed producer and never re-derived. offeredNpuTierIds()
+        // is the capability probe AND each tier's own files on disk; spelling either half out
+        // here would be a second composition, free to drift from the one the chooser screens obey.
         assertEquals(
-            "the offer gate is consulted through isNpuTierOffered() exactly once in this file",
+            "the offer gate is consulted through offeredNpuTierIds() exactly once in this file",
             1,
-            count(service, "app.isNpuTierOffered()"),
+            count(service, "app.offeredNpuTierIds()"),
         )
         listOf("npuCapableDevice", "isInstalled(").forEach { half ->
             assertEquals(
@@ -376,11 +491,18 @@ class NpuBackendWiringTest {
             )
         }
         assertEquals(
+            "and the deleted 4.0 Boolean shim is consulted NOWHERE — L8 removed " +
+                "isNpuTierOffered() with this file's re-thread, and a revival here would be a " +
+                "second derivation of the gate that one bit cannot even express",
+            0,
+            count(service, "isNpuTierOffered"),
+        )
+        assertEquals(
             "and the gate is evaluated OFF MAIN. warmLocalEngine runs on Main from " +
-                "startRecording; isNpuTierOffered() forces the memoised probe, which dlopens " +
+                "startRecording; offeredNpuTierIds() forces the memoised probe, which dlopens " +
                 "libQnnSystem.so and libQnnHtp.so, and QnnAsrNative forbids Main everywhere.",
             1,
-            count(service, "npuTierOffered = withContext(Dispatchers.IO) { app.isNpuTierOffered() }"),
+            count(service, "npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }"),
         )
         assertEquals(
             "the memo is refreshed at BOTH points that can change it, and nowhere else: three " +
@@ -486,7 +608,7 @@ class NpuBackendWiringTest {
             service, "    private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {"
         )
         val permission = liveOffsets(
-            warm, "if (cached != null && (onNpu == localEngineOnNpu || !allowRebuild)) return cached"
+            warm, "if (cached != null && (routedNpuTierId == localEngineNpuTierId || !allowRebuild)) return cached"
         )
         val teardown = liveOffsets(warm, "cached.shutdown()")
         assertTrue("the permission guard must be on a live line", permission.isNotEmpty())
@@ -561,26 +683,32 @@ class NpuBackendWiringTest {
             shutdown.first() < construct.first(),
         )
         assertEquals(
-            "the cached engine is invalidated when — and only when — the routing decision changed. " +
-                "Comparing against the recorded decision is what makes a tier change and a " +
-                "fallback the same event, handled once.",
+            "the cached engine is invalidated when — and only when — the ROUTED TIER ID changed " +
+                "(L8). A Boolean could not tell npu from npu-turbo, so the A/B's own switch read " +
+                "as \"no change\" and never rebuilt; comparing recorded ids is what makes a tier " +
+                "change and a fallback the same event, handled once — and null == null keeps " +
+                "every CPU-to-CPU switch on the cached engine exactly as before.",
             1,
             count(
                 warm,
                 block(
                     "        val cached = localEngine",
-                    "        if (cached != null && (onNpu == localEngineOnNpu || !allowRebuild)) return cached",
+                    "        if (cached != null && (routedNpuTierId == localEngineNpuTierId || !allowRebuild)) return cached",
                 ),
             ),
         )
         assertEquals(
-            "the decision is the SELECTOR's, not a second copy of the truth table written here",
+            "the decision is the SELECTOR's, not a second copy of the truth table written here — " +
+                "the service only names WHICH id the yes was about",
             1,
-            count(warm, "val onNpu = NpuBackendSelector.routesToNpu(tierId, npuTierOffered, reason != null)"),
+            count(
+                warm,
+                "val routedNpuTierId = if (NpuBackendSelector.routesToNpu(tierId, npuTierIds, declined)) tierId else null",
+            ),
         )
         // The decision must be RECORDED beside the engine it describes. Dropping this write is the
-        // sharpest mutation on this function and it does not look like one: `localEngineOnNpu`
-        // stays false, so on an npu device the guard above never matches, and every single call —
+        // sharpest mutation on this function and it does not look like one: `localEngineNpuTierId`
+        // stays null, so on an npu device the guard above never matches, and every single call —
         // every session start, every prewarm — shuts the engine down and builds another. A warm
         // engine that is never warm, paying a full model load per session, with no test, no log
         // line and no crash to say so.
@@ -591,17 +719,23 @@ class NpuBackendWiringTest {
                 warm,
                 block(
                     "        localEngine = built",
-                    "        localEngineOnNpu = onNpu",
+                    "        localEngineNpuTierId = routedNpuTierId",
                     "        return built",
                 ),
             ),
         )
         assertEquals(
-            "and the decline is read from the mirror NpuWhisperBackend publishes from its own " +
-                "setter, so the engine layer and the tier card state the same fact from the same " +
-                "source",
+            "and the decline set is read from the mirror NpuWhisperBackend publishes from its " +
+                "own setter — PER TIER (L8), so the engine layer and each tier card state the " +
+                "same fact from the same source",
             1,
-            count(warm, "val reason = NpuTierStatus.unavailableReason.value"),
+            count(warm, "val declined = NpuTierStatus.declinedTiers"),
+        )
+        assertEquals(
+            "the fallback narration reads the CACHED engine's own tier's reason — asking for the " +
+                "routed tier's would print a stage the engine being torn down never declined at",
+            1,
+            count(warm, "val reason = NpuTierStatus.reasonFor(localEngineNpuTierId)"),
         )
         // ONCE PER SESSION. The line sits on the transition, inside the branch that has already
         // decided to rebuild — so it cannot fire per segment, and it cannot fire on the ordinary
@@ -665,6 +799,78 @@ class NpuBackendWiringTest {
                 "resolution site would be a second answer to \"which model is this tier\"",
             1,
             count(selector, "val spec = NpuModelSpec.forTier(tierId) ?: return WhisperNativeBackend"),
+        )
+    }
+
+    /**
+     * Q9 M3, folded at L8 — THE SILENT REBUILD GETS ITS NARRATION. A tier change away from an
+     * npu-class tier with NO decline was correct behaviour with a missing line: the log showed a
+     * session on one tier, then a session on another, with nothing saying the engine was torn
+     * down in between — indistinguishable from a cached-engine bug. The A/B makes exactly that
+     * switch the ORDINARY path (multi -> npu -> npu-turbo and back, once per sheet row), so
+     * every rebuild now narrates itself: a decline keeps [NpuDiag.fallbackRebuild] with its
+     * stage, and every other rebuild names the from-tier and the to-tier.
+     */
+    @Test
+    fun theSilentRebuildIsNarratedWithFromAndToTiers() {
+        val warm = memberBody(
+            service, "    private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {"
+        )
+        // Emission: exactly one tierRebuild site, and it is the fallback line's else-arm — the
+        // two narrations partition the rebuild transitions, so every rebuild prints exactly one.
+        val line = liveOffsets(warm, "NpuDiag.tierRebuild(localEngineNpuTierId, routedNpuTierId)")
+        assertEquals(
+            "the switch narration is emitted exactly once, from the rebuild transition — a copy " +
+                "in the segment path would print per utterance and bury the lines it sits beside",
+            1,
+            line.size,
+        )
+        val shutdown = liveOffsets(warm, "cached.shutdown()")
+        assertTrue(
+            "and it is emitted from INSIDE the rebuild branch, BEFORE the teardown it narrates " +
+                "(offset ${line.first()} vs ${shutdown.first()}) — after it, a shutdown crash " +
+                "would eat the only line saying a rebuild was in flight",
+            line.first() < shutdown.first(),
+        )
+        assertEquals(
+            "the decline arm and the switch arm are one if/else — one rebuild, one line, never " +
+                "zero and never two",
+            1,
+            count(
+                warm,
+                block(
+                    "            if (localEngineNpuTierId != null && reason != null) {",
+                    "                android.util.Log.w(NpuDiag.TAG, NpuDiag.fallbackRebuild(NpuTierStatus.stageOf(reason)))",
+                    "            } else {",
+                    "                android.util.Log.i(NpuDiag.TAG, NpuDiag.tierRebuild(localEngineNpuTierId, routedNpuTierId))",
+                    "            }",
+                ),
+            ),
+        )
+        // The format itself, assertable because it is a builder (the F-rule split).
+        assertEquals(
+            "npu: tier rebuild from=npu to=npu-turbo (the cached local engine is rebuilt for the selected tier)",
+            NpuDiag.tierRebuild("npu", "npu-turbo"),
+        )
+        assertEquals(
+            "null means the shared CPU backend and is REPORTED as cpu — every CPU tier is one " +
+                "backend, which is exactly what the null encodes",
+            "npu: tier rebuild from=cpu to=npu (the cached local engine is rebuilt for the selected tier)",
+            NpuDiag.tierRebuild(null, "npu"),
+        )
+        assertEquals(
+            "npu: tier rebuild from=npu-turbo to=cpu (the cached local engine is rebuilt for the selected tier)",
+            NpuDiag.tierRebuild("npu-turbo", null),
+        )
+        assertTrue(
+            "it carries the `npu: ` prefix every line of this tier's diagnostics carries",
+            NpuDiag.tierRebuild("npu", "npu-turbo").startsWith("npu: "),
+        )
+        assertEquals(
+            "and that prefix is ONE contiguous literal in NpuDiag.kt — the same rule, checked " +
+                "the same way, as `npu: fallback rebuild stage=`",
+            1,
+            count(diag, "\"npu: tier rebuild from="),
         )
     }
 }

@@ -321,8 +321,9 @@ class WhisperCatalogHelpersTest {
     }
 
     @Test fun downloadability_tracks_the_artefact_count_and_not_the_device_gate() {
-        // On TODAY's catalog `!gated` and `pairedArtifact == null` agree on all seven tiers — npu
-        // is the only tier that is either, and it is both. So the census above CANNOT tell the two
+        // On TODAY's catalog `!gated` and `pairedArtifact == null` agree on all eight tiers — npu
+        // and npu-turbo are the only tiers that are either, and each is both (two paired gated
+        // tiers since 4.1 L5). So the census above CANNOT tell the two
         // candidate predicates apart, and swapping one for the other is an equivalent mutation
         // that a full-suite battery would report as a survivor. The choice only shows up on a tier
         // that does not exist yet, which is exactly when nobody will be reading the comment that

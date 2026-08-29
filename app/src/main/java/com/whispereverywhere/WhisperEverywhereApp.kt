@@ -10,9 +10,9 @@ import android.system.Os
 import android.util.Log
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.data.local.UsageTracker
+import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModelManager
-import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.transcription.NpuWhisperBackend
@@ -78,8 +78,25 @@ class WhisperEverywhereApp : Application() {
         )
     }
 
-    /** Emits [NpuDiag.offer] exactly once per process, at the gate's first evaluation. */
-    private val npuOfferLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+    /**
+     * The [ModelInstallSignal] generation the [NpuDiag.offer] line was last emitted at, or
+     * [Int.MIN_VALUE] before the first emission.
+     *
+     * **Once per process per INSTALL EPOCH, not once per process (4.1 L8, L5 review I1).** The
+     * flipped gate's first evaluation on a fresh device is its least informative state
+     * (`probe=skipped installed=none`), and a plain once-per-process latch spent the line there:
+     * a mid-process import followed by a probe FAILURE then logged nowhere until restart —
+     * `runCatching` discards the reason, no session routes to the tier so `npu: unavailable`
+     * never fires, and the only offer line on record said "nothing installed" about a device
+     * that had the pair. Re-arming on the install signal makes the landmark self-consistent in
+     * exactly the session that matters (L8's own device script imports mid-process and then
+     * reads the line). Bounded: one extra line per install event, never one per chooser open —
+     * the generation only moves when `notifyModelInstalled()` fires. The `adb push` dev route
+     * does not bump the signal, so a pushed pair still refreshes the line only at restart; the
+     * run-book says so where it prescribes that route.
+     */
+    private val npuOfferLoggedGeneration =
+        java.util.concurrent.atomic.AtomicInteger(Int.MIN_VALUE)
 
     /**
      * The gated tiers a chooser may OFFER: every gated catalog tier whose own files are on disk,
@@ -113,10 +130,11 @@ class WhisperEverywhereApp : Application() {
      * **Never call from Main** — with anything installed it forces [npuCapableDevice], which
      * dlopens.
      *
-     * **Emits one `WE-DIAG` line the first time it runs** (4.0, Q7b fix round, I3; the tier-id
-     * set since 4.1 L5). Three predicates collapse into one answer here, so without it a report
-     * of "the card never showed" cannot be told apart from "wrong SoC", "the QNN stack did not
-     * load" and "nothing installed" — three different next actions. See [NpuDiag.offer].
+     * **Emits one `WE-DIAG` line at its first evaluation per install epoch** (4.0, Q7b fix
+     * round, I3; the tier-id set since 4.1 L5; re-armed on the install signal since L8 — see
+     * [npuOfferLoggedGeneration]). Three predicates collapse into one answer here, so without it
+     * a report of "the card never showed" cannot be told apart from "wrong SoC", "the QNN stack
+     * did not load" and "nothing installed" — three different next actions. See [NpuDiag.offer].
      */
     fun offeredNpuTierIds(): Set<String> {
         val installed = WhisperCatalog.entries
@@ -125,7 +143,10 @@ class WhisperEverywhereApp : Application() {
             .toSet()
         val capable: Boolean? = if (installed.isEmpty()) null else npuCapableDevice
         val offered: Set<String> = if (capable == true) installed else emptySet()
-        if (npuOfferLogged.compareAndSet(false, true)) {
+        // Once per install epoch — see [npuOfferLoggedGeneration]. getAndSet keeps the emission
+        // atomic under concurrent evaluations of the same generation.
+        val generation = ModelInstallSignal.generation.value
+        if (npuOfferLoggedGeneration.getAndSet(generation) != generation) {
             // isSocSupported is called here for REPORTING only — it is a pure two-string table
             // lookup, it cannot dlopen, and the DECISION is `capable` above. The gate is not
             // re-run and is not duplicated: this only recovers which HALF of `capable` answered,
@@ -143,17 +164,11 @@ class WhisperEverywhereApp : Application() {
         return offered
     }
 
-    /**
-     * The npu (small) tier's Boolean view of [offeredNpuTierIds] — the 4.0 spelling, kept for the
-     * one consumer that still routes a single tier: `FloatingBubbleService` feeds it to
-     * `NpuBackendSelector.routesToNpu`, whose `tierId == NpuAssetImport.TIER_ID` clause makes the
-     * membership question exactly this one. Same off-Main contract as the set.
-     *
-     * **Named trigger for deletion: 4.1 L8**, which re-threads routing per-tier (the selector
-     * takes the offered set, the service's field becomes the set) and removes this view with its
-     * caller. Nothing else may grow a second derivation of the gate.
-     */
-    fun isNpuTierOffered(): Boolean = NpuAssetImport.TIER_ID in offeredNpuTierIds()
+    // isNpuTierOffered() — the 4.0 Boolean view of the gate — is GONE (4.1 L8, its named
+    // trigger): routing takes the set now (`NpuBackendSelector.routesToNpu(tierId, npuTierIds,
+    // declinedTiers)`, fed by the service's own offeredNpuTierIds() memo), so the shim's one
+    // consumer went with it. Nothing may re-grow a Boolean view: it is a second derivation of
+    // the gate, and one bit cannot say WHICH of two independently-installed tiers is offered.
 
     override fun onCreate() {
         super.onCreate()

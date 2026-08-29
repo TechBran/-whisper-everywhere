@@ -180,6 +180,27 @@ object NpuDiag {
             "(the cached local engine is rebuilt on the CPU tier)"
 
     /**
+     * `npu: tier rebuild from=npu to=npu-turbo (the cached local engine is rebuilt for the
+     * selected tier)` — emitted **once per rebuild**, by the service, when it drops a cached
+     * engine for a reason that is NOT a decline: the user switched tiers (4.0 Q9 M3, folded at
+     * 4.1 L8).
+     *
+     * **The silent rebuild was correct behaviour with missing narration, and the A/B makes it
+     * the ordinary path.** The owner's session is a sequence of exactly these switches — multi ->
+     * npu -> npu-turbo and back — and until L8 the only rebuild line was [fallbackRebuild], whose
+     * absence a reader could take as "no rebuild happened". Now every rebuild narrates itself:
+     * a decline keeps the stage-carrying line above, and a switch names both sides.
+     *
+     * @param fromNpuTierId the npu-class tier the cached engine was built on, or null for the
+     *        shared CPU backend — reported as `cpu`, because every CPU tier is one backend and
+     *        the engine genuinely cannot tell them apart (that is the null's meaning).
+     * @param toNpuTierId the npu-class tier the replacement routes to, or null likewise.
+     */
+    fun tierRebuild(fromNpuTierId: String?, toNpuTierId: String?): String =
+        "npu: tier rebuild from=${fromNpuTierId ?: "cpu"} to=${toNpuTierId ?: "cpu"} " +
+            "(the cached local engine is rebuilt for the selected tier)"
+
+    /**
      * `npu: offer soc=SM8650:pass probe=pass installed=npu,npu-turbo offered=npu,npu-turbo` —
      * emitted **once per process**, at the first evaluation of the offer gate.
      *

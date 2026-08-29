@@ -2114,6 +2114,20 @@ class NpuNativeContractTest {
                 "`nativeInit: session armed with epoch N` and the refusal's own two numbers.",
             liveOffsets(body, "sessionReplacedDetail(armedEpoch,").isNotEmpty()
         )
+        // THE COMPARE ITSELF, exact to its closing brace (4.1 L8, found by designing the
+        // cross-tier battery and MEASURED as a survivor first): every needle above pins the
+        // guard, the read, the ORDER and the refusal detail, yet `if (liveEpoch != armedEpoch &&
+        // false)` kept all of them present and live while making the stale-instance refusal
+        // unreachable — the one arm of the epoch defense whose failure is the fluent-wrong-text
+        // shape (a stale instance encoding into the tier the user just switched TO). The `) {`
+        // is part of the needle so an appended conjunct cannot contain it.
+        assertTrue(
+            "transcribe must take the stale-session branch on the bare two-epoch compare " +
+                "`if (liveEpoch != armedEpoch) {` on a live line — nothing may be conjoined " +
+                "into it, because any added clause is a way for a replaced session to keep " +
+                "encoding. Found: " + liveLines(body, "liveEpoch != armedEpoch"),
+            liveOffsets(body, "if (liveEpoch != armedEpoch) {").isNotEmpty()
+        )
     }
 
     // ================================================================ 4.1 L2 — THE TIER'S CENSUS

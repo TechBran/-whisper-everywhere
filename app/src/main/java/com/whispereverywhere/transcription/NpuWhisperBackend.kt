@@ -206,18 +206,20 @@ class NpuWhisperBackend(
      * `"<stage>: <detail>"` for the stage that declined, or null while the tier is live. Read by
      * the tier card (Q8) so the UI states the same fact the log line does.
      *
-     * **The setter publishes to [NpuTierStatus] (Q8).** Nothing in the app holds this instance —
-     * the engine layer builds it per session (Q9) and a Compose screen can never reach it — so the
-     * card subscribes to the process-scoped mirror instead. It is done HERE, in the setter, and not
-     * at the two assignment sites, for the same reason `notifyModelInstalled` is one function: a
-     * stage that declines cannot set the reason and forget to announce it, including a stage nobody
-     * has written yet.
+     * **The setter publishes to [NpuTierStatus] (Q8), under this instance's own tier id (4.1
+     * L8).** Nothing in the app holds this instance — the engine layer builds it per session (Q9)
+     * and a Compose screen can never reach it — so the card subscribes to the process-scoped
+     * mirror instead. It is done HERE, in the setter, and not at the two assignment sites, for the
+     * same reason `notifyModelInstalled` is one function: a stage that declines cannot set the
+     * reason and forget to announce it, including a stage nobody has written yet. The key is
+     * `spec.tierId` so the record lands on the tier it is ABOUT — a turbo decline must never ban
+     * npu's routing or wear npu's card, which is the coupling the per-tier mirror removes.
      */
     @Volatile
     var unavailableReason: String? = null
         private set(value) {
             field = value
-            NpuTierStatus.publish(value)
+            NpuTierStatus.publish(spec.tierId, value)
         }
 
     // ---------------------------------------------------------------- load
@@ -611,8 +613,10 @@ class NpuWhisperBackend(
             // unsuppressed native-side and this is the only thing that removes them.
             //
             // An IllegalArgumentException out of decode is deliberately NOT caught: it means an id
-            // outside 0 until 51865 was written, which is a contract breach between this file and
-            // native — not an asset problem, and not something to bury in the fallback path.
+            // outside 0 until spec.tokens.vocab was written (51,865 for the whisper-small family,
+            // 51,866 for large-v3-turbo — the decoder's bound is per-family, 4.1 L4/L8), which is
+            // a contract breach between this file and native — not an asset problem, and not
+            // something to bury in the fallback path.
             val text = bpe.decode(out.copyOf(written))
 
             // `.reportable`, NEVER `.code`. A (locale) or (fallback) resolution is a guess this

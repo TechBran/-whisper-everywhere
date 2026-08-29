@@ -104,11 +104,15 @@ fun OnboardingModelScreen(
         }
     }
 
-    // The npu tier's own report about the LAST SESSION: null while it is live or has never run,
-    // `"<stage>: <detail>"` after a stage declined and the session fell back to the CPU model. The
-    // backend publishes it from the setter of its `unavailableReason` (Q6); this is that property's
-    // consumer, and it renders the same fact the `npu: unavailable` log line carries.
-    val npuUnavailableReason by NpuTierStatus.unavailableReason.collectAsState()
+    // Each npu-class tier's own decline report, keyed by tier id (per-tier since 4.1 L8): absent
+    // while a tier is live or has never run, `"<stage>: <detail>"` after one of ITS stages
+    // declined and that session fell back to the CPU model. The backend publishes from the setter
+    // of its `unavailableReason` under `spec.tierId` (Q6/Q8); this map is that property's
+    // consumer, and each card renders the same fact its own `npu: unavailable` log line carried —
+    // the note appears on the tier it is ABOUT, never on its sibling. (`NpuTierStatus.reasonFor`
+    // is the same read for non-Compose callers; a Compose card reads the collected map so a
+    // decline recomposes it.)
+    val npuTierReasons by NpuTierStatus.reasons.collectAsState()
 
     val state by viewModel.state.collectAsState()
 
@@ -168,8 +172,10 @@ fun OnboardingModelScreen(
                     recommended = recommended,
                     isSteered = isSteered,
                     installed = installedIds.contains(model.id),
-                    unavailableNote = if (model.id == NpuAssetImport.TIER_ID)
-                        NpuTierStatus.cardNote(npuUnavailableReason) else null,
+                    // Per-tier (4.1 L8): the note renders on the tier the decline is ABOUT.
+                    // cardNote(null) is null, so every undeclined tier — CPU tiers included —
+                    // shows nothing, with no id check to forget when a third npu tier arrives.
+                    unavailableNote = NpuTierStatus.cardNote(npuTierReasons[model.id]),
                     state = if (isActive) state else DownloadState.Idle,
                     onSelect = {
                         activeModelId = model.id
@@ -483,7 +489,7 @@ private fun ModelTierCard(
                 }
             }
 
-            // "Unavailable on this device" — the npu tier's session-time decline (4.0, Q8 step 5).
+            // "Unavailable on this device" — an npu-class tier's decline, per tier (4.0 Q8; L8).
             // Same Warning surface as the RAM-gated note directly below, which is the pattern the
             // brief names: it already reads as "this device, this tier", unlike the retired-model
             // card, which is about a tier being withdrawn from everyone. The text comes from

@@ -1,5 +1,6 @@
 package com.whispereverywhere.npu
 
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,6 +23,16 @@ class NpuDiagTest {
 
     /** The `npu` tier's shape — the numbers these lines used to compile in (4.1 L2). */
     private val spec = NpuModelSpec.SMALL
+
+    /**
+     * [NpuTierStatus] is a process singleton and the card tests below publish into it (Q8 M5,
+     * landed with L8's per-tier re-spec): without this reset a published reason leaks into every
+     * later test in the same JVM — including `NpuTierStatusTest`'s independence claims.
+     */
+    @After
+    fun resetTierStatus() {
+        NpuTierStatus.declinedTiers.forEach { NpuTierStatus.publish(it, null) }
+    }
 
     @Test
     fun lineMatchesTheGreppableFormatExactly() {
@@ -499,11 +510,20 @@ class NpuDiagTest {
     }
 
     @Test
-    fun theOfferLineIsEmittedExactlyOncePerProcessAtTheGatesFirstEvaluation() {
+    fun theOfferLineIsEmittedOncePerInstallEpochAtTheGatesFirstEvaluation() {
         // Format and emission, both guarded — either alone is decoration (this class's KDoc). The
         // emitter is `WhisperEverywhereApp`, which no JVM test can construct, so the call is
-        // pinned as source; the ONE-SHOT is the AtomicBoolean, because a line re-emitted on every
-        // chooser open stops being a landmark and becomes noise in a logcat with no adb behind it.
+        // pinned as source.
+        //
+        // THE ONE-SHOT WAS DELIBERATELY RE-SPECIFIED AT 4.1 L8 (L5 review I1): the 4.0 latch was
+        // a plain AtomicBoolean, once per PROCESS — and the flipped gate spends that first
+        // evaluation in its least informative state (`probe=skipped installed=none` at bubble
+        // start on a fresh device), after which a mid-process import + probe FAILURE logged
+        // nowhere until restart. The latch is now the ModelInstallSignal GENERATION the line was
+        // last emitted at: one line per install epoch, re-armed by exactly the event that changes
+        // the line's truth, still never one per chooser open — so the landmark stays a landmark
+        // and stays TRUE in the first-import process, which is the process the L8 device session
+        // actually runs.
         val app = source("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
         // Q7b NEW-5, resolved in 4.1 L5: the Log.i / TAG / one-shot pins are scoped to the GATE'S
         // OWN BODY, because the whole-file counts failed for reasons unrelated to their invariant
@@ -528,10 +548,18 @@ class NpuDiagTest {
             liveLineCount(gate, "NpuDiag.offer("),
         )
         assertEquals(
-            "the emitter is behind a compareAndSet, so it runs once per process and not once per " +
-                "chooser open",
+            "the emitter is behind the generation compare-and-swap, so it runs once per install " +
+                "epoch and not once per chooser open — getAndSet keeps concurrent evaluations of " +
+                "the same generation to one line",
             1,
-            liveLineCount(gate, "if (npuOfferLogged.compareAndSet(false, true)) {"),
+            liveLineCount(gate, "if (npuOfferLoggedGeneration.getAndSet(generation) != generation) {"),
+        )
+        assertEquals(
+            "and the epoch it keys on is the install signal's OWN generation — the one value " +
+                "that moves exactly when the line's installed= snapshot goes stale. (The adb-push " +
+                "dev route does not bump it; the run-book states the restart rule there.)",
+            1,
+            liveLineCount(gate, "val generation = ModelInstallSignal.generation.value"),
         )
         // Battery row V10, a measured survivor: diverting the line to a private tag
         // (`Log.i("NpuOffer", …)`) leaves the format correct, the emission once-per-process and
@@ -564,22 +592,23 @@ class NpuDiagTest {
         val stage = "init"
         val detail = "init: nativeInit failed at 0"
         val logLine = NpuDiag.unavailable(stage, detail)
-        NpuTierStatus.publish("$stage: $detail")
+        NpuTierStatus.publish("npu", "$stage: $detail")
 
         assertEquals(
-            "the card reads what the backend published",
+            "the card reads what the backend published — under the tier's OWN id (per-tier " +
+                "since 4.1 L8)",
             "$stage: $detail",
-            NpuTierStatus.unavailableReason.value,
+            NpuTierStatus.reasonFor("npu"),
         )
         assertEquals(
             "and it recovers the same STAGE word the log line carries — the part a screenshot can " +
                 "usefully report",
             stage,
-            NpuTierStatus.stageOf(NpuTierStatus.unavailableReason.value),
+            NpuTierStatus.stageOf(NpuTierStatus.reasonFor("npu")),
         )
         assertTrue("which is the word the log line leads with too: $logLine", logLine.contains("stage=$stage"))
 
-        val note = NpuTierStatus.cardNote(NpuTierStatus.unavailableReason.value)!!
+        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"))!!
         assertTrue("the note names the stage: $note", note.contains(stage))
         assertTrue(
             "AND it says what is running instead. A card that only says \"unavailable\" leaves " +
@@ -616,8 +645,8 @@ class NpuDiagTest {
 
     @Test
     fun aTierThatNeverDeclinedShowsNoCardAtAll() {
-        NpuTierStatus.publish(null)
-        assertEquals(null, NpuTierStatus.unavailableReason.value)
+        NpuTierStatus.publish("npu", null)
+        assertEquals(null, NpuTierStatus.reasonFor("npu"))
         assertEquals("no decline, no stage", null, NpuTierStatus.stageOf(null))
         assertEquals("no decline, no note", null, NpuTierStatus.cardNote(null))
         assertEquals("nor for an empty reason", null, NpuTierStatus.cardNote("   "))
@@ -636,9 +665,11 @@ class NpuDiagTest {
         // reason and forget to announce it — including a stage nobody has written yet.
         val backend = source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
         assertEquals(
-            "the reason's setter publishes to the process-scoped mirror the card subscribes to",
+            "the reason's setter publishes to the process-scoped mirror the card subscribes to — " +
+                "under the instance's OWN tier id (per-tier since 4.1 L8), so a turbo decline " +
+                "lands on turbo's record and never bans npu's routing or wears npu's card",
             1,
-            liveLineCount(backend, "NpuTierStatus.publish(value)"),
+            liveLineCount(backend, "NpuTierStatus.publish(spec.tierId, value)"),
         )
         assertEquals(
             "and that is the ONLY publication site: a second one at a call site is a second thing " +

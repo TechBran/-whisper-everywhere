@@ -3044,9 +3044,13 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         //
         // A HEALTHY WALK IS READABLE AT A GLANCE, which is why the raw argmax is here rather than
         // just the final token: after bare SOT the model must want a LANGUAGE token; after the
-        // language token it must want <|transcribe|> (50359); after that <|notimestamps|> (50363);
-        // and only at position promptLen-1 should the answer become a text token. Any step where
-        // that chain breaks is the step where the prompt stopped taking.
+        // language token it must want <|transcribe|> (50359 in the whisper-small family, 50360
+        // under large-v3/turbo — the shifted-specials block, 4.1 L4); after that <|notimestamps|>
+        // (50363 small / 50364 large-v3); and only at position promptLen-1 should the answer
+        // become a text token. Any step where that chain breaks is the step where the prompt
+        // stopped taking. The ids are the FAMILY's, never universal: 50358 in particular is
+        // small's <|translate|> and large-v3's <|yue|>, which is why no per-id note here can be
+        // read without the family in hand.
         const bool trace = g.diag && position <= promptLen;
         LogitsHealth h;
         if (trace) h = scanLogitsRaw(logits, g.vocab);

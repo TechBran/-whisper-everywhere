@@ -300,6 +300,131 @@ class NpuAssetImportTest {
     }
 
     @Test
+    fun theVendorZipShapeIsRefusedForBothTiers_prefixAndSharedBareNames() {
+        // 4.1 L8 — the two MEASURED facts the delivery repack exists for, pinned from the
+        // importer's side so nobody "helpfully" relaxes the allow-list to accept them:
+        //
+        //  (1) The AI Hub zips carry a top-level DIRECTORY prefix. A prefixed name cannot be
+        //      equals()-equal to a bare allow-list name, so the vendor zip AS DOWNLOADED imports
+        //      nothing — every entry Ignored, then the missing-entries refusal. Loud, not silent.
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        val turboRequired = NpuAssetImport.requiredEntriesFor(turbo)
+        val vendorPrefix =
+            "whisper_large_v3_turbo_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3"
+        listOf("encoder_qairt_context.bin", "decoder_qairt_context.bin").forEach { bare ->
+            val verdict = NpuAssetImport.classifyEntry(
+                turboRequired, "$vendorPrefix/$bare", declaredBytes = -1L, alreadyAccepted = emptySet(),
+            )
+            assertTrue(
+                "a vendor entry under its directory prefix must be Ignored, never Accepted — " +
+                    "accepting a path-carrying name is the exact allow-list relaxation that " +
+                    "would reopen zip-slip AND install under a name isInstalled never checks",
+                verdict is NpuAssetImport.EntryVerdict.Ignore,
+            )
+        }
+        //  (2) Both families' entries carry the SAME bare names, and those names are the npu
+        //      (small) tier's INSTALLED files. Against TURBO's allow-list the vendor bare names
+        //      are strangers — because the catalog names turbo's files turbo_*. If this verdict
+        //      ever became Accept, a turbo import would write over the owner's 358 MB npu pair.
+        listOf("encoder_qairt_context.bin", "decoder_qairt_context.bin").forEach { npuName ->
+            assertTrue(
+                "the vendor bare name '$npuName' is npu's file and must be a STRANGER to " +
+                    "turbo's import — the rename to turbo_* is what keeps the two pairs apart " +
+                    "in the one directory both live in",
+                NpuAssetImport.classifyEntry(
+                    turboRequired, npuName, declaredBytes = -1L, alreadyAccepted = emptySet(),
+                ) is NpuAssetImport.EntryVerdict.Ignore,
+            )
+        }
+        // And the delivery names really are distinct across the two tiers — all four, the
+        // no-overwrite invariant stated as a set cardinality.
+        val allFour = NpuAssetImport.PAIRED_TIER_IDS.flatMap { id ->
+            NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId(id)).keys
+        }
+        assertEquals(
+            "four delivery filenames across the two tiers, pairwise distinct — a collision is " +
+                "an import that destroys the other tier's installed half",
+            4,
+            allFour.toSet().size,
+        )
+    }
+
+    @Test
+    fun thePackScriptCarriesBothTiersFourFilenamesAndAllFourDigests() {
+        // 4.1 L8. tools/pack_npu_zip.py builds the delivery zips (prefix stripped, turbo's
+        // entries renamed) and re-verifies its own output with the importer's logic — so ITS
+        // table is a fourth reading of the catalog's values (catalog, this test's literals, the
+        // importer map, the script), and the same both-ways census applies: the script must name
+        // every delivery filename and every digest EXACTLY, as literals, so a catalog move is a
+        // decision that shows up here rather than a repack that quietly re-hashes a ~GB artefact.
+        val script = read("tools/pack_npu_zip.py")
+        listOf(
+            "encoder_qairt_context.bin",
+            "decoder_qairt_context.bin",
+            "turbo_encoder_qairt_context.bin",
+            "turbo_decoder_qairt_context.bin",
+        ).forEach { name ->
+            assertTrue(
+                "the pack script must name the delivery file '$name'",
+                script.contains("\"$name\""),
+            )
+        }
+        listOf(
+            encoderSha,
+            decoderSha,
+            WhisperCatalog.byId("npu-turbo")!!.sha256,
+            WhisperCatalog.byId("npu-turbo")!!.pairedArtifact!!.sha256,
+        ).forEach { sha ->
+            assertTrue(
+                "the pack script must carry the catalog digest $sha as a literal — its " +
+                    "self-verification is only worth the digests it checks against",
+                script.contains("\"$sha\""),
+            )
+        }
+        listOf("132_927_488", "225_316_864", "775_831_552", "295_854_080").forEach { bytes ->
+            assertTrue(
+                "and the exact byte length $bytes — the size half of the same gate",
+                script.contains(bytes),
+            )
+        }
+        // THE PAIRING, not just the presence — found by designing the battery: a script whose
+        // tuples swapped two digests (or two lengths) still CONTAINS all four of each, so the
+        // loops above stay green while the repack would refuse every correct vendor zip (or,
+        // worse for a future edit, verify a wrong one). Each (name, bytes, sha) triple is pinned
+        // as one block, indentation and trailing commas included.
+        listOf(
+            Triple(encoder, "132_927_488", encoderSha),
+            Triple(decoder, "225_316_864", decoderSha),
+            Triple(
+                "turbo_encoder_qairt_context.bin", "775_831_552",
+                WhisperCatalog.byId("npu-turbo")!!.sha256,
+            ),
+            Triple(
+                "turbo_decoder_qairt_context.bin", "295_854_080",
+                WhisperCatalog.byId("npu-turbo")!!.pairedArtifact!!.sha256,
+            ),
+        ).forEach { (name, bytes, sha) ->
+            assertEquals(
+                "the script pairs $name with ITS bytes and ITS digest in one tuple",
+                1,
+                count(
+                    script,
+                    lines(
+                        "            \"$name\",",
+                        "            $bytes,",
+                        "            \"$sha\",",
+                    ),
+                ),
+            )
+        }
+        assertTrue(
+            "the script verifies its own output through the importer-equivalent walk — the " +
+                "function is named for it and a rename here is a review flag",
+            script.contains("def verify_like_the_importer("),
+        )
+    }
+
+    @Test
     fun rejectsAnAbsolutePathEntry() {
         assertNothingIsWritten("/abs/path", "an absolute path")
         assertNothingIsWritten("/data/local/tmp/$encoder", "an absolute path ending in a legal name")

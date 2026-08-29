@@ -39,12 +39,13 @@ import kotlinx.coroutines.flow.asStateFlow
  * ### Why "process", corrected (4.0, final review F3 / I4)
  *
  * This said **session** state, on the reasoning that `load()` clears the value on every arm. True
- * of this class in isolation; **false in the shipped composition.** The reason feeds
- * `NpuBackendSelector.routesToNpu`'s `declinedThisSession`, which then returns false, so
- * `FloatingBubbleService` builds the CPU engine — so `NpuWhisperBackend` is never constructed
- * again, so `load()`, the only writer of `null`, never runs again. `releaseEverything()` does not
- * clear it either. **One decline therefore persists until process death**, and the card said "for
- * this session" about it on every later visit to the chooser, whatever tier was selected.
+ * of this class in isolation; **false in the shipped composition.** A tier's record feeds
+ * `NpuBackendSelector.routesToNpu`'s declined set, which then answers false for that tier, so
+ * `FloatingBubbleService` builds the CPU engine — so that tier's `NpuWhisperBackend` is never
+ * constructed again, so `load()`, the only writer of `null`, never runs again for it.
+ * `releaseEverything()` does not clear it either. **One decline therefore persists until process
+ * death** (per tier, since 4.1 L8), and the card said "for this session" about it on every later
+ * visit to the chooser, whatever tier was selected.
  *
  * **The wording was corrected rather than the lifetime, and that is a decision with a reason.** The
  * obvious alternative — clear it in `releaseEverything()` — does not deliver what its name promises
@@ -59,18 +60,42 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 object NpuTierStatus {
 
-    private val _unavailableReason = MutableStateFlow<String?>(null)
+    private val _reasons = MutableStateFlow<Map<String, String>>(emptyMap())
 
     /**
-     * The stage that declined, `"<stage>: <detail>"`, or null. Read as Compose state by the tier
-     * card; written only by `NpuWhisperBackend.unavailableReason`'s setter.
+     * Every declined tier's `"<stage>: <detail>"`, keyed by tier id (4.1 L8 — per-tier).
+     *
+     * **Per-tier because a shared reason was the worst possible coupling in an A/B lab.** Until
+     * L8 this object held ONE process-wide reason, which was correct while one npu-class tier
+     * existed; with two, a turbo decline — *"init: could not deserialise 740 MB"* — would have
+     * banned `npu` for the rest of the process (the shared reason fed `routesToNpu`'s decline
+     * input for every tier), and the card would have worn turbo's note on npu's card. The record
+     * is now keyed under [NpuModelSpec.tierId], the routing reads [declinedTiers] membership, and
+     * the card reads [reasonFor] its OWN id — so each tier's decline stands, and only stands, for
+     * itself.
+     *
+     * Read as Compose state by the tier cards; written only by
+     * `NpuWhisperBackend.unavailableReason`'s setter, under `spec.tierId`.
      */
-    val unavailableReason: StateFlow<String?> = _unavailableReason.asStateFlow()
+    val reasons: StateFlow<Map<String, String>> = _reasons.asStateFlow()
 
-    /** Called from the backend's setter — every arm and every decline, no exceptions. */
-    fun publish(reason: String?) {
-        _unavailableReason.value = reason
+    /**
+     * Called from the backend's setter — every arm and every decline, no exceptions. A null
+     * [reason] is the arm path clearing THIS tier's record; other tiers' records stand.
+     */
+    fun publish(tierId: String, reason: String?) {
+        _reasons.value =
+            if (reason == null) _reasons.value - tierId else _reasons.value + (tierId to reason)
     }
+
+    /** The declined stage recorded for [tierId], or null — including for a null/unknown id. */
+    fun reasonFor(tierId: String?): String? = if (tierId == null) null else _reasons.value[tierId]
+
+    /**
+     * The tiers with a live decline on record — `routesToNpu`'s per-tier decline input. The same
+     * PROCESS lifetime as ever (see the class KDoc): membership ends at process death, by design.
+     */
+    val declinedTiers: Set<String> get() = _reasons.value.keys
 
     /**
      * The stage alone: `"init: nativeInit failed at 0"` -> `"init"`. Null in, null out.
