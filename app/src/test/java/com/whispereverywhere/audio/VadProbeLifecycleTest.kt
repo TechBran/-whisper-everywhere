@@ -215,6 +215,106 @@ class VadProbeLifecycleTest {
         return hits.single()
     }
 
+    /**
+     * THE Q10a CRASH, closed at this class's own entry point (4.0, Q9b) — and executed, not pinned.
+     *
+     * The build is `GGML_BACKEND_DL`: the ggml backend registry starts EMPTY and only
+     * `WhisperNative.loadBackends` populates it. `vadProbeInit` ->
+     * `whisper_vad_init_with_params` -> `make_buft_list` then asks it for a CPU device
+     * (`whisper.cpp:1387`) and hands the resulting `nullptr` to `ggml_backend_dev_backend_reg`
+     * (`:1388`), which trips `GGML_ASSERT(device)` -> `ggml_abort` -> **SIGABRT**. Not a failed
+     * init — a dead process, on the first captured frame of every session.
+     *
+     * It never fired before 4.0 because every session loaded a CPU tier first and the registry was
+     * populated as a **side effect** of a component this class has no relationship with. The npu
+     * tier is the first session shape that loads no CPU tier, and the first device session found it
+     * in minutes. **The assumption that some other component ran first is what broke, so this class
+     * now states its own precondition** — and the assertion below is about ORDER, because populate
+     * *after* init is the same crash with all the same statements present.
+     */
+    @Test
+    fun theBackendRegistryIsPopulatedBeforeTheProbeIsEverInitialised() {
+        val probe = FakeVadProbe()
+        val life = VadProbeLifecycle(probe) { probe.calls += "ensure-backends" }
+        life.arm("/models/ggml-silero-v5.1.2.bin")
+
+        assertTrue(life.ensureReady())
+        assertEquals(
+            "the registry must be populated BEFORE the probe is initialised. Reversed, every " +
+                "statement is still present and vadProbeInit still runs — into make_buft_list, a " +
+                "null CPU device and GGML_ASSERT. That is a SIGABRT, not a false return.",
+            listOf("ensure-backends", "init"),
+            probe.calls,
+        )
+
+        // And it rides the same once-per-session latch as the init it guards: the capture thread
+        // calls ensureReady at 31.25 Hz and neither of these may run per frame.
+        assertTrue(life.ensureReady())
+        assertTrue(life.ensureReady())
+        assertEquals(listOf("ensure-backends", "init"), probe.calls)
+        assertEquals(1, probe.initCalls)
+    }
+
+    /**
+     * The precondition is asserted even on the paths that then FAIL — a probe whose model is
+     * missing must still have found a populated registry, because `vadProbeInit`'s own refusal
+     * happens *inside* the native call that would have aborted.
+     */
+    @Test
+    fun theRegistryIsPopulatedEvenWhenTheProbeInitThenFails() {
+        val failing = FakeVadProbe(initReturns = false)
+        val life = VadProbeLifecycle(failing) { failing.calls += "ensure-backends" }
+        life.arm("/models/missing.bin")
+        assertFalse(life.ensureReady())
+        assertEquals(listOf("ensure-backends", "init"), failing.calls)
+        assertEquals(VadProbeLifecycle.State.UNAVAILABLE, life.state())
+
+        // A THROWING collaborator must not escape onto the audio thread either — the session
+        // degrades to the amplitude endpointer, which is exactly what a missing model does.
+        val throwing = FakeVadProbe()
+        val hostile = VadProbeLifecycle(throwing) { error("registry load blew up") }
+        hostile.arm("/models/ggml-silero-v5.1.2.bin")
+        assertFalse(hostile.ensureReady())
+        assertEquals(VadProbeLifecycle.State.UNAVAILABLE, hostile.state())
+        assertEquals("a failed precondition must not reach the probe", 0, throwing.initCalls)
+    }
+
+    /**
+     * THE DEFAULT ITSELF, pinned — a MEASURED survivor (Q9b battery row H5).
+     *
+     * Both tests above inject their own `ensureBackends`, which is what makes the ORDER executable
+     * — and it is also what makes them blind to the one mutation that matters most in production:
+     * replacing the default with `{}`. That compiles, keeps every assertion in this file green, and
+     * restores the Q10a SIGABRT in full on every device, because `EndpointerFactory` is the only
+     * production construction site and it takes the default.
+     *
+     * A source pin is the only instrument that can see it: the value of a default parameter is not
+     * observable from a test that supplies its own.
+     */
+    @Test
+    fun theProductionDefaultIsTheRealBackendLoader() {
+        val lifecycle = repoFile("src/main/java/com/whispereverywhere/audio/VadProbeLifecycle.kt")
+            .readText().replace("\r\n", "\n")
+        assertEquals(
+            "the default must BE the real loader. `{}` here is green in this whole file and a " +
+                "crash loop on every device — EndpointerFactory is the only production caller and " +
+                "it takes the default.",
+            1,
+            lifecycle.split(
+                "private val ensureBackends: () -> Unit = " +
+                    "com.whispereverywhere.whisper.GgmlBackends::ensureLoaded,"
+            ).size - 1,
+        )
+        assertEquals(
+            "and the factory constructs the lifecycle WITHOUT overriding it, so the default is " +
+                "the thing that actually runs",
+            1,
+            repoFile("src/main/java/com/whispereverywhere/audio/EndpointerFactory.kt")
+                .readText().replace("\r\n", "\n")
+                .split("val lifecycle = VadProbeLifecycle(probe)").size - 1,
+        )
+    }
+
     private fun repoFile(relative: String): File {
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
         while (dir != null) {

@@ -1,5 +1,6 @@
 package com.whispereverywhere.whisper
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -682,5 +683,118 @@ class NativeVadSourceContractTest {
                 freeDoc.contains(inKt)
             )
         }
+    }
+
+    /**
+     * THE Q10a CRASH'S LAST LINE OF DEFENCE (4.0, Q9b) — the JNI refuses an empty ggml registry
+     * instead of aborting the process on it.
+     *
+     * The build is `GGML_BACKEND_DL`, so the registry starts EMPTY and only `loadBackends()`
+     * populates it. Reaching `whisper_vad_init_with_params` with it empty is not a failed init:
+     * `make_buft_list` asks for a CPU device (`whisper.cpp:1387`), gets `nullptr`, hands it to
+     * `ggml_backend_dev_backend_reg` (`:1388`), and `GGML_ASSERT(device)` calls `ggml_abort`.
+     * **SIGABRT, on the first captured frame of every session, in a loop** — three process deaths
+     * in the owner's first device log.
+     *
+     * Two Kotlin call sites now populate the registry before this function can run. This guard is
+     * the layer that makes the NEXT ordering hole survivable, because "some other component ran
+     * first" is precisely the assumption that broke: it held for three minor versions purely
+     * because every session happened to load a CPU tier before the probe.
+     *
+     * Three claims, and the second is the one presence alone cannot see:
+     *  1. the check EXISTS on a live line;
+     *  2. it PRECEDES the context creation — after it, the abort has already happened;
+     *  3. it names the reason on a greppable `WE-DIAG` line, because a silent refusal here is a
+     *     session with no VAD and nothing anywhere saying why.
+     */
+    @Test
+    fun vadProbeInitRefusesAnEmptyBackendRegistryInsteadOfAbortingOnIt() {
+        val init = jniFunctionBody("vadProbeInit")
+
+        assertTrue(
+            "vadProbeInit must test ggml_backend_reg_count() on a LIVE line. Without it an empty " +
+                "registry reaches make_buft_list, which does not fail — it aborts the process.",
+            containsLiveLine(init, "ggml_backend_reg_count() == 0")
+        )
+
+        val guard = Regex("""(?m)^[ 	]*if \(ggml_backend_reg_count\(\) == 0\)""").find(init)
+        assertTrue("the zero-registry guard must be a live `if` in vadProbeInit", guard != null)
+        val create = probeContextCreation(init)
+        assertTrue(
+            "the guard (at ${guard!!.range.first}) must PRECEDE the context creation (at " +
+                "${create.range.first}). Presence is not the invariant here: a check placed after " +
+                "whisper_vad_init_from_file_with_params runs after the GGML_ASSERT has already " +
+                "aborted the process, so it would be unreachable code that reads like a fix.",
+            guard.range.first < create.range.first
+        )
+
+        assertTrue(
+            "the refusal must name its reason on the WE-DIAG tag — `vad: probe unavailable " +
+                "(no ggml backends)` is the exact substring the Q10a run-book tells the owner to " +
+                "grep for, and a silent false here is a session with no VAD and no explanation",
+            containsLiveLine(init, "vad: probe unavailable (no ggml backends)")
+        )
+        assertTrue(
+            "and it must return before touching anything: the guard sits above g_probe_mutex, so " +
+                "a refusal cannot free a context the caller may still be using",
+            guard.range.first < init.indexOf("std::lock_guard<std::mutex> lock(g_probe_mutex)")
+        )
+    }
+
+    /**
+     * ONE registry-loading implementation in main sources (4.0, Q9b).
+     *
+     * The defect was not that the registry went unpopulated — it was that *one component owned*
+     * a process-wide precondition, so it was true on the CPU tiers' path and false everywhere
+     * else. A second implementation would restore exactly that: two things that can disagree, with
+     * a `SIGABRT` on whichever path takes the one that has not run.
+     */
+    @Test
+    fun theBackendRegistryHasExactlyOneLoaderInMainSources() {
+        // The package root, reached through a file rather than named directly: repoFile resolves
+        // FILES only, and anchoring on the loader itself means "GgmlBackends.kt was deleted" fails
+        // here loudly instead of walking an empty tree to a vacuous pass.
+        val root = repoFile("src/main/java/com/whispereverywhere/whisper/GgmlBackends.kt")
+            .parentFile.parentFile
+        val callers = mutableListOf<String>()
+        root.walkTopDown().filter { it.isFile && it.extension == "kt" }.forEach { f ->
+            val text = f.readText().replace("\r\n", "\n")
+            if (containsLiveLine(text, "WhisperNative.loadBackends(")) callers += f.name
+        }
+        assertEquals(
+            "WhisperNative.loadBackends must be called from exactly ONE main-source file, and it " +
+                "must be GgmlBackends.kt — the whole Q10a defect was a process-wide precondition " +
+                "owned by one component. Found: $callers",
+            listOf("GgmlBackends.kt"),
+            callers
+        )
+
+        // AND THAT ONE LOADER KEEPS ITS MEMO — a MEASURED survivor (Q9b battery row H10).
+        //
+        // Without the double-checked early return, loadBackends() runs again on every session's
+        // load and every probe init rather than once per process: repeated ggml_backend_load calls
+        // against an already-populated registry, from the audio thread's own init path. It is not
+        // a crash and no behavioural test can see it, which is exactly why it needs a pin.
+        val loader = repoFile("src/main/java/com/whispereverywhere/whisper/GgmlBackends.kt")
+            .readText().replace("\r\n", "\n")
+        assertEquals(
+            "the shared loader keeps BOTH halves of its double-checked lock — the volatile fast " +
+                "path and the in-monitor re-check",
+            2,
+            loader.split("if (loaded) return").size - 1
+        )
+        assertTrue(
+            "the fast path must precede the monitor: that read is the entire cost on every call " +
+                "after the first, and taking the lock to discover it is unnecessary is the memo " +
+                "not existing",
+            loader.indexOf("if (loaded) return") < loader.indexOf("synchronized(this)")
+        )
+        assertEquals(
+            "and the flag is set exactly once, unconditionally — a registry that could not be " +
+                "loaded will not load on the next frame either, and retrying it on the capture " +
+                "thread is its own defect",
+            1,
+            loader.split("loaded = true").size - 1
+        )
     }
 }

@@ -9,6 +9,7 @@ import com.whispereverywhere.npu.NpuQuantize
 import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.npu.QnnAsrNative
 import com.whispereverywhere.npu.WhisperBpeDecoder
+import com.whispereverywhere.whisper.GgmlBackends
 import com.whispereverywhere.whisper.WhisperNative
 import java.nio.ByteBuffer
 import java.util.Locale
@@ -174,6 +175,22 @@ class NpuWhisperBackend(
      */
     override fun load(modelPath: String, companionPath: String?): Long =
         NativeComputeGate.serialized {
+            // FIRST STATEMENT, and it is an ORDER invariant (4.0, Q9b). The build is
+            // GGML_BACKEND_DL, so the ggml backend registry starts EMPTY and only
+            // WhisperNative.loadBackends populates it — which, until Q9b, happened solely inside
+            // WhisperNativeBackend.load. This tier is the first session shape that never loads a
+            // CPU tier, so it inherited an empty registry and every session SIGABRTed at the VAD
+            // probe's make_buft_list. The probe now asserts the precondition at its own site too;
+            // this call is the tier's half, placed above everything so that no native whisper
+            // entry reachable from here — initMelOnly, pcmToMel, or the CPU fallback's own load —
+            // can ever be the one that finds the registry empty.
+            //
+            // MEASURED, not assumed: whisper_init_from_file_mel_only and whisper_pcm_to_mel do
+            // NOT call make_buft_list today (it appears at whisper.cpp:1712 in the full loader and
+            // :5126 in the VAD init, nowhere else). Ensuring first makes that a fact this file
+            // does not have to keep depending on.
+            GgmlBackends.ensureLoaded()
+
             // A re-load with a previous session still held is the co-residency hazard in miniature:
             // whichever way round it happened, two model-sized things would be resident at once.
             releaseEverything()

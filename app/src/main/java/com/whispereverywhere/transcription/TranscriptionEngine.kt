@@ -215,29 +215,20 @@ interface WhisperBackend {
  * native GPU crash permanently falls this version back to CPU instead of crash-looping.
  */
 object WhisperNativeBackend : WhisperBackend {
-    @Volatile private var backendsLoaded = false
 
-    /** One-time dynamic backend registration (GGML_BACKEND_DL) before the first model load. */
-    private fun ensureBackendsLoaded() {
-        if (backendsLoaded) return
-        synchronized(this) {
-            if (backendsLoaded) return
-            runCatching {
-                WhisperNative.loadBackends(
-                    com.whispereverywhere.WhisperEverywhereApp.getInstance()
-                        .applicationInfo.nativeLibraryDir
-                )
-            }
-            backendsLoaded = true
-        }
-    }
+    // The one-time GGML_BACKEND_DL registration used to live here as a private member, and that
+    // ownership was the Q9b defect (SIGABRT on every npu session): the registry is PROCESS state,
+    // every native whisper entry point needs it, and having the CPU tiers' load path be the only
+    // thing that populated it made "some other component ran first" a silent precondition of the
+    // VAD probe. It now lives in [com.whispereverywhere.whisper.GgmlBackends], which every caller
+    // asserts at its own entry point. See that object for the full chain.
 
     // All three native entry points hold the process-global [NativeComputeGate] so the bubble and
     // batch services (which share THIS singleton) can never run two native whisper calls at once —
     // see NativeComputeGate for why concurrent GPU submits and the racing GpuPolicy sentinel are
     // unsafe. The gate is released between calls, so the two paths still interleave per-call.
     override fun load(modelPath: String): Long = NativeComputeGate.serialized {
-        ensureBackendsLoaded()
+        com.whispereverywhere.whisper.GgmlBackends.ensureLoaded()
         val useGpu = GpuPolicy.decideUseGpuForLoad(modelPath)
         if (!useGpu) return@serialized WhisperNative.init(modelPath, false)
         // finally (not sequential code): a survivable Java exception between arm and disarm must

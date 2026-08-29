@@ -301,6 +301,30 @@ Java_com_whispereverywhere_whisper_WhisperNative_vadProbeInit(
     if (modelPath == nullptr) {
         return JNI_FALSE;
     }
+
+    // THE ZERO-REGISTRY REFUSAL (4.0, Q9b). This must precede whisper_vad_init_* and it must not
+    // touch g_probe_ctx, which is why it sits above the mutex: nothing is mutated on this path.
+    //
+    // The build is GGML_BACKEND_DL, so the backend registry starts EMPTY and is populated only by
+    // loadBackends(). With it empty, whisper_vad_init_with_params -> make_buft_list does
+    // `ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU)` (whisper.cpp:1387), gets nullptr,
+    // and hands it straight to `ggml_backend_dev_backend_reg` (:1388) -> GGML_ASSERT(device) ->
+    // ggml_abort -> SIGABRT. Not a failed init: a dead process, on every session, in a loop.
+    //
+    // Two Kotlin-side call sites now guarantee the registry is populated before we get here
+    // (NpuWhisperBackend.load and VadProbeLifecycle.ensureReady, each owning the precondition at
+    // its own entry point). THIS is the layer that makes the NEXT hole survivable — a session
+    // shape nobody has written yet, reaching the probe without either of them — because the whole
+    // lesson of the Q10a crash is that "some other component ran first" is not a guarantee. A
+    // refusal here degrades exactly as a missing model does: the caller latches UNAVAILABLE and
+    // runs the amplitude endpointer for the session, which is byte-identical to 3.6.0 behaviour.
+    // Loud, per the same doctrine as the tier fallback: never silent, never fatal.
+    if (ggml_backend_reg_count() == 0) {
+        LOGDIAGE("vad: probe unavailable (no ggml backends) - registry empty at vadProbeInit; "
+                 "endpointing falls back to amplitude for this session");
+        return JNI_FALSE;
+    }
+
     std::string pathStr;
     {
         const char *raw = env->GetStringUTFChars(modelPath, nullptr);

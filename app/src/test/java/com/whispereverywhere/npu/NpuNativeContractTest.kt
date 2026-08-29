@@ -1,5 +1,6 @@
 package com.whispereverywhere.npu
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -1046,6 +1047,57 @@ class NpuNativeContractTest {
                 "and impossible to un-publish. The trailing slash is deliberate: it matches the " +
                 "directory and everything under it, and never a same-named file.",
             ignore.lineSequence().any { it.trim() == entry }
+        )
+    }
+
+    /**
+     * THE Q10a CRASH, closed at this tier's own entry point (4.0, Q9b).
+     *
+     * `-DGGML_BACKEND_DL=ON` means the ggml backend registry starts **empty** and only
+     * `WhisperNative.loadBackends` populates it. Until Q9b the sole caller was inside
+     * `WhisperNativeBackend.load` — the CPU tiers' path — so the registry was populated as a
+     * SIDE EFFECT of a component this tier never touches. Every 3.7 session loaded a CPU tier
+     * first, so it always happened to be full; the npu tier is the first session shape that loads
+     * no CPU tier, and every one of its sessions died at the VAD probe:
+     *
+     * ```
+     * vadProbeInit -> whisper_vad_init_with_params -> make_buft_list        (whisper.cpp:5126)
+     *   -> ggml_backend_dev_by_type(CPU) == nullptr                         (:1387)
+     *   -> ggml_backend_dev_backend_reg(nullptr) -> GGML_ASSERT -> SIGABRT  (:1388)
+     * ```
+     *
+     * **The ORDER is the invariant, not the presence.** `ensureLoaded()` placed anywhere below
+     * `initMelOnly` leaves every statement in this file intact and still lets the mel loader —
+     * and, on the refusal paths, `WhisperNativeBackend.load` — be the first native whisper call
+     * to meet an empty registry. It is the first statement of `load` so that no native entry
+     * reachable from this tier can ever be the one that finds it empty.
+     */
+    @Test
+    fun theTierPopulatesTheBackendRegistryBeforeAnyNativeWhisperCall() {
+        val ensure = liveOffsets(backend, "GgmlBackends.ensureLoaded()")
+        assertEquals(
+            "the tier must populate the ggml backend registry exactly once, on a live line, in " +
+                "load(). Zero is the Q10a SIGABRT: an npu session loads no CPU tier, so nothing " +
+                "else on its path has ever called loadBackends.",
+            1,
+            ensure.size
+        )
+
+        val melInit = liveOffsets(backend, "WhisperNative.initMelOnly(")
+        val release = liveOffsets(backend, "releaseEverything()")
+        assertTrue("the mel donor must be loaded on a live line", melInit.isNotEmpty())
+        assertTrue("the re-load teardown must run on a live line", release.isNotEmpty())
+        assertTrue(
+            "ensureLoaded (${ensure.first()}) must precede initMelOnly (${melInit.first()}). " +
+                "Presence is not the invariant: below it, the registry is still empty for every " +
+                "native whisper call this tier makes, which is the crash unchanged.",
+            ensure.first() < melInit.first()
+        )
+        assertTrue(
+            "and it must be the FIRST statement — above even releaseEverything " +
+                "(${release.first()}) — so no path out of load(), including the CPU fallback's " +
+                "own WhisperNativeBackend.load, can reach native code before it",
+            ensure.first() < release.first()
         )
     }
 }

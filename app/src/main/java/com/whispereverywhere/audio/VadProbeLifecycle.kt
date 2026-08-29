@@ -127,7 +127,26 @@ import java.util.concurrent.atomic.AtomicLong
  * probe is the measurement point, and it is what would revise this paragraph. [arm] deliberately
  * does NOT take the monitor, so session OPEN — also Main — can never block behind an init at all.
  */
-class VadProbeLifecycle(private val probe: VadProbe) {
+class VadProbeLifecycle(
+    private val probe: VadProbe,
+    /**
+     * The ggml backend registry's population — this class's own precondition (4.0, Q9b).
+     *
+     * **It is a parameter of THIS class because the dependency is this class's, not some other
+     * component's.** The build is `GGML_BACKEND_DL`, so the registry starts empty and
+     * `vadProbeInit` -> `whisper_vad_init_with_params` -> `make_buft_list` asks it for a CPU device
+     * on the very first frame of every session. Until Q9b nothing here said so, and the registry
+     * happened to be populated by `WhisperNativeBackend.load` — a component the probe has no
+     * relationship with. That held for three minor versions because every session loaded a CPU
+     * tier first; the 4.0 npu tier does not, and every npu session SIGABRTed here. **An ordering
+     * assumption about another component is exactly what broke, so this class states its own.**
+     *
+     * Injected rather than called statically for the reason everything else in this class is
+     * injected: it makes the ORDER — populate, *then* init — a thing a JVM test can execute
+     * instead of a thing a source pin can only describe.
+     */
+    private val ensureBackends: () -> Unit = com.whispereverywhere.whisper.GgmlBackends::ensureLoaded,
+) {
 
     companion object {
         /**
@@ -196,6 +215,13 @@ class VadProbeLifecycle(private val probe: VadProbe) {
                 return false
             }
             val ok = try {
+                // BEFORE probe.init, always (4.0, Q9b). An empty ggml registry does not make
+                // vadProbeInit return false — it makes make_buft_list hand a null CPU device to
+                // ggml_backend_dev_backend_reg, which trips GGML_ASSERT and aborts the process.
+                // Inside the try because this runs inline on the AUDIO thread and nothing may
+                // escape here; GgmlBackends.ensureLoaded cannot throw, but the seam above means a
+                // future collaborator could, and a degraded session beats a lost one.
+                ensureBackends()
                 probe.init(path)
             } catch (t: Throwable) {
                 // Must never escape: this runs inline on the audio thread.
