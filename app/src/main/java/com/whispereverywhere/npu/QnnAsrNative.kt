@@ -194,12 +194,12 @@ object QnnAsrNative {
      * prompt possible without re-encoding. The flag says "the cross-KV holds a real segment", not
      * "a decode is still owed".
      *
-     * @param prompt `NpuDecodePolicy.promptTokens(lang)`.
-     * @param suppress `NpuDecodePolicy.suppressList` — applied to the logits at **every** generated
+     * @param prompt `NpuDecodePolicy.promptTokens(spec.tokens, lang)`.
+     * @param suppress `NpuDecodePolicy.suppressList(spec.tokens)` — applied to the logits at **every** generated
      *        step, before the argmax scan.
-     * @param beginSuppress `NpuDecodePolicy.beginSuppressList` — applied at the first generated
+     * @param beginSuppress `NpuDecodePolicy.beginSuppressList(spec.tokens)` — applied at the first generated
      *        step **only**.
-     * @param maxTokens `NpuDecodePolicy.maxTokensFor(prompt.size)`.
+     * @param maxTokens `NpuDecodePolicy.maxTokensFor(spec.tokens, prompt.size)`.
      * @param out receives the generated ids; must have `size >= maxTokens`. Bounds-checked native
      *        side rather than trusted, and untouched beyond the returned count.
      * @return the number of ids written (`>= 0`), or `< 0` on failure with the text in
@@ -217,7 +217,10 @@ object QnnAsrNative {
 
     /**
      * One decode step at `position = 0` with `input_ids = <|startoftranscript|>`, with the argmax
-     * **restricted to the language block** `50259..50357`, then both self-KV sets are zeroed so a
+     * **restricted to THIS SESSION'S language block** — `50259..50357` for the 99-language
+     * `npu` tier, one wider for a 100-language one, and native derives the bound from the
+     * `vocab` scalar [nativeInit] received rather than from a constant (4.1 L2). Then both
+     * self-KV sets are zeroed so a
      * following [nativeDecodeSegment] starts from an empty cache.
      *
      * The restriction lives native for the same reason the suppression mask does: an unrestricted
@@ -231,7 +234,10 @@ object QnnAsrNative {
      * without one. It does **not** consume the encode: call [nativeDecodeSegment] next against the
      * same encode, which is exactly what this function exists for.
      *
-     * @return a `<|xx|>` token id in `50259..50357`, or `< 0` with the reason in [nativeLastError].
+     * @return a `<|xx|>` token id inside this session's own language band, or `< 0` with the
+     *         reason in [nativeLastError]. Feed it to [WhisperTokenFamily.codeForToken] for the
+     *         SAME family the session was armed with: the band is per-family, and 50358 is a
+     *         language in one vocabulary and `<|translate|>` in another.
      */
     external fun nativeDetectLanguage(): Int
 

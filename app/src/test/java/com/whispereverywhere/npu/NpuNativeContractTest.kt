@@ -2099,11 +2099,28 @@ class NpuNativeContractTest {
                 liveOffsets(body, needle).isNotEmpty()
             )
         }
+        // THE SIXTH REFUSAL, NAMED. `langCount` is DERIVED from vocab rather than passed, so it is
+        // the one bound with no parameter of its own — and it was covered only by the `"spec: "`
+        // population count below, which is the N11 weakness again: a claim about diagnostics
+        // standing in for a claim about a predicate. A `>= 5` against six sites would not have
+        // noticed this one going missing at all.
         assertTrue(
+            "the derivation must refuse a vocabulary that leaves no language band. It is derived " +
+                "(`vocab - kTimestampSlots - kSpecialsAboveLangBand - kLangTokenBase`), so an " +
+                "in-range vocab can still imply a negative language count — and langTokenLast would " +
+                "then sit BELOW langTokenFirst, making every detect-pass argmax range empty. Live " +
+                "lines: " + liveLines(body, "langCount"),
+            liveOffsets(body, "if (langCount < 1)").isNotEmpty()
+        )
+        assertEquals(
             "and every refusal must be a normal `spec: ` stage error, so it routes through " +
                 "fallBackToCpuTier to `npu: unavailable stage=init` and the card, like every other " +
-                "stage. Found ${liveOffsets(body, "\"spec: ").size} live sites.",
-            liveOffsets(body, "\"spec: ").size >= 5
+                "stage. EXACTLY six — five scalar bounds plus the derived language count. An " +
+                "inequality here would let a deleted refusal pass as long as the others remained, " +
+                "which is how a population check stops being one. Found: " +
+                liveLines(body, "\"spec: "),
+            6,
+            liveOffsets(body, "\"spec: ").size
         )
 
         // WHERE THE FIVE COME FROM, and it is the other half of the same guard.
@@ -2535,9 +2552,78 @@ class NpuNativeContractTest {
     }
 
     /**
+     * **The census this session derived is REPORTED, on the capture that will have to check it.**
+     *
+     * `nativeInit` derives ten numbers from five scalars and then refuses any asset that disagrees
+     * with them. Until this line existed, the derivation itself was invisible: a capture showed the
+     * graph IO enumeration (what the ASSET carries) and, on a mismatch, a refusal quoting both
+     * sides — but a SUCCESSFUL arm said nothing about what was expected, so there was no way to
+     * confirm the derivation was right rather than merely un-contradicted.
+     *
+     * That matters because of where this task's confidence actually comes from. Every census value
+     * is asserted against 4.0's shipped constants in `NpuModelSpecTest`, on the JVM, with no asset
+     * anywhere near it. **Nothing has checked the derivation against a real graph**, and L8's A/B
+     * session is the first moment anything can: this line prints the expectation immediately above
+     * the enumeration it will be compared with, so the two can be read as a pair in one capture.
+     *
+     * Pinned as FORMAT and EMISSION separately, the same F-rule split `NpuDiag` uses and for the
+     * same reason — a format nothing emits and an emission with a broken format are both silent,
+     * and either one alone leaves the L8 sheet with a row it cannot fill. Its two siblings on this
+     * tag (`vote: %s` and `mel: `) are both pinned; this one was not.
+     */
+    @Test
+    fun theCensusThisSessionDerivedIsReportedOnTheCaptureThatWillHaveToCheckIt() {
+        val init = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(")
+        val line = liveOffsets(init, "LOGI(\"nativeInit spec: melBins=%d decLayers=%d heads=%d vocab=%d maxPositions=%d -> \"")
+        assertTrue(
+            "nativeInit must report the census it derived, on a live line, with the five scalars " +
+                "it derived them FROM in the same line. Scalars without the census cannot be " +
+                "checked against an asset; the census without the scalars cannot be checked against " +
+                "NpuModelSpec. Live lines mentioning it: " + liveLines(init, "nativeInit spec:"),
+            line.isNotEmpty()
+        )
+        assertEquals(
+            "the `nativeInit spec: ` prefix is ONE contiguous literal — the same rule as " +
+                "`npu: encode=` and `mel: bins=`. Assembling it from parts produces identical " +
+                "output, is invisible to the compiler and to review, and breaks every grep and " +
+                "every parser written against the shipped format.",
+            1,
+            liveOffsets(cpp, "\"nativeInit spec: melBins=").size
+        )
+        assertTrue(
+            "…and it must print BOTH graphs' four figures and the language band, because those are " +
+                "precisely the values the guard beneath it compares and the ones turbo differs at. " +
+                "A line carrying only the scalars would echo the caller back to itself.",
+            liveOffsets(init, "g.encExpect.numIn, g.encExpect.numOut, g.encExpect.inBytes, g.encExpect.outBytes,")
+                .isNotEmpty() &&
+                liveOffsets(init, "g.decExpect.numIn, g.decExpect.numOut, g.decExpect.inBytes, g.decExpect.outBytes,")
+                    .isNotEmpty() &&
+                liveOffsets(init, "g.langTokenFirst, g.langTokenLast);").isNotEmpty()
+        )
+        val assign = liveOffsets(init, "g.encExpect = census.enc;")
+        val load = liveOffsets(init, "loadGraphSlot(g.enc, encoderPath, g.encExpect)")
+        assertTrue("nativeInit must still copy the derived census into the session", assign.isNotEmpty())
+        assertTrue(
+            "ORDER: the report (${line.first()}) must sit AFTER the census is assigned " +
+                "(${assign.first()}) and BEFORE the graphs are loaded against it " +
+                "(${load.first()}). Below the load it would print only for sessions that already " +
+                "passed the guard — i.e. never for the one case a reader needs it, which is an " +
+                "asset the expectation was wrong about.",
+            assign.first() < line.first() && line.first() < load.first()
+        )
+        assertTrue(
+            "and it goes to the owner's capture. Since the L2 tag sweep LOGI is WE-DIAG, so this " +
+                "is a claim about the MACRO rather than the tag: LOGW would still land there but " +
+                "would report a successful arm as a warning.",
+            liveOffsets(cpp, "#define TAG \"WE-DIAG\"").isNotEmpty()
+        )
+    }
+
+    /**
      * **I3 — the whole file logs on the tag the owner actually captures.**
      *
-     * `#define TAG "WE-NPU"` put every `LOGI`/`LOGW`/`LOGE` in this file — 41 sites — on a tag
+     * `#define TAG "WE-NPU"` put every `LOGI`/`LOGW`/`LOGE` in this file — 37 call sites on live
+     * lines, 38 once this task added the census line — on a tag
      * `adb logcat -s WE-DIAG` cannot see. Among them: the graph IO enumeration that is the only
      * evidence for the bind-by-name design, the cold-load timings, the decode's tokens-per-second
      * line, and `vote: %s`, whose own design note reads *"always logged, never silently empty

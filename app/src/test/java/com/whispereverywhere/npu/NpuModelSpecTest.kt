@@ -342,6 +342,35 @@ class NpuModelSpecTest {
                 "graph wants",
             NpuModelSpec.forTier("npu")!!.melBins == 80
         )
+
+        // AND THE PRODUCTS, NOT ONLY THE FACTORS (4.1 L2 micro-round).
+        //
+        // The bounds above are per-factor and loose on purpose: `headDim <= 1024` and
+        // `audioCtx <= 65536` exist to catch a typo, not to bound a product. At their extremes
+        // `2 x 64 x 64 x 1024 x 65536` is ~5.5e11 — three orders of magnitude past Int.MAX_VALUE —
+        // and it wraps to a SMALL POSITIVE number. That is the worst shape a census value can take:
+        // nothing downstream reads as wrong, and the load-time guard then compares a real asset
+        // against a total no arithmetic produced. Every factor in the two specs below is
+        // individually legal, which is exactly why the guard has to be on the product.
+        listOf<() -> NpuModelSpec>(
+            { small.copy(headDim = 1024, audioCtx = 65536) },
+            { small.copy(decLayers = 64, heads = 64, headDim = 1024, audioCtx = 65536) },
+        ).forEach { build ->
+            try {
+                val got = build()
+                fail("a census of ${got.encOutBytes} B must be refused rather than wrapped")
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(
+                    "the refusal must name the overflow and the widest term. Got: " +
+                        "${expected.message}",
+                    expected.message.orEmpty().contains("overflows a 32-bit Int")
+                )
+            }
+        }
+        assertTrue(
+            "and the shipped row is nowhere near the rail — 31,316,376 B against 2,147,483,647",
+            small.decInBytes < Int.MAX_VALUE / 64
+        )
     }
 
     /**

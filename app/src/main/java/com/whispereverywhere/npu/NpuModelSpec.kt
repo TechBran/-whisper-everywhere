@@ -62,11 +62,16 @@ package com.whispereverywhere.npu
  *
  * ### Every derived value is an `Int`, and the refusal table is what makes that safe
  *
- * The bounds below (`melBins ∈ {80,128}`, `decLayers ≤ 64`, `heads ≤ 64`, `maxPositions ≤ 1024`,
- * `vocab ≤ 65535`) put the worst case at roughly 1.3e9 bytes, comfortably inside a signed 32-bit
- * int, so no term here can overflow into a plausible-looking smaller number. That is a consequence
- * of the refusal table, not an independent fact — widen a bound and this paragraph stops being
- * true.
+ * The per-factor bounds alone are **not** enough to promise that, and saying so would be the kind
+ * of claim this file exists to refuse. `headDim ≤ 1024` and `audioCtx ≤ 65536` are deliberately
+ * loose — they exist to catch a typo, not to bound a product — and at their extremes
+ * `2 x 64 x 64 x 1024 x 65536` is far past `Int.MAX_VALUE`. An overflowed census does not throw:
+ * it wraps to a smaller positive number that the guard would then compare an asset against.
+ *
+ * So the promise is a GUARD rather than an argument. `init` computes the three largest terms in
+ * `Long` and refuses the spec if any of them will not fit an `Int` — which makes every derived
+ * value below safe by construction, at every combination of bounds, including ones a future row
+ * widens.
  */
 data class NpuModelSpec(
     /** The catalog tier id this row describes. [forTier] is the only intended lookup. */
@@ -102,6 +107,31 @@ data class NpuModelSpec(
         require(heads in 1..64) { "heads $heads is outside 1..64" }
         require(headDim in 1..1024) { "headDim $headDim is outside 1..1024" }
         require(audioCtx in 1..65536) { "audioCtx $audioCtx is outside 1..65536" }
+
+        // AND THE PRODUCTS MUST FIT THE Int THEY ARE STORED IN.
+        //
+        // The six bounds above are per-factor and loose on purpose — they catch a typo, they do not
+        // bound a product. At their extremes the cross-KV term alone is 2 x 64 x 64 x 1024 x 65536,
+        // which is ~5.5e11 and wraps. A wrapped census is the worst possible shape for this value:
+        // it is a small POSITIVE number, so nothing downstream looks wrong, and the census guard
+        // then refuses (or worse, accepts) an asset against a byte total that no arithmetic
+        // produced. Computed in Long and refused here, once, so every derived value below is safe
+        // by construction rather than by the row that happens to be in the table.
+        val crossKv = 2L * decLayers * heads * headDim * audioCtx
+        val selfKv = 2L * decLayers * heads * headDim * (tokens.maxPositions - 1)
+        val widest = maxOf(
+            crossKv,
+            8L + tokens.maxPositions * 2L + selfKv + crossKv,
+            tokens.vocab * 2L + selfKv,
+            melBins.toLong() * melFrames * 4L,
+        )
+        require(widest <= Int.MAX_VALUE) {
+            "this spec's census overflows a 32-bit Int: the widest term is $widest B, past " +
+                "${Int.MAX_VALUE}. The factors are individually inside their bounds, which is " +
+                "exactly why this is checked on the PRODUCTS — an overflowed byte total wraps to a " +
+                "small positive number that reads like a plausible census and is compared against " +
+                "a real asset as though it were one."
+        }
     }
 
     /**

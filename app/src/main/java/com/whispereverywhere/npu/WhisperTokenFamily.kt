@@ -15,11 +15,20 @@ package com.whispereverywhere.npu
  *
  * ```
  *              whisper-small        large-v3 / turbo
- *   50357      <|su|>               <|jw|>
- *   50358      <|translate|>        <|yue|>          (Cantonese)
+ *   50356      <|jw|>               <|jw|>           the tables agree up to here…
+ *   50357      <|su|>               <|su|>           …including whisper-small's LAST language
+ *   50358      <|translate|>        <|yue|>          …and diverge at the first id past it
  *   50359      <|transcribe|>       <|translate|>
  *   50360      <|startoflm|>        <|transcribe|>
  * ```
+ *
+ * Read the boundary carefully, because the obvious reading of it is wrong. The two tables are
+ * **identical for every id they share** — `whisper-small`'s table is a strict PREFIX of
+ * `large-v3`'s, so `<|jw|>` is 50356 and `<|su|>` is 50357 in both. The divergence begins at the
+ * first id *past* whisper-small's last language: 50358, where one family has appended a 100th
+ * language (`<|yue|>`) and the other has already moved on to its control tokens. Provenance, read
+ * out of the vendored `whisper.cpp` `g_lang` table rather than inferred: `jw` is index 97, `su` is
+ * 98, `yue` is 99 — so `50259 + index` puts them exactly there.
  *
  * **The same integer is a task token in one family and a language token in the other, and both are
  * legal.** A prompt built with `whisper-small`'s `<|transcribe|>` (50359) and fed to a `large-v3`

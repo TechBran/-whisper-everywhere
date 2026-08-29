@@ -76,9 +76,12 @@
 
 // THE HOUSE TAG, AND IT USED TO BE A DIFFERENT ONE (4.1 L2, item I3).
 //
-// This file's TAG was `WE-NPU` for the whole of 4.0, which put 41 LOGI/LOGW/LOGE sites on a tag
+// This file's TAG was `WE-NPU` for the whole of 4.0, which put 37 LOGI/LOGW/LOGE sites on a tag
 // `adb logcat -s WE-DIAG` cannot see - and that command is run-book 9.2's capture, i.e. the ONLY
-// evidence the owner (who has no adb) ever produces about this tier. Among the 41: the graph IO
+// evidence the owner (who has no adb) ever produces about this tier. (37 is CALL sites on live
+// lines; the three #define lines below introduce the macros and emit nothing, so they are not
+// among them. 38 after this task, which added the census line in nativeInit.) Among the 37: the
+// graph IO
 // enumeration that is the sole evidence for the bind-by-name design, both cold-load timings, the
 // decode's ms/token line, and `vote: %s`, whose own design note reads "always logged, never
 // silently empty (lesson 6)" - a line written expressly to be read, on a tag nobody reads.
