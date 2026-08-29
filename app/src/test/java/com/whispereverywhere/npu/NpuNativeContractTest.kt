@@ -798,6 +798,50 @@ class NpuNativeContractTest {
     }
 
     /**
+     * **THE ATTENTION MASK'S COLUMN ARRANGEMENT — the Q10a defect, and the most consequential
+     * single line on this branch.**
+     *
+     * It has its own test rather than living inside the load-time-guard pin, and that is the point:
+     * this is RUNTIME behaviour, rewritten 199 times per segment, and it was folded in beside four
+     * *load-time* guards where a maintainer trimming that test to its documented scope would have
+     * deleted it without the test name telling them what they broke.
+     *
+     * THE LAYOUT. `attention_mask` is `[1,1,1,200]` over a 199-deep self-KV: the 200 columns are
+     * the 199 cache slots plus **the current token's own key at column `maskLen-1`**, and the cache
+     * is a **right-aligned shift register** — every write lands at the top slot and the earlier
+     * entries move down. So at position `p` the live columns are `maskLen-1-p .. maskLen-1`: the
+     * last `p+1`. Column 0 is the one never used (it would need `p >= 199`, and `lastPosition`
+     * stops the loop at 198).
+     *
+     * WHY IT NEEDS A PIN AT ALL. The superseded fill was `i <= position` — the FIRST `p+1` columns,
+     * a set disjoint from the live one at every position up to 197. It enabled only never-written
+     * padding and never the current token, so self-attention saw nothing while cross-attention
+     * stayed healthy; the decoder heard the audio, emitted a language token at its first scored
+     * step, and then EOT. **Nothing detected it for four review rounds and roughly fifty battery
+     * rows**, because the mask *codes* were pinned (`checkMaskCodesLocked` dequantises both through
+     * the tensor's own scale and offset — correct, and it passed) while which columns received
+     * which code was asserted nowhere. It was itself a plan-time sentence, implemented faithfully
+     * and never re-derived, in a file whose doctrine is that such a sentence must become a guard.
+     */
+    @Test
+    fun theAttentionMaskEnablesTheCurrentTokenAndTheHistoryAboveIt() {
+        val step = functionBody(cpp, "std::string decodeStepLocked(")
+        assertTrue(
+            "decodeStepLocked must fill the attention mask from the TOP down — `i >= firstLive` " +
+                "with `firstLive = maskLen - 1 - position` — so the current token's own key at " +
+                "column maskLen-1 is ALWAYS enabled and the history is the p entries below it. " +
+                "Live mask lines: " + liveLines(step, "mask[i] ="),
+            liveOffsets(step, "g.maskLen - 1 - position").isNotEmpty() &&
+                liveOffsets(step, "(i >= firstLive) ? kMaskAttend : kMaskBlocked").isNotEmpty()
+        )
+        assertTrue(
+            "the superseded fill `(i <= position) ? kMaskAttend` must appear nowhere live in " +
+                "decodeStepLocked — it is the Q10a defect and it reads as though it were right.",
+            !step.contains("(i <= position) ? kMaskAttend")
+        )
+    }
+
+    /**
      * The decode loop's four single-point invariants — each one line, each with no host-visible
      * signal, none of them defended before this pin existed.
      *
@@ -908,31 +952,6 @@ class NpuNativeContractTest {
             maskCheck.first() > maskBind.first()
         )
         val mask = functionBody(cpp, "std::string checkMaskCodesLocked()")
-        // THE FILL ITSELF (Q10a-D3). Until this round nothing pinned WHICH columns the mask
-        // enables — only what the two codes mean — and the fill was wrong for the whole of Q4
-        // through Q10a-D2 while every battery stayed green. The 200 columns are 199 cache slots
-        // plus the current token, and the cache is a right-aligned shift register (read from the
-        // context binary's node names: 24 per-head Concats appending to the cache, 2 Slices
-        // trimming back to 199, mask Adds only under self_attn). So the live columns at position p
-        // are `maskLen-1-p .. maskLen-1`, which is the LAST p+1 — and the old `i <= position` fill
-        // is disjoint from that at every position.
-        val step = functionBody(cpp, "std::string decodeStepLocked(")
-        assertTrue(
-            "decodeStepLocked must fill the attention mask from the TOP down — `i >= firstLive` " +
-                "with `firstLive = maskLen - 1 - position` — so the current token's own key at " +
-                "column maskLen-1 is ALWAYS enabled and the history is the p entries below it. " +
-                "The old fill `i <= position` enabled the first p+1 columns instead: never the " +
-                "current token, and only never-written padding. Live mask lines: " +
-                liveLines(step, "mask[i] ="),
-            liveOffsets(step, "g.maskLen - 1 - position").isNotEmpty() &&
-                liveOffsets(step, "(i >= firstLive) ? kMaskAttend : kMaskBlocked").isNotEmpty()
-        )
-        assertTrue(
-            "the superseded fill `(i <= position) ? kMaskAttend` must appear nowhere live in " +
-                "decodeStepLocked — it is the Q10a defect and it reads as though it were right.",
-            !step.contains("(i <= position) ? kMaskAttend")
-        )
-
         assertTrue(
             "checkMaskCodesLocked must actually DEQUANTISE both codes through the tensor's own " +
                 "scale and offset and compare the results. A guard that reads the quant params " +

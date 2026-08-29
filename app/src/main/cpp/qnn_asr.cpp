@@ -1419,12 +1419,15 @@ std::string bindDecoderLocked() {
 
             // THE "EXACT FIT" IS A RELATION BETWEEN TWO DIFFERENT TENSORS, SO IT IS CHECKED
             // BETWEEN THEM. `lastPosition` is derived from attention_mask (maskLen - 2 = 198), and
-            // the whole "positions 0..198 write cache slots 0..198, an exact fit" argument depends
-            // on the self-KV being maskLen - 1 = 199 deep. Nothing else in this file compares the
-            // two: g.selfKvBytes is only checked for consistency ACROSS the 24 buffers, so a
-            // re-export that changed the cache depth without changing the mask width would drive
-            // the loop past the end of the cache with the graph doing the indexing and no signal
-            // at load or on the host.
+            // the argument it rests on is that the 199 executing positions each add one entry to a
+            // cache exactly maskLen - 1 = 199 deep. Position p does NOT write slot p: the cache is
+            // a right-aligned shift register, so every write lands at the top slot and the earlier
+            // entries move down one (see decodeStepLocked). The count is what has to fit, not the
+            // index. Nothing else in this file compares the two: g.selfKvBytes is only checked for
+            // consistency ACROSS the 24 buffers, so a re-export that changed the cache depth
+            // without changing the mask width would silently drop the oldest entry a position
+            // early - or leave a column of the mask addressing a slot that does not exist - with
+            // the graph doing the indexing and no signal at load or on the host.
             // k is [heads, 1, headDim, depth]; v is [heads, 1, depth, headDim].
             const uint32_t rank = tensorRank(d.inputs[iit->second]);
             const uint32_t *sdims = tensorDims(d.inputs[iit->second]);
@@ -1521,10 +1524,12 @@ void bindSelfKvLocked(int inSet) {
 
 /// Zeroes BOTH ping-pong sets and re-binds set 0 as the input side.
 ///
-/// The zero is a quantisation code, not the value zero - but every cache slot above the current
-/// position is masked out by `attention_mask` anyway, so what is in them cannot reach the
-/// attention. Zeroing is about determinism: the previous segment's cache must not be able to leak
-/// into this one through a slot that was written once and then masked inconsistently.
+/// The zero is a quantisation code, not the value zero - but the cache is a RIGHT-ALIGNED shift
+/// register, so the slots that have not been written yet are the ones BELOW `firstLive`
+/// (`maskLen - 1 - position`), and those are exactly the columns `decodeStepLocked` blocks. What is
+/// in them cannot reach the attention. Zeroing is about determinism: the previous segment's cache
+/// must not be able to leak into this one through a slot that was written once and then masked
+/// inconsistently.
 void zeroSelfKvLocked() {
     for (int s = 0; s < 2; ++s) {
         for (auto &b : g.selfKv[s]) {
@@ -1813,29 +1818,46 @@ std::string decodeStepLocked(int32_t tokenId, uint32_t position) {
     *static_cast<int32_t *>(g.dec.inBufs[g.decPositionIdsIdx].p) = static_cast<int32_t>(position);
 
     // THE MASK'S 200 COLUMNS ARE 199 CACHE SLOTS PLUS THE CURRENT TOKEN, AND THE CACHE IS A
-    // RIGHT-ALIGNED SHIFT REGISTER. Both facts are read out of the decoder context binary's own
-    // node names (Q10a-D3), not inferred:
+    // RIGHT-ALIGNED SHIFT REGISTER.
+    //
+    // HOW EACH LINK WAS ESTABLISHED, because a comment that overstates its own provenance is how
+    // the fill this replaces survived four review rounds. The decoder ONNX is only an EPContext
+    // wrapper, but the QNN context binary retains the pre-compile node names, and those give
+    // three facts DIRECTLY (Q10a-D3):
     //
     //   * each self-attention layer carries 24 per-head `Concat` nodes - k and v for 12 heads -
-    //     which append the new key/value to the 199-deep cache. Attention therefore runs over
-    //     200 keys, which is exactly why `attention_mask` is [1,1,1,200] and not [1,1,1,199];
-    //   * exactly 2 `Slice` nodes per layer trim that 200 back to 199 for the `_out` tensors, by
-    //     dropping the OLDEST entry. That is the shift;
+    //     so the current key/value joins the 199-deep cache and attention runs over 200 keys.
+    //     That is why `attention_mask` is [1,1,1,200] and not [1,1,1,199];
+    //   * exactly 2 `Slice` nodes per layer trim that 200 back to 199 for the `_out` tensors;
     //   * the 12 per-head mask `Add` nodes exist only under `self_attn` - `encoder_attn` has none -
     //     so these 200 columns are the self-attention scores and nothing else.
+    //
+    // Two further links are NOT readable from a node name and were settled otherwise:
+    //
+    //   * that the `Slice` drops the OLDEST entry rather than the newest, and
+    //   * the `Concat` operand order, i.e. that the current token lands at column 199 rather than 0.
+    //
+    //   Both were closed by ELIMINATION plus the device: `Concat(new, cache)` would make the live
+    //   set `0..p`, which is precisely the fill this replaces, and that fill produced one language
+    //   token and then EOT on a run whose audio, mel, encoder and cross-KV were all separately
+    //   verified. The corrected fill then transcribed correctly on device. Treat those two as
+    //   confirmed by experiment, not by reading.
     //
     // So at position p the live columns are the p history entries sitting at the TOP of the cache,
     // `maskLen-1-p .. maskLen-2`, plus the current token's own key at `maskLen-1`:
     //
     //   p = 0    -> column 199 only        (the first token attends to itself, and to nothing else)
     //   p = 3    -> columns 196..199
-    //   p = 198  -> columns 1..199         (199 live columns; the oldest has been shifted out)
+    //   p = 198  -> columns 1..199         (199 live columns)
+    //
+    // The column that is never used is therefore the FIRST, not the last: column 0 would only come
+    // live at p >= 199, and `lastPosition = maskLen - 2` stops the loop at 198.
     //
     // THE PREVIOUS FILL WAS `i <= position` - the FIRST p+1 columns - and under this layout that
-    // set is disjoint from the live one at every position. It attended only never-written padding
-    // and never the current token, at every step, which is precisely why the decoder emitted a
-    // language token at its first scored step and then EOT: cross-attention was healthy, so the
-    // model heard the audio, and self-attention showed it nothing at all.
+    // set is disjoint from the live one at every position up to 197. It attended only never-written
+    // padding and never the current token, at every step, which is precisely why the decoder
+    // emitted a language token at its first scored step and then EOT: cross-attention was healthy,
+    // so the model heard the audio, and self-attention showed it nothing at all.
     const uint32_t firstLive = (position < g.maskLen) ? (g.maskLen - 1 - position) : 0;
     uint16_t *mask = static_cast<uint16_t *>(g.dec.inBufs[g.decMaskIdx].p);
     for (uint32_t i = 0; i < g.maskLen; ++i) {
@@ -2750,7 +2772,11 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeSetDiag(
     (void) env;
     std::lock_guard<std::mutex> lock(g.mu);
     g.diag = (enabled == JNI_TRUE);
-    LOGI("npu-debug instrumentation %s", g.diag ? "ENABLED" : "disabled");
+    // LOGDIAG, not LOGI. This is the one line that says whether the instrumentation is armed, and
+    // under WE-NPU it would be absent from `adb logcat -s WE-DIAG` - the only capture the owner's
+    // sessions produce. An empty capture would then be indistinguishable from a failed arming,
+    // which is the exact confusion this whole round of instrumentation exists to remove.
+    LOGDIAG("npu-debug: instrumentation %s", g.diag ? "ENABLED" : "disabled");
 }
 
 /// The last "stage: detail" recorded by any entry point, or "" if none. nativeDecodeSegment
