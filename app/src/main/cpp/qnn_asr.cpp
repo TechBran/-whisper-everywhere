@@ -1812,12 +1812,34 @@ std::string decodeStepLocked(int32_t tokenId, uint32_t position) {
     *static_cast<int32_t *>(g.dec.inBufs[g.decInputIdsIdx].p) = tokenId;
     *static_cast<int32_t *>(g.dec.inBufs[g.decPositionIdsIdx].p) = static_cast<int32_t>(position);
 
-    // Attend to 0..position inclusive, block everything above. At the last executing position
-    // (maskLen - 2) that is maskLen - 1 columns; the final column is never used, which is the
-    // arithmetic behind "199 positions in a 200-wide mask".
+    // THE MASK'S 200 COLUMNS ARE 199 CACHE SLOTS PLUS THE CURRENT TOKEN, AND THE CACHE IS A
+    // RIGHT-ALIGNED SHIFT REGISTER. Both facts are read out of the decoder context binary's own
+    // node names (Q10a-D3), not inferred:
+    //
+    //   * each self-attention layer carries 24 per-head `Concat` nodes - k and v for 12 heads -
+    //     which append the new key/value to the 199-deep cache. Attention therefore runs over
+    //     200 keys, which is exactly why `attention_mask` is [1,1,1,200] and not [1,1,1,199];
+    //   * exactly 2 `Slice` nodes per layer trim that 200 back to 199 for the `_out` tensors, by
+    //     dropping the OLDEST entry. That is the shift;
+    //   * the 12 per-head mask `Add` nodes exist only under `self_attn` - `encoder_attn` has none -
+    //     so these 200 columns are the self-attention scores and nothing else.
+    //
+    // So at position p the live columns are the p history entries sitting at the TOP of the cache,
+    // `maskLen-1-p .. maskLen-2`, plus the current token's own key at `maskLen-1`:
+    //
+    //   p = 0    -> column 199 only        (the first token attends to itself, and to nothing else)
+    //   p = 3    -> columns 196..199
+    //   p = 198  -> columns 1..199         (199 live columns; the oldest has been shifted out)
+    //
+    // THE PREVIOUS FILL WAS `i <= position` - the FIRST p+1 columns - and under this layout that
+    // set is disjoint from the live one at every position. It attended only never-written padding
+    // and never the current token, at every step, which is precisely why the decoder emitted a
+    // language token at its first scored step and then EOT: cross-attention was healthy, so the
+    // model heard the audio, and self-attention showed it nothing at all.
+    const uint32_t firstLive = (position < g.maskLen) ? (g.maskLen - 1 - position) : 0;
     uint16_t *mask = static_cast<uint16_t *>(g.dec.inBufs[g.decMaskIdx].p);
     for (uint32_t i = 0; i < g.maskLen; ++i) {
-        mask[i] = (i <= position) ? kMaskAttend : kMaskBlocked;
+        mask[i] = (i >= firstLive) ? kMaskAttend : kMaskBlocked;
     }
 
     Qnn_ErrorHandle_t e = g.qnn.graphExecute(
