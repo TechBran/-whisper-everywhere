@@ -173,6 +173,31 @@ interface WhisperBackend {
     fun detectedLanguage(ctx: Long): String? = null
 
     /**
+     * True when this backend detects the language of EVERY segment cheaply enough not to latch.
+     *
+     * The 3.7 session latch ([LanguagePin]) exists because multilingual whisper.cpp pays a
+     * throwaway detect-encode pass on every auto segment — roughly HALF of multi's steady-state
+     * native cost. On the NPU tier the same detect is one extra graphExecute, ~4.5 ms against a
+     * ~405 ms encode, so there is nothing to amortise and the latch is pure loss: it freezes an
+     * auto session's language at segment 1 when the model could honestly re-answer per utterance
+     * (start in one language, finish in another — the owner's ruling; an explicit selection
+     * stays absolute under both answers). A backend answering true is handed the SESSION
+     * language unchanged for every segment: null stays null, so auto re-detects each time, and
+     * the engine neither consults nor feeds [LanguagePin].
+     *
+     * A new member with a default BODY, never a widened parameter list — the house precedent is
+     * three times over in this same interface, and the two-arg [load]'s KDoc records what the
+     * alternative costs (23 un-overridden overrides across 10 files). Default false: every
+     * existing backend and every fake keeps the 3.7 latch byte-for-byte.
+     *
+     * LIVE, read off the ACTIVE backend per segment, never snapshotted at session start:
+     * `NpuWhisperBackend` answers `fallbackBackend == null`, so a session that declines mid-life
+     * flips to false and the engine re-acquires the CPU latch from that point — on whisper.cpp,
+     * per-utterance detection is the exact cost the latch exists to avoid paying forever.
+     */
+    val detectsPerUtterance: Boolean get() = false
+
+    /**
      * Like [transcribe], additionally delivering the in-flight call's running text after each
      * newly decoded native segment (3.6.0 Workstream D). [onNewSegment] receives the FULL text
      * decoded so far in THIS call, on the SAME thread that invoked transcribeStreaming, while

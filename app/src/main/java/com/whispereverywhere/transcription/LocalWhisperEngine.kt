@@ -104,7 +104,10 @@ class LocalWhisperEngine(
      * first speech-producing segment's detection lands, later segments pass the concrete code
      * and skip multilingual whisper's per-segment detect-encode pass. Reset in [connect];
      * written only behind the stale-listener guard in [runSegment], so a previous session's
-     * late segment can never pin the new session.
+     * late segment can never pin the new session. 4.1 L7: consulted and fed only while the
+     * LIVE backend does not declare [WhisperBackend.detectsPerUtterance] — see [runSegment] —
+     * so a session that falls back mid-life finds it exactly as a fresh 3.7 session would:
+     * empty, and fed by the first post-fallback speech segment.
      */
     private val languagePin = LanguagePin()
 
@@ -361,9 +364,20 @@ class LocalWhisperEngine(
                 SegmentOutcome.Lost(NO_MODEL)
             } else {
                 val samples = AudioMath.pcm16ToFloat(pcm)
-                // B (3.6.0): an explicit language passes through untouched; an auto session
-                // (lang == null) rides the session pin once the first speech segment detected it.
-                val effectiveLang = languagePin.languageFor(lang)
+                // B (3.6.0) / L7 (4.1): an explicit language passes through untouched under
+                // BOTH arms — the ruling's absolute half. A per-utterance backend (the live NPU
+                // tier, where detect is ~4.5 ms against a ~405 ms encode) is handed `lang`
+                // UNCHANGED: null stays null, so an auto session re-detects EVERY segment and
+                // may honestly start in one language and finish in another. A latching backend
+                // rides the session pin once the first speech segment detected it — the 3.7
+                // behaviour byte-for-byte, because whisper.cpp's detect pass is roughly half of
+                // multi's steady-state cost and the latch is what amortises it. The property is
+                // read off the LIVE backend PER SEGMENT, never snapshotted at connect:
+                // NpuWhisperBackend answers fallbackBackend == null, so the first segment after
+                // a mid-life decline lands in the else arm and re-acquires the CPU latch from
+                // that point.
+                val effectiveLang =
+                    if (backend.detectsPerUtterance) lang else languagePin.languageFor(lang)
                 android.util.Log.i(
                     "WE-DIAG",
                     "transcribe START seq=$seq samples=${samples.size} lang=$lang effective=$effectiveLang",
@@ -447,7 +461,17 @@ class LocalWhisperEngine(
                 // STALE (it persists on the ctx across calls, even across sessions). The stale-
                 // listener guard — the exact `listener === myListener` identity check resolutions
                 // use — keeps a dead session's late segment from pinning the new session.
-                if (lang == null && effectiveLang == null && cleaned.isNotBlank() && listener === myListener) {
+                //
+                // L7 (4.1): and NEVER for a per-utterance backend. Its resolutions are
+                // per-segment answers, not a session latch, and feeding the pin from them would
+                // hand a STALE code to the first post-fallback segment — the false latch the
+                // fallback edge must not inherit. The clause reads the LIVE backend AFTER the
+                // transcribe returned, so a backend that fell back DURING this very segment
+                // already answers false here, and this segment's detection is the one that
+                // re-acquires the CPU latch.
+                if (lang == null && effectiveLang == null && cleaned.isNotBlank() &&
+                    listener === myListener && !backend.detectsPerUtterance
+                ) {
                     val detected = backend.detectedLanguage(ctx)
                     languagePin.onDetected(sessionLanguage = lang, detected = detected)
                     // Language code only — never transcript content.

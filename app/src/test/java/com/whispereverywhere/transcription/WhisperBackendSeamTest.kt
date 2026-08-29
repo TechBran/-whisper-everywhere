@@ -1,7 +1,9 @@
 package com.whispereverywhere.transcription
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -147,6 +149,86 @@ class WhisperBackendSeamTest {
             "cpuTierModelPath defaults to null, which is what makes the npu tier decline at " +
                 "stage=mel-donor before any of the 358 MB of NPU assets is touched",
             oneFileTier.cpuTierModelPath(),
+        )
+    }
+
+    /**
+     * 4.1 L7's member: default FALSE, so every backend that has not opted in keeps the 3.7
+     * session latch byte-for-byte. `true` is a per-backend MEASUREMENT — "my detect pass is too
+     * cheap to amortise" — and only the NPU tier has made it; on whisper.cpp the detect pass is
+     * roughly half of multi's steady-state cost, which is the entire reason the latch exists.
+     */
+    @Test
+    fun detectsPerUtterance_defaultsToFalse_soTheCpuLatchStaysByInheritance() {
+        assertFalse(MinimalBackend().detectsPerUtterance)
+        assertFalse(PairedBackend().detectsPerUtterance)
+    }
+
+    /**
+     * THE INTERFACE CENSUS (4.1 L7). Two claims, one mechanism:
+     *
+     *  1. `detectsPerUtterance` has a DEFAULT BODY — the house seam rule. 4.0's NEW-C1 measured
+     *     the alternative: a default PARAMETER value helps callers, not implementors, and would
+     *     have un-overridden 23 overrides across 10 files with the interface's own body silently
+     *     running instead of theirs.
+     *  2. The set of members WITHOUT a default body is EXACTLY the original three. A name joining
+     *     that set forces every implementor — all of the overrides' files, plus every test fake —
+     *     to change, which is the cost the seam rule exists to refuse; and a new abstract member
+     *     that arrives with its overrides already written everywhere would compile clean, so ONLY
+     *     this census would name it.
+     *
+     * MECHANISM: this project compiles at the default `-Xjvm-default` mode (the bytecode story is
+     * `LocalWhisperEngineCapSplitTest`'s census KDoc), so a member with a default body is emitted
+     * as a static on `WhisperBackend$DefaultImpls` taking the interface as its first parameter —
+     * and a member without one is not. The `$default` bridges that default PARAMETER VALUES emit
+     * (`transcribe`/`transcribeStreaming`'s `useVad`) are name-suffixed, so the exact-name match
+     * excludes them.
+     */
+    @Test
+    fun theInterfaceCensus_membersWithoutADefaultBodyAreExactlyTheOriginalThree() {
+        val iface = WhisperBackend::class.java
+        val defaults = try {
+            Class.forName("com.whispereverywhere.transcription.WhisperBackend\$DefaultImpls")
+        } catch (e: ClassNotFoundException) {
+            throw AssertionError(
+                "WhisperBackend\$DefaultImpls is gone — Kotlin's -Xjvm-default mode changed. The " +
+                    "product contract is UNVERIFIED until this census's mechanism is re-derived; " +
+                    "LocalWhisperEngineCapSplitTest's census KDoc holds the discriminator story.",
+                e,
+            )
+        }
+
+        fun hasDefaultBody(m: java.lang.reflect.Method): Boolean =
+            defaults.declaredMethods.any { d ->
+                d.name == m.name &&
+                    d.parameterTypes.size == m.parameterTypes.size + 1 &&
+                    d.parameterTypes.first() == iface &&
+                    d.parameterTypes.drop(1) == m.parameterTypes.toList()
+            }
+
+        val withoutDefaultBody = iface.declaredMethods
+            .filter { !it.isSynthetic && !hasDefaultBody(it) }
+            .map { m -> "${m.name}(${m.parameterTypes.joinToString(",") { it.simpleName }})" }
+            .sorted()
+        assertEquals(
+            "the members WITHOUT a default body must stay exactly the original three. A name " +
+                "APPEARING here is a new abstract member on the seam (every implementor must now " +
+                "change — the exact cost the default-body rule refuses) or a deleted default " +
+                "body; a name MISSING is a formerly-abstract member that grew a body existing " +
+                "overrides now shadow.",
+            listOf("load(String)", "release(long)", "transcribe(long,float[],String,boolean)"),
+            withoutDefaultBody,
+        )
+
+        assertTrue(
+            "detectsPerUtterance must exist on WhisperBackend WITH a default body (a " +
+                "getDetectsPerUtterance static on DefaultImpls). Absent, the 4.1 L7 per-utterance " +
+                "seam does not exist; declared abstract instead, it un-defaults the seam and " +
+                "every existing implementor's file stops compiling — the widened-parameter-list " +
+                "mistake in a different spelling.",
+            iface.declaredMethods.any {
+                !it.isSynthetic && it.name == "getDetectsPerUtterance" && hasDefaultBody(it)
+            },
         )
     }
 

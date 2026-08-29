@@ -339,6 +339,15 @@ tasks.withType<Test>().configureEach {
         // addition to that line.
         "src/main/java/com/whispereverywhere/npu/NpuModelSpec.kt",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
+        // (4.1 L7) LocalWhisperEngine.kt joins because PerUtteranceLanguageTest now READS it:
+        // the languageFor-exactly-once-inside-the-conditional claim is what stops a second,
+        // unconditional pin consult from reinstating the 3.7 latch under a per-utterance
+        // backend. Stated honestly, the QnnAsrNative.kt discipline below: today's assertions
+        // there (and SegmentTimingTest's older ones) are all LIVE-line scoped, so a comment-only
+        // edit could not break them — the entry is here because the rule this list is built on
+        // is about what the tests READ, and the next assertion added to those pins is not
+        // required to remember the distinction.
+        "src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt",
         "src/main/java/com/whispereverywhere/npu/QnnAsrNative.kt",
         "src/main/java/com/whispereverywhere/npu/NpuDecodePolicy.kt",
         "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",

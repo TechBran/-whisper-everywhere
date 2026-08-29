@@ -169,13 +169,22 @@ class NpuWhisperBackend(
      * each check this field, and this field only, before delegating.
      *
      * **Two mechanisms, and they are one mechanism.** This field and [fallbackCtx] are both
-     * `@Volatile` AND every read and write of them happens inside [NativeComputeGate], because
-     * they need two different guarantees. The gate gives mutual exclusion, so the pair cannot be
+     * `@Volatile` AND every read and write that can ACT on them — route a transcribe, load a
+     * tier, tear one down — happens inside [NativeComputeGate], because they need two different
+     * guarantees. The gate gives mutual exclusion, so the pair cannot be
      * half-updated while another thread routes on it; `@Volatile` gives publication, so the pair a
      * reader sees is the pair a writer wrote. Neither alone is enough and neither is redundant —
      * dropping the gate lets two threads both observe `null` and both fall back (leaking a whole
      * 60-190 MB whisper context), and dropping `@Volatile` lets a reader see a non-null backend
      * beside a stale `0L` handle and silently lose a segment on `transcribe(0L, …)`.
+     *
+     * **Two bounded exemptions, both passive (4.1 L7).** [detectsPerUtterance] reads the guard
+     * ALONE, ungated: it routes nothing, touches nothing native, and either stale answer costs
+     * at most one segment resolved under the other arm's language policy — both of which are
+     * honest. [lastSegmentStats] reads the pair ungated for its delegate's own documented
+     * reason: the gate is FAIR, so taking it for a diagnostic would park the timing line (and
+     * the segment resolution behind it) behind an in-flight batch chunk — see that member. Both
+     * lean on the publication order below, and every reader that can ACT still holds the gate.
      *
      * **This one is the GUARD**: it is written LAST when arming ([fallBackToCpuTier]) and cleared
      * FIRST when tearing down ([releaseEverything]), so a reader that sees it non-null is
@@ -625,6 +634,56 @@ class NpuWhisperBackend(
     }
 
     /**
+     * Live previews AFTER a fallback; the interface default's exact behaviour before one
+     * (Q6 M4, folded at 4.1 L7).
+     *
+     * This override did not exist in 4.0, so after any NPU decline the session silently lost
+     * partial streaming for the rest of its life — `WhisperNativeBackend` supplies it, but the
+     * inherited default routed the call through [transcribe] and dropped the closure. §9.2's
+     * "it behaves like any other WhisperBackend" was simply wrong there, and the user
+     * experienced a degradation nothing named. The live-NPU arm stays a plain [transcribe] with
+     * zero deltas, deliberately: the NPU decode loop has no per-segment native callback, and
+     * forging deltas would be worse than omitting them.
+     *
+     * Same gate-then-route shape as [transcribe], for the same reasons: this member runs native
+     * compute, so it is an ACTING reader of the routing pair. The lock is reentrant, so the
+     * live arm's delegation to [transcribe] costs nothing.
+     */
+    override fun transcribeStreaming(
+        ctx: Long,
+        samples: FloatArray,
+        lang: String?,
+        useVad: Boolean,
+        onNewSegment: (String) -> Unit,
+    ): String = NativeComputeGate.serialized {
+        fallbackBackend?.let {
+            return@serialized it.transcribeStreaming(fallbackCtx, samples, lang, useVad, onNewSegment)
+        }
+        transcribe(ctx, samples, lang, useVad)
+    }
+
+    /**
+     * True exactly while the NPU session is what answers transcribes — LIVE, never a constant
+     * (4.1 L7).
+     *
+     * On this tier the detect pass is one extra `graphExecute`, ~4.5 ms against a ~405 ms
+     * encode — about 1%, the same machinery the decode loop already runs — so the 3.7 session
+     * latch has nothing to amortise and auto may honestly re-resolve every utterance. On the
+     * CPU tier the same question costs roughly HALF of multi's steady-state native cost, which
+     * is the entire reason that latch exists. So the moment a stage declines and this backend
+     * starts delegating, the answer must flip back to false and the CPU latch must resume — a
+     * `val` initialised at construction is evaluated while [fallbackBackend] is still ALWAYS
+     * null and could never do that.
+     *
+     * The read is of the GUARD alone, ungated — one of the two bounded exemptions the routing
+     * pair's declaration names: it decides no routing, touches nothing native, and either stale
+     * answer costs at most one segment resolved under the other arm's (equally honest) language
+     * policy. The engine reads it per segment, which is what lets the fallback edge re-acquire
+     * the latch from the exact segment that declined.
+     */
+    override val detectsPerUtterance: Boolean get() = fallbackBackend == null
+
+    /**
      * ISO code the LAST segment's language was **answered** with — by the user's selection or by
      * the model's own detection pass — or `null` when this tier only guessed.
      *
@@ -637,6 +696,13 @@ class NpuWhisperBackend(
      *
      * Also null before the first segment. Under the gate because the routing fields it reads are
      * shared mutable state; see their declaration.
+     *
+     * Since 4.1 L7 the ENGINE queries this only AFTER a fallback — [detectsPerUtterance] gates
+     * its pin-feed — so the engine always lands in the delegating arm, and
+     * `LangResolution.reportable`'s whole argument (a `(locale)` or `(fallback)` guess must not
+     * become a session-wide pin) is exactly the invariant that delegating case still needs. The
+     * non-delegating arm keeps answering honestly for any OTHER caller, so the member means the
+     * same thing on both tiers.
      */
     override fun detectedLanguage(ctx: Long): String? {
         return NativeComputeGate.serialized {
@@ -644,6 +710,29 @@ class NpuWhisperBackend(
             lastReportedLanguage
         }
     }
+
+    /**
+     * The CPU tier's cost counters AFTER a fallback; null while the NPU is live (Q6 M4, folded
+     * at 4.1 L7 — the second member a declined session silently lost, alongside
+     * [transcribeStreaming]: every post-decline timing line dropped its vadIn/vadOut/ctxFrames
+     * suffix with nothing naming why).
+     *
+     * The live-NPU arm answers null through the safe-call, never an all-zero
+     * [NativeSegmentStats]: this path has no native counters, and null ("no counters exist")
+     * and zeros ("a transcribe ran and cost nothing") are DIFFERENT ANSWERS the type's KDoc
+     * forbids collapsing — [SegmentTiming.line] is already built to omit the fields on null.
+     *
+     * DELIBERATELY NOT under [NativeComputeGate], mirroring the delegate's own documented
+     * exemption: this is a diagnostic over volatile Kotlin snapshots that touches no native
+     * memory, and the gate is FAIR — taking it here would park the timing line (and the segment
+     * resolution behind it) behind an in-flight batch chunk, which would re-tag the delegate's
+     * slot before the wait ended anyway. The ungated PAIR read is safe here and only here: the
+     * guard is written last and cleared first (see [fallbackBackend]), so a non-null guard
+     * vouches for the handle beside it, and the pair's only writers run under the gate on the
+     * engine's own executor — the same single thread that issues this read.
+     */
+    override fun lastSegmentStats(ctx: Long): NativeSegmentStats? =
+        fallbackBackend?.lastSegmentStats(fallbackCtx)
 
     // ---------------------------------------------------------------- teardown and fallback
 
