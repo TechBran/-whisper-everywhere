@@ -55,6 +55,12 @@ import org.junit.Test
  *    context binaries are 358 MB; a chooser that preselects the steered card turns "we suggest"
  *    into "we chose", which is the one thing the steer has never been allowed to do.
  *
+ * **A THIRD file joins the two screens: `WhisperEverywhereApp.kt`,** which owns the gate both
+ * surfaces consume. It is read here rather than in a class of its own because the wiring and the
+ * value it carries are one subject — a needle proving the screens pass `npuAvailable` around
+ * correctly is worth little if the thing producing that Boolean has quietly lost half of itself.
+ * See [theOfferGateKeepsBothHalvesAndGuardsEveryBuildFieldItReads].
+ *
  * **The source is read LF-NORMALISED.** `core.autocrlf=true` checks this repo out with CRLF, so a
  * needle written with a bare `\n` finds nothing and every assertion would pass or fail for the wrong
  * reason. The normalisation happens once, at each read site below.
@@ -84,6 +90,11 @@ class ChooserSteerWiringPinTest {
 
     private val picker: String by lazy {
         read("src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt")
+    }
+
+    /** The third file (4.0, Q7b micro-round): the gate BOTH surfaces above consume. */
+    private val app: String by lazy {
+        read("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
     }
 
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
@@ -335,5 +346,58 @@ class ChooserSteerWiringPinTest {
                 "non-English user it named the wrong tier",
             !picker.contains("TierBadge(text = \"Default\""),
         )
+    }
+
+    /**
+     * The gate itself (4.0, Q7b micro-round) — the one thing both surfaces above agree to obey.
+     *
+     * **Every assertion here closes a MEASURED survivor.** Neither half of `isNpuTierOffered` can
+     * be executed by a JVM test — `npuCapableDevice` dlopens two QNN libraries and `isInstalled`
+     * needs a `Context` — so the battery's T11 and T12 both survived all 1453 tests. That is the
+     * same hole, for the same reason, as `UnsupportedTierGatePinTest`'s R14, and it is closed with
+     * the same instrument: what cannot be run is pinned as source.
+     */
+    @Test
+    fun theOfferGateKeepsBothHalvesAndGuardsEveryBuildFieldItReads() {
+        assertEquals(
+            "the offer gate keeps BOTH halves (battery T11). Without the installed check the card " +
+                "renders on a gate-passing device whose 358 MB pair has not arrived, and the only " +
+                "button on it is a Download that fetches the provenance zip and fails the size gate",
+            1,
+            count(app, "return npuCapableDevice && whisperModelManager.isInstalled(npu)"),
+        )
+        // ORDER is deliberately NOT asserted for those two conjuncts, and that is a finding rather
+        // than an omission. Both are pure predicates over state neither one changes, so `&&` in
+        // either order returns the same Boolean; only which of them is evaluated first differs.
+        // The rule this branch has paid for four times is "pin the order WHERE correctness depends
+        // on where a thing sits" — asserting it where it does not would be decoration that a later
+        // reader would mistake for a real invariant.
+        assertEquals(
+            "the memo survives (battery T11's neighbour): without `by lazy` the probe's dlopen " +
+                "runs again on every read, and the readers are recomposing choosers",
+            1,
+            count(app, "val npuCapableDevice: Boolean by lazy {"),
+        )
+        // battery T12. minSdk is 26 and both SOC fields arrived in API 31, so an unguarded read
+        // throws NoSuchFieldError on every pre-S device that opens the chooser — a crash, on a
+        // large share of the install base, on a screen that has nothing to do with the NPU tier.
+        // Counting the GUARDED form against the TOTAL is what closes it: a second, unguarded read
+        // raises the total without raising the guarded count, so it cannot be added quietly.
+        listOf("SOC_MODEL", "SOC_MANUFACTURER").forEach { field ->
+            assertEquals(
+                "Build.$field is read exactly once in this file",
+                1,
+                count(app, "Build.$field"),
+            )
+            assertEquals(
+                "that one read of Build.$field carries the API-31 guard, handing NpuGate the null " +
+                    "it denies for the whole pre-S population",
+                1,
+                count(
+                    app,
+                    "if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.$field else null",
+                ),
+            )
+        }
     }
 }

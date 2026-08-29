@@ -240,6 +240,9 @@ android {
 // contract — SettingsScreen.kt is a Compose file already in this list for the same reason — and
 // this pin's needles are INDENTATION-sensitive block matches, the one mutation shape most likely
 // to leave semantics untouched. Declared, so the re-run stops depending on a compiler accident.
+// WhisperEverywhereApp.kt joins them in the Q7b micro-round: the same class now pins the offer
+// gate's two halves and the API-31 guard on both Build SOC fields there, and unlike the two
+// Compose screens it is a plain Kotlin class — exactly the shape Q7a measured going UP-TO-DATE.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -253,6 +256,7 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
+        "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
 }

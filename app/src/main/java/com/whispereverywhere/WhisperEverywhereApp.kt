@@ -45,8 +45,11 @@ class WhisperEverywhereApp : Application() {
      * matters and its callers do exactly that.
      *
      * The API-31 guard lives HERE rather than in `NpuGate`, which is a pure two-string table on
-     * purpose: `minSdk` is 26, `Build.SOC_MODEL` arrived in API 31, and the gate's null → deny
-     * handles the whole pre-S population in one branch.
+     * purpose: `minSdk` is 26, `SOC_MODEL` arrived in API 31, and the gate's null → deny handles
+     * the whole pre-S population in one branch. Reading either field unguarded throws
+     * `NoSuchFieldError` on every pre-S device that opens the chooser, so both reads are counted
+     * by `ChooserSteerWiringPinTest` — the guarded form against the total, which is what makes a
+     * second, unguarded read impossible to add quietly.
      *
      * This file is already where the NPU's process-scoped setup lives — see
      * [configureFastRpcLibraryPath], which is here for the same reason: it has to happen once, per

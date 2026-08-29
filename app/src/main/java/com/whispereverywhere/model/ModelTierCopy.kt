@@ -72,7 +72,7 @@ object ModelTierCopy {
      * `npu`, a non-English locale is steered THERE instead of to `multi`.
      *
      * **`npu` substitutes for the MULTILINGUAL steer and nothing else.** It carries `multi`'s
-     * weights on faster silicon, so for the user `multi` was already the right answer it is a
+     * weights on faster silicon, so for the user `multi` was already the right answer for, it is a
      * strictly better one. An English locale keeps `pro`: steering an English speaker onto a
      * multilingual tier is the Bengali-review defect mirrored, and "the device is fast" is not a
      * reason to hand someone the less accurate model for their language.
