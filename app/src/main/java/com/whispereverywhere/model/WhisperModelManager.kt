@@ -453,10 +453,16 @@ class WhisperModelManager(
      * unlinked, which is why the fix is the parking and not a smarter undo.
      *
      * `isInstalled(npu)` is therefore true before the transaction and true after a successful one.
-     * The only window in which a MIXED pair exists is between the two phase-2 renames — a pair of
-     * `renameTo` calls on one directory with nothing between them — and observing it requires
-     * arming the tier inside that window. If the roll-back itself fails, the message names exactly
-     * which of the two files are on the device and which are gone; see [rollBackFinalise].
+     * A MIXED pair exists only between the two phase-2 renames — a pair of `renameTo` calls on one
+     * directory with nothing between them — and observing it requires arming the tier inside that
+     * window **or killing the process inside it**. The second case used to outlive the window:
+     * per-file reconciliation would then have *rebuilt* the mix on the next launch and left it
+     * there. It no longer can — [reconcileStagingDebris] finishes an interrupted finalise in one
+     * direction for the whole tier (micro-round 2, N3) — so the window is again only as long as
+     * the two calls it spans.
+     *
+     * If the roll-back itself fails, the message names exactly which of the two files are on the
+     * device and which are gone; see [rollBackFinalise].
      *
      * **`prefs.notifyModelInstalled()` is the last thing it does, and the order is the contract**
      * (Q7b fix round, I1). It bumps `ModelInstallSignal.generation`, the key both chooser producers
@@ -581,7 +587,15 @@ class WhisperModelManager(
                                 }
                             }
                         }
-                        zis.closeEntry()
+                        // THE REFUSAL COMES BEFORE closeEntry() (micro-round 2, N1), and the order
+                        // is the whole of it. `ZipInputStream.closeEntry()` skips to the end of the
+                        // current entry, which for a DEFLATED entry means inflating and discarding
+                        // every remaining byte. Below that call the capped read has stopped the
+                        // WRITE, so the disk is safe — and the 40 KB bomb is still fully
+                        // decompressed on the IO thread, with progress frozen and Cancel dead,
+                        // which is most of the attack the cap was added to stop. Nothing needs
+                        // closing here: the enclosing `zis.use { }` closes the stream on the way
+                        // out, entry and all.
                         if (overLength) {
                             // The `finally` deletes the oversize `.part`, so at most one byte more
                             // than the tier's own file was ever on disk.
@@ -591,6 +605,7 @@ class WhisperModelManager(
                                 )
                             )
                         }
+                        zis.closeEntry()
                         if (got != accept.expectedBytes) {
                             return@withContext refuseImport(
                                 NpuAssetImport.wrongSizeRefusal(
@@ -692,13 +707,22 @@ class WhisperModelManager(
         renamed: List<File>,
         parked: Map<File, File>,
     ): String {
-        renamed.forEach { if (it.exists()) it.delete() }
-        var restoredAll = true
+        // Every step's RESULT counts, not just the restore loop's (micro-round 2, N2). `delete()`
+        // returns a Boolean and the first draft dropped it, so on a first import — where `parked`
+        // is empty and the restore loop therefore says nothing at all — a file that refused to be
+        // deleted still produced "nothing new was installed" while the new file sat on disk.
+        var undoneCleanly = true
+        renamed.forEach { if (it.exists() && !it.delete()) undoneCleanly = false }
         parked.forEach { (dest, previous) ->
             if (!previous.exists()) return@forEach
-            if (dest.exists() || !previous.renameTo(dest)) restoredAll = false
+            if (dest.exists() || !previous.renameTo(dest)) undoneCleanly = false
         }
-        if (restoredAll) return NpuAssetImport.rolledBackRefusal(what)
+        if (undoneCleanly) {
+            // A first import has no previous pair, and telling that user their existing install is
+            // unchanged is a sentence about something that never existed (N2).
+            return if (parked.isEmpty()) NpuAssetImport.rolledBackFreshRefusal(what)
+            else NpuAssetImport.rolledBackRefusal(what)
+        }
         // Report on the tier's own two files, by name, as they actually are right now.
         val names = NpuAssetImport.requiredEntries.keys
         val live = names.filter { File(modelsDir(), it).exists() }
@@ -707,22 +731,56 @@ class WhisperModelManager(
     }
 
     /**
-     * Reconcile `.prev` debris from an import that died between parking and renaming
-     * (fix round 1, I2). Run BEFORE the free-space budget and the already-installed check, so both
-     * see the true state of the directory.
+     * Finish the transaction a dead process left half-done (fix round 1, I2; **semantic corrected
+     * in micro-round 2, N3**). Runs BEFORE the free-space budget and the already-installed check,
+     * so both see the true state of the directory.
      *
-     * A parked file whose destination is missing is the **only** copy the device has, so it is
-     * restored, not swept — losing it to tidiness would be the same defect this parking exists to
-     * fix, arriving one process-death later. A parked file whose destination is present has been
-     * superseded and is 132-225 MB of debris.
+     * **The decision is made for the TIER, never per file.** The first draft decided each name on
+     * its own — destination present, drop the parked copy; destination missing, restore it — and
+     * that rule *synthesizes* a pair nothing ever wrote. Process death between the two phase-2
+     * renames leaves `dest1 = new`, `prev1`, `prev2`, `part2`; per-file reconciliation then drops
+     * `prev1` and restores `prev2`, producing **a new encoder beside an old decoder** with
+     * `isInstalled` true and no record anywhere that the two came from different imports. Today
+     * that mix is bounded — both halves are the same published asset version, and a cross-version
+     * mix would be caught at load by C7's alias guard — but it is a state no code path intended,
+     * and the "only window" claim in [importNpuAssetPair]'s KDoc was false while it was possible.
+     *
+     * So: either the dead transaction reached the end of phase 2 for **every** file, in which case
+     * finishing it forward is correct and the pair on disk is internally consistent, or it did not,
+     * in which case it is finished in the **roll-back** direction. Never half.
+     *
+     * **`.part` presence is what distinguishes the two, and it is load-bearing.** Phase 1 runs only
+     * after every copy has completed, so at the moment a `.prev` first exists, every name has a
+     * full `.part`. A `.part` that is now *gone* therefore proves phase 2 consumed it — which is
+     * exactly "this destination is the new file". Without that test, an interrupted **phase 1**
+     * (some names parked, the rest still holding their originals) would be misread as a completed
+     * phase 2 and the untouched originals would be deleted as though this import had placed them.
+     *
+     * With no parked file at all there is no interrupted finalise, and any `.part` is debris from
+     * an interrupted COPY — swept here, which is also what stops a process death mid-copy leaving
+     * 358 MB behind forever.
      */
     private fun reconcileStagingDebris(dir: File, names: Set<String>) {
-        for (name in names) {
-            val previous = File(dir, name + NpuAssetImport.PREVIOUS_SUFFIX)
-            if (!previous.exists()) continue
-            val dest = File(dir, name)
-            if (dest.exists()) previous.delete() else previous.renameTo(dest)
+        val parked = names.filter { File(dir, it + NpuAssetImport.PREVIOUS_SUFFIX).exists() }.toSet()
+        val movedIn = names.filter {
+            !File(dir, it + NpuAssetImport.PART_SUFFIX).exists() && File(dir, it).exists()
+        }.toSet()
+        when (NpuAssetImport.reconcileDecision(names, parked, movedIn)) {
+            NpuAssetImport.Reconcile.NOTHING -> Unit
+            NpuAssetImport.Reconcile.COMPLETE_FORWARD ->
+                parked.forEach { File(dir, it + NpuAssetImport.PREVIOUS_SUFFIX).delete() }
+            NpuAssetImport.Reconcile.ROLL_BACK -> {
+                // Remove what phase 2 placed FIRST, then put the parked files back — the same
+                // order, for the same reason, as rollBackFinalise: both claim the same paths.
+                movedIn.forEach { File(dir, it).delete() }
+                parked.forEach { name ->
+                    val previous = File(dir, name + NpuAssetImport.PREVIOUS_SUFFIX)
+                    val dest = File(dir, name)
+                    if (dest.exists()) previous.delete() else previous.renameTo(dest)
+                }
+            }
         }
+        names.forEach { File(dir, it + NpuAssetImport.PART_SUFFIX).delete() }
     }
 
     /** One refusal shape: the WE-DIAG line and the state the card renders come from one place. */

@@ -132,6 +132,57 @@ class NpuImportControllerTest {
     }
 
     @Test
+    fun aCancelledImportFinishesSweepingBeforeTheNextOneTouchesTheSameStagingPaths() {
+        // Micro-round 2, N4. `cancel()` returns at once, but the copy's `finally` — the one that
+        // deletes this tier's `.part` files — runs afterwards, and a cancelled read blocked inside
+        // SAF can take a while to reach it. Both attempts write the SAME two staging paths, so a
+        // retry starting in that gap races the dying coroutine's cleanup and can have its fresh
+        // bytes deleted underneath it.
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val sweptUp = CompletableDeferred<Unit>()
+        NpuImportController.start {
+            try {
+                entered.complete(Unit)
+                gate.await()
+                NpuAssetImport.ImportState.Installed
+            } finally {
+                // Stands in for importNpuAssetPair's own `finally`, which clears the .part files.
+                sweptUp.complete(Unit)
+            }
+        }
+        // Wait until the copy is genuinely underway before cancelling. Cancelling a coroutine that
+        // has not been dispatched yet never enters the work at all, so there would be no cleanup to
+        // race — a test that skipped this would pass or fail on scheduler timing rather than on the
+        // thing it is about.
+        runBlocking { withTimeout(5_000) { entered.await() } }
+        NpuImportController.cancel()
+
+        var predecessorHadFinished = false
+        val accepted = NpuImportController.start {
+            predecessorHadFinished = sweptUp.isCompleted
+            NpuAssetImport.ImportState.Installed
+        }
+        assertTrue(
+            "the retry is ACCEPTED rather than silently dropped — holding the guard shut until " +
+                "the sweep finished would make cancel-then-retry a no-op, which is the I3 failure " +
+                "shape wearing a different hat",
+            accepted,
+        )
+        assertEquals(
+            "and the panel says so immediately",
+            NpuAssetImport.ImportState.Running(0L, 0L),
+            NpuImportController.state.value,
+        )
+        awaitTerminal()
+        assertTrue(
+            "THE RACE: the second import's work must not begin until the cancelled one has run " +
+                "its cleanup, because the two write the same staging paths",
+            predecessorHadFinished,
+        )
+    }
+
+    @Test
     fun cancellingReturnsTheOwnerToRestSoARetryStartsClean() {
         val release = CompletableDeferred<Unit>()
         NpuImportController.start { release.await(); NpuAssetImport.ImportState.Installed }

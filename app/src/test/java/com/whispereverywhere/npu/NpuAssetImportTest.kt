@@ -339,6 +339,73 @@ class NpuAssetImportTest {
     }
 
     @Test
+    fun aRollBackOnADeviceWithNoPreviousPairSaysSoInsteadOfReassuringAboutOne() {
+        // Micro-round 2, N2. On a FIRST import there is nothing parked, so the "your previously
+        // installed model pair is unchanged" wording is a sentence about something that never
+        // existed — disorienting exactly when the user is least able to judge it.
+        val what = "The imported files did not verify on disk"
+        val fresh = NpuAssetImport.rolledBackFreshRefusal(what)
+        assertTrue("it names the step: $fresh", fresh.contains(what))
+        assertTrue("it is honest that nothing was installed: $fresh", fresh.contains("Nothing was installed"))
+        assertTrue(
+            "and it does not invent a previous install to reassure the user about: $fresh",
+            fresh.contains("had no model pair before"),
+        )
+        assertFalse(
+            "so it must not carry the had-a-pair wording",
+            fresh.contains("previously installed model pair is unchanged"),
+        )
+        assertTrue(
+            "the two roll-back messages are genuinely different sentences, not one with a tweak",
+            fresh != NpuAssetImport.rolledBackRefusal(what),
+        )
+    }
+
+    @Test
+    fun anInterruptedFinaliseIsFinishedInONEDirectionAndNeverHalf() {
+        // Micro-round 2, N3 — the semantic, executed. The per-file rule this replaces could
+        // SYNTHESIZE a pair nothing ever wrote: process death between the two phase-2 renames left
+        // dest1=new + prev1 + prev2 + part2, and deciding each name alone dropped prev1 and
+        // restored prev2 — a new encoder beside an old decoder, with isInstalled true.
+        val names = setOf(encoder, decoder)
+
+        assertEquals(
+            "nothing parked means no finalise was interrupted, whatever else is lying around",
+            NpuAssetImport.Reconcile.NOTHING,
+            NpuAssetImport.reconcileDecision(names, parked = emptySet(), movedIn = names),
+        )
+        assertEquals(
+            "both new files landed: the pair on disk IS the new pair and is internally consistent, " +
+                "so the transaction is finished FORWARD",
+            NpuAssetImport.Reconcile.COMPLETE_FORWARD,
+            NpuAssetImport.reconcileDecision(names, parked = names, movedIn = names),
+        )
+        assertEquals(
+            "THE ROW THAT MATTERS: one landed and one did not, which is the state that used to " +
+                "become a mixed pair. It is finished in the ROLL-BACK direction instead",
+            NpuAssetImport.Reconcile.ROLL_BACK,
+            NpuAssetImport.reconcileDecision(names, parked = names, movedIn = setOf(encoder)),
+        )
+        assertEquals(
+            "phase 2 had not started at all: roll back, which restores both parked files",
+            NpuAssetImport.Reconcile.ROLL_BACK,
+            NpuAssetImport.reconcileDecision(names, parked = names, movedIn = emptySet()),
+        )
+        assertEquals(
+            "and an interrupted PHASE 1 — only one file parked — is a roll-back too, never a " +
+                "forward completion that would delete an original this import never placed",
+            NpuAssetImport.Reconcile.ROLL_BACK,
+            NpuAssetImport.reconcileDecision(names, parked = setOf(decoder), movedIn = setOf(encoder)),
+        )
+        assertEquals(
+            "an empty tier cannot be 'complete' by vacuous truth — that would drop parked files " +
+                "with nothing having landed",
+            NpuAssetImport.Reconcile.ROLL_BACK,
+            NpuAssetImport.reconcileDecision(emptySet(), parked = setOf(encoder), movedIn = emptySet()),
+        )
+    }
+
+    @Test
     fun theStagingSuffixesAreDistinctSoNeitherSweepCanEatTheOther() {
         // `.part` is this import's own in-progress write and is always safe to delete; `.prev` is
         // the user's PREVIOUS installed file and may be the only copy on the device. Collapsing

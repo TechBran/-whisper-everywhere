@@ -45,9 +45,15 @@ import kotlinx.coroutines.launch
  *
  * ### What it deliberately does not survive
  *
- * Process death. The `.part` files are cleaned by the next import's staging reconciliation rather
- * than resumed; a 358 MB copy is not worth a foreground service on a tier that ships to one owner
- * on one phone. Stated rather than implied.
+ * Process death. A 358 MB copy is not worth a foreground service on a tier that ships to one owner
+ * on one phone, so an in-flight import is lost and the next one starts over.
+ *
+ * What cleans up after it is worth stating precisely, because an earlier draft of this KDoc got it
+ * wrong: within a live process the `.part` files are deleted by `importNpuAssetPair`'s own
+ * `finally`, which runs on every failure, refusal and cancellation. Only after a process death is
+ * there anything left for the next import to sweep, and that sweep is
+ * `WhisperModelManager.reconcileStagingDebris` — whose real subject is the `.prev` files of an
+ * interrupted finalise; it clears orphaned `.part` files on the same pass.
  */
 object NpuImportController {
 
@@ -86,10 +92,24 @@ object NpuImportController {
         work: suspend (onProgress: (soFar: Long, total: Long) -> Unit) -> NpuAssetImport.ImportState,
     ): Boolean = synchronized(this) {
         if (isRunning()) return false
+        // The PREVIOUS job, which may be a cancelled one still unwinding (micro-round 2, N4).
+        // `cancel()` returns immediately, but the coroutine's `finally` — the one that deletes this
+        // tier's `.part` files — runs afterwards, and a cancelled read blocked inside SAF can take
+        // a while to get there. Two attempts write the SAME staging paths, so a new import that
+        // starts in that gap races the dying one's cleanup and can have its freshly written bytes
+        // deleted out from under it.
+        //
+        // Held by JOIN rather than by widening the guard, and the difference matters: a guard that
+        // stayed closed until the finally had run would make "cancel, then immediately tap Import"
+        // a silent no-op, which is exactly the I3 failure shape. This way the tap is accepted, the
+        // panel shows Running at once, and the copy simply waits for its predecessor to finish
+        // clearing the paths it is about to use.
+        val previous = job
         // Published BEFORE the work is launched, so there is no window in which the button is back
         // and the import has already begun.
         _state.value = NpuAssetImport.ImportState.Running(0L, 0L)
         job = scope.launch {
+            previous?.join()
             val outcome = try {
                 work { soFar, total ->
                     _state.value = NpuAssetImport.ImportState.Running(soFar, total)
@@ -110,10 +130,13 @@ object NpuImportController {
      * Abandon a running import. The copy's own `finally` clears its `.part` files, so a retry
      * starts clean; the state returns to [NpuAssetImport.ImportState.Idle] immediately, because
      * from the user's point of view the import they cancelled is over the moment they say so.
+     *
+     * **The job reference is deliberately KEPT** (micro-round 2, N4). Nulling it here dropped the
+     * only handle on a coroutine that had not finished deleting its staging files, so the next
+     * import raced it for the same paths. [start] joins whatever is left here before it writes.
      */
     fun cancel() {
         job?.cancel()
-        job = null
         _state.value = NpuAssetImport.ImportState.Idle
     }
 }

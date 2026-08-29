@@ -491,6 +491,90 @@ class UnsupportedTierGatePinTest {
             liveIndexOfOrFail(import, "importNpuAssetPair", "NpuAssetImport.overLengthRefusal(") <
                 liveIndexOfOrFail(import, "importNpuAssetPair", "parts.values.forEach { if (it.exists()) it.delete() }"),
         )
+        // MICRO-ROUND 2, N1 — the EIGHTH application of the presence-vs-ORDER rule on this branch,
+        // and the sharpest illustration of it yet: the cap, the detector, the guard and the message
+        // were all correct and correctly ordered relative to each other, and one call sitting above
+        // them gave most of the attack back.
+        //
+        // `ZipInputStream.closeEntry()` skips to the end of the current entry, which for a DEFLATED
+        // entry means inflating and discarding every remaining byte. Below the refusal, the capped
+        // read has stopped the WRITE — the disk is safe — while the 40 KB bomb is still fully
+        // decompressed on the IO thread with progress frozen and Cancel dead. Nothing needs closing
+        // on this path: the enclosing `zis.use { }` closes the stream, entry and all.
+        // Scoped to the ACCEPTED-ENTRY block: `zis.closeEntry()` appears three times in this method
+        // (the directory skip, the ignored-entry branch, and the one after the copy), and the first
+        // two legitimately precede the refusal. Comparing against the whole method would compare
+        // against the wrong call and fail on correct code.
+        val acceptedEntry = import.substringAfter("val part = File(dir, accept.fileName")
+        assertTrue(
+            "the accepted-entry block was found",
+            acceptedEntry.isNotEmpty() && acceptedEntry.length < import.length,
+        )
+        assertTrue(
+            "THE OVER-LENGTH REFUSAL MUST PRECEDE closeEntry(), which for a DEFLATED entry inflates " +
+                "and discards everything still to come. Below it the write is stopped and the disk " +
+                "is safe, while the bomb is decompressed in full on the IO thread with progress " +
+                "frozen and Cancel dead.",
+            liveIndexOfOrFail(acceptedEntry, "the accepted-entry block", "if (overLength) {") <
+                liveIndexOfOrFail(acceptedEntry, "the accepted-entry block", "zis.closeEntry()"),
+        )
+    }
+
+    @Test
+    fun anInterruptedFinaliseIsReconciledForTheWholeTierAndNeverFileByFile() {
+        // Micro-round 2, N3. `NpuAssetImportTest` proves the DECISION; this pins that the manager
+        // asks for it instead of deciding per file again — which is what could synthesize a pair
+        // nothing ever wrote (new encoder beside old decoder, isInstalled true).
+        val reconcile = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    private fun reconcileStagingDebris(",
+        )
+        assertEquals(
+            "the direction is decided once, for the tier, by the pure rule",
+            1,
+            count(reconcile, "when (NpuAssetImport.reconcileDecision(names, parked, movedIn))"),
+        )
+        // The restore statement itself survives — it is correct INSIDE the roll-back branch. What
+        // is gone is deciding with it, per name, for the whole directory: that is the shape that
+        // could synthesize a mixed pair, and its loop header is the thing to keep absent.
+        assertEquals(
+            "nothing iterates the tier's names deciding each one on its own any more",
+            0,
+            count(reconcile, "for (name in names) {"),
+        )
+        assertTrue(
+            "and the restore is reached only THROUGH the tier-wide decision — it sits inside the " +
+                "ROLL_BACK branch, not above the `when` where it would run unconditionally",
+            indexOfOrFail(reconcile, "reconcileStagingDebris", "NpuAssetImport.Reconcile.ROLL_BACK -> {") <
+                indexOfOrFail(reconcile, "reconcileStagingDebris", "if (dest.exists()) previous.delete() else previous.renameTo(dest)"),
+        )
+        assertEquals(
+            "`.part` presence is what proves phase 2 consumed a staged file, and it is what stops " +
+                "an interrupted PHASE 1 being misread as a completed phase 2 — which would delete " +
+                "originals this import never placed",
+            1,
+            count(reconcile, "!File(dir, it + NpuAssetImport.PART_SUFFIX).exists() && File(dir, it).exists()"),
+        )
+        assertEquals(
+            "a completed phase 2 is finished forward: the parked copies are simply dropped",
+            1,
+            count(reconcile, "parked.forEach { File(dir, it + NpuAssetImport.PREVIOUS_SUFFIX).delete() }"),
+        )
+        // The same ORDER invariant as rollBackFinalise, for the same reason: both statements claim
+        // the same paths, and restoring before removing puts the previous file back and then
+        // deletes it.
+        assertTrue(
+            "the roll-back branch REMOVES what phase 2 placed before restoring what it parked",
+            liveIndexOfOrFail(reconcile, "reconcileStagingDebris", "movedIn.forEach { File(dir, it).delete() }") <
+                liveIndexOfOrFail(reconcile, "reconcileStagingDebris", "if (dest.exists()) previous.delete() else previous.renameTo(dest)"),
+        )
+        assertEquals(
+            "orphaned .part files are swept on the same pass, so a process death mid-copy does not " +
+                "leave 358 MB behind for good",
+            1,
+            count(reconcile, "names.forEach { File(dir, it + NpuAssetImport.PART_SUFFIX).delete() }"),
+        )
     }
 
     @Test
@@ -554,13 +638,22 @@ class UnsupportedTierGatePinTest {
         // prevent, spelled with the same two statements in the other order.
         assertTrue(
             "the roll-back REMOVES what this import moved in BEFORE restoring what it parked",
-            liveIndexOfOrFail(rollback, "rollBackFinalise", "renamed.forEach { if (it.exists()) it.delete() }") <
-                liveIndexOfOrFail(rollback, "rollBackFinalise", "if (dest.exists() || !previous.renameTo(dest)) restoredAll = false"),
+            liveIndexOfOrFail(rollback, "rollBackFinalise", "renamed.forEach { if (it.exists() && !it.delete()) undoneCleanly = false }") <
+                liveIndexOfOrFail(rollback, "rollBackFinalise", "if (dest.exists() || !previous.renameTo(dest)) undoneCleanly = false"),
+        )
+        // Micro-round 2, N2. `delete()` returns a Boolean and the first draft dropped it, so on a
+        // FIRST import — where `parked` is empty and the restore loop therefore falsifies nothing
+        // at all — a file that refused to be deleted still produced "nothing new was installed"
+        // while sitting on disk. Every step's result now feeds the one truthfulness decision.
+        assertEquals(
+            "a failed delete makes the roll-back UNCLEAN, exactly as a failed restore does",
+            1,
+            count(rollback, "renamed.forEach { if (it.exists() && !it.delete()) undoneCleanly = false }"),
         )
         assertEquals(
-            "a fully restored roll-back says the previous pair is unchanged",
+            "and a device with nothing parked gets the wording for a device that never had a pair",
             1,
-            count(rollback, "return NpuAssetImport.rolledBackRefusal(what)"),
+            count(rollback, "return if (parked.isEmpty()) NpuAssetImport.rolledBackFreshRefusal(what)"),
         )
         assertEquals(
             "and a failed one reports the device's REAL state instead, read live off disk rather " +
@@ -574,18 +667,9 @@ class UnsupportedTierGatePinTest {
             1,
             count(import, "reconcileStagingDebris(dir, required.keys)"),
         )
-        val reconcile = body(
-            manager,
-            "WhisperModelManager.kt",
-            "    private fun reconcileStagingDebris(",
-        )
-        assertEquals(
-            "a parked file whose destination is missing is RESTORED, not swept: it is then the " +
-                "only copy the device has, and sweeping it would be this same defect arriving one " +
-                "process-death later",
-            1,
-            count(reconcile, "if (dest.exists()) previous.delete() else previous.renameTo(dest)"),
-        )
+        // The reconciliation's own semantic moved to
+        // `anInterruptedFinaliseIsReconciledForTheWholeTierAndNeverFileByFile` in micro-round 2,
+        // where the per-file rule this used to assert is now asserted ABSENT.
     }
 
     @Test

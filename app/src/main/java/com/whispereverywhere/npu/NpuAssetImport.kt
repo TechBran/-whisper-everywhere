@@ -216,6 +216,18 @@ object NpuAssetImport {
             "and nothing new was installed."
 
     /**
+     * The same roll-back on a device that **had no pair to begin with** (micro-round 2, N2).
+     *
+     * [rolledBackRefusal] promises that "your previously installed model pair is unchanged", which
+     * on a first import is a sentence about something that never existed. It is not false so much
+     * as disorienting — a user installing the tier for the first time is told their existing
+     * install survived. The state is genuinely different and gets its own words.
+     */
+    fun rolledBackFreshRefusal(what: String): String =
+        "$what, so the import was rolled back. Nothing was installed — this device had no model " +
+            "pair before, and has none now. Try the import again."
+
+    /**
      * A finalise step failed AND the roll-back failed — **the one message that may not say
      * "nothing was installed", because something was** (fix round 1, I2).
      *
@@ -231,6 +243,54 @@ object NpuAssetImport {
             if (gone.isEmpty()) "" else "; missing: " + gone.sorted().joinToString(" and ") { safeName(it) }
         return "$what, and the previous files could not be put back. On this device now, " +
             "$liveText$goneText. Import the model pair zip again to repair this."
+    }
+
+    /**
+     * What to do about `.prev` files found at the start of an import (micro-round 2, N3).
+     *
+     * They exist only when a previous import died **inside** the two-phase finalise, so the
+     * question is never "tidy up" — it is "which direction did that transaction not get to
+     * finish in".
+     */
+    enum class Reconcile {
+        /** No parked file: nothing was interrupted mid-finalise. */
+        NOTHING,
+
+        /** Every new file landed. The pair on disk IS the new pair; drop the parked copies. */
+        COMPLETE_FORWARD,
+
+        /** The finalise was interrupted. Undo it: remove what landed, put the parked files back. */
+        ROLL_BACK,
+    }
+
+    /**
+     * The reconciliation semantic, as a pure decision (micro-round 2, N3).
+     *
+     * **The per-FILE rule this replaces could synthesize a pair that never existed.** Deciding each
+     * name on its own — destination present, drop the parked copy; destination missing, restore it
+     * — turns "the dead process renamed the encoder and then died" into *new encoder beside old
+     * decoder*, with `isInstalled` true and nothing anywhere saying the two came from different
+     * imports. That is not a recovery, it is a state no code path ever wrote.
+     *
+     * So the decision is made for the TIER: either the interrupted transaction reached the end of
+     * phase 2 for every file — in which case finishing it forward is correct and the pair is
+     * consistent — or it did not, in which case it is finished in the **roll-back** direction. The
+     * one thing it may never do is finish half of it.
+     *
+     * @param names every file the tier needs.
+     * @param parked names with a `.prev` on disk. Empty means no finalise was interrupted.
+     * @param movedIn names whose staged `.part` is gone while the destination is present — the
+     *        evidence that phase 2 already renamed that one into place. Meaningful only when
+     *        [parked] is non-empty, because a settled installation looks identical.
+     */
+    fun reconcileDecision(
+        names: Set<String>,
+        parked: Set<String>,
+        movedIn: Set<String>,
+    ): Reconcile = when {
+        parked.isEmpty() -> Reconcile.NOTHING
+        names.isNotEmpty() && movedIn.containsAll(names) -> Reconcile.COMPLETE_FORWARD
+        else -> Reconcile.ROLL_BACK
     }
 
     /** The refusal for a file that could not be read as a zip at all. */
