@@ -598,13 +598,24 @@ class NpuNativeContractTest {
             liveOffsets(token, "\"text-token\"").isNotEmpty()
         )
         val decode = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
-        assertTrue(
-            "nativeDecodeSegment's instrumentation must route every id it prints through " +
-                "diagToken — the step input, the raw argmax, the post-mask argmax and the first " +
-                "generated token. Found ${liveOffsets(decode, "diagToken(").size} live call " +
-                "sites, expected at least 5.",
-            liveOffsets(decode, "diagToken(").size >= 5
-        )
+        // EACH ID BY NAME, not a count of wrappers. A count is a weaker claim than it looks:
+        // there are four distinct ids on these lines across six call sites, so "at least five"
+        // is satisfied by unwrapping any one of them — measured, as row D2, which SURVIVED the
+        // count form of this assertion and kills the form below.
+        listOf(
+            "tokenIn" to "the token fed to this step (a PROMPT id early, a GENERATED id after)",
+            "h.argmax" to "the raw pre-mask argmax",
+            "tok" to "the post-mask argmax — the token this step actually emits",
+            "firstGenerated" to "the first generated token, on the result line",
+        ).forEach { (id, what) ->
+            assertTrue(
+                "$what must reach its log line through diagToken($id, …). Printing it directly " +
+                    "puts a raw vocabulary id in logcat, and every id below EOT is a word the " +
+                    "user said. Live diagToken sites: " +
+                    liveLines(decode, "diagToken(").map { it.trim() },
+                liveOffsets(decode, "diagToken($id,").isNotEmpty()
+            )
+        }
         assertTrue(
             "the prompt echo must go through diagIdList, which applies the same rule per id. The " +
                 "prompt is four specials today and would carry previous-segment TEXT if this tier " +
