@@ -260,9 +260,22 @@ class BatchTranscriber(
         }
     }
 
+    /**
+     * (4.0, Q9 fix round, I1) The path is chosen by [BatchLocalModel], not read straight off
+     * `installedModelPath()`. This class is hard-wired to whisper.cpp, and since 4.0 the selected
+     * tier's own file is not necessarily something whisper.cpp can load — for `npu` it is a QAIRT
+     * context binary that `WhisperNative.init` refuses by magic number, producing a failed job with
+     * nothing naming the cause. The substitution is gated on the tier, so every ggml tier
+     * (`ultra` included, which the donor picker deliberately excludes) keeps the exact file it has
+     * always been given.
+     */
     private suspend fun loadCtx(): Long = withContext(nativeDispatcher) {
-        val path = modelPathProvider.installedModelPath()
-            ?: error("No on-device model installed — cannot transcribe locally")
+        val tierId = modelPathProvider.selectedTierId()
+        val path = BatchLocalModel.pathFor(
+            tierId = tierId,
+            installedPath = modelPathProvider.installedModelPath(),
+            ggmlSubstitutePath = modelPathProvider.cpuTierModelPath(),
+        ) ?: error(BatchLocalModel.refusal(tierId))
         backend.load(path)
     }
 

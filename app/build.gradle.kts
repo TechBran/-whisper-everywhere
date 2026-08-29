@@ -279,6 +279,13 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt",
         "src/main/java/com/whispereverywhere/MainActivity.kt",
         "src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt",
+        // (4.0 Q9 fix round, I1) BatchTranscriber.kt joins for the NARROW reason, the same one
+        // NpuWhisperBackend.kt is here for: BatchLocalModelTest's wiring pin includes NEGATIVE
+        // assertions over the whole file INCLUDING comments (`installedModelPath()` must not be read
+        // straight in loadCtx; the refusal string must not be re-spelled there and drift from the
+        // policy that owns it). A comment-only edit produces byte-identical .class files, so without
+        // this entry the one mutation those pins exist to catch is the one that never re-runs them.
+        "src/main/java/com/whispereverywhere/transcription/batch/BatchTranscriber.kt",
         "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)

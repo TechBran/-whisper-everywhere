@@ -246,7 +246,9 @@ class NpuBackendWiringTest {
      */
     @Test
     fun theServicePassesTheSelectedBackendAtConstructionExactlyOnce() {
-        val warm = memberBody(service, "    private fun warmLocalEngine(): LocalWhisperEngine {")
+        val warm = memberBody(
+            service, "    private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {"
+        )
 
         assertEquals(
             "warmLocalEngine passes `backend =` exactly once. Zero is this file's own history — " +
@@ -274,10 +276,11 @@ class NpuBackendWiringTest {
             ),
         )
         assertEquals(
-            "exactly one LocalWhisperEngine( is constructed in this whole file — the cached one. " +
-                "A second construction site is a second native context and a second tier decision.",
+            "exactly one LocalWhisperEngine( is constructed on a LIVE line in this whole file — " +
+                "the cached one. A second construction site is a second native context and a " +
+                "second tier decision. (Live-scoped: the KDoc quotes the pre-Q9 expression.)",
             1,
-            count(service, "LocalWhisperEngine("),
+            liveOffsets(service, "LocalWhisperEngine(").size,
         )
         assertEquals(
             "the tier routed on is `selectedModelId` — the id the chooser WRITES, which Q8's D-2 " +
@@ -356,6 +359,84 @@ class NpuBackendWiringTest {
     }
 
     /**
+     * C1 (Q9 review) — **only a session start may tear the cached engine down.**
+     *
+     * `warmLocalEngine` used to be `localEngine ?: LocalWhisperEngine(…)`: pure, idempotent, safe
+     * from anywhere. Q9 gave it a destructive branch and did not re-audit its callers, and
+     * `LocalWhisperEngine.shutdown()` calls `executor.shutdown()` — after which `commit()`'s
+     * unguarded `executor.execute { runSegment(…) }` throws `RejectedExecutionException` from the
+     * **capture thread**, which has no handler, while `sendAudio` keeps filling a buffer nobody will
+     * ever cut. Two callers could reach it mid-session: the boot prewarm (no gate at all) and the
+     * switch collector (whose IDLE gate now sits above a suspension point). The sharpest instance is
+     * the Q10a script itself — service starts, user taps inside 1500 ms, the tier declines, and the
+     * prewarm coroutine shuts the live engine down.
+     *
+     * The permission travels with the caller because it **cannot** be read from state:
+     * `startRecording` sets `CONNECTING` before resolving the engine, so a `currentState` guard
+     * would block the one rebuild that must happen and permit none. That trap is pinned too.
+     */
+    @Test
+    fun onlyASessionStartMayTearTheCachedEngineDown() {
+        assertEquals(
+            "the permission DEFAULTS to false, so a caller added later is safe by omission — the " +
+                "property Q9 lost by making a pure function destructive without changing its shape",
+            1,
+            count(service, "private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {"),
+        )
+        assertEquals(
+            "exactly one caller passes it, and it is named at the call site",
+            1,
+            count(service, "warmLocalEngine(allowRebuild = true)"),
+        )
+        val resolve = memberBody(service, "    private fun resolveTranscriptionEngine(): TranscriptionEngine {")
+        assertEquals(
+            "and that caller is resolveTranscriptionEngine — session start, before any audio " +
+                "exists and before any commit() can be queued, which is the entire safety argument",
+            1,
+            count(resolve, "val local = warmLocalEngine(allowRebuild = true)"),
+        )
+        listOf("warmLocalEngine().prewarm()", "warmLocalEngine().prewarmModelSwitch()").forEach { site ->
+            assertEquals(
+                "`$site` takes the cached engine as it is. A tier change or a fallback it observes " +
+                    "is applied at the NEXT session start, which always precedes the next segment — " +
+                    "\"mid-session triggers are skipped, never deferred\", applied one level in.",
+                1,
+                count(service, site),
+            )
+        }
+        assertEquals(
+            "four live mentions of warmLocalEngine( in this file — the declaration and its three " +
+                "call sites. A fifth cannot be added without moving this number, which is what " +
+                "makes the two assertions above a complete audit rather than a spot check.",
+            4,
+            liveOffsets(service, "warmLocalEngine(").size,
+        )
+        // THE ORDER, and it is the invariant rather than the presence: a permission check that runs
+        // after shutdown() has already run is not a check. Every statement survives the swap.
+        val warm = memberBody(
+            service, "    private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {"
+        )
+        val permission = liveOffsets(
+            warm, "if (cached != null && (onNpu == localEngineOnNpu || !allowRebuild)) return cached"
+        )
+        val teardown = liveOffsets(warm, "cached.shutdown()")
+        assertTrue("the permission guard must be on a live line", permission.isNotEmpty())
+        assertTrue("the teardown must be on a live line", teardown.isNotEmpty())
+        assertTrue(
+            "the guard (${permission.first()}) must precede the teardown (${teardown.first()})",
+            permission.first() < teardown.first(),
+        )
+        // THE TRAP. startRecording sets CONNECTING at its top and resolves the engine afterwards, so
+        // a state-keyed guard inside this function would refuse the only rebuild that is allowed.
+        assertEquals(
+            "warmLocalEngine must not read currentState: startRecording has already left IDLE by " +
+                "the time it calls in, so a state guard permits nothing and blocks everything",
+            0,
+            count(warm, "currentState"),
+        )
+    }
+
+    /**
      * Rebuild-on-fallback, half two — and the ORDER, which is the part presence cannot see.
      *
      * `shutdown()` queues the stale engine's `backend.release`, and for `NpuWhisperBackend` that
@@ -368,7 +449,9 @@ class NpuBackendWiringTest {
      */
     @Test
     fun theRebuildOnFallbackSiteShutsTheStaleEngineDownFirst() {
-        val warm = memberBody(service, "    private fun warmLocalEngine(): LocalWhisperEngine {")
+        val warm = memberBody(
+            service, "    private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {"
+        )
 
         val shutdown = liveOffsets(warm, "cached.shutdown()")
         val construct = liveOffsets(warm, "val built = LocalWhisperEngine(")
@@ -394,7 +477,7 @@ class NpuBackendWiringTest {
                 warm,
                 block(
                     "        val cached = localEngine",
-                    "        if (cached != null && onNpu == localEngineOnNpu) return cached",
+                    "        if (cached != null && (onNpu == localEngineOnNpu || !allowRebuild)) return cached",
                 ),
             ),
         )

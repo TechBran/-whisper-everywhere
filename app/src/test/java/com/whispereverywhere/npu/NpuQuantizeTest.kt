@@ -330,4 +330,67 @@ class NpuQuantizeTest {
             goodOut.get(0).toInt() and 0xFFFF)
         assertEquals(zeroPoint, goodOut.get(NpuQuantize.MEL_VALUES - 1).toInt() and 0xFFFF)
     }
+
+    /**
+     * THE STRIDE BISECTOR'S ARITHMETIC (4.0, Q9 fix round, I2).
+     *
+     * `NpuDiag.mel` is only worth emitting if `row40 == row79` really is the copy-stride defect's
+     * signature, and that rests entirely on this function reading row-major with stride
+     * [NpuQuantize.MEL_FRAMES]. So the row identity is proved, and then the defect itself is
+     * simulated: a copy that used whisper's internal stride (6000) instead of 3000 fills only the
+     * first half of the buffer and leaves rows 40-79 untouched — which is exactly what the line has
+     * to make visible on a device with no adb.
+     */
+    @Test
+    fun melRowSumReadsRowMajorAndMakesTheStrideDefectVisible() {
+        val mel = NpuQuantize.newMelFloatBuffer().asFloatBuffer()
+
+        // Row r filled with the value r: every row sum is r * 3000, so a wrong stride cannot
+        // produce a right answer by coincidence.
+        for (b in 0 until NpuQuantize.MEL_BINS) {
+            for (f in 0 until NpuQuantize.MEL_FRAMES) {
+                mel.put(b * NpuQuantize.MEL_FRAMES + f, b.toFloat())
+            }
+        }
+        assertEquals(0.0, NpuQuantize.melRowSum(mel, 0), 0.0)
+        assertEquals(40.0 * NpuQuantize.MEL_FRAMES, NpuQuantize.melRowSum(mel, 40), 0.0)
+        assertEquals(79.0 * NpuQuantize.MEL_FRAMES, NpuQuantize.melRowSum(mel, 79), 0.0)
+        assertNotEquals(
+            "rows 40 and 79 must differ on a CORRECTLY strided mel — otherwise the bisector would " +
+                "report the defect on healthy data and mean nothing",
+            NpuQuantize.melRowSum(mel, 40),
+            NpuQuantize.melRowSum(mel, 79),
+        )
+        assertEquals("absolute reads only: the shared view's position must not move", 0, mel.position())
+
+        // THE DETECTABLE PROPERTY, simulated — stated as what it is rather than as a
+        // reconstruction of the fork's bug. `whisper_jni.cpp`'s own comment names the failure as
+        // "reads bins 0-39 at wrong offsets and NEVER TOUCHES bins 40-79"; whatever the precise
+        // arithmetic that produces it, its observable form is an upper band that was never written.
+        // Two untouched rows have identical sums, and that equality is what the line surfaces.
+        val broken = NpuQuantize.newMelFloatBuffer().asFloatBuffer()
+        for (b in 0 until 40) {
+            for (f in 0 until NpuQuantize.MEL_FRAMES) {
+                broken.put(b * NpuQuantize.MEL_FRAMES + f, (b + 1).toFloat())
+            }
+        }
+        assertEquals(
+            "rows 40 and 79 are both untouched, so their sums are equal — one glance, on a device, " +
+                "with no adb and no reference transcript to compare against",
+            NpuQuantize.melRowSum(broken, 40),
+            NpuQuantize.melRowSum(broken, 79),
+            0.0,
+        )
+        assertTrue(
+            "while row 0 carries data, so the line cannot be dismissed as an empty buffer — which " +
+                "is the difference between a bisector and a null reading",
+            NpuQuantize.melRowSum(broken, 0) != 0.0,
+        )
+
+        // A row outside the band is a programming error, not a value to report.
+        assertThrows(IllegalArgumentException::class.java) { NpuQuantize.melRowSum(mel, -1) }
+        assertThrows(IllegalArgumentException::class.java) {
+            NpuQuantize.melRowSum(mel, NpuQuantize.MEL_BINS)
+        }
+    }
 }

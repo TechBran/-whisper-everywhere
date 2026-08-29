@@ -172,6 +172,102 @@ class NpuDiagTest {
         )
     }
 
+    // ---------------------------------------- 4.0 Q9 fix round (I2): the mel stride bisector
+
+    /**
+     * THE `mel:` LINE — format and emission, the two halves the F-rule always guards separately.
+     *
+     * **It was promised by three ledger entries and did not exist.** Until this fix `mel: bins=`
+     * occurred exactly twice in the repository: a comment in `whisper_jni.cpp` and a KDoc in
+     * `MelExportContractTest`. Nothing emitted it, and the Q10a run-book told the owner to grep for
+     * it. That is the failure this test exists to make impossible to repeat.
+     *
+     * **What it detects.** whisper's internal mel is bin-major with stride `mel.n_len` — 6000 for a
+     * 30 s window, because `log_mel_spectrogram` appends 30 s of zeros before framing — while the
+     * destination stride is 3000. A flat copy reads bins 0-39 at wrong offsets and never touches
+     * bins 40-79. Nothing downstream can see it: the encoder accepts structured noise and
+     * transcribes it fluently into different words. `row40 == row79` is the whole diagnosis.
+     */
+    @Test
+    fun theMelLineIsOneLiteralAndItsRowsAreTheStrideBisector() {
+        val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
+        assertEquals(
+            "mel: bins=80 frames=3000 row0=1234.568 row40=0.000 row79=0.000",
+            NpuDiag.mel(1234.5678, 0.0, 0.0),
+        )
+        assertEquals(
+            "negatives are ordinary here — a log-mel is mostly negative, and a formatter that " +
+                "mangled the sign would make every row look alike",
+            "mel: bins=80 frames=3000 row0=-91234.500 row40=-88.250 row79=-0.001",
+            NpuDiag.mel(-91234.5, -88.25, -0.001),
+        )
+        assertEquals(
+            "the `mel: bins=` prefix is ONE contiguous literal on one live line. Assembling it " +
+                "produces identical output and breaks every grep written against the format.",
+            1,
+            liveLineCount(diag, "\"mel: bins="),
+        )
+        assertTrue(
+            "and the whole field sequence lives in that one literal, in order — row0, row40, row79",
+            diag.contains("\"mel: bins=%d frames=%d row0=%.3f row40=%.3f row79=%.3f\""),
+        )
+        assertEquals(
+            "Locale.US, not the default. On a comma-decimal device `%.3f` yields `row0=1234,567`, " +
+                "which breaks every parser and is *almost* readable — the kind of defect that " +
+                "survives review.",
+            1,
+            liveLineCount(diag, "java.util.Locale.US,"),
+        )
+
+        // EMISSION, and its POSITION, which is the invariant on both sides.
+        val backend =
+            source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+        assertEquals(
+            "the backend emits the mel line exactly once per segment",
+            1,
+            liveLineCount(backend, "NpuDiag.mel("),
+        )
+        assertEquals(
+            "row 79 is taken from MEL_BINS - 1, not a bare 79: the last row IS the claim, and a " +
+                "future 128-bin tier would leave a literal 79 measuring the middle of the band",
+            1,
+            liveLineCount(backend, "NpuQuantize.melRowSum(melView, NpuQuantize.MEL_BINS - 1),"),
+        )
+        assertEquals(
+            "the view is taken fresh and read absolutely, so the shared direct buffer handed on to " +
+                "melToU16 and then nativeEncode keeps its position untouched",
+            1,
+            liveLineCount(backend, "val melView = mel.asFloatBuffer()"),
+        )
+        val pcmToMel = offsetOfLive(backend, "if (!WhisperNative.pcmToMel(melCtx, samples, mel)) {")
+        val melLine = offsetOfLive(backend, "NpuDiag.mel(")
+        val quantise = offsetOfLive(backend, "NpuQuantize.melToU16(")
+        assertTrue(
+            "the mel line ($melLine) must be emitted AFTER pcmToMel's success guard ($pcmToMel). " +
+                "The mel buffer is reused across segments, so a line above that guard prints the " +
+                "PREVIOUS segment's spectrogram and attributes it to one whose mel never ran.",
+            pcmToMel in 0 until melLine,
+        )
+        assertTrue(
+            "and BEFORE melToU16 ($quantise): a bisector that cannot separate the spectrogram from " +
+                "the quantisation is not a bisector",
+            melLine < quantise,
+        )
+    }
+
+    /** First LIVE offset of [needle] in [scope], or -1. Comments never satisfy an ordering claim. */
+    private fun offsetOfLive(scope: String, needle: String): Int {
+        var at = 0
+        for (line in scope.split("\n")) {
+            val trimmed = line.trimStart()
+            val commented =
+                trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")
+            if (!commented && line.contains(needle)) return at
+            at += line.length + 1
+        }
+        return -1
+    }
+
     // ---------------------------------------- 4.0 Q7b fix round (I3): the offer line
 
     @Test

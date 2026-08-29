@@ -138,6 +138,14 @@ class WhisperModelManager(
     }
 
     /**
+     * The selected tier's catalog id (4.0, Q9 fix round). Straight off preferences and NOT through
+     * [installedModel]: the question the batch path asks is *which tier was chosen*, so that it can
+     * decide whether the file [installedModelPath] just handed it is a whisper.cpp ggml at all.
+     * Filtering by installedness here would answer null for the exact case that needs an answer.
+     */
+    override fun selectedTierId(): String? = prefs.selectedModelId
+
+    /**
      * May [model]'s file serve as the 80-bin mel donor and CPU fallback? See [cpuTierModelPath] for
      * why each clause is here; `retired` tiers are deliberately eligible — eco and base are ordinary
      * 80-bin whisper models, and an installed one is a perfectly good donor and a real fallback.

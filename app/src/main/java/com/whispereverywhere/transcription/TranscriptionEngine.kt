@@ -530,4 +530,24 @@ interface ModelPathProvider {
      * of the 358 MB of NPU assets is touched. `WhisperModelManager` supplies the real answer at Q8.
      */
     fun cpuTierModelPath(): String? = null
+
+    /**
+     * The catalog id of the SELECTED tier, or null when nothing is selected (4.0, Q9 fix round).
+     *
+     * A **String**, deliberately, and not a `WhisperModel`: this seam lives in the transcription
+     * layer and must not acquire a dependency on the catalog just to answer "which one". The one
+     * consumer resolves it through `WhisperCatalog` on its own side, where that lookup is pure and
+     * JVM-testable.
+     *
+     * It exists because [installedModelPath] answers *the selected tier's primary file* and, since
+     * 4.0, that file is not necessarily a whisper.cpp ggml — for `npu` it is a QAIRT context binary,
+     * which `WhisperNative.init` refuses by magic number. A caller that is hard-wired to
+     * whisper.cpp (the batch path) therefore needs to know **which tier it was handed**, so it can
+     * substitute [cpuTierModelPath] rather than fail on a file that was never meant for it. See
+     * `BatchLocalModel`.
+     *
+     * A default body, like the two members above, so every existing implementor and test fake keeps
+     * compiling untouched.
+     */
+    fun selectedTierId(): String? = null
 }

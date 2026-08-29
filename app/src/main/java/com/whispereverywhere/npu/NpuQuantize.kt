@@ -81,6 +81,37 @@ object NpuQuantize {
         ByteBuffer.allocateDirect(INPUT_FEATURES_BYTES).order(ByteOrder.nativeOrder())
 
     /**
+     * Σ of one mel row — the arithmetic behind `NpuDiag.mel`'s stride bisector (4.0, Q9 fix round).
+     *
+     * **What it is for.** The mel arrives from whisper's own spectrogram, which is bin-major with
+     * stride `mel.n_len` — **6000** for a 30 s window, because `log_mel_spectrogram` appends 30 s of
+     * zeros before framing — while this buffer's stride is [MEL_FRAMES], 3000. A flat copy of the
+     * first 240,000 floats therefore reads bins 0-39 at the wrong offsets and **never touches bins
+     * 40-79**, leaving them holding whatever was there before. That is not an error anywhere: it is
+     * structured noise, and the encoder transcribes it fluently into different words. Summing rows
+     * 0, 40 and 79 makes it a one-glance test — with the stride wrong, rows 40 and 79 are both
+     * untouched tail and **`row40 == row79`** (typically both 0.0 on the first segment).
+     *
+     * **Absolute [FloatBuffer.get], never relative.** The caller passes a view of the same direct
+     * buffer that is handed to [melToU16] and then to `nativeEncode`; a relative read would advance
+     * that view's position and a later relative consumer would start 3000 floats in. Absolute
+     * indexing touches no position at all, which is why it is the only form used here.
+     *
+     * **Accumulated in `Double`.** 3000 float adds at whisper's log-mel magnitudes lose digits in
+     * `Float`, and the whole value of this line is that two rows can be compared by eye.
+     *
+     * @param mel a float view of the 80x3000 row-major mel — `melBuffer.asFloatBuffer()`.
+     * @param row 0 until [MEL_BINS].
+     */
+    fun melRowSum(mel: FloatBuffer, row: Int): Double {
+        require(row in 0 until MEL_BINS) { "mel row $row outside 0 until $MEL_BINS" }
+        val base = row * MEL_FRAMES
+        var sum = 0.0
+        for (f in 0 until MEL_FRAMES) sum += mel.get(base + f)
+        return sum
+    }
+
+    /**
      * One value: `clamp(rint(x / scale) + zeroPoint, 0, 65535)`.
      *
      * **`Math.rint`, not `Math.round`.** `rint` is round-half-to-EVEN, which is how ONNX specifies

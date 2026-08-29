@@ -277,6 +277,27 @@ class NpuWhisperBackend(
                 return@serialized fallBackAndRun("mel", "pcmToMel refused or failed", samples, lang, useVad)
             }
 
+            // THE STRIDE BISECTOR (4.0, Q9 fix round, I2). Three row sums, 9,000 float adds against
+            // a ~405 ms encode, and `row40 == row79` is the copy-stride defect stated in one glance
+            // — see NpuDiag.mel. Its POSITION is the invariant, on both sides:
+            //   - AFTER pcmToMel returned TRUE. The mel buffer is reused across segments, so a line
+            //     emitted above this guard would print the PREVIOUS segment's spectrogram and
+            //     attribute it to a segment whose mel was never computed.
+            //   - BEFORE melToU16. This must measure whisper's floats, not anything the quantiser
+            //     has been near; a bisector that cannot separate the mel from the quantisation is
+            //     not a bisector.
+            // A fresh asFloatBuffer() view, read absolutely, so the shared direct buffer handed to
+            // melToU16 and then to nativeEncode keeps its position untouched.
+            val melView = mel.asFloatBuffer()
+            android.util.Log.i(
+                NpuDiag.TAG,
+                NpuDiag.mel(
+                    NpuQuantize.melRowSum(melView, 0),
+                    NpuQuantize.melRowSum(melView, 40),
+                    NpuQuantize.melRowSum(melView, NpuQuantize.MEL_BINS - 1),
+                ),
+            )
+
             // NEVER literals. The affine parameters belong to the asset and are read off
             // input_features' own metadata; a hardcoded scale would survive an asset re-export and
             // scale every spectrogram wrongly, which the encoder transcribes fluently into different

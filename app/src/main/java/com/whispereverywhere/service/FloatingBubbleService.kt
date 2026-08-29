@@ -394,9 +394,15 @@ class FloatingBubbleService : Service(),
     private var localEngineOnNpu: Boolean = false
 
     // WhisperEverywhereApp.isNpuTierOffered()'s answer, memoised because warmLocalEngine() reads it
-    // on Main and that gate must never be evaluated there. Written only by refreshNpuTierOffer(),
-    // which does the dispatcher hop; false until the first refresh lands, which is the safe
-    // direction (the CPU tier always works). @Volatile: written on IO, read on Main.
+    // on Main and that gate must never be evaluated there. Written only by refreshNpuTierOffer();
+    // false until the first refresh lands, which is the safe direction (the CPU tier always works).
+    //
+    // @Volatile is DEFENSIVE, not load-bearing, and the earlier comment here claiming otherwise was
+    // wrong (Q9 review, M1). `withContext(Dispatchers.IO) { … }` returns to the CALLER's context,
+    // and both call sites are `serviceScope.launch { }` on Dispatchers.Main — so today the write
+    // and every read are alike Main-confined and no publication is needed. It is kept because it
+    // costs one Boolean read and it is the difference between "correct" and "correct until someone
+    // moves the refresh onto a background scope", which is a one-line change with no other symptom.
     @Volatile private var npuTierOffered: Boolean = false
 
     // The cloud wrapper (FallbackTranscriptionEngine) of the CURRENT/previous session, held so it
@@ -2213,15 +2219,40 @@ class FloatingBubbleService : Service(),
      * `WhisperNative.init` (60-190 MB) racing an NPU teardown that has not run yet, which is the
      * ~570 MB transient the whole fallback path exists to avoid, arriving through the service
      * instead of through the backend.
+     *
+     * ### [allowRebuild] — the permission, and why it is a parameter rather than a state check
+     *
+     * This function used to be `localEngine ?: LocalWhisperEngine(…)`: pure, idempotent, safe from
+     * anywhere. It is now **destructive**, and `LocalWhisperEngine.shutdown()` does not merely free
+     * the context — it calls `executor.shutdown()`, after which the next `commit()` throws an
+     * uncaught `RejectedExecutionException` from the **capture thread**, which has no handler.
+     * Rebuilding under a live session is therefore not a degraded experience; it is a crash with
+     * the user's audio still accumulating in a buffer nobody will ever cut.
+     *
+     * So the destructive branch requires explicit permission, and **exactly one caller has it**:
+     * [resolveTranscriptionEngine], which runs at session start, before any audio exists. Every
+     * other caller — the boot prewarm, the model-switch collector — gets the cached engine
+     * untouched and the rebuild happens at the next session start, which is the *"mid-session
+     * triggers are skipped, never deferred"* doctrine the collector already states, applied inside
+     * the function that now needs it. Nothing is lost by waiting: a deferred rebuild always
+     * resolves before the next segment can exist, because the thing that creates segments is the
+     * thing that carries the permission.
+     *
+     * **NOT a `currentState` check, and that is the trap.** `startRecording` sets `CONNECTING`
+     * *before* calling [resolveTranscriptionEngine], so a state-keyed guard would block the one
+     * rebuild that must happen and permit none. The permission has to travel with the caller.
+     *
+     * **The guard sits ABOVE the teardown**, which is an ORDER invariant rather than a presence
+     * one: a permission check that runs after `shutdown()` has already run is not a check.
      */
-    private fun warmLocalEngine(): LocalWhisperEngine {
+    private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {
         val tierId = app.preferencesManager.selectedModelId
         // Session state, read from the mirror NpuWhisperBackend publishes from its own setter.
         // Non-null means a stage has already declined, so the tier is not re-armed.
         val reason = NpuTierStatus.unavailableReason.value
         val onNpu = NpuBackendSelector.routesToNpu(tierId, npuTierOffered, reason != null)
         val cached = localEngine
-        if (cached != null && onNpu == localEngineOnNpu) return cached
+        if (cached != null && (onNpu == localEngineOnNpu || !allowRebuild)) return cached
         if (cached != null) {
             // ONCE PER SESSION, never once per segment: this fires only on the transition, and the
             // transition is one-way for as long as the reason stands.
@@ -2254,6 +2285,11 @@ class FloatingBubbleService : Service(),
      * threading contract forbids Main for every entry point — while [warmLocalEngine], which needs
      * the answer, runs on Main from `startRecording`. Hence a memo written here and only read
      * there, exactly as the two chooser screens do it with `produceState { withContext(IO) { … } }`.
+     *
+     * **The hop moves the GATE off Main, not the assignment.** `withContext` returns to the
+     * caller's context, so the write to [npuTierOffered] lands back on Main — which is where every
+     * read of it happens too. Stated because the first version of this KDoc claimed a cross-thread
+     * publication that does not exist (Q9 review, M1).
      *
      * Re-read rather than cached forever because the *installed* half can change under a live
      * service: Q8's importer writes the 358 MB pair while the app is running.
@@ -2349,7 +2385,13 @@ class FloatingBubbleService : Service(),
         // sessions keep their exact behavior. Only the CLOUD_LIVE branch flips it on.
         sessionIsLive = false
 
-        val local = warmLocalEngine()
+        // THE ONLY CALLER PERMITTED TO REBUILD (4.0, Q9 fix round, C1). This runs at session start,
+        // from startRecording, before a single byte of audio exists and before any commit() can be
+        // queued — so tearing the previous engine down here cannot reject a segment. Every other
+        // caller passes the default `false` and takes the cached engine as it is; a tier change or
+        // a fallback they observed is applied HERE, at the next session, which always precedes the
+        // next segment.
+        val local = warmLocalEngine(allowRebuild = true)
         // Announced when the SHAPE CHANGES, not once per service and not once per session: a user
         // who loses signal at noon should be told, and a user who dictates forty times should not
         // be told forty times.

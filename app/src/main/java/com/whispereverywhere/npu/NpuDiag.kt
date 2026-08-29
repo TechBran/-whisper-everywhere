@@ -45,6 +45,37 @@ object NpuDiag {
         "npu: encode=$encodeMs decode=$decodeMs tokens=$tokens lang=$langNote"
 
     /**
+     * `mel: bins=80 frames=3000 row0=1234.567 row40=890.123 row79=456.789` — one line per segment,
+     * emitted after the spectrogram is computed and before it is quantised (4.0, Q9 fix round, I2).
+     *
+     * **`row40 == row79` IS the stride bug**, and that is the whole design of this line. whisper's
+     * internal mel is bin-major with stride `mel.n_len` (6000 for a 30 s window — the loader appends
+     * 30 s of zeros before framing) while the destination stride is 3000, so a flat copy reads bins
+     * 0-39 at wrong offsets and leaves bins 40-79 **untouched**. Nothing downstream can detect that:
+     * the encoder accepts structured noise and transcribes it fluently into different words. Two
+     * equal row sums where the audio had any high-frequency content at all is the bisector, and it
+     * costs 9,000 float adds against a ~405 ms encode.
+     *
+     * **This line was promised by three ledger entries and did not exist.** Until this fix it lived
+     * only as a comment in `whisper_jni.cpp` and a KDoc in `MelExportContractTest`; the Q10a
+     * run-book instructed the owner to read a line nothing emitted. It is Kotlin-side deliberately —
+     * the mel crosses into Kotlin already, so no native change is needed to see it.
+     *
+     * **`Locale.US`, not the default.** These are decimal numbers in a machine-read log line, and on
+     * a device set to a comma-decimal locale `"%.3f"` produces `row0=1234,567` — which breaks every
+     * parser and, worse, is *almost* readable, so it is the kind of defect that survives review.
+     *
+     * The prefix is `mel: `, not `npu: `, and deliberately: this measures whisper.cpp's spectrogram,
+     * which the CPU and GPU tiers use too. It is the one line here that is not about the NPU.
+     */
+    fun mel(row0: Double, row40: Double, row79: Double): String =
+        String.format(
+            java.util.Locale.US,
+            "mel: bins=%d frames=%d row0=%.3f row40=%.3f row79=%.3f",
+            NpuQuantize.MEL_BINS, NpuQuantize.MEL_FRAMES, row0, row40, row79,
+        )
+
+    /**
      * `npu: unavailable stage=encode detail=encode: graphExecute failed at 0` — emitted once, on
      * the path where the tier declines and the session falls back to the CPU model.
      *
