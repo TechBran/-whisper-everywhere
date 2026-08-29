@@ -2248,22 +2248,25 @@ class FloatingBubbleService : Service(),
      * session the ~570 MB co-residency is reachable if the load wins the gate. Bounded and
      * survivable on 8 Gen 3-class RAM; stated because it was previously claimed to be excluded.
      *
-     * **The consequence that matters is worse and is excluded by something else entirely.** The QNN
-     * session is a process-global and `nativeInit` releases any existing one, so an `npu -> npu`
+     * **The consequence that matters is worse, and 4.1 L1 closed it structurally.** The QNN session
+     * is a process-global and `nativeInit` releases any existing one, so an `npu -> npu-class`
      * rebuild has a losing interleaving: the new `load` tears down the old session and builds a new
-     * one, and *then* the stale engine's queued `release` runs `nativeRelease()` and destroys **the
-     * session that just came up**, leaving a backend `armed` with nothing behind it. It fails
-     * loudly at `encode` and falls back, so it is not silent — but it is wrong.
+     * one, and *then* the stale engine's queued `release` reaches native and destroys **the session
+     * that just came up**, leaving a backend `armed` with nothing behind it. Ordering cannot fix
+     * that — the two effects are not ordered by the two statements that cause them. **Identity
+     * can, and now does:** every successful `nativeInit` issues a monotonic *arming epoch*, the
+     * release names the epoch its own instance was armed with, and native ignores any release that
+     * is not the live session. A stale teardown is a `WE-DIAG` line rather than a destroyed
+     * session, and a stale `transcribe` refuses rather than encoding into another model's session.
      *
-     * **THE INVARIANT: `routesToNpu` cannot produce an `npu -> npu` rebuild.** It is a single-tier
-     * predicate — one id, one Boolean — so on any npu-to-npu transition `onNpu == localEngineOnNpu`
-     * and the guard above returns the cached engine without rebuilding at all. That is the only
-     * reason the paragraph above is a memory note rather than a correctness bug, **and until the
-     * final review nothing stated or pinned it.** `NpuBackendWiringTest` now asserts the property
-     * directly (the set of tier ids that route to the NPU has exactly one element), so the ruling
-     * that makes two npu tiers exist — the turbo A/B — trips a red here instead of a heisenbug on a
-     * device. The structural fix (an arming epoch on `NpuWhisperBackend`, so a stale instance's
-     * `release` cannot tear down a live session) is a 4.1 item and is not this task's.
+     * **The invariant that still holds TODAY: `routesToNpu` cannot produce an `npu -> npu`
+     * rebuild.** It is a single-tier predicate — one id, one Boolean — so on any npu-to-npu
+     * transition `onNpu == localEngineOnNpu` and the guard above returns the cached engine without
+     * rebuilding at all. `NpuBackendWiringTest` asserts that property directly (the set of tier ids
+     * that route to the NPU has exactly one element), so the ruling that makes two npu tiers
+     * exist — the turbo A/B — trips a red there rather than a heisenbug on a device. That red is
+     * now a *deliberate re-spec* rather than a missing prerequisite, because the structural fix it
+     * used to ask for has landed.
      *
      * ### [allowRebuild] — the permission, and why it is a parameter rather than a state check
      *

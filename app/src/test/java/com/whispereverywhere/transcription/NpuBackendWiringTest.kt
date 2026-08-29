@@ -215,6 +215,15 @@ class NpuBackendWiringTest {
      * fires. **The owner's next ruling — a turbo NPU tier for an in-app A/B — is exactly the change
      * that makes two npu-class tiers exist**, and this assertion is what turns that from a
      * heisenbug on a device into a red here.
+     *
+     * **4.1 L1 changed what a red here MEANS.** The structural fix that finding asked for — an
+     * arming epoch, so that a stale instance's release names a session that no longer exists and is
+     * ignored — has landed: `nativeRelease` takes an epoch, `nativeEpoch()` hands one out, and
+     * `NpuWhisperBackend` threads `armedEpoch` through both its teardown and its `transcribe`. This
+     * assertion is therefore no longer *"do that first"*; it is a **containment boundary**. A second
+     * id here is a deliberate re-spec (L8), not an accident, and the message says so — a pin whose
+     * guidance has already been carried out but still says "do this first" is a pin readers learn to
+     * ignore.
      */
     @Test
     fun exactlyOneTierIdRoutesToTheNpuBackend() {
@@ -225,13 +234,19 @@ class NpuBackendWiringTest {
             NpuBackendSelector.routesToNpu(it, npuAvailable = true, declinedThisSession = false)
         }
         assertEquals(
-            "EXACTLY ONE tier id may route to the NPU backend. A second one makes `onNpu` — a " +
-                "Boolean — unable to tell two npu tiers apart, so an npu→npu switch reads as " +
-                "\"no change\" and never rebuilds; and if the guard were ever loosened so it DID " +
-                "rebuild, the stale engine's queued nativeRelease() would tear down the session " +
-                "the new nativeInit just built. If this went red because a turbo NPU tier was " +
-                "added, that is the test working: give NpuWhisperBackend an arming epoch before " +
-                "letting two npu-class tiers coexist. Routed: $routed",
+            "EXACTLY ONE tier id may route to the NPU backend TODAY. A second one makes `onNpu` — " +
+                "a Boolean — unable to tell two npu tiers apart, so an npu→npu switch reads as " +
+                "\"no change\" and never rebuilds. If this went red because a turbo NPU tier was " +
+                "added, that is a DELIBERATE RE-SPEC (4.1 L8), not a defect — and the structural " +
+                "half is already done: 4.1 L1 landed the arming epoch, so a stale instance's " +
+                "queued nativeRelease(epoch) can no longer tear down the session a newer " +
+                "nativeInit built. Before widening this list, check the two places that epoch has " +
+                "to be threaded through, because the guard is worthless if either is missed: " +
+                "NpuWhisperBackend.releaseNpuResources must pass `armedEpoch` (not a fresh " +
+                "nativeEpoch() read, which names the SUCCESSOR), and transcribe must compare " +
+                "`armedEpoch` against nativeEpoch() before it touches the mel — otherwise a stale " +
+                "instance encodes into another model's session and returns its transcript. " +
+                "Routed: $routed",
             listOf("npu"),
             routed,
         )

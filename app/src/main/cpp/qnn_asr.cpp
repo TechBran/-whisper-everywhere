@@ -478,6 +478,20 @@ struct NpuState {
     GraphSlot dec;
     bool initialised = false;
 
+    /// THE ARMING EPOCH (4.1 L1) — the session's IDENTITY, where `initialised` is only its
+    /// existence. `0` means no live session; every successful nativeInit takes the next value from
+    /// `nextEpoch` (below `g`), and releaseLocked() puts it back to `0`.
+    ///
+    /// WHY A NAME AND NOT AN ORDERING (final review F4/I1). This session is a PROCESS-GLOBAL and
+    /// nativeInit releases any existing one. LocalWhisperEngine.shutdown() QUEUES the stale
+    /// backend's release onto that engine's own executor while the replacement loads on a
+    /// different one, so an npu -> npu-class rebuild has an interleaving in which the stale
+    /// release tears down the session the new init just built, leaving a backend with
+    /// `armed = true` and nothing behind it. No arrangement of the two source statements can fix
+    /// that: source order does not order two executors' effects. A NAME does. A release states
+    /// which session it means, and a session that is no longer that one refuses to be torn down.
+    uint64_t epoch = 0;
+
     // ---- the sustained power vote (Q3 step 2) ------------------------------------------------
     // Armed ONCE per session in nativeInit and released in nativeRelease - not per segment. The
     // config it holds is a governor SETTING, not a clock pin: it costs nothing while idle, which
@@ -552,6 +566,18 @@ struct NpuState {
 };
 
 NpuState g;
+
+/// THE EPOCH SOURCE, and it is PROCESS state rather than SESSION state — which is the whole reason
+/// it lives beside `g` instead of inside it.
+///
+/// releaseLocked() zeroes six pieces of session state on adjacent lines, `g.epoch` among them. A
+/// counter declared next to them would sit one plausible line away from being zeroed too, and a
+/// REUSED epoch is worse than no epoch at all: a stale backend's release would then match the LIVE
+/// session's name and be obeyed — the exact failure this mechanism exists to refuse, with the guard
+/// in place and passing. Starting at 1 is what lets 0 mean "no session" and nothing else.
+///
+/// Read and written only under g.mu, like everything else in this file.
+uint64_t nextEpoch = 1;
 
 std::string jstr(JNIEnv *env, jstring s) {
     if (!s) return "";
@@ -2130,6 +2156,13 @@ void releaseLocked() {
 
     g.initialised = false;
 
+    // THE EPOCH DIES WITH THE SESSION IT NAMED. Any release still holding this number is now
+    // naming a session that does not exist, which nativeRelease refuses; and the next successful
+    // init takes a FRESH value from nextEpoch rather than this one, so the number cannot come back
+    // and cannot be matched by anybody. nextEpoch itself is deliberately NOT touched here - see
+    // its declaration.
+    g.epoch = 0;
+
     // The two libraries stay dlopen()ed on purpose. dlclose on a backend that has registered
     // process-wide FastRPC state is not something the QNN API promises is safe, the handles are
     // refcounted so re-arming costs nothing, and NpuGate may arm this tier several times in one
@@ -2259,6 +2292,12 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
     armSustainedVoteLocked();
 
     g.initialised = true;
+    // AN EPOCH IS A RECEIPT FOR A LIVE SESSION, NOT FOR AN ATTEMPT. Every stage above this line
+    // has succeeded - each failure path released and returned - so this is the only place in the
+    // process where an epoch is issued, and nextEpoch never rewinds. Issued above the success log
+    // so that the log can report the number, and below the last releaseLocked() so that a stage
+    // which declined can never hand a name to a backend whose session does not exist.
+    g.epoch = nextEpoch++;
     // A fresh session has encoded nothing. Stated rather than inherited from releaseLocked, so the
     // invariant is readable at the point the session becomes usable.
     g.encoded = false;
@@ -2267,6 +2306,11 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(
          "(%zu in / %zu out)",
          g.enc.name.c_str(), g.enc.inputs.size(), g.enc.outputs.size(),
          g.dec.name.c_str(), g.dec.inputs.size(), g.dec.outputs.size());
+    // On WE-DIAG, not WE-NPU, and it is one half of a pair: nativeRelease reports its refusals on
+    // that tag with two epoch numbers in them, and a capture carrying the refusal but not the arm
+    // cannot say which session either number belonged to. The owner's only capture is
+    // `adb logcat -s WE-DIAG`, so both halves have to be on it or neither is worth emitting.
+    LOGDIAG("nativeInit: session armed with epoch %llu", (unsigned long long) g.epoch);
     return env->NewStringUTF("");
 }
 
@@ -2828,12 +2872,63 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeLastError(
     return env->NewStringUTF(g.lastError.c_str());
 }
 
-/// Tears the session down. MUST be called before the CPU tier re-arms: the plan's memory budget
-/// forbids the NPU and `multi` being co-resident in either direction (I11).
+/// The live session's epoch, or 0 when there is none. The ONLY way Kotlin learns the name of the
+/// session it armed (4.1 L1).
+///
+/// It is a reader and nothing else: an entry point that could also ASSIGN g.epoch would be a second
+/// issue site reachable from outside nativeInit, and "an epoch is never reused" would become a
+/// comment rather than a property. Under the same mutex as everything else here - the value is
+/// written on every arm and read on every segment, and an unlocked read of the field the whole
+/// guard is keyed on would be correct almost always.
+///
+/// nativeInit deliberately does NOT return this. Widening a String whose entire job is to name a
+/// failed stage, so that it can also carry a number, is how the failure text stops being read.
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_whispereverywhere_npu_QnnAsrNative_nativeEpoch(
+        JNIEnv *env, jobject /* this */) {
+    (void) env;
+    std::lock_guard<std::mutex> lock(g.mu);
+    return static_cast<jlong>(g.epoch);
+}
+
+/// Tears the session down - IF the caller names the session that is actually live. MUST be called
+/// before the CPU tier re-arms: the plan's memory budget forbids the NPU and `multi` being
+/// co-resident in either direction (I11).
+///
+/// THE EPOCH IS THE WHOLE OF THE 4.1 L1 FIX (final review F4/I1). This session is a process-global
+/// and nativeInit releases any existing one, while LocalWhisperEngine.shutdown() QUEUES the stale
+/// backend's release onto a different executor from the one the replacement loads on. An
+/// npu -> npu-class rebuild therefore has an interleaving in which this function, called late by a
+/// backend whose session is long gone, destroys the session its successor just built. Ordering
+/// cannot fix that - the two effects are not ordered by the two statements that cause them. So the
+/// caller states which session it means and a mismatch is IGNORED rather than obeyed.
+///
+/// Epoch 0 is refused explicitly, and it is not a special case: 0 is what nativeEpoch() answers
+/// when nothing is live and what an unarmed NpuWhisperBackend holds, so without that arm a torn
+/// down session's `0 == 0` would read as a match and tear down whatever was armed after it.
+///
+/// Both outcomes are reported on WE-DIAG. The owner's only capture is `adb logcat -s WE-DIAG`, and
+/// under WE-NPU a refused release is indistinguishable from one that found nothing to do - which is
+/// exactly the reading the device A/B has to make.
+///
+/// The four compute entry points (nativeEncode, nativeDecodeSegment, nativeInputQuant,
+/// nativeDetectLanguage) are deliberately NOT epoch-guarded, and the reason is stated rather than
+/// implied: all four run inside NativeComputeGate.serialized on the same process-global lock as
+/// load and release, and NpuWhisperBackend compares its own armedEpoch against nativeEpoch() before
+/// the first of them - one check at the Kotlin boundary instead of four here. THIS one is guarded
+/// natively anyway, because it is the destructive one, and because "safe by a property of a
+/// different object" is the shape this branch has already paid for twice.
 extern "C" JNIEXPORT void JNICALL
 Java_com_whispereverywhere_npu_QnnAsrNative_nativeRelease(
-        JNIEnv *env, jobject /* this */) {
+        JNIEnv *env, jobject /* this */, jlong epoch) {
+    (void) env;
     std::lock_guard<std::mutex> lock(g.mu);
+    const uint64_t want = static_cast<uint64_t>(epoch);
+    if (want == 0 || want != g.epoch) {
+        LOGDIAG("nativeRelease: epoch %llu is not the live session (%llu) - ignored",
+                (unsigned long long) want, (unsigned long long) g.epoch);
+        return;
+    }
     releaseLocked();
-    LOGI("nativeRelease complete");
+    LOGDIAG("nativeRelease complete (epoch %llu)", (unsigned long long) want);
 }

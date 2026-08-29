@@ -256,6 +256,14 @@ android {
 // offer gate is read off Main. It is a plain Kotlin file — exactly the shape Q7a MEASURED going
 // UP-TO-DATE on a comment-only edit — and the needles are indentation-sensitive block matches, the
 // mutation shape most likely to leave semantics untouched.
+// (4.1 L1) QnnAsrNative.kt joins because NpuNativeContractTest now READS it — that file is the only
+// place the Kotlin and native halves of `nativeRelease(epoch)` / `nativeEpoch()` can be compared
+// before a device links them, and a `jlong` added native-side while Kotlin still declared the
+// zero-argument form would link (the JNI name is unmangled for a non-overloaded method) and reach
+// the guard with whatever was in the argument register. Stated honestly: today's assertions there
+// are all LIVE-line scoped, so a comment-only edit could not break them and this entry is not yet
+// load-bearing. It is here because the rule this list is built on is about what the tests READ, and
+// the next assertion added to that pin is not required to remember the distinction.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -272,6 +280,7 @@ tasks.withType<Test>().configureEach {
         // being guarded against.
         "src/main/assets/oss_licenses.html",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
+        "src/main/java/com/whispereverywhere/npu/QnnAsrNative.kt",
         "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",

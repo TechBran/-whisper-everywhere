@@ -99,9 +99,29 @@ class NpuNativeContractTest {
     }
 
     /**
-     * One Kotlin member function's body. Class members in `NpuWhisperBackend.kt` close at a
-     * four-space indent, so [functionBody]'s column-0 rule does not apply to them; the same two
-     * loud failures are kept, for the same two reasons.
+     * One Kotlin member's body, bounded by the anchor's own INDENT rather than by a fixed
+     * four-space closing brace (4.1 L1, folding Q6 M3).
+     *
+     * [functionBody]'s column-0 rule does not apply to class members, and the `"\n    }\n"` this
+     * used to cut on was a rule about the CLASS, not about the member. Two consequences, both
+     * silent:
+     *
+     *  - **a companion member's scope ran to the end of the companion.** `isTierAvailable` is eight
+     *    spaces in, so the first four-space `}` after it is the COMPANION's closing brace. That
+     *    made the anti-widening guard below *vacuous* for it: the assertion could only have failed
+     *    if the companion had no closing brace at all. It passed because `isTierAvailable` happened
+     *    to be the last member — and adding one after it would have widened the gate-before-probe
+     *    pin onto a neighbour's code with nothing to say so. (There is now a member after it, so
+     *    the fix is exercised rather than asserted.)
+     *  - **an expression-bodied member had no terminator of its own at all.** `load(modelPath,
+     *    companionPath)` is `= NativeComputeGate.serialized { … }`; under the old rule its "body"
+     *    ran through the whole of `transcribe`.
+     *
+     * The rule instead: record the indent of the anchor's line, and end the body at the first
+     * following NON-BLANK line indented no further than that. That is the member's own closing
+     * brace when it has one, the enclosing block's when it does not, and the next member's first
+     * line as soon as one exists. Both loud failures are kept, for the two reasons the originals
+     * name.
      */
     private fun kotlinMemberBody(kt: String, anchor: String): String {
         val start = kt.indexOf(anchor)
@@ -112,21 +132,43 @@ class NpuNativeContractTest {
                 "instead of failing.",
             start >= 0
         )
-        val body = kt.substring(start)
+        val lineStart = kt.lastIndexOf('\n', start - 1) + 1
+        val indent = kt.substring(lineStart, start).takeWhile { it == ' ' }.length
+        val lines = kt.substring(start).split("\n")
+        val body = StringBuilder(lines.first())
+        var closed = false
+        for (line in lines.drop(1)) {
+            if (line.isNotBlank() && line.takeWhile { it == ' ' }.length <= indent) {
+                closed = true
+                break
+            }
+            body.append("\n").append(line)
+        }
         assertTrue(
-            "no four-space-indented \"\\n    }\\n\" follows \"$anchor\". substringBefore() returns " +
-                "its RECEIVER when the delimiter is absent, so a re-indented closing brace would " +
-                "silently widen the scope into the FOLLOWING member and the assertions would pass " +
-                "on a neighbour's code.",
-            body.contains("\n    }\n")
+            "nothing at or left of \"$anchor\"'s own indent ($indent) follows it. Without a " +
+                "terminator the scope runs to the end of the FILE, and every assertion below would " +
+                "be answered by unrelated code — the same failure the old fixed-delimiter form had " +
+                "when substringBefore() returned its whole receiver.",
+            closed
         )
-        return body.substringBefore("\n    }\n")
+        return body.toString()
     }
 
     private val cpp: String by lazy { source("src/main/cpp/qnn_asr.cpp") }
 
     private val backend: String by lazy {
         source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+    }
+
+    /**
+     * The Kotlin half of the JNI seam, read as SOURCE for exactly the reason `NpuWhisperBackend` is:
+     * `QnnAsrNative`'s `init` block runs `System.loadLibrary("qnnasr")`, so a test that *named* the
+     * object would not fail on this classpath, it would die. The declarations are the only place
+     * the Kotlin and native sides of `nativeRelease(epoch)` / `nativeEpoch()` can be compared at
+     * all before a device runs them (4.1 L1).
+     */
+    private val seam: String by lazy {
+        source("src/main/java/com/whispereverywhere/npu/QnnAsrNative.kt")
     }
 
     /** Where the FastRPC search path is built — one site, per Q1's review (4.0, Q8). */
@@ -1465,6 +1507,442 @@ class NpuNativeContractTest {
                 "human-readable numbers must be on the wire even when the tier declines, because " +
                 "the returned string is what the card shows and the log is what the model lab acts on",
             report.first() < refuse.first()
+        )
+    }
+
+    // ================================================================ 4.1 L1 — THE ARMING EPOCH
+    //
+    // Final review F4/I1. The QNN session is a PROCESS-GLOBAL, `nativeInit` releases any existing
+    // one, and `LocalWhisperEngine.shutdown()` QUEUES the stale backend's release onto that
+    // engine's own executor while the replacement loads on a different one. Source order does not
+    // order two executors' effects, so an `npu → npu-class` rebuild has an interleaving in which
+    // the stale release destroys the session the new init just built — leaving a backend with
+    // `armed = true` and nothing behind it.
+    //
+    // The fix is IDENTITY, not ordering, and that distinction is the branch's second named lesson.
+    // Everything below therefore pins two different kinds of claim, and they are not
+    // interchangeable: that the epoch EXISTS and is threaded end to end (presence), and that each
+    // of the four places it is read runs BEFORE the thing it is supposed to protect (order). A
+    // guard that runs after the teardown is not a guard.
+
+    /**
+     * **The guard itself, and the one the brief names as this task's red.**
+     *
+     * `nativeRelease` used to take nothing, which is precisely why F4 was unfixable by rearranging
+     * statements: a release with no argument cannot say which session it means, so the only
+     * question it can answer is *"is there a session?"* — and there always is one, the successor's.
+     *
+     * Four claims, each defeating a different edit:
+     *  - the **parameter** exists. Without it there is nothing to compare and the rest is vacuous;
+     *  - the comparison **precedes** `releaseLocked()`. Both statements survive the swap, the code
+     *    compiles, and a guard evaluated after the teardown reports on a session it has just
+     *    destroyed. This is the ninth-and-something presence-vs-ORDER pin on this branch;
+     *  - **epoch 0 is refused explicitly**. `0` is the value `nativeEpoch()` answers when nothing is
+     *    live and the value an unarmed `NpuWhisperBackend` holds; without the `want == 0` arm, the
+     *    first release after a teardown would compare `0 != 0` and tear down the *next* session;
+     *  - the refusal is **reported on WE-DIAG**. The owner's only capture is
+     *    `adb logcat -s WE-DIAG`, and a refusal nobody can see is indistinguishable on device from
+     *    a release that did nothing because there was nothing to release.
+     */
+    @Test
+    fun nativeReleaseIsGuardedByTheArmingEpoch() {
+        val body = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeRelease(")
+        assertTrue(
+            "nativeRelease must TAKE the epoch — `jlong epoch` in its parameter list, on a live " +
+                "line. A release with no argument cannot name the session it means; it can only " +
+                "ask whether a session exists, and after an npu→npu-class rebuild the session " +
+                "that exists is the SUCCESSOR's. Found: " + liveLines(body, "jlong"),
+            liveOffsets(body, "jlong epoch").isNotEmpty()
+        )
+        val compare = liveOffsets(body, "want != g.epoch")
+        val teardown = liveOffsets(body, "releaseLocked();")
+        assertTrue(
+            "nativeRelease must COMPARE the caller's epoch against the live one on a live line. " +
+                "Presence is asserted separately from ordering because \"A precedes B\" is " +
+                "trivially true when there is no A.",
+            compare.isNotEmpty()
+        )
+        assertTrue(
+            "nativeRelease must still CALL releaseLocked() on a live line — a guard that refuses " +
+                "everything is not a teardown, and the tier's whole memory budget rests on this " +
+                "call happening for the session that owns it.",
+            teardown.isNotEmpty()
+        )
+        assertTrue(
+            "the epoch comparison (${compare.first()}) must run BEFORE releaseLocked() " +
+                "(${teardown.first()}). ORDER, not presence: both statements survive the swap, it " +
+                "compiles, and a guard evaluated after the teardown has already destroyed the " +
+                "session it was asked about — which is the F4 defect with a passing test beside it.",
+            compare.first() < teardown.first()
+        )
+        assertTrue(
+            "epoch 0 must be refused EXPLICITLY (`want == 0`) on a live line. 0 is what " +
+                "nativeEpoch() answers when nothing is live and what an unarmed backend holds; " +
+                "without this arm the comparison `0 != 0` reads as a match and the first stale " +
+                "release after a teardown destroys the NEXT session instead.",
+            liveOffsets(body, "want == 0").isNotEmpty()
+        )
+        val bail = liveOffsets(body, "return;")
+        assertTrue(
+            "the refusal must RETURN on a live line, before the teardown. Logging a refusal and " +
+                "then tearing the session down anyway is the defect wearing the guard's clothes.",
+            bail.isNotEmpty() && bail.first() < teardown.first()
+        )
+        assertTrue(
+            "the refusal must be reported through LOGDIAG — the owner's only capture is " +
+                "`adb logcat -s WE-DIAG`, and under WE-NPU a refused release is indistinguishable " +
+                "from a release that found nothing to do. Third instance of that trap on this " +
+                "branch. Found: " + liveLines(body, "LOGDIAG"),
+            liveOffsets(body, "LOGDIAG(\"nativeRelease: epoch").isNotEmpty()
+        )
+    }
+
+    /**
+     * **An epoch is a receipt for a live session, not for an attempt — and it is never reused.**
+     *
+     * Two failures, both one line, both silent:
+     *  - **issued too early.** `nativeInit` has ten failure paths and every one of them calls
+     *    `releaseLocked()` and returns. An epoch assigned above any of them is handed to a backend
+     *    whose session does not exist, and that backend's later release then names — and destroys —
+     *    whatever session happens to be live by then;
+     *  - **reused.** If the counter lived in `NpuState` it would sit one plausible line away from
+     *    the `= 0` resets in `releaseLocked()`, and a re-issued epoch is a *stale* release that
+     *    matches the *live* session and is obeyed. That is the original defect, restored, with the
+     *    guard in place and passing. So the counter is process state, held outside `g`, and this
+     *    pin counts its live mentions: the declaration and the one issue site, and nothing else.
+     */
+    @Test
+    fun theArmingEpochIsIssuedOnlyByASuccessfulInitAndIsNeverReused() {
+        val init = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeInit(")
+        val issue = liveOffsets(init, "g.epoch = nextEpoch++;")
+        assertEquals(
+            "nativeInit must issue the epoch on exactly one live line, as `g.epoch = nextEpoch++;`",
+            1,
+            issue.size
+        )
+        val released = liveOffsets(init, "releaseLocked();")
+        assertTrue(
+            "nativeInit must still release on its failure paths, on live lines",
+            released.size >= 2
+        )
+        assertTrue(
+            "the epoch (${issue.first()}) must be issued AFTER the LAST failure-path " +
+                "releaseLocked() (${released.last()}). Above it, a stage that declines still hands " +
+                "out an epoch — and the backend holding it can then destroy a session it never " +
+                "owned. The receipt is for a session, not for an attempt.",
+            issue.first() > released.last()
+        )
+        val ok = liveOffsets(init, "LOGI(\"nativeInit OK")
+        assertTrue("nativeInit must log its success on a live line", ok.isNotEmpty())
+        assertTrue(
+            "and the epoch must be issued BEFORE that success log (${ok.first()}) — the log is the " +
+                "line the device session reads to learn which epoch this arm produced, so it " +
+                "cannot precede the number it reports on.",
+            issue.first() < ok.first()
+        )
+        assertTrue(
+            "the counter must be declared at namespace scope as `uint64_t nextEpoch = 1;` on a " +
+                "live line — 1 so that 0 can mean \"no session\" and nothing else. Found: " +
+                liveLines(cpp, "nextEpoch = 1"),
+            liveOffsets(cpp, "uint64_t nextEpoch = 1;").isNotEmpty()
+        )
+        val release = functionBody(cpp, "void releaseLocked()")
+        assertTrue(
+            "releaseLocked must NOT touch nextEpoch on any live line. It zeroes six other pieces " +
+                "of session state on adjacent lines, so a reset here is the most plausible edit in " +
+                "the file — and it re-issues an epoch a stale backend may still be holding, which " +
+                "makes its release match the LIVE session and be obeyed. Found: " +
+                liveLines(release, "nextEpoch"),
+            liveOffsets(release, "nextEpoch").isEmpty()
+        )
+        assertEquals(
+            "exactly TWO live mentions of nextEpoch in the whole file: its declaration and the one " +
+                "site that consumes it. A third is either a second issue site or a reset, and both " +
+                "of those are the same bug. Found: " + liveLines(cpp, "nextEpoch"),
+            2,
+            liveOffsets(cpp, "nextEpoch").size
+        )
+    }
+
+    /**
+     * The two ends of the epoch's lifetime: teardown forgets it, and Kotlin can read the live one.
+     *
+     *  - `releaseLocked` must zero `g.epoch`. Without that, a torn-down session's number stays
+     *    matchable and the *next* release — from any instance — is accepted against a session that
+     *    no longer exists, which is a double teardown of whatever was armed in between.
+     *  - `nativeEpoch` must read under the **same mutex** every other entry point takes. An unlocked
+     *    read is a torn read of the value the whole guard is keyed on, and it would be correct
+     *    99.99% of the time on the one device this tier runs on.
+     *  - and it must be a **reader**. An entry point that could assign `g.epoch` is a second issue
+     *    site reachable from Kotlin, which is the reuse hazard arriving through the front door.
+     */
+    @Test
+    fun teardownForgetsTheEpochAndTheLiveOneIsReadableUnderTheSameMutex() {
+        val release = functionBody(cpp, "void releaseLocked()")
+        assertTrue(
+            "releaseLocked must zero g.epoch on a live line, beside the other session state it " +
+                "clears. A number that outlives its session is a name a later release can still " +
+                "match.",
+            liveOffsets(release, "g.epoch = 0;").isNotEmpty()
+        )
+        val reader = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeEpoch(")
+        assertTrue(
+            "nativeEpoch must take the session mutex on a live line — the same one nativeInit and " +
+                "nativeRelease hold. It is read on every segment and written on every arm, and an " +
+                "unlocked read of the value the guard is keyed on is right almost always.",
+            liveOffsets(reader, "std::lock_guard<std::mutex> lock(g.mu);").isNotEmpty()
+        )
+        assertTrue(
+            "nativeEpoch must answer g.epoch itself on a live line",
+            liveOffsets(reader, "g.epoch").isNotEmpty()
+        )
+        assertTrue(
+            "and it must never ASSIGN it. nativeEpoch is the only way Kotlin learns its epoch; if " +
+                "it could also set one, the process would have a second issue site reachable from " +
+                "outside nativeInit and the \"never reused\" property would be a comment. Found: " +
+                liveLines(reader, "g.epoch ="),
+            liveOffsets(reader, "g.epoch =").isEmpty()
+        )
+    }
+
+    /**
+     * The Kotlin declarations — the only place the two sides of this JNI change can be compared
+     * before a device runs them.
+     *
+     * A `jlong` parameter added native-side while Kotlin still declares `nativeRelease()` links
+     * (the JNI name is unmangled for a non-overloaded method), reaches the guard with whatever
+     * happens to be in the argument register, and refuses or accepts at random. There is no
+     * compiler on either side of that seam.
+     *
+     * The negative is the sharper half: the **zero-argument form must be gone**. Leaving it as an
+     * overload beside the new one compiles, and every existing caller keeps calling the unguarded
+     * release — the fix present, landed, and bypassed.
+     *
+     * And `nativeInit`'s signature is pinned UNCHANGED. Widening its return to carry the epoch as
+     * well as the stage error is the obvious alternative and it is the wrong one: it turns a string
+     * whose whole purpose is to name a failed stage into a value with two readings, one of which
+     * nobody reads.
+     */
+    @Test
+    fun theKotlinSeamDeclaresTheEpochAccessorsAndLeavesNativeInitsStageErrorAlone() {
+        assertTrue(
+            "QnnAsrNative must declare `external fun nativeRelease(epoch: Long)` on a live line. " +
+                "Found: " + liveLines(seam, "external fun nativeRelease"),
+            liveOffsets(seam, "external fun nativeRelease(epoch: Long)").isNotEmpty()
+        )
+        assertTrue(
+            "the zero-argument `external fun nativeRelease()` must be GONE from every live line. " +
+                "Kept as an overload it compiles, links to the same unmangled JNI symbol, and " +
+                "leaves every existing caller invoking the unguarded release — the fix landed and " +
+                "bypassed in one edit.",
+            liveOffsets(seam, "external fun nativeRelease()").isEmpty()
+        )
+        assertTrue(
+            "QnnAsrNative must declare `external fun nativeEpoch(): Long` on a live line — it is " +
+                "the only way Kotlin can learn the epoch it was armed with.",
+            liveOffsets(seam, "external fun nativeEpoch(): Long").isNotEmpty()
+        )
+        assertTrue(
+            "nativeInit must still ANSWER a String — `\"\"` or `\"stage: detail\"`. Widening it to " +
+                "carry the epoch too is how a stage error becomes a value with two readings and " +
+                "the failure text stops being read. THE NAMED TRIGGER: task L2 adds five scalars " +
+                "to this declaration (melBins, decLayers, heads, vocab, maxPositions), so this " +
+                "needle goes red THERE by construction — re-spell it with L2's parameter list and " +
+                "keep the `: String`, because the claim is about the RETURN, not the arity. Found: " +
+                liveLines(seam, "external fun nativeInit"),
+            liveOffsets(
+                seam,
+                "external fun nativeInit(encoderPath: String, decoderPath: String, libDir: String): String"
+            ).isNotEmpty()
+        )
+    }
+
+    /**
+     * **The backend records its epoch before it declares itself armed** — ORDER, and the window is
+     * real rather than theoretical.
+     *
+     * `armed = true` is what makes this instance a live participant; `armedEpoch` is what lets its
+     * release name the session it participates in. Between the two statements the instance is a
+     * backend that will call `nativeRelease(0L)` — the unguarded shape, refused native-side only
+     * because of the `want == 0` arm pinned above, and a shape that has no business existing at all.
+     *
+     * The other half is the clear: `releaseNpuResources` must put it back to `0L`. An instance that
+     * kept its epoch after teardown would answer the transcribe guard with a number matching a
+     * session it has already released.
+     */
+    @Test
+    fun theBackendRecordsItsEpochBeforeItArmsItself() {
+        assertTrue(
+            "NpuWhisperBackend must declare `private var armedEpoch: Long = 0L` — 0L is \"this " +
+                "instance owns no session\", which is the value the native guard refuses outright. " +
+                "Found: " + liveLines(backend, "armedEpoch: Long"),
+            backend.contains("private var armedEpoch: Long = 0L")
+        )
+        val load = kotlinMemberBody(
+            backend, "override fun load(modelPath: String, companionPath: String?): Long ="
+        )
+        val armInit = liveOffsets(load, "QnnAsrNative.nativeInit(")
+        val record = liveOffsets(load, "armedEpoch = QnnAsrNative.nativeEpoch()")
+        val armed = liveOffsets(load, "armed = true")
+        assertTrue("load must call nativeInit on a live line", armInit.isNotEmpty())
+        assertTrue(
+            "load must record the epoch it was armed with, from nativeEpoch(), on a live line",
+            record.isNotEmpty()
+        )
+        assertTrue("load must set armed on a live line", armed.isNotEmpty())
+        assertTrue(
+            "the epoch must be read AFTER nativeInit (${armInit.first()}) returned — before it, " +
+                "nativeEpoch() answers the PREVIOUS session's number or 0, and the instance would " +
+                "spend its whole life holding a name that was never its own. Found at " +
+                "${record.first()}.",
+            record.first() > armInit.first()
+        )
+        assertTrue(
+            "and BEFORE `armed = true` (${armed.first()}). ORDER: between those two statements " +
+                "this instance is armed with epoch 0 — a backend whose release names no session, " +
+                "which is exactly the unguarded shape this task removed.",
+            record.first() < armed.first()
+        )
+        assertEquals(
+            "load() must read the epoch EXACTLY ONCE. The count is the invariant — an arm records " +
+                "the session it created, it does not re-ask — and it is also what makes " +
+                "kotlinMemberBody's indent rule load-bearing rather than decorative: load() is " +
+                "expression-bodied, so under the old fixed \"\\n    }\\n\" delimiter its \"body\" " +
+                "ran through the whole of `transcribe`, which reads nativeEpoch() too. Every " +
+                "ordering claim above would then have been answered partly by a neighbour's code. " +
+                "Found: " + liveLines(load, "QnnAsrNative.nativeEpoch()"),
+            1,
+            liveOffsets(load, "QnnAsrNative.nativeEpoch()").size
+        )
+        val teardown = kotlinMemberBody(backend, "private fun releaseNpuResources() {")
+        assertTrue(
+            "releaseNpuResources must clear armedEpoch back to 0L on a live line — an instance " +
+                "that kept its epoch after teardown answers the transcribe guard with the name of " +
+                "a session it has already released.",
+            liveOffsets(teardown, "armedEpoch = 0L").isNotEmpty()
+        )
+    }
+
+    /**
+     * **The release names this instance's own session, at one site, and does not load the library
+     * for a session that never existed.**
+     *
+     * Two things in one function, and they are the same decision seen from two sides.
+     *
+     * *The epoch is passed.* One call site in the whole file, so there is no second, unguarded
+     * spelling of the teardown to drift.
+     *
+     * *And the call is skipped when nothing was ever armed* — Q6 M1. `fallBackToCpuTier` runs
+     * `releaseNpuResources()` first, and the cheapest refusal in `load` is `mel-donor`: no installed
+     * 80-bin model, reached **before** anything native is touched. Every session on a device with
+     * no ggml model installed took that path and then `dlopen`ed `libqnnasr.so` on its way out —
+     * ~25 MiB of Qualcomm runtime mapped, in a `runCatching`, to release a session that was never
+     * created. `armedEpoch != 0L || melCtx != 0L` is the whole test for "did this instance ever
+     * touch anything", and it must run BEFORE the touch it guards.
+     */
+    @Test
+    fun theBackendsReleaseNamesItsOwnSessionAndSkipsTheLibraryItNeverLoaded() {
+        assertEquals(
+            "exactly one live `QnnAsrNative.nativeRelease(` site in the whole file. A second " +
+                "spelling of the teardown is a second chance to omit the epoch. Found: " +
+                liveLines(backend, "QnnAsrNative.nativeRelease("),
+            1,
+            liveOffsets(backend, "QnnAsrNative.nativeRelease(").size
+        )
+        val teardown = kotlinMemberBody(backend, "private fun releaseNpuResources() {")
+        val call = liveOffsets(teardown, "QnnAsrNative.nativeRelease(armedEpoch)")
+        assertTrue(
+            "releaseNpuResources must pass armedEpoch to nativeRelease on a live line — passing " +
+                "0L, or a fresh nativeEpoch() read, would name the LIVE session rather than this " +
+                "instance's own, which is the F4 teardown with an argument added to it. Found: " +
+                liveLines(teardown, "nativeRelease("),
+            call.isNotEmpty()
+        )
+        val guard = liveOffsets(teardown, "if (armedEpoch != 0L || melCtx != 0L)")
+        assertTrue(
+            "the native touch must be guarded by `if (armedEpoch != 0L || melCtx != 0L)` on a " +
+                "live line (Q6 M1). Without it the mel-donor refusal — the cheapest refusal in " +
+                "load(), and the one every device with no installed ggml model hits on every " +
+                "session — dlopens libqnnasr.so on its way out for a session that never existed.",
+            guard.isNotEmpty()
+        )
+        assertTrue(
+            "the guard (${guard.first()}) must precede the native call (${call.first()}). ORDER, " +
+                "and the same order as every other guard in this file: a check that runs after the " +
+                "library has been loaded has not avoided loading it.",
+            guard.first() < call.first()
+        )
+    }
+
+    /**
+     * **`transcribe` refuses a session that a newer arm replaced, before it computes anything.**
+     *
+     * This is the half of the epoch that is about *fluent wrong text* rather than about a crash.
+     * The QNN session is a process-global: a stale `NpuWhisperBackend` whose session has been
+     * replaced by a different tier's would encode its mel into — and decode its tokens out of —
+     * **another model's session**. Nothing fails. The transcript is fluent, confident, and produced
+     * by a model the caller did not select, which is the worst failure shape this tier has.
+     *
+     * Three ordering claims, and each is a one-line move:
+     *  - **inside the gate, after the fallback short-circuit.** An instance that has already fallen
+     *    back holds no epoch and must not consult one;
+     *  - **before `pcmToMel`.** A refusal taken after the mel has been computed has paid for the
+     *    segment it is about to hand to the CPU tier anyway — and, worse, `pcmToMel` mutates the
+     *    shared mel context, so a check below it is a check taken after the side effect;
+     *  - **guarded on `armedEpoch != 0L`.** The short-circuit keeps an unarmed instance from
+     *    touching `QnnAsrNative` at all, which is the same Q6 M1 property as the release path.
+     */
+    @Test
+    fun transcribeRefusesASessionThatANewerArmReplaced() {
+        val body = kotlinMemberBody(
+            backend,
+            "override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {"
+        )
+        val gate = liveOffsets(body, "NativeComputeGate.serialized {")
+        val shortCircuit = liveOffsets(body, "fallbackBackend?.let")
+        val guard = liveOffsets(body, "if (armedEpoch != 0L)")
+        val read = liveOffsets(body, "QnnAsrNative.nativeEpoch()")
+        val session = liveOffsets(body, "if (!armed ||")
+        val mel = liveOffsets(body, "WhisperNative.pcmToMel(")
+        assertTrue("transcribe must take the gate on a live line", gate.isNotEmpty())
+        assertTrue("transcribe must short-circuit to the fallback on a live line", shortCircuit.isNotEmpty())
+        assertTrue(
+            "transcribe must guard the epoch read on `if (armedEpoch != 0L)` on a live line — an " +
+                "instance that never armed must not touch QnnAsrNative to find that out.",
+            guard.isNotEmpty()
+        )
+        assertTrue(
+            "transcribe must read the live epoch through QnnAsrNative.nativeEpoch() on a live line",
+            read.isNotEmpty()
+        )
+        assertTrue("transcribe must still refuse an unarmed session on a live line", session.isNotEmpty())
+        assertTrue("transcribe must still compute the mel on a live line", mel.isNotEmpty())
+        assertTrue(
+            "the epoch check (${guard.first()}) must sit INSIDE the gate (${gate.first()}) and " +
+                "AFTER the fallback short-circuit (${shortCircuit.first()}): an instance that has " +
+                "already fallen back holds no epoch, and the routing state may only be read under " +
+                "the hold.",
+            gate.first() < guard.first() && shortCircuit.first() < guard.first()
+        )
+        assertTrue(
+            "and it must be transcribe's FIRST act after that short-circuit — above the armed/" +
+                "buffers check (${session.first()}) and above pcmToMel (${mel.first()}). ORDER: " +
+                "pcmToMel REPLACES the shared mel context's internal state, so a check taken below " +
+                "it is a check taken after the side effect, on a segment already paid for. Found " +
+                "at ${guard.first()}.",
+            guard.first() < session.first() && read.first() < mel.first()
+        )
+        assertTrue(
+            "the refusal must route through the tier's own funnel as stage `epoch`, so the user's " +
+                "utterance still runs — on the CPU tier — and the card names the stage that " +
+                "declined. Live fallBackAndRun lines: " + liveLines(body, "fallBackAndRun("),
+            liveOffsets(body, "\"epoch\",").isNotEmpty()
+        )
+        assertTrue(
+            "and the detail must name BOTH epochs — this instance's and the live one. \"replaced\" " +
+                "with no numbers cannot be checked against the WE-DIAG capture, which carries " +
+                "`nativeInit: session armed with epoch N` and the refusal's own two numbers.",
+            liveOffsets(body, "sessionReplacedDetail(armedEpoch,").isNotEmpty()
         )
     }
 }

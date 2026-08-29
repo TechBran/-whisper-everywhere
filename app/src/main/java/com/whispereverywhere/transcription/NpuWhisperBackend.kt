@@ -19,10 +19,11 @@ import java.util.Locale
  * on the Hexagon, and one CPU-tier fallback that is never silent.
  *
  * ```
- * load(encoder, decoder)   initMelOnly (64 KB)  ->  vocab  ->  nativeInit (376 MiB)
- * transcribe(samples)      pcmToMel -> nativeInputQuant -> melToU16 -> nativeEncode
- *                          -> nativeDetectLanguage -> nativeDecodeSegment -> WhisperBpeDecoder
- * release(ctx)             nativeRelease + WhisperNative.free
+ * load(encoder, decoder)   initMelOnly (64 KB)  ->  vocab  ->  nativeInit (376 MiB) -> nativeEpoch
+ * transcribe(samples)      nativeEpoch (is this still my session?) -> pcmToMel -> nativeInputQuant
+ *                          -> melToU16 -> nativeEncode -> nativeDetectLanguage
+ *                          -> nativeDecodeSegment -> WhisperBpeDecoder
+ * release(ctx)             nativeRelease(armedEpoch) + WhisperNative.free
  * ```
  *
  * ### The 64 KB that must never become 190 MB
@@ -87,6 +88,27 @@ class NpuWhisperBackend(
 
     /** True once `nativeInit` has succeeded and every artefact is in hand. */
     private var armed: Boolean = false
+
+    /**
+     * **The arming epoch — the identity of the QNN session THIS instance armed**, or `0L` when it
+     * owns none (4.1 L1, final review F4/I1).
+     *
+     * [armed] says a session exists. This says *which one*, and the difference is the whole task.
+     * The QNN session is a process-global that `nativeInit` releases before building a new one,
+     * and `LocalWhisperEngine.shutdown()` **queues** this backend's release onto the stale engine's
+     * executor while the replacement loads on a different one. So an `npu → npu-class` rebuild has
+     * an interleaving in which a dead instance's release destroys the successor's session — and no
+     * arrangement of the two source statements prevents it, because source order does not order
+     * two executors' effects.
+     *
+     * It is read in exactly two places, and both of them are refusals rather than actions:
+     * [releaseNpuResources] passes it so that a stale teardown names a session that no longer
+     * exists and is ignored, and [transcribe] compares it against the live one so that a stale
+     * instance cannot encode into — or decode out of — a session belonging to a different model.
+     * That second one is the *fluent wrong text* shape at its worst: another model's transcript,
+     * with nothing failing.
+     */
+    private var armedEpoch: Long = 0L
 
     /**
      * The CPU tier's native handle, valid only while [fallbackBackend] is non-null, else `0L`.
@@ -248,6 +270,13 @@ class NpuWhisperBackend(
                 return@serialized fallBackToCpuTier("init", initError)
             }
 
+            // (6) THE ARMING EPOCH, read the instant the session exists and BEFORE `armed = true`
+            // below. The order is an invariant, not a tidiness: between those two statements this
+            // instance would be a live backend holding epoch 0 — i.e. one whose release names no
+            // session — which is precisely the unguarded shape L1 removed. Native refuses 0
+            // outright, so the window is not dangerous; it is simply a state that must not exist.
+            armedEpoch = QnnAsrNative.nativeEpoch()
+
             // Q10a-D1. The decoder runs and emits nothing, and every hypothesis about why is a
             // statement about numbers only the native loop can see. Armed here, after init, because
             // there is no session to instrument before it — and with BuildConfig.DEBUG, so the
@@ -283,6 +312,34 @@ class NpuWhisperBackend(
             fallbackBackend?.let {
                 return@serialized it.transcribe(fallbackCtx, samples, lang, useVad)
             }
+
+            // THE EPOCH CHECK, and it is this function's first act for a reason (4.1 L1).
+            //
+            // The QNN session is a process-global. If a newer arm — another npu-class tier — has
+            // replaced the session this instance was built on, then encoding into it and decoding
+            // out of it produces ANOTHER MODEL'S TRANSCRIPT: fluent, confident, and wrong, with
+            // nothing failing anywhere. That is the worst failure shape this tier has, so the
+            // refusal is taken before any work at all. Below `pcmToMel` it would be taken after
+            // the shared mel context's state had already been replaced, on a segment already paid
+            // for; the check costs one ~100 ns JNI crossing against a ~405 ms encode.
+            //
+            // Guarded on `armedEpoch != 0L` so an instance that never armed does not touch
+            // QnnAsrNative — and therefore does not dlopen it — merely to find that out; and read
+            // ONCE, into a local, so the number the refusal reports is the number the branch was
+            // taken on rather than a second reading of a value that has no reason to agree.
+            if (armedEpoch != 0L) {
+                val liveEpoch = QnnAsrNative.nativeEpoch()
+                if (liveEpoch != armedEpoch) {
+                    return@serialized fallBackAndRun(
+                        "epoch",
+                        sessionReplacedDetail(armedEpoch, liveEpoch),
+                        samples,
+                        lang,
+                        useVad,
+                    )
+                }
+            }
+
             val mel = melBuffer
             val quantised = quantBuffer
             val bpe = decoder
@@ -455,7 +512,23 @@ class NpuWhisperBackend(
      * armed session is the normal case and a teardown that throws would strand the rest of it.
      */
     private fun releaseNpuResources() {
-        runCatching { QnnAsrNative.nativeRelease() }
+        // NAMED, and only when there is something to name.
+        //
+        // `armedEpoch` rather than a fresh `nativeEpoch()` read: a fresh read names whatever is
+        // live NOW, which on the losing interleaving is the SUCCESSOR's session — the unguarded
+        // release with an argument added to it. Native ignores an epoch that is not the live one,
+        // so a stale instance's teardown becomes a WE-DIAG line instead of a destroyed session.
+        //
+        // And the guard, which closes Q6 M1: `mel-donor` is the cheapest refusal in load() — no
+        // installed 80-bin whisper model — and it is reached BEFORE anything native is touched, on
+        // every session of every device with no ggml model installed. Unguarded, the way out of
+        // that refusal ran through `QnnAsrNative`, whose `init` block dlopens ~25 MiB of Qualcomm
+        // runtime, to release a session that was never created. The two conditions together are
+        // the whole test for "did this instance ever touch the native side".
+        if (armedEpoch != 0L || melCtx != 0L) {
+            runCatching { QnnAsrNative.nativeRelease(armedEpoch) }
+        }
+        armedEpoch = 0L
         if (melCtx != 0L) {
             runCatching { WhisperNative.free(melCtx) }
             melCtx = 0L
@@ -581,5 +654,21 @@ class NpuWhisperBackend(
         fun isTierAvailable(socModel: String?, socManufacturer: String?, libDir: String): Boolean =
             NpuGate.isSocSupported(socModel, socManufacturer) &&
                 runCatching { QnnAsrNative.nativeProbe(libDir).isEmpty() }.getOrDefault(false)
+
+        /**
+         * The `epoch` refusal's detail line, built in one place so that **both** numbers are always
+         * in it (4.1 L1).
+         *
+         * A message that says only "the session was replaced" cannot be checked against anything.
+         * The `WE-DIAG` capture carries `nativeInit: session armed with epoch N` on every arm and
+         * `nativeRelease: epoch M is not the live session (N)` on every refused teardown, so a
+         * Kotlin-side refusal that names neither number leaves the reader unable to say which arm
+         * won — which is the single question the L8 device A/B has to answer about this mechanism.
+         *
+         * @param mine the epoch this backend was armed with.
+         * @param live what `nativeEpoch()` answered, i.e. the session that exists now.
+         */
+        private fun sessionReplacedDetail(mine: Long, live: Long): String =
+            "this backend's session ($mine) was replaced by a newer arm ($live)"
     }
 }

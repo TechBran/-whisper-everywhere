@@ -20,7 +20,10 @@ package com.whispereverywhere.npu
  *
  * LIFECYCLE: [nativeInit] is idempotent (an existing session is released first), and
  * [nativeRelease] must be called before the CPU `multi` tier re-arms. The NPU path needs ~376 MiB
- * and the two are never co-resident, in either direction.
+ * and the two are never co-resident, in either direction. Every successful [nativeInit] issues an
+ * **arming epoch**, readable through [nativeEpoch]; [nativeRelease] takes that epoch and ignores
+ * any release that does not name the live session, which is what makes two npu-class tiers safe to
+ * switch between (4.1 L1 / final review F4).
  *
  * LOADING: the `init` block below throws `UnsatisfiedLinkError` when `libqnnasr.so` is absent from
  * the APK, which happens by design when the Qualcomm headers could not be fetched at build time
@@ -233,16 +236,51 @@ object QnnAsrNative {
     external fun nativeLastError(): String
 
     /**
+     * The live session's **arming epoch**, or `0L` when there is none (4.1 L1).
+     *
+     * Every successful [nativeInit] issues the next value of a process-monotonic counter and hands
+     * it out here; [nativeRelease] refuses any epoch that is not this one. It is the only way
+     * Kotlin can learn the name of the session it armed — [nativeInit] keeps returning `""` /
+     * `"stage: detail"` unchanged, because widening a String whose whole job is to name a failed
+     * stage so that it can also carry a number is how the failure text stops being read.
+     *
+     * Read under the session mutex, so it is safe from any thread. One JNI crossing is ~100 ns
+     * against a ~405 ms encode, which is why `NpuWhisperBackend` can afford to check it once per
+     * segment — and why a stale instance can never encode into, or decode out of, a session that
+     * belongs to a different tier.
+     */
+    external fun nativeEpoch(): Long
+
+    /**
      * Releases the sustained power vote, the client buffers, the contexts, the device and the
-     * backend, and frees the system context that owns the tensor metadata — in that order. Safe to
-     * call twice and safe to call on a partially-initialised session.
+     * backend, and frees the system context that owns the tensor metadata — in that order —
+     * **if [epoch] names the session that is actually live**. Safe to call twice and safe to call
+     * on a partially-initialised session.
      *
      * The vote goes first because it is a request held against the backend that is about to be
      * freed. Everything the session holds is session-scoped, so this is also the only place any of
      * it is released: there is no per-segment allocation to reclaim.
      *
+     * ### Why it takes an epoch (final review F4/I1)
+     *
+     * The QNN session is a **process-global** and [nativeInit] releases any existing one, while
+     * `LocalWhisperEngine.shutdown()` *queues* the stale backend's release onto that engine's own
+     * executor — a different one from the executor the replacement loads on. An `npu → npu-class`
+     * rebuild therefore has an interleaving in which this call, made late by a backend whose
+     * session is long gone, destroys the session its **successor** just built, leaving that
+     * successor armed with nothing behind it.
+     *
+     * Source order cannot repair that: the two effects are not ordered by the two statements that
+     * cause them. Identity can. Pass the value [nativeEpoch] answered when this instance armed; a
+     * mismatch — and `0L`, which is "no session" and is refused outright — is logged on `WE-DIAG`
+     * and **ignored**.
+     *
      * The QNN libraries themselves stay mapped on purpose: dlclose on a backend holding process-wide
      * FastRPC state is not something the API promises is safe, and re-arming the tier is free.
+     *
+     * @param epoch the epoch this caller was armed with, from [nativeEpoch]. Never a fresh read —
+     *        a fresh read names whatever is live *now*, which is the unguarded release with an
+     *        argument added to it.
      */
-    external fun nativeRelease()
+    external fun nativeRelease(epoch: Long)
 }
