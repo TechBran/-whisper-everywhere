@@ -10,7 +10,9 @@ import android.system.Os
 import android.util.Log
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.data.local.UsageTracker
+import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModelManager
+import com.whispereverywhere.transcription.NpuWhisperBackend
 
 class WhisperEverywhereApp : Application() {
 
@@ -27,6 +29,58 @@ class WhisperEverywhereApp : Application() {
      */
     val whisperModelManager: WhisperModelManager by lazy {
         WhisperModelManager(this, preferencesManager)
+    }
+
+    /**
+     * Whether this device's HARDWARE can run the 4.0 `npu` tier: the SoC gate, then the QNN probe.
+     *
+     * **`by lazy` because the probe dlopens `libQnnSystem.so` and `libQnnHtp.so`** — a real load
+     * the first time, and a chooser that recomposes must not repeat it. Computed at most once per
+     * process, and on the overwhelming majority of devices not at all past the first branch: the
+     * SoC gate is checked first inside [NpuWhisperBackend.isTierAvailable] and a Tensor, an Exynos
+     * or a MediaTek never reaches the dlopen.
+     *
+     * **Not Main-safe** — `QnnAsrNative`'s threading contract forbids Main for every entry point,
+     * so every reader forces this off the main thread. [isNpuTierOffered] is the reader that
+     * matters and its callers do exactly that.
+     *
+     * The API-31 guard lives HERE rather than in `NpuGate`, which is a pure two-string table on
+     * purpose: `minSdk` is 26, `Build.SOC_MODEL` arrived in API 31, and the gate's null → deny
+     * handles the whole pre-S population in one branch.
+     *
+     * This file is already where the NPU's process-scoped setup lives — see
+     * [configureFastRpcLibraryPath], which is here for the same reason: it has to happen once, per
+     * process, before anything touches the backend.
+     */
+    val npuCapableDevice: Boolean by lazy {
+        NpuWhisperBackend.isTierAvailable(
+            socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null,
+            socManufacturer =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MANUFACTURER else null,
+            libDir = applicationInfo.nativeLibraryDir,
+        )
+    }
+
+    /**
+     * Whether a chooser may OFFER the gated `npu` tier: capable hardware AND both context binaries
+     * already on disk.
+     *
+     * **The installed half is not redundant with the hardware half, and it is not Q8's job.** The
+     * pair is SAF-imported from a zip, never downloaded — `WhisperModel.url` on that tier is
+     * provenance, not a source — so a card offered before the assets exist would put a Download
+     * button in front of a user for whom downloading cannot work. Offering a tier whose assets
+     * cannot yet arrive is the one thing this gate exists to prevent.
+     *
+     * Re-read on every call rather than memoised: [npuCapableDevice] is a fact about the silicon
+     * and cannot change within a process, but the files can — Q8's importer creates them while the
+     * app is running, and a chooser that cached "not installed" would keep hiding the card the
+     * import just earned. It is four `File` stats behind a memoised gate.
+     *
+     * **Never call from Main** — it forces [npuCapableDevice], which dlopens.
+     */
+    fun isNpuTierOffered(): Boolean {
+        val npu = WhisperCatalog.byId("npu") ?: return false
+        return npuCapableDevice && whisperModelManager.isInstalled(npu)
     }
 
     override fun onCreate() {

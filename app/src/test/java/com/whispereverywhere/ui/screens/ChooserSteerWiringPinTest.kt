@@ -38,6 +38,23 @@ import org.junit.Test
  *  - *The device locale dropped.* Both surfaces must pass a full `Locale.toLanguageTag()`; H3's
  *    battery row (a) measured that a bare language code hides separator/case bugs.
  *
+ * **4.0 (Q7b) — the gated `npu` tier joins the lineup, and adds three more mutations of the same
+ * family.** The ordering and steer calls are now the `…For(languageTag, npuAvailable)` pair, which
+ * is why the two 3.7 needles below read differently from the ones this class shipped with; the
+ * `WhisperCatalog.pickable` count stays at ZERO on both files, because that assertion encodes the
+ * Bengali review and nothing about a new tier makes catalog order acceptable.
+ *  - *The gate answer hardcoded at one of the two call sites.* `steerIdForLanguageTagFor(tag,
+ *    false)` beside `orderedForLanguageTagFor(tag, npuAvailable)` compiles, and puts the STEER
+ *    badge and the selection highlight on `multi` while `npu` sits above it wearing neither. The
+ *    guard is that both calls are counted with the SAME argument list.
+ *  - *`withContext(Dispatchers.IO)` dropped from the producer.* `produceState`'s block runs in the
+ *    composition's context, i.e. Main. The gate answer dlopens `libQnnSystem.so` and
+ *    `libQnnHtp.so`, and `QnnAsrNative`'s threading contract forbids Main for every entry point.
+ *    Removing one wrapper is compile-clean and moves a real dynamic-link load onto the UI thread.
+ *  - *`pickedTierId` given a non-null initial value.* The 4.0 steer can now name a tier whose two
+ *    context binaries are 358 MB; a chooser that preselects the steered card turns "we suggest"
+ *    into "we chose", which is the one thing the steer has never been allowed to do.
+ *
  * **The source is read LF-NORMALISED.** `core.autocrlf=true` checks this repo out with CRLF, so a
  * needle written with a bare `\n` finds nothing and every assertion would pass or fail for the wrong
  * reason. The normalisation happens once, at each read site below.
@@ -77,12 +94,14 @@ class ChooserSteerWiringPinTest {
     @Test
     fun theGuidedFlowOffersTheOrderedListAndNeverRawCatalogOrder() {
         assertEquals(
-            "the guided chooser renders orderedForLanguageTag, resolved through the catalog",
+            "the guided chooser renders orderedForLanguageTagFor, resolved through the catalog",
             1,
             count(
                 flow,
-                "ModelTierCopy.orderedForLanguageTag(languageTag)" +
-                    ".mapNotNull { WhisperCatalog.byId(it) }",
+                block(
+                    "        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)",
+                    "            .mapNotNull { WhisperCatalog.byId(it) }",
+                ),
             ),
         )
         assertEquals(
@@ -103,10 +122,55 @@ class ChooserSteerWiringPinTest {
         // land on the English-only tier for every user on earth while the ORDERING stays correct:
         // half-right, and harder to diagnose than the original Bengali-review defect.
         assertEquals(
-            "the guided flow's steerId comes from steerIdForLanguageTag, not a catalog default " +
-                "or a hardcoded tier id",
+            "the guided flow's steerId comes from steerIdForLanguageTagFor, not a catalog " +
+                "default or a hardcoded tier id",
             1,
-            count(flow, "val steerId = ModelTierCopy.steerIdForLanguageTag(languageTag)"),
+            count(
+                flow,
+                "val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)",
+            ),
+        )
+        assertGateAnswerReachesBothCallsOffMain(
+            flow,
+            "the guided flow",
+            block(
+                "        val npuAvailable by produceState(initialValue = false) {",
+                "            value = withContext(Dispatchers.IO) {",
+                "                WhisperEverywhereApp.getInstance().isNpuTierOffered()",
+                "            }",
+                "        }",
+            ),
+        )
+    }
+
+    /**
+     * The 4.0 half, shared by both surfaces: the gate answer is produced OFF Main, and the SAME
+     * answer feeds the steer and the ordering.
+     *
+     * Two assertions, and neither is redundant. The producer needle pins WHERE the answer comes
+     * from — `isNpuTierOffered()` composes the SoC gate, the QNN probe and the two-file installed
+     * check, and its first call dlopens `libQnnSystem.so` and `libQnnHtp.so`, so
+     * `withContext(Dispatchers.IO)` inside `produceState` is the difference between a background
+     * load and one on the UI thread (`produceState`'s block runs in the composition's context,
+     * which is Main). The count of TWO pins that the answer is not then dropped at one of the two
+     * places that consume it: a `false` literal in either call is compile-clean and separates the
+     * STEER badge from the card the lineup actually led with.
+     */
+    private fun assertGateAnswerReachesBothCallsOffMain(
+        source: String,
+        surface: String,
+        producer: String,
+    ) {
+        assertEquals(
+            "$surface's npu gate answer is produced off Main from the process-memoised app gate",
+            1,
+            count(source, producer),
+        )
+        assertEquals(
+            "$surface passes the SAME gate answer to the steer AND the ordering — a `false` " +
+                "literal in either one badges a card the lineup did not lead with",
+            2,
+            count(source, "(languageTag, npuAvailable)"),
         )
     }
 
@@ -136,6 +200,17 @@ class ChooserSteerWiringPinTest {
             1,
             count(flow, block("    steered: Boolean,", "    selected: Boolean,")),
         )
+        // 4.0 (Q7b). `steered` and `selected` are only genuinely different things while NOTHING
+        // starts selected. The steer can now name `npu` — 358 MB of context binaries — and a
+        // chooser that preselects the steered card has stopped suggesting and started choosing,
+        // on a tier whose whole contract is that the device decides and then the user does.
+        // Pinned here rather than commented because the mutation is one word: `null` -> `"npu"`.
+        assertEquals(
+            "the guided flow preselects NOTHING: the steer moves a card to the top and badges " +
+                "it, and the user still has to tap it",
+            1,
+            count(flow, "var pickedTierId by remember { mutableStateOf<String?>(null) }"),
+        )
     }
 
     @Test
@@ -160,12 +235,12 @@ class ChooserSteerWiringPinTest {
     @Test
     fun theSettingsPickerOffersTheSameOrderedListFromTheSameRule() {
         assertEquals(
-            "the Settings picker's model list comes from orderedForLanguageTag",
+            "the Settings picker's model list comes from orderedForLanguageTagFor",
             1,
             count(
                 picker,
                 block(
-                    "    val models = ModelTierCopy.orderedForLanguageTag(languageTag)",
+                    "    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)",
                     "        .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
             ),
@@ -185,10 +260,22 @@ class ChooserSteerWiringPinTest {
         // (`val steerId = "pro"`) evades it entirely. This needle pins the source of the value,
         // so both spellings of the same defect die here.
         assertEquals(
-            "the Settings picker's steerId comes from steerIdForLanguageTag, not a catalog " +
+            "the Settings picker's steerId comes from steerIdForLanguageTagFor, not a catalog " +
                 "default or a hardcoded tier id",
             1,
-            count(picker, "val steerId = ModelTierCopy.steerIdForLanguageTag(languageTag)"),
+            count(
+                picker,
+                "val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)",
+            ),
+        )
+        assertGateAnswerReachesBothCallsOffMain(
+            picker,
+            "the Settings picker",
+            block(
+                "    val npuAvailable by produceState(initialValue = false) {",
+                "        value = withContext(Dispatchers.IO) { app.isNpuTierOffered() }",
+                "    }",
+            ),
         )
     }
 

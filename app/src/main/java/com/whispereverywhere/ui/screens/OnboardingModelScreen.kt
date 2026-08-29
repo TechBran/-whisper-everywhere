@@ -31,6 +31,8 @@ import com.whispereverywhere.ui.theme.Primary
 import com.whispereverywhere.ui.theme.Success
 import com.whispereverywhere.ui.theme.Warning
 import com.whispereverywhere.util.formatBytes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,8 +46,16 @@ fun OnboardingModelScreen(
     // existing users but must not be selectable by anyone new. 3.7 Workstream H orders them by
     // locale: the steered tier is first and carries the badge.
     val languageTag = java.util.Locale.getDefault().toLanguageTag()
-    val steerId = ModelTierCopy.steerIdForLanguageTag(languageTag)
-    val models = ModelTierCopy.orderedForLanguageTag(languageTag)
+    // 4.0: the gated npu tier joins the lineup only where the SoC gate, the QNN probe AND both
+    // context binaries all say yes. The probe dlopens two QNN libraries and QnnAsrNative forbids
+    // Main for every entry point, so the answer is produced OFF Main and memoised for the process
+    // (WhisperEverywhereApp.npuCapableDevice). `false` until it arrives, which is the ungated
+    // lineup every device that will never pass the gate keeps rendering.
+    val npuAvailable by produceState(initialValue = false) {
+        value = withContext(Dispatchers.IO) { app.isNpuTierOffered() }
+    }
+    val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)
+    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)
         .mapNotNull { WhisperCatalog.byId(it) }
 
     val state by viewModel.state.collectAsState()

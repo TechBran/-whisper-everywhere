@@ -231,6 +231,15 @@ android {
 // negative assertions (`model.retired` must appear nowhere; `f.length(), model.approxBytes` must
 // appear nowhere in isInstalled) could be broken by a KDoc line that never re-runs them. The pins
 // predate this entry; the gap was found by Q7a's battery and is closed for both files at once.
+// (4.0 Q7b) The two chooser screens ChooserSteerWiringPinTest reads join by the same stated rule —
+// what the tests READ — and the honest note is that here the gap was MEASURED ABSENT rather than
+// present: with OnboardingModelScreen.kt off this list, a comment-only edit to it still produced
+// "> Task :app:compileDebugKotlin / bundleDebugClassesToRuntimeJar / testDebugUnitTest", i.e. the
+// Compose-compiled classes are not byte-stable across a recompile, so the runtime jar changed and
+// the task re-ran anyway. That is an incidental property of the Compose plugin's output, not a
+// contract — SettingsScreen.kt is a Compose file already in this list for the same reason — and
+// this pin's needles are INDENTATION-sensitive block matches, the one mutation shape most likely
+// to leave semantics untouched. Declared, so the re-run stops depending on a compiler accident.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -242,6 +251,8 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
         "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
+        "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
+        "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
 }

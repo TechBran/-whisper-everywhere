@@ -174,6 +174,105 @@ class ModelTierCopyTest {
         }
     }
 
+    // ------------------------------------------------------------ 4.0: steering the gated tier
+    //
+    // The 3.7 rules above answer "which tier for this language". These four answer "...and does
+    // this device have a faster way to run it" — without letting the answer to the second
+    // question change the answer to the first.
+
+    @Test fun the_gated_tier_is_the_steer_only_where_the_device_runs_it_and_the_locale_needs_it() {
+        // Capable device, and a language `multi` was already the right answer for: the same model
+        // on the Hexagon is a strictly better version of the same answer.
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", true))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("zh-Hans-CN", true))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("fr-CA", true))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("", true))
+        // An ENGLISH locale keeps `pro` however fast the silicon is. Steering an English speaker
+        // onto a multilingual tier because the device is capable is the Bengali review mirrored:
+        // it trades the accuracy they came for against a speed they never asked about.
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en", true))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en-US", true))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("EN-au", true))
+        // Gate says no: 3.7's answer, unchanged, for every locale.
+        assertEquals("multi", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", false))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en-US", false))
+    }
+
+    @Test fun the_gated_tier_leads_the_lineup_without_promoting_the_english_only_tier() {
+        // The second ordering key, stated as the assertion it exists for: `multi` stays ahead of
+        // `pro` for a non-English user. A one-key sort reads [npu, pro, multi] here and promotes
+        // the English-only tier above the multilingual one 3.7 demoted it below — by a change
+        // that was supposed to be about silicon.
+        assertEquals(
+            listOf("npu", "multi", "pro"),
+            ModelTierCopy.orderedForLanguageTagFor("bn-BD", true),
+        )
+        // English locale on a capable device: `pro` leads, and the gated tier is LAST rather than
+        // absent. The user can still reach it; they are simply not pushed at it.
+        assertEquals(
+            listOf("pro", "multi", "npu"),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", true),
+        )
+        assertEquals(listOf("multi", "pro"), ModelTierCopy.orderedForLanguageTagFor("bn-BD", false))
+        assertEquals(listOf("pro", "multi"), ModelTierCopy.orderedForLanguageTagFor("en-US", false))
+    }
+
+    @Test fun the_lineup_is_a_permutation_of_this_devices_pickable_set_and_the_steer_leads_it() {
+        // ORDER, not presence — the rule this branch has now paid for four times. Both chooser
+        // surfaces make TWO calls: one for the cards, one for the badge and the highlight. If the
+        // two ever disagree, the lineup leads with one card while "Best match for your language"
+        // sits on another: every element present, every element in the wrong relationship to the
+        // others, and nothing in the type system to notice.
+        listOf("en", "en-US", "bn", "bn-BD", "de-AT", "zh-Hans-CN", "").forEach { tag ->
+            listOf(true, false).forEach { npuAvailable ->
+                val expected = WhisperCatalog.pickableFor(npuAvailable).map { it.id }
+                val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, npuAvailable)
+                assertEquals(
+                    "'$tag'/$npuAvailable lost or duplicated a tier",
+                    expected.size,
+                    ordered.size,
+                )
+                assertEquals(
+                    "'$tag'/$npuAvailable is not a permutation of what this device can pick",
+                    expected.toSet(),
+                    ordered.toSet(),
+                )
+                assertEquals(
+                    "'$tag'/$npuAvailable: the badged tier is not the one the lineup leads with",
+                    ModelTierCopy.steerIdForLanguageTagFor(tag, npuAvailable),
+                    ordered.first(),
+                )
+                ordered.forEach {
+                    assertNotNull("ordered id '$it' does not resolve", WhisperCatalog.byId(it))
+                    assertNotNull("ordered id '$it' has no card copy", ModelTierCopy.forId(it))
+                }
+            }
+        }
+    }
+
+    @Test fun a_device_that_failed_the_gate_never_sees_the_gated_tier_at_all() {
+        listOf("en", "en-US", "en_GB", "bn", "bn-BD", "de-AT", "zh-Hans-CN", "fr-CA", "").forEach { tag ->
+            val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, npuAvailable = false)
+            assertFalse(
+                "'$tag': the gated tier reached a device whose gate said no",
+                ordered.contains("npu"),
+            )
+            assertEquals("'$tag': the ungated lineup is 3.7's two tiers", 2, ordered.size)
+            assertTrue(
+                "'$tag': the ungated steer is not a tier this device can pick",
+                WhisperCatalog.pickable.map { it.id }
+                    .contains(ModelTierCopy.steerIdForLanguageTagFor(tag, false)),
+            )
+            // The 3.7 spelling still answers identically: the new overload is the same rule with
+            // one more input, not a second rule free to drift from it.
+            assertEquals("'$tag': the two spellings disagree", ordered, ModelTierCopy.orderedForLanguageTag(tag))
+        }
+        // Being steered to is a position in a list and a chip. It is not selection, and nothing
+        // about the gate moves the catalog default or lets a gated tier into `pickable`.
+        assertEquals("pro", WhisperCatalog.DEFAULT_MODEL_ID)
+        assertFalse(WhisperCatalog.pickable.map { it.id }.contains("npu"))
+    }
+
     // ---------------------------------------------------------------- the 4.0 gated tier
     //
     // npu is the first tier the census loops above could not have reached through `pickable`, so

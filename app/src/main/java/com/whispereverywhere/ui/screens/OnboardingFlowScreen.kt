@@ -42,6 +42,8 @@ import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import com.whispereverywhere.ui.theme.Primary
 import com.whispereverywhere.util.formatBytes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // ---------------------------------------------------------------------------------------------
 // Guided first-run onboarding (owner decision 2026-08-01): everything the app needs, configured
@@ -399,9 +401,22 @@ private fun EnginesStep(
         // 3.7 Workstream H: the steered tier first — English locale -> pro, everything else ->
         // multi. A steer, not a lock: both cards stay tappable and TIER_SWITCH_HINT below still
         // promises the switch.
+        //
+        // 4.0: on a device that passes the NPU gate AND already holds both context binaries, the
+        // non-English steer becomes `npu` — the same multilingual weights on the Hexagon. The
+        // probe dlopens two QNN libraries and QnnAsrNative forbids Main for every entry point, so
+        // the answer is produced OFF Main and memoised for the process. `false` until it arrives.
+        // `pickedTierId` still starts null: the steer moves a card to the top and badges it, and
+        // the user still has to tap it.
         val languageTag = java.util.Locale.getDefault().toLanguageTag()
-        val steerId = ModelTierCopy.steerIdForLanguageTag(languageTag)
-        ModelTierCopy.orderedForLanguageTag(languageTag).mapNotNull { WhisperCatalog.byId(it) }
+        val npuAvailable by produceState(initialValue = false) {
+            value = withContext(Dispatchers.IO) {
+                WhisperEverywhereApp.getInstance().isNpuTierOffered()
+            }
+        }
+        val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)
+        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)
+            .mapNotNull { WhisperCatalog.byId(it) }
             .forEach { model ->
                 TierChoiceCard(
                     model = model,
