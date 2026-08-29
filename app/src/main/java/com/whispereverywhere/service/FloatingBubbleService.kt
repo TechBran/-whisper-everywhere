@@ -753,13 +753,34 @@ class FloatingBubbleService : Service(),
                 // half is a live stat. Re-read before warmLocalEngine() decides which backend the
                 // engine it may be about to rebuild is built on.
                 refreshNpuTierOffer()
+                // THE GATE, RE-READ BELOW THE SUSPENSION (4.0, Q9 fix round 2). The check at the
+                // top of this block was taken before refreshNpuTierOffer() hopped to IO and back,
+                // so by here it is stale — a session can have started across that suspension. This
+                // read is what makes the rebuild below safe, and it is safe *because* nothing
+                // between it and the call suspends: currentState is a plain non-volatile var with
+                // a single writer (updateBubbleState), i.e. already Main-confined by the whole
+                // file's existing correctness, warmLocalEngine and prewarmModelSwitch are ordinary
+                // functions, and collectLatest can only cancel at a suspension point. One
+                // uninterrupted run on Main, so the state cannot change underneath it.
+                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) {
+                    android.util.Log.i("WE-DIAG", "$reason: session started while re-reading the gate — connect() will reload")
+                    return@collectLatest
+                }
+                // AND THE REBUILD IS PERMITTED HERE. Without it this collector gets the cached
+                // engine back UNCHANGED after a tier switch and calls prewarmModelSwitch() on it —
+                // which loads the NEW tier's file through the OLD tier's backend. Both directions
+                // are wrong and one of them is loud: an npu-backed engine handed a ggml path
+                // resolves a null companion and publishes `unavailable stage=companion`, i.e. a
+                // FALSE decline card, a process-sticky routing block, and a spurious line in the
+                // one log the Q10a run-book tells the owner to trust.
+                //
                 // prewarmModelSwitch queues onto the engine's executor, which onDestroy shuts
                 // down — a rejection escaping here would kill this collector for good. Belt and
                 // braces only: onDestroy cancels serviceScope BEFORE it touches the engine, so
                 // this body cannot run against a shut-down executor. Caught narrowly, never as a
                 // blanket Throwable, so a CancellationException is always free to propagate.
                 try {
-                    warmLocalEngine().prewarmModelSwitch()
+                    warmLocalEngine(allowRebuild = true).prewarmModelSwitch()
                 } catch (e: java.util.concurrent.RejectedExecutionException) {
                     android.util.Log.i("WE-DIAG", "$reason: re-prewarm skipped (engine shut down)")
                 }
@@ -2229,14 +2250,25 @@ class FloatingBubbleService : Service(),
      * Rebuilding under a live session is therefore not a degraded experience; it is a crash with
      * the user's audio still accumulating in a buffer nobody will ever cut.
      *
-     * So the destructive branch requires explicit permission, and **exactly one caller has it**:
-     * [resolveTranscriptionEngine], which runs at session start, before any audio exists. Every
-     * other caller — the boot prewarm, the model-switch collector — gets the cached engine
-     * untouched and the rebuild happens at the next session start, which is the *"mid-session
-     * triggers are skipped, never deferred"* doctrine the collector already states, applied inside
-     * the function that now needs it. Nothing is lost by waiting: a deferred rebuild always
-     * resolves before the next segment can exist, because the thing that creates segments is the
-     * thing that carries the permission.
+     * So the destructive branch requires explicit permission, and **exactly two callers have it,
+     * each with its own proof that no session can be in flight**:
+     *
+     *  1. [resolveTranscriptionEngine] — session start, before any audio exists and before any
+     *     `commit()` can be queued.
+     *  2. the model-switch collector — after an `IDLE`/`ERROR` read taken **below** its last
+     *     suspension point, in one uninterrupted run on Main (fix round 2). It needs the permission
+     *     because the alternative is worse than a stale engine: handed the cached engine unchanged
+     *     after a tier switch, it calls `prewarmModelSwitch()`, which loads the NEW tier's file
+     *     through the OLD tier's backend — and an npu-backed engine given a ggml path publishes a
+     *     FALSE `unavailable stage=companion`.
+     *
+     * The **boot prewarm** deliberately does not have it: it only ever fills an empty slot, so it
+     * has nothing to tear down, and a rebuild there would be the un-gated one C1 was about.
+     *
+     * Nothing is lost by a caller *not* having the permission: a deferred rebuild always resolves
+     * before the next segment can exist, because the thing that creates segments is the thing that
+     * carries permission 1. That is the *"mid-session triggers are skipped, never deferred"*
+     * doctrine the collector already states, applied inside the function that needed it.
      *
      * **NOT a `currentState` check, and that is the trap.** `startRecording` sets `CONNECTING`
      * *before* calling [resolveTranscriptionEngine], so a state-keyed guard would block the one

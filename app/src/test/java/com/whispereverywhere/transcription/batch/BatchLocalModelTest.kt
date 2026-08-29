@@ -111,23 +111,44 @@ class BatchLocalModelTest {
     fun loadCtxRoutesThroughThePolicyAndNotStraightAtTheInstalledPath() {
         val src = read("src/main/java/com/whispereverywhere/transcription/batch/BatchTranscriber.kt")
         assertEquals(
-            "loadCtx resolves through BatchLocalModel, with all three inputs named",
+            "the resolution goes through BatchLocalModel, with all three inputs named, in ONE " +
+                "place — so the file that is loaded and the file that is recorded cannot diverge",
             1,
             src.split(
                 listOf(
-                    "        val path = BatchLocalModel.pathFor(",
-                    "            tierId = tierId,",
-                    "            installedPath = modelPathProvider.installedModelPath(),",
-                    "            ggmlSubstitutePath = modelPathProvider.cpuTierModelPath(),",
-                    "        ) ?: error(BatchLocalModel.refusal(tierId))",
+                    "    private fun localModelPath(): String? = BatchLocalModel.pathFor(",
+                    "        tierId = modelPathProvider.selectedTierId(),",
+                    "        installedPath = modelPathProvider.installedModelPath(),",
+                    "        ggmlSubstitutePath = modelPathProvider.cpuTierModelPath(),",
+                    "    )",
                 ).joinToString("\n")
             ).size - 1,
         )
         assertEquals(
-            "the bare installed-path read is gone from loadCtx — leaving it is the whole defect, " +
-                "and it is one deleted wrapper away",
+            "loadCtx loads that path and refuses by name when there is none",
+            1,
+            src.split(
+                listOf(
+                    "        val path = localModelPath()",
+                    "            ?: error(BatchLocalModel.refusal(modelPathProvider.selectedTierId()))",
+                    "        backend.load(path)",
+                ).joinToString("\n")
+            ).size - 1,
+        )
+        // The manifest records the file that ACTUALLY ran. Recording installedModelPath() here was
+        // a stored falsehood on a substituted job — the QAIRT encoder blob named as the model that
+        // produced a transcript whisper.cpp made from a ggml. Nothing reads it today, which is why
+        // it was worth fixing: manifests outlive the code that wrote them.
+        assertEquals(
+            "modelId is the resolved path, not the selected tier's raw file",
+            1,
+            src.split("modelId = localModelPath()").size - 1,
+        )
+        assertEquals(
+            "the bare installed-path read is gone from BOTH sites — leaving either is the whole " +
+                "defect, and it is one deleted wrapper away",
             0,
-            src.split("val path = modelPathProvider.installedModelPath()").size - 1,
+            src.split("modelPathProvider.installedModelPath())").size - 1,
         )
         assertEquals(
             "and the refusal string is not re-spelled here, where it could drift from the policy",

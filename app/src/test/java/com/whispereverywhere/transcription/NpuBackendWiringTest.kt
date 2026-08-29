@@ -291,9 +291,12 @@ class NpuBackendWiringTest {
             count(warm, "val tierId = app.preferencesManager.selectedModelId"),
         )
         assertEquals(
-            "the memo is @Volatile: refreshNpuTierOffer writes it on IO and warmLocalEngine reads " +
-                "it on Main, so without it the reading thread may never see the write at all — a " +
-                "tier that is offered, installed and simply never routed to",
+            "the memo keeps its @Volatile. It is DEFENSIVE, not load-bearing, and this message " +
+                "used to claim otherwise: withContext(Dispatchers.IO) returns to the CALLER's " +
+                "context and both callers are on Dispatchers.Main, so the write and every read " +
+                "are alike Main-confined today. It is pinned because it costs one Boolean read and " +
+                "it is the difference between correct and correct-until-someone-moves-the-refresh " +
+                "onto a background scope — a one-line change with no other symptom.",
             1,
             count(service, "@Volatile private var npuTierOffered: Boolean = false"),
         )
@@ -376,7 +379,7 @@ class NpuBackendWiringTest {
      * would block the one rebuild that must happen and permit none. That trap is pinned too.
      */
     @Test
-    fun onlyASessionStartMayTearTheCachedEngineDown() {
+    fun onlyAProvablyIdleCallerMayTearTheCachedEngineDown() {
         assertEquals(
             "the permission DEFAULTS to false, so a caller added later is safe by omission — the " +
                 "property Q9 lost by making a pure function destructive without changing its shape",
@@ -384,30 +387,37 @@ class NpuBackendWiringTest {
             count(service, "private fun warmLocalEngine(allowRebuild: Boolean = false): LocalWhisperEngine {"),
         )
         assertEquals(
-            "exactly one caller passes it, and it is named at the call site",
-            1,
+            "exactly TWO callers pass it, each named at the call site and each with its own proof " +
+                "that no session can be in flight (fix round 2 added the second)",
+            2,
             count(service, "warmLocalEngine(allowRebuild = true)"),
         )
         val resolve = memberBody(service, "    private fun resolveTranscriptionEngine(): TranscriptionEngine {")
         assertEquals(
-            "and that caller is resolveTranscriptionEngine — session start, before any audio " +
-                "exists and before any commit() can be queued, which is the entire safety argument",
+            "the first is resolveTranscriptionEngine — session start, before any audio exists and " +
+                "before any commit() can be queued, which is the entire safety argument",
             1,
             count(resolve, "val local = warmLocalEngine(allowRebuild = true)"),
         )
-        listOf("warmLocalEngine().prewarm()", "warmLocalEngine().prewarmModelSwitch()").forEach { site ->
-            assertEquals(
-                "`$site` takes the cached engine as it is. A tier change or a fallback it observes " +
-                    "is applied at the NEXT session start, which always precedes the next segment — " +
-                    "\"mid-session triggers are skipped, never deferred\", applied one level in.",
-                1,
-                count(service, site),
-            )
-        }
+        assertEquals(
+            "the second is the model-switch collector, and it must reach prewarmModelSwitch() " +
+                "THROUGH the rebuild. Without that the collector prewarms the NEW tier's file on " +
+                "the OLD tier's backend — an npu-backed engine given a ggml path resolves a null " +
+                "companion and publishes a FALSE `unavailable stage=companion`.",
+            1,
+            count(service, "warmLocalEngine(allowRebuild = true).prewarmModelSwitch()"),
+        )
+        assertEquals(
+            "the boot prewarm does NOT have the permission: it only ever fills an empty slot, so " +
+                "it has nothing to tear down, and a rebuild there is precisely the un-gated one " +
+                "the Critical was about",
+            1,
+            count(service, "warmLocalEngine().prewarm()"),
+        )
         assertEquals(
             "four live mentions of warmLocalEngine( in this file — the declaration and its three " +
                 "call sites. A fifth cannot be added without moving this number, which is what " +
-                "makes the two assertions above a complete audit rather than a spot check.",
+                "makes the assertions above a complete audit rather than a spot check.",
             4,
             liveOffsets(service, "warmLocalEngine(").size,
         )
@@ -433,6 +443,29 @@ class NpuBackendWiringTest {
                 "the time it calls in, so a state guard permits nothing and blocks everything",
             0,
             count(warm, "currentState"),
+        )
+
+        // THE COLLECTOR'S OWN PROOF, and it is an ORDER claim (fix round 2). Its liveness gate must
+        // be re-read BELOW refreshNpuTierOffer()'s `withContext(Dispatchers.IO)` and ABOVE the
+        // rebuild. The gate at the top of the block is not enough and its insufficiency is
+        // invisible: every statement is present, the read is spelled identically, and only its
+        // position decides whether it describes the state at the moment of the teardown or the
+        // state as it was before a thread hop. That is the TOCTOU the Critical named.
+        val refresh = liveOffsets(service, "                refreshNpuTierOffer()")
+        val reRead = liveOffsets(service, "session started while re-reading the gate")
+        val rebuild = liveOffsets(service, "warmLocalEngine(allowRebuild = true).prewarmModelSwitch()")
+        assertEquals("the collector refreshes the gate on exactly one live line", 1, refresh.size)
+        assertEquals("and re-reads its liveness gate on exactly one live line", 1, reRead.size)
+        assertEquals("and rebuilds on exactly one live line", 1, rebuild.size)
+        assertTrue(
+            "the re-read (${reRead.first()}) must come AFTER the suspension it exists to survive " +
+                "(${refresh.first()}) — above it, it is the stale read the Critical was about",
+            refresh.first() < reRead.first(),
+        )
+        assertTrue(
+            "and BEFORE the rebuild it authorises (${rebuild.first()}) — a liveness check taken " +
+                "after the teardown is not a check",
+            reRead.first() < rebuild.first(),
         )
     }
 

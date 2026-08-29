@@ -222,8 +222,13 @@ class BatchTranscriber(
             usedLocal -> EngineUsed.LOCAL
             else -> meta.engineUsed
         }
+        // The path a local chunk WOULD have loaded, resolved the same way loadCtx resolves it
+        // (4.0, Q9 fix round 2). Recording `installedModelPath()` here was a stored falsehood on a
+        // substituted job: the manifest would name the QAIRT encoder blob as the model that
+        // produced the transcript, when whisper.cpp had in fact run a ggml. Nothing reads it today,
+        // which is exactly why it was worth fixing now — manifests outlive the code that wrote them.
         meta = meta.copy(status = finalStatus, engineUsed = engineUsed,
-            modelId = modelPathProvider.installedModelPath())
+            modelId = localModelPath())
         store.save(meta)
         _progress.value = BatchProgress(id, meta.chunkPlan.size, meta.chunkPlan.size, finalStatus)
     }
@@ -269,13 +274,15 @@ class BatchTranscriber(
      * (`ultra` included, which the donor picker deliberately excludes) keeps the exact file it has
      * always been given.
      */
+    private fun localModelPath(): String? = BatchLocalModel.pathFor(
+        tierId = modelPathProvider.selectedTierId(),
+        installedPath = modelPathProvider.installedModelPath(),
+        ggmlSubstitutePath = modelPathProvider.cpuTierModelPath(),
+    )
+
     private suspend fun loadCtx(): Long = withContext(nativeDispatcher) {
-        val tierId = modelPathProvider.selectedTierId()
-        val path = BatchLocalModel.pathFor(
-            tierId = tierId,
-            installedPath = modelPathProvider.installedModelPath(),
-            ggmlSubstitutePath = modelPathProvider.cpuTierModelPath(),
-        ) ?: error(BatchLocalModel.refusal(tierId))
+        val path = localModelPath()
+            ?: error(BatchLocalModel.refusal(modelPathProvider.selectedTierId()))
         backend.load(path)
     }
 
