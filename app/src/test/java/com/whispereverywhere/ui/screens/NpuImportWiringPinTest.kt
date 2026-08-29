@@ -150,6 +150,20 @@ class NpuImportWiringPinTest {
             indexOfOrFail(picker, "the card", "                installed -> {") < downloadArm &&
                 indexOfOrFail(picker, "the card", "                !downloadable -> {") < downloadArm,
         )
+        // The SECOND ordering claim, and it is a different one. The assertion above says both
+        // branches precede `else`; this says which of the two comes first. Swap them — both
+        // spellings intact, both counts satisfied, `else` still last — and an INSTALLED npu card
+        // matches `!downloadable` first, so the one tier that can only be adopted from this screen
+        // shows "Import model pair…" and never "Use this model". Battery row X13 approached this
+        // from the presence side and was killed by a needle rather than by an order, which is how
+        // the gap was found.
+        assertTrue(
+            "the INSTALLED arm must precede the not-downloadable arm: `installed` is the narrower " +
+                "and more specific state, and `when` takes the first match, so the broader arm " +
+                "first swallows it",
+            indexOfOrFail(picker, "the card", "                installed -> {") <
+                indexOfOrFail(picker, "the card", "                !downloadable -> {"),
+        )
         assertEquals(
             "downloadability is the CATALOG's predicate, the same one download() refuses on, so " +
                 "the card and the sink cannot disagree about which tiers have a URL",

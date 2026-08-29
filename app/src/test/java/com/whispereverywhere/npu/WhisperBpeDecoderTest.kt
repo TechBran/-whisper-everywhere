@@ -252,6 +252,58 @@ class WhisperBpeDecoderTest {
      * normalized at this single read site; the vocab asset contains no newline at all, so the
      * normalisation is a no-op for it and the bytes read are the bytes shipped.
      */
+    /**
+     * THE SHIPPED LICENCE PAGE ATTRIBUTES THIS ASSET, AND UNDER THE RIGHT LICENCE (4.0, Q8).
+     *
+     * The Q5 review's I1, recorded there as a **4.0 ship gate**: `oss_licenses.html` attributed
+     * whisper as MIT and described "model weights (all tiers)", while what this class loads is
+     * 563 KB of **tokenizer vocabulary** built from `openai/whisper-small`, whose model card
+     * declares `license: apache-2.0`. Two things were wrong for the material that now ships — the
+     * licence, and the description that was supposed to cover it — on the app's user-facing legal
+     * surface, where both licences require attribution.
+     *
+     * Pinned HERE because it is the same artefact this class already pins byte-for-byte: the file
+     * that ships and the page that describes it are one subject, and a test in either place alone
+     * lets them drift apart. Measured as a survivor first — battery row X18 reverted the line to
+     * MIT and all 1,489 tests stayed green, which is what a ship gate that nothing enforces
+     * actually looks like.
+     */
+    @Test
+    fun theShippedLicencePageAttributesThisVocabularyUnderApache2() {
+        val page = source("src/main/assets/oss_licenses.html")
+        assertTrue(
+            "the licence page names the tokenizer vocabulary as its own item, separate from the " +
+                "model weights: \"model weights (all tiers)\" does not cover tokenizer DATA on its " +
+                "face, which is half of what the Q5 review found wrong",
+            page.contains("OpenAI Whisper tokenizer vocabulary"),
+        )
+        val entry = page.substringAfter("OpenAI Whisper tokenizer vocabulary")
+            .substringBefore("</div>")
+        assertTrue(
+            "and states Apache License 2.0 for it — NOT MIT, which is what the page said before " +
+                "this asset shipped and what a careless merge would restore. Found: $entry",
+            entry.contains("Apache License 2.0"),
+        )
+        assertTrue(
+            "the attribution names the upstream repository the declaration comes from, so the " +
+                "claim is checkable rather than remembered",
+            entry.contains("openai/whisper-small"),
+        )
+        assertTrue(
+            "and it names the two source objects, which is what the NOTICE block in " +
+                "WhisperBpeDecoder.kt records: $entry",
+            entry.contains("vocab.json") && entry.contains("added_tokens.json"),
+        )
+        assertTrue(
+            "the MIT attribution for the model WEIGHTS is untouched — this is an addition, not a " +
+                "correction of the weights' licence, and conflating the two would replace one " +
+                "wrong statement with another",
+            page.contains("<b>OpenAI Whisper models</b>") &&
+                page.substringAfter("<b>OpenAI Whisper models</b>")
+                    .substringBefore("</div>").contains("MIT License"),
+        )
+    }
+
     private fun source(relative: String): String {
         var dir: java.io.File? = java.io.File(System.getProperty("user.dir")!!).absoluteFile
         while (dir != null) {

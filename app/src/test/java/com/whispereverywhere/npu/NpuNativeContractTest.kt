@@ -128,6 +128,58 @@ class NpuNativeContractTest {
         source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
     }
 
+    /** Where the FastRPC search path is built — one site, per Q1's review (4.0, Q8). */
+    private val app: String by lazy {
+        source("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
+    }
+
+    /**
+     * THE FASTRPC SEARCH PATH LEADS WITH THE APP'S FILES DIRECTORY (4.0, Q8).
+     *
+     * This is the app-side half of Q1's open concern for Q10a, and it is a *packaging* fact wearing
+     * a one-line disguise. `libQnnHtp.so` reaches the DSP by loading `libQnnHtpV75Skel.so` through
+     * the FastRPC loader, which searches `ADSP_LIBRARY_PATH` **and nothing else**, and which needs a
+     * REAL FILE on disk. This app is `extractNativeLibs="false"`, so `nativeLibraryDir` contains no
+     * such file and the bundled skel is unreachable — see the comment at the `libQnnHtp.so` dlopen
+     * in `qnn_asr.cpp`, which says the same thing from the other side of the seam.
+     *
+     * With the files directory first, both remaining answers work with no further code change: the
+     * owner adding the skel to the published zip, or an `adb push` into `files/` during the Q10a
+     * session. Without it, neither does — and the failure is **silent**: the dlopen succeeds and the
+     * HTP simply never comes up.
+     *
+     * Measured as a survivor first. Battery row X19 removed the prepend and all 1,489 tests stayed
+     * green, which is exactly the shape of hole this class exists to close.
+     */
+    @Test
+    fun theFastRpcSearchPathLeadsWithTheAppsFilesDirectory() {
+        assertTrue(
+            "ADSP_LIBRARY_PATH is still built at exactly one site. Found: " +
+                liveLines(app, "\"ADSP_LIBRARY_PATH\","),
+            liveLines(app, "\"ADSP_LIBRARY_PATH\",").size == 1,
+        )
+        assertTrue(
+            "the app's FILES directory is the first entry. It is the only directory on the list " +
+                "this app can write to, so it is the only one an imported or pushed skel can ever " +
+                "live in; anything ahead of it would shadow the one that can be fixed. Found: " +
+                liveLines(app, "filesDir.absolutePath"),
+            liveOffsets(app, "filesDir.absolutePath +").isNotEmpty(),
+        )
+        assertTrue(
+            "and the app's native library dir still follows it rather than being replaced — the " +
+                "bundled skel is unreachable under extractNativeLibs=false TODAY, and that is a " +
+                "packaging decision that may yet be flipped",
+            liveOffsets(app, "filesDir.absolutePath +").first() <
+                liveOffsets(app, "\";\" + nativeLibDir +").first(),
+        )
+        assertTrue(
+            "the stock vendor locations still come last, so a device that exposes its own HTP " +
+                "skels keeps working",
+            liveOffsets(app, "\";\" + nativeLibDir +").first() <
+                liveOffsets(app, "\";/vendor/lib/rfsa/adsp\" +").first(),
+        )
+    }
+
     /**
      * THE RESIDENCY CONTRACT — the one invariant in this tier that has only ever been protected by
      * prose, and the one whose violation is byte-identical to correct behaviour.

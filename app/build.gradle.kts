@@ -257,6 +257,13 @@ tasks.withType<Test>().configureEach {
         "src/main/cpp/qnn_asr.cpp",
         "src/main/AndroidManifest.xml",
         "src/main/assets/whisper_vocab.json",
+        // (4.0 Q8) The second ASSET, and it is here for the sharpest version of the stated reason:
+        // WhisperBpeDecoderTest now pins that the shipped licence page attributes the vocabulary
+        // above under Apache-2.0 (the Q5 review's I1, a 4.0 ship gate). An HTML asset is an input to
+        // no compile task at all, so an edit confined to it would leave this task UP-TO-DATE and
+        // the gate would pass against the page as it used to be — which is precisely the change
+        // being guarded against.
+        "src/main/assets/oss_licenses.html",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
         "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
