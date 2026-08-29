@@ -42,15 +42,16 @@ import kotlinx.coroutines.withContext
  * @param npuImportState the SAF import's progress, owned by [com.whispereverywhere.MainActivity]
  *        because the document-picker launcher lives there (4.0, Q8). Defaulted so the screen keeps
  *        rendering for any caller that does not have an importer.
- * @param onImportNpuAssets opens the document picker. Its GATE is the capability half alone — see
- *        the `npuCapable` producer below.
+ * @param onImportNpuAssets opens the document picker FOR the tier id it is handed (4.1 L6 — the
+ *        import is per-tier, and each card passes its own id). Its GATE is the capability half
+ *        alone — see the `npuCapable` producer below.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnboardingModelScreen(
     onModelReady: () -> Unit,
     npuImportState: NpuAssetImport.ImportState = NpuAssetImport.ImportState.Idle,
-    onImportNpuAssets: () -> Unit = {},
+    onImportNpuAssets: (String) -> Unit = {},
     viewModel: ModelDownloadViewModel = viewModel()
 ) {
     val app = WhisperEverywhereApp.getInstance()
@@ -178,7 +179,9 @@ fun OnboardingModelScreen(
                         activeModelId = model.id
                         viewModel.download(model)
                     },
-                    onImport = onImportNpuAssets,
+                    // The card's Import button passes ITS OWN tier id — turbo's card must never
+                    // import under npu's names and numbers, or vice versa.
+                    onImport = { onImportNpuAssets(model.id) },
                     onUse = {
                         activeModelId = model.id
                         viewModel.select(model)
@@ -201,7 +204,9 @@ fun OnboardingModelScreen(
                     // would satisfy while the npu pair is still absent.
                     offered = NpuAssetImport.TIER_ID in npuTierIds,
                     state = npuImportState,
-                    onImport = onImportNpuAssets,
+                    // The panel imports the npu (small) pair — its copy says so — so it passes
+                    // that tier's id, not whatever card happens to be above it.
+                    onImport = { onImportNpuAssets(NpuAssetImport.TIER_ID) },
                 )
             }
 

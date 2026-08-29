@@ -201,25 +201,42 @@ class NpuNativeContractTest {
                 liveLines(app, "\"ADSP_LIBRARY_PATH\","),
             liveLines(app, "\"ADSP_LIBRARY_PATH\",").size == 1,
         )
+        // Q8 M4 (4.1 L6): the filesDir read is HOISTED above the try. getFilesDir() throws
+        // IllegalStateException, never ErrnoException, so inside the try it sat under a catch
+        // that could not catch it while looking covered by the function's own logged-and-
+        // swallowed promise. The pin follows the hoist: the read happens once, on a live line,
+        // BEFORE the try whose catch names only ErrnoException.
+        val configure = kotlinMemberBody(app, "private fun configureFastRpcLibraryPath() {")
         assertTrue(
-            "the app's FILES directory is the first entry. It is the only directory on the list " +
-                "this app can write to, so it is the only one an imported or pushed skel can ever " +
-                "live in; anything ahead of it would shadow the one that can be fixed. Found: " +
-                liveLines(app, "filesDir.absolutePath"),
-            liveOffsets(app, "filesDir.absolutePath +").isNotEmpty(),
+            "filesDir is read exactly once, into the local the path is built from. Found: " +
+                liveLines(configure, "filesDir"),
+            liveLines(configure, "val filesDirPath = filesDir.absolutePath").size == 1,
         )
         assertTrue(
-            "and the app's native library dir still follows it rather than being replaced — the " +
-                "bundled skel is unreachable under extractNativeLibs=false TODAY, and that is a " +
-                "packaging decision that may yet be flipped",
-            liveOffsets(app, "filesDir.absolutePath +").first() <
-                liveOffsets(app, "\";\" + nativeLibDir +").first(),
+            "…and ABOVE the try, so the read sits outside a catch that could never have caught " +
+                "its failure anyway (IllegalStateException vs ErrnoException)",
+            liveOffsets(configure, "val filesDirPath = filesDir.absolutePath").first() <
+                liveOffsets(configure, "try {").first(),
+        )
+        assertTrue(
+            "the app's FILES directory is the first entry. It is the only directory on the list " +
+                "this app can write to, so it is the only one the L6-staged (or Q10a-pushed) skel " +
+                "can ever live in; anything ahead of it would shadow the one that can be fixed. " +
+                "Found: " + liveLines(configure, "filesDirPath"),
+            liveOffsets(configure, "filesDirPath +").isNotEmpty(),
+        )
+        assertTrue(
+            "and the app's native library dir still follows it rather than being replaced — " +
+                "since L6 the skel is staged into filesDir from assets, and the lib-dir entry " +
+                "stays for a device or build that puts one there",
+            liveOffsets(configure, "filesDirPath +").first() <
+                liveOffsets(configure, "\";\" + nativeLibDir +").first(),
         )
         assertTrue(
             "the stock vendor locations still come last, so a device that exposes its own HTP " +
                 "skels keeps working",
-            liveOffsets(app, "\";\" + nativeLibDir +").first() <
-                liveOffsets(app, "\";/vendor/lib/rfsa/adsp\" +").first(),
+            liveOffsets(configure, "\";\" + nativeLibDir +").first() <
+                liveOffsets(configure, "\";/vendor/lib/rfsa/adsp\" +").first(),
         )
     }
 
@@ -1475,6 +1492,40 @@ class NpuNativeContractTest {
                 "directory and everything under it, and never a same-named file.",
             ignore.lineSequence().any { it.trim() == entry }
         )
+    }
+
+    /**
+     * THE PROPRIETARY BOUNDARY, WIDENED TO THE BLOB SHAPES (4.1 L6).
+     *
+     * The 4.0 entry above is exact-path only, so a header copied one directory too high, or a
+     * `libQnnHtp.so` extracted from the AAR to sideload, would be stageable by `git add -A` — and
+     * L6 is the task that extracts exactly such a blob (`libQnnHtpV75Skel.so`, re-materialised
+     * from the resolved `qnn-runtime` AAR into generated assets). The extraction lands in the
+     * build directory, OUTSIDE the repo, so these four patterns are defence in depth rather than
+     * the only line — but the repo has a public remote, and un-publishing is not a thing.
+     *
+     * Nothing tracked matches any of the four (verified with `git ls-files` when they were
+     * added), so widening the ignore untracks nothing.
+     */
+    @Test
+    fun gitignoreExcludesEveryProprietaryBlobShape() {
+        val ignore = source(".gitignore")
+        listOf(
+            "*.so" to "a native library — the exact shape the L6 extraction produces, and the " +
+                "shape a sideload experiment leaves lying in the tree",
+            "*.dlc" to "a Qualcomm DLC model blob",
+            "*.context" to "a QAIRT context binary — the model pairs themselves, ~GB-class and " +
+                "never redistributable through this repo",
+            "app/src/main/cpp/include/Qnn*.h" to "a proprietary QNN header copied one directory " +
+                "too high, i.e. just outside the exact-path entry above",
+        ).forEach { (entry, why) ->
+            assertTrue(
+                "the root .gitignore must contain the line \"$entry\" (uncommented): $why. " +
+                    "The exact-path QNN entry cannot catch this shape, and the first " +
+                    "`git add -A` after a slip publishes it irreversibly.",
+                ignore.lineSequence().any { it.trim() == entry }
+            )
+        }
     }
 
     /**

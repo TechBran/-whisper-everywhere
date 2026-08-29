@@ -21,7 +21,8 @@ import java.util.Locale
  * on the Hexagon, and one CPU-tier fallback that is never silent.
  *
  * ```
- * load(encoder, decoder)   companion? -> mel (64 KB) -> vocab -> nativeInit (376 MiB) -> nativeEpoch
+ * load(encoder, decoder)   companion? -> mel (64 KB) -> vocab -> skel (17.9 MB once)
+ *                          -> nativeInit (376 MiB) -> nativeEpoch
  * transcribe(samples)      nativeEpoch (is this still my session?) -> pcmToMel -> nativeInputQuant
  *                          -> melToU16 -> nativeEncode -> nativeDetectLanguage
  *                          -> nativeDecodeSegment -> WhisperBpeDecoder
@@ -346,7 +347,34 @@ class NpuWhisperBackend(
                 )
             }
 
-            // (5) 342 MiB and ~525 ms. runCatching, not try/catch on a named type: libqnnasr.so is
+            // (5) THE DSP-SIDE SKEL, staged from the APK's assets into filesDir (4.1 L6 — the I5
+            // answer). packaging.jniLibs EXCLUDES libQnnHtpV75Skel.so: under extractNativeLibs=
+            // "false" a lib/ copy is provably unopenable by the FastRPC loader, which needs a
+            // real file on disk and searches only ADSP_LIBRARY_PATH. The extractQnnSkel Gradle
+            // task re-materialises the same bytes from the resolved AAR into assets — asserting
+            // the SAME two values below at build time — and this stage copies them to filesDir,
+            // the FIRST ADSP_LIBRARY_PATH entry, where nativeInit's dlopen of libQnnHtp.so will
+            // have FastRPC find them. The RETURN PATH IS DELIBERATELY UNUSED: FastRPC searches
+            // the environment, never Kotlin, so the call's value is its refusal gate.
+            //
+            // stagedPathWithMarker, NOT stagedPath — the L3 handoff's explicit warning to this
+            // task: the plain arm full-hashes the destination on EVERY arm, free at the melbank's
+            // 103 KB and a per-session 17.9 MiB flash read here. The first arm pays one ~17.9 MB
+            // verified write (once per install); every later arm is a handful of stats against
+            // the stored marker. A null is a stage refusal like any other stage's: without it the
+            // HTP backend would come up and then fail somewhere far less legible, inside FastRPC.
+            NpuAssetStage.stagedPathWithMarker(
+                appContext,
+                "libQnnHtpV75Skel.so",
+                SKEL_BYTES,
+                SKEL_SHA256,
+            ) ?: return@serialized fallBackToCpuTier(
+                "skel",
+                "libQnnHtpV75Skel.so could not be staged from the APK into filesDir — the " +
+                    "FastRPC loader would find no DSP-side skel to open"
+            )
+
+            // (6) 342 MiB and ~525 ms. runCatching, not try/catch on a named type: libqnnasr.so is
             // absent by design on builds where the proprietary QNN headers could not be fetched, and
             // the FIRST touch throws UnsatisfiedLinkError while every touch after it throws
             // ExceptionInInitializerError / NoClassDefFoundError, because the <clinit> has already
@@ -375,7 +403,7 @@ class NpuWhisperBackend(
                 return@serialized fallBackToCpuTier("init", initError)
             }
 
-            // (6) THE ARMING EPOCH, read the instant the session exists and BEFORE `armed = true`
+            // (7) THE ARMING EPOCH, read the instant the session exists and BEFORE `armed = true`
             // below. The order is an invariant, not a tidiness: between those two statements this
             // instance would be a live backend holding epoch 0 — i.e. one whose release names no
             // session — which is precisely the unguarded shape L1 removed. Native refuses 0
@@ -745,6 +773,20 @@ class NpuWhisperBackend(
 
         /** Passed as `detected` when the user chose a language, so no detect pass ran. */
         private const val DETECT_NOT_RUN: Int = -1
+
+        /**
+         * The DSP-side HTP skel's published length and digest — BOTH MEASURED from
+         * `qnn-runtime-2.49.0.aar`'s `jni/arm64-v8a/libQnnHtpV75Skel.so` in the Gradle cache
+         * (4.1 L6), and both asserted a SECOND time by the `extractQnnSkel` build task over the
+         * bytes it writes into assets. Two readers, one pair of values, pinned equal by
+         * `NpuSkelPackagingTest`: a runtime version bump therefore produces a named build
+         * failure and a named `stage=skel` refusal, never a mystery on a device.
+         */
+        const val SKEL_BYTES: Long = 17_913_608L
+
+        /** See [SKEL_BYTES]. */
+        const val SKEL_SHA256: String =
+            "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c"
 
         /**
          * Whether the npu tier may be OFFERED on this device: the right silicon, and a QNN stack

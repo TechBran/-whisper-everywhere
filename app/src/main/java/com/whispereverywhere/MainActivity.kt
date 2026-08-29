@@ -23,7 +23,9 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuImportController
 import com.whispereverywhere.ui.screens.BatchTranscribeScreen
 import com.whispereverywhere.ui.screens.EnginesAndVoicesScreen
@@ -151,16 +153,26 @@ fun WhisperEverywhereNavigation() {
     // device makes a wrong file an ordinary outcome, and one the card has to be able to explain.
     val npuImportState by NpuImportController.state.collectAsState()
 
+    // WHICH tier the picker was opened for (4.1 L6 — the import is per-tier now). The SAF round
+    // trip can outlive this composition — the picker is a separate activity, and a recreation or
+    // even a process death can happen behind it — so the id is `rememberSaveable`, not `remember`:
+    // a plain remember resets to the default on recreation and the result would import the picked
+    // zip under the WRONG tier's names and numbers. It is read in the result callback, where it
+    // still holds the value the launching button set (the picker is modal — no second launch can
+    // interleave).
+    var npuImportTierId by rememberSaveable { mutableStateOf(NpuAssetImport.TIER_ID) }
+
     val npuAssetImportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         // A dismissed picker leaves the previous state alone: clearing it here would wipe the
         // refusal message the user re-opened the picker because of.
         if (uri != null) {
+            val tierId = npuImportTierId
             NpuImportController.start { onProgress ->
                 WhisperEverywhereApp.getInstance()
                     .whisperModelManager
-                    .importNpuAssetPair(uri, onProgress)
+                    .importNpuAssetPair(tierId, uri, onProgress)
             }
         }
     }
@@ -217,7 +229,10 @@ fun WhisperEverywhereNavigation() {
                 // reachable rather than leaving the owner staring at a greyed-out row. The picked
                 // file is validated hard by the importer either way — the MIME filter is a
                 // convenience, never a guard.
-                onImportNpuAssets = {
+                onImportNpuAssets = { tierId ->
+                    // The button passes ITS OWN tier id; recorded before the launch so the result
+                    // callback pairs the picked zip with the tier the user was looking at.
+                    npuImportTierId = tierId
                     npuAssetImportLauncher.launch(
                         arrayOf(
                             "application/zip",

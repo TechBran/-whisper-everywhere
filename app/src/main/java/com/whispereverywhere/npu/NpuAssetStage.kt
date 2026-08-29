@@ -56,6 +56,86 @@ object NpuAssetStage {
     /** The suffix the copy is written under until its length and digest verify. */
     const val PART_SUFFIX: String = ".part"
 
+    /**
+     * The sibling file recording a VERIFIED stage — `<name>.staged`, holding [markerLine]
+     * (4.1 L6).
+     *
+     * It exists because [stage]'s idempotent arm full-hashes the destination on EVERY arm. At the
+     * melbank's 103 KB that is free; at the skel's 17.9 MiB it is a per-session flash read on
+     * `load`, which is exactly the cost the L3 handoff warned this object's second caller about —
+     * and the answer it prescribed is a stored marker, not a weaker check. A marker that matches
+     * ([markerVouches]) lets the arm settle for a handful of stats; anything else — absent, a
+     * different digest expectation, a changed length or mtime — falls through to the FULL
+     * verification and a fresh marker.
+     *
+     * **The stated trade:** a file corrupted in place at the same length and mtime passes the
+     * fast arm. That is the same trust every mtime-based build system extends, it is exactly what
+     * the full hash bought at 103 KB, and the failure it admits is one `nativeInit` meets as a
+     * refusal — while the cost it removes is paid on every single session.
+     */
+    const val MARKER_SUFFIX: String = ".staged"
+
+    /** The marker beside [dest]. */
+    fun markerFile(dest: File): File = File(dest.parentFile, dest.name + MARKER_SUFFIX)
+
+    /**
+     * What a marker records: the digest the bytes VERIFIED against, the length, and the mtime of
+     * the verified copy. The digest is in the line so that an APK upgrade that changes the
+     * expected digest invalidates every old marker by content, not by convention.
+     */
+    fun markerLine(expectedSha256: String, bytes: Long, mtime: Long): String =
+        "$expectedSha256 $bytes $mtime"
+
+    /** Does the marker vouch for [dest] as it is RIGHT NOW, against THIS expectation? */
+    fun markerVouches(dest: File, expectedBytes: Long, expectedSha256: String): Boolean {
+        if (!dest.isFile || dest.length() != expectedBytes) return false
+        val marker = markerFile(dest)
+        if (!marker.isFile) return false
+        val recorded = try {
+            marker.readText()
+        } catch (cause: IOException) {
+            return false
+        }
+        return recorded == markerLine(expectedSha256, dest.length(), dest.lastModified())
+    }
+
+    /**
+     * [stage], behind the marker fast path — the arm for the 17.9 MiB class of asset.
+     *
+     * Not concurrency-guarded, exactly like [stage]: its one caller is `NpuWhisperBackend.load`,
+     * which runs inside `NativeComputeGate` — the same argument the mel arm and `pcmToMel` rely
+     * on. A caller outside that gate must re-check the argument, not inherit it (the L3 handoff's
+     * words).
+     */
+    fun stageWithMarker(
+        dest: File,
+        assetName: String,
+        expectedBytes: Long,
+        expectedSha256: String,
+        open: () -> InputStream,
+    ): StageResult {
+        if (markerVouches(dest, expectedBytes, expectedSha256)) {
+            return StageResult.Staged(dest)
+        }
+        // The marker did not vouch, so it must not survive a failed re-stage to vouch later:
+        // delete FIRST, re-create only after a full verification has passed again.
+        val marker = markerFile(dest)
+        marker.delete()
+        val outcome = stage(dest, assetName, expectedBytes, expectedSha256, open)
+        if (outcome is StageResult.Staged) {
+            try {
+                marker.writeText(
+                    markerLine(expectedSha256, dest.length(), dest.lastModified())
+                )
+            } catch (cause: IOException) {
+                // The stage itself verified; a missing marker only costs the next arm one full
+                // hash. A half-written marker must not vouch, so it is removed.
+                marker.delete()
+            }
+        }
+        return outcome
+    }
+
     /** What one staging attempt did. */
     sealed interface StageResult {
         /** The asset is on disk at [file], at the expected length and digest. */
@@ -180,12 +260,33 @@ object NpuAssetStage {
         val outcome = stage(dest, assetName, expectedBytes, expectedSha256) {
             context.assets.open(assetName)
         }
-        return when (outcome) {
-            is StageResult.Staged -> outcome.file.absolutePath
-            is StageResult.Refused -> {
-                android.util.Log.w(NpuDiag.TAG, "npu: asset stage refused ${outcome.reason}")
-                null
-            }
+        return pathOrRefusal(outcome)
+    }
+
+    /**
+     * [stagedPath] through the marker fast path — same `filesDir` destination, same null-means-
+     * declined contract, one full verification per install instead of one per arm. The skel's
+     * entry point (4.1 L6); see [MARKER_SUFFIX] for the trade this buys and the cost it removes.
+     */
+    fun stagedPathWithMarker(
+        context: Context,
+        assetName: String,
+        expectedBytes: Long,
+        expectedSha256: String,
+    ): String? {
+        val dest = File(context.filesDir, assetName)
+        val outcome = stageWithMarker(dest, assetName, expectedBytes, expectedSha256) {
+            context.assets.open(assetName)
+        }
+        return pathOrRefusal(outcome)
+    }
+
+    /** One rendering of an outcome, so both `Context` entry points refuse identically. */
+    private fun pathOrRefusal(outcome: StageResult): String? = when (outcome) {
+        is StageResult.Staged -> outcome.file.absolutePath
+        is StageResult.Refused -> {
+            android.util.Log.w(NpuDiag.TAG, "npu: asset stage refused ${outcome.reason}")
+            null
         }
     }
 

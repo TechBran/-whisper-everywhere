@@ -167,29 +167,39 @@ class WhisperEverywhereApp : Application() {
         usageTracker = UsageTracker(this)
         cloudCostTracker = com.whispereverywhere.data.local.CloudCostTracker(this)
 
+        // Settle any paired tier's interrupted import transaction NOW, not only from inside a
+        // later import of the same tier (4.1 L6, Q8 M1 + m4). A process death between the park
+        // and the rename used to leave the tier's primary under a `.prev` name: isInstalled read
+        // false, the card silently vanished from the chooser, and nothing on screen explained
+        // why — the one failure shape the import is written to never have. On a healthy launch
+        // this is a handful of File stats; wrapped so a filesystem surprise can never cost the
+        // app its launch (the same promise configureFastRpcLibraryPath documents).
+        runCatching { whisperModelManager.reconcileNpuStagingDebris() }
+            .onFailure { Log.w(NpuDiag.TAG, "npu: launch staging sweep failed", it) }
+
         // Create notification channel for foreground service
         createNotificationChannel()
     }
 
     /**
-     * Points the FastRPC loader at the app's own native library directory (4.0 NPU tier).
+     * Points the FastRPC loader at the app's own files directory (4.0 NPU tier; the skel's real
+     * home since 4.1 L6).
      *
-     * The HTP backend (libQnnHtp.so) loads its DSP-side skel — libQnnHtpV75Skel.so, which the APK
-     * bundles — through the FastRPC loader, and that loader does NOT search the app's native
-     * library directory. It searches `ADSP_LIBRARY_PATH`, and only that. The variable has to be set
-     * before the backend is ever dlopen()ed, which is why this lives in Application.onCreate rather
-     * than anywhere near the NPU code itself.
+     * The HTP backend (libQnnHtp.so) loads its DSP-side skel — libQnnHtpV75Skel.so — through the
+     * FastRPC loader, and that loader does NOT search the app's native library directory. It
+     * searches `ADSP_LIBRARY_PATH`, and only that. The variable has to be set before the backend
+     * is ever dlopen()ed, which is why this lives in Application.onCreate rather than anywhere
+     * near the NPU code itself.
      *
-     * **The app's FILES directory comes first (4.0, Q8).** The bundled skel is unreachable under
-     * this app's `extractNativeLibs="false"` packaging — the FastRPC loader needs a real file on
-     * disk and `nativeLibraryDir` contains none (Q1's open concern for Q10a) — so the two answers
-     * are an app-wide packaging flip or a skel that lives in the app's own files directory beside
-     * the imported model pair. This entry is the half that belongs to the app: it costs nothing
-     * when the directory holds no skel, and it makes both remaining routes work without another
-     * code change — the owner adding the skel to the release zip, or an `adb push` into
-     * `files/` during the Q10a session. **Q8 does not import a skel**: it is not one of the tier's
-     * two catalog artefacts, it has no pinned size to verify against, and putting a 17.9 MB
-     * proprietary blob into the published zip is an owner-facing packaging decision.
+     * **The app's FILES directory comes first (4.0 Q8), and since 4.1 L6 it is where the skel
+     * actually lives.** A jniLibs copy was provably unreachable under this app's
+     * `extractNativeLibs="false"` packaging — the FastRPC loader needs a real file on disk and
+     * `nativeLibraryDir` contains none (Q1's open concern for Q10a; the 4.0 tier armed only
+     * because the owner `adb push`ed a skel by hand). L6's answer: `packaging.jniLibs` excludes
+     * the skel, the `extractQnnSkel` Gradle task re-materialises it from the resolved AAR into
+     * the APK's assets, and `NpuWhisperBackend.load` stages it into `filesDir` — this first
+     * entry — before `nativeInit`. The entry costs nothing when the directory holds no skel, and
+     * it is also what keeps the Q10a `adb push` dev route working unchanged.
      *
      * Then the app's native library directory, then the stock vendor locations, which is where a
      * device exposing its own HTP skels keeps them.
@@ -201,11 +211,18 @@ class WhisperEverywhereApp : Application() {
      */
     private fun configureFastRpcLibraryPath() {
         val nativeLibDir = applicationInfo.nativeLibraryDir
+        // Q8 M4 (4.1 L6): filesDir is read ABOVE the try. getFilesDir() throws
+        // IllegalStateException, never ErrnoException, so inside the try it sat under a catch
+        // that could not catch it while LOOKING covered by the "logged and swallowed" promise
+        // above. Hoisted, the try covers exactly what its catch can catch — the two setenv
+        // calls — and the filesDir read stands where its (theoretical, Context-is-broken)
+        // failure is visibly an app-wide fact rather than an NPU-tier loss.
+        val filesDirPath = filesDir.absolutePath
         try {
             // Semicolon-separated, unlike LD_LIBRARY_PATH — this is the FastRPC loader's own format.
             Os.setenv(
                 "ADSP_LIBRARY_PATH",
-                filesDir.absolutePath +
+                filesDirPath +
                     ";" + nativeLibDir +
                     ";/vendor/lib/rfsa/adsp" +
                     ";/vendor/dsp/cdsp" +

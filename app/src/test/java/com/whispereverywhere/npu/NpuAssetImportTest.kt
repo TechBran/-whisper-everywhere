@@ -7,15 +7,20 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
- * THE npu ASSET IMPORT'S DECISIONS (4.0, Q8) — the half that can be executed.
+ * THE PAIRED TIERS' ASSET IMPORT DECISIONS (4.0 Q8; per-tier and sha256-verified at 4.1 L6) —
+ * the half that can be executed.
  *
- * `WhisperModelManager.importNpuAssetPair` needs a `Context`, a `ContentResolver` and 358 MB, so no
- * JVM test in this project can run it; its wiring is pinned as source by
- * `NpuImportWiringPinTest` and `UnsupportedTierGatePinTest`. Everything it DECIDES lives in
- * [NpuAssetImport] precisely so it can be proved here instead — the same split, for the same
- * reason, as `ModelInstallSignal` and `NpuDiag`.
+ * `WhisperModelManager.importNpuAssetPair` needs a `Context`, a `ContentResolver` and up to
+ * ~1.07 GB, so no JVM test in this project can run it; its UI wiring is pinned as source by
+ * `NpuImportWiringPinTest` and its transaction shape by `UnsupportedTierGatePinTest`. Everything
+ * it DECIDES lives in [NpuAssetImport] precisely so it can be proved here instead — the same
+ * split, for the same reason, as `ModelInstallSignal` and `NpuDiag`. Since L6 this class also
+ * carries a handful of SOURCE pins over the manager's import body, because the digest work is a
+ * property of the copy loop itself — where the digest is computed and where it is checked are
+ * ORDER facts about `Context`-bound code that no pure function can witness.
  *
  * The zip-slip cases below are the point of the design rather than special cases in it: an
  * allow-list of two `equals()`-compared bare filenames makes a separator, a `..` segment and a
@@ -32,9 +37,217 @@ class NpuAssetImportTest {
     private val encoderBytes = 132_927_488L
     private val decoderBytes = 225_316_864L
 
-    /** `classifyEntry` at the entry's own correct size, whatever that entry is. */
+    // The npu pair's MEASURED digests (the spike staged and hashed the extracted files) — restated
+    // here as literals so the catalog moving is a decision somebody made, not a silent follow-on.
+    private val encoderSha = "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec"
+    private val decoderSha = "fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4"
+
+    /** `classifyEntry` at the entry's own correct size, with nothing accepted yet. */
     private fun classify(name: String, declared: Long = -1L) =
-        NpuAssetImport.classifyEntry(required, name, declared)
+        NpuAssetImport.classifyEntry(required, name, declared, alreadyAccepted = emptySet())
+
+    // ------------------------------------------------------------------ source-pin helpers
+    // The house locator + the live-line discipline (comments can neither satisfy nor break a pin).
+
+    private fun read(relative: String): String {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(File(dir, relative), File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate.readText().replace("\r\n", "\n")
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
+    }
+
+    private val manager: String by lazy {
+        read("src/main/java/com/whispereverywhere/model/WhisperModelManager.kt")
+    }
+
+    private val app: String by lazy {
+        read("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
+    }
+
+    private val importObject: String by lazy {
+        read("src/main/java/com/whispereverywhere/npu/NpuAssetImport.kt")
+    }
+
+    private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
+
+    private fun lines(vararg text: String) = text.joinToString("\n")
+
+    private fun liveLineCount(haystack: String, needle: String): Int =
+        haystack.lineSequence().count { line ->
+            val trimmed = line.trimStart()
+            val commented = trimmed.startsWith("//") || trimmed.startsWith("/*") ||
+                trimmed.startsWith("*")
+            !commented && line.contains(needle)
+        }
+
+    private fun liveIndexOfOrFail(haystack: String, what: String, needle: String): Int {
+        var offset = 0
+        for (line in haystack.lineSequence()) {
+            val trimmed = line.trimStart()
+            val commented =
+                trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")
+            val at = line.indexOf(needle)
+            if (!commented && at >= 0) return offset + at
+            offset += line.length + 1
+        }
+        throw AssertionError("missing from $what as a LIVE line: <<$needle>>")
+    }
+
+    /** One member to its own closer, by the four-space rule these classes close on. */
+    private fun body(haystack: String, what: String, declaration: String): String {
+        val start = haystack.indexOf(declaration)
+        assertTrue("missing from $what: <<$declaration>>", start >= 0)
+        val close = haystack.indexOf("\n    }\n", start)
+        assertTrue("the closing brace of <<$declaration>> moved", close > start)
+        return haystack.substring(start, close + "\n    }\n".length)
+    }
+
+    private val importBody: String by lazy {
+        body(manager, "WhisperModelManager.kt", "    suspend fun importNpuAssetPair(")
+    }
+
+    // ------------------------------------------------------------------ the catalog census
+
+    @Test
+    fun theRequiredEntriesAndTheirSizesComeFromTheCatalogNotFromLiteralsInTheImporter() {
+        // Asserted BOTH ways round on purpose. Against the catalog, so a tier whose files change
+        // moves the importer with it; against literals, so the change is a decision somebody made
+        // rather than a silent follow-on. This is the same census shape Q7a used on the entry —
+        // extended at L6 to the digests, which ride the same map for the same one-home reason.
+        assertEquals(
+            "the importer's allow-list IS the catalog's two artefacts, each with its own exact " +
+                "length AND its own measured digest",
+            mapOf(
+                encoder to NpuAssetImport.RequiredEntry(encoderBytes, encoderSha),
+                decoder to NpuAssetImport.RequiredEntry(decoderBytes, decoderSha),
+            ),
+            required,
+        )
+        assertEquals("the primary entry is the catalog's fileName", npu.fileName, encoder)
+        assertEquals(
+            "the primary is held to primaryBytes — NOT approxBytes, which for a paired tier is " +
+                "the SUM of both files and 63% above the encoder alone (the Q7a R14 trap)",
+            npu.primaryBytes,
+            required[encoder]!!.bytes,
+        )
+        assertEquals(
+            "the paired entry is the catalog's pairedArtifact, at its own size",
+            npu.pairedArtifact!!.approxBytes,
+            required[decoder]!!.bytes,
+        )
+        assertEquals(
+            "the primary's digest is the catalog's own",
+            npu.sha256,
+            required[encoder]!!.sha256,
+        )
+        assertEquals(
+            "and the paired digest is the pairedArtifact's own — never the primary's restated",
+            npu.pairedArtifact!!.sha256,
+            required[decoder]!!.sha256,
+        )
+        assertEquals(
+            "the two entries sum to the size the tier card advertises, so the import's progress " +
+                "denominator and the badge cannot disagree",
+            npu.approxBytes,
+            NpuAssetImport.pairBytes(required),
+        )
+        assertEquals(
+            "a catalog with no npu tier yields an EMPTY allow-list, which refuses every entry — " +
+                "not a permissive one",
+            emptyMap<String, NpuAssetImport.RequiredEntry>(),
+            NpuAssetImport.requiredEntriesFor(null),
+        )
+        assertEquals(
+            "a single-file tier has nothing to import: no paired artefact, no allow-list",
+            emptyMap<String, NpuAssetImport.RequiredEntry>(),
+            NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId("pro")),
+        )
+    }
+
+    @Test
+    fun everyPairedTierImportsItsOwnTwoEntriesWithDistinctDigests() {
+        // 4.1 L6. The map is per-TIER: turbo's ~GB entries flow through the same derivation the
+        // moment its id is passed, under the REPACKED turbo_* names — never the vendor names,
+        // which are npu's installed files (the L5 handoff's exact warning).
+        val digestsSeen = mutableListOf<String>()
+        NpuAssetImport.PAIRED_TIER_IDS.forEach { id ->
+            val model = WhisperCatalog.byId(id)
+            assertNotNull("PAIRED_TIER_IDS must resolve in the catalog: $id", model)
+            val entries = NpuAssetImport.requiredEntriesFor(model)
+            val paired = model!!.pairedArtifact!!
+            assertEquals("a pair is exactly two entries ($id)", 2, entries.size)
+            assertEquals(
+                "the primary is held to ITS exact bytes ($id)",
+                model.primaryBytes,
+                entries[model.fileName]!!.bytes,
+            )
+            assertEquals(
+                "…and ITS digest ($id)",
+                model.sha256,
+                entries[model.fileName]!!.sha256,
+            )
+            assertEquals(
+                "the paired file is held to ITS exact bytes ($id)",
+                paired.approxBytes,
+                entries[paired.fileName]!!.bytes,
+            )
+            assertEquals(
+                "…and ITS digest ($id)",
+                paired.sha256,
+                entries[paired.fileName]!!.sha256,
+            )
+            assertTrue(
+                "the two digests of a pair are DISTINCT ($id) — a copy-paste between the two " +
+                    "would let a transposed encoder/decoder verify as published",
+                entries[model.fileName]!!.sha256 != entries[paired.fileName]!!.sha256,
+            )
+            digestsSeen += entries.values.map { it.sha256 }
+        }
+        assertEquals(
+            "all four digests across both tiers are pairwise distinct — the same claim the " +
+                "catalog's own distinctness census makes, read from the importer's side",
+            digestsSeen.size,
+            digestsSeen.toSet().size,
+        )
+    }
+
+    @Test
+    fun thePairedTierIdsAreDerivedFromTheCatalogNotWrittenOut() {
+        // Both ways round, like every census here: the exact value, so a tier arriving or leaving
+        // is announced; and the derivation, so the list can never be a literal that a ninth tier
+        // has to be remembered into.
+        assertEquals(
+            "exactly the two paired tiers, in catalog order",
+            listOf("npu", "npu-turbo"),
+            NpuAssetImport.PAIRED_TIER_IDS,
+        )
+        assertEquals(
+            "and the list IS the catalog derivation — same filter, same projection",
+            WhisperCatalog.entries.filter { it.pairedArtifact != null }.map { it.id },
+            NpuAssetImport.PAIRED_TIER_IDS,
+        )
+        assertEquals(
+            "the derivation is written STRUCTURALLY in NpuAssetImport, on a live line — a " +
+                "hand-maintained list would be one more thing to remember for the next npu-class " +
+                "tier, which is the exact defect the structural mel-donor clause already closed",
+            1,
+            liveLineCount(
+                importObject,
+                "WhisperCatalog.entries.filter { it.pairedArtifact != null }.map { it.id }",
+            ),
+        )
+        assertEquals(
+            "and no live line of NpuAssetImport.kt writes the turbo id out as a literal",
+            0,
+            liveLineCount(importObject, "\"npu-turbo\""),
+        )
+    }
+
+    // ------------------------------------------------------------------ classifyEntry
 
     private fun assertNothingIsWritten(name: String, why: String) {
         val verdict = classify(name)
@@ -52,57 +265,17 @@ class NpuAssetImportTest {
     }
 
     @Test
-    fun theRequiredEntriesAndTheirSizesComeFromTheCatalogNotFromLiteralsInTheImporter() {
-        // Asserted BOTH ways round on purpose. Against the catalog, so a tier whose files change
-        // moves the importer with it; against literals, so the change is a decision somebody made
-        // rather than a silent follow-on. This is the same census shape Q7a used on the entry.
-        assertEquals(
-            "the importer's allow-list IS the catalog's two artefacts",
-            mapOf(encoder to encoderBytes, decoder to decoderBytes),
-            required,
-        )
-        assertEquals("the primary entry is the catalog's fileName", npu.fileName, encoder)
-        assertEquals(
-            "the primary is held to primaryBytes — NOT approxBytes, which for a paired tier is " +
-                "the SUM of both files and 63% above the encoder alone (the Q7a R14 trap)",
-            npu.primaryBytes,
-            required[encoder],
-        )
-        assertEquals(
-            "the paired entry is the catalog's pairedArtifact, at its own size",
-            npu.pairedArtifact!!.approxBytes,
-            required[decoder],
-        )
-        assertEquals(
-            "the two entries sum to the size the tier card advertises, so the import's progress " +
-                "denominator and the badge cannot disagree",
-            npu.approxBytes,
-            NpuAssetImport.pairBytes(required),
-        )
-        assertEquals(
-            "a catalog with no npu tier yields an EMPTY allow-list, which refuses every entry — " +
-                "not a permissive one",
-            emptyMap<String, Long>(),
-            NpuAssetImport.requiredEntriesFor(null),
-        )
-        assertEquals(
-            "a single-file tier has nothing to import: no paired artefact, no allow-list",
-            emptyMap<String, Long>(),
-            NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId("pro")),
-        )
-    }
-
-    @Test
     fun acceptsTheTwoKnownEntriesAtTheirCatalogSizes() {
         val enc = classify(encoder, encoderBytes)
         assertEquals(
-            "the encoder is accepted, under its own bare name, at its own length",
-            NpuAssetImport.EntryVerdict.Accept(encoder, encoderBytes),
+            "the encoder is accepted, under its own bare name, at its own length, carrying its " +
+                "own digest for the copy to stream against",
+            NpuAssetImport.EntryVerdict.Accept(encoder, encoderBytes, encoderSha),
             enc,
         )
         assertEquals(
             "and the decoder likewise — a two-artefact tier needs both halves",
-            NpuAssetImport.EntryVerdict.Accept(decoder, decoderBytes),
+            NpuAssetImport.EntryVerdict.Accept(decoder, decoderBytes, decoderSha),
             classify(decoder, decoderBytes),
         )
     }
@@ -172,10 +345,236 @@ class NpuAssetImportTest {
         // actually written, which the manager applies after the copy.
         assertEquals(
             "an undeclared header size is deferred to the written-bytes check, not refused",
-            NpuAssetImport.EntryVerdict.Accept(encoder, encoderBytes),
+            NpuAssetImport.EntryVerdict.Accept(encoder, encoderBytes, encoderSha),
             classify(encoder, -1L),
         )
     }
+
+    @Test
+    fun aDuplicateAllowedNameIsRefusedOutright() {
+        // 4.1 L6, Q8 M3. A duplicate allowed entry used to double-count `written`, corrupting
+        // `npu: import ok entries=2 bytes=…` — the one number the run-book greps as the success
+        // landmark — and re-opening the same .part truncated the first copy's bytes under it.
+        // With a digest per entry, a second copy of a name is a repack fault, refused by name.
+        val verdict =
+            NpuAssetImport.classifyEntry(required, encoder, encoderBytes, setOf(encoder))
+        assertTrue(
+            "a second copy of an allowed name is REFUSED — not skipped, which would silently " +
+                "drop bytes, and not re-written, which double-counts the landmark",
+            verdict is NpuAssetImport.EntryVerdict.Refuse,
+        )
+        val reason = (verdict as NpuAssetImport.EntryVerdict.Refuse).reason
+        assertTrue("it names the file: $reason", reason.contains(encoder))
+        assertTrue("it says the name appeared twice: $reason", reason.contains("twice"))
+        assertTrue("and that nothing was installed, which is true: $reason", reason.contains("Nothing was installed"))
+        assertTrue(
+            "the decoder duplicates refuse identically",
+            NpuAssetImport.classifyEntry(required, decoder, decoderBytes, setOf(decoder))
+                is NpuAssetImport.EntryVerdict.Refuse,
+        )
+        assertTrue(
+            "the allow-list is still consulted FIRST: an ignored rider appearing twice stays " +
+                "Ignore both times — the duplicate rule is about OUR names, whose bytes count",
+            NpuAssetImport.classifyEntry(required, "README.txt", -1L, setOf("README.txt"))
+                is NpuAssetImport.EntryVerdict.Ignore,
+        )
+        // And the manager threads the LIVE accepted set — a call site passing emptySet() would
+        // re-open the hazard with every assertion above still green, which is why the parameter
+        // has no default and why this needle exists.
+        assertEquals(
+            "the manager's classify call passes the accepted-so-far set",
+            1,
+            liveLineCount(
+                importBody,
+                "NpuAssetImport.classifyEntry(required, entry.name, entry.size, accepted)",
+            ),
+        )
+    }
+
+    // ------------------------------------------------------------------ the digest verdicts
+
+    @Test
+    fun aCorrectlySizedEntryWithTheWrongDigestIsRefused() {
+        // 4.1 L6 — the verification the two ~GB pairs arrive through. Size alone verified nothing
+        // but truncation; a re-exported asset, a corrupted download or a substituted file all
+        // arrive at the right length.
+        val wrong = "f".repeat(64)
+        val refusal = NpuAssetImport.wrongDigestRefusal(encoder, encoderSha, wrong)
+        assertNotNull(
+            "a correct name at the correct size with the WRONG digest must refuse",
+            refusal,
+        )
+        assertTrue("the refusal names the file: $refusal", refusal!!.contains(encoder))
+        assertTrue(
+            "it names the digest it GOT, labelled as what the file hashed to: $refusal",
+            refusal.contains("is $wrong"),
+        )
+        assertTrue(
+            "and the digest it EXPECTED, labelled truthfully — a swapped pair of hashes would " +
+                "send the owner comparing the wrong value against the release page: $refusal",
+            refusal.contains("expected $encoderSha"),
+        )
+        assertTrue("and that nothing was installed, which the .part staging makes true: $refusal",
+            refusal.contains("Nothing was installed"))
+        assertFalse(
+            "the refusal carries NO path — the name is an allow-listed bare name and nothing " +
+                "else may leak into user-visible card copy: $refusal",
+            refusal.contains("/") || refusal.contains("\\"),
+        )
+        assertNull(
+            "a matching digest is silent — null is the pass value, like freeSpaceRefusal's",
+            NpuAssetImport.wrongDigestRefusal(encoder, encoderSha, encoderSha),
+        )
+        // The refusal must be REACHABLE, and reachable at the right point: immediately after the
+        // written-bytes check and BEFORE the entry counts as accepted. Below `accepted +=` a
+        // hash-failed entry would satisfy missingEntriesRefusal and reach the finalise; above the
+        // size check it would hash-refuse a truncated file that has a clearer size story. Between
+        // the two, a digest failure leaves through exactly the refusal-and-rollback door a size
+        // failure does — the .part dies in the finally, nothing has been parked, and a previously
+        // installed pair is untouched.
+        val sizeCheck = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair", "if (got != accept.expectedBytes) {"
+        )
+        val digestCheck = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair", "NpuAssetImport.wrongDigestRefusal("
+        )
+        val acceptedAdd = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair", "accepted += accept.fileName"
+        )
+        assertTrue(
+            "ORDER: size check ($sizeCheck) -> digest check ($digestCheck) -> accepted " +
+                "($acceptedAdd). Presence cannot see this — every statement survives any " +
+                "permutation, and two of the three permutations are live defects.",
+            sizeCheck < digestCheck && digestCheck < acceptedAdd,
+        )
+        // And the call hands the builder (expected, got) IN THAT ORDER. Swapped, every label in
+        // the refusal lies — "expected <what the file hashed to>" — the equality still refuses,
+        // every other assertion here stays green, and the owner compares the wrong value against
+        // the release page. Found by designing the battery: this was the one mutation with no
+        // killer.
+        assertEquals(
+            "the call site's argument order matches the builder's labels",
+            1,
+            count(importBody, "accept.fileName, accept.expectedSha256, hexOf(digest.digest())"),
+        )
+    }
+
+    @Test
+    fun theDigestIsStreamedDuringTheCopyNeverASecondRead() {
+        // The digest is computed from the same buffers the write takes. A second pass over a
+        // 776 MB entry would double the import's I/O to learn what the first pass already knew —
+        // and it would verify what LANDED rather than what ARRIVED, which differs exactly when it
+        // matters. Source-pinned because this is a property of the Context-bound copy loop.
+        assertEquals(
+            "one MessageDigest per entry, created in the import body",
+            1,
+            liveLineCount(importBody, "MessageDigest.getInstance(\"SHA-256\")"),
+        )
+        val write = liveIndexOfOrFail(importBody, "importNpuAssetPair", "out.write(buffer, 0, n)")
+        val update = liveIndexOfOrFail(importBody, "importNpuAssetPair", "digest.update(buffer, 0, n)")
+        val counted = liveIndexOfOrFail(importBody, "importNpuAssetPair", "got += n")
+        assertTrue(
+            "the digest update sits INSIDE the copy loop, fed the exact buffer slice the write " +
+                "took (write=$write, update=$update, got+=$counted)",
+            write < update && update < counted,
+        )
+        assertEquals(
+            "and the import NEVER re-reads a staged file to hash it — sha256HexFile is the " +
+                "download path's whole-file second read, and it must appear nowhere here",
+            0,
+            liveLineCount(importBody, "sha256HexFile"),
+        )
+    }
+
+    // ------------------------------------------------------------------ per-tier resolution
+
+    @Test
+    fun theImportResolvesTheTierItWasAskedFor() {
+        // 4.1 L6. The signature takes the tier id and EVERYTHING resolves off it — the allow-list
+        // names, both lengths, both digests, the free-space budget, the debris sweep and the
+        // rollback report. A fallback to the npu constant anywhere in the body is a turbo zip
+        // installed (or rolled back, or reported) under the wrong tier's names.
+        assertEquals(
+            "the signature takes the tier id first",
+            1,
+            count(
+                importBody,
+                lines(
+                    "    suspend fun importNpuAssetPair(",
+                    "        tierId: String,",
+                    "        source: Uri,",
+                ),
+            ),
+        )
+        assertEquals(
+            "the catalog is asked for the ARGUMENT",
+            1,
+            liveLineCount(importBody, "WhisperCatalog.byId(tierId)"),
+        )
+        assertEquals(
+            "and the npu constant appears on NO live line of the import body",
+            0,
+            liveLineCount(importBody, "NpuAssetImport.TIER_ID"),
+        )
+        assertEquals(
+            "the debris reconciliation is scoped to THIS tier's names",
+            1,
+            liveLineCount(importBody, "reconcileStagingDebris(dir, required.keys)"),
+        )
+        assertEquals(
+            "and the rollback reports THIS tier's files — it used to read the npu constant's " +
+                "names, which for a turbo import would report the wrong tier's files as the " +
+                "device's state",
+            1,
+            liveLineCount(
+                importBody,
+                "rollBackFinalise(finaliseFailure, required.keys, renamed, parked)",
+            ),
+        )
+    }
+
+    @Test
+    fun theLaunchSweepSettlesEveryPairedTiersDebris() {
+        // 4.1 L6, Q8 M1 + m4. Stale .prev/.part debris used to be swept ONLY from inside a
+        // running import, so a process death between the park and the rename left isInstalled
+        // false with the primary parked under .prev: the tier silently vanished from the chooser
+        // and nothing on screen explained why — until the owner happened to start ANOTHER import
+        // of the same tier. One call from Application.onCreate closes both halves (the .prev
+        // disappearance and the .part orphan that makes the StatFs precheck count reusable space
+        // as unavailable).
+        assertEquals(
+            "the app sweeps at launch, and a sweep failure can never cost the launch — the same " +
+                "promise configureFastRpcLibraryPath documents",
+            1,
+            liveLineCount(app, "runCatching { whisperModelManager.reconcileNpuStagingDebris() }"),
+        )
+        assertTrue(
+            "ORDER: the sweep runs after the manager it needs exists (preferencesManager feeds " +
+                "the lazy WhisperModelManager)",
+            liveIndexOfOrFail(app, "WhisperEverywhereApp", "preferencesManager = PreferencesManager(this)") <
+                liveIndexOfOrFail(
+                    app, "WhisperEverywhereApp",
+                    "runCatching { whisperModelManager.reconcileNpuStagingDebris() }",
+                ),
+        )
+        val sweep = body(
+            manager, "WhisperModelManager.kt", "    fun reconcileNpuStagingDebris() {"
+        )
+        assertEquals(
+            "the sweep covers EVERY paired tier, structurally — the next npu-class tier is swept " +
+                "by the clause that already sweeps these two",
+            1,
+            liveLineCount(sweep, "NpuAssetImport.PAIRED_TIER_IDS.forEach"),
+        )
+        assertEquals(
+            "and it settles each tier through the SAME reconciliation the import itself uses — " +
+                "a second rule would be a second chance to synthesize a mixed pair",
+            1,
+            liveLineCount(sweep, "reconcileStagingDebris(dir, names)"),
+        )
+    }
+
+    // ------------------------------------------------------------------ the second guard
 
     @Test
     fun theCanonicalPathCheckIsASecondIndependentGuard() {
@@ -199,6 +598,8 @@ class NpuAssetImportTest {
             NpuAssetImport.escapesTargetDir(dir, dir, "/"),
         )
     }
+
+    // ------------------------------------------------------------------ free space
 
     @Test
     fun theFreeSpacePrecheckRefusesAndNamesTheShortfall() {
@@ -239,6 +640,41 @@ class NpuAssetImportTest {
     }
 
     @Test
+    fun theFreeSpacePrecheckScalesToTurbosPair() {
+        // 4.1 L6. The precheck's numbers are the TIER's: turbo's pair is 1,071,685,632 B, so the
+        // replace-an-installed-pair transient is ~2.14 GB on disk and the budget ~2.36 GB with
+        // the house margin. A precheck still budgeting npu's 358 MB would pass a device that the
+        // renames then fill mid-import — the exact too-late failure the precheck exists to move
+        // before the first byte.
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        val entries = NpuAssetImport.requiredEntriesFor(turbo)
+        val pair = NpuAssetImport.pairBytes(entries)
+        assertEquals(
+            "turbo's pair is the sum of its two published lengths",
+            1_071_685_632L,
+            pair,
+        )
+        val fresh = NpuAssetImport.requiredFreeBytes(pair, pairAlreadyInstalled = false)
+        val replacing = NpuAssetImport.requiredFreeBytes(pair, pairAlreadyInstalled = true)
+        assertEquals("one staged copy plus the margin", (pair * 11) / 10, fresh)
+        assertEquals("the replace transient doubles it", (pair * 2 * 11) / 10, replacing)
+        assertTrue(
+            "the doubled budget covers the real ~2.14 GB transient of pair + parked pair",
+            replacing > pair * 2,
+        )
+        val refusal = NpuAssetImport.freeSpaceRefusal(1_000_000_000L, replacing)
+        assertNotNull("a 1 GB-free device replacing a turbo pair must refuse", refusal)
+        assertTrue("it names the ~2.36 GB it needs: $refusal", refusal!!.contains("${replacing / 1_000_000}"))
+        assertTrue("what the device has: $refusal", refusal.contains("1000"))
+        assertTrue(
+            "and the shortfall in real figures: $refusal",
+            refusal.contains("${(replacing - 1_000_000_000L) / 1_000_000}"),
+        )
+    }
+
+    // ------------------------------------------------------------------ both-or-neither
+
+    @Test
     fun aMissingHalfOfThePairIsRefusedByName() {
         assertNull(
             "both halves present is the only silent outcome",
@@ -268,10 +704,10 @@ class NpuAssetImportTest {
         // this app did not write; the import writes them and demands the exact published length.
         // Strict-inside-tolerant is the safe nesting: an import that reports success can never
         // leave `isInstalled` false, so the card cannot hide the tier the user just imported.
-        required.forEach { (name, bytes) ->
+        required.forEach { (name, entry) ->
             assertTrue(
                 "everything the import accepts, isInstalled accepts ($name)",
-                WhisperCatalog.sizeWithinTolerance(bytes, bytes),
+                WhisperCatalog.sizeWithinTolerance(entry.bytes, entry.bytes),
             )
         }
         val offByOne = encoderBytes + 1
@@ -306,6 +742,8 @@ class NpuAssetImportTest {
         )
         assertTrue("nothing was installed, and that is true: $refusal", refusal.contains("Nothing was installed"))
     }
+
+    // ------------------------------------------------------------------ the finalise messages
 
     @Test
     fun aRolledBackFinaliseSaysThePreviousPairSurvivedAndAFailedRollbackSaysWhatIsLeft() {
@@ -447,6 +885,22 @@ class NpuAssetImportTest {
         assertTrue(
             "a hostile entry name is truncated before it is echoed: ${ignored.reason.length} chars",
             ignored.reason.length < 200,
+        )
+        // Q8 M2 (4.1 L6): the unreadable refusal interpolates a THROWABLE's message into
+        // user-visible card copy, and an IOException message typically carries the full internal
+        // .part path. The cause is bounded at the builder — the one sink both callers (the
+        // manager's catch and NpuImportController's) funnel through — with the same
+        // SAFE_NAME_CHARS bound every other echo takes.
+        val hostileCause = "y".repeat(500)
+        val bounded = NpuAssetImport.unreadableRefusal(hostileCause)
+        assertTrue(
+            "a hostile cause is truncated before it reaches the card: ${bounded.length} chars",
+            bounded.length < 250,
+        )
+        assertTrue("the truncation is visible, not silent: $bounded", bounded.contains("…"))
+        assertTrue(
+            "and the refusal still reads as the sentence it always was: $bounded",
+            bounded.contains("Nothing was installed"),
         )
     }
 }

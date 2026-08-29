@@ -121,3 +121,14 @@ keystore.properties
 # this repo has a public remote. tools/fetch_qnn_headers.py re-fetches the pinned version on demand
 # (and falls back to the local spike copy offline), so nothing is lost by keeping them out.
 app/src/main/cpp/include/QNN/
+
+# Proprietary blob SHAPES (4.1 L6) — defence in depth around the QNN extraction. The entry above
+# is exact-path only, so a header copied one directory too high, or a libQnnHtp.so extracted from
+# the AAR to sideload, would be stageable by `git add -A` — and the extractQnnSkel task extracts
+# exactly such a blob (libQnnHtpV75Skel.so). That extraction lands in the build directory, outside
+# the repo, so these are the second line, not the only one. Nothing tracked matches any of the
+# four (verified with `git ls-files` when they were added), so this untracks nothing.
+*.so
+*.dlc
+*.context
+app/src/main/cpp/include/Qnn*.h

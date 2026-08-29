@@ -465,9 +465,10 @@ class UnsupportedTierGatePinTest {
         // `aFailedFinaliseRollsBackAndTellsTheTruthAboutWhatIsOnTheDevice` pins its internals.
         assertEquals(
             "a failed finalise leaves through the roll-back, which purges what this import moved " +
-                "in AND puts back what it parked",
+                "in AND puts back what it parked — handed THIS tier's names (4.1 L6), so a turbo " +
+                "import's failure report never describes npu's files",
             1,
-            count(import, "rollBackFinalise(finaliseFailure, renamed, parked)"),
+            count(import, "rollBackFinalise(finaliseFailure, required.keys, renamed, parked)"),
         )
         assertEquals(
             "and every .part is cleared on failure, refusal OR cancellation, so a retry starts " +
@@ -681,9 +682,17 @@ class UnsupportedTierGatePinTest {
             count(import, "finaliseFailure = \"The imported files did not verify on disk\""),
         )
         assertEquals(
-            "and every finalise failure leaves through the one roll-back",
+            "and every finalise failure leaves through the one roll-back, scoped to this tier's " +
+                "own names (4.1 L6)",
             1,
-            count(import, "return@withContext refuseImport(rollBackFinalise(finaliseFailure, renamed, parked))"),
+            count(
+                import,
+                lines(
+                    "                return@withContext refuseImport(",
+                    "                    rollBackFinalise(finaliseFailure, required.keys, renamed, parked)",
+                    "                )",
+                ),
+            ),
         )
         assertEquals(
             "the parked copies are dropped only after the whole transaction has succeeded",

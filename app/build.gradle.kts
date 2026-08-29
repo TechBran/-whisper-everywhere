@@ -1,5 +1,8 @@
 import java.security.MessageDigest
 import java.util.Properties
+// 4.1 L6: extractQnnSkel reads the skel entry straight out of the resolved AAR. Imported here
+// because `java` inside the script body resolves to the Gradle DSL accessor, not the package.
+import java.util.zip.ZipFile
 
 plugins {
     id("com.android.application")
@@ -16,6 +19,12 @@ val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
+
+// The HTP skel's generated-assets home (4.1 L6 — the I5 answer). extractQnnSkel (below the
+// android block) writes the resolved AAR's own libQnnHtpV75Skel.so here, size- and
+// digest-asserted; the dir is registered as an assets srcDir inside android{} and lives in the
+// BUILD directory — outside the repo, so the proprietary blob structurally cannot be committed.
+val qnnSkelAssetDir = layout.buildDirectory.dir("generated/qnnSkel/assets")
 
 android {
     namespace = "com.whispereverywhere"
@@ -171,7 +180,18 @@ android {
             excludes += "**/libQnnDspV66Skel.so"
             excludes += "**/libQnnDspV66Stub.so"
             excludes += "**/libQnnGpu.so"
-            // Other HTP architectures. V75 is the only one kept.
+            // 4.1 L6 (the I5 answer): the V75 DSP-side skel leaves jniLibs too — not as dead
+            // weight but as a RELOCATION. Under this app's extractNativeLibs="false" packaging
+            // the FastRPC loader (which needs a real file on disk and searches only
+            // ADSP_LIBRARY_PATH) could never open a lib/ copy, so the APK carried a provably
+            // dead 17.9 MB and the 4.0 tier armed only off an adb-pushed skel. The same bytes
+            // now ship under assets/ (extractQnnSkel, below) and NpuWhisperBackend stages them
+            // into filesDir — the first ADSP_LIBRARY_PATH entry — on first arm. The V75 STUB
+            // stays: it is the CPU-side half, dlopen()ed by libQnnHtp.so straight out of the
+            // APK, which works page-aligned without extraction.
+            excludes += "**/libQnnHtpV75Skel.so"
+            // Other HTP architectures. V75 is the only one kept — its stub in lib/, its skel in
+            // assets/ (see above).
             excludes += "**/libQnnHtpV68Skel.so"
             excludes += "**/libQnnHtpV68Stub.so"
             excludes += "**/libQnnHtpV69Skel.so"
@@ -183,6 +203,14 @@ android {
             excludes += "**/libQnnHtpV81Skel.so"
             excludes += "**/libQnnHtpV81Stub.so"
         }
+    }
+
+    sourceSets {
+        // 4.1 L6: the generated qnnSkel assets dir — produced by extractQnnSkel, consumed by
+        // merge*Assets (the task ordering lives beside the task). Without this registration the
+        // merge never sees the dir, the APK ships without the skel, and every device dies at
+        // stage=skel while the build looks green.
+        getByName("main") { assets.srcDir(qnnSkelAssetDir) }
     }
 
     testOptions {
@@ -329,6 +357,14 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/transcription/batch/BatchTranscriber.kt",
         "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt",
         rootProject.file(".gitignore"),
+        // (4.1 L6) THIS build script, and it is the strangest member yet: NpuSkelPackagingTest
+        // reads it, because the skel mechanism is four spellings that must agree (the jniLibs
+        // exclude, the extract task's two asserted values, the srcDir registration, the
+        // dependency coordinate pair) and none of them is an input to any compile task. An edit
+        // confined to this file invalidates configuration, not the test task's inputs — so
+        // without this entry, deleting the exclude or loosening a check( would leave
+        // testDebugUnitTest UP-TO-DATE and the pins passing against stale evidence.
+        "build.gradle.kts",
         // (4.1 L3) The extractor, for the same reason as the asset above and one step further out:
         // it lives outside the app module, so it is not even a candidate input by convention.
         // MelbankAssetTest asserts it carries BOTH pinned digests as literals — the provenance
@@ -435,6 +471,69 @@ val fetchSherpaAar = tasks.register("fetchSherpaAar") {
 }
 tasks.named("preBuild") { dependsOn(fetchSherpaAar) }
 
+// The HTP skel, re-materialised from the RESOLVED qnn-runtime AAR into generated assets
+// (4.1 L6 — the I5 answer, which also retires the OWNER-PENDING zip-packaging question: 17.9 MB
+// into EACH of two ~GB delivery zips, plus a non-model entry in a both-or-neither model
+// transaction, was the losing option). PROPRIETARY: the blob lands in the build directory,
+// outside the repo, and the root .gitignore is hardened with the blob shapes besides.
+//
+// The configuration restates the F2 dependency's exact coordinate ON PURPOSE — the dependency
+// line itself stays byte-unchanged, and NpuSkelPackagingTest pins the two spellings equal so
+// they cannot drift apart.
+val qnnSkelSource: Configuration by configurations.creating {
+    isTransitive = false
+    isCanBeConsumed = false
+}
+
+val extractQnnSkel = tasks.register("extractQnnSkel") {
+    description =
+        "Re-materialises libQnnHtpV75Skel.so from the resolved qnn-runtime AAR into generated assets."
+    inputs.files(qnnSkelSource)
+    outputs.dir(qnnSkelAssetDir)
+    doLast {
+        val aar = qnnSkelSource.singleFile
+        val outDir = qnnSkelAssetDir.get().asFile
+        outDir.mkdirs()
+        val skel = File(outDir, "libQnnHtpV75Skel.so")
+        ZipFile(aar).use { zip ->
+            val entry = zip.getEntry("jni/arm64-v8a/libQnnHtpV75Skel.so")
+                ?: throw GradleException(
+                    "extractQnnSkel: jni/arm64-v8a/libQnnHtpV75Skel.so is missing from " +
+                        "${aar.name} — a runtime version bump changed the AAR layout. Re-measure " +
+                        "the skel and update the two pinned values here AND NpuWhisperBackend's " +
+                        "SKEL_BYTES/SKEL_SHA256, which check the same bytes at stage time."
+                )
+            zip.getInputStream(entry).use { input ->
+                skel.outputStream().use { output -> input.copyTo(output) }
+            }
+        }
+        // The same assert-the-pinned-value discipline fetchSherpaAar applies to its hardcoded
+        // digest, over the same two values the runtime staging checks again at arm time
+        // (NpuWhisperBackend.SKEL_BYTES / SKEL_SHA256, both MEASURED from this AAR): a runtime
+        // bump produces a NAMED build failure here and a NAMED stage refusal there — never a
+        // mystery on a device.
+        check(skel.length() == 17_913_608L) {
+            "extractQnnSkel: libQnnHtpV75Skel.so is ${skel.length()} bytes, expected 17_913_608 " +
+                "(measured from qnn-runtime-2.49.0.aar). A runtime bump must re-measure and " +
+                "update this assert AND NpuWhisperBackend.SKEL_BYTES together."
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(skel.readBytes())
+            .joinToString("") { b -> "%02x".format(b) }
+        check(digest == "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c") {
+            "extractQnnSkel: libQnnHtpV75Skel.so sha256 mismatch ($digest). A runtime bump must " +
+                "re-measure and update this assert AND NpuWhisperBackend.SKEL_SHA256 together."
+        }
+    }
+}
+// Ordered before the task that actually NEEDS the asset — merge*Assets — and not merely
+// preBuild: preBuild gates the compile* tasks and does NOT gate AGP's asset merging, which is
+// the exact lesson fetchQnnHeaders paid for with the CMake tasks one asset class over.
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+    .configureEach { dependsOn(extractQnnSkel) }
+// preBuild too, so a build that never reaches the merge still leaves the blob materialised.
+tasks.named("preBuild") { dependsOn(extractQnnSkel) }
+
 dependencies {
     // On-device TTS (Track F): sherpa-onnx runs Kokoro-82M on CPU (fetched above). arm64
     // native payload only reaches the APK because of the abiFilters above.
@@ -470,6 +569,10 @@ dependencies {
     // The version MUST stay in step with the pinned literal in tools/fetch_qnn_headers.py.
     // Most of the AAR's payload is excluded in packaging.jniLibs above; see the note there.
     implementation("com.qualcomm.qti:qnn-runtime:2.49.0")
+    // 4.1 L6: extractQnnSkel resolves the SAME artifact through its own configuration to pull
+    // the V75 skel out of the AAR (see the task above the dependencies block). The restated
+    // coordinate is pinned equal to the line above by NpuSkelPackagingTest.
+    qnnSkelSource("com.qualcomm.qti:qnn-runtime:2.49.0")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.1.1")

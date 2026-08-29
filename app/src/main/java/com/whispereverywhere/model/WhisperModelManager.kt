@@ -498,18 +498,29 @@ class WhisperModelManager(
     }
 
     /**
-     * Install the npu tier from the asset-pair zip the owner picked with the document picker
-     * (4.0, Q8). The **second** install path in this app, and the only one that is not a download.
+     * Install a paired tier from the asset-pair zip the owner picked with the document picker
+     * (4.0 Q8; per-tier and sha256-verified since 4.1 L6). The **second** install path in this
+     * app, and the only one that is not a download.
      *
      * ```
-     * reconcile .prev debris  ->  free-space precheck
-     *   ->  inflate each allowed entry to <name>.part, BOUNDED to expected+1 bytes
-     *   ->  size-verify each  ->  both present?
+     * resolve tierId  ->  reconcile .prev debris  ->  free-space precheck
+     *   ->  inflate each allowed entry to <name>.part, BOUNDED to expected+1 bytes,
+     *       sha256 streamed from the same buffers the write takes
+     *   ->  size-verify each  ->  digest-verify each  ->  both present?
      *   ->  PHASE 1 park each installed file as <name>.prev
      *   ->  PHASE 2 rename each .part into place
      *   ->  isInstalled?          (any failure above: roll back, report the real state)
      *   ->  drop the .prev copies  ->  notifyModelInstalled()
      * ```
+     *
+     * **Per-tier since L6.** [tierId] names which of `NpuAssetImport.PAIRED_TIER_IDS` this zip is
+     * for; every number below — the allow-list names, both exact lengths, both digests, the
+     * free-space budget — scales off that tier's own catalog entry, so turbo's ~1.07 GB pair flows
+     * through the identical transaction npu's 358 MB pair proved out. The digest verification is
+     * STREAMED during the copy (never a second read of a ~GB file) and a hash failure lands in
+     * the same refusal path as a size failure, before anything is parked. The owner's `adb push`
+     * dev route never enters this function and stays hash-exempt by design — the run-book states
+     * it where it prescribes the push.
      *
      * **Both-or-neither, and a re-import is non-destructive.** Every entry lands as `.part`
      * alongside whatever is already installed, so an existing pair survives a zip that turns out to
@@ -555,14 +566,18 @@ class WhisperModelManager(
      *         normal outcome of letting a user pick any file on the device.
      */
     suspend fun importNpuAssetPair(
+        tierId: String,
         source: Uri,
         onProgress: (soFar: Long, total: Long) -> Unit = { _, _ -> },
     ): NpuAssetImport.ImportState = withContext(Dispatchers.IO) {
-        val model = WhisperCatalog.byId(NpuAssetImport.TIER_ID)
+        // The ARGUMENT resolves the tier — never the npu constant. The card that launched the
+        // picker passed its own id, and everything below is that one tier's names and numbers.
+        val model = WhisperCatalog.byId(tierId)
         val required = NpuAssetImport.requiredEntriesFor(model)
         if (model == null || required.isEmpty()) {
             return@withContext refuseImport(
-                "this build's catalog has no importable npu tier, so there is nothing to import into."
+                "this build's catalog has no importable model pair for that tier, so there is " +
+                    "nothing to import into."
             )
         }
 
@@ -607,7 +622,7 @@ class WhisperModelManager(
                             continue
                         }
                         val verdict =
-                            NpuAssetImport.classifyEntry(required, entry.name, entry.size)
+                            NpuAssetImport.classifyEntry(required, entry.name, entry.size, accepted)
                         if (verdict is NpuAssetImport.EntryVerdict.Ignore) {
                             android.util.Log.i(NpuDiag.TAG, "npu: import ${verdict.reason}")
                             zis.closeEntry()
@@ -631,6 +646,12 @@ class WhisperModelManager(
 
                         val part = File(dir, accept.fileName + NpuAssetImport.PART_SUFFIX)
                         parts[accept.fileName] = part
+                        // THE DIGEST RIDES THE COPY (4.1 L6). One MessageDigest per entry, fed
+                        // the exact buffer slice the write just took — never a second pass:
+                        // re-reading a 776 MB entry to hash it would double the import's I/O to
+                        // learn what the first pass already knew, and it would verify what LANDED
+                        // rather than what ARRIVED.
+                        val digest = java.security.MessageDigest.getInstance("SHA-256")
                         var got = 0L
                         var overLength = false
                         java.io.FileOutputStream(part).use { out ->
@@ -647,6 +668,7 @@ class WhisperModelManager(
                                 val n = zis.read(buffer, 0, minOf(buffer.size.toLong(), room).toInt())
                                 if (n <= 0) break
                                 out.write(buffer, 0, n)
+                                digest.update(buffer, 0, n)
                                 got += n
                                 written += n
                                 if (got > accept.expectedBytes) {
@@ -685,6 +707,14 @@ class WhisperModelManager(
                                 )
                             )
                         }
+                        // IMMEDIATELY AFTER THE SIZE CHECK, BEFORE the entry counts as arrived
+                        // (4.1 L6): a hash failure leaves through exactly the door a size failure
+                        // does — the .part dies in the finally, nothing has been parked yet, and
+                        // a previously installed pair is untouched. Below the accepted line it
+                        // would satisfy missingEntriesRefusal and reach the finalise.
+                        NpuAssetImport.wrongDigestRefusal(
+                            accept.fileName, accept.expectedSha256, hexOf(digest.digest())
+                        )?.let { return@withContext refuseImport(it) }
                         accepted += accept.fileName
                     }
                 }
@@ -737,7 +767,9 @@ class WhisperModelManager(
                 finaliseFailure = "The imported files did not verify on disk"
             }
             if (finaliseFailure != null) {
-                return@withContext refuseImport(rollBackFinalise(finaliseFailure, renamed, parked))
+                return@withContext refuseImport(
+                    rollBackFinalise(finaliseFailure, required.keys, renamed, parked)
+                )
             }
             // Committed. The parked copies are now genuinely superseded.
             parked.values.forEach { if (it.exists()) it.delete() }
@@ -773,9 +805,13 @@ class WhisperModelManager(
      * is told their pair is unchanged, which is now true. If it did not, they are told **exactly
      * which files are on the device and which are gone** — because "Nothing was installed" is a
      * promise, and on this one path it was a false one.
+     *
+     * @param names THIS tier's files (4.1 L6). It used to read the npu constant's names, which
+     *        for a turbo import would have reported the wrong tier's files as the device's state.
      */
     private fun rollBackFinalise(
         what: String,
+        names: Set<String>,
         renamed: List<File>,
         parked: Map<File, File>,
     ): String {
@@ -796,7 +832,6 @@ class WhisperModelManager(
             else NpuAssetImport.rolledBackRefusal(what)
         }
         // Report on the tier's own two files, by name, as they actually are right now.
-        val names = NpuAssetImport.requiredEntries.keys
         val live = names.filter { File(modelsDir(), it).exists() }
         val gone = names.filterNot { File(modelsDir(), it).exists() }
         return NpuAssetImport.rollbackFailedRefusal(what, live, gone)
@@ -854,6 +889,34 @@ class WhisperModelManager(
         }
         names.forEach { File(dir, it + NpuAssetImport.PART_SUFFIX).delete() }
     }
+
+    /**
+     * Settle every paired tier's staging debris — called from `Application.onCreate` (4.1 L6,
+     * Q8 M1 + m4), not only from inside a later import of the same tier.
+     *
+     * Before this existed, a process death between the park and the rename left `isInstalled`
+     * false with the primary parked under `.prev`: *the tier silently vanished from the chooser
+     * and nothing on screen explained why*, until the owner happened to start another import of
+     * exactly that tier. The orphaned `.part` half is the same story in storage terms — the
+     * `StatFs` precheck counted reusable space as unavailable. One pass per tier through the SAME
+     * [reconcileStagingDebris] the import runs closes both halves; a second rule here would be a
+     * second chance to synthesize a mixed pair.
+     *
+     * Cost on a healthy launch: a handful of `File` stats (no parked files, nothing to do).
+     * Renames or deletes happen only after a mid-finalise death, which is the launch that needs
+     * them.
+     */
+    fun reconcileNpuStagingDebris() {
+        val dir = modelsDir()
+        NpuAssetImport.PAIRED_TIER_IDS.forEach { tierId ->
+            val names = NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId(tierId)).keys
+            if (names.isNotEmpty()) reconcileStagingDebris(dir, names)
+        }
+    }
+
+    /** Lowercase hex of a digest's raw bytes — the import's one rendering of a hash. */
+    private fun hexOf(digestBytes: ByteArray): String =
+        digestBytes.joinToString("") { "%02x".format(it) }
 
     /** One refusal shape: the WE-DIAG line and the state the card renders come from one place. */
     private fun refuseImport(reason: String): NpuAssetImport.ImportState.Refused {

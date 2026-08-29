@@ -88,10 +88,11 @@ class NpuImportWiringPinTest {
             ),
         )
         assertEquals(
-            "the picked Uri is handed to the manager's importer. A launcher whose result nothing " +
+            "the picked Uri is handed to the manager's importer WITH the tier id the launching " +
+                "button chose (4.1 L6 — the import is per-tier). A launcher whose result nothing " +
                 "consumes is a picker that opens, closes, and silently does nothing",
             1,
-            count(activity, ".importNpuAssetPair(uri, onProgress)"),
+            count(activity, ".importNpuAssetPair(tierId, uri, onProgress)"),
         )
         assertEquals(
             "and the screen is handed both halves: the state, and the way to start an import",
@@ -144,14 +145,30 @@ class NpuImportWiringPinTest {
         // spelling, and counting it too would make this assertion pass for the wrong reason.
         assertEquals(
             "a dismissed picker leaves the previous state alone — clearing it would wipe the " +
-                "refusal message the user re-opened the picker because of",
+                "refusal message the user re-opened the picker because of. The tier id is read " +
+                "into a local FIRST (4.1 L6), pairing the picked zip with the tier whose button " +
+                "launched the picker",
             1,
             count(
                 activity,
                 block(
                     "        if (uri != null) {",
+                    "            val tierId = npuImportTierId",
                     "            NpuImportController.start { onProgress ->",
                 ),
+            ),
+        )
+        // The tier id must survive the SAF round trip the same way the import itself must survive
+        // recreation: the picker is a separate activity, so a rotation (or a process death) behind
+        // it rebuilds this composition before the result arrives. A plain `remember` resets to
+        // the default and the result would import the picked zip under the WRONG tier's names and
+        // numbers — rememberSaveable is the difference.
+        assertEquals(
+            "the pending tier id is rememberSaveable, defaulted to the npu tier",
+            1,
+            count(
+                activity,
+                "var npuImportTierId by rememberSaveable { mutableStateOf(NpuAssetImport.TIER_ID) }",
             ),
         )
         assertEquals(
