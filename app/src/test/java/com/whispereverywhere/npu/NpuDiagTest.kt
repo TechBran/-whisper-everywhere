@@ -236,10 +236,21 @@ class NpuDiagTest {
             1,
             liveLineCount(app, "if (npuOfferLogged.compareAndSet(false, true)) {"),
         )
+        // Battery row V10, a measured survivor: diverting the line to a private tag
+        // (`Log.i("NpuOffer", …)`) leaves the format correct, the emission once-per-process and
+        // every other assertion in this class green — while making the line invisible to the ONE
+        // grep the Q10a run-book tells an owner with no adb to run. The tag is the whole
+        // distribution mechanism, so it is pinned as the symbol and not merely as "some tag".
         assertEquals(
-            "the line goes to the house tag, so one grep finds every tier line",
+            "the line goes to the house tag BY NAME, so one grep finds every tier line",
             1,
-            liveLineCount(app, "Log.i(") ,
+            liveLineCount(app, "NpuDiag.TAG,"),
+        )
+        assertEquals(
+            "and it is emitted at Log.i — a diagnostic the owner is asked to read must not sit " +
+                "below the default logcat filter",
+            1,
+            liveLineCount(app, "Log.i("),
         )
     }
 }
