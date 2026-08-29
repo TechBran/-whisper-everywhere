@@ -76,6 +76,47 @@ object NpuDiag {
         )
 
     /**
+     * `npu-debug: melprobe qRow0=… qCol0=… cell[0]=… cell[1500]=… cell[121500]=… scale=… zp=…` —
+     * the **Kotlin half of the Q10a-D2 encoder read**, emitted once per segment behind
+     * `BuildConfig.DEBUG` and never in a release build.
+     *
+     * **It exists to be compared, line to line, with what native prints next.** Native scans the
+     * `uint16` block from the pointer the DSP is bound to and reports the same two sums
+     * (`npu-debug: layout sumFirstRow= sumColStride=`) and the same three cells dequantised back to
+     * floats (`npu-debug: dequant`). These are computed from the float mel by a separate route. One
+     * reading describes a buffer; the pair decides between the three live hypotheses — a faithful
+     * copy, a transposed one, and a byte-swapped or misaddressed one — which is the whole reason
+     * this round exists.
+     *
+     * **Why the mel floats are not transcript content.** Three values out of 240,000, plus two
+     * aggregates over 3,000 and 80 of them. A spectrogram cell is a band energy at one 10 ms frame;
+     * nothing about a word survives three of them, and the shipped `mel:` line above already prints
+     * three whole row sums unconditionally. This one is additionally DEBUG-gated.
+     *
+     * **`Locale.US`**, for the reason [mel] states: a comma-decimal device turns `qRow0=1.234` into
+     * something every parser and every eye reads wrongly but almost correctly.
+     *
+     * @param qRow0 [NpuQuantize.quantisedRowSum] of row 0 — compare with native `sumFirstRow`.
+     * @param qCol0 [NpuQuantize.quantisedColumnSum] of column 0 — compare with native `sumColStride`.
+     * @param cells the float mel at indices `0`, `MEL_FRAMES/2` and `MEL_FRAMES*(MEL_BINS/2) +
+     *        MEL_FRAMES/2` — the same three native dequantises. Exactly three, and the caller is
+     *        held to it: a line whose cell count drifted from native's would be compared anyway.
+     */
+    fun melProbe(qRow0: Long, qCol0: Long, cells: FloatArray, scale: Float, zeroPoint: Int): String {
+        require(cells.size == 3) {
+            "melProbe takes exactly the 3 cells native dequantises, got ${cells.size}"
+        }
+        val i1 = NpuQuantize.MEL_FRAMES / 2
+        val i2 = NpuQuantize.MEL_FRAMES * (NpuQuantize.MEL_BINS / 2) + i1
+        return String.format(
+            java.util.Locale.US,
+            "npu-debug: melprobe qRow0=%d qCol0=%d cell[0]=%.6f cell[%d]=%.6f cell[%d]=%.6f " +
+                "scale=%.9g zp=%d",
+            qRow0, qCol0, cells[0], i1, cells[1], i2, cells[2], scale, zeroPoint,
+        )
+    }
+
+    /**
      * `npu: unavailable stage=encode detail=encode: graphExecute failed at 0` — emitted once, on
      * the path where the tier declines and the session falls back to the CPU model.
      *

@@ -112,6 +112,56 @@ object NpuQuantize {
     }
 
     /**
+     * Σ of the **quantised codes** of one mel row — Q10a-D2's reference half of the transpose
+     * detector.
+     *
+     * Native scans the block it is about to hand the DSP and reports the same two quantities from
+     * the pointer that is actually bound (`npu-debug: layout sumFirstRow= sumColStride=`). This
+     * computes them the other way round: from the float mel, through the same affine transform, in
+     * Kotlin. **Two independent routes to one number is the entire design** — a single reading can
+     * only say what a buffer contains, while the pair says whether the buffer the DSP reads is the
+     * buffer this code filled, and in which orientation:
+     *
+     * | native `sumFirstRow` | native `sumColStride` | reading |
+     * |---|---|---|
+     * | == [quantisedRowSum]`(0)` | == [quantisedColumnSum]`(0)` | the copy is byte-exact |
+     * | == [quantisedColumnSum]`(0)` | == [quantisedRowSum]`(0)`'s head | the block is transposed |
+     * | neither | neither | endianness, a wrong offset, or a different buffer |
+     *
+     * Deliberately **not** shared with [melToU16]'s loop: a helper that both produced the buffer and
+     * measured it would agree with itself under every bug either could have. It calls [quantise], so
+     * the arithmetic is the same; the indexing is written out again on purpose.
+     *
+     * `Long`, not `Int`: 3,000 codes of up to 65,535 reach 196 million, and 80 of them would not
+     * overflow an `Int` either — but the column sum and the row sum print side by side, and one of
+     * them silently wrapping is exactly the kind of thing that would be read as evidence.
+     *
+     * Absolute [FloatBuffer.get] throughout, like [melRowSum]: the caller passes a view of the same
+     * direct buffer that goes on to `nativeEncode`, and a relative read would move its position.
+     */
+    fun quantisedRowSum(mel: FloatBuffer, row: Int, scale: Float, zeroPoint: Int): Long {
+        require(row in 0 until MEL_BINS) { "mel row $row outside 0 until $MEL_BINS" }
+        val base = row * MEL_FRAMES
+        var sum = 0L
+        for (f in 0 until MEL_FRAMES) sum += quantise(mel.get(base + f), scale, zeroPoint).toLong()
+        return sum
+    }
+
+    /**
+     * Σ of the quantised codes of one mel **column** — one value per bin, [MEL_FRAMES] apart, which
+     * is the stride-3000 pick native reports as `sumColStride`. See [quantisedRowSum] for the
+     * reading; this is the other half of the same pair.
+     */
+    fun quantisedColumnSum(mel: FloatBuffer, column: Int, scale: Float, zeroPoint: Int): Long {
+        require(column in 0 until MEL_FRAMES) { "mel column $column outside 0 until $MEL_FRAMES" }
+        var sum = 0L
+        for (b in 0 until MEL_BINS) {
+            sum += quantise(mel.get(b * MEL_FRAMES + column), scale, zeroPoint).toLong()
+        }
+        return sum
+    }
+
+    /**
      * One value: `clamp(rint(x / scale) + zeroPoint, 0, 65535)`.
      *
      * **`Math.rint`, not `Math.round`.** `rint` is round-half-to-EVEN, which is how ONNX specifies

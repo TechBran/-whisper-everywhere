@@ -211,13 +211,27 @@ class NpuDiagTest {
             "and the whole field sequence lives in that one literal, in order — row0, row40, row79",
             diag.contains("\"mel: bins=%d frames=%d row0=%.3f row40=%.3f row79=%.3f\""),
         )
-        assertEquals(
-            "Locale.US, not the default. On a comma-decimal device `%.3f` yields `row0=1234,567`, " +
-                "which breaks every parser and is *almost* readable — the kind of defect that " +
-                "survives review.",
-            1,
-            liveLineCount(diag, "java.util.Locale.US,"),
-        )
+        // Locale.US, not the default — ASKED AS A BEHAVIOUR, not counted as a source line.
+        //
+        // This used to be `liveLineCount(diag, "java.util.Locale.US,") == 1`, and it broke the
+        // moment a second builder in this file needed the same formatter: a count over a whole file
+        // is a claim about the file's population, not about this line's locale, and its only
+        // possible repairs are to bump the number (weaker every time) or to keep the file at one
+        // formatter forever. The 7a73ea0 lesson, arriving a second time. Asked directly instead —
+        // render it under a comma-decimal default and require a dot — the assertion cannot drift,
+        // and it fails for exactly the reason it names.
+        val previous = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMANY)
+            assertEquals(
+                "on a comma-decimal device `%.3f` yields `row0=1234,567`, which breaks every " +
+                    "parser and is *almost* readable — the kind of defect that survives review",
+                "mel: bins=80 frames=3000 row0=1234.568 row40=0.000 row79=0.000",
+                NpuDiag.mel(1234.5678, 0.0, 0.0),
+            )
+        } finally {
+            java.util.Locale.setDefault(previous)
+        }
 
         // EMISSION, and its POSITION, which is the invariant on both sides.
         val backend =
@@ -252,6 +266,88 @@ class NpuDiagTest {
             "and BEFORE melToU16 ($quantise): a bisector that cannot separate the spectrogram from " +
                 "the quantisation is not a bisector",
             melLine < quantise,
+        )
+    }
+
+    /**
+     * Q10a-D2's `melprobe` line: the Kotlin half of the encoder read.
+     *
+     * **This line only has value as one half of a comparison.** Native prints the same two sums from
+     * the `uint16` block the DSP is bound to and the same three cells dequantised back to floats;
+     * these are computed from the float mel by an independent route. So the format is pinned exactly
+     * — a field that silently renamed itself, or a cell index that drifted away from the one native
+     * dequantises, turns a decisive comparison into two numbers that look comparable and are not.
+     *
+     * The cell indices are DERIVED here from the same constants native derives them from
+     * (`frames/2` and `frames*(bins/2) + frames/2`), so a future 128-bin tier moves both sides
+     * together rather than silently comparing different cells.
+     */
+    @Test
+    fun theMelProbeLineIsOneLiteralAndItsCellsAreTheOnesNativeDequantises() {
+        val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
+        assertEquals(
+            "npu-debug: melprobe qRow0=98304000 qCol0=2621440 cell[0]=-1.500000 " +
+                "cell[1500]=0.000000 cell[121500]=1.234568 scale=4.67700702e-05 zp=32072",
+            NpuDiag.melProbe(
+                qRow0 = 98_304_000L,
+                qCol0 = 2_621_440L,
+                cells = floatArrayOf(-1.5f, 0.0f, 1.2345678f),
+                scale = 4.677007018472068e-05f,
+                zeroPoint = 32072,
+            ),
+        )
+        assertEquals(
+            "the `npu-debug: melprobe ` prefix is ONE contiguous literal — the whole D2 read is " +
+                "found by one grep, and half a format assembled from parts breaks it invisibly",
+            1,
+            liveLineCount(diag, "\"npu-debug: melprobe qRow0="),
+        )
+        assertTrue(
+            "the cell indices must be DERIVED from MEL_FRAMES/MEL_BINS, never written as 1500 and " +
+                "121500. Native derives its three cells the same way, and a literal here would " +
+                "keep pointing at the old cells the day the geometry changes — while still " +
+                "printing a number beside native's, ready to be compared.",
+            diag.contains("NpuQuantize.MEL_FRAMES / 2") &&
+                diag.contains("NpuQuantize.MEL_FRAMES * (NpuQuantize.MEL_BINS / 2) + i1"),
+        )
+        // Locale.US, asked as a behaviour for the reason the mel line's own assertion now states.
+        val previous = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMANY)
+            assertTrue(
+                "under a comma-decimal default the cells must still render with a dot, or the " +
+                    "float this line exists to be compared with native's is unparseable",
+                NpuDiag.melProbe(1L, 2L, floatArrayOf(-1.5f, 0f, 1.25f), 1.0f, 0)
+                    .contains("cell[0]=-1.500000"),
+            )
+        } finally {
+            java.util.Locale.setDefault(previous)
+        }
+
+        // Exactly three cells, and the builder says so rather than formatting whatever it is given:
+        // a four-cell caller would otherwise render a line that reads as if it were comparable.
+        listOf(floatArrayOf(), floatArrayOf(1f, 2f), floatArrayOf(1f, 2f, 3f, 4f)).forEach { bad ->
+            org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+                NpuDiag.melProbe(0L, 0L, bad, 1.0f, 0)
+            }
+        }
+
+        // EMISSION, and its gate.
+        val backend =
+            source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+        assertEquals(
+            "the backend emits the melprobe line exactly once per segment",
+            1,
+            liveLineCount(backend, "NpuDiag.melProbe("),
+        )
+        val quantise = offsetOfLive(backend, "NpuQuantize.melToU16(")
+        val probe = offsetOfLive(backend, "NpuDiag.melProbe(")
+        val encode = offsetOfLive(backend, "QnnAsrNative.nativeEncode(quantised)")
+        assertTrue(
+            "the melprobe line ($probe) must be emitted BEFORE nativeEncode ($encode), so the two " +
+                "halves of the comparison land adjacent in one capture instead of straddling a " +
+                "405 ms encode and everything else that logs during it",
+            probe in (quantise + 1) until encode,
         )
     }
 

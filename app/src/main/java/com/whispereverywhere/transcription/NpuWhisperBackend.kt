@@ -333,6 +333,34 @@ class NpuWhisperBackend(
                 mel.asFloatBuffer(), quant[0], quant[1].toInt(), quantised.asShortBuffer()
             )
 
+            // Q10a-D2. The KOTLIN half of the encoder read — the same two sums and the same three
+            // cells native is about to report from the buffer the DSP is bound to, computed here
+            // from the float mel by an independent route. One reading describes a buffer; the pair
+            // decides whether the block the graph sees is the block this code wrote, and in which
+            // orientation. Emitted BEFORE nativeEncode so the two halves land adjacent in the log.
+            //
+            // BuildConfig.DEBUG, like nativeSetDiag above it: 6,000 extra quantise calls and three
+            // float reads are nothing against a ~405 ms encode, but a release build has no business
+            // narrating the spectrogram it is working on.
+            if (com.whispereverywhere.BuildConfig.DEBUG) {
+                val probe = mel.asFloatBuffer()
+                val half = NpuQuantize.MEL_FRAMES / 2
+                android.util.Log.i(
+                    NpuDiag.TAG,
+                    NpuDiag.melProbe(
+                        NpuQuantize.quantisedRowSum(probe, 0, quant[0], quant[1].toInt()),
+                        NpuQuantize.quantisedColumnSum(probe, 0, quant[0], quant[1].toInt()),
+                        floatArrayOf(
+                            probe.get(0),
+                            probe.get(half),
+                            probe.get(NpuQuantize.MEL_FRAMES * (NpuQuantize.MEL_BINS / 2) + half),
+                        ),
+                        quant[0],
+                        quant[1].toInt(),
+                    ),
+                )
+            }
+
             val encodeError = QnnAsrNative.nativeEncode(quantised)
             if (encodeError.isNotEmpty()) {
                 return@serialized fallBackAndRun("encode", encodeError, samples, lang, useVad)

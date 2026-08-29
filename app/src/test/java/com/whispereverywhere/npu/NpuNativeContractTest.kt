@@ -655,6 +655,115 @@ class NpuNativeContractTest {
             liveOffsets(backend, "nativeSetDiag(").isNotEmpty() &&
                 liveLines(backend, "nativeSetDiag(").single().contains("BuildConfig.DEBUG")
         )
+
+        // ---- Q10a-D2: the ENCODER read ---------------------------------------------------------
+        //
+        // Six native lines, and every one of them is a measurement whose VALUE DEPENDS ENTIRELY ON
+        // WHERE IT IS TAKEN. That is what is pinned here: not that the lines exist — that they are
+        // taken at the only moment and from the only pointer at which their numbers mean what the
+        // line says they mean. An instrumentation round that reports the wrong buffer, or the right
+        // buffer at the wrong instant, does not fail. It produces confident numbers, and the next
+        // decision is made on them.
+        val encode = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(")
+
+        listOf(
+            "npu-debug: quant " to "the quantisation params as read, with input_features' DIMS " +
+                "and data format — the transpose hypothesis stated in full, and the first time " +
+                "any of it reaches WE-DIAG (Q1 logged the shapes under WE-NPU, which the owner's " +
+                "capture filters out)",
+            "npu-debug: inbuf " to "the input block's distribution and rail counts",
+            "npu-debug: layout " to "the transpose detector — the decisive line of this round",
+            "npu-debug: dequant " to "three cells back through the affine transform, which is the " +
+                "only reading that catches a sign or offset misapplication exactly",
+            "npu-debug: crossKV " to "whether the encoder wrote its outputs at all",
+        ).forEach { (needle, what) ->
+            assertTrue(
+                "qnn_asr.cpp must emit `$needle…` — $what. Deleting it removes a reading the " +
+                    "next round's conclusion depends on, and nothing else in this suite would notice.",
+                liveOffsets(encode, needle).isNotEmpty()
+            )
+        }
+        assertTrue(
+            "nativeDecodeSegment must emit `npu-debug: selfkv ` — the position-0 self-KV write " +
+                "check, which settles D1's H2 for one buffer scan per segment.",
+            liveOffsets(decode, "npu-debug: selfkv ").isNotEmpty()
+        )
+
+        // POST-COPY, PRE-EXECUTE. Both halves, because both are silently wrong rather than absent.
+        val copy = liveOffsets(encode, "memcpy(dst.p")
+        val exec = liveOffsets(encode, "g.qnn.graphExecute(")
+        assertTrue("nativeEncode must memcpy into dst.p on a live line", copy.isNotEmpty())
+        assertTrue("nativeEncode must call graphExecute on a live line", exec.isNotEmpty())
+        listOf("npu-debug: inbuf ", "npu-debug: layout ", "npu-debug: dequant ").forEach { needle ->
+            val at = liveOffsets(encode, needle).first()
+            assertTrue(
+                "`$needle` must be emitted AFTER the memcpy (${copy.first()}). The input buffer is " +
+                    "session-scoped and never cleared, so a reading taken above the copy describes " +
+                    "the PREVIOUS segment — with numbers that look entirely reasonable and belong " +
+                    "to different audio. Found at $at.",
+                at > copy.first()
+            )
+            assertTrue(
+                "`$needle` must be emitted BEFORE graphExecute (${exec.first()}) — after it, the " +
+                    "graph has run and the block is no longer provably the one it was handed. " +
+                    "Found at $at.",
+                at < exec.first()
+            )
+        }
+        val cross = liveOffsets(encode, "npu-debug: crossKV ").first()
+        assertTrue(
+            "`npu-debug: crossKV ` must be emitted AFTER graphExecute (${exec.first()}) — it asks " +
+                "whether the encoder WROTE those buffers, and asked beforehand the answer is " +
+                "always AlignedBuf's zeros, i.e. the failure it is looking for, every time. " +
+                "Found at $cross.",
+            cross > exec.first()
+        )
+
+        // THE POINTER. This is the difference between confirming what Kotlin wrote and measuring
+        // what the DSP will read, and they are the same address only if nothing is wrong.
+        assertTrue(
+            "nativeEncode's input-block scan must read `dst.p` — the pointer bound to the tensor " +
+                "by tensorSetClientBuf — and never the JNI source address `src`. Reading `src` " +
+                "would re-measure the buffer Kotlin just filled and prove nothing whatsoever " +
+                "about what the graph sees, which is the entire question of this round.",
+            liveOffsets(encode, "static_cast<const uint16_t *>(dst.p)").isNotEmpty()
+        )
+
+        // THE SET. Reading the input side would report the zeroed cache and manufacture the exact
+        // failure the line exists to test for.
+        assertTrue(
+            "the self-KV write check must read the OUT set — `1 - inSetForStep` — because that is " +
+                "the side bindSelfKvLocked pointed the outputs at for the step that just ran. " +
+                "Reading inSetForStep reports the set the graph consumed, which at position 0 is " +
+                "zeroed by construction, so the line would print nonzero=0.000 on a perfectly " +
+                "healthy decoder and send the next round after a defect that is not there.",
+            liveOffsets(decode, "1 - inSetForStep").isNotEmpty()
+        )
+
+        // THE GATE, on the encode side too. The decode-side gate is asserted above, and this block
+        // is the more expensive one: two 1,152,000-byte cross-KV scans plus a 240,000-value input
+        // scan, every segment, for lines a release build must not emit at all. Two sites — the
+        // pre-execute block and the post-execute cross-KV block — so a gate deleted from either
+        // fails here rather than shipping.
+        assertTrue(
+            "nativeEncode's instrumentation must sit behind g.diag at BOTH sites (pre-execute and " +
+                "post-execute); found ${liveOffsets(encode, "g.diag").size} live mentions, " +
+                "expected at least 2.",
+            liveOffsets(encode, "g.diag").size >= 2
+        )
+
+        // The Kotlin half, and its gate.
+        assertTrue(
+            "NpuWhisperBackend must emit NpuDiag.melProbe on a live line — native's layout and " +
+                "dequant readings are only decisive against an independently computed reference, " +
+                "and this is that reference.",
+            liveOffsets(backend, "NpuDiag.melProbe(").isNotEmpty()
+        )
+        assertTrue(
+            "the melProbe emission must be behind BuildConfig.DEBUG, like nativeSetDiag. It " +
+                "prints three spectrogram cells, and a release build has no business doing that.",
+            liveOffsets(backend, "BuildConfig.DEBUG").size >= 2
+        )
     }
 
     /**

@@ -280,6 +280,85 @@ class NpuQuantizeTest {
     }
 
     /**
+     * Q10a-D2's reference sums, checked against **the buffer [NpuQuantize.melToU16] actually
+     * produces** — which is the only check worth making of them.
+     *
+     * These two functions exist to be compared, on device, with what native reports from the
+     * pointer the DSP is bound to. If they disagree with `melToU16`'s own output *here*, on a host
+     * with no NPU in it, then every conclusion drawn from that comparison is wrong in a way nobody
+     * would ever trace back: the device evidence would say "the buffer is not what Kotlin wrote"
+     * and the truth would be "the reference is not what Kotlin wrote". So the assertion is not
+     * "the sum is some expected number" — it is that the two independent routes agree, exactly, in
+     * both orientations.
+     *
+     * The mel is built so **row 0 and column 0 cannot coincide**: a fill where they summed alike
+     * would pass this test and make the transpose detector unable to detect a transpose.
+     */
+    @Test
+    fun theReferenceSumsAgreeExactlyWithTheBufferMelToU16Produces() {
+        val mel = FloatBuffer.allocate(NpuQuantize.MEL_VALUES)
+        // Distinct per (bin, frame) and non-separable, so no two index sets alias by accident.
+        for (b in 0 until NpuQuantize.MEL_BINS) {
+            for (f in 0 until NpuQuantize.MEL_FRAMES) {
+                val x = (scale.toDouble() * ((b * 7919 + f * 13) % 65536 - zeroPoint)).toFloat()
+                mel.put(b * NpuQuantize.MEL_FRAMES + f, x)
+            }
+        }
+        val out = ShortBuffer.allocate(NpuQuantize.MEL_VALUES)
+        NpuQuantize.melToU16(mel, scale, zeroPoint, out)
+
+        // Row 0 is q[0 .. frames-1]; column 0 is q[0], q[frames], q[2*frames], … — exactly the two
+        // index sets native walks as `sumFirstRow` and `sumColStride`.
+        var bufRow0 = 0L
+        for (f in 0 until NpuQuantize.MEL_FRAMES) bufRow0 += (out.get(f).toInt() and 0xFFFF).toLong()
+        var bufCol0 = 0L
+        for (b in 0 until NpuQuantize.MEL_BINS) {
+            bufCol0 += (out.get(b * NpuQuantize.MEL_FRAMES).toInt() and 0xFFFF).toLong()
+        }
+
+        assertEquals(
+            "quantisedRowSum(0) must equal the sum of the codes melToU16 wrote into row 0. These " +
+                "are the two sides of the device comparison, and if they can disagree on a host " +
+                "the device reading is uninterpretable.",
+            bufRow0,
+            NpuQuantize.quantisedRowSum(mel, 0, scale, zeroPoint),
+        )
+        assertEquals(
+            "quantisedColumnSum(0) must equal the sum of the codes at stride MEL_FRAMES",
+            bufCol0,
+            NpuQuantize.quantisedColumnSum(mel, 0, scale, zeroPoint),
+        )
+        assertNotEquals(
+            "the fixture must make row 0 and column 0 differ — a mel where they agreed would pass " +
+                "every assertion above while leaving the transpose detector unable to detect a " +
+                "transpose, which is the one thing it is for",
+            bufRow0,
+            bufCol0,
+        )
+
+        // A later row and column too, so nothing is special about index 0's arithmetic.
+        var bufRow40 = 0L
+        val base = 40 * NpuQuantize.MEL_FRAMES
+        for (f in 0 until NpuQuantize.MEL_FRAMES) {
+            bufRow40 += (out.get(base + f).toInt() and 0xFFFF).toLong()
+        }
+        assertEquals(bufRow40, NpuQuantize.quantisedRowSum(mel, 40, scale, zeroPoint))
+        var bufCol1500 = 0L
+        for (b in 0 until NpuQuantize.MEL_BINS) {
+            bufCol1500 += (out.get(b * NpuQuantize.MEL_FRAMES + 1500).toInt() and 0xFFFF).toLong()
+        }
+        assertEquals(bufCol1500, NpuQuantize.quantisedColumnSum(mel, 1500, scale, zeroPoint))
+
+        // Out-of-range indices are refused rather than reading a neighbouring row's memory.
+        assertThrows(IllegalArgumentException::class.java) {
+            NpuQuantize.quantisedRowSum(mel, NpuQuantize.MEL_BINS, scale, zeroPoint)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NpuQuantize.quantisedColumnSum(mel, NpuQuantize.MEL_FRAMES, scale, zeroPoint)
+        }
+    }
+
+    /**
      * The shapes are fixed by the asset — `[1,80,3000]`, no dynamic dimension — so anything else
      * is a wiring mistake, and the one that actually happens is handing over the 960,000-byte mel
      * where the 480,000-byte quantised block belongs (or its `asFloatBuffer` view where the

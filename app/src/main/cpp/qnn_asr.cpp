@@ -211,6 +211,23 @@ const Qnn_QuantizeParams_t *tensorQuantParams(const Qnn_Tensor_t &t) {
     return nullptr;
 }
 
+/// How the tensor's elements are laid out in the client buffer, read through the version tag.
+///
+/// **Q10a-D2 added this, and it is a load-bearing reading rather than a curiosity.** Everything
+/// this seam does with `input_features` assumes the buffer is a DENSE row-major block: quantise
+/// 240,000 floats in order, `memcpy` them, execute. `Qnn_TensorDataFormat_t` is the field that says
+/// whether that assumption holds - QNN also defines sparse, codebook, MX and a family of UBWC
+/// (compressed) layouts, and under any of them a flat block of correctly-quantised values is read
+/// as something else entirely. That failure has no error and no crash: it is noise the encoder
+/// transcribes fluently. `QNN_TENSOR_DATA_FORMAT_DENSE` is 0, so a zero-initialised descriptor
+/// reads as dense whether or not anyone checked - which is exactly why it is now printed rather
+/// than assumed.
+Qnn_TensorDataFormat_t tensorDataFormat(const Qnn_Tensor_t &t) {
+    if (t.version == QNN_TENSOR_VERSION_1) return t.v1.dataFormat;
+    if (t.version == QNN_TENSOR_VERSION_2) return t.v2.dataFormat;
+    return QNN_TENSOR_DATA_FORMAT_DENSE;
+}
+
 /// Point a copied descriptor at storage WE own, so it survives systemContextFree().
 void tensorRepoint(Qnn_Tensor_t &t, std::string &name, std::vector<uint32_t> &dims) {
     if (t.version == QNN_TENSOR_VERSION_1) {
@@ -302,6 +319,17 @@ const char *encodingName(Qnn_QuantizationEncoding_t enc) {
         case QNN_QUANTIZATION_ENCODING_BLOCK:             return "block";
         case QNN_QUANTIZATION_ENCODING_UNDEFINED:         return "undefined";
         default:                                          return "other";
+    }
+}
+
+/// Names the memory layout so a non-dense format is readable rather than an integer nobody looks up.
+const char *dataFormatName(Qnn_TensorDataFormat_t f) {
+    switch (f) {
+        case QNN_TENSOR_DATA_FORMAT_DENSE:    return "dense";
+        case QNN_TENSOR_DATA_FORMAT_SPARSE:   return "sparse";
+        case QNN_TENSOR_DATA_FORMAT_CODEBOOK: return "codebook";
+        case QNN_TENSOR_DATA_FORMAT_MX:       return "mx";
+        default:                              return "non-dense";
     }
 }
 
@@ -1631,6 +1659,116 @@ LogitsHealth scanLogitsRaw(const uint16_t *logits, uint32_t vocab) {
     return h;
 }
 
+// ------------------------------------------------- Q10a-D2: the ENCODER's input path
+//
+// D1 instrumented the decode loop and cleared it: the prompt arrives intact, the positions walk
+// correctly, the logits are structured (min ~11,000, max ~23,500) and they VARY BY SEGMENT under an
+// identical prompt and a zeroed self-KV - which can only mean the cross-KV carries per-segment
+// encoder output. And yet the raw argmax is EOT at every position including position 0 given bare
+// SOT. A mechanically healthy decoder that says "no speech" to every segment is a decoder attending
+// noise, so the remaining window is this file's own input path: quantise -> copy -> layout ->
+// execute. The mel FLOATS are already exonerated (the same spectrogram feeds the CPU tier, which
+// transcribes this phone perfectly, and the `mel:` row sums check out numerically).
+//
+// NOTE ON THE SPIKE, because it is the reason this window was never closed: the spike measured
+// encoder TIMING. Its input was a deterministic pseudo-random fill and its output was never compared
+// against anything. 404.6 ms is a true statement about a graph that has never been shown to compute
+// the right answer. This is the first correctness read of the encoder.
+//
+// Everything below is measurement only. No fix is attempted in this round.
+
+/// Aggregate health of a `uint16` block. Rail counts are separate from min/max deliberately: `min=0
+/// max=65535` says the extremes were touched, `atZero=180000` says most of the spectrogram is
+/// pinned there, and those are completely different diagnoses.
+struct U16Stats {
+    uint32_t lo = 0;
+    uint32_t hi = 0;
+    double mean = 0.0;
+    uint32_t atZero = 0;
+    uint32_t atMax = 0;
+};
+
+U16Stats scanU16Stats(const uint16_t *p, size_t n) {
+    U16Stats s;
+    if (!p || n == 0) return s;
+    uint64_t sum = 0;
+    s.lo = p[0];
+    s.hi = p[0];
+    for (size_t i = 0; i < n; ++i) {
+        const uint32_t v = p[i];
+        if (v < s.lo) s.lo = v;
+        if (v > s.hi) s.hi = v;
+        sum += v;
+        if (v == 0u) ++s.atZero;
+        if (v == 0xFFFFu) ++s.atMax;
+    }
+    s.mean = static_cast<double>(sum) / static_cast<double>(n);
+    return s;
+}
+
+/// Aggregate health of a `uint8` block - the cross-KV and self-KV caches.
+///
+/// `nonzero` answers "was this buffer ever written at all", because `AlignedBuf` memsets to zero and
+/// an unwritten buffer is therefore exactly 0.000. `mean` answers the harder question: these tensors
+/// are asymmetrically quantised at zero point 128, so a HEALTHY written buffer has a mean near 128,
+/// while a buffer full of small values is nonzero everywhere and still wrong.
+struct U8Stats {
+    uint32_t lo = 0;
+    uint32_t hi = 0;
+    double mean = 0.0;
+    double nonzero = 0.0;
+};
+
+U8Stats scanU8Stats(const uint8_t *p, size_t n) {
+    U8Stats s;
+    if (!p || n == 0) return s;
+    uint64_t sum = 0, nz = 0;
+    s.lo = p[0];
+    s.hi = p[0];
+    for (size_t i = 0; i < n; ++i) {
+        const uint32_t v = p[i];
+        if (v < s.lo) s.lo = v;
+        if (v > s.hi) s.hi = v;
+        sum += v;
+        if (v != 0u) ++nz;
+    }
+    s.mean = static_cast<double>(sum) / static_cast<double>(n);
+    s.nonzero = static_cast<double>(nz) / static_cast<double>(n);
+    return s;
+}
+
+/// The `(bins, frames)` split this seam is assuming for `input_features`, taken from the tensor's
+/// OWN trailing two dimensions rather than from a constant.
+///
+/// **The split is printed on the line that uses it, and that is the point.** `NpuQuantize` writes
+/// 80 rows of 3000 because the plan says the tensor is `[1,80,3000]`. If a re-export ever declared
+/// `[1,3000,80]` instead - the NWC form a QAIRT conversion can legitimately produce - the byte count
+/// would be IDENTICAL, `kEncoderExpectation`'s 480,000 B check would still pass, the alias guard
+/// would still pass, and the encoder would read our row-major block transposed. Nothing in this
+/// codebase would say a word. So the geometry is derived here, reported, and compared against
+/// Kotlin's independent arithmetic by eye.
+struct MelGeometry {
+    uint32_t bins = 0;
+    uint32_t frames = 0;
+    size_t values = 0;
+    bool consistent = false;
+};
+
+MelGeometry encoderMelGeometryLocked() {
+    MelGeometry m;
+    if (g.encInputIdx >= g.enc.inputs.size()) return m;
+    const Qnn_Tensor_t &t = g.enc.inputs[g.encInputIdx];
+    const uint32_t rank = tensorRank(t);
+    const uint32_t *d = tensorDims(t);
+    if (!d || rank < 2) return m;
+    m.bins = d[rank - 2];
+    m.frames = d[rank - 1];
+    m.values = g.enc.inBufs.empty() ? 0 : g.enc.inBufs[g.encInputIdx].n / sizeof(uint16_t);
+    m.consistent = m.bins > 0 && m.frames > 0 &&
+                   static_cast<size_t>(m.bins) * m.frames == m.values;
+    return m;
+}
+
 /// One decoder execute at [position] with [tokenId] as `input_ids`. Writes the three step inputs
 /// and runs the graph; the caller owns the argmax and the ping-pong swap.
 std::string decodeStepLocked(int32_t tokenId, uint32_t position) {
@@ -2090,6 +2228,96 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
     }
     memcpy(dst.p, src, dst.n);
 
+    // ---- Q10a-D2: read the buffer the DSP is about to read, from the pointer it is bound to -----
+    //
+    // POST-COPY, PRE-EXECUTE, and both halves of that are load-bearing. Before the copy this block
+    // holds the PREVIOUS segment (it is session-scoped and never cleared), so a summary taken above
+    // the memcpy describes the wrong audio while looking identical. After the execute the encoder
+    // may have touched it. This is the only window in which the numbers mean what they say.
+    //
+    // And it reads `dst.p` - the pointer that was handed to `tensorSetClientBuf` at init - not the
+    // JNI source address. Reading the source would confirm what Kotlin wrote and prove nothing
+    // about what the graph will see, which is the entire question this round is asking.
+    if (g.diag) {
+        const Qnn_Tensor_t &inT = g.enc.inputs[g.encInputIdx];
+        const Qnn_QuantizeParams_t *inQ = tensorQuantParams(inT);
+        const float mScale = inQ ? inQ->scaleOffsetEncoding.scale : 0.0f;
+        const int32_t mOffset = inQ ? inQ->scaleOffsetEncoding.offset : 0;
+
+        // ITEM 6 - the params AS READ, beside the params the copy path actually used. `metaScale`
+        // and `usedScale` are the same number read twice by different routes: the descriptor now,
+        // and the value cached at init that nativeInputQuant handed to Kotlin. They can only differ
+        // if something overwrote the cache, and if they ever do, every other line here is suspect.
+        // The DIMS and the DATA FORMAT ride along because they are the transpose hypothesis stated
+        // in full, and because every earlier printing of them went to WE-NPU - a tag the owner's
+        // `adb logcat -s WE-DIAG` capture has been filtering out since Q1.
+        const Qnn_Tensor_t *xT = nullptr;
+        auto xit = g.enc.outIndex.find("k_cache_cross_0");
+        if (xit != g.enc.outIndex.end()) xT = &g.enc.outputs[xit->second];
+        const Qnn_QuantizeParams_t *xQ = xT ? tensorQuantParams(*xT) : nullptr;
+        LOGDIAG("npu-debug: quant in=%s dims=%s dtype=%s fmt=%s metaScale=%.9g metaOffset=%d "
+                "usedScale=%.9g usedZp=%d | k_cache_cross_0 dims=%s dtype=%s fmt=%s scale=%.9g "
+                "offset=%d",
+                tensorName(inT), shapeStr(inT).c_str(), dtypeName(tensorDataType(inT)),
+                dataFormatName(tensorDataFormat(inT)), static_cast<double>(mScale), mOffset,
+                static_cast<double>(g.encInputScale), g.encInputZeroPoint,
+                xT ? shapeStr(*xT).c_str() : "?", xT ? dtypeName(tensorDataType(*xT)) : "?",
+                xT ? dataFormatName(tensorDataFormat(*xT)) : "?",
+                xQ ? static_cast<double>(xQ->scaleOffsetEncoding.scale) : 0.0,
+                xQ ? xQ->scaleOffsetEncoding.offset : 0);
+
+        const auto *q = static_cast<const uint16_t *>(dst.p);
+        const MelGeometry geo = encoderMelGeometryLocked();
+        const size_t values = dst.n / sizeof(uint16_t);
+
+        // ITEM 1 - the distribution. A healthy quantised mel spans a wide interior band with its
+        // mean somewhere near the zero point and NO pile-up on either rail. atZero == values is a
+        // buffer of silence; a large atMax is a scale applied the wrong way round.
+        const U16Stats s = scanU16Stats(q, values);
+        LOGDIAG("npu-debug: inbuf bytes=%zu values=%zu min=%u max=%u mean=%.1f atZero=%u atMax=%u zp=%d",
+                dst.n, values, s.lo, s.hi, s.mean, s.atZero, s.atMax, g.encInputZeroPoint);
+
+        // ITEM 2 - THE TRANSPOSE DETECTOR, and the decisive line of this round.
+        //
+        // `sumFirstRow` is the first `frames` codes as stored. `sumColStride` is one code per row,
+        // taken `frames` apart. Kotlin computes the SAME two quantities from the float mel by its
+        // own arithmetic and prints them on `npu-debug: melprobe`. Read the pair:
+        //   both match         -> the copy is byte-exact and the DSP is bound to the buffer Kotlin
+        //                         filled. (It does NOT prove the encoder wants this layout; only
+        //                         the device can settle that, and `dims=` above is the other half.)
+        //   crossed over       -> the buffer holds Kotlin's data transposed.
+        //   neither matches    -> endianness, a wrong offset, or a different buffer entirely.
+        if (geo.consistent) {
+            uint64_t sumRow = 0, sumCol = 0;
+            for (uint32_t f = 0; f < geo.frames; ++f) sumRow += q[f];
+            for (uint32_t b = 0; b < geo.bins; ++b) sumCol += q[static_cast<size_t>(b) * geo.frames];
+            LOGDIAG("npu-debug: layout bins=%u frames=%u sumFirstRow=%" PRIu64 " sumColStride=%" PRIu64
+                    " (row = q[0..%u], col = q[0,%u,..])",
+                    geo.bins, geo.frames, sumRow, sumCol, geo.frames - 1, geo.frames);
+
+            // ITEM 3 - three cells dequantised through the metadata's own affine transform, to be
+            // read beside the float mel's same three cells on the melprobe line. This is the one
+            // reading that catches a sign or offset misapplication exactly: a zero point applied
+            // with the wrong sign leaves every aggregate above looking plausible and moves every
+            // dequantised value by a constant 2 x zp x scale.
+            const size_t c0 = 0;
+            const size_t c1 = geo.frames / 2;
+            const size_t c2 = static_cast<size_t>(geo.bins / 2) * geo.frames + geo.frames / 2;
+            const double sc = static_cast<double>(g.encInputScale);
+            const int32_t zp = g.encInputZeroPoint;
+            LOGDIAG("npu-debug: dequant i=%zu q=%u->%.6f | i=%zu q=%u->%.6f | i=%zu q=%u->%.6f "
+                    "(scale=%.9g zp=%d)",
+                    c0, q[c0], sc * (static_cast<double>(q[c0]) - zp),
+                    c1, q[c1], sc * (static_cast<double>(q[c1]) - zp),
+                    c2, q[c2], sc * (static_cast<double>(q[c2]) - zp),
+                    sc, zp);
+        } else {
+            LOGDIAG("npu-debug: layout UNUSABLE bins=%u frames=%u values=%zu (bins*frames must equal "
+                    "values; the transpose and dequant reads are skipped rather than indexed blind)",
+                    geo.bins, geo.frames, geo.values);
+        }
+    }
+
     auto t0 = Clock::now();
     Qnn_ErrorHandle_t e = g.qnn.graphExecute(
             g.enc.graph,
@@ -2101,6 +2329,38 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
         return env->NewStringUTF(failure("encode: graphExecute " + qnnErr(e)).c_str());
     }
     LOGI("encode: graphExecute OK in %.1f ms (vote: %s)", ms, g.voteNote.c_str());
+
+    // ITEM 4 - did the encoder actually WRITE its outputs, and with what dynamic range?
+    //
+    // These two buffers ARE the decoder's cross-KV inputs; nothing is copied between the passes, so
+    // whatever is here is exactly what the decode loop attends. Both are looked up BY NAME and their
+    // output INDICES are printed beside them, because "buffers 0 and 12" is an assumption about the
+    // graph's output ordering and this line is the place to stop assuming it.
+    //   nonzero=0.000        -> the encoder never wrote them; the decoder is attending AlignedBuf's
+    //                           zeros and would say "no speech" to every segment, forever.
+    //   nonzero~1.0 mean~128 -> written, and centred on the zero point these tensors are quantised
+    //                           around: healthy.
+    //   nonzero~1.0 mean~0   -> written, but with a distribution nothing sane produced.
+    if (g.diag) {
+        auto kit = g.enc.outIndex.find("k_cache_cross_0");
+        auto vit = g.enc.outIndex.find("v_cache_cross_0");
+        const bool haveK = kit != g.enc.outIndex.end() && g.enc.outBufs[kit->second].p;
+        const bool haveV = vit != g.enc.outIndex.end() && g.enc.outBufs[vit->second].p;
+        const U8Stats ks = haveK
+                ? scanU8Stats(static_cast<const uint8_t *>(g.enc.outBufs[kit->second].p),
+                              g.enc.outBufs[kit->second].n)
+                : U8Stats{};
+        const U8Stats vs = haveV
+                ? scanU8Stats(static_cast<const uint8_t *>(g.enc.outBufs[vit->second].p),
+                              g.enc.outBufs[vit->second].n)
+                : U8Stats{};
+        LOGDIAG("npu-debug: crossKV k_cache_cross_0[out=%zu bytes=%zu min=%u max=%u mean=%.1f "
+                "nonzero=%.3f] v_cache_cross_0[out=%zu bytes=%zu min=%u max=%u mean=%.1f nonzero=%.3f]",
+                haveK ? kit->second : 0u, haveK ? g.enc.outBufs[kit->second].n : 0u,
+                ks.lo, ks.hi, ks.mean, ks.nonzero,
+                haveV ? vit->second : 0u, haveV ? g.enc.outBufs[vit->second].n : 0u,
+                vs.lo, vs.hi, vs.mean, vs.nonzero);
+    }
     // The 24 cross-KV buffers now hold THIS segment, and they are already the decoder's bound
     // inputs. Only now may a decode run.
     g.encoded = true;
@@ -2214,6 +2474,29 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         }
         lastPositionRun = position;
         ++stepsRun;
+
+        // ITEM 5 (Q10a-D2) - DID THE DECODER GRAPH WRITE ITS NEW SELF-KV SLOT? One line, at
+        // position 0 only, and it settles D1's H2 for the price of one buffer scan per segment.
+        //
+        // The step that just ran had set `inSetForStep` bound as its INPUT side, so its OUTPUT side
+        // is the other set - that is `bindSelfKvLocked`'s whole contract, and reading the wrong one
+        // here would report the ZEROED set and manufacture the failure it is looking for. The swap
+        // that follows only re-points descriptors; it moves no bytes, so the set identified here
+        // stays the one the graph wrote.
+        //
+        // At position 0 with a zeroed cache, `nonzero=0.000` means the graph produced no cache at
+        // all and every later position attends nothing - which would be a decoder fault. Anything
+        // else means the self-KV path works and the defect is upstream, in the encoder's input.
+        if (g.diag && position == 0 && !g.selfOutIdx.empty()) {
+            const int outSetForStep = 1 - inSetForStep;
+            const AlignedBuf &b = g.selfKv[outSetForStep][0];
+            const U8Stats ss = b.p ? scanU8Stats(static_cast<const uint8_t *>(b.p), b.n) : U8Stats{};
+            LOGDIAG("npu-debug: selfkv pos=0 inSet=%d outSet=%d tensor=%s bytes=%u min=%u max=%u "
+                    "mean=%.1f nonzero=%.3f",
+                    inSetForStep, outSetForStep,
+                    tensorName(g.dec.outputs[g.selfOutIdx[0]]), g.selfKvBytes,
+                    ss.lo, ss.hi, ss.mean, ss.nonzero);
+        }
 
         // The prompt walk plus one step past it. Bounded: for the shipped 4-token prompt that is
         // five lines per segment and then silence, whatever the segment's length.
