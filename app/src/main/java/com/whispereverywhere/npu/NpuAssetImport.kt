@@ -53,6 +53,13 @@ object NpuAssetImport {
     const val PART_SUFFIX: String = ".part"
 
     /**
+     * The suffix a **previously installed** file is parked under while the new one is moved into
+     * place (fix round 1, I2). It is what makes a failed second rename recoverable: the old file is
+     * moved aside rather than deleted, so it can be moved back.
+     */
+    const val PREVIOUS_SUFFIX: String = ".prev"
+
+    /**
      * The same 10 % headroom `WhisperModelManager.download` applies, for the same reason: a
      * filesystem that reports exactly enough free space still fails, because the writes are not the
      * only thing happening on the device while 358 MB inflates.
@@ -181,6 +188,49 @@ object NpuAssetImport {
         if (missing.isEmpty()) return null
         return "That zip did not contain ${missing.sorted().joinToString(" and ") { safeName(it) }}. " +
             "The npu tier needs both files, so nothing was installed."
+    }
+
+    /**
+     * The refusal for an entry that keeps producing bytes past its expected length (fix round 1,
+     * I1) — **the only refusal that must be reachable mid-copy rather than after it.**
+     *
+     * A zip entry's header size is not evidence. `-1` is legal (a streamed archive) and a stated
+     * size can simply be a lie, so an importer that only compares the byte count *after* the copy
+     * will happily write until the filesystem is full: a 40 KB zip bomb declaring `-1` fills a
+     * phone and is then refused for being the wrong size, which is a true statement made far too
+     * late. The copy is therefore bounded to `expected + 1` bytes — one byte of headroom, because
+     * reaching it is the proof and nothing smaller is.
+     */
+    fun overLengthRefusal(fileName: String, expectedBytes: Long): String =
+        "${safeName(fileName)}: entry larger than declared. It kept producing data past its " +
+            "expected $expectedBytes bytes, so the copy was stopped. That file is not the " +
+            "published model pair. Nothing was installed."
+
+    /**
+     * A finalise step failed and the previously installed pair was **put back** (fix round 1, I2).
+     *
+     * @param what the step, as a sentence opener — the user is told which half went wrong.
+     */
+    fun rolledBackRefusal(what: String): String =
+        "$what, so the import was rolled back. Your previously installed model pair is unchanged, " +
+            "and nothing new was installed."
+
+    /**
+     * A finalise step failed AND the roll-back failed — **the one message that may not say
+     * "nothing was installed", because something was** (fix round 1, I2).
+     *
+     * It names the exact state of the device instead. A user who is told nothing changed, while
+     * their working tier has in fact been dismantled, cannot even describe the problem; naming the
+     * live and the missing files makes the next action obvious and the bug report possible.
+     */
+    fun rollbackFailedRefusal(what: String, live: List<String>, gone: List<String>): String {
+        val liveText =
+            if (live.isEmpty()) "neither model file is present"
+            else "present: " + live.sorted().joinToString(" and ") { safeName(it) }
+        val goneText =
+            if (gone.isEmpty()) "" else "; missing: " + gone.sorted().joinToString(" and ") { safeName(it) }
+        return "$what, and the previous files could not be put back. On this device now, " +
+            "$liveText$goneText. Import the model pair zip again to repair this."
     }
 
     /** The refusal for a file that could not be read as a zip at all. */

@@ -430,19 +430,33 @@ class WhisperModelManager(
      * (4.0, Q8). The **second** install path in this app, and the only one that is not a download.
      *
      * ```
-     * free-space precheck  ->  inflate each allowed entry to <name>.part  ->  size-verify each
-     *   ->  both present?  ->  rename BOTH into place  ->  isInstalled?  ->  notifyModelInstalled()
+     * reconcile .prev debris  ->  free-space precheck
+     *   ->  inflate each allowed entry to <name>.part, BOUNDED to expected+1 bytes
+     *   ->  size-verify each  ->  both present?
+     *   ->  PHASE 1 park each installed file as <name>.prev
+     *   ->  PHASE 2 rename each .part into place
+     *   ->  isInstalled?          (any failure above: roll back, report the real state)
+     *   ->  drop the .prev copies  ->  notifyModelInstalled()
      * ```
      *
      * **Both-or-neither, and a re-import is non-destructive.** Every entry lands as `.part`
      * alongside whatever is already installed, so an existing pair survives a zip that turns out to
-     * be truncated, wrong or not a zip at all — the two renames happen only after BOTH files exist
-     * at their exact published lengths. On a second import over an existing pair the old files are
-     * replaced one rename after the other with nothing in between; `isInstalled(npu)` is true
-     * before, during and after, and the only way to observe a mixed pair is to arm the tier in the
-     * microseconds between two `renameTo` calls on the same directory. If the second rename fails
-     * anyway, both destinations are deleted rather than left mismatched: a tier that reads as
-     * not-installed is recoverable by re-importing, and one that arms halfway is a native crash.
+     * be truncated, wrong, oversized or not a zip at all — nothing is finalised until BOTH files
+     * exist at their exact published lengths.
+     *
+     * **A second import over an existing pair parks the old files rather than deleting them**
+     * (fix round 1, I2). The previous encoder and decoder are renamed to `.prev` and kept until the
+     * whole transaction — both renames *and* the `isInstalled` verification — has succeeded, so a
+     * failure at any point puts them back. Deleting each destination first, as the first draft did,
+     * meant a failed SECOND rename left the device with neither pair while the message still said
+     * "Nothing was installed"; a rename cannot be rolled back onto a file that has already been
+     * unlinked, which is why the fix is the parking and not a smarter undo.
+     *
+     * `isInstalled(npu)` is therefore true before the transaction and true after a successful one.
+     * The only window in which a MIXED pair exists is between the two phase-2 renames — a pair of
+     * `renameTo` calls on one directory with nothing between them — and observing it requires
+     * arming the tier inside that window. If the roll-back itself fails, the message names exactly
+     * which of the two files are on the device and which are gone; see [rollBackFinalise].
      *
      * **`prefs.notifyModelInstalled()` is the last thing it does, and the order is the contract**
      * (Q7b fix round, I1). It bumps `ModelInstallSignal.generation`, the key both chooser producers
@@ -479,6 +493,11 @@ class WhisperModelManager(
             ?: return@withContext refuseImport(
                 "Could not resolve the app's models folder. Nothing was installed."
             )
+
+        // A previous import that died between parking a file and moving the new one in leaves a
+        // `.prev` behind. Settle that FIRST, so both the free-space budget and the
+        // already-installed question below are answered about the directory as it really is.
+        reconcileStagingDebris(dir, required.keys)
 
         // The transient, checked BEFORE a byte is read: 358 MB of .part files, doubled when a pair
         // is already installed because those stay on disk until the renames at the very end.
@@ -535,14 +554,27 @@ class WhisperModelManager(
                         val part = File(dir, accept.fileName + NpuAssetImport.PART_SUFFIX)
                         parts[accept.fileName] = part
                         var got = 0L
+                        var overLength = false
                         java.io.FileOutputStream(part).use { out ->
                             while (true) {
                                 callerContext.ensureActive()
-                                val n = zis.read(buffer)
+                                // BOUNDED READ (fix round 1, I1). The entry's declared size is not
+                                // evidence — `-1` is legal and a stated size can be a lie — so a
+                                // copy that only checks the total afterwards writes until the
+                                // filesystem is full and is then refused for being the wrong size.
+                                // The read is capped at one byte past what this entry is allowed
+                                // to be: reaching that byte proves it is too big, and nothing
+                                // smaller proves it.
+                                val room = accept.expectedBytes - got + 1L
+                                val n = zis.read(buffer, 0, minOf(buffer.size.toLong(), room).toInt())
                                 if (n <= 0) break
                                 out.write(buffer, 0, n)
                                 got += n
                                 written += n
+                                if (got > accept.expectedBytes) {
+                                    overLength = true
+                                    break
+                                }
                                 if (written - lastTick >= PROGRESS_TICK_BYTES) {
                                     lastTick = written
                                     onProgress(if (written > total) total else written, total)
@@ -550,6 +582,15 @@ class WhisperModelManager(
                             }
                         }
                         zis.closeEntry()
+                        if (overLength) {
+                            // The `finally` deletes the oversize `.part`, so at most one byte more
+                            // than the tier's own file was ever on disk.
+                            return@withContext refuseImport(
+                                NpuAssetImport.overLengthRefusal(
+                                    accept.fileName, accept.expectedBytes
+                                )
+                            )
+                        }
                         if (got != accept.expectedBytes) {
                             return@withContext refuseImport(
                                 NpuAssetImport.wrongSizeRefusal(
@@ -565,26 +606,54 @@ class WhisperModelManager(
             NpuAssetImport.missingEntriesRefusal(required.keys, accepted)
                 ?.let { return@withContext refuseImport(it) }
 
-            // Both files exist at their exact published lengths. Move them into place back to back.
+            // Both files exist at their exact published lengths. Finalising is TWO PHASES and a
+            // roll-back, not two renames (fix round 1, I2).
+            //
+            // PHASE 1 parks every currently-installed file of this tier under `.prev`. PHASE 2
+            // renames each `.part` into place. The old code deleted the destination first, so a
+            // failed SECOND rename left the device with neither the new pair nor the old one —
+            // while telling the user "Nothing was installed". A destroyed working tier is not
+            // nothing. Parking rather than deleting is what makes the previous pair genuinely
+            // survivable; a rename cannot be "rolled back" onto a file that was already unlinked.
+            val parked = LinkedHashMap<File, File>()   // destination -> the parked previous file
             val renamed = mutableListOf<File>()
-            for ((name, part) in parts) {
+            var finaliseFailure: String? = null
+
+            for (name in parts.keys) {
                 val dest = File(dir, name)
-                if (dest.exists()) dest.delete()
-                if (part.renameTo(dest)) {
-                    renamed += dest
+                if (!dest.exists()) continue
+                val previous = File(dir, name + NpuAssetImport.PREVIOUS_SUFFIX)
+                if (previous.exists()) previous.delete()
+                if (dest.renameTo(previous)) {
+                    parked[dest] = previous
                 } else {
-                    renamed.forEach { it.delete() }
-                    return@withContext refuseImport(
-                        "Could not finalise the imported files. Nothing was installed."
-                    )
+                    finaliseFailure = "The previously installed files could not be set aside"
+                    break
                 }
             }
-
-            if (!isInstalled(model)) {
-                return@withContext refuseImport(
-                    "The imported files did not verify on disk. Nothing was installed."
-                )
+            if (finaliseFailure == null) {
+                for ((name, part) in parts) {
+                    val dest = File(dir, name)
+                    if (part.renameTo(dest)) {
+                        renamed += dest
+                    } else {
+                        finaliseFailure = "The imported files could not be moved into place"
+                        break
+                    }
+                }
             }
+            // The verification is part of the SAME transaction: a pair that does not read as
+            // installed is not a successful import that happens to look odd, it is a failed one,
+            // and leaving it on disk would make the next import's "is a pair already installed"
+            // reasoning — and its free-space budget — answer about garbage.
+            if (finaliseFailure == null && !isInstalled(model)) {
+                finaliseFailure = "The imported files did not verify on disk"
+            }
+            if (finaliseFailure != null) {
+                return@withContext refuseImport(rollBackFinalise(finaliseFailure, renamed, parked))
+            }
+            // Committed. The parked copies are now genuinely superseded.
+            parked.values.forEach { if (it.exists()) it.delete() }
             onProgress(total, total)
             android.util.Log.i(NpuDiag.TAG, NpuAssetImport.okLine(accepted.size, written))
             // LAST, and only now. See the KDoc: the chooser's producers key on this.
@@ -600,6 +669,59 @@ class WhisperModelManager(
             // Failure, refusal or cancellation — a retry starts clean. On success there is nothing
             // here, because every .part was renamed away.
             parts.values.forEach { if (it.exists()) it.delete() }
+        }
+    }
+
+    /**
+     * Undo a failed finalise, and return the message that is TRUE of the device afterwards
+     * (fix round 1, I2).
+     *
+     * **The order is the invariant, and it is the seventh application of that rule on this branch.**
+     * Every file this import moved in is removed FIRST, and only then is each parked previous file
+     * moved back — because both claim the same path. Restore-then-remove would put the old file
+     * back and then delete it as "one of ours", which is the failure mode this function exists to
+     * prevent, spelled with the same two statements in the other order.
+     *
+     * The message it returns is the point of the whole exercise. If everything went back, the user
+     * is told their pair is unchanged, which is now true. If it did not, they are told **exactly
+     * which files are on the device and which are gone** — because "Nothing was installed" is a
+     * promise, and on this one path it was a false one.
+     */
+    private fun rollBackFinalise(
+        what: String,
+        renamed: List<File>,
+        parked: Map<File, File>,
+    ): String {
+        renamed.forEach { if (it.exists()) it.delete() }
+        var restoredAll = true
+        parked.forEach { (dest, previous) ->
+            if (!previous.exists()) return@forEach
+            if (dest.exists() || !previous.renameTo(dest)) restoredAll = false
+        }
+        if (restoredAll) return NpuAssetImport.rolledBackRefusal(what)
+        // Report on the tier's own two files, by name, as they actually are right now.
+        val names = NpuAssetImport.requiredEntries.keys
+        val live = names.filter { File(modelsDir(), it).exists() }
+        val gone = names.filterNot { File(modelsDir(), it).exists() }
+        return NpuAssetImport.rollbackFailedRefusal(what, live, gone)
+    }
+
+    /**
+     * Reconcile `.prev` debris from an import that died between parking and renaming
+     * (fix round 1, I2). Run BEFORE the free-space budget and the already-installed check, so both
+     * see the true state of the directory.
+     *
+     * A parked file whose destination is missing is the **only** copy the device has, so it is
+     * restored, not swept — losing it to tidiness would be the same defect this parking exists to
+     * fix, arriving one process-death later. A parked file whose destination is present has been
+     * superseded and is 132-225 MB of debris.
+     */
+    private fun reconcileStagingDebris(dir: File, names: Set<String>) {
+        for (name in names) {
+            val previous = File(dir, name + NpuAssetImport.PREVIOUS_SUFFIX)
+            if (!previous.exists()) continue
+            val dest = File(dir, name)
+            if (dest.exists()) previous.delete() else previous.renameTo(dest)
         }
     }
 

@@ -24,7 +24,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.whispereverywhere.WhisperEverywhereApp
-import com.whispereverywhere.npu.NpuAssetImport
+import com.whispereverywhere.npu.NpuImportController
 import com.whispereverywhere.ui.screens.BatchTranscribeScreen
 import com.whispereverywhere.ui.screens.EnginesAndVoicesScreen
 import com.whispereverywhere.ui.screens.OnboardingFlowScreen
@@ -139,28 +139,28 @@ fun WhisperEverywhereNavigation() {
     // picked — and the same reason it lives HERE: a launcher must be registered from the activity's
     // composition, not from a screen that may not be on the back stack when the result returns.
     //
-    // The whole 358 MB inflate is inside WhisperModelManager.importNpuAssetPair on Dispatchers.IO;
-    // this coroutine only moves its progress into Compose state. A refusal is a RETURNED state, not
-    // an exception: letting a user pick any file on the device means a wrong file is an ordinary
-    // outcome, and one the card has to be able to explain.
-    var npuImportState by remember {
-        mutableStateOf<NpuAssetImport.ImportState>(NpuAssetImport.ImportState.Idle)
-    }
+    // The state and the JOB both live in NpuImportController, NOT in this composition (fix round 1,
+    // I3). This activity declares no android:configChanges, so a rotation or a theme change
+    // destroys the whole tree — and with it a `remember`ed state and a `rememberCoroutineScope()`.
+    // Three minutes into a 358 MB copy that meant a silent cancellation and a panel back to
+    // "Import model pair…" with nothing said. The controller is process-scoped, so a recreation
+    // re-collects this flow and finds the import exactly where it was.
+    //
+    // The whole inflate is inside WhisperModelManager.importNpuAssetPair on Dispatchers.IO, and a
+    // refusal is a RETURNED state rather than an exception: letting a user pick any file on the
+    // device makes a wrong file an ordinary outcome, and one the card has to be able to explain.
+    val npuImportState by NpuImportController.state.collectAsState()
 
     val npuAssetImportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        if (uri == null) {
-            // Dismissed the picker. Not a failure, and not worth a message.
-            npuImportState = NpuAssetImport.ImportState.Idle
-        } else {
-            scope.launch {
-                npuImportState = NpuAssetImport.ImportState.Running(0L, 0L)
-                npuImportState = WhisperEverywhereApp.getInstance()
+        // A dismissed picker leaves the previous state alone: clearing it here would wipe the
+        // refusal message the user re-opened the picker because of.
+        if (uri != null) {
+            NpuImportController.start { onProgress ->
+                WhisperEverywhereApp.getInstance()
                     .whisperModelManager
-                    .importNpuAssetPair(uri) { soFar, total ->
-                        npuImportState = NpuAssetImport.ImportState.Running(soFar, total)
-                    }
+                    .importNpuAssetPair(uri, onProgress)
             }
         }
     }

@@ -27,6 +27,7 @@ import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.npu.NpuAssetImport
+import com.whispereverywhere.npu.NpuImportController
 import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel.DownloadState
@@ -264,6 +265,15 @@ private fun NpuImportPanel(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    // The copy is minutes long and it survives leaving this screen, so there has to
+                    // be a way to stop it. The importer's own `finally` clears the staged files, so
+                    // cancelling costs nothing but the time already spent.
+                    TextButton(
+                        onClick = { NpuImportController.cancel() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Cancel import")
+                    }
                 }
 
                 is NpuAssetImport.ImportState.Refused -> {

@@ -91,23 +91,74 @@ class NpuImportWiringPinTest {
             "the picked Uri is handed to the manager's importer. A launcher whose result nothing " +
                 "consumes is a picker that opens, closes, and silently does nothing",
             1,
-            count(activity, ".importNpuAssetPair(uri) { soFar, total ->"),
-        )
-        assertEquals(
-            "the returned state is what the screen renders — the importer REPORTS a refusal " +
-                "rather than throwing one, so dropping the return value loses every error message",
-            1,
-            count(activity, "npuImportState = WhisperEverywhereApp.getInstance()"),
+            count(activity, ".importNpuAssetPair(uri, onProgress)"),
         )
         assertEquals(
             "and the screen is handed both halves: the state, and the way to start an import",
             1,
             count(activity, block("                npuImportState = npuImportState,")),
         )
+    }
+
+    /**
+     * Fix round 1, I3 — **the composition may not own a 358 MB copy.**
+     *
+     * `MainActivity` declares no `android:configChanges`, so a rotation, a theme change or a
+     * font-size change destroys and rebuilds the entire Compose tree. The first draft kept the
+     * import's state in `remember` and launched it from `rememberCoroutineScope()` in the nav
+     * composition: both die with that tree, so a rotation three minutes into the copy cancelled it
+     * and returned the panel to "Import model pair…" **with nothing said**. Nothing failed loudly
+     * because nothing failed — the owner simply stopped existing, which is the one failure shape
+     * this import is written to make impossible.
+     *
+     * The state machine itself is proved by execution in `NpuImportControllerTest`. What only
+     * source can say is that the activity delegates to it rather than owning the work again.
+     */
+    @Test
+    fun theImportIsOwnedByTheProcessScopedControllerAndNotByTheComposition() {
         assertEquals(
-            "the import runs in a coroutine, not on the result callback's thread",
+            "the panel's state is COLLECTED from the process-scoped owner, so a recreation " +
+                "re-subscribes and finds the import exactly where it was",
             1,
-            count(activity, block("            scope.launch {", "                npuImportState = NpuAssetImport.ImportState.Running(0L, 0L)")),
+            count(activity, "val npuImportState by NpuImportController.state.collectAsState()"),
+        )
+        assertEquals(
+            "and the work is started through that owner",
+            1,
+            count(activity, "NpuImportController.start { onProgress ->"),
+        )
+        assertEquals(
+            "the import state is NEVER held in a `remember`: that is the composition owning it " +
+                "again, and it dies on the next rotation",
+            0,
+            count(activity, "mutableStateOf<NpuAssetImport.ImportState>"),
+        )
+        assertEquals(
+            "nor launched from the composition's scope, which is cancelled with the tree",
+            0,
+            count(activity, "scope.launch {\n                npuImportState"),
+        )
+        // A dismissed picker must not clear the state: wiping it erases the refusal message the
+        // user re-opened the picker BECAUSE of.
+        // Scoped to THIS launcher: the batch audio picker a few lines above has the same guard
+        // spelling, and counting it too would make this assertion pass for the wrong reason.
+        assertEquals(
+            "a dismissed picker leaves the previous state alone — clearing it would wipe the " +
+                "refusal message the user re-opened the picker because of",
+            1,
+            count(
+                activity,
+                block(
+                    "        if (uri != null) {",
+                    "            NpuImportController.start { onProgress ->",
+                ),
+            ),
+        )
+        assertEquals(
+            "and a running import can be abandoned — the copy is minutes long and survives leaving " +
+                "the screen, so there has to be a way to stop it",
+            1,
+            count(picker, "onClick = { NpuImportController.cancel() },"),
         )
     }
 

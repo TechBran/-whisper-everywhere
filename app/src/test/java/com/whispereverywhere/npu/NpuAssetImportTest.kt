@@ -286,6 +286,82 @@ class NpuAssetImportTest {
     }
 
     @Test
+    fun anEntryThatKeepsProducingDataPastItsDeclaredLengthIsNamedAsSuch() {
+        // Fix round 1, I1. The refusal that has to be reachable MID-COPY: a header size of -1 is
+        // legal and a stated size can be a lie, so a copy bounded only by "check the total
+        // afterwards" fills the device and is then refused for being the wrong size — a true
+        // statement made far too late.
+        val refusal = NpuAssetImport.overLengthRefusal(encoder, encoderBytes)
+        assertTrue("it names the file: $refusal", refusal.contains(encoder))
+        assertTrue(
+            "it says WHY in the words the reviewer asked for, so the log and the card agree with " +
+                "the review that found it: $refusal",
+            refusal.contains("entry larger than declared"),
+        )
+        assertTrue("it names the length that was exceeded: $refusal", refusal.contains("$encoderBytes"))
+        assertTrue(
+            "and it is distinguishable from the wrong-size refusal, which is about a file that " +
+                "ENDED at the wrong length rather than one that would not end",
+            refusal != NpuAssetImport.wrongSizeRefusal(encoder, encoderBytes + 1, encoderBytes),
+        )
+        assertTrue("nothing was installed, and that is true: $refusal", refusal.contains("Nothing was installed"))
+    }
+
+    @Test
+    fun aRolledBackFinaliseSaysThePreviousPairSurvivedAndAFailedRollbackSaysWhatIsLeft() {
+        // Fix round 1, I2. The two messages differ in the one way that matters: only ONE of them
+        // may promise that nothing changed.
+        val what = "The imported files could not be moved into place"
+        val rolledBack = NpuAssetImport.rolledBackRefusal(what)
+        assertTrue("the rolled-back message names the step: $rolledBack", rolledBack.contains(what))
+        assertTrue(
+            "and promises the previous pair is intact — which the parking is what makes true: " +
+                rolledBack,
+            rolledBack.contains("previously installed model pair is unchanged"),
+        )
+
+        val stranded = NpuAssetImport.rollbackFailedRefusal(what, listOf(encoder), listOf(decoder))
+        assertFalse(
+            "THE ONE MESSAGE THAT MAY NOT SAY IT. Something WAS changed on this path, and a user " +
+                "told otherwise while their working tier is half gone cannot even describe the " +
+                "problem: $stranded",
+            stranded.contains("unchanged") || stranded.contains("Nothing was installed"),
+        )
+        assertTrue("it names what is still there: $stranded", stranded.contains(encoder))
+        assertTrue("and what is gone: $stranded", stranded.contains(decoder))
+        assertTrue("and what to do about it: $stranded", stranded.contains("again"))
+
+        val nothingLeft = NpuAssetImport.rollbackFailedRefusal(what, emptyList(), listOf(encoder, decoder))
+        assertTrue(
+            "an empty live-list reads as a sentence rather than as a blank: $nothingLeft",
+            nothingLeft.contains("neither model file is present"),
+        )
+    }
+
+    @Test
+    fun theStagingSuffixesAreDistinctSoNeitherSweepCanEatTheOther() {
+        // `.part` is this import's own in-progress write and is always safe to delete; `.prev` is
+        // the user's PREVIOUS installed file and may be the only copy on the device. Collapsing
+        // them to one suffix would make the failure-path cleanup delete the thing it exists to
+        // preserve.
+        assertEquals(".part", NpuAssetImport.PART_SUFFIX)
+        assertEquals(".prev", NpuAssetImport.PREVIOUS_SUFFIX)
+        assertTrue(
+            "the two suffixes are different, and neither is a suffix of the other",
+            NpuAssetImport.PART_SUFFIX != NpuAssetImport.PREVIOUS_SUFFIX &&
+                !NpuAssetImport.PART_SUFFIX.endsWith(NpuAssetImport.PREVIOUS_SUFFIX) &&
+                !NpuAssetImport.PREVIOUS_SUFFIX.endsWith(NpuAssetImport.PART_SUFFIX),
+        )
+        required.keys.forEach { name ->
+            assertFalse(
+                "and no staging name collides with a real entry name ($name)",
+                required.containsKey(name + NpuAssetImport.PART_SUFFIX) ||
+                    required.containsKey(name + NpuAssetImport.PREVIOUS_SUFFIX),
+            )
+        }
+    }
+
+    @Test
     fun everyDiagnosticLineIsGreppableAndCarriesNoContent() {
         assertEquals(
             "the refusal line is one contiguous greppable prefix",

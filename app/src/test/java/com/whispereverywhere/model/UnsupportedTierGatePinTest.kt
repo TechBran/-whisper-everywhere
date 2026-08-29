@@ -361,8 +361,16 @@ class UnsupportedTierGatePinTest {
         )
         assertTrue(
             "AND THE VERIFICATION. `isInstalled` is the predicate the card itself keys on, so " +
-                "announcing before it is announcing something not yet true.",
-            liveIndexOfOrFail(import, "importNpuAssetPair", "if (!isInstalled(model)) {") < announce,
+                "announcing before it is announcing something not yet true. (Fix round 1, I2 " +
+                "folded the verification into the finalise transaction, so it now sets the " +
+                "failure rather than returning on its own — the ordering claim is unchanged.)",
+            liveIndexOfOrFail(
+                import, "importNpuAssetPair", "finaliseFailure == null && !isInstalled(model)"
+            ) < announce,
+        )
+        assertTrue(
+            "and the whole finalise — park, rename, verify, roll back — precedes it too",
+            liveIndexOfOrFail(import, "importNpuAssetPair", "if (finaliseFailure != null) {") < announce,
         )
         // Both-or-neither. Every entry is staged under `.part` and the destinations are only
         // touched once both files exist at their exact published lengths; a half-renamed pair is
@@ -378,10 +386,18 @@ class UnsupportedTierGatePinTest {
             liveIndexOfOrFail(import, "importNpuAssetPair", "NpuAssetImport.missingEntriesRefusal(") <
                 liveIndexOfOrFail(import, "importNpuAssetPair", "if (part.renameTo(dest)) {"),
         )
+        // Fix round 1, I2 REPLACED what this assertion used to check. It read
+        // `count(import, "renamed.forEach { it.delete() }") == 1` — "a failed second rename purges
+        // the first" — which was true and not enough: purging the first rename left the device with
+        // NEITHER pair, because the previous files had already been deleted to make room. The claim
+        // is kept and strengthened rather than dropped: every finalise failure now leaves through
+        // one roll-back that restores the previous pair, and
+        // `aFailedFinaliseRollsBackAndTellsTheTruthAboutWhatIsOnTheDevice` pins its internals.
         assertEquals(
-            "a failed second rename purges the first rather than leaving a mismatched pair",
+            "a failed finalise leaves through the roll-back, which purges what this import moved " +
+                "in AND puts back what it parked",
             1,
-            count(import, "renamed.forEach { it.delete() }"),
+            count(import, "rollBackFinalise(finaliseFailure, renamed, parked)"),
         )
         assertEquals(
             "and every .part is cleared on failure, refusal OR cancellation, so a retry starts " +
@@ -408,6 +424,156 @@ class UnsupportedTierGatePinTest {
             "the copy is cancellable between buffers — 358 MB is long enough for a user to leave",
             1,
             count(import, "callerContext.ensureActive()"),
+        )
+    }
+
+    @Test
+    fun theCopyIsBoundedByTheEntrysOwnLengthRatherThanByTheFilesystemFillingUp() {
+        // Fix round 1, I1. The entry's declared size is not evidence: `-1` is legal (a streamed
+        // archive) and a stated size can simply be a lie. Reading `zis.read(buffer)` unbounded and
+        // comparing the total AFTERWARDS means a 40 KB zip declaring `-1` writes until ENOSPC and
+        // is then refused for being the wrong size — true, and far too late. One byte of headroom
+        // past the expected length is the detector, and nothing smaller can be.
+        val import = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    suspend fun importNpuAssetPair(",
+        )
+        assertEquals(
+            "the read is capped at what this entry is still allowed to produce, plus one",
+            1,
+            count(import, "val room = accept.expectedBytes - got + 1L"),
+        )
+        assertEquals(
+            "and the cap is actually applied to the read, not merely computed beside it",
+            1,
+            count(import, "zis.read(buffer, 0, minOf(buffer.size.toLong(), room).toInt())"),
+        )
+        assertEquals(
+            "an unbounded read must appear NOWHERE in the import: it is one deleted argument list " +
+                "away, it compiles, and it restores the whole defect",
+            0,
+            count(import, "zis.read(buffer)"),
+        )
+        assertEquals(
+            "the overflow is detected INSIDE the copy loop and stops it",
+            1,
+            count(import, "if (got > accept.expectedBytes) {"),
+        )
+        // ORDER: the overflow check must run before the progress tick, or the loop reports progress
+        // for a byte it has already decided is illegitimate — and, more to the point, the `break`
+        // is what bounds the write.
+        assertTrue(
+            "the over-length break precedes the progress tick inside the loop",
+            liveIndexOfOrFail(import, "importNpuAssetPair", "if (got > accept.expectedBytes) {") <
+                liveIndexOfOrFail(import, "importNpuAssetPair", "if (written - lastTick >= PROGRESS_TICK_BYTES) {"),
+        )
+        assertEquals(
+            "and the refusal names it as an over-length entry rather than as a size mismatch",
+            1,
+            count(import, "NpuAssetImport.overLengthRefusal("),
+        )
+        // The staged file is still cleaned: the refusal returns from inside the try, so the
+        // finally runs and at most one byte more than the tier's own file was ever on disk.
+        assertTrue(
+            "the over-length refusal returns from inside the try whose finally clears the .part",
+            liveIndexOfOrFail(import, "importNpuAssetPair", "NpuAssetImport.overLengthRefusal(") <
+                liveIndexOfOrFail(import, "importNpuAssetPair", "parts.values.forEach { if (it.exists()) it.delete() }"),
+        )
+    }
+
+    @Test
+    fun aFailedFinaliseRollsBackAndTellsTheTruthAboutWhatIsOnTheDevice() {
+        // Fix round 1, I2, and the SEVENTH application of the presence-vs-ORDER rule on this branch
+        // — this time inside the roll-back itself.
+        //
+        // The first draft deleted each destination before renaming, so a failed SECOND rename left
+        // the device with neither the new pair nor the old one while the message still read
+        // "Nothing was installed". A destroyed working tier is not nothing, and a rename cannot be
+        // undone onto a file that has already been unlinked — which is why the fix is to PARK the
+        // previous file rather than to write a smarter undo.
+        val import = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    suspend fun importNpuAssetPair(",
+        )
+        assertEquals(
+            "the previously installed file is moved aside, not deleted",
+            1,
+            count(import, "if (dest.renameTo(previous)) {"),
+        )
+        assertEquals(
+            "nothing in the finalise deletes a destination outright any more — that single " +
+                "statement WAS the defect",
+            0,
+            count(import, "if (dest.exists()) dest.delete()"),
+        )
+        assertEquals(
+            "the verification failure joins the same transaction rather than returning on its own: " +
+                "a pair that does not read as installed must be rolled back, not left on disk for " +
+                "the next import's already-installed logic to reason about",
+            1,
+            count(import, "finaliseFailure = \"The imported files did not verify on disk\""),
+        )
+        assertEquals(
+            "and every finalise failure leaves through the one roll-back",
+            1,
+            count(import, "return@withContext refuseImport(rollBackFinalise(finaliseFailure, renamed, parked))"),
+        )
+        assertEquals(
+            "the parked copies are dropped only after the whole transaction has succeeded",
+            1,
+            count(import, "parked.values.forEach { if (it.exists()) it.delete() }"),
+        )
+        assertTrue(
+            "and that drop comes AFTER the verification, or a failed verify would have nothing " +
+                "left to restore",
+            liveIndexOfOrFail(import, "importNpuAssetPair", "if (finaliseFailure != null) {") <
+                liveIndexOfOrFail(import, "importNpuAssetPair", "parked.values.forEach { if (it.exists()) it.delete() }"),
+        )
+
+        val rollback = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    private fun rollBackFinalise(",
+        )
+        // THE ORDER INVARIANT. Both statements claim the same paths: the imported file that was
+        // moved in, and the previous file that must go back. Restore-then-remove puts the old file
+        // back and then deletes it as "one of ours" — the exact failure this function exists to
+        // prevent, spelled with the same two statements in the other order.
+        assertTrue(
+            "the roll-back REMOVES what this import moved in BEFORE restoring what it parked",
+            liveIndexOfOrFail(rollback, "rollBackFinalise", "renamed.forEach { if (it.exists()) it.delete() }") <
+                liveIndexOfOrFail(rollback, "rollBackFinalise", "if (dest.exists() || !previous.renameTo(dest)) restoredAll = false"),
+        )
+        assertEquals(
+            "a fully restored roll-back says the previous pair is unchanged",
+            1,
+            count(rollback, "return NpuAssetImport.rolledBackRefusal(what)"),
+        )
+        assertEquals(
+            "and a failed one reports the device's REAL state instead, read live off disk rather " +
+                "than assumed from what the code believes it did",
+            1,
+            count(rollback, "val live = names.filter { File(modelsDir(), it).exists() }"),
+        )
+        assertEquals(
+            "the staging debris of an import that died between parking and renaming is settled " +
+                "before the free-space budget and the already-installed check are answered",
+            1,
+            count(import, "reconcileStagingDebris(dir, required.keys)"),
+        )
+        val reconcile = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    private fun reconcileStagingDebris(",
+        )
+        assertEquals(
+            "a parked file whose destination is missing is RESTORED, not swept: it is then the " +
+                "only copy the device has, and sweeping it would be this same defect arriving one " +
+                "process-death later",
+            1,
+            count(reconcile, "if (dest.exists()) previous.delete() else previous.renameTo(dest)"),
         )
     }
 
