@@ -672,7 +672,15 @@ class NpuNativeContractTest {
                 "any of it reaches WE-DIAG (Q1 logged the shapes under WE-NPU, which the owner's " +
                 "capture filters out)",
             "npu-debug: inbuf " to "the input block's distribution and rail counts",
-            "npu-debug: layout " to "the transpose detector — the decisive line of this round",
+            // NOT `npu-debug: layout `, and the difference was MEASURED. Battery row D10 deleted the
+            // transpose detector's LOGDIAG outright and SURVIVED the prefix form of this assertion:
+            // the `layout UNUSABLE` fallback in the else-branch contains the same prefix and
+            // answered for it. A needle that a sibling line also satisfies pins nothing. So the two
+            // SUMS are named instead — they are the reading, and the fallback carries neither.
+            "sumFirstRow=" to "the first row's sum — half of the transpose detector, the decisive " +
+                "reading of this round",
+            "sumColStride=" to "the stride-frames column sum — the other half; without it there is " +
+                "one number and nothing to compare it against",
             "npu-debug: dequant " to "three cells back through the affine transform, which is the " +
                 "only reading that catches a sign or offset misapplication exactly",
             "npu-debug: crossKV " to "whether the encoder wrote its outputs at all",
@@ -694,7 +702,7 @@ class NpuNativeContractTest {
         val exec = liveOffsets(encode, "g.qnn.graphExecute(")
         assertTrue("nativeEncode must memcpy into dst.p on a live line", copy.isNotEmpty())
         assertTrue("nativeEncode must call graphExecute on a live line", exec.isNotEmpty())
-        listOf("npu-debug: inbuf ", "npu-debug: layout ", "npu-debug: dequant ").forEach { needle ->
+        listOf("npu-debug: inbuf ", "sumFirstRow=", "npu-debug: dequant ").forEach { needle ->
             val at = liveOffsets(encode, needle).first()
             assertTrue(
                 "`$needle` must be emitted AFTER the memcpy (${copy.first()}). The input buffer is " +
