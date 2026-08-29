@@ -1821,6 +1821,24 @@ class NpuNativeContractTest {
                 "a session it has already released.",
             liveOffsets(teardown, "armedEpoch = 0L").isNotEmpty()
         )
+        // THE KOTLIN HALF OF "AN EPOCH HAS EXACTLY ONE ISSUE SITE" (L1 review, I1). Native pins this
+        // property TWICE — nativeEpoch may not assign g.epoch, and nextEpoch has exactly two live
+        // mentions in the whole file — and until this line the Kotlin side pinned it nowhere. The
+        // count above is scoped to load(), so a "defensive" re-read anywhere ELSE in the class
+        // passed all seven of this task's pins; MEASURED as row M1, which survived at 138/1539/0.
+        assertEquals(
+            "exactly TWO live `armedEpoch =` sites in the whole file: the record in load() and the " +
+                "clear in releaseNpuResources(). A third is a second issue site, and it is not a " +
+                "cosmetic edit — a stale instance that re-adopts the LIVE epoch as its own then " +
+                "names the successor's session CORRECTLY, so its release is obeyed and F4 is back " +
+                "in full with the guard present, threaded and green. WHEN THIS MATTERS MOST: L8, " +
+                "which routes a second npu-class tier and is the named next editor of this class — " +
+                "an npu→npu-turbo switch is the first transition in this app's history where a " +
+                "stale instance and a live session of a DIFFERENT model exist at the same time. " +
+                "Found: " + liveLines(backend, "armedEpoch ="),
+            2,
+            liveOffsets(backend, "armedEpoch =").size
+        )
     }
 
     /**
