@@ -57,9 +57,18 @@ import org.junit.Test
  *
  * **A THIRD file joins the two screens: `WhisperEverywhereApp.kt`,** which owns the gate both
  * surfaces consume. It is read here rather than in a class of its own because the wiring and the
- * value it carries are one subject — a needle proving the screens pass `npuAvailable` around
- * correctly is worth little if the thing producing that Boolean has quietly lost half of itself.
+ * value it carries are one subject — a needle proving the screens pass the gate answer around
+ * correctly is worth little if the thing producing it has quietly lost half of itself.
  * See [theOfferGateKeepsBothHalvesAndGuardsEveryBuildFieldItReads].
+ *
+ * **4.1 (L5): the gate answer became `Set<String>`** — `offeredNpuTierIds()`, one id per gated
+ * tier whose own files are on disk — because two gated tiers can be independently installed and a
+ * Boolean cannot say which. Every needle that carried `npuAvailable` carries `npuTierIds` now;
+ * the `WhisperCatalog.pickable` zero-counts are UNCHANGED, because they encode the Bengali review
+ * and nothing about a second gated tier makes catalog order acceptable. The conjunction inside
+ * the gate also flipped (installed half first, probe conditional) — see
+ * [theProbeRunsOnlyWhenAGatedPairIsAlreadyOnDisk], which re-spells the pin that used to enforce
+ * the eager form.
  *
  * **The source is read LF-NORMALISED.** `core.autocrlf=true` checks this repo out with CRLF, so a
  * needle written with a bare `\n` finds nothing and every assertion would pass or fail for the wrong
@@ -102,7 +111,26 @@ class ChooserSteerWiringPinTest {
         read("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt")
     }
 
+    /** The fifth (4.1, m2): the Settings row that opens the chooser must not describe its lineup. */
+    private val settings: String by lazy {
+        read("src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt")
+    }
+
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
+
+    /**
+     * [count] over LIVE lines only — the comment filter `NpuDiagTest.liveLineCount` and
+     * `UnsupportedTierGatePinTest` use, added here with the 4.1 L5 sweep. Zero-counts on retired
+     * spellings MUST be live-scoped: a truthful comment naming the old form would otherwise turn
+     * them red and invite pin deletion (the L3 review's false-RED class).
+     */
+    private fun liveLineCount(haystack: String, needle: String): Int =
+        haystack.lineSequence().count { line ->
+            val trimmed = line.trimStart()
+            val commented = trimmed.startsWith("//") || trimmed.startsWith("/*") ||
+                trimmed.startsWith("*")
+            !commented && line.contains(needle)
+        }
 
     /** A multi-line needle, written as its own source lines so indentation is part of the match. */
     private fun block(vararg lines: String) = lines.joinToString("\n")
@@ -115,7 +143,7 @@ class ChooserSteerWiringPinTest {
             count(
                 flow,
                 block(
-                    "        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)",
+                    "        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds)",
                     "            .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
             ),
@@ -143,7 +171,7 @@ class ChooserSteerWiringPinTest {
             1,
             count(
                 flow,
-                "val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)",
+                "val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)",
             ),
         )
         assertGateAnswerReachesBothCallsOffMain(
@@ -151,9 +179,9 @@ class ChooserSteerWiringPinTest {
             "the guided flow",
             block(
                 "        val installGeneration by ModelInstallSignal.generation.collectAsState()",
-                "        val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {",
+                "        val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {",
                 "            value = withContext(Dispatchers.IO) {",
-                "                WhisperEverywhereApp.getInstance().isNpuTierOffered()",
+                "                WhisperEverywhereApp.getInstance().offeredNpuTierIds()",
                 "            }",
                 "        }",
             ),
@@ -161,61 +189,64 @@ class ChooserSteerWiringPinTest {
     }
 
     /**
-     * The 4.0 half, shared by both surfaces: the gate answer is produced OFF Main, and the SAME
-     * answer feeds the steer and the ordering.
+     * The 4.0 half, shared by both surfaces and re-spelled for the 4.1 set: the gate answer is
+     * produced OFF Main, and the SAME answer feeds the steer and the ordering.
      *
      * Two assertions, and neither is redundant. The producer needle pins WHERE the answer comes
-     * from — `isNpuTierOffered()` composes the SoC gate, the QNN probe and the two-file installed
-     * check, and its first call dlopens `libQnnSystem.so` and `libQnnHtp.so`, so
-     * `withContext(Dispatchers.IO)` inside `produceState` is the difference between a background
-     * load and one on the UI thread (`produceState`'s block runs in the composition's context,
-     * which is Main). The count of TWO pins that the answer is not then dropped at one of the two
-     * places that consume it: a `false` literal in either call is compile-clean and separates the
-     * STEER badge from the card the lineup actually led with.
+     * from — `offeredNpuTierIds()` composes the per-tier installed check, the SoC gate and the
+     * QNN probe, and its first call on a device with assets dlopens `libQnnSystem.so` and
+     * `libQnnHtp.so`, so `withContext(Dispatchers.IO)` inside `produceState` is the difference
+     * between a background load and one on the UI thread (`produceState`'s block runs in the
+     * composition's context, which is Main). The count of TWO pins that the answer is not then
+     * dropped at one of the two places that consume it: an `emptySet()` literal in either call is
+     * compile-clean and separates the STEER badge from the card the lineup actually led with.
      */
     private fun assertGateAnswerReachesBothCallsOffMain(
         source: String,
         surface: String,
         producer: String,
-        keyedProducers: Int = 1,
+        booleanKeyedProducers: Int = 0,
     ) {
         assertEquals(
-            "$surface's npu gate answer is produced off Main from the process-memoised app gate",
+            "$surface's npu gate answer is produced off Main from the app gate",
             1,
             count(source, producer),
         )
         assertEquals(
-            "$surface passes the SAME gate answer to the steer AND the ordering — a `false` " +
-                "literal in either one badges a card the lineup did not lead with",
+            "$surface passes the SAME gate answer to the steer AND the ordering — an " +
+                "`emptySet()` literal in either one badges a card the lineup did not lead with",
             2,
-            count(source, "(languageTag, npuAvailable)"),
+            count(source, "(languageTag, npuTierIds)"),
         )
         // 4.0 Q7b fix round, I1. The producer needle above already contains `key1 =`, but this
         // says WHY out loud, because the tempting "simplification" is to delete the key rather
         // than the whole block. `produceState` with no key desugars to `remember { … }` +
         // `LaunchedEffect(Unit)`: the producer runs ONCE PER COMPOSITION ENTRY and never again.
-        // `isNpuTierOffered()` deliberately re-stats the two files on every call so an import is
-        // visible immediately — and an unkeyed producer throws that away one layer up, in the very
-        // composition Q8's import affordance lives in. The user imports the pair and the lineup
-        // does not change.
-        // [keyedProducers] is the count for THIS surface, and it is a parameter rather than a
-        // literal `1` because the two surfaces genuinely differ (4.0, Q8). The picker asks the app
-        // TWO device questions — `isNpuTierOffered()` for the lineup, and `npuCapableDevice` alone
-        // for the import entry, which must not be gated on the tier already being installed. What
-        // the assertion is for is unchanged and is not weakened by counting two: an UNKEYED
-        // producer has its own needle at zero below, and a producer that lost its key would drop
-        // this count rather than raise it.
+        // `offeredNpuTierIds()` deliberately re-stats each gated tier's files on every call so an
+        // import is visible immediately — and an unkeyed producer throws that away one layer up,
+        // in the very composition Q8's import affordance lives in. The user imports the pair and
+        // the lineup does not change.
         assertEquals(
-            "$surface keys every gate producer on the install generation, so an import that lands " +
+            "$surface keys the gate producer on the install generation, so an import that lands " +
                 "while the chooser is on screen re-reads the gate instead of being invisible until " +
                 "the user navigates away and back",
-            keyedProducers,
+            1,
+            count(source, "produceState(initialValue = emptySet<String>(), key1 = installGeneration)"),
+        )
+        // [booleanKeyedProducers] is the count of the picker's OTHER keyed device question —
+        // `npuCapableDevice` alone, the import entry's capability-only gate, which must not be
+        // gated on the tier already being installed (4.0, Q8; its own test below). The flow asks
+        // no second question. A producer that lost its key drops a count rather than raising one.
+        assertEquals(
+            "$surface's capability-only producers, keyed identically",
+            booleanKeyedProducers,
             count(source, "produceState(initialValue = false, key1 = installGeneration)"),
         )
         assertEquals(
-            "$surface never samples the gate unkeyed",
+            "$surface never samples a gate producer unkeyed",
             0,
-            count(source, "produceState(initialValue = false) {"),
+            count(source, "produceState(initialValue = false) {") +
+                count(source, "produceState(initialValue = emptySet<String>()) {"),
         )
     }
 
@@ -311,7 +342,7 @@ class ChooserSteerWiringPinTest {
             count(
                 picker,
                 block(
-                    "    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)",
+                    "    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds)",
                     "        .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
             ),
@@ -336,7 +367,7 @@ class ChooserSteerWiringPinTest {
             1,
             count(
                 picker,
-                "val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)",
+                "val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)",
             ),
         )
         assertGateAnswerReachesBothCallsOffMain(
@@ -344,27 +375,28 @@ class ChooserSteerWiringPinTest {
             "the Settings picker",
             block(
                 "    val installGeneration by ModelInstallSignal.generation.collectAsState()",
-                "    val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {",
-                "        value = withContext(Dispatchers.IO) { app.isNpuTierOffered() }",
+                "    val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {",
+                "        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }",
                 "    }",
             ),
-            // 4.0 Q8: two keyed producers on this surface. See the second one's own test.
-            keyedProducers = 2,
+            // 4.0 Q8: the picker's second device question, capability-only. Its own test below.
+            booleanKeyedProducers = 1,
         )
     }
 
     /**
      * 4.0 (Q8) — the picker's SECOND device question, and why it is a second one.
      *
-     * `isNpuTierOffered()` is `capable && installed`. The import entry cannot be gated on it: the
-     * offer gate is false precisely in the state the import exists to leave, so an affordance
+     * The offer gate requires each tier's files on disk. The import entry cannot be gated on it:
+     * the gate is empty precisely in the state the import exists to leave, so an affordance
      * behind it could only ever appear once the 358 MB it fetches had already arrived. That is the
      * chicken-and-egg the Q7a handoff flagged, and the fix is that the entry reads the CAPABILITY
      * half alone.
      *
-     * The mutation this closes is one identifier: `app.npuCapableDevice` -> `app.isNpuTierOffered()`
-     * in the second producer. It compiles, it leaves every other assertion in this class green, and
-     * it makes the tier permanently un-installable on every device that does not already have it.
+     * The mutation this closes is one identifier: `app.npuCapableDevice` ->
+     * `app.offeredNpuTierIds().isNotEmpty()` (or any offered-set spelling) in the second
+     * producer. It compiles, it leaves every other assertion in this class green, and it makes
+     * the tier permanently un-installable on every device that does not already have it.
      */
     @Test
     fun theImportEntryIsGatedOnCapabilityAloneAndNeverOnTheTierBeingInstalled() {
@@ -391,7 +423,22 @@ class ChooserSteerWiringPinTest {
             "the offer gate is asked exactly once, for the lineup — not a second time as the " +
                 "import's gate",
             1,
-            count(picker, "app.isNpuTierOffered()"),
+            count(picker, "app.offeredNpuTierIds()"),
+        )
+        assertEquals(
+            "and the 4.0 Boolean view is consulted by NEITHER surface: the screens consume the " +
+                "set, and the shim exists only for the service's single-tier routing until L8 " +
+                "deletes it",
+            0,
+            count(picker, "isNpuTierOffered") + count(flow, "isNpuTierOffered"),
+        )
+        // What the panel SAYS keys on the npu (small) pair specifically — the pair this importer
+        // installs — not on the set being non-empty, which a turbo-only device would satisfy
+        // while the npu pair is still absent, telling the user a model is installed that is not.
+        assertEquals(
+            "the panel's installed-wording gate is the npu tier's OWN membership",
+            1,
+            count(picker, "offered = NpuAssetImport.TIER_ID in npuTierIds,"),
         )
     }
 
@@ -454,10 +501,11 @@ class ChooserSteerWiringPinTest {
     }
 
     /**
-     * The gate itself (4.0, Q7b micro-round) — the one thing both surfaces above agree to obey.
+     * The gate itself (4.0, Q7b micro-round; re-spelled for the 4.1 set) — the one thing both
+     * surfaces above agree to obey.
      *
-     * **Every assertion here closes a MEASURED survivor.** Neither half of `isNpuTierOffered` can
-     * be executed by a JVM test — `npuCapableDevice` dlopens two QNN libraries and `isInstalled`
+     * **Every assertion here closes a MEASURED survivor.** Neither half of the gate can be
+     * executed by a JVM test — `npuCapableDevice` dlopens two QNN libraries and `isInstalled`
      * needs a `Context` — so the battery's T11 and T12 both survived all 1453 tests. That is the
      * same hole, for the same reason, as `UnsupportedTierGatePinTest`'s R14, and it is closed with
      * the same instrument: what cannot be run is pinned as source.
@@ -465,38 +513,34 @@ class ChooserSteerWiringPinTest {
     @Test
     fun theOfferGateKeepsBothHalvesAndGuardsEveryBuildFieldItReads() {
         assertEquals(
-            "the offer gate keeps BOTH halves (battery T11). Without the installed check the card " +
-                "renders on a gate-passing device whose 358 MB pair has not arrived, and the only " +
-                "button on it is a Download that — until the Q7b fix round — deleted the imported " +
-                "encoder before failing",
+            "the offer gate keeps BOTH halves (battery T11's claim, re-spelled for the set): " +
+                "without the capable conjunct the installed set is offered on any device whose " +
+                "files happen to exist — `offered` must be gated on `capable == true`",
             1,
-            count(app, "return capable && installed"),
+            count(app, "val offered: Set<String> = if (capable == true) installed else emptySet()"),
         )
+        assertEquals("and the gate returns exactly that value", 1, count(app, "return offered"))
         assertEquals(
-            "the capability half is the MEMOISED gate, not a re-derivation",
+            "the installed half is a live per-tier stat over the GATED flag — no id literal, so " +
+                "a card renders exactly when ITS pair is on disk and the next gated tier joins " +
+                "by structure",
             1,
-            count(app, "val capable = npuCapableDevice"),
-        )
-        assertEquals(
-            "the installed half is a live two-file stat, taken on every call",
-            1,
-            count(app, "val installed = whisperModelManager.isInstalled(npu)"),
+            count(app, ".filter { it.gated && whisperModelManager.isInstalled(it) }"),
         )
         // The reporting call must not become the decision. `NpuGate.isSocSupported` is called here
         // only to recover which HALF of `capable` answered, for the diagnostic line; routing the
-        // gate through it would drop the probe entirely and offer the tier on any SM8650 whose QNN
-        // stack does not load.
+        // gate through it would drop the probe entirely and offer the tiers on any SM8650 whose
+        // QNN stack does not load.
         assertEquals(
             "NpuGate is consulted once, for reporting, and never as the gate itself",
             1,
             count(app, "socSupported = NpuGate.isSocSupported(npuSocModel, npuSocManufacturer),"),
         )
-        // ORDER is deliberately NOT asserted for those two conjuncts, and that is a finding rather
-        // than an omission. Both are pure predicates over state neither one changes, so `&&` in
-        // either order returns the same Boolean; only which of them is evaluated first differs.
-        // The rule this branch has paid for four times is "pin the order WHERE correctness depends
-        // on where a thing sits" — asserting it where it does not would be decoration that a later
-        // reader would mistake for a real invariant.
+        // The two conjuncts' ORDER, unlike 4.0's, IS asserted now — but in its own test
+        // (theProbeRunsOnlyWhenAGatedPairIsAlreadyOnDisk), because 4.1 made it load-bearing:
+        // the probe's evaluation is conditional on the installed half, which is a cost claim,
+        // not a truth-value claim. The 4.0 comment that declined to pin the order was right for
+        // the shape it described.
         assertEquals(
             "the memo survives (battery T11's neighbour): without `by lazy` the probe's dlopen " +
                 "runs again on every read, and the readers are recomposing choosers",
@@ -505,7 +549,7 @@ class ChooserSteerWiringPinTest {
         )
         // battery T12. minSdk is 26 and both SOC fields arrived in API 31, so an unguarded read
         // throws NoSuchFieldError on every pre-S device that opens the chooser — a crash, on a
-        // large share of the install base, on a screen that has nothing to do with the NPU tier.
+        // large share of the install base, on a screen that has nothing to do with the NPU tiers.
         // Counting the GUARDED form against the TOTAL is what closes it: a second, unguarded read
         // raises the total without raising the guarded count, so it cannot be added quietly.
         listOf("SOC_MODEL", "SOC_MANUFACTURER").forEach { field ->
@@ -524,5 +568,105 @@ class ChooserSteerWiringPinTest {
                 ),
             )
         }
+    }
+
+    /**
+     * Q7b NEW-1 / m3, folded into L5 because the gate's shape changed anyway.
+     *
+     * The 4.0 conjunction read the capable half first and unconditionally, so every 8 Gen 3
+     * paid the ~7.9 MiB QNN dlopen at bubble-service start — above the `delay(1500)` that exists
+     * to keep boot work out of app launch — whether or not a pair was ever imported. And the OLD
+     * pin in the test above (`val capable = npuCapableDevice` beside `return capable &&
+     * installed`) ENFORCED that eager form, which is why NEW-1 was never a one-liner. This is
+     * that pin, re-spelled against the flipped shape it had to become.
+     */
+    @Test
+    fun theProbeRunsOnlyWhenAGatedPairIsAlreadyOnDisk() {
+        assertEquals(
+            "the installed half is computed FIRST, over every gated catalog tier",
+            1,
+            count(
+                app,
+                block(
+                    "        val installed = WhisperCatalog.entries",
+                    "            .filter { it.gated && whisperModelManager.isInstalled(it) }",
+                    "            .map { it.id }",
+                    "            .toSet()",
+                ),
+            ),
+        )
+        assertEquals(
+            "the ~7.9 MiB QNN dlopen is CONDITIONAL on it: a device with no gated pair on disk " +
+                "never pays the probe, and `null` records that it was NOT evaluated — which the " +
+                "offer line reports as `skipped` rather than inventing a verdict",
+            1,
+            count(app, "val capable: Boolean? = if (installed.isEmpty()) null else npuCapableDevice"),
+        )
+        assertEquals(
+            "the eager form is gone from live code",
+            0,
+            liveLineCount(app, "val capable = npuCapableDevice"),
+        )
+        assertEquals(
+            "the old npu-entry resolution is gone with it: the gate iterates the gated FLAG, so " +
+                "the next gated tier joins by structure rather than being remembered in by id",
+            0,
+            liveLineCount(app, "WhisperCatalog.byId(\"npu\")"),
+        )
+        assertEquals(
+            "the 4.0 Boolean view survives as a named-trigger shim over the set — its one " +
+                "remaining consumer is the service's single-tier routing, and 4.1 L8's per-tier " +
+                "re-thread deletes both together. Nothing else may grow a second derivation of " +
+                "the gate",
+            1,
+            count(app, "fun isNpuTierOffered(): Boolean = NpuAssetImport.TIER_ID in offeredNpuTierIds()"),
+        )
+    }
+
+    /**
+     * Q7b M2, folded here — hole (i) was called "the widest-blast-radius test hole on the
+     * branch". The loop in the gate test counts QUALIFIED reads (`Build.SOC_MODEL`); a member
+     * import lets a later reader spell the same read as bare `SOC_MODEL`, which raises neither
+     * the total nor the guarded count — an unguarded `NoSuchFieldError` on every pre-S device
+     * that opens the chooser, invisible to the pin. The star form un-qualifies both fields at
+     * once, and an aliased import (`as X`) hides the read under a name no needle knows.
+     */
+    @Test
+    fun noImportCanTurnABuildFieldReadBare() {
+        listOf("SOC_MODEL", "SOC_MANUFACTURER").forEach { field ->
+            assertEquals(
+                "no member import of Build.$field — it would let a bare `$field` read bypass " +
+                    "the qualified-read counts",
+                0,
+                count(app, "import android.os.Build.$field"),
+            )
+        }
+        assertEquals(
+            "no Build member import AT ALL — named, star or aliased. The class import " +
+                "(`import android.os.Build`) is the only sanctioned spelling, because it is what " +
+                "keeps every field read countable as `Build.<FIELD>`",
+            0,
+            count(app, "import android.os.Build."),
+        )
+    }
+
+    /**
+     * 4.1 m2. The Settings entry row's subtitle enumerated `WhisperCatalog.pickable`'s display
+     * names — a device-INDEPENDENT constant describing a device-DEPENDENT lineup, wrong by two
+     * tiers on a gate-passing device with both pairs imported. The row now invites rather than
+     * enumerates; the same Bengali-review-encoding zero-count the two chooser surfaces carry.
+     */
+    @Test
+    fun theSettingsEntryRowStopsEnumeratingALineupItCannotKnow() {
+        assertEquals(
+            "the Settings entry point renders no tier enumeration from the ungated catalog",
+            0,
+            count(settings, "WhisperCatalog.pickable"),
+        )
+        assertEquals(
+            "the row keeps its invitation copy",
+            1,
+            count(settings, "subtitle = \"Pick a speech-model tier\","),
+        )
     }
 }

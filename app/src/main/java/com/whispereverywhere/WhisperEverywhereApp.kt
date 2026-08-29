@@ -12,6 +12,7 @@ import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.data.local.UsageTracker
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModelManager
+import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.transcription.NpuWhisperBackend
@@ -43,7 +44,7 @@ class WhisperEverywhereApp : Application() {
      * or a MediaTek never reaches the dlopen.
      *
      * **Not Main-safe** — `QnnAsrNative`'s threading contract forbids Main for every entry point,
-     * so every reader forces this off the main thread. [isNpuTierOffered] is the reader that
+     * so every reader forces this off the main thread. [offeredNpuTierIds] is the reader that
      * matters and its callers do exactly that.
      *
      * The API-31 guard lives HERE rather than in `NpuGate`, which is a pure two-string table on
@@ -81,11 +82,25 @@ class WhisperEverywhereApp : Application() {
     private val npuOfferLogged = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
-     * Whether a chooser may OFFER the gated `npu` tier: capable hardware AND both context binaries
-     * already on disk.
+     * The gated tiers a chooser may OFFER: every gated catalog tier whose own files are on disk,
+     * provided this device's hardware can run the NPU class at all. Empty for every other device,
+     * which is the answer the ungated lineup has always rendered.
+     *
+     * **The Boolean became a set in 4.1 (L5)** because two gated tiers (`npu`, `npu-turbo`) can
+     * be independently installed and one bit cannot say which. The set feeds
+     * `WhisperCatalog.pickableFor` / `ModelTierCopy.*For` directly, so each tier's card appears
+     * exactly when ITS pair is on disk.
+     *
+     * **The installed half runs FIRST, and the probe is conditional on it** (Q7b NEW-1 / m3,
+     * folded here because the shape changed anyway). The installed half is a handful of `File`
+     * stats; [npuCapableDevice]'s first read dlopens ~7.9 MiB of QNN. The old conjunction forced
+     * the dlopen on every 8 Gen 3 at bubble-service start whether or not a pair was ever
+     * imported; now a device with no gated pair on disk never pays it. `capable == null` records
+     * that the probe was NOT evaluated — which the offer line reports as `skipped` rather than
+     * inventing a verdict.
      *
      * **The installed half is not redundant with the hardware half, and it is not Q8's job.** The
-     * pair is SAF-imported from a zip, never downloaded — `WhisperModel.url` on that tier is
+     * pairs are SAF-imported from a zip, never downloaded — `WhisperModel.url` on those tiers is
      * provenance, not a source — so a card offered before the assets exist would put a Download
      * button in front of a user for whom downloading cannot work. Offering a tier whose assets
      * cannot yet arrive is the one thing this gate exists to prevent.
@@ -93,36 +108,52 @@ class WhisperEverywhereApp : Application() {
      * Re-read on every call rather than memoised: [npuCapableDevice] is a fact about the silicon
      * and cannot change within a process, but the files can — Q8's importer creates them while the
      * app is running, and a chooser that cached "not installed" would keep hiding the card the
-     * import just earned. It is four `File` stats behind a memoised gate.
+     * import just earned. It is a few `File` stats, then a memoised read.
      *
-     * **Never call from Main** — it forces [npuCapableDevice], which dlopens.
+     * **Never call from Main** — with anything installed it forces [npuCapableDevice], which
+     * dlopens.
      *
-     * **Emits one `WE-DIAG` line the first time it runs** (4.0, Q7b fix round, I3). Three
-     * predicates collapse into one Boolean here, so without it a Q10a report of "the card never
-     * showed" cannot be told apart from "wrong SoC", "the QNN stack did not load" and "the pair is
-     * not on disk" — three different next actions. See [NpuDiag.offer].
+     * **Emits one `WE-DIAG` line the first time it runs** (4.0, Q7b fix round, I3; the tier-id
+     * set since 4.1 L5). Three predicates collapse into one answer here, so without it a report
+     * of "the card never showed" cannot be told apart from "wrong SoC", "the QNN stack did not
+     * load" and "nothing installed" — three different next actions. See [NpuDiag.offer].
      */
-    fun isNpuTierOffered(): Boolean {
-        val npu = WhisperCatalog.byId("npu") ?: return false
-        val capable = npuCapableDevice
-        val installed = whisperModelManager.isInstalled(npu)
+    fun offeredNpuTierIds(): Set<String> {
+        val installed = WhisperCatalog.entries
+            .filter { it.gated && whisperModelManager.isInstalled(it) }
+            .map { it.id }
+            .toSet()
+        val capable: Boolean? = if (installed.isEmpty()) null else npuCapableDevice
+        val offered: Set<String> = if (capable == true) installed else emptySet()
         if (npuOfferLogged.compareAndSet(false, true)) {
             // isSocSupported is called here for REPORTING only — it is a pure two-string table
-            // lookup, it cannot dlopen, and the DECISION is `capable` on the line below. The gate
-            // is not re-run and is not duplicated: this only recovers which HALF of `capable`
-            // answered, which the Boolean itself has thrown away.
+            // lookup, it cannot dlopen, and the DECISION is `capable` above. The gate is not
+            // re-run and is not duplicated: this only recovers which HALF of `capable` answered,
+            // which the value itself has thrown away.
             Log.i(
                 NpuDiag.TAG,
                 NpuDiag.offer(
                     socModel = npuSocModel,
                     socSupported = NpuGate.isSocSupported(npuSocModel, npuSocManufacturer),
                     capable = capable,
-                    installed = installed,
+                    installedTierIds = installed,
                 ),
             )
         }
-        return capable && installed
+        return offered
     }
+
+    /**
+     * The npu (small) tier's Boolean view of [offeredNpuTierIds] — the 4.0 spelling, kept for the
+     * one consumer that still routes a single tier: `FloatingBubbleService` feeds it to
+     * `NpuBackendSelector.routesToNpu`, whose `tierId == NpuAssetImport.TIER_ID` clause makes the
+     * membership question exactly this one. Same off-Main contract as the set.
+     *
+     * **Named trigger for deletion: 4.1 L8**, which re-threads routing per-tier (the selector
+     * takes the offered set, the service's field becomes the set) and removes this view with its
+     * caller. Nothing else may grow a second derivation of the gate.
+     */
+    fun isNpuTierOffered(): Boolean = NpuAssetImport.TIER_ID in offeredNpuTierIds()
 
     override fun onCreate() {
         super.onCreate()

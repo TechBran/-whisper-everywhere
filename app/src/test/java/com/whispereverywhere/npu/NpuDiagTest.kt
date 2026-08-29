@@ -401,43 +401,98 @@ class NpuDiagTest {
 
     @Test
     fun theOfferLineNamesEveryPredicateSeparatelyAndDistinguishesSkippedFromFailed() {
-        // The gate is a conjunction whose answer is one Boolean, so this line exists to un-collapse
-        // it. Q10a's first read.
+        // The gate composes three predicates into one answer, so this line exists to un-collapse
+        // it. The run-book's first read. (4.1 L5: `installed`/`offered` carry TIER IDS — two
+        // gated tiers can be independently installed, and a Boolean cannot say which.)
+        // The 4.0 line's first case read `probe=pass installed=false` — a state the flipped gate
+        // can no longer produce, because the probe only runs once something is installed. Its
+        // honest respelling is the skipped/none line probeSkippedSeparatesItsTwoCauses... pins.
         assertEquals(
-            "npu: offer soc=SM8650:pass probe=pass installed=false offered=false",
-            NpuDiag.offer("SM8650", socSupported = true, capable = true, installed = false),
-        )
-        assertEquals(
-            "npu: offer soc=SM8650:pass probe=pass installed=true offered=true",
-            NpuDiag.offer("SM8650", socSupported = true, capable = true, installed = true),
+            "npu: offer soc=SM8650:pass probe=pass installed=npu offered=npu",
+            NpuDiag.offer("SM8650", socSupported = true, capable = true, installedTierIds = setOf("npu")),
         )
         // The right silicon, but the QNN stack did not load — an ADSP_LIBRARY_PATH / libqnnasr.so
         // question, and a completely different next action from the two below.
         assertEquals(
-            "npu: offer soc=SM8650-AC:pass probe=fail installed=true offered=false",
-            NpuDiag.offer("SM8650-AC", socSupported = true, capable = false, installed = true),
+            "npu: offer soc=SM8650-AC:pass probe=fail installed=npu offered=none",
+            NpuDiag.offer("SM8650-AC", socSupported = true, capable = false, installedTierIds = setOf("npu")),
         )
         // SKIPPED, not failed. The SoC table is checked first precisely so a non-Qualcomm device
         // never dlopens a Qualcomm backend, so on these devices the probe genuinely did not run —
         // reporting `fail` would invent a measurement nobody took.
         assertEquals(
-            "npu: offer soc=Tensor G3:fail probe=skipped installed=false offered=false",
-            NpuDiag.offer("Tensor G3", socSupported = false, capable = false, installed = false),
+            "npu: offer soc=Tensor G3:fail probe=skipped installed=npu offered=none",
+            NpuDiag.offer("Tensor G3", socSupported = false, capable = false, installedTierIds = setOf("npu")),
         )
         // Below API 31 the caller hands us null by design (NpuGate's null -> deny). The line must
         // still be readable rather than printing "null".
         assertEquals(
-            "npu: offer soc=unknown:fail probe=skipped installed=false offered=false",
-            NpuDiag.offer(null, socSupported = false, capable = false, installed = false),
+            "npu: offer soc=unknown:fail probe=skipped installed=none offered=none",
+            NpuDiag.offer(null, socSupported = false, capable = null, installedTierIds = emptySet()),
+        )
+    }
+
+    @Test
+    fun theOfferLineListsEveryInstalledGatedTierByIdSorted() {
+        // 4.1 L5: the gate's Boolean became a set, and the line follows — a "the card never
+        // showed" report must say WHICH pair is on disk now that two can be. Sorted, so the line
+        // is ONE greppable spelling rather than one per set-iteration order; the input here is
+        // deliberately in REVERSED insertion order to pin that promise.
+        assertEquals(
+            "npu: offer soc=SM8650:pass probe=pass installed=npu,npu-turbo offered=npu,npu-turbo",
+            NpuDiag.offer(
+                "SM8650",
+                socSupported = true,
+                capable = true,
+                installedTierIds = linkedSetOf("npu-turbo", "npu"),
+            ),
+        )
+        assertEquals(
+            "npu: offer soc=SM8650:pass probe=pass installed=npu-turbo offered=npu-turbo",
+            NpuDiag.offer("SM8650", socSupported = true, capable = true, installedTierIds = setOf("npu-turbo")),
+        )
+    }
+
+    @Test
+    fun probeSkippedSeparatesItsTwoCausesByTheFieldsBesideIt() {
+        // The conjunction flipped in L5: with no gated pair on disk the gate returns BEFORE the
+        // dlopen, so the probe genuinely did not run — `capable = null` — and reporting `fail`
+        // would invent a measurement nobody took, the same rule the SoC skip has always followed.
+        // The three "card never showed" causes stay separable:
+        //   wrong SoC            -> soc=…:fail probe=skipped
+        //   nothing installed    -> soc=…:pass probe=skipped installed=none
+        //   stack did not load   -> soc=…:pass probe=fail    installed=<ids>
+        assertEquals(
+            "npu: offer soc=SM8650:pass probe=skipped installed=none offered=none",
+            NpuDiag.offer("SM8650", socSupported = true, capable = null, installedTierIds = emptySet()),
+        )
+        assertEquals(
+            "npu: offer soc=Tensor G3:fail probe=skipped installed=none offered=none",
+            NpuDiag.offer("Tensor G3", socSupported = false, capable = null, installedTierIds = emptySet()),
+        )
+        assertEquals(
+            "npu: offer soc=SM8650:pass probe=fail installed=npu,npu-turbo offered=none",
+            NpuDiag.offer(
+                "SM8650",
+                socSupported = true,
+                capable = false,
+                installedTierIds = setOf("npu", "npu-turbo"),
+            ),
         )
     }
 
     @Test
     fun theOfferLineIsGreppableWithTheOtherTwoAndCarriesNoTranscriptContent() {
-        val line = NpuDiag.offer("SM8650", socSupported = true, capable = true, installed = true)
+        val line = NpuDiag.offer(
+            "SM8650",
+            socSupported = true,
+            capable = true,
+            installedTierIds = setOf("npu", "npu-turbo"),
+        )
         assertTrue("the offer line must share the tier's `npu: ` prefix", line.startsWith("npu: "))
         assertTrue("one line, never two", !line.contains("\n"))
-        // Same shape as the other two: a word, then k=v pairs a parser can split on.
+        // Same shape as the other two: a word, then k=v pairs a parser can split on — even with
+        // the two-tier set in both values.
         listOf("soc=", "probe=", "installed=", "offered=").forEach {
             assertEquals("the offer line states `$it` exactly once", 1, line.split(it).size - 1)
         }
@@ -450,16 +505,33 @@ class NpuDiagTest {
         // pinned as source; the ONE-SHOT is the AtomicBoolean, because a line re-emitted on every
         // chooser open stops being a landmark and becomes noise in a logcat with no adb behind it.
         val app = source("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
+        // Q7b NEW-5, resolved in 4.1 L5: the Log.i / TAG / one-shot pins are scoped to the GATE'S
+        // OWN BODY, because the whole-file counts failed for reasons unrelated to their invariant
+        // the moment any other Log.i joined this file — and an over-broad pin trains people to
+        // weaken pins. The body closer is the first line at the declaration's own indentation,
+        // which no nested block in this function can produce.
+        val gate = app
+            .substringAfter("fun offeredNpuTierIds(): Set<String> {")
+            .substringBefore("\n    }")
+        assertTrue(
+            "the offer gate body was found and is smaller than the file",
+            gate.isNotEmpty() && gate.length < app.length,
+        )
         assertEquals(
-            "the offer line has exactly one emitter",
+            "the offer line has exactly one emitter in the whole file",
             1,
             liveLineCount(app, "NpuDiag.offer("),
+        )
+        assertEquals(
+            "and that emitter is inside the gate itself",
+            1,
+            liveLineCount(gate, "NpuDiag.offer("),
         )
         assertEquals(
             "the emitter is behind a compareAndSet, so it runs once per process and not once per " +
                 "chooser open",
             1,
-            liveLineCount(app, "if (npuOfferLogged.compareAndSet(false, true)) {"),
+            liveLineCount(gate, "if (npuOfferLogged.compareAndSet(false, true)) {"),
         )
         // Battery row V10, a measured survivor: diverting the line to a private tag
         // (`Log.i("NpuOffer", …)`) leaves the format correct, the emission once-per-process and
@@ -469,13 +541,13 @@ class NpuDiagTest {
         assertEquals(
             "the line goes to the house tag BY NAME, so one grep finds every tier line",
             1,
-            liveLineCount(app, "NpuDiag.TAG,"),
+            liveLineCount(gate, "NpuDiag.TAG,"),
         )
         assertEquals(
             "and it is emitted at Log.i — a diagnostic the owner is asked to read must not sit " +
                 "below the default logcat filter",
             1,
-            liveLineCount(app, "Log.i("),
+            liveLineCount(gate, "Log.i("),
         )
     }
 

@@ -417,8 +417,10 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Filled.CloudDownload,
                     title = if (installedModel != null) "Change or add a model" else "Download a model",
-                    subtitle = "Pick a speech-model tier " +
-                        "(${WhisperCatalog.pickable.joinToString(" / ") { it.displayName }})",
+                    // 4.1 m2: no enumeration. `pickable` is the device-INDEPENDENT lineup, and
+                    // the screen this row opens can show up to two more tiers on a gate-passing
+                    // device — a constant list here was already wrong for one of them.
+                    subtitle = "Pick a speech-model tier",
                     onClick = onNavigateToModelOnboarding
                 )
 

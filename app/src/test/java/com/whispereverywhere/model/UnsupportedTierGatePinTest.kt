@@ -112,6 +112,30 @@ class UnsupportedTierGatePinTest {
     }
 
     /**
+     * [count] over LIVE lines only — [liveIndexOfOrFail]'s comment filter, in counting form
+     * (4.1 L5: THE FOUR-PIN SWEEP, from the L3 review's 2+2 taxonomy).
+     *
+     * Every whole-file count in this class that carries a source literal is live-scoped through
+     * this, because a raw count has two failure modes and BOTH were MEASURED on this branch:
+     *  - **false-GREEN class** (a `== 1` count): rewrite the live predicate and leave a comment
+     *    quoting the old clause — the count stays satisfied by the comment across the entire
+     *    rewrite. That is exactly how L3's own pin went false-green, and the sweep's P1/P2
+     *    measurements reproduced it against the old spellings here.
+     *  - **false-RED class** (a `== 0` count): a truthful comment naming the needle — history,
+     *    a migration note — turns the pin red on correct code, which invites pin deletion. The
+     *    sweep's P3/P4 measurements reproduced that too.
+     * Comments are excluded by construction, so an assertion here can only be answered — or
+     * broken — by the code it is about.
+     */
+    private fun liveLineCount(haystack: String, needle: String): Int =
+        haystack.lineSequence().count { line ->
+            val trimmed = line.trimStart()
+            val commented = trimmed.startsWith("//") || trimmed.startsWith("/*") ||
+                trimmed.startsWith("*")
+            !commented && line.contains(needle)
+        }
+
+    /**
      * One declaration to its own closing brace, matched by INDENTATION rather than by counting
      * braces: the closer is the first line at the declaration's own nesting depth, which no nested
      * block can produce. Members of these classes close on four spaces.
@@ -138,17 +162,23 @@ class UnsupportedTierGatePinTest {
             1,
             count(gate, "return if (model.unsupported) model else null"),
         )
+        // Both zero-counts below are LIVE-SCOPED (4.1 L5 sweep, false-RED class): this very
+        // assertion's message narrates the H1->H2 history, and the day someone writes that same
+        // truthful history into a comment in the manager, a whole-file count turns red on
+        // correct code — and a pin that fails for no real reason is a pin somebody deletes.
         assertEquals(
             "the manager never gates the migration prompt on `retired`: that is the H1->H2 interim " +
                 "defect — it raises the card, and the false \"much faster\" claim, for every " +
-                "installed eco/base user",
+                "installed eco/base user. LIVE lines only: a comment may narrate this history, " +
+                "and only a live read reintroduces the defect",
             0,
-            count(manager, "model.retired"),
+            liveLineCount(manager, "model.retired"),
         )
         assertEquals(
-            "the old name is gone, so no caller can be left on the retired-flag gate",
+            "the old name is gone from live code, so no caller can be left on the retired-flag " +
+                "gate — and a comment recording the rename cannot fail this",
             0,
-            count(manager, "retiredInstalledModel"),
+            liveLineCount(manager, "retiredInstalledModel"),
         )
     }
 
@@ -297,10 +327,17 @@ class UnsupportedTierGatePinTest {
             1,
             count(donor, "val preferred = WhisperCatalog.byId(prefs.selectedModelId)"),
         )
+        // LIVE-SCOPED (4.1 L5 sweep, false-GREEN class — and this one's trigger is already
+        // scheduled: the L3 KDoc beside the predicate promises the literal's replacement by a
+        // catalog mel-bin count). When that rewrite lands, THIS goes red asking for the catalog
+        // decision — and a comment quoting the retired clause can neither satisfy it nor break
+        // it, which is the exact hole the whole-file count had (measured: sweep P1).
         assertEquals(
-            "128-bin large-v3-turbo is excluded BY NAME, with the reason in the KDoc",
+            "128-bin large-v3-turbo is excluded BY NAME, on a LIVE line, with the reason in the " +
+                "KDoc — the real fix is a mel-bin count in the catalog, and replacing the " +
+                "literal is a catalog decision this pin exists to demand",
             1,
-            count(manager, "model.id != \"ultra\""),
+            liveLineCount(manager, "model.id != \"ultra\""),
         )
         // 4.1 L3. THE NPU EXCLUSION IS STRUCTURAL NOW, AND THIS PIN IS LIVE-SCOPED FOR IT.
         //
@@ -330,18 +367,18 @@ class UnsupportedTierGatePinTest {
                 "structural clause it is the fix landed and bypassed, and it is what made this " +
                 "pin answerable by a comment in the first place",
             0,
-            manager.lineSequence().count { line ->
-                val trimmed = line.trimStart()
-                val commented = trimmed.startsWith("//") || trimmed.startsWith("/*") ||
-                    trimmed.startsWith("*")
-                !commented && line.contains("model.id != \"npu\"")
-            },
+            liveLineCount(manager, "model.id != \"npu\""),
         )
+        // LIVE-SCOPED (4.1 L5 sweep, false-GREEN class): any pairedArtifact refactor plus a
+        // comment quoting this clause kept the whole-file count green across the rewrite
+        // (measured: sweep P2 — `model.pairedArtifact?.fileName == null` beside a quoting
+        // comment passed the old pin). Live-scoped, the rewrite goes red and asks for the
+        // decision the clause encodes.
         assertEquals(
             "plus the structural clause that catches the NEXT two-artefact tier nobody thought to " +
-                "name here — the id says why, the structure catches the next one",
+                "name here — the id says why, the structure catches the next one — on a LIVE line",
             1,
-            count(manager, "model.pairedArtifact == null"),
+            liveLineCount(manager, "model.pairedArtifact == null"),
         )
         // The companion must come from the SAME tier as installedModelPath, not from the npu entry
         // directly. Resolving the two independently hands nativeInit an encoder from one tier and

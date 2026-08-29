@@ -45,6 +45,20 @@ object ModelTierCopy {
             badges = listOf("90+ languages", "358 MB"),
             body = "Runs on your phone's AI chip. Same model as Multilingual, much faster on this device.",
         ),
+        // 4.1: the second gated tier. "Best quality" is the spec's owner-approved framing
+        // (decision 8) and ", slower" is the disclosure the house rules require beside it. The
+        // body states the trade and then declines to make a speed claim at all: no WER has been
+        // measured for any w8a16 Whisper variant, so "the reason to pick it is the words" is the
+        // most this copy is entitled to say — the owner's A/B is what measures the rest. The
+        // comparison is OUR OWN other NPU card, never another app, never an absolute.
+        "npu-turbo" to TierCopy(
+            headline = "Best quality, slower",
+            // 1072 MB = the PAIR (encoder 775,831,552 + decoder 295,854,080), same rule as npu's
+            // badge: what the user installs, not the one file WhisperModel.fileName names.
+            badges = listOf("90+ languages", "1072 MB"),
+            body = "Large-v3's own encoder, on your phone's AI chip. Bigger and slower than " +
+                "Multilingual on NPU — the reason to pick it is the words, not the speed.",
+        ),
     )
 
     /**
@@ -68,7 +82,7 @@ object ModelTierCopy {
         else "multi"
 
     /**
-     * [steerIdForLanguageTag] with the 4.0 gated tier folded in: on a device that can actually run
+     * [steerIdForLanguageTag] with the gated tiers folded in: on a device that can actually run
      * `npu`, a non-English locale is steered THERE instead of to `multi`.
      *
      * **`npu` substitutes for the MULTILINGUAL steer and nothing else.** It carries `multi`'s
@@ -77,17 +91,25 @@ object ModelTierCopy {
      * multilingual tier is the Bengali-review defect mirrored, and "the device is fast" is not a
      * reason to hand someone the less accurate model for their language.
      *
+     * **`npu-turbo` NEVER steers** (4.1, decision 8). The steer is a promotion, and turbo's claim
+     * is unproved in the one way that would justify one: no WER has been measured for any w8a16
+     * Whisper variant, and its card says "slower" out loud. It joins the lineup below the steer
+     * and waits to be picked — the body of this function names `"npu"` and nothing else, so a
+     * turbo-only offer set changes NOTHING about steering.
+     *
      * **This is a STEER, not a selection.** Nothing here writes `prefs.selectedModelId`; both
      * chooser surfaces still require a tap, `WhisperCatalog.DEFAULT_MODEL_ID` stays `pro` and
      * `ModelMigration`'s multilingual target stays `multi`. A gated tier that could become the
      * default by locale alone would be selected on devices whose assets are absent.
      *
-     * @param npuAvailable the caller's gate answer — the SoC gate, the QNN probe AND both context
-     *        binaries on disk. `false` reproduces [steerIdForLanguageTag] exactly.
+     * @param offeredGatedIds the caller's gate answer — the ids of gated tiers this device may
+     *        offer (`WhisperEverywhereApp.offeredNpuTierIds()`: the SoC gate, the QNN probe AND
+     *        that tier's own files on disk). `emptySet()` reproduces [steerIdForLanguageTag]
+     *        exactly, and so does any set without `"npu"` in it.
      */
-    fun steerIdForLanguageTagFor(languageTag: String, npuAvailable: Boolean): String {
+    fun steerIdForLanguageTagFor(languageTag: String, offeredGatedIds: Set<String>): String {
         val cpuSteer = steerIdForLanguageTag(languageTag)
-        return if (npuAvailable && cpuSteer == "multi") "npu" else cpuSteer
+        return if ("npu" in offeredGatedIds && cpuSteer == "multi") "npu" else cpuSteer
     }
 
     /**
@@ -96,32 +118,34 @@ object ModelTierCopy {
      * permutation of [WhisperCatalog.pickable] by construction — a tier this object has never
      * heard of still reaches the user, just not at the top.
      *
-     * The ungated contract, unchanged: this is [orderedForLanguageTagFor] with the 4.0 gate
-     * answered `false`, which is the answer for every device that cannot run the gated tier.
+     * The ungated contract, unchanged: this is [orderedForLanguageTagFor] with the gate answered
+     * with the empty set, which is the answer for every device that cannot run a gated tier.
      * Delegating rather than duplicating is deliberate — two copies of an ordering rule drift, and
      * the one that drifts is always the one nobody is reading.
      */
     fun orderedForLanguageTag(languageTag: String): List<String> =
-        orderedForLanguageTagFor(languageTag, npuAvailable = false)
+        orderedForLanguageTagFor(languageTag, emptySet())
 
     /**
      * [orderedForLanguageTag] over the tiers THIS device can pick — `WhisperCatalog.pickableFor`,
-     * so the gated 4.0 tier is in the lineup exactly where the caller's gate says yes.
+     * so each gated tier is in the lineup exactly where the caller's gate says yes for it.
      *
      * **Two ordering keys, and the second one is the point.** First the steer
      * ([steerIdForLanguageTagFor]); then the tier the locale would have been steered to WITHOUT
      * the gate; then catalog order. Without that middle key a Bengali user on a capable device
      * would read `npu, pro, multi` — the English-only tier promoted above the multilingual one it
      * was demoted below in 3.7, by a change that was supposed to be about silicon. The sort is
-     * stable, so every tier neither key names keeps the order the catalog declares it in.
+     * stable, so every tier neither key names keeps the order the catalog declares it in —
+     * `npu-turbo`, which never steers, simply joins the lineup below the steer, last in catalog
+     * order.
      *
-     * The result is a permutation of `pickableFor(npuAvailable)` — of the caller's OWN input list,
-     * not of [WhisperCatalog.pickable] — so a gate-passing device never loses a card to a rule
-     * written for the ungated lineup.
+     * The result is a permutation of `pickableFor(offeredGatedIds)` — of the caller's OWN input
+     * list, not of [WhisperCatalog.pickable] — so a gate-passing device never loses a card to a
+     * rule written for the ungated lineup.
      */
-    fun orderedForLanguageTagFor(languageTag: String, npuAvailable: Boolean): List<String> {
-        val ids = WhisperCatalog.pickableFor(npuAvailable).map { it.id }
-        val steer = steerIdForLanguageTagFor(languageTag, npuAvailable)
+    fun orderedForLanguageTagFor(languageTag: String, offeredGatedIds: Set<String>): List<String> {
+        val ids = WhisperCatalog.pickableFor(offeredGatedIds).map { it.id }
+        val steer = steerIdForLanguageTagFor(languageTag, offeredGatedIds)
         val languageSteer = steerIdForLanguageTag(languageTag)
         return ids.sortedBy {
             when (it) {

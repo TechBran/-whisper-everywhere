@@ -17,6 +17,9 @@ import com.whispereverywhere.audio.Endpointer
  *   speech-end-to-text at the paced boundary, and no 15 s walls.
  * - npu (4.0): the same small weights as multi, but the encoder runs on the Hexagon — ~0.4 s
  *   sustained in the spike, so it pays for the FAST row. See [minCommitIntervalMs].
+ * - npu-turbo (4.1): large-v3-turbo on the same Hexagon. Published 8 Gen 3 raw-QNN figures put it
+ *   at ~1.37-1.57 s per segment — provisional until L8's device measurement, exactly as npu's
+ *   spike figure was. See [minCommitIntervalMs].
  * - extreme/ultra (539-574 MB): UNMEASURED. 8 s is the conservative placeholder; H2 may revise it.
  * - cloud batch: every commit is one HTTP POST (Semaphore(3) in flight, shed at 24). Same
  *   reasoning that made the 4 s first cap LOCAL-only.
@@ -80,7 +83,15 @@ object CommitCadencePolicy {
             // multi's 2.3 s fixed cost, and the decode is bounded at 196 tokens. Pacing a 0.4 s
             // encoder at a 6 s floor would discard the entire reason the tier exists. Provisional
             // on ONE spike-measured encoder pass; Q10a is the first full-tier device measurement.
-            "eco", "base", "pro", "npu" -> MIN_COMMIT_INTERVAL_FAST_MS
+            //
+            // npu-turbo (4.1) joins it WITH ITS REASON RECORDED: published 8 Gen 3 raw-QNN
+            // figures put turbo at ~1.37-1.57 s per segment against npu's ~1.0 s measured — both
+            // well under the 2.3 s fixed cost that multi's 6 s floor exists for, and the floor is
+            // a minimum interval, not a metronome: the VAD still cuts at real pauses. Provisional
+            // on L8's device measurement, exactly as npu's was: if the owner's `npu:` lines show
+            // per-segment cost above this cadence, commits will visibly lag, and that is the
+            // signal to give turbo its own constant rather than to widen this row.
+            "eco", "base", "pro", "npu", "npu-turbo" -> MIN_COMMIT_INTERVAL_FAST_MS
             "multi" -> MIN_COMMIT_INTERVAL_MULTI_MS
             "extreme", "ultra" -> MIN_COMMIT_INTERVAL_LARGE_MS
             else -> MIN_COMMIT_INTERVAL_LARGE_MS

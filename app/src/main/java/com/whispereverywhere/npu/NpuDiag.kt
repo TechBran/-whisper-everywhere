@@ -180,47 +180,57 @@ object NpuDiag {
             "(the cached local engine is rebuilt on the CPU tier)"
 
     /**
-     * `npu: offer soc=SM8650:pass probe=pass installed=false offered=false` — emitted **once per
-     * process**, at the first evaluation of the memoised offer gate.
+     * `npu: offer soc=SM8650:pass probe=pass installed=npu,npu-turbo offered=npu,npu-turbo` —
+     * emitted **once per process**, at the first evaluation of the offer gate.
      *
-     * **This line is the Q10a run-book's first read.** The gate is a conjunction of three
-     * predicates and its answer is one Boolean, so "the card never showed" collapses three very
-     * different next actions into one symptom: *unsupported SoC* (nothing to do — wrong phone),
-     * *probe failed* (the QNN stack did not load — an `ADSP_LIBRARY_PATH` / `libqnnasr.so`
-     * question), and *not installed* (import the pair). The memo makes it worse, not better: a
-     * probe failure is latched for the life of the process and `runCatching{…}.getOrDefault(false)`
-     * discards the reason on the way through, so without this line the evidence does not exist
-     * anywhere.
+     * **This line is the run-book's first read.** The gate composes three predicates and its
+     * answer is one set, so "the card never showed" collapses three very different next actions
+     * into one symptom: *unsupported SoC* (nothing to do — wrong phone), *probe failed* (the QNN
+     * stack did not load — an `ADSP_LIBRARY_PATH` / `libqnnasr.so` question), and *nothing
+     * installed* (import a pair). The memo makes it worse, not better: a probe failure is latched
+     * for the life of the process and `runCatching{…}.getOrDefault(false)` discards the reason on
+     * the way through, so without this line the evidence does not exist anywhere. Since 4.1 two
+     * gated tiers can be independently installed, so `installed=` names the tier ids — sorted,
+     * comma-joined, `none` for the empty set — rather than one Boolean that cannot say which.
      *
-     * **`probe=skipped` is not `probe=fail`, and the distinction is the whole point.** The SoC
-     * table is evaluated first precisely so a non-Qualcomm device never dlopens a Qualcomm backend;
-     * on those devices the probe genuinely did not run, and reporting `fail` would invent a
-     * measurement that was never taken.
+     * **`probe=skipped` is not `probe=fail`, and the distinction is the whole point.** It now has
+     * two causes, told apart by the fields beside it. The SoC table is evaluated first precisely
+     * so a non-Qualcomm device never dlopens a Qualcomm backend (`soc=…:fail`); and since L5
+     * flipped the conjunction, a device with **no gated pair on disk** returns before the dlopen
+     * too (`soc=…:pass installed=none`). In both states the probe genuinely did not run, and
+     * reporting `fail` would invent a measurement that was never taken.
      *
-     * **Never transcript content**: two hardware identifiers and three verdicts.
+     * **Never transcript content**: two hardware identifiers, two verdicts and a set of tier ids.
      *
      * @param socModel `Build.SOC_MODEL`, or null below API 31 — reported as `unknown`, which is
      *        also what the platform substitutes when an OEM leaves the field unset.
      * @param socSupported [NpuGate.isSocSupported]'s answer. Reporting only; the DECISION is the
      *        caller's `capable`.
-     * @param capable the memoised gate — `isSocSupported && probe`, so `capable` with
-     *        `socSupported` true means the probe passed.
-     * @param installed whether both context binaries were on disk **at this first evaluation**.
-     *        The other two verdicts are process-permanent; this one is a snapshot, because the
-     *        line is emitted once and an import can land afterwards.
+     * @param capable the memoised gate — `isSocSupported && probe` — or **null when the gate
+     *        returned before evaluating it** because nothing was installed. Null is reported as
+     *        `probe=skipped`, never as `fail`.
+     * @param installedTierIds the gated tiers whose files were on disk **at this first
+     *        evaluation**. The SoC and probe verdicts are process-permanent; this one is a
+     *        snapshot, because the line is emitted once and an import can land afterwards.
      */
     fun offer(
         socModel: String?,
         socSupported: Boolean,
-        capable: Boolean,
-        installed: Boolean,
+        capable: Boolean?,
+        installedTierIds: Set<String>,
     ): String {
         val probe = when {
             !socSupported -> "skipped"
+            capable == null -> "skipped"
             capable -> "pass"
             else -> "fail"
         }
         val soc = "${socModel ?: "unknown"}:${if (socSupported) "pass" else "fail"}"
-        return "npu: offer soc=$soc probe=$probe installed=$installed offered=${capable && installed}"
+        // Sorted so the line is ONE greppable spelling, not one per set-iteration order.
+        val installed =
+            if (installedTierIds.isEmpty()) "none"
+            else installedTierIds.sorted().joinToString(",")
+        val offered = if (capable == true) installed else "none"
+        return "npu: offer soc=$soc probe=$probe installed=$installed offered=$offered"
     }
 }

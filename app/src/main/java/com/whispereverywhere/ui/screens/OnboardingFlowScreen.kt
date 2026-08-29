@@ -403,25 +403,26 @@ private fun EnginesStep(
         // multi. A steer, not a lock: both cards stay tappable and TIER_SWITCH_HINT below still
         // promises the switch.
         //
-        // 4.0: on a device that passes the NPU gate AND already holds both context binaries, the
-        // non-English steer becomes `npu` — the same multilingual weights on the Hexagon. The
-        // probe dlopens two QNN libraries and QnnAsrNative forbids Main for every entry point, so
-        // the answer is produced OFF Main and memoised for the process. `false` until it arrives.
-        // `pickedTierId` still starts null: the steer moves a card to the top and badges it, and
-        // the user still has to tap it.
+        // 4.0/4.1: on a device that passes the NPU gate AND already holds a gated tier's own
+        // context binaries, that tier joins the lineup — the answer is a SET of tier ids because
+        // two gated tiers can be independently installed. The non-English steer becomes `npu`
+        // where it is offered; `npu-turbo` never steers and joins below. The probe dlopens two
+        // QNN libraries and QnnAsrNative forbids Main for every entry point, so the answer is
+        // produced OFF Main. Empty until it arrives. `pickedTierId` still starts null: the steer
+        // moves a card to the top and badges it, and the user still has to tap it.
         //
         // KEYED on the install generation, for the reason spelled out at the Settings picker's
         // copy of this block: an unkeyed produceState samples once per composition entry, so an
         // import landing while the chooser is on screen would never reach the lineup.
         val languageTag = java.util.Locale.getDefault().toLanguageTag()
         val installGeneration by ModelInstallSignal.generation.collectAsState()
-        val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {
+        val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
             value = withContext(Dispatchers.IO) {
-                WhisperEverywhereApp.getInstance().isNpuTierOffered()
+                WhisperEverywhereApp.getInstance().offeredNpuTierIds()
             }
         }
-        val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)
-        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)
+        val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
+        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds)
             .mapNotNull { WhisperCatalog.byId(it) }
             .forEach { model ->
                 TierChoiceCard(

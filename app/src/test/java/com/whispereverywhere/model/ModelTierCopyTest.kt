@@ -174,28 +174,30 @@ class ModelTierCopyTest {
         }
     }
 
-    // ------------------------------------------------------------ 4.0: steering the gated tier
+    // ------------------------------------------------------ 4.0/4.1: steering the gated tiers
     //
-    // The 3.7 rules above answer "which tier for this language". These four answer "...and does
-    // this device have a faster way to run it" — without letting the answer to the second
-    // question change the answer to the first.
+    // The 3.7 rules above answer "which tier for this language". These answer "...and does this
+    // device have a faster way to run it" — without letting the answer to the second question
+    // change the answer to the first. Since 4.1 the gate answer is a SET of offered gated tier
+    // ids (two gated tiers can be independently installed); `setOf("npu")` below is the exact
+    // 4.0 `true`, and `emptySet()` the exact 4.0 `false` — identical assertions, new spelling.
 
     @Test fun the_gated_tier_is_the_steer_only_where_the_device_runs_it_and_the_locale_needs_it() {
         // Capable device, and a language `multi` was already the right answer for: the same model
         // on the Hexagon is a strictly better version of the same answer.
-        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", true))
-        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("zh-Hans-CN", true))
-        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("fr-CA", true))
-        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("", true))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", setOf("npu")))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("zh-Hans-CN", setOf("npu")))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("fr-CA", setOf("npu")))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("", setOf("npu")))
         // An ENGLISH locale keeps `pro` however fast the silicon is. Steering an English speaker
         // onto a multilingual tier because the device is capable is the Bengali review mirrored:
         // it trades the accuracy they came for against a speed they never asked about.
-        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en", true))
-        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en-US", true))
-        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("EN-au", true))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en", setOf("npu")))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en-US", setOf("npu")))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("EN-au", setOf("npu")))
         // Gate says no: 3.7's answer, unchanged, for every locale.
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", false))
-        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en-US", false))
+        assertEquals("multi", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", emptySet()))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en-US", emptySet()))
     }
 
     @Test fun the_gated_tier_leads_the_lineup_without_promoting_the_english_only_tier() {
@@ -205,16 +207,16 @@ class ModelTierCopyTest {
         // that was supposed to be about silicon.
         assertEquals(
             listOf("npu", "multi", "pro"),
-            ModelTierCopy.orderedForLanguageTagFor("bn-BD", true),
+            ModelTierCopy.orderedForLanguageTagFor("bn-BD", setOf("npu")),
         )
         // English locale on a capable device: `pro` leads, and the gated tier is LAST rather than
         // absent. The user can still reach it; they are simply not pushed at it.
         assertEquals(
             listOf("pro", "multi", "npu"),
-            ModelTierCopy.orderedForLanguageTagFor("en-US", true),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu")),
         )
-        assertEquals(listOf("multi", "pro"), ModelTierCopy.orderedForLanguageTagFor("bn-BD", false))
-        assertEquals(listOf("pro", "multi"), ModelTierCopy.orderedForLanguageTagFor("en-US", false))
+        assertEquals(listOf("multi", "pro"), ModelTierCopy.orderedForLanguageTagFor("bn-BD", emptySet()))
+        assertEquals(listOf("pro", "multi"), ModelTierCopy.orderedForLanguageTagFor("en-US", emptySet()))
     }
 
     @Test fun the_lineup_is_a_permutation_of_this_devices_pickable_set_and_the_steer_leads_it() {
@@ -222,24 +224,30 @@ class ModelTierCopyTest {
         // surfaces make TWO calls: one for the cards, one for the badge and the highlight. If the
         // two ever disagree, the lineup leads with one card while "Best match for your language"
         // sits on another: every element present, every element in the wrong relationship to the
-        // others, and nothing in the type system to notice.
+        // others, and nothing in the type system to notice. Every reachable gate answer is
+        // driven: none, either tier alone, both.
         listOf("en", "en-US", "bn", "bn-BD", "de-AT", "zh-Hans-CN", "").forEach { tag ->
-            listOf(true, false).forEach { npuAvailable ->
-                val expected = WhisperCatalog.pickableFor(npuAvailable).map { it.id }
-                val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, npuAvailable)
+            listOf(
+                emptySet(),
+                setOf("npu"),
+                setOf("npu-turbo"),
+                setOf("npu", "npu-turbo"),
+            ).forEach { offered ->
+                val expected = WhisperCatalog.pickableFor(offered).map { it.id }
+                val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, offered)
                 assertEquals(
-                    "'$tag'/$npuAvailable lost or duplicated a tier",
+                    "'$tag'/$offered lost or duplicated a tier",
                     expected.size,
                     ordered.size,
                 )
                 assertEquals(
-                    "'$tag'/$npuAvailable is not a permutation of what this device can pick",
+                    "'$tag'/$offered is not a permutation of what this device can pick",
                     expected.toSet(),
                     ordered.toSet(),
                 )
                 assertEquals(
-                    "'$tag'/$npuAvailable: the badged tier is not the one the lineup leads with",
-                    ModelTierCopy.steerIdForLanguageTagFor(tag, npuAvailable),
+                    "'$tag'/$offered: the badged tier is not the one the lineup leads with",
+                    ModelTierCopy.steerIdForLanguageTagFor(tag, offered),
                     ordered.first(),
                 )
                 ordered.forEach {
@@ -250,18 +258,18 @@ class ModelTierCopyTest {
         }
     }
 
-    @Test fun a_device_that_failed_the_gate_never_sees_the_gated_tier_at_all() {
+    @Test fun a_device_that_failed_the_gate_never_sees_a_gated_tier_at_all() {
         listOf("en", "en-US", "en_GB", "bn", "bn-BD", "de-AT", "zh-Hans-CN", "fr-CA", "").forEach { tag ->
-            val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, npuAvailable = false)
+            val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, emptySet())
             assertFalse(
-                "'$tag': the gated tier reached a device whose gate said no",
-                ordered.contains("npu"),
+                "'$tag': a gated tier reached a device whose gate said no",
+                ordered.contains("npu") || ordered.contains("npu-turbo"),
             )
             assertEquals("'$tag': the ungated lineup is 3.7's two tiers", 2, ordered.size)
             assertTrue(
                 "'$tag': the ungated steer is not a tier this device can pick",
                 WhisperCatalog.pickable.map { it.id }
-                    .contains(ModelTierCopy.steerIdForLanguageTagFor(tag, false)),
+                    .contains(ModelTierCopy.steerIdForLanguageTagFor(tag, emptySet())),
             )
             // The 3.7 spelling still answers identically: the new overload is the same rule with
             // one more input, not a second rule free to drift from it.
@@ -271,6 +279,92 @@ class ModelTierCopyTest {
         // about the gate moves the catalog default or lets a gated tier into `pickable`.
         assertEquals("pro", WhisperCatalog.DEFAULT_MODEL_ID)
         assertFalse(WhisperCatalog.pickable.map { it.id }.contains("npu"))
+        assertFalse(WhisperCatalog.pickable.map { it.id }.contains("npu-turbo"))
+    }
+
+    // ------------------------------------------------------------ 4.1: the second gated tier
+    //
+    // Turbo's whole steering contract is a negative: it NEVER steers and NEVER auto-selects.
+    // The positive claims — where it sits, what its card says — follow.
+
+    @Test fun the_npu_turbo_tier_never_steers_for_any_locale_or_any_offer_set() {
+        // Decision 8: the steer is a promotion, and turbo's claim is unproved in the one way that
+        // would justify one — no WER has been measured for any w8a16 Whisper variant, and its own
+        // card says "slower". Every reachable offer set, every locale shape: the steer is never
+        // the turbo tier. (Never auto-SELECTS is pinned where selection lives: the chooser's
+        // pickedTierId starts null — ChooserSteerWiringPinTest — and DEFAULT_MODEL_ID is `pro`.)
+        listOf("en", "en-US", "bn", "bn-BD", "zh-Hans-CN", "fr-CA", "").forEach { tag ->
+            listOf(
+                emptySet(),
+                setOf("npu"),
+                setOf("npu-turbo"),
+                setOf("npu", "npu-turbo"),
+            ).forEach { offered ->
+                assertFalse(
+                    "'$tag'/$offered: the steer landed on npu-turbo",
+                    ModelTierCopy.steerIdForLanguageTagFor(tag, offered) == "npu-turbo",
+                )
+            }
+        }
+    }
+
+    @Test fun the_npu_steer_survives_turbos_arrival() {
+        // The brief's exact claim: setOf("npu", "npu-turbo") still steers to `npu` — adding the
+        // second gated tier to the offer set changes NOTHING about who is steered where.
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", setOf("npu", "npu-turbo")))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("zh-Hans-CN", setOf("npu", "npu-turbo")))
+        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("", setOf("npu", "npu-turbo")))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en-US", setOf("npu", "npu-turbo")))
+    }
+
+    @Test fun a_turbo_only_device_keeps_the_cpu_steer() {
+        // The case the old Boolean could not even express: turbo installed, npu not. The steer
+        // body names "npu" and nothing else, so a turbo-only offer set reproduces the ungated
+        // steer exactly — turbo is reachable, below, and never pushed.
+        assertEquals("multi", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", setOf("npu-turbo")))
+        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en", setOf("npu-turbo")))
+        assertEquals(
+            listOf("multi", "pro", "npu-turbo"),
+            ModelTierCopy.orderedForLanguageTagFor("bn-BD", setOf("npu-turbo")),
+        )
+        assertEquals(
+            listOf("pro", "multi", "npu-turbo"),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu-turbo")),
+        )
+    }
+
+    @Test fun turbo_joins_the_lineup_below_the_steer() {
+        // The full two-tier lineups, exact: the steered card leads, the 3.7 second key keeps
+        // `multi` ahead of `pro` for a non-English user, and turbo — which never steers — sits
+        // last in catalog order on both.
+        assertEquals(
+            listOf("npu", "multi", "pro", "npu-turbo"),
+            ModelTierCopy.orderedForLanguageTagFor("bn-BD", setOf("npu", "npu-turbo")),
+        )
+        assertEquals(
+            listOf("pro", "multi", "npu", "npu-turbo"),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu", "npu-turbo")),
+        )
+    }
+
+    @Test fun the_lineup_with_both_npu_tiers_is_a_permutation_of_pickableFor_with_the_steer_leading() {
+        // The brief's exact claim, stated against the both-tiers set specifically (the loop above
+        // drives it too — this is the named case a reader will look for).
+        listOf("en-US", "bn-BD", "zh-Hans-CN", "").forEach { tag ->
+            val both = setOf("npu", "npu-turbo")
+            val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, both)
+            assertEquals(
+                "'$tag': not a permutation of pickableFor(both)",
+                WhisperCatalog.pickableFor(both).map { it.id }.toSet(),
+                ordered.toSet(),
+            )
+            assertEquals("'$tag': lost or duplicated a tier", 4, ordered.size)
+            assertEquals(
+                "'$tag': the steered tier does not lead",
+                ModelTierCopy.steerIdForLanguageTagFor(tag, both),
+                ordered.first(),
+            )
+        }
     }
 
     // ---------------------------------------------------------------- the 4.0 gated tier
@@ -346,6 +440,78 @@ class ModelTierCopyTest {
                 assertFalse("tier '${model.id}' copy makes the absolute claim '$needle'", all.contains(needle))
             }
         }
+    }
+
+    // ---------------------------------------------------------------- the 4.1 npu-turbo card
+    //
+    // The second tier the census loops could never have reached through `pickable`, so the same
+    // discipline is restated against the owner-approved strings — mirroring the npu pins Q7a's
+    // I5 established.
+
+    @Test fun the_npu_turbo_headline_is_pinned_exactly_and_takes_a_position() {
+        val copy = ModelTierCopy.forId("npu-turbo")!!
+        // "Best quality" is the spec's owner-approved framing (decision 8); ", slower" is the
+        // disclosure the house rules require beside it — and it is already in POSITION_WORDS, so
+        // the census passes WITHOUT the test's constant being edited to fit the copy, which
+        // would be the wrong way round.
+        assertEquals("Best quality, slower", copy.headline)
+        assertTrue(
+            "the npu-turbo headline takes no speed-vs-accuracy position",
+            POSITION_WORDS.any { copy.headline.lowercase().contains(it) },
+        )
+    }
+
+    @Test fun the_npu_turbo_badges_state_coverage_and_the_size_of_the_whole_pair() {
+        val copy = ModelTierCopy.forId("npu-turbo")!!
+        assertEquals(listOf("90+ languages", "1072 MB"), copy.badges)
+        // The SAME coverage string every multilingual tier carries, so the cards stay comparable
+        // at a glance.
+        assertTrue(copy.badges.contains("90+ languages"))
+        // 1072 MB is the PAIR (encoder + decoder), within the census's ±5 MB of approxBytes...
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        val statedMb = copy.badges.first { it.endsWith(" MB") }.removeSuffix(" MB").toInt()
+        val expectedMb = (turbo.approxBytes / 1_000_000L).toInt()
+        assertTrue(
+            "npu-turbo badge says $statedMb MB but the install is ~$expectedMb MB",
+            kotlin.math.abs(statedMb - expectedMb) <= 5,
+        )
+        // ...and STRICTLY greater than the encoder alone, so a future edit that badges only the
+        // 776 MB primary fires here even before the approxBytes tolerance does.
+        assertTrue(
+            "the badge must state the pair, not just the encoder",
+            statedMb > turbo.primaryBytes / 1_000_000L,
+        )
+    }
+
+    @Test fun the_npu_turbo_body_states_the_trade_and_claims_no_speed_win() {
+        val copy = ModelTierCopy.forId("npu-turbo")!!
+        assertEquals(
+            "Large-v3's own encoder, on your phone's AI chip. Bigger and slower than " +
+                "Multilingual on NPU — the reason to pick it is the words, not the speed.",
+            copy.body,
+        )
+        // The comparison is OUR OWN other NPU card, named by its display family — the only
+        // before/after this branch is entitled to. And the trade is stated against it honestly:
+        // no WER has been measured for any w8a16 Whisper variant, so "the words" is a reason to
+        // A/B, never a measured claim, and "faster" appears nowhere on this card.
+        assertTrue(copy.body.contains("Multilingual on NPU"))
+        assertTrue(copy.body.contains("slower"))
+        assertFalse(
+            "the turbo card may not claim a speed win anywhere",
+            (copy.headline + " " + copy.body).lowercase().contains("faster"),
+        )
+    }
+
+    @Test fun no_two_offered_tiers_share_a_headline() {
+        // New with the second NPU card: the lineup now holds two tiers a user must tell apart at
+        // a glance, and the headline is the glance. A copy-paste that leaves two cards reading
+        // identically is exactly the mutation this census exists for.
+        val headlines = offeredTiers.map { ModelTierCopy.forId(it.id)!!.headline }
+        assertEquals(
+            "two offered tiers share a headline: $headlines",
+            headlines.size,
+            headlines.toSet().size,
+        )
     }
 
     private companion object {

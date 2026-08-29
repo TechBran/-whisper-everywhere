@@ -1,5 +1,6 @@
 package com.whispereverywhere.model
 
+import com.whispereverywhere.npu.NpuModelSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -11,13 +12,14 @@ class WhisperCatalogHelpersTest {
 
     @Test
     fun catalog_hasFiveEntries_withExpectedIds() {
-        // 4.0: 6 -> 7. The census pin fired when `npu` was added and is resolved here rather than
-        // relaxed — the whole point of the pin is that a tier cannot arrive unannounced. `npu` is
-        // last because entries order is chronological, and it is GATED, so this list growing does
-        // not change what any device is offered (see the pickable/pickableFor pair below).
+        // 4.0: 6 -> 7; 4.1: 7 -> 8. The census pin fired for `npu` and again for `npu-turbo`,
+        // exactly as designed, and is resolved here rather than relaxed — the whole point of the
+        // pin is that a tier cannot arrive unannounced. Both npu-class tiers are last because
+        // entries order is chronological, and both are GATED, so this list growing does not
+        // change what any device is offered (see the pickable/pickableFor pair below).
         val ids = WhisperCatalog.entries.map { it.id }
-        assertEquals(7, WhisperCatalog.entries.size)
-        assertEquals(listOf("eco", "base", "pro", "extreme", "multi", "ultra", "npu"), ids)
+        assertEquals(8, WhisperCatalog.entries.size)
+        assertEquals(listOf("eco", "base", "pro", "extreme", "multi", "ultra", "npu", "npu-turbo"), ids)
     }
 
     @Test
@@ -188,6 +190,15 @@ class WhisperCatalogHelpersTest {
             assertEquals("$who sha256 length", 64, sha.length)
             assertTrue("$who sha256 must be lowercase hex", sha.matches(Regex("[0-9a-f]{64}")))
         }
+        // 4.1: DISTINCT, all of them. With four npu-class digests in one file, a copy-paste
+        // between two PairedArtifacts is a real mutation — and it would install the wrong half of
+        // a pair WITH A PASSING VERIFICATION, because the digest it checks against would be the
+        // digest of the file that arrived.
+        assertEquals(
+            "every catalog sha256 must be distinct — a duplicated digest verifies the wrong file",
+            digests.size,
+            digests.map { it.second }.toSet().size,
+        )
     }
 
     @Test fun the_npu_tier_states_the_asset_pair_it_actually_needs() {
@@ -239,19 +250,46 @@ class WhisperCatalogHelpersTest {
     @Test fun a_gated_tier_is_never_pickable_and_is_never_the_default() {
         // The offered lineup must not change on any device that cannot answer the gate question,
         // and the fallback every no-pick-on-record path lands on must stay device-independent.
-        assertEquals(listOf("npu"), WhisperCatalog.entries.filter { it.gated }.map { it.id })
+        // 4.1: this census fired when npu-turbo arrived — the second gated tier, announced here.
+        assertEquals(listOf("npu", "npu-turbo"), WhisperCatalog.entries.filter { it.gated }.map { it.id })
         assertFalse(WhisperCatalog.pickable.any { it.gated })
         assertFalse(WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!.gated)
         assertEquals("multi", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
     }
 
-    @Test fun pickableFor_offers_npu_only_when_the_gate_passes() {
-        // false is the every-other-device answer and must be byte-identical to `pickable`.
-        assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(npuAvailable = false))
-        assertEquals(listOf("pro", "multi"), WhisperCatalog.pickableFor(false).map { it.id })
-        // true ADDS the tier, changing nothing else — retired tiers stay retired.
-        assertEquals(listOf("pro", "multi", "npu"), WhisperCatalog.pickableFor(true).map { it.id })
-        assertTrue(WhisperCatalog.pickableFor(true).containsAll(WhisperCatalog.pickable))
+    @Test fun pickableFor_offers_a_gated_tier_exactly_when_its_id_is_in_the_set() {
+        // 4.1: the Boolean became a set — two gated tiers can be independently installed, and one
+        // bit cannot say which. The empty set is the every-other-device answer and must be
+        // identical to `pickable`; each id ADDS its own tier and nothing else, in catalog order.
+        assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(emptySet()))
+        assertEquals(listOf("pro", "multi"), WhisperCatalog.pickableFor(emptySet()).map { it.id })
+        assertEquals(
+            listOf("pro", "multi", "npu"),
+            WhisperCatalog.pickableFor(setOf("npu")).map { it.id },
+        )
+        // The turbo-only device: the case the old `it.id == "npu"` literal could never answer —
+        // a second gated tier would have had to be REMEMBERED into it.
+        assertEquals(
+            listOf("pro", "multi", "npu-turbo"),
+            WhisperCatalog.pickableFor(setOf("npu-turbo")).map { it.id },
+        )
+        assertEquals(
+            listOf("pro", "multi", "npu", "npu-turbo"),
+            WhisperCatalog.pickableFor(setOf("npu", "npu-turbo")).map { it.id },
+        )
+        assertTrue(WhisperCatalog.pickableFor(setOf("npu", "npu-turbo")).containsAll(WhisperCatalog.pickable))
+    }
+
+    @Test fun an_id_in_the_offer_set_never_resurrects_a_retired_or_unknown_tier() {
+        // The set is the caller's GATE answer, not a general admission list: `!it.retired` still
+        // applies first, so a retired id in the set changes nothing, and an id the catalog cannot
+        // resolve admits nothing at all.
+        assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(setOf("ultra")))
+        assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(setOf("eco", "nope")))
+        assertEquals(
+            listOf("pro", "multi", "npu"),
+            WhisperCatalog.pickableFor(setOf("npu", "ultra", "nope")).map { it.id },
+        )
     }
 
     // ------------------------------------------------ 4.0 Q7b fix round: the download refusal
@@ -270,11 +308,13 @@ class WhisperCatalogHelpersTest {
         }
         // Stated concretely for today's catalog so the general rule above cannot go vacuous.
         assertFalse(WhisperCatalog.isInstallableByDownload(WhisperCatalog.byId("npu")!!))
+        assertFalse(WhisperCatalog.isInstallableByDownload(WhisperCatalog.byId("npu-turbo")!!))
         assertTrue(WhisperCatalog.isInstallableByDownload(WhisperCatalog.byId("pro")!!))
         assertTrue(WhisperCatalog.isInstallableByDownload(WhisperCatalog.byId("multi")!!))
         assertEquals(
-            "exactly one tier is refused today, and it is the paired one",
-            listOf("npu"),
+            "exactly two tiers are refused today, and they are the paired ones — this census " +
+                "fired when npu-turbo arrived (4.1), exactly as designed",
+            listOf("npu", "npu-turbo"),
             WhisperCatalog.entries.filterNot { WhisperCatalog.isInstallableByDownload(it) }
                 .map { it.id },
         )
@@ -325,5 +365,127 @@ class WhisperCatalogHelpersTest {
             reason.contains("installs by import, not download"),
         )
         assertFalse("the refusal must never be a bare boolean stringified", reason == "false")
+    }
+
+    // ------------------------------------------------------------ 4.1 L5: the npu-turbo tier
+
+    @Test fun the_npu_turbo_tier_states_the_asset_pair_it_actually_needs() {
+        // Every value MEASURED (the plan's asset block, 2026-08-29): both digests streamed out of
+        // the local vendor zip, both lengths read from its entry table. No placeholder ships —
+        // the 4.0 I6 rule, applied to the second pair.
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        assertEquals(ModelScope.MULTILINGUAL, turbo.scope)   // large-v3-turbo: 100 languages
+        assertEquals(0L, turbo.minRamBytes)                  // the SoC gate is the real gate
+        // OWNER-PENDING and pinned for the same reason npu's is: nothing else in app/src names
+        // this string, so without this line it could be reworded — or emptied — with a green
+        // suite. The parenthetical names the underlying model, mirroring every other tier.
+        assertEquals("Multilingual on NPU (large-v3-turbo)", turbo.displayName)
+        assertTrue(turbo.gated)
+        assertFalse(turbo.retired)
+        assertFalse(turbo.unsupported)
+        // The REPACKED names. The vendor zip's entries carry the SAME bare names as the 4.0 npu
+        // tier's installed files, in the same models directory — importing them un-renamed would
+        // overwrite the owner's 358 MB pair, which is why the catalog states `turbo_*`.
+        assertEquals("turbo_encoder_qairt_context.bin", turbo.fileName)
+        assertEquals("f7d11c08a20ea671f59b3ace2f9421da00b06170ac9fe946f29092ee59be6bbe", turbo.sha256)
+        assertEquals(775_831_552L, turbo.primaryBytes)
+
+        val decoder = turbo.pairedArtifact!!
+        assertEquals("turbo_decoder_qairt_context.bin", decoder.fileName)
+        assertEquals("c19b067766180843fca6266531605bf037820c5e5ae178bd6dc03785df4c6ae4", decoder.sha256)
+        assertEquals(295_854_080L, decoder.approxBytes)
+
+        // The advertised size is the PAIR: what the user installs, stores, and reads on the badge.
+        assertEquals(1_071_685_632L, turbo.approxBytes)
+        assertEquals(turbo.approxBytes, turbo.primaryBytes + decoder.approxBytes)
+        // Both files come out of one archive, so one URL is the honest answer for both.
+        assertEquals(turbo.url, decoder.url)
+    }
+
+    @Test fun the_turbo_id_is_the_spec_tables_own_tier_id() {
+        // The string has ONE home (4.1 L4 handoff): `NpuModelSpec.TURBO.tierId`. The catalog
+        // entry resolves through the row's own field, so the two cannot disagree by construction
+        // — and this pin states the value, so the field cannot drift either. Everything keyed on
+        // the id — forTier, the mel-donor auto-exclusion, the L8 routing re-spec — reads this
+        // exact string.
+        assertEquals("npu-turbo", NpuModelSpec.TURBO.tierId)
+        assertEquals(NpuModelSpec.TURBO.tierId, WhisperCatalog.byId("npu-turbo")!!.id)
+    }
+
+    @Test fun the_spec_table_and_the_gated_flag_agree_tier_by_tier() {
+        // Both directions are load-bearing (the L3/L4 handoffs). A gated tier WITHOUT a spec row
+        // could never construct the NPU backend — the constructor takes a spec and has no
+        // default. A ggml tier WITH one would silently stop being a mel donor and a CPU fallback,
+        // because `isMelDonorEligible` keys its npu-class exclusion on `forTier` — an accidental
+        // row for `pro` would remove the English flagship from the donor pool with a green suite.
+        WhisperCatalog.entries.forEach { model ->
+            assertEquals(
+                "tier '${model.id}': `gated` and `NpuModelSpec.forTier` must agree — every " +
+                    "gated npu-class tier has a spec row, and no ggml tier may ever gain one",
+                model.gated,
+                NpuModelSpec.forTier(model.id) != null,
+            )
+        }
+    }
+
+    @Test fun the_turbo_encoder_is_size_gated_against_its_own_bytes_not_the_pairs() {
+        // The same reason primaryBytes exists at all (Q7a R14, restated for the second pair): the
+        // turbo encoder is ~28 % under the pair's advertised sum, so gating it against
+        // approxBytes reads "not installed" forever, whatever the owner provisioned.
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        assertFalse(
+            "the encoder's own length must NOT satisfy the pair's advertised size",
+            WhisperCatalog.sizeWithinTolerance(turbo.primaryBytes, turbo.approxBytes),
+        )
+        assertTrue(WhisperCatalog.sizeWithinTolerance(turbo.primaryBytes, turbo.primaryBytes))
+        // And the two halves are 2.6x apart, so a transposed gate cannot quietly pass either.
+        assertFalse(
+            "the decoder's length must not satisfy the encoder's gate",
+            WhisperCatalog.sizeWithinTolerance(turbo.pairedArtifact!!.approxBytes, turbo.primaryBytes),
+        )
+    }
+
+    @Test fun both_gated_tiers_record_the_vendor_zip_they_actually_came_from() {
+        // Q7a M2, folded here: the URL on a gated tier is provenance — the ONLY record of where
+        // these bytes came from — and it was unpinned. Pinned by endsWith on the vendor path
+        // (model id, release version, runtime, precision, chipset): the bucket host is the
+        // vendor's to move, the release path is the identity.
+        val npu = WhisperCatalog.byId("npu")!!
+        assertTrue(
+            "npu's URL must record the whisper_small_quantized v0.61.0 8gen3 release, got: ${npu.url}",
+            npu.url.endsWith(
+                "/qai-hub-models/models/whisper_small_quantized/releases/v0.61.0/" +
+                    "whisper_small_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3.zip",
+            ),
+        )
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        assertTrue(
+            "npu-turbo's URL must record the whisper_large_v3_turbo_quantized v0.61.0 8gen3 " +
+                "release, got: ${turbo.url}",
+            turbo.url.endsWith(
+                "/qai-hub-models/models/whisper_large_v3_turbo_quantized/releases/v0.61.0/" +
+                    "whisper_large_v3_turbo_quantized-precompiled_qnn_onnx-w8a16-" +
+                    "qualcomm_snapdragon_8gen3.zip",
+            ),
+        )
+        // Each pair's two entries share their archive — pinned per tier so a paired artefact can
+        // never point at a different provenance than its primary.
+        assertEquals(npu.url, npu.pairedArtifact!!.url)
+        assertEquals(turbo.url, turbo.pairedArtifact!!.url)
+    }
+
+    @Test fun the_turbo_refusal_names_the_tier_and_both_files_it_actually_needs() {
+        // The same claim the npu refusal test makes, for the tier whose files are ~3x the size:
+        // the reader of this line is working out what to do INSTEAD, and "import these two" has
+        // to be in it. Asserted here because download() needs a Context no JVM test has.
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        val reason = WhisperCatalog.notInstallableByDownloadReason(turbo)
+        assertTrue("the refusal does not name the tier", reason.contains("'npu-turbo'"))
+        assertTrue("the refusal does not name the encoder", reason.contains("turbo_encoder_qairt_context.bin"))
+        assertTrue("the refusal does not name the paired decoder", reason.contains("turbo_decoder_qairt_context.bin"))
+        assertTrue(
+            "the refusal must say import, not download",
+            reason.contains("installs by import, not download"),
+        )
     }
 }

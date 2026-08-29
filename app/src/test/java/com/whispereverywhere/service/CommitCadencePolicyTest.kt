@@ -124,10 +124,12 @@ class CommitCadencePolicyTest {
         // runs on the Hexagon at ~405 ms sustained (spike-measured) against multi's 2.3 s fixed
         // cost, and the decode is bounded at 196 tokens; the 6 s floor would have thrown the win
         // away. Provisional on one spike pass — Q10a measures the full tier on device.
+        // 4.1: npu-turbo joined and the pin fired again. The decision: 1_200L, the FAST row —
+        // see npuTurboRidesTheFastRowOnItsPublishedFigures for the reasoning and its trigger.
         val expected = mapOf(
             "eco" to 1_200L, "base" to 1_200L, "pro" to 1_200L,
             "multi" to 6_000L, "extreme" to 8_000L, "ultra" to 8_000L,
-            "npu" to 1_200L,
+            "npu" to 1_200L, "npu-turbo" to 1_200L,
         )
         assertEquals(
             "a catalog tier gained or lost an entry — decide its cadence",
@@ -137,6 +139,22 @@ class CommitCadencePolicyTest {
         for ((id, interval) in expected) {
             assertEquals(id, interval, CommitCadencePolicy.minCommitIntervalMs(id, isCloudBatch = false))
         }
+    }
+
+    @Test
+    fun npuTurboRidesTheFastRowOnItsPublishedFigures() {
+        // 4.1: published 8 Gen 3 raw-QNN figures put turbo at ~1.37-1.57 s per segment against
+        // npu's ~1.0 s measured — both well under the 2.3 s fixed cost that multi's 6 s floor
+        // exists for, and the floor is a minimum interval rather than a metronome: the VAD still
+        // cuts at real pauses. PROVISIONAL on L8's device measurement, exactly as npu's spike
+        // figure was: if the owner's `npu:` lines show per-segment cost above this cadence,
+        // commits will visibly lag, and that is the signal to give turbo its own constant rather
+        // than to widen the FAST row.
+        assertEquals(1_200L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = false))
+        // And cloud batch still wins outright on the npu-class tiers, exactly as it does on every
+        // other row — the flat floor is about the HTTP request, not the local silicon.
+        assertEquals(3_000L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = true))
+        assertEquals(3_000L, CommitCadencePolicy.minCommitIntervalMs("npu", isCloudBatch = true))
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.whispereverywhere.model
 
+import com.whispereverywhere.npu.NpuModelSpec
 import java.security.MessageDigest
 import kotlin.math.abs
 
@@ -69,9 +70,10 @@ data class WhisperModel(
      */
     val unsupported: Boolean = false,
     /**
-     * A tier only SOME devices may be offered — 4.0's npu, which is a precompiled QAIRT graph for
-     * one HTP architecture and is meaningless anywhere else. Orthogonal to [retired]: retired means
-     * "we stopped offering this to anyone", gated means "this device decides".
+     * A tier only SOME devices may be offered — the npu-class tiers (4.0's `npu`, 4.1's
+     * `npu-turbo`), which are precompiled QAIRT graphs for one HTP architecture and are
+     * meaningless anywhere else. Orthogonal to [retired]: retired means "we stopped offering this
+     * to anyone", gated means "this device decides".
      *
      * A gated tier is out of [WhisperCatalog.pickable] unconditionally and only enters the chooser
      * through [WhisperCatalog.pickableFor], whose argument is the caller's gate answer. That split
@@ -124,6 +126,12 @@ object WhisperCatalog {
     private const val SHA256_NPU_ENCODER = "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec"
     private const val SHA256_NPU_DECODER = "fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4"
 
+    // The 4.1 npu-turbo tier's two context binaries — the same discipline: MEASURED sha256s,
+    // streamed out of the local vendor zip at plan time (asset block, 2026-08-29). The digests are
+    // of the EXTRACTED entries, which is what lands on disk under the repacked names below.
+    private const val SHA256_NPU_TURBO_ENCODER = "f7d11c08a20ea671f59b3ace2f9421da00b06170ac9fe946f29092ee59be6bbe"
+    private const val SHA256_NPU_TURBO_DECODER = "c19b067766180843fca6266531605bf037820c5e5ae178bd6dc03785df4c6ae4"
+
     /**
      * Provenance of the npu pair: Qualcomm AI Hub's public precompiled QNN-ONNX release for
      * whisper_small_quantized on Snapdragon 8 Gen 3, the zip the spike measured. BOTH context
@@ -135,6 +143,22 @@ object WhisperCatalog {
         "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/" +
             "whisper_small_quantized/releases/v0.61.0/" +
             "whisper_small_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3.zip"
+
+    /**
+     * Provenance of the npu-turbo pair (4.1): Qualcomm AI Hub's public precompiled QNN-ONNX
+     * release for whisper_large_v3_turbo_quantized on Snapdragon 8 Gen 3 — the zip the plan's
+     * asset work downloaded, CRC-verified and hashed. Same shape as [NPU_ASSET_ZIP_URL]: both
+     * context binaries live inside this ONE archive, so both entries carry the same URL and
+     * neither is a DownloadManager source. Note the vendor zip is NOT the delivery zip — its
+     * entries sit under a directory prefix and carry the SAME bare names as the 4.0 npu tier's
+     * installed files, so the delivery repack (L8) strips the prefix and renames turbo's entries
+     * to the `turbo_*` filenames the catalog states below; importing the vendor names as-is
+     * would overwrite the owner's 358 MB npu pair.
+     */
+    private const val NPU_TURBO_ASSET_ZIP_URL =
+        "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/" +
+            "whisper_large_v3_turbo_quantized/releases/v0.61.0/" +
+            "whisper_large_v3_turbo_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3.zip"
 
     private fun urlFor(fileName: String): String = BASE_URL + fileName
 
@@ -240,6 +264,36 @@ object WhisperCatalog {
                 approxBytes = 225_316_864L,
             ),
         ),
+        WhisperModel(
+            // The id resolves through the spec row's OWN field (4.1 L4 handoff): "npu-turbo" has
+            // one home, NpuModelSpec.TURBO.tierId, and everything keyed on it — forTier, the
+            // mel-donor auto-exclusion, the L8 routing re-spec — reads the same string this
+            // entry carries, by construction rather than by two literals agreeing.
+            id = NpuModelSpec.TURBO.tierId,
+            displayName = "Multilingual on NPU (large-v3-turbo)",
+            // The REPACKED name. The vendor zip's entry is `encoder_qairt_context.bin` —
+            // byte-identical to the npu tier's installed encoder, in the same models directory —
+            // so the delivery zip renames turbo's entries and npu keeps its 4.0 names untouched.
+            fileName = "turbo_encoder_qairt_context.bin",
+            url = NPU_TURBO_ASSET_ZIP_URL,
+            // The PAIR — 775,831,552 + 295,854,080. What the badge states, what the user stores.
+            approxBytes = 1_071_685_632L,
+            sha256 = SHA256_NPU_TURBO_ENCODER,
+            // large-v3-turbo: 100 languages, the same multilingual promise as `multi` and `npu`.
+            scope = ModelScope.MULTILINGUAL,
+            // No RAM gate, same reasoning as `npu`: the SoC gate already restricts this tier to
+            // 8 Gen 3-class hardware.
+            minRamBytes = 0L,
+            gated = true,
+            // The encoder alone — what isInstalled gates models/<fileName> against.
+            primaryBytes = 775_831_552L,
+            pairedArtifact = PairedArtifact(
+                fileName = "turbo_decoder_qairt_context.bin",
+                url = NPU_TURBO_ASSET_ZIP_URL,
+                sha256 = SHA256_NPU_TURBO_DECODER,
+                approxBytes = 295_854_080L,
+            ),
+        ),
     )
 
     /**
@@ -251,16 +305,22 @@ object WhisperCatalog {
     val pickable: List<WhisperModel> = entries.filter { !it.retired && !it.gated }
 
     /**
-     * [pickable] plus the npu tier when [npuAvailable] — the caller's answer to
-     * `NpuWhisperBackend.isTierAvailable(soc, mfr, libDir) && WhisperModelManager.isInstalled(npu)`
-     * (Q6 handoff §9.1: capability AND the 358 MB actually on disk). Computed once per process,
-     * never in a recomposition — the capability half dlopens two libraries on its first call.
+     * [pickable] plus every gated tier whose id is in [offeredGatedIds] — the caller's gate
+     * answer, i.e. `WhisperEverywhereApp.offeredNpuTierIds()`: hardware capability AND that
+     * tier's own files on disk, per tier. The set is produced off Main and memoised per process
+     * on the capability half — the probe dlopens two libraries on its first evaluation.
      *
-     * Only `npu` is named: a future gated tier stays hidden until someone decides what its own gate
-     * is, rather than inheriting this one by accident.
+     * **The Boolean became a set in 4.1 (L5)** because two gated tiers can be independently
+     * installed and one bit cannot say which — and because the old `it.id == "npu"` was a literal
+     * a second gated tier would have had to be remembered into. A gated tier is offered iff its
+     * id is in the set, which is what the parameter now means; `!it.retired` still applies first,
+     * so an id in the set never resurrects a retired tier, and an id the catalog cannot resolve
+     * admits nothing.
+     *
+     * `emptySet()` is the every-other-device answer and reproduces [pickable] exactly.
      */
-    fun pickableFor(npuAvailable: Boolean): List<WhisperModel> =
-        if (npuAvailable) entries.filter { !it.retired && (!it.gated || it.id == "npu") } else pickable
+    fun pickableFor(offeredGatedIds: Set<String>): List<WhisperModel> =
+        entries.filter { !it.retired && (!it.gated || it.id in offeredGatedIds) }
 
     /**
      * Whether `WhisperModelManager.download` can install this tier **at all**.

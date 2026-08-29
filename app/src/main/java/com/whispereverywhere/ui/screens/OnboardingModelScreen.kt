@@ -59,11 +59,12 @@ fun OnboardingModelScreen(
     // existing users but must not be selectable by anyone new. 3.7 Workstream H orders them by
     // locale: the steered tier is first and carries the badge.
     val languageTag = java.util.Locale.getDefault().toLanguageTag()
-    // 4.0: the gated npu tier joins the lineup only where the SoC gate, the QNN probe AND both
-    // context binaries all say yes. The probe dlopens two QNN libraries and QnnAsrNative forbids
-    // Main for every entry point, so the answer is produced OFF Main and memoised for the process
-    // (WhisperEverywhereApp.npuCapableDevice). `false` until it arrives, which is the ungated
-    // lineup every device that will never pass the gate keeps rendering.
+    // 4.0/4.1: a gated tier joins the lineup only where the SoC gate, the QNN probe AND its own
+    // context binaries all say yes — per tier, which is why the answer is a SET of tier ids
+    // (WhisperEverywhereApp.offeredNpuTierIds). The probe dlopens two QNN libraries and
+    // QnnAsrNative forbids Main for every entry point, so the answer is produced OFF Main; empty
+    // until it arrives, which is the ungated lineup every device that will never pass the gate
+    // keeps rendering.
     //
     // KEYED on the install generation. `produceState` with no key runs its producer once per
     // composition ENTRY and never again, so the freshly-stat'd installed half would be sampled
@@ -71,22 +72,22 @@ fun OnboardingModelScreen(
     // import the pair and watch the lineup not change. The key is bumped by
     // PreferencesManager.notifyModelInstalled(), which every install path calls.
     val installGeneration by ModelInstallSignal.generation.collectAsState()
-    val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {
-        value = withContext(Dispatchers.IO) { app.isNpuTierOffered() }
+    val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
+        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }
     }
     // THE SECOND PRODUCER, and it is a different question from the first (4.0, Q8).
-    // `isNpuTierOffered()` is `capable && installed`, so on a gate-passing device with no assets it
-    // is false — and the tier is not in the lineup at all. That is correct for the CHOOSER and
-    // fatal for the IMPORT: an import entry gated on the offer gate could only ever appear after
-    // the files it exists to fetch had already arrived. So the import's gate is the capability half
-    // alone, read here. `npuCapableDevice` is `by lazy`, so this costs one memo read after the
-    // first; it is keyed identically anyway, because what the panel below renders depends on the
-    // installed half and must re-read when an import lands.
+    // The offer gate requires each tier's files on disk, so on a gate-passing device with no
+    // assets the set is empty — and no gated tier is in the lineup at all. That is correct for
+    // the CHOOSER and fatal for the IMPORT: an import entry gated on the offer gate could only
+    // ever appear after the files it exists to fetch had already arrived. So the import's gate is
+    // the capability half alone, read here. `npuCapableDevice` is `by lazy`, so this costs one
+    // memo read after the first; it is keyed identically anyway, because what the panel below
+    // renders depends on the installed half and must re-read when an import lands.
     val npuCapable by produceState(initialValue = false, key1 = installGeneration) {
         value = withContext(Dispatchers.IO) { app.npuCapableDevice }
     }
-    val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)
-    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)
+    val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
+    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds)
         .mapNotNull { WhisperCatalog.byId(it) }
 
     // Which tiers are actually on disk. Off Main — `isInstalled` stats one or two files per tier —
@@ -95,7 +96,7 @@ fun OnboardingModelScreen(
     val installedIds by produceState(
         initialValue = emptySet<String>(),
         key1 = installGeneration,
-        key2 = npuAvailable,
+        key2 = npuTierIds,
     ) {
         value = withContext(Dispatchers.IO) {
             models.filter { manager.isInstalled(it) }.map { it.id }.toSet()
@@ -195,7 +196,10 @@ fun OnboardingModelScreen(
             // pair being on the device.
             if (npuCapable) {
                 NpuImportPanel(
-                    offered = npuAvailable,
+                    // The panel imports the npu (small) pair, so what it SAYS keys on that tier
+                    // being offered — not on the set being non-empty, which a turbo-only device
+                    // would satisfy while the npu pair is still absent.
+                    offered = NpuAssetImport.TIER_ID in npuTierIds,
                     state = npuImportState,
                     onImport = onImportNpuAssets,
                 )
