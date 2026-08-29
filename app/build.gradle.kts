@@ -243,6 +243,12 @@ android {
 // WhisperEverywhereApp.kt joins them in the Q7b micro-round: the same class now pins the offer
 // gate's two halves and the API-31 guard on both Build SOC fields there, and unlike the two
 // Compose screens it is a plain Kotlin class — exactly the shape Q7a measured going UP-TO-DATE.
+// (4.0 Q8) MainActivity.kt joins by the same stated rule — NpuImportWiringPinTest reads it, to pin
+// that the SAF launcher exists, that the Uri it yields reaches `importNpuAssetPair`, and that the
+// state the importer returns is what the screen renders. A launcher whose result nothing consumes
+// is a picker that opens, closes and silently does nothing, which is the one failure shape an
+// import is never allowed to have; it must not be possible to introduce it in a file the guard
+// does not re-read.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -257,6 +263,7 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
         "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt",
+        "src/main/java/com/whispereverywhere/MainActivity.kt",
         "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)

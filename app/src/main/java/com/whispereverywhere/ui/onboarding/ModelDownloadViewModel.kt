@@ -66,6 +66,24 @@ class ModelDownloadViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Adopt an ALREADY-INSTALLED tier — the same two writes [download] makes on success, without
+     * the network (4.0, Q8).
+     *
+     * The screen's only way to choose a tier used to be to download it. That re-fetched up to
+     * 574 MB for files already on disk, and on the `npu` tier it could not work at all: its assets
+     * arrive by import, `download()` refuses it at the sink, and so the one tier that can only be
+     * installed by hand had no path to `prefs.selectedModelId` from this screen.
+     *
+     * Guarded against stomping a live download, for the same reason [download] is.
+     */
+    fun select(model: WhisperModel) {
+        if (_state.value is DownloadState.Downloading || _state.value is DownloadState.Verifying) return
+        prefs.selectedModelId = model.id
+        prefs.onboardingCompleted = true
+        _state.value = DownloadState.Done(model.id)
+    }
+
     /** Reset back to Idle (e.g. after dismissing an error before retry). */
     fun reset() {
         if (_state.value !is DownloadState.Downloading && _state.value !is DownloadState.Verifying) {

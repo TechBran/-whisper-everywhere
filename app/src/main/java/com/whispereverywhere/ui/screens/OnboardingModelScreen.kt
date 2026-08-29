@@ -26,6 +26,8 @@ import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
+import com.whispereverywhere.npu.NpuAssetImport
+import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel.DownloadState
 import com.whispereverywhere.ui.theme.Primary
@@ -35,10 +37,19 @@ import com.whispereverywhere.util.formatBytes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * @param npuImportState the SAF import's progress, owned by [com.whispereverywhere.MainActivity]
+ *        because the document-picker launcher lives there (4.0, Q8). Defaulted so the screen keeps
+ *        rendering for any caller that does not have an importer.
+ * @param onImportNpuAssets opens the document picker. Its GATE is the capability half alone — see
+ *        the `npuCapable` producer below.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnboardingModelScreen(
     onModelReady: () -> Unit,
+    npuImportState: NpuAssetImport.ImportState = NpuAssetImport.ImportState.Idle,
+    onImportNpuAssets: () -> Unit = {},
     viewModel: ModelDownloadViewModel = viewModel()
 ) {
     val app = WhisperEverywhereApp.getInstance()
@@ -62,9 +73,39 @@ fun OnboardingModelScreen(
     val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {
         value = withContext(Dispatchers.IO) { app.isNpuTierOffered() }
     }
+    // THE SECOND PRODUCER, and it is a different question from the first (4.0, Q8).
+    // `isNpuTierOffered()` is `capable && installed`, so on a gate-passing device with no assets it
+    // is false — and the tier is not in the lineup at all. That is correct for the CHOOSER and
+    // fatal for the IMPORT: an import entry gated on the offer gate could only ever appear after
+    // the files it exists to fetch had already arrived. So the import's gate is the capability half
+    // alone, read here. `npuCapableDevice` is `by lazy`, so this costs one memo read after the
+    // first; it is keyed identically anyway, because what the panel below renders depends on the
+    // installed half and must re-read when an import lands.
+    val npuCapable by produceState(initialValue = false, key1 = installGeneration) {
+        value = withContext(Dispatchers.IO) { app.npuCapableDevice }
+    }
     val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)
     val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuAvailable)
         .mapNotNull { WhisperCatalog.byId(it) }
+
+    // Which tiers are actually on disk. Off Main — `isInstalled` stats one or two files per tier —
+    // and keyed on the same generation, so a finished download or import updates the cards without
+    // leaving the screen. A card for an installed tier must not offer to download it (Q7a §9.3).
+    val installedIds by produceState(
+        initialValue = emptySet<String>(),
+        key1 = installGeneration,
+        key2 = npuAvailable,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            models.filter { manager.isInstalled(it) }.map { it.id }.toSet()
+        }
+    }
+
+    // The npu tier's own report about the LAST SESSION: null while it is live or has never run,
+    // `"<stage>: <detail>"` after a stage declined and the session fell back to the CPU model. The
+    // backend publishes it from the setter of its `unavailableReason` (Q6); this is that property's
+    // consumer, and it renders the same fact the `npu: unavailable` log line carries.
+    val npuUnavailableReason by NpuTierStatus.unavailableReason.collectAsState()
 
     val state by viewModel.state.collectAsState()
 
@@ -123,6 +164,9 @@ fun OnboardingModelScreen(
                     model = model,
                     recommended = recommended,
                     isSteered = isSteered,
+                    installed = installedIds.contains(model.id),
+                    unavailableNote = if (model.id == NpuAssetImport.TIER_ID)
+                        NpuTierStatus.cardNote(npuUnavailableReason) else null,
                     state = if (isActive) state else DownloadState.Idle,
                     onSelect = {
                         activeModelId = model.id
@@ -131,10 +175,29 @@ fun OnboardingModelScreen(
                     onRetry = {
                         activeModelId = model.id
                         viewModel.download(model)
-                    }
+                    },
+                    onImport = onImportNpuAssets,
+                    onUse = {
+                        activeModelId = model.id
+                        viewModel.select(model)
+                    },
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // THE IMPORT ENTRY. Its gate is `npuCapable` — the CAPABILITY half, never the offer
+            // gate — because the offer gate includes `isInstalled` and an import affordance behind
+            // it could only appear once the files it exists to fetch had already arrived. On a
+            // gate-passing device with no assets there is no npu card in the lineup above, so this
+            // panel is the only route the pair has onto the device, and it must not depend on the
+            // pair being on the device.
+            if (npuCapable) {
+                NpuImportPanel(
+                    offered = npuAvailable,
+                    state = npuImportState,
+                    onImport = onImportNpuAssets,
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -142,14 +205,146 @@ fun OnboardingModelScreen(
     }
 }
 
+/**
+ * The npu tier's asset-pair import, on any device whose silicon can run the tier (4.0, Q8).
+ *
+ * Rendered for capability alone, so it is present in exactly the state the chooser cannot show a
+ * card for: the right phone, and 358 MB that has not arrived yet. [offered] only changes what it
+ * SAYS — "enable it" before the pair lands, "replace it" afterwards — never whether it is there.
+ */
+@Composable
+private fun NpuImportPanel(
+    offered: Boolean,
+    state: NpuAssetImport.ImportState,
+    onImport: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = if (offered) "AI chip model files" else "This device has an AI chip (NPU)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Primary,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = if (offered)
+                    "The multilingual NPU model is installed. Import the pair again only if you " +
+                        "are replacing it — your existing files stay in place until the new ones " +
+                        "have been checked."
+                else
+                    "The multilingual model can run on this device's AI chip, which is much " +
+                        "faster than the CPU. Its files are not downloaded in the app: get the " +
+                        "model pair zip from the release page, then import it here. It needs " +
+                        "about 358 MB once installed, and roughly twice that free while importing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            when (state) {
+                is NpuAssetImport.ImportState.Running -> {
+                    val pct =
+                        if (state.total > 0L) (state.soFar * 100 / state.total).toInt() else 0
+                    LinearProgressIndicator(
+                        progress = pct / 100f,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = Primary,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Importing… $pct%  " +
+                            "(${formatBytes(state.soFar)} / ${formatBytes(state.total)})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                is NpuAssetImport.ImportState.Refused -> {
+                    // Loud, and it names the reason: wrong size, a missing half of the pair, no
+                    // room, or a file that is not a zip. A silent "nothing happened" is the one
+                    // outcome an import is never allowed to have.
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(
+                            Icons.Filled.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = state.reason,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+                        Text("Pick the model zip again")
+                    }
+                }
+
+                else -> {
+                    if (state is NpuAssetImport.ImportState.Installed) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = Success,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Model pair imported.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Success,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (offered) "Re-import model pair…" else "Import model pair…")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @param installed this tier's files are on disk **now** (not "a download just finished"). An
+ *        installed tier is never offered a Download: for npu that button used to delete the
+ *        imported encoder and then fail against the provenance zip, and for every other tier it is
+ *        simply untrue. Repair is still reachable — it just says what it is.
+ * @param unavailableNote the npu tier's session-time decline, or null. Rendered with the same
+ *        Warning surface as the RAM-gated note below, which already reads as "this device, this
+ *        tier".
+ * @param onImport opens the document picker for the asset-pair zip. Only a tier with a paired
+ *        artefact can reach it.
+ * @param onUse adopt an already-installed tier without touching the network. Before 4.0 the only
+ *        way to choose a tier here was to download it, which for `npu` is a refusal — so the one
+ *        tier that can only be installed by import had no way to be SELECTED from this screen.
+ */
 @Composable
 private fun ModelTierCard(
     model: WhisperModel,
     recommended: Boolean,
     isSteered: Boolean,
+    installed: Boolean,
+    unavailableNote: String?,
     state: DownloadState,
     onSelect: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onImport: () -> Unit = {},
+    onUse: () -> Unit = {},
 ) {
     // 3.5.0: same source of truth as the onboarding chooser (ModelTierCopy) — the headline takes
     // the speed-vs-accuracy position, the badges make language coverage impossible to miss, the
@@ -164,6 +359,11 @@ private fun ModelTierCard(
 
     val ramGated = model.minRamBytes > 0L
 
+    // A tier whose files arrive by import, not by URL — npu, and nothing else today. The predicate
+    // is the catalog's own (`pairedArtifact == null`), the same one `download()` refuses on, so the
+    // card and the sink can never disagree about which tiers are downloadable.
+    val downloadable = WhisperCatalog.isInstallableByDownload(model)
+
     val borderColor = when {
         done -> Success
         isSteered -> Primary
@@ -174,7 +374,11 @@ private fun ModelTierCard(
         modifier = Modifier
             .fillMaxWidth()
             .then(
-                if (!isBusy) Modifier.clickable(onClick = onSelect) else Modifier
+                // Tapping an INSTALLED card adopts it; tapping an uninstalled one fetches it.
+                // Before 4.0 both meant "download", which re-fetched 190 MB for a tier already on
+                // disk and, on npu, hit the refusal instead of ever selecting the tier.
+                if (!isBusy) Modifier.clickable(onClick = if (installed) onUse else onSelect)
+                else Modifier
             ),
         colors = CardDefaults.cardColors(
             containerColor = if (isSteered)
@@ -257,6 +461,27 @@ private fun ModelTierCard(
                 }
                 if (recommended) {
                     TierBadge(text = "Recommended for your device", color = Success)
+                }
+            }
+
+            // "Unavailable on this device" — the npu tier's session-time decline (4.0, Q8 step 5).
+            // Same Warning surface as the RAM-gated note directly below, which is the pattern the
+            // brief names: it already reads as "this device, this tier", unlike the retired-model
+            // card, which is about a tier being withdrawn from everyone. The text comes from
+            // NpuTierStatus.cardNote, which is fed by NpuWhisperBackend.unavailableReason — so the
+            // card and the `npu: unavailable stage=…` log line state one fact from one source.
+            if (unavailableNote != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    color = Warning.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = unavailableNote,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Warning
+                    )
                 }
             }
 
@@ -355,6 +580,52 @@ private fun ModelTierCard(
                             color = Success,
                             fontWeight = FontWeight.Medium
                         )
+                    }
+                }
+
+                // THE INSTALLED BRANCH (4.0, Q8; the Q7a §9.3 concern). Before it existed, EVERY
+                // card's action was a Download button — including a tier already on disk. On npu
+                // that button deleted the hand-imported 132,927,488-byte encoder and then failed
+                // the size gate against the provenance zip, which is why `download()` now refuses
+                // that tier at the sink. The refusal is the backstop; THIS is the fix: a card for
+                // an installed tier offers to USE it, and says how it would be replaced.
+                installed -> {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = Success,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Installed on this device",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Success,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(onClick = onUse, modifier = Modifier.fillMaxWidth()) {
+                        Text("Use this model")
+                    }
+                    // Repair stays reachable, and it is named for what it actually does on this
+                    // tier: re-fetch for a URL tier, re-import for the paired one.
+                    TextButton(
+                        onClick = if (downloadable) onSelect else onImport,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (downloadable) "Download again" else "Re-import model pair…")
+                    }
+                }
+
+                // Not installed, and not installable from a URL: npu. The Download button is not
+                // merely wrong here, it is the one action this tier can never perform.
+                !downloadable -> {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+                        Text("Import model pair…")
                     }
                 }
 

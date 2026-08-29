@@ -253,4 +253,97 @@ class NpuDiagTest {
             liveLineCount(app, "Log.i("),
         )
     }
+
+    // ------------------------------------------------------------------ the card half (4.0, Q8)
+
+    /**
+     * `NpuDiag.unavailable` is the logcat half of a decline; [NpuTierStatus] is the CARD half of
+     * the same fact, and Q8 is where that fact acquires a reader at all. Same subject, same class:
+     * a tier that told logcat one thing and the user another would be the failure both exist to
+     * prevent, wearing a disguise.
+     */
+    @Test
+    fun theUnavailableCardStatesTheSameDeclineTheLogLineDoes() {
+        val stage = "init"
+        val detail = "init: nativeInit failed at 0"
+        val logLine = NpuDiag.unavailable(stage, detail)
+        NpuTierStatus.publish("$stage: $detail")
+
+        assertEquals(
+            "the card reads what the backend published",
+            "$stage: $detail",
+            NpuTierStatus.unavailableReason.value,
+        )
+        assertEquals(
+            "and it recovers the same STAGE word the log line carries — the part a screenshot can " +
+                "usefully report",
+            stage,
+            NpuTierStatus.stageOf(NpuTierStatus.unavailableReason.value),
+        )
+        assertTrue("which is the word the log line leads with too: $logLine", logLine.contains("stage=$stage"))
+
+        val note = NpuTierStatus.cardNote(NpuTierStatus.unavailableReason.value)!!
+        assertTrue("the note names the stage: $note", note.contains(stage))
+        assertTrue(
+            "AND it says what is running instead. A card that only says \"unavailable\" leaves " +
+                "the user believing speech is broken, and one that says nothing at all is the " +
+                "silent fallback this tier is forbidden to have: $note",
+            note.contains("CPU model"),
+        )
+        assertTrue(
+            "and it does not claim accuracy was lost, because it was not — the fallback is the " +
+                "same whisper weights on a different processor: $note",
+            note.contains("Accuracy is unchanged"),
+        )
+    }
+
+    @Test
+    fun aTierThatNeverDeclinedShowsNoCardAtAll() {
+        NpuTierStatus.publish(null)
+        assertEquals(null, NpuTierStatus.unavailableReason.value)
+        assertEquals("no decline, no stage", null, NpuTierStatus.stageOf(null))
+        assertEquals("no decline, no note", null, NpuTierStatus.cardNote(null))
+        assertEquals("nor for an empty reason", null, NpuTierStatus.cardNote("   "))
+        // A malformed reason degrades to the whole string rather than to an empty label: a card
+        // reading "unavailable (stage: )" is worse than one repeating something odd.
+        assertEquals("truncated", NpuTierStatus.stageOf("truncated"))
+        assertEquals(": leading", NpuTierStatus.stageOf(": leading"))
+    }
+
+    @Test
+    fun theBackendAnnouncesEveryWriteOfItsReasonThroughOneFunnel() {
+        // The wiring, pinned as source because no unit test may NAME NpuWhisperBackend (its
+        // QnnAsrNative reference runs System.loadLibrary at class-init). The publication lives in
+        // the property's SETTER and not at the assignment sites, which is the same "one funnel"
+        // rule as PreferencesManager.notifyModelInstalled: a stage that declines cannot set the
+        // reason and forget to announce it — including a stage nobody has written yet.
+        val backend = source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+        assertEquals(
+            "the reason's setter publishes to the process-scoped mirror the card subscribes to",
+            1,
+            liveLineCount(backend, "NpuTierStatus.publish(value)"),
+        )
+        assertEquals(
+            "and that is the ONLY publication site: a second one at a call site is a second thing " +
+                "to remember, and the one that is forgotten is the one that matters",
+            1,
+            liveLineCount(backend, "NpuTierStatus.publish("),
+        )
+        assertEquals(
+            "the funnel is the setter itself, so both existing writes go through it",
+            1,
+            liveLineCount(backend, "private set(value) {"),
+        )
+        assertEquals(
+            "the arm path still CLEARS the reason, so a decline cannot outlive the session that " +
+                "produced it and haunt the card of a tier that is now running fine",
+            1,
+            liveLineCount(backend, "unavailableReason = null"),
+        )
+        assertEquals(
+            "and the decline path still sets it, stage first",
+            1,
+            liveLineCount(backend, "unavailableReason = \"\$stage: \$detail\""),
+        )
+    }
 }

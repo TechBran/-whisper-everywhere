@@ -149,8 +149,19 @@ class WhisperEverywhereApp : Application() {
      * before the backend is ever dlopen()ed, which is why this lives in Application.onCreate rather
      * than anywhere near the NPU code itself.
      *
-     * App directory FIRST so the bundled skel wins, then the stock vendor locations, which is where
-     * a device exposing its own HTP skels keeps them.
+     * **The app's FILES directory comes first (4.0, Q8).** The bundled skel is unreachable under
+     * this app's `extractNativeLibs="false"` packaging — the FastRPC loader needs a real file on
+     * disk and `nativeLibraryDir` contains none (Q1's open concern for Q10a) — so the two answers
+     * are an app-wide packaging flip or a skel that lives in the app's own files directory beside
+     * the imported model pair. This entry is the half that belongs to the app: it costs nothing
+     * when the directory holds no skel, and it makes both remaining routes work without another
+     * code change — the owner adding the skel to the release zip, or an `adb push` into
+     * `files/` during the Q10a session. **Q8 does not import a skel**: it is not one of the tier's
+     * two catalog artefacts, it has no pinned size to verify against, and putting a 17.9 MB
+     * proprietary blob into the published zip is an owner-facing packaging decision.
+     *
+     * Then the app's native library directory, then the stock vendor locations, which is where a
+     * device exposing its own HTP skels keeps them.
      *
      * Runs on EVERY device, including the overwhelming majority that will never arm the NPU tier:
      * it is two setenv calls and no I/O, and making it conditional would mean predicting NPU
@@ -163,7 +174,8 @@ class WhisperEverywhereApp : Application() {
             // Semicolon-separated, unlike LD_LIBRARY_PATH — this is the FastRPC loader's own format.
             Os.setenv(
                 "ADSP_LIBRARY_PATH",
-                nativeLibDir +
+                filesDir.absolutePath +
+                    ";" + nativeLibDir +
                     ";/vendor/lib/rfsa/adsp" +
                     ";/vendor/dsp/cdsp" +
                     ";/system/lib/rfsa/adsp" +

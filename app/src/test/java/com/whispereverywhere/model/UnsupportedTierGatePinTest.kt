@@ -266,6 +266,152 @@ class UnsupportedTierGatePinTest {
     }
 
     @Test
+    fun theMelDonorRefusesTheWrongFilterbankAndTheFileThatIsNotGgml() {
+        // 4.0 Q8. `cpuTierModelPath` answers two questions with one file (the D-Q6-1 ruling): the
+        // 80-bin mel filterbank the NPU tier borrows, and the CPU backend it falls back to. Both
+        // exclusions are live defects, not hygiene:
+        //  - `ultra` is large-v3-turbo, a 128-BIN model. `pcmToMel` refuses it by bin count, so as
+        //    a donor it is a failed load — and an `ultra` user would otherwise be handed it as the
+        //    preferred candidate purely because it is the tier they selected.
+        //  - `npu` is not a ggml file at all. It is the QAIRT encoder context this tier is trying
+        //    to arm; handing it to `initMelOnly` is handing a QNN blob to a whisper.cpp loader.
+        // Neither is reachable from a JVM test (the manager needs a Context), which is the same
+        // hole, and the same instrument, as the two pins above.
+        val donor = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    override fun cpuTierModelPath(): String? {",
+        )
+        assertEquals(
+            "the donor is chosen by an eligibility predicate, not by an inline filter that a " +
+                "later reader could simplify one clause out of",
+            1,
+            count(donor, "candidates.firstOrNull { isMelDonorEligible(it) && isInstalled(it) }"),
+        )
+        assertEquals(
+            "the selected tier is PREFERRED, so a session that falls back falls back to the model " +
+                "the user actually chose",
+            1,
+            count(donor, "val preferred = WhisperCatalog.byId(prefs.selectedModelId)"),
+        )
+        assertEquals(
+            "128-bin large-v3-turbo is excluded BY NAME, with the reason in the KDoc",
+            1,
+            count(manager, "model.id != \"ultra\""),
+        )
+        assertEquals(
+            "and so is the tier being armed, which is not a ggml file",
+            1,
+            count(manager, "model.id != \"npu\""),
+        )
+        assertEquals(
+            "plus the structural clause that catches the NEXT two-artefact tier nobody thought to " +
+                "name here — the id says why, the structure catches the next one",
+            1,
+            count(manager, "model.pairedArtifact == null"),
+        )
+        // The companion must come from the SAME tier as installedModelPath, not from the npu entry
+        // directly. Resolving the two independently hands nativeInit an encoder from one tier and
+        // a decoder from another — a native-side failure with no Kotlin-side symptom.
+        val companion = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    override fun companionModelPath(): String? {",
+        )
+        assertEquals(
+            "the companion is the paired artefact OF THE INSTALLED SELECTED TIER",
+            1,
+            count(companion, "val model = installedModel() ?: return null"),
+        )
+        assertEquals(
+            "and null for a tier that has no second file, which is all six ggml ones",
+            1,
+            count(companion, "val paired = model.pairedArtifact ?: return null"),
+        )
+    }
+
+    @Test
+    fun theImportAnnouncesTheInstallOnlyAfterThePairIsVerifiedOnDisk() {
+        // 4.0 Q8, and the SIXTH application of the presence-vs-ORDER rule on this branch.
+        //
+        // `prefs.notifyModelInstalled()` bumps `ModelInstallSignal.generation`, the key both
+        // chooser producers re-read the offer gate on. Omit it and the tier card stays hidden in
+        // the very composition that just imported its assets (Q7b fix round, I1 — the correction
+        // to that report's §9.2.4 is precisely this requirement). Hoist it above the renames and
+        // the opposite defect appears: the signal fires for files still sitting in `.part`, so the
+        // chooser re-stats, finds nothing, and caches a "not installed" answer for an import that
+        // then succeeds.
+        val import = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    suspend fun importNpuAssetPair(",
+        )
+        assertEquals(
+            "the import announces the install exactly once — the SAME funnel the download path " +
+                "uses, so a future consumer cannot be wired to one route and not the other",
+            1,
+            count(import, "prefs.notifyModelInstalled()"),
+        )
+        val announce = liveIndexOfOrFail(import, "importNpuAssetPair", "prefs.notifyModelInstalled()")
+        assertTrue(
+            "THE ANNOUNCEMENT MUST FOLLOW THE RENAMES. Bumping the generation while the files are " +
+                "still `.part` makes the chooser re-read the gate against a directory the pair has " +
+                "not landed in yet.",
+            liveIndexOfOrFail(import, "importNpuAssetPair", "if (part.renameTo(dest)) {") < announce,
+        )
+        assertTrue(
+            "AND THE VERIFICATION. `isInstalled` is the predicate the card itself keys on, so " +
+                "announcing before it is announcing something not yet true.",
+            liveIndexOfOrFail(import, "importNpuAssetPair", "if (!isInstalled(model)) {") < announce,
+        )
+        // Both-or-neither. Every entry is staged under `.part` and the destinations are only
+        // touched once both files exist at their exact published lengths; a half-renamed pair is
+        // purged rather than left mismatched.
+        assertEquals(
+            "entries land as .part first, so an existing installed pair survives a bad zip",
+            1,
+            count(import, "File(dir, accept.fileName + NpuAssetImport.PART_SUFFIX)"),
+        )
+        assertTrue(
+            "the missing-half check runs BEFORE anything is renamed into place: an encoder " +
+                "without its decoder is a tier that arms halfway",
+            liveIndexOfOrFail(import, "importNpuAssetPair", "NpuAssetImport.missingEntriesRefusal(") <
+                liveIndexOfOrFail(import, "importNpuAssetPair", "if (part.renameTo(dest)) {"),
+        )
+        assertEquals(
+            "a failed second rename purges the first rather than leaving a mismatched pair",
+            1,
+            count(import, "renamed.forEach { it.delete() }"),
+        )
+        assertEquals(
+            "and every .part is cleared on failure, refusal OR cancellation, so a retry starts " +
+                "clean — in a finally, because a return from inside the copy loop must not skip it",
+            1,
+            count(import, "parts.values.forEach { if (it.exists()) it.delete() }"),
+        )
+        assertEquals(
+            "the free-space precheck runs before a byte is read, and it is the only one",
+            1,
+            count(import, "NpuAssetImport.freeSpaceRefusal(usable, needed)"),
+        )
+        assertTrue(
+            "before the stream is even opened",
+            liveIndexOfOrFail(import, "importNpuAssetPair", "NpuAssetImport.freeSpaceRefusal(usable, needed)") <
+                liveIndexOfOrFail(import, "importNpuAssetPair", "context.contentResolver.openInputStream(source)"),
+        )
+        assertEquals(
+            "both zip-slip guards are present: the allow-list AND the canonical-path check",
+            1,
+            count(import, "NpuAssetImport.escapesTargetDir(dirCanonical, dest.canonicalPath)"),
+        )
+        assertEquals(
+            "the copy is cancellable between buffers — 358 MB is long enough for a user to leave",
+            1,
+            count(import, "callerContext.ensureActive()"),
+        )
+    }
+
+    @Test
     fun theSettingsCardIsDrivenByTheUnsupportedGate() {
         // The rename's call site. A compiler catches a MISSING follow-up; nothing catches a call
         // site that was pointed back at a re-added `retiredInstalledModel()`.

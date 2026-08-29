@@ -9,9 +9,13 @@ import android.os.Environment
 import android.os.StatFs
 import androidx.core.net.toUri
 import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.npu.NpuAssetImport
+import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.transcription.ModelPathProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -84,6 +88,63 @@ class WhisperModelManager(
         return fileFor(model).absolutePath
     }
 
+    /**
+     * The paired artefact of the SELECTED installed tier — npu's decoder context binary (4.0, Q8).
+     *
+     * It resolves off [installedModel] rather than off the `npu` entry directly, and that is the
+     * invariant rather than a convenience: the seam's contract is that this is the companion **of
+     * the file [installedModelPath] just returned**. Resolving the two from different tiers would
+     * hand `nativeInit` an encoder from one tier and a decoder from another, which is a native-side
+     * failure with no Kotlin-side symptom. Null for every one-file tier, which is all six ggml ones.
+     */
+    override fun companionModelPath(): String? {
+        val model = installedModel() ?: return null
+        val paired = model.pairedArtifact ?: return null
+        return File(modelsDir(), paired.fileName).absolutePath
+    }
+
+    /**
+     * An installed **80-bin whisper ggml model**: the NPU tier's mel-filterbank donor and the CPU
+     * backend it falls back to (4.0, Q8; the D-Q6-1 ruling — one file, two uses, donor ⊂ fallback).
+     *
+     * **Both exclusions are load-bearing and both are spelled out.**
+     *  - `ultra` (`large-v3-turbo`) carries a **128-bin** filterbank. `pcmToMel` refuses it by bin
+     *    count, so as a donor it is not a degraded choice, it is a failed load — and as a *fallback*
+     *    it would otherwise be preferred by an `ultra` user purely because it is what they have.
+     *  - `npu` is not a ggml file at all: it is the encoder context binary this tier is trying to
+     *    arm. Handing it to `initMelOnly` is handing a QAIRT blob to a whisper.cpp loader.
+     *
+     * The `pairedArtifact == null` clause excludes `npu` a second time, structurally, and would
+     * catch a future two-artefact tier nobody thought to name here — the same "the id says why, the
+     * structure catches the next one" pairing `isInstallableByDownload` uses. The residual risk is
+     * stated rather than hidden: a future SINGLE-file 128-bin tier would qualify by both clauses,
+     * because the catalog records no mel-bin count. Adding one is the real fix and it is a catalog
+     * change, not a manager change.
+     *
+     * The **selected** tier is preferred when it qualifies, so a session that falls back falls back
+     * to the model the user actually chose; otherwise the first installed eligible tier in catalog
+     * order answers, because any 80-bin filterbank is byte-identical to any other and for the
+     * fallback something is unambiguously better than nothing.
+     *
+     * Null means the NPU tier cannot come up AND cannot fall back — a clean refusal at
+     * `stage=mel-donor`, before any of the 358 MB is touched.
+     */
+    override fun cpuTierModelPath(): String? {
+        val preferred = WhisperCatalog.byId(prefs.selectedModelId)
+        val candidates = listOfNotNull(preferred) + WhisperCatalog.entries
+        val donor = candidates.firstOrNull { isMelDonorEligible(it) && isInstalled(it) }
+            ?: return null
+        return fileFor(donor).absolutePath
+    }
+
+    /**
+     * May [model]'s file serve as the 80-bin mel donor and CPU fallback? See [cpuTierModelPath] for
+     * why each clause is here; `retired` tiers are deliberately eligible — eco and base are ordinary
+     * 80-bin whisper models, and an installed one is a perfectly good donor and a real fallback.
+     */
+    private fun isMelDonorEligible(model: WhisperModel): Boolean =
+        model.id != "npu" && model.id != "ultra" && model.pairedArtifact == null
+
     /** Total device RAM in bytes (ActivityManager.MemoryInfo.totalMem). */
     fun deviceTotalRamBytes(): Long {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -126,9 +187,15 @@ class WhisperModelManager(
         // and the only way back is re-importing. `download()` never reads `pairedArtifact`, so this
         // path could never have installed the tier even with a correct URL.
         //
-        // At the SINK on purpose. Two call sites reach it — the picker's Download button and
-        // `OnboardingSetupViewModel.ensureSpeech()`, which serves Home's missing-engine row for
-        // whatever `prefs.selectedModelId` names — and a guard at either one leaves the other open.
+        // At the SINK on purpose. THREE call sites reach it, not the two an earlier draft of this
+        // comment claimed: the picker's Download button (via `ModelDownloadViewModel.download`),
+        // `OnboardingSetupViewModel.ensureSpeech()` — which serves Home's missing-engine row for
+        // whatever `prefs.selectedModelId` names — and `SettingsScreen.kt`'s
+        // `ModelMigration.Action.OfferDownload` handler. The third cannot reach `npu` today,
+        // because every migration target is `pro`/`multi` by construction and that is pinned; it is
+        // named anyway, because it is the argument FOR the sink: a guard placed at the call sites
+        // someone had enumerated would have left open the one they had not, and Q8 adds a fourth
+        // install path (`importNpuAssetPair`) that deliberately does not come through here at all.
         if (!WhisperCatalog.isInstallableByDownload(model)) {
             android.util.Log.w("WE-DIAG", WhisperCatalog.notInstallableByDownloadReason(model))
             throw ModelDownloadException(
@@ -358,9 +425,199 @@ class WhisperModelManager(
         removeStaleDownloads(dm, model)
     }
 
+    /**
+     * Install the npu tier from the asset-pair zip the owner picked with the document picker
+     * (4.0, Q8). The **second** install path in this app, and the only one that is not a download.
+     *
+     * ```
+     * free-space precheck  ->  inflate each allowed entry to <name>.part  ->  size-verify each
+     *   ->  both present?  ->  rename BOTH into place  ->  isInstalled?  ->  notifyModelInstalled()
+     * ```
+     *
+     * **Both-or-neither, and a re-import is non-destructive.** Every entry lands as `.part`
+     * alongside whatever is already installed, so an existing pair survives a zip that turns out to
+     * be truncated, wrong or not a zip at all — the two renames happen only after BOTH files exist
+     * at their exact published lengths. On a second import over an existing pair the old files are
+     * replaced one rename after the other with nothing in between; `isInstalled(npu)` is true
+     * before, during and after, and the only way to observe a mixed pair is to arm the tier in the
+     * microseconds between two `renameTo` calls on the same directory. If the second rename fails
+     * anyway, both destinations are deleted rather than left mismatched: a tier that reads as
+     * not-installed is recoverable by re-importing, and one that arms halfway is a native crash.
+     *
+     * **`prefs.notifyModelInstalled()` is the last thing it does, and the order is the contract**
+     * (Q7b fix round, I1). It bumps `ModelInstallSignal.generation`, the key both chooser producers
+     * re-read the offer gate on; without it the tier card stays hidden in the very composition that
+     * just imported its assets. After the verification and never before, for the same reason
+     * `verifyDest` announces last: a signal sent for files that get deleted a line later is worse
+     * than no signal.
+     *
+     * Main-safe by construction (`Dispatchers.IO`): 358 MB of inflate on the main thread is an ANR,
+     * not a jank. Cancellation is honoured between buffers and leaves no `.part` behind, so a retry
+     * starts clean.
+     *
+     * @param source the `content://` URI from `ACTION_OPEN_DOCUMENT`. Read as a stream; never copied.
+     * @param onProgress (uncompressed bytes written, total expected), throttled to ~4 MB ticks —
+     *        the caller is Compose state and 5,500 updates would cost more than the copy.
+     * @return [NpuAssetImport.ImportState.Installed], or `Refused` **naming the reason**. Every
+     *         refusal is also one `WE-DIAG` line. It does not throw for a bad file: a refusal is a
+     *         normal outcome of letting a user pick any file on the device.
+     */
+    suspend fun importNpuAssetPair(
+        source: Uri,
+        onProgress: (soFar: Long, total: Long) -> Unit = { _, _ -> },
+    ): NpuAssetImport.ImportState = withContext(Dispatchers.IO) {
+        val model = WhisperCatalog.byId(NpuAssetImport.TIER_ID)
+        val required = NpuAssetImport.requiredEntriesFor(model)
+        if (model == null || required.isEmpty()) {
+            return@withContext refuseImport(
+                "this build's catalog has no importable npu tier, so there is nothing to import into."
+            )
+        }
+
+        val dir = modelsDir()
+        val dirCanonical = runCatching { dir.canonicalPath }.getOrNull()
+            ?: return@withContext refuseImport(
+                "Could not resolve the app's models folder. Nothing was installed."
+            )
+
+        // The transient, checked BEFORE a byte is read: 358 MB of .part files, doubled when a pair
+        // is already installed because those stay on disk until the renames at the very end.
+        val total = NpuAssetImport.pairBytes(required)
+        val usable = runCatching { StatFs(dir.absolutePath).availableBytes }
+            .getOrDefault(Long.MAX_VALUE)
+        val needed = NpuAssetImport.requiredFreeBytes(total, isInstalled(model))
+        NpuAssetImport.freeSpaceRefusal(usable, needed)?.let { return@withContext refuseImport(it) }
+
+        val callerContext = currentCoroutineContext()
+        val parts = LinkedHashMap<String, File>()
+        try {
+            val accepted = mutableSetOf<String>()
+            var written = 0L
+            var lastTick = 0L
+            val input = context.contentResolver.openInputStream(source)
+                ?: return@withContext refuseImport(
+                    NpuAssetImport.unreadableRefusal("the picker returned nothing to read")
+                )
+            input.use { raw ->
+                java.util.zip.ZipInputStream(
+                    java.io.BufferedInputStream(raw, COPY_BUFFER_BYTES)
+                ).use { zis ->
+                    val buffer = ByteArray(COPY_BUFFER_BYTES)
+                    while (true) {
+                        val entry = zis.nextEntry ?: break
+                        if (entry.isDirectory) {
+                            zis.closeEntry()
+                            continue
+                        }
+                        val verdict =
+                            NpuAssetImport.classifyEntry(required, entry.name, entry.size)
+                        if (verdict is NpuAssetImport.EntryVerdict.Ignore) {
+                            android.util.Log.i(NpuDiag.TAG, "npu: import ${verdict.reason}")
+                            zis.closeEntry()
+                            continue
+                        }
+                        if (verdict is NpuAssetImport.EntryVerdict.Refuse) {
+                            return@withContext refuseImport(verdict.reason)
+                        }
+                        val accept = verdict as NpuAssetImport.EntryVerdict.Accept
+
+                        // Guard 2. The allow-list already makes a separator unrepresentable; this
+                        // is the independent check that the resolved destination is really inside
+                        // the models directory.
+                        val dest = File(dir, accept.fileName)
+                        if (NpuAssetImport.escapesTargetDir(dirCanonical, dest.canonicalPath)) {
+                            return@withContext refuseImport(
+                                "An entry in that zip resolved outside the app's models folder. " +
+                                    "Nothing was installed."
+                            )
+                        }
+
+                        val part = File(dir, accept.fileName + NpuAssetImport.PART_SUFFIX)
+                        parts[accept.fileName] = part
+                        var got = 0L
+                        java.io.FileOutputStream(part).use { out ->
+                            while (true) {
+                                callerContext.ensureActive()
+                                val n = zis.read(buffer)
+                                if (n <= 0) break
+                                out.write(buffer, 0, n)
+                                got += n
+                                written += n
+                                if (written - lastTick >= PROGRESS_TICK_BYTES) {
+                                    lastTick = written
+                                    onProgress(if (written > total) total else written, total)
+                                }
+                            }
+                        }
+                        zis.closeEntry()
+                        if (got != accept.expectedBytes) {
+                            return@withContext refuseImport(
+                                NpuAssetImport.wrongSizeRefusal(
+                                    accept.fileName, got, accept.expectedBytes
+                                )
+                            )
+                        }
+                        accepted += accept.fileName
+                    }
+                }
+            }
+
+            NpuAssetImport.missingEntriesRefusal(required.keys, accepted)
+                ?.let { return@withContext refuseImport(it) }
+
+            // Both files exist at their exact published lengths. Move them into place back to back.
+            val renamed = mutableListOf<File>()
+            for ((name, part) in parts) {
+                val dest = File(dir, name)
+                if (dest.exists()) dest.delete()
+                if (part.renameTo(dest)) {
+                    renamed += dest
+                } else {
+                    renamed.forEach { it.delete() }
+                    return@withContext refuseImport(
+                        "Could not finalise the imported files. Nothing was installed."
+                    )
+                }
+            }
+
+            if (!isInstalled(model)) {
+                return@withContext refuseImport(
+                    "The imported files did not verify on disk. Nothing was installed."
+                )
+            }
+            onProgress(total, total)
+            android.util.Log.i(NpuDiag.TAG, NpuAssetImport.okLine(accepted.size, written))
+            // LAST, and only now. See the KDoc: the chooser's producers key on this.
+            prefs.notifyModelInstalled()
+            NpuAssetImport.ImportState.Installed
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled // the finally below still clears the .part files
+        } catch (t: Throwable) {
+            refuseImport(
+                NpuAssetImport.unreadableRefusal("${t.javaClass.simpleName}: ${t.message}")
+            )
+        } finally {
+            // Failure, refusal or cancellation — a retry starts clean. On success there is nothing
+            // here, because every .part was renamed away.
+            parts.values.forEach { if (it.exists()) it.delete() }
+        }
+    }
+
+    /** One refusal shape: the WE-DIAG line and the state the card renders come from one place. */
+    private fun refuseImport(reason: String): NpuAssetImport.ImportState.Refused {
+        android.util.Log.w(NpuDiag.TAG, NpuAssetImport.refusedLine(reason))
+        return NpuAssetImport.ImportState.Refused(reason)
+    }
+
     class ModelDownloadException(message: String) : Exception(message)
 
     companion object {
         private const val POLL_INTERVAL_MS = 300L
+
+        /** 64 KB, the spike's buffer. */
+        private const val COPY_BUFFER_BYTES = 1 shl 16
+
+        /** ~4 MB between progress callbacks: the callback writes Compose state. */
+        private const val PROGRESS_TICK_BYTES = 4L shl 20
     }
 }

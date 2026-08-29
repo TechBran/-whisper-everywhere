@@ -6,6 +6,7 @@ import com.whispereverywhere.npu.NpuDecodePolicy
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.npu.NpuQuantize
+import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.npu.QnnAsrNative
 import com.whispereverywhere.npu.WhisperBpeDecoder
 import com.whispereverywhere.whisper.WhisperNative
@@ -120,10 +121,20 @@ class NpuWhisperBackend(
     /**
      * `"<stage>: <detail>"` for the stage that declined, or null while the tier is live. Read by
      * the tier card (Q8) so the UI states the same fact the log line does.
+     *
+     * **The setter publishes to [NpuTierStatus] (Q8).** Nothing in the app holds this instance —
+     * the engine layer builds it per session (Q9) and a Compose screen can never reach it — so the
+     * card subscribes to the process-scoped mirror instead. It is done HERE, in the setter, and not
+     * at the two assignment sites, for the same reason `notifyModelInstalled` is one function: a
+     * stage that declines cannot set the reason and forget to announce it, including a stage nobody
+     * has written yet.
      */
     @Volatile
     var unavailableReason: String? = null
-        private set
+        private set(value) {
+            field = value
+            NpuTierStatus.publish(value)
+        }
 
     // ---------------------------------------------------------------- load
 

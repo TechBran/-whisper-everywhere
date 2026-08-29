@@ -177,6 +177,7 @@ class ChooserSteerWiringPinTest {
         source: String,
         surface: String,
         producer: String,
+        keyedProducers: Int = 1,
     ) {
         assertEquals(
             "$surface's npu gate answer is produced off Main from the process-memoised app gate",
@@ -197,11 +198,18 @@ class ChooserSteerWiringPinTest {
         // visible immediately — and an unkeyed producer throws that away one layer up, in the very
         // composition Q8's import affordance lives in. The user imports the pair and the lineup
         // does not change.
+        // [keyedProducers] is the count for THIS surface, and it is a parameter rather than a
+        // literal `1` because the two surfaces genuinely differ (4.0, Q8). The picker asks the app
+        // TWO device questions — `isNpuTierOffered()` for the lineup, and `npuCapableDevice` alone
+        // for the import entry, which must not be gated on the tier already being installed. What
+        // the assertion is for is unchanged and is not weakened by counting two: an UNKEYED
+        // producer has its own needle at zero below, and a producer that lost its key would drop
+        // this count rather than raise it.
         assertEquals(
-            "$surface keys the producer on the install generation, so an import that lands while " +
-                "the chooser is on screen re-reads the gate instead of being invisible until the " +
-                "user navigates away and back",
-            1,
+            "$surface keys every gate producer on the install generation, so an import that lands " +
+                "while the chooser is on screen re-reads the gate instead of being invisible until " +
+                "the user navigates away and back",
+            keyedProducers,
             count(source, "produceState(initialValue = false, key1 = installGeneration)"),
         )
         assertEquals(
@@ -340,6 +348,50 @@ class ChooserSteerWiringPinTest {
                 "        value = withContext(Dispatchers.IO) { app.isNpuTierOffered() }",
                 "    }",
             ),
+            // 4.0 Q8: two keyed producers on this surface. See the second one's own test.
+            keyedProducers = 2,
+        )
+    }
+
+    /**
+     * 4.0 (Q8) — the picker's SECOND device question, and why it is a second one.
+     *
+     * `isNpuTierOffered()` is `capable && installed`. The import entry cannot be gated on it: the
+     * offer gate is false precisely in the state the import exists to leave, so an affordance
+     * behind it could only ever appear once the 358 MB it fetches had already arrived. That is the
+     * chicken-and-egg the Q7a handoff flagged, and the fix is that the entry reads the CAPABILITY
+     * half alone.
+     *
+     * The mutation this closes is one identifier: `app.npuCapableDevice` -> `app.isNpuTierOffered()`
+     * in the second producer. It compiles, it leaves every other assertion in this class green, and
+     * it makes the tier permanently un-installable on every device that does not already have it.
+     */
+    @Test
+    fun theImportEntryIsGatedOnCapabilityAloneAndNeverOnTheTierBeingInstalled() {
+        assertEquals(
+            "the picker produces the CAPABILITY half separately, off Main and memoised",
+            1,
+            count(
+                picker,
+                block(
+                    "    val npuCapable by produceState(initialValue = false, key1 = installGeneration) {",
+                    "        value = withContext(Dispatchers.IO) { app.npuCapableDevice }",
+                    "    }",
+                ),
+            ),
+        )
+        assertEquals(
+            "the import panel's gate is `npuCapable` — the hardware — and nothing else. Gated on " +
+                "the offer gate instead, the only route the asset pair has onto a device would " +
+                "require the asset pair to already be on that device",
+            1,
+            count(picker, block("            if (npuCapable) {", "                NpuImportPanel(")),
+        )
+        assertEquals(
+            "the offer gate is asked exactly once, for the lineup — not a second time as the " +
+                "import's gate",
+            1,
+            count(picker, "app.isNpuTierOffered()"),
         )
     }
 

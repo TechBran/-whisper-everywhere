@@ -24,6 +24,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.ui.screens.BatchTranscribeScreen
 import com.whispereverywhere.ui.screens.EnginesAndVoicesScreen
 import com.whispereverywhere.ui.screens.OnboardingFlowScreen
@@ -133,6 +134,37 @@ fun WhisperEverywhereNavigation() {
         }
     }
 
+    // The npu tier's asset-pair import (4.0, Q8). Same contract as the audio picker above —
+    // ACTION_OPEN_DOCUMENT, no permission, and the app receives exactly the one file the owner
+    // picked — and the same reason it lives HERE: a launcher must be registered from the activity's
+    // composition, not from a screen that may not be on the back stack when the result returns.
+    //
+    // The whole 358 MB inflate is inside WhisperModelManager.importNpuAssetPair on Dispatchers.IO;
+    // this coroutine only moves its progress into Compose state. A refusal is a RETURNED state, not
+    // an exception: letting a user pick any file on the device means a wrong file is an ordinary
+    // outcome, and one the card has to be able to explain.
+    var npuImportState by remember {
+        mutableStateOf<NpuAssetImport.ImportState>(NpuAssetImport.ImportState.Idle)
+    }
+
+    val npuAssetImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) {
+            // Dismissed the picker. Not a failure, and not worth a message.
+            npuImportState = NpuAssetImport.ImportState.Idle
+        } else {
+            scope.launch {
+                npuImportState = NpuAssetImport.ImportState.Running(0L, 0L)
+                npuImportState = WhisperEverywhereApp.getInstance()
+                    .whisperModelManager
+                    .importNpuAssetPair(uri) { soFar, total ->
+                        npuImportState = NpuAssetImport.ImportState.Running(soFar, total)
+                    }
+            }
+        }
+    }
+
     // Compute the start destination once, at launch. Onboarding is mandatory: no installed model
     // always opens the two-path chooser, even if onboardingCompleted was restored by Auto Backup
     // (backup never restores the model file). See firstRunStartDestination for the exact rule
@@ -178,7 +210,23 @@ fun WhisperEverywhereNavigation() {
                     navController.navigate("home") {
                         popUpTo("onboarding_model") { inclusive = true }
                     }
-                }
+                },
+                npuImportState = npuImportState,
+                // The zip is often labelled application/octet-stream by the provider that wrote it,
+                // and some file managers use neither name, so the last entry keeps the file
+                // reachable rather than leaving the owner staring at a greyed-out row. The picked
+                // file is validated hard by the importer either way — the MIME filter is a
+                // convenience, never a guard.
+                onImportNpuAssets = {
+                    npuAssetImportLauncher.launch(
+                        arrayOf(
+                            "application/zip",
+                            "application/x-zip-compressed",
+                            "application/octet-stream",
+                            "*/*",
+                        )
+                    )
+                },
             )
         }
 
