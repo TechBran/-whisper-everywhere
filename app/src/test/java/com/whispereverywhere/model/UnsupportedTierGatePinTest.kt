@@ -473,6 +473,17 @@ class UnsupportedTierGatePinTest {
             1,
             count(import, "NpuAssetImport.overLengthRefusal("),
         )
+        // Battery row Z3, a MEASURED survivor: neutering this guard (`if (false && overLength)`)
+        // leaves the cap, the detector and the builder all in place and every other assertion here
+        // green — while the refusal falls through to the wrong-size branch, because `got` is then
+        // `expected + 1`. The user is told their file is one byte too long when the truth is that
+        // it never stopped. The naming was the review's explicit ask, so the guard is pinned too.
+        assertEquals(
+            "the over-length refusal is reached on the over-length flag ALONE, so it cannot fall " +
+                "through to the wrong-size message",
+            1,
+            count(import, "if (overLength) {"),
+        )
         // The staged file is still cleaned: the refusal returns from inside the try, so the
         // finally runs and at most one byte more than the tier's own file was ever on disk.
         assertTrue(
