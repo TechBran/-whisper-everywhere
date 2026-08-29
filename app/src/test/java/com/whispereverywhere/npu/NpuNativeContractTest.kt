@@ -692,9 +692,32 @@ class NpuNativeContractTest {
             )
         }
         assertTrue(
-            "nativeDecodeSegment must emit `npu-debug: selfkv ` — the position-0 self-KV write " +
-                "check, which settles D1's H2 for one buffer scan per segment.",
+            "nativeDecodeSegment must emit `npu-debug: selfkv ` — the self-KV write check, which " +
+                "settles D1's H2 for one buffer scan per segment.",
             liveOffsets(decode, "npu-debug: selfkv ").isNotEmpty()
+        )
+        // Q10a-D3: the field that decides the cache alignment, and therefore the mask fill.
+        assertTrue(
+            "the selfkv line must carry `slot=[%d..%d]` — D2 proved the graph writes exactly one " +
+                "slot per step but not WHICH, and that index is the entire remaining question: " +
+                "slot==position is left-aligned and the mask must enable columns 0..position, " +
+                "while a fixed top slot is a right-aligned shift register and the mask must " +
+                "enable the LAST position+1 columns. The two fills are disjoint.",
+            liveOffsets(decode, "slot=[%d..%d]").isNotEmpty()
+        )
+        assertTrue(
+            "the slot index must be derived from the tensor's OWN dims, not a constant: " +
+                "k_cache_self_* is [12,1,64,199] (slot axis last, stride 1) and v_cache_self_* is " +
+                "[12,1,199,64] (second-to-last, stride 64), so the wrong arithmetic reports an " +
+                "index wrong by a factor of 64 that still looks entirely plausible.",
+            liveOffsets(decode, "scanNonzeroSlots(").isNotEmpty() &&
+                liveOffsets(decode, "sdm[srank - 1] == depth").isNotEmpty()
+        )
+        assertTrue(
+            "the selfkv line must run for steps 0, 1 AND 2 — one step cannot distinguish a " +
+                "fixed write slot from a moving one, and the two candidate layouts diverge from " +
+                "the second step onward.",
+            liveOffsets(decode, "position <= 2").isNotEmpty()
         )
 
         // POST-COPY, PRE-EXECUTE. Both halves, because both are silently wrong rather than absent.

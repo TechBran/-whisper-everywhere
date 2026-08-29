@@ -1719,6 +1719,43 @@ struct U8Stats {
     double nonzero = 0.0;
 };
 
+/// WHICH CACHE SLOT DID THE GRAPH JUST WRITE? The span of non-zero bytes, in bytes and in slots.
+///
+/// D2 proved the decoder writes **exactly one slot per step** (`nonzero` = 1/199 at position 0) but
+/// not WHICH one, and that index is the whole remaining question: a cache that is written at
+/// `slot == position` is left-aligned and the attention mask must enable columns `0..position`;
+/// one that is written at the last slot is a right-aligned shift register and the mask must enable
+/// the LAST `position + 1` columns instead. The two fills are disjoint, and the wrong one attends
+/// only never-written padding.
+struct SlotSpan {
+    long long firstOff = -1;
+    long long lastOff = -1;
+    int32_t slotMin = -1;
+    int32_t slotMax = -1;
+};
+
+/// [stride] and [depth] come from the tensor's OWN dims, never from a constant: `k_cache_self_*` is
+/// `[12,1,64,199]` so the slot axis is last (stride 1), while `v_cache_self_*` is `[12,1,199,64]`
+/// so it is second-to-last (stride 64). Reading a v tensor with the k arithmetic would report a
+/// slot index that is wrong by a factor of 64 and look entirely plausible.
+SlotSpan scanNonzeroSlots(const uint8_t *p, size_t n, uint32_t stride, uint32_t depth) {
+    SlotSpan s;
+    if (!p || n == 0 || stride == 0 || depth == 0) return s;
+    for (size_t i = 0; i < n; ++i) {
+        if (p[i] == 0u) continue;
+        const int32_t slot = static_cast<int32_t>((i / stride) % depth);
+        if (s.firstOff < 0) {
+            s.firstOff = static_cast<long long>(i);
+            s.slotMin = slot;
+            s.slotMax = slot;
+        }
+        s.lastOff = static_cast<long long>(i);
+        if (slot < s.slotMin) s.slotMin = slot;
+        if (slot > s.slotMax) s.slotMax = slot;
+    }
+    return s;
+}
+
 U8Stats scanU8Stats(const uint8_t *p, size_t n) {
     U8Stats s;
     if (!p || n == 0) return s;
@@ -2487,15 +2524,38 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         // At position 0 with a zeroed cache, `nonzero=0.000` means the graph produced no cache at
         // all and every later position attends nothing - which would be a decoder fault. Anything
         // else means the self-KV path works and the defect is upstream, in the encoder's input.
-        if (g.diag && position == 0 && !g.selfOutIdx.empty()) {
+        //
+        // Q10a-D3 EXTENSION: steps 0, 1 and 2, and the SLOT INDEX the graph wrote. Three lines
+        // decide the cache's alignment outright, because the two candidate layouts diverge from the
+        // very first step:
+        //   left-aligned, written at `position`   -> slot=[0..0], [0..1], [0..2]
+        //   right-aligned shift register          -> slot=[198..198], [197..198], [196..198]
+        // and the mask fill that is correct for one attends only padding under the other.
+        if (g.diag && position <= 2 && !g.selfOutIdx.empty()) {
             const int outSetForStep = 1 - inSetForStep;
             const AlignedBuf &b = g.selfKv[outSetForStep][0];
             const U8Stats ss = b.p ? scanU8Stats(static_cast<const uint8_t *>(b.p), b.n) : U8Stats{};
-            LOGDIAG("npu-debug: selfkv pos=0 inSet=%d outSet=%d tensor=%s bytes=%u min=%u max=%u "
-                    "mean=%.1f nonzero=%.3f",
-                    inSetForStep, outSetForStep,
+
+            // The slot axis, from this tensor's own dims. depth is the cache depth (199).
+            const Qnn_Tensor_t &st = g.dec.outputs[g.selfOutIdx[0]];
+            const uint32_t srank = tensorRank(st);
+            const uint32_t *sdm = tensorDims(st);
+            const uint32_t depth = g.maskLen - 1;
+            uint32_t stride = 0;
+            if (sdm && srank >= 2) {
+                if (sdm[srank - 1] == depth) stride = 1;
+                else if (sdm[srank - 2] == depth) stride = sdm[srank - 1];
+            }
+            const SlotSpan sp = b.p ? scanNonzeroSlots(static_cast<const uint8_t *>(b.p), b.n,
+                                                       stride, depth)
+                                    : SlotSpan{};
+            LOGDIAG("npu-debug: selfkv pos=%u inSet=%d outSet=%d tensor=%s bytes=%u min=%u max=%u "
+                    "mean=%.1f nonzero=%.3f depth=%u stride=%u firstOff=%lld lastOff=%lld "
+                    "slot=[%d..%d]",
+                    position, inSetForStep, outSetForStep,
                     tensorName(g.dec.outputs[g.selfOutIdx[0]]), g.selfKvBytes,
-                    ss.lo, ss.hi, ss.mean, ss.nonzero);
+                    ss.lo, ss.hi, ss.mean, ss.nonzero, depth, stride,
+                    sp.firstOff, sp.lastOff, sp.slotMin, sp.slotMax);
         }
 
         // The prompt walk plus one step past it. Bounded: for the shipped 4-token prompt that is
