@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
@@ -51,7 +52,14 @@ fun OnboardingModelScreen(
     // Main for every entry point, so the answer is produced OFF Main and memoised for the process
     // (WhisperEverywhereApp.npuCapableDevice). `false` until it arrives, which is the ungated
     // lineup every device that will never pass the gate keeps rendering.
-    val npuAvailable by produceState(initialValue = false) {
+    //
+    // KEYED on the install generation. `produceState` with no key runs its producer once per
+    // composition ENTRY and never again, so the freshly-stat'd installed half would be sampled
+    // once and frozen — and Q8's import affordance lives in THIS composition, so the user would
+    // import the pair and watch the lineup not change. The key is bumped by
+    // PreferencesManager.notifyModelInstalled(), which every install path calls.
+    val installGeneration by ModelInstallSignal.generation.collectAsState()
+    val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {
         value = withContext(Dispatchers.IO) { app.isNpuTierOffered() }
     }
     val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuAvailable)

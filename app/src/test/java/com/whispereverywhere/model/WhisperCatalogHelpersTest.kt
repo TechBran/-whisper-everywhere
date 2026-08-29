@@ -253,4 +253,48 @@ class WhisperCatalogHelpersTest {
         assertEquals(listOf("pro", "multi", "npu"), WhisperCatalog.pickableFor(true).map { it.id })
         assertTrue(WhisperCatalog.pickableFor(true).containsAll(WhisperCatalog.pickable))
     }
+
+    // ------------------------------------------------ 4.0 Q7b fix round: the download refusal
+
+    @Test fun only_a_single_artefact_tier_can_be_installed_by_download() {
+        // download() enqueues ONE request for `url` and writes ONE file, `fileName`; it never
+        // reads pairedArtifact. So a paired tier is not merely "unlikely to work" — it cannot be
+        // installed by that path at all, and trying destroys the file already at `fileName`.
+        WhisperCatalog.entries.forEach { model ->
+            assertEquals(
+                "tier '${model.id}': downloadability must track the artefact COUNT, which is the " +
+                    "thing download() cannot handle",
+                model.pairedArtifact == null,
+                WhisperCatalog.isInstallableByDownload(model),
+            )
+        }
+        // Stated concretely for today's catalog so the general rule above cannot go vacuous.
+        assertFalse(WhisperCatalog.isInstallableByDownload(WhisperCatalog.byId("npu")!!))
+        assertTrue(WhisperCatalog.isInstallableByDownload(WhisperCatalog.byId("pro")!!))
+        assertTrue(WhisperCatalog.isInstallableByDownload(WhisperCatalog.byId("multi")!!))
+        assertEquals(
+            "exactly one tier is refused today, and it is the paired one",
+            listOf("npu"),
+            WhisperCatalog.entries.filterNot { WhisperCatalog.isInstallableByDownload(it) }
+                .map { it.id },
+        )
+    }
+
+    @Test fun the_refusal_names_the_tier_and_both_files_it_actually_needs() {
+        // The reader of this line is working out what to do INSTEAD, so "import these two" has to
+        // be in it. Asserted here because download() needs a Context and no JVM test reaches it.
+        val npu = WhisperCatalog.byId("npu")!!
+        val reason = WhisperCatalog.notInstallableByDownloadReason(npu)
+        assertTrue("the refusal does not name the tier", reason.contains("'npu'"))
+        assertTrue("the refusal does not name the encoder", reason.contains(npu.fileName))
+        assertTrue(
+            "the refusal does not name the paired decoder",
+            reason.contains(npu.pairedArtifact!!.fileName),
+        )
+        assertTrue(
+            "the refusal must say import, not download",
+            reason.contains("installs by import, not download"),
+        )
+        assertFalse("the refusal must never be a bare boolean stringified", reason == "false")
+    }
 }

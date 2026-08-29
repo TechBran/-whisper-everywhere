@@ -12,6 +12,8 @@ import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.data.local.UsageTracker
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModelManager
+import com.whispereverywhere.npu.NpuDiag
+import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.transcription.NpuWhisperBackend
 
 class WhisperEverywhereApp : Application() {
@@ -55,14 +57,28 @@ class WhisperEverywhereApp : Application() {
      * [configureFastRpcLibraryPath], which is here for the same reason: it has to happen once, per
      * process, before anything touches the backend.
      */
+    /**
+     * The two `Build` SOC fields, each read in exactly ONE place so the API-31 guard has exactly
+     * one site to be correct at. Two readers need them — the gate and its diagnostic — and two
+     * inline guarded reads would be two chances to get it wrong, plus a pin that could no longer
+     * count them.
+     */
+    private val npuSocModel: String?
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null
+
+    private val npuSocManufacturer: String?
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MANUFACTURER else null
+
     val npuCapableDevice: Boolean by lazy {
         NpuWhisperBackend.isTierAvailable(
-            socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null,
-            socManufacturer =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MANUFACTURER else null,
+            socModel = npuSocModel,
+            socManufacturer = npuSocManufacturer,
             libDir = applicationInfo.nativeLibraryDir,
         )
     }
+
+    /** Emits [NpuDiag.offer] exactly once per process, at the gate's first evaluation. */
+    private val npuOfferLogged = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * Whether a chooser may OFFER the gated `npu` tier: capable hardware AND both context binaries
@@ -80,10 +96,32 @@ class WhisperEverywhereApp : Application() {
      * import just earned. It is four `File` stats behind a memoised gate.
      *
      * **Never call from Main** — it forces [npuCapableDevice], which dlopens.
+     *
+     * **Emits one `WE-DIAG` line the first time it runs** (4.0, Q7b fix round, I3). Three
+     * predicates collapse into one Boolean here, so without it a Q10a report of "the card never
+     * showed" cannot be told apart from "wrong SoC", "the QNN stack did not load" and "the pair is
+     * not on disk" — three different next actions. See [NpuDiag.offer].
      */
     fun isNpuTierOffered(): Boolean {
         val npu = WhisperCatalog.byId("npu") ?: return false
-        return npuCapableDevice && whisperModelManager.isInstalled(npu)
+        val capable = npuCapableDevice
+        val installed = whisperModelManager.isInstalled(npu)
+        if (npuOfferLogged.compareAndSet(false, true)) {
+            // isSocSupported is called here for REPORTING only — it is a pure two-string table
+            // lookup, it cannot dlopen, and the DECISION is `capable` on the line below. The gate
+            // is not re-run and is not duplicated: this only recovers which HALF of `capable`
+            // answered, which the Boolean itself has thrown away.
+            Log.i(
+                NpuDiag.TAG,
+                NpuDiag.offer(
+                    socModel = npuSocModel,
+                    socSupported = NpuGate.isSocSupported(npuSocModel, npuSocManufacturer),
+                    capable = capable,
+                    installed = installed,
+                ),
+            )
+        }
+        return capable && installed
     }
 
     override fun onCreate() {

@@ -31,6 +31,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
@@ -408,8 +409,13 @@ private fun EnginesStep(
         // the answer is produced OFF Main and memoised for the process. `false` until it arrives.
         // `pickedTierId` still starts null: the steer moves a card to the top and badges it, and
         // the user still has to tap it.
+        //
+        // KEYED on the install generation, for the reason spelled out at the Settings picker's
+        // copy of this block: an unkeyed produceState samples once per composition entry, so an
+        // import landing while the chooser is on screen would never reach the lineup.
         val languageTag = java.util.Locale.getDefault().toLanguageTag()
-        val npuAvailable by produceState(initialValue = false) {
+        val installGeneration by ModelInstallSignal.generation.collectAsState()
+        val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {
             value = withContext(Dispatchers.IO) {
                 WhisperEverywhereApp.getInstance().isNpuTierOffered()
             }

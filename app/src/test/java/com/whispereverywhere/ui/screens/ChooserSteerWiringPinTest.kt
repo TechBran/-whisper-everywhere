@@ -97,6 +97,11 @@ class ChooserSteerWiringPinTest {
         read("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
     }
 
+    /** The fourth (4.0, Q7b fix round, I1): where the gate's re-read key is bumped. */
+    private val prefs: String by lazy {
+        read("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt")
+    }
+
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
 
     /** A multi-line needle, written as its own source lines so indentation is part of the match. */
@@ -145,7 +150,8 @@ class ChooserSteerWiringPinTest {
             flow,
             "the guided flow",
             block(
-                "        val npuAvailable by produceState(initialValue = false) {",
+                "        val installGeneration by ModelInstallSignal.generation.collectAsState()",
+                "        val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {",
                 "            value = withContext(Dispatchers.IO) {",
                 "                WhisperEverywhereApp.getInstance().isNpuTierOffered()",
                 "            }",
@@ -182,6 +188,52 @@ class ChooserSteerWiringPinTest {
                 "literal in either one badges a card the lineup did not lead with",
             2,
             count(source, "(languageTag, npuAvailable)"),
+        )
+        // 4.0 Q7b fix round, I1. The producer needle above already contains `key1 =`, but this
+        // says WHY out loud, because the tempting "simplification" is to delete the key rather
+        // than the whole block. `produceState` with no key desugars to `remember { … }` +
+        // `LaunchedEffect(Unit)`: the producer runs ONCE PER COMPOSITION ENTRY and never again.
+        // `isNpuTierOffered()` deliberately re-stats the two files on every call so an import is
+        // visible immediately — and an unkeyed producer throws that away one layer up, in the very
+        // composition Q8's import affordance lives in. The user imports the pair and the lineup
+        // does not change.
+        assertEquals(
+            "$surface keys the producer on the install generation, so an import that lands while " +
+                "the chooser is on screen re-reads the gate instead of being invisible until the " +
+                "user navigates away and back",
+            1,
+            count(source, "produceState(initialValue = false, key1 = installGeneration)"),
+        )
+        assertEquals(
+            "$surface never samples the gate unkeyed",
+            0,
+            count(source, "produceState(initialValue = false) {"),
+        )
+    }
+
+    @Test
+    fun theInstallGenerationIsBumpedAtTheOneFunnelEveryInstallPathGoesThrough() {
+        // The other end of I1's mechanism. `ModelInstallSignalTest` proves the counter changes;
+        // this proves something actually turns it. Both are needed: a key nothing bumps makes the
+        // two producers above decoration, which is the same class of hole as a pin nothing runs.
+        assertEquals(
+            "notifyModelInstalled bumps the Compose re-read key",
+            1,
+            count(prefs, "ModelInstallSignal.bump()"),
+        )
+        assertEquals(
+            "and still emits the SharedFlow the bubble's prewarm collects — the counter is an " +
+                "addition, not a replacement; `Unit` cannot serve as a Compose key and a key " +
+                "cannot be collected as an event",
+            1,
+            count(prefs, "_modelInstalled.tryEmit(Unit)"),
+        )
+        // One function, so a future install path (Q8's SAF importer) cannot deliver half the news
+        // by calling the one it happened to know about.
+        assertEquals(
+            "there is exactly one place that announces an install",
+            1,
+            count(prefs, "fun notifyModelInstalled() {"),
         )
     }
 
@@ -283,7 +335,8 @@ class ChooserSteerWiringPinTest {
             picker,
             "the Settings picker",
             block(
-                "    val npuAvailable by produceState(initialValue = false) {",
+                "    val installGeneration by ModelInstallSignal.generation.collectAsState()",
+                "    val npuAvailable by produceState(initialValue = false, key1 = installGeneration) {",
                 "        value = withContext(Dispatchers.IO) { app.isNpuTierOffered() }",
                 "    }",
             ),
@@ -362,9 +415,29 @@ class ChooserSteerWiringPinTest {
         assertEquals(
             "the offer gate keeps BOTH halves (battery T11). Without the installed check the card " +
                 "renders on a gate-passing device whose 358 MB pair has not arrived, and the only " +
-                "button on it is a Download that fetches the provenance zip and fails the size gate",
+                "button on it is a Download that — until the Q7b fix round — deleted the imported " +
+                "encoder before failing",
             1,
-            count(app, "return npuCapableDevice && whisperModelManager.isInstalled(npu)"),
+            count(app, "return capable && installed"),
+        )
+        assertEquals(
+            "the capability half is the MEMOISED gate, not a re-derivation",
+            1,
+            count(app, "val capable = npuCapableDevice"),
+        )
+        assertEquals(
+            "the installed half is a live two-file stat, taken on every call",
+            1,
+            count(app, "val installed = whisperModelManager.isInstalled(npu)"),
+        )
+        // The reporting call must not become the decision. `NpuGate.isSocSupported` is called here
+        // only to recover which HALF of `capable` answered, for the diagnostic line; routing the
+        // gate through it would drop the probe entirely and offer the tier on any SM8650 whose QNN
+        // stack does not load.
+        assertEquals(
+            "NpuGate is consulted once, for reporting, and never as the gate itself",
+            1,
+            count(app, "socSupported = NpuGate.isSocSupported(npuSocModel, npuSocManufacturer),"),
         )
         // ORDER is deliberately NOT asserted for those two conjuncts, and that is a finding rather
         // than an omission. Both are pure predicates over state neither one changes, so `&&` in

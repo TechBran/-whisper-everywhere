@@ -103,12 +103,40 @@ class WhisperModelManager(
      * (the move + streaming hash of up to ~574 MB used to freeze the UI for 10-20 s when a
      * caller invoked this from the main dispatcher).
      * On completion, size-gate + sha256 verify; delete + throw on mismatch.
+     *
+     * **Refuses a tier it structurally cannot install, BEFORE touching anything** (4.0, Q7b fix
+     * round). See the guard below: the order of those two statements is the difference between a
+     * loud no-op and a data-destroying one.
      */
     suspend fun download(
         model: WhisperModel,
         onProgress: (soFar: Long, total: Long) -> Unit,
         onVerifying: () -> Unit = {},
     ): Unit = withContext(Dispatchers.IO) {
+        // REFUSAL FIRST — before the DownloadManager handle, before `dest`, and above all before
+        // the `if (dest.exists()) dest.delete()` two lines down. THE ORDER IS THE FIX, not the
+        // check: run this after that delete and the guard is decoration on a file that is already
+        // gone.
+        //
+        // What it prevents, on the only device that can reach it — a gate-passing phone with the
+        // npu pair imported by hand: the card's Download button deletes the 132,927,488-byte
+        // encoder immediately, fetches ~423 MB of provenance zip over a possibly-metered link,
+        // fails the size gate against the PAIR's 358,244,352 bytes, deletes that too, and leaves
+        // `isInstalled(npu)` false — so the tier's card silently vanishes on the next composition
+        // and the only way back is re-importing. `download()` never reads `pairedArtifact`, so this
+        // path could never have installed the tier even with a correct URL.
+        //
+        // At the SINK on purpose. Two call sites reach it — the picker's Download button and
+        // `OnboardingSetupViewModel.ensureSpeech()`, which serves Home's missing-engine row for
+        // whatever `prefs.selectedModelId` names — and a guard at either one leaves the other open.
+        if (!WhisperCatalog.isInstallableByDownload(model)) {
+            android.util.Log.w("WE-DIAG", WhisperCatalog.notInstallableByDownloadReason(model))
+            throw ModelDownloadException(
+                "${model.displayName} is installed by importing its files, not by downloading. " +
+                    "Nothing on this device was changed."
+            )
+        }
+
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val dest = fileFor(model)
         if (dest.exists()) dest.delete()

@@ -171,4 +171,75 @@ class NpuDiagTest {
             liveLineCount(backend, "NpuDiag.line(encodeMs, decodeMs, written, resolution.note)"),
         )
     }
+
+    // ---------------------------------------- 4.0 Q7b fix round (I3): the offer line
+
+    @Test
+    fun theOfferLineNamesEveryPredicateSeparatelyAndDistinguishesSkippedFromFailed() {
+        // The gate is a conjunction whose answer is one Boolean, so this line exists to un-collapse
+        // it. Q10a's first read.
+        assertEquals(
+            "npu: offer soc=SM8650:pass probe=pass installed=false offered=false",
+            NpuDiag.offer("SM8650", socSupported = true, capable = true, installed = false),
+        )
+        assertEquals(
+            "npu: offer soc=SM8650:pass probe=pass installed=true offered=true",
+            NpuDiag.offer("SM8650", socSupported = true, capable = true, installed = true),
+        )
+        // The right silicon, but the QNN stack did not load — an ADSP_LIBRARY_PATH / libqnnasr.so
+        // question, and a completely different next action from the two below.
+        assertEquals(
+            "npu: offer soc=SM8650-AC:pass probe=fail installed=true offered=false",
+            NpuDiag.offer("SM8650-AC", socSupported = true, capable = false, installed = true),
+        )
+        // SKIPPED, not failed. The SoC table is checked first precisely so a non-Qualcomm device
+        // never dlopens a Qualcomm backend, so on these devices the probe genuinely did not run —
+        // reporting `fail` would invent a measurement nobody took.
+        assertEquals(
+            "npu: offer soc=Tensor G3:fail probe=skipped installed=false offered=false",
+            NpuDiag.offer("Tensor G3", socSupported = false, capable = false, installed = false),
+        )
+        // Below API 31 the caller hands us null by design (NpuGate's null -> deny). The line must
+        // still be readable rather than printing "null".
+        assertEquals(
+            "npu: offer soc=unknown:fail probe=skipped installed=false offered=false",
+            NpuDiag.offer(null, socSupported = false, capable = false, installed = false),
+        )
+    }
+
+    @Test
+    fun theOfferLineIsGreppableWithTheOtherTwoAndCarriesNoTranscriptContent() {
+        val line = NpuDiag.offer("SM8650", socSupported = true, capable = true, installed = true)
+        assertTrue("the offer line must share the tier's `npu: ` prefix", line.startsWith("npu: "))
+        assertTrue("one line, never two", !line.contains("\n"))
+        // Same shape as the other two: a word, then k=v pairs a parser can split on.
+        listOf("soc=", "probe=", "installed=", "offered=").forEach {
+            assertEquals("the offer line states `$it` exactly once", 1, line.split(it).size - 1)
+        }
+    }
+
+    @Test
+    fun theOfferLineIsEmittedExactlyOncePerProcessAtTheGatesFirstEvaluation() {
+        // Format and emission, both guarded — either alone is decoration (this class's KDoc). The
+        // emitter is `WhisperEverywhereApp`, which no JVM test can construct, so the call is
+        // pinned as source; the ONE-SHOT is the AtomicBoolean, because a line re-emitted on every
+        // chooser open stops being a landmark and becomes noise in a logcat with no adb behind it.
+        val app = source("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
+        assertEquals(
+            "the offer line has exactly one emitter",
+            1,
+            liveLineCount(app, "NpuDiag.offer("),
+        )
+        assertEquals(
+            "the emitter is behind a compareAndSet, so it runs once per process and not once per " +
+                "chooser open",
+            1,
+            liveLineCount(app, "if (npuOfferLogged.compareAndSet(false, true)) {"),
+        )
+        assertEquals(
+            "the line goes to the house tag, so one grep finds every tier line",
+            1,
+            liveLineCount(app, "Log.i(") ,
+        )
+    }
 }

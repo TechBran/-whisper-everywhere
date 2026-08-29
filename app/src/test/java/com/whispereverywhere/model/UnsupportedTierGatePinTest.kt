@@ -85,6 +85,30 @@ class UnsupportedTierGatePinTest {
     }
 
     /**
+     * [indexOfOrFail] over LIVE lines only — the same comment filter `NpuDiagTest.liveLineCount`
+     * uses, for the same reason and one measured failure.
+     *
+     * An ordering assertion is a claim about where a STATEMENT sits, and a comment that quotes the
+     * statement is not that statement. This bit immediately: the refusal in `download()` explains
+     * itself by naming `if (dest.exists()) dest.delete()` in prose, two lines above the real one —
+     * so the plain `indexOf` found the *explanation* first and the pin failed on correct code.
+     * Rewording the comment would have "fixed" it and left the next comment free to break it
+     * again, in a class whose entire value is that it fails only for real reasons.
+     */
+    private fun liveIndexOfOrFail(haystack: String, what: String, needle: String): Int {
+        var offset = 0
+        for (line in haystack.lineSequence()) {
+            val trimmed = line.trimStart()
+            val commented =
+                trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")
+            val at = line.indexOf(needle)
+            if (!commented && at >= 0) return offset + at
+            offset += line.length + 1
+        }
+        throw AssertionError("missing from $what as a LIVE line: <<$needle>>")
+    }
+
+    /**
      * One declaration to its own closing brace, matched by INDENTATION rather than by counting
      * braces: the closer is the first line at the declaration's own nesting depth, which no nested
      * block can produce. Members of these classes close on four spaces.
@@ -180,6 +204,64 @@ class UnsupportedTierGatePinTest {
                 "isInstalled",
                 "WhisperCatalog.sizeWithinTolerance(f.length(), model.primaryBytes)",
             ) < indexOfOrFail(predicate, "isInstalled", "model.pairedArtifact ?: return true"),
+        )
+    }
+
+    @Test
+    fun theDownloadRefusalRunsBeforeAnyFileOperation() {
+        // 4.0 Q7b fix round, C1 — and this is an ORDER assertion for the FIFTH time on this
+        // branch, because presence is again only half of it.
+        //
+        // `download()`'s third statement is `if (dest.exists()) dest.delete()`. For the npu tier
+        // `dest` is the hand-imported 132,927,488-byte encoder, and the function goes on to fetch
+        // the ~423 MB provenance zip over a possibly-metered link, fail the size gate against the
+        // PAIR's 358,244,352 bytes, delete that too, and leave `isInstalled(npu)` false — so the
+        // card silently vanishes and the only way back is re-importing. `download()` never reads
+        // `pairedArtifact`, so this path could not have installed the tier even with a good URL.
+        //
+        // A guard placed anywhere AFTER that delete still refuses, still throws, still logs — and
+        // is decoration on a file that is already gone. Only the order makes it a fix.
+        val download = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    suspend fun download(",
+        )
+        assertEquals(
+            "download() refuses a tier it structurally cannot install",
+            1,
+            count(download, "if (!WhisperCatalog.isInstallableByDownload(model)) {"),
+        )
+        assertEquals(
+            "the refusal is loud: one WE-DIAG line naming the tier and the reason",
+            1,
+            count(download, "WhisperCatalog.notInstallableByDownloadReason(model)"),
+        )
+        // It leaves by the failure path every caller already handles — `download()` has four
+        // `throw ModelDownloadException(` sites, so the refusal is identified by ITS message, not
+        // by a count of the type. And the message is the assertion worth making: the refusal
+        // promises the user nothing was touched, which is only true while the ORDER below holds.
+        assertEquals(
+            "the refusal tells the user nothing was changed, which the ordering below is what makes true",
+            1,
+            count(download, "\"Nothing on this device was changed.\""),
+        )
+        val refusal = liveIndexOfOrFail(
+            download,
+            "download",
+            "if (!WhisperCatalog.isInstallableByDownload(model)) {",
+        )
+        assertTrue(
+            "THE REFUSAL MUST PRECEDE THE FIRST FILE OPERATION. Below the delete it is a guard on " +
+                "a destroyed file: the imported encoder is gone before the check that says it " +
+                "should never have been touched.",
+            refusal < liveIndexOfOrFail(download, "download", "if (dest.exists()) dest.delete()"),
+        )
+        // The other half of the same claim: nothing may sneak a file operation above the guard.
+        // `fileFor(model)` resolves the path that gets deleted, so it is the earliest statement
+        // that could be hoisted to reintroduce the defect.
+        assertTrue(
+            "`dest` must be resolved AFTER the refusal, so no code path can touch a file first",
+            refusal < liveIndexOfOrFail(download, "download", "val dest = fileFor(model)"),
         )
     }
 

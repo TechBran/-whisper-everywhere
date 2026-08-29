@@ -2,6 +2,7 @@ package com.whispereverywhere.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.ResizeMath
 import com.whispereverywhere.tts.ttsCloudVoiceKey
@@ -266,9 +267,19 @@ class PreferencesManager(private val context: Context) {
     private val _modelInstalled = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val modelInstalled: SharedFlow<Unit> = _modelInstalled.asSharedFlow()
 
-    /** Called by WhisperModelManager once a downloaded model is verified on disk. */
+    /**
+     * Called by WhisperModelManager once a downloaded model is verified on disk — **and by Q8's
+     * SAF importer once the npu pair is verified**, which is the same event by a different route.
+     *
+     * Two signals, because they have two different consumers and two different shapes.
+     * [modelInstalled] is a `SharedFlow<Unit>` the bubble collects to schedule a prewarm;
+     * [ModelInstallSignal.generation] is a monotonic counter the Compose choosers use as a
+     * re-read KEY, which `Unit` cannot serve as (4.0, Q7b fix round, I1). One function so a caller
+     * cannot deliver half the news.
+     */
     fun notifyModelInstalled() {
         _modelInstalled.tryEmit(Unit)
+        ModelInstallSignal.bump()
     }
 
     /**

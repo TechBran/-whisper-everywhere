@@ -257,6 +257,7 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
         "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt",
+        "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)
 }

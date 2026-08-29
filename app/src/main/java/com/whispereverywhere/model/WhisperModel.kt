@@ -263,6 +263,39 @@ object WhisperCatalog {
         if (npuAvailable) entries.filter { !it.retired && (!it.gated || it.id == "npu") } else pickable
 
     /**
+     * Whether `WhisperModelManager.download` can install this tier **at all**.
+     *
+     * **This is a STRUCTURAL fact about `download()`, not a policy about which tiers we like.**
+     * That function enqueues exactly one `DownloadManager.Request` for `model.url` and writes
+     * exactly one file, `model.fileName`; it never reads [WhisperModel.pairedArtifact]. So a tier
+     * made of two artefacts cannot be installed by it however correct its URL is — and calling it
+     * anyway is not a harmless no-op: `download()`'s first act is `if (dest.exists()) dest.delete()`
+     * on `fileName`, which for `npu` **destroys the hand-imported encoder** before a byte is
+     * fetched, and `verifyDest` then size-gates whatever arrived against `approxBytes` — the SUM of
+     * both files — and deletes that too.
+     *
+     * **`pairedArtifact == null` rather than `!gated`**, deliberately. `gated` means "this device
+     * decides", which is a different question with a different answer: a future gated tier could be
+     * a single downloadable file, and a future ungated tier could ship as a pair. The predicate
+     * tracks the thing that actually breaks, so it stays correct when the next two-artifact tier
+     * arrives without anyone remembering this comment.
+     */
+    fun isInstallableByDownload(model: WhisperModel): Boolean = model.pairedArtifact == null
+
+    /**
+     * The refusal line for a tier [isInstallableByDownload] rejects — a pure builder so the text is
+     * assertable, since `download()` itself needs a `Context` and no JVM test can reach it (the
+     * same F-rule split [com.whispereverywhere.npu.NpuDiag] uses, and for the same reason).
+     *
+     * Names the tier and both files, because the reader of this line is trying to work out what to
+     * do instead, and "import these two" is the answer.
+     */
+    fun notInstallableByDownloadReason(model: WhisperModel): String =
+        "download refused for '${model.id}': installs by import, not download " +
+            "(needs ${model.fileName} AND ${model.pairedArtifact?.fileName}; " +
+            "url is provenance, not a source)"
+
+    /**
      * Default tier on first run. **pro (small.en) since 2026-08-20 (3.7 Workstream H):** eco and
      * base are retired for accuracy, leaving pro as the English flagship and multi as the
      * international tier. The chooser offers [pickable], steers a fresh install toward one of them
