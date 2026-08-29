@@ -783,6 +783,28 @@ class NpuNativeContractTest {
             )
         }
 
+        // (4.0 Q9 rider) The GUARD paragraph must sit on the field it describes. This is the one
+        // assertion in this class that is deliberately about COMMENT text, and it exists because
+        // the failure already happened: a declaration-order swap left the whole "non-null is the
+        // whole of the routing decision / written LAST when arming" block attached to fallbackCtx,
+        // a Long whose 0L cannot be told from its own uninitialised value — so the field that
+        // carries the invariant shipped undocumented and the field that cannot carry it claimed to.
+        // Nothing above catches that: both declarations are present, both are @Volatile, and every
+        // ordering pin below still passes. A KDoc that names the wrong field is not a cosmetic
+        // defect on a routing pair two threads reach; it is the next reader being told, in the one
+        // place they will look, that the guard is the thing that is not the guard.
+        val ctxDecl = backend.indexOf("private var fallbackCtx: Long = 0L")
+        val guardDoc = backend.indexOf("**This one is the GUARD**")
+        val backendDecl = backend.indexOf("private var fallbackBackend: WhisperBackend? = null")
+        assertTrue("the guard paragraph must exist at all", guardDoc >= 0)
+        assertTrue(
+            "the guard paragraph ($guardDoc) must sit AFTER fallbackCtx's declaration ($ctxDecl) " +
+                "and BEFORE fallbackBackend's ($backendDecl) — i.e. in the KDoc attached to the " +
+                "field it is about. Anywhere else and it documents a field that does not have the " +
+                "property it claims.",
+            ctxDecl in 0 until guardDoc && guardDoc < backendDecl
+        )
+
         val fallback = kotlinMemberBody(
             backend, "private fun fallBackToCpuTier(stage: String, detail: String): Long {"
         )

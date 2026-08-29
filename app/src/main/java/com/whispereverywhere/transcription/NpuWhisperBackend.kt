@@ -88,25 +88,36 @@ class NpuWhisperBackend(
     private var armed: Boolean = false
 
     /**
-     * The CPU tier this session fell back to, or null while the NPU is live. Non-null is the whole
-     * of the routing decision: every entry point checks it and delegates.
+     * The CPU tier's native handle, valid only while [fallbackBackend] is non-null, else `0L`.
      *
-     * **Two mechanisms, and they are one mechanism.** Both fields are `@Volatile` AND every read
-     * and write of them happens inside [NativeComputeGate], because they need two different
-     * guarantees. The gate gives mutual exclusion, so the pair cannot be half-updated while another
-     * thread routes on it; `@Volatile` gives publication, so the pair a reader sees is the pair a
-     * writer wrote. Neither alone is enough and neither is redundant — dropping the gate lets two
-     * threads both observe `null` and both fall back (leaking a whole 60-190 MB whisper context),
-     * and dropping `@Volatile` lets a reader see a non-null backend beside a stale `0L` handle and
-     * silently lose a segment on `transcribe(0L, …)`.
-     *
-     * [fallbackBackend] is the GUARD: it is written LAST when arming and cleared FIRST when tearing
-     * down, so a reader that sees it non-null is guaranteed to see the handle that goes with it.
-     * Same discipline, and the same reason, as `WhisperNativeBackend`'s `lastStats`/`lastStatsCtx`.
+     * **It is a `Long`, so it can carry no routing decision of its own.** `0L` is
+     * `WhisperNativeBackend`'s failure value AND its uninitialised value, and nothing here can tell
+     * those apart — which is exactly why the pair needs a separate guard and why that guard is
+     * [fallbackBackend]. Read it only after that one has answered non-null; see its declaration for
+     * the publication order that makes doing so safe.
      */
     @Volatile
     private var fallbackCtx: Long = 0L
 
+    /**
+     * The CPU tier this session fell back to, or null while the NPU is live. **Non-null is the
+     * whole of the routing decision**: [transcribe], [detectedLanguage] and [releaseEverything]
+     * each check this field, and this field only, before delegating.
+     *
+     * **Two mechanisms, and they are one mechanism.** This field and [fallbackCtx] are both
+     * `@Volatile` AND every read and write of them happens inside [NativeComputeGate], because
+     * they need two different guarantees. The gate gives mutual exclusion, so the pair cannot be
+     * half-updated while another thread routes on it; `@Volatile` gives publication, so the pair a
+     * reader sees is the pair a writer wrote. Neither alone is enough and neither is redundant —
+     * dropping the gate lets two threads both observe `null` and both fall back (leaking a whole
+     * 60-190 MB whisper context), and dropping `@Volatile` lets a reader see a non-null backend
+     * beside a stale `0L` handle and silently lose a segment on `transcribe(0L, …)`.
+     *
+     * **This one is the GUARD**: it is written LAST when arming ([fallBackToCpuTier]) and cleared
+     * FIRST when tearing down ([releaseEverything]), so a reader that sees it non-null is
+     * guaranteed to see the handle that goes with it. Same discipline, and the same reason, as
+     * `WhisperNativeBackend`'s `lastStats`/`lastStatsCtx`.
+     */
     @Volatile
     private var fallbackBackend: WhisperBackend? = null
 

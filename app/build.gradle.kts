@@ -249,6 +249,13 @@ android {
 // is a picker that opens, closes and silently does nothing, which is the one failure shape an
 // import is never allowed to have; it must not be possible to introduce it in a file the guard
 // does not re-read.
+// (4.0 Q9) FloatingBubbleService.kt joins by the same stated rule — NpuBackendWiringTest reads it,
+// because it is the ONE construction site of LocalWhisperEngine in the bubble path and no JVM test
+// can instantiate a Service. What is pinned there is the `backend =` argument, the ORDER of the
+// rebuild (shutdown BEFORE construct, which is I11 arriving through the service), and that the
+// offer gate is read off Main. It is a plain Kotlin file — exactly the shape Q7a MEASURED going
+// UP-TO-DATE on a comment-only edit — and the needles are indentation-sensitive block matches, the
+// mutation shape most likely to leave semantics untouched.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
@@ -271,6 +278,7 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
         "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt",
         "src/main/java/com/whispereverywhere/MainActivity.kt",
+        "src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt",
         "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt",
         rootProject.file(".gitignore"),
     ).withPropertyName("nativeSourceContract").withPathSensitivity(PathSensitivity.RELATIVE)

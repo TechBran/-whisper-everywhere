@@ -62,6 +62,27 @@ object NpuDiag {
         "npu: unavailable stage=$stage detail=$detail"
 
     /**
+     * `npu: fallback rebuild stage=encode (the cached local engine is rebuilt on the CPU tier)` —
+     * emitted **once per session**, by the service, when it drops the engine it built on the NPU
+     * backend and builds the CPU one in its place (4.0, Q9).
+     *
+     * **It is a second line about the same event, and that is deliberate.** [unavailable] is the
+     * BACKEND saying "this stage declined"; this is the ENGINE LAYER saying "and here is what I did
+     * about it". They are emitted from different objects at different times — the decline happens
+     * mid-session, the rebuild at the next warm — and without the second line a Q10a log shows a
+     * tier that declined and then, silently, a session that no longer even tries. One line per
+     * rebuild, never one per segment: a per-segment version would bury the `npu: encode=` and
+     * `segment-timing:` pair it sits between.
+     *
+     * @param stage `NpuTierStatus.stageOf(reason)` — the same one word [unavailable] printed, so
+     *        the two lines join by eye. `unknown` when the reason was null or unparseable, which is
+     *        a state the caller should not be able to reach and is reported rather than hidden.
+     */
+    fun fallbackRebuild(stage: String?): String =
+        "npu: fallback rebuild stage=${stage ?: "unknown"} " +
+            "(the cached local engine is rebuilt on the CPU tier)"
+
+    /**
      * `npu: offer soc=SM8650:pass probe=pass installed=false offered=false` — emitted **once per
      * process**, at the first evaluation of the memoised offer gate.
      *

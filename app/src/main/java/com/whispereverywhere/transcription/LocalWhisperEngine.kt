@@ -27,6 +27,20 @@ import java.util.concurrent.Executors
 class LocalWhisperEngine(
     private val modelPathProvider: ModelPathProvider,
     private val retry: RetryPolicy = RetryPolicy(maxAttempts = 3),
+    /**
+     * The tier this engine runs on. `WhisperNativeBackend` — whisper.cpp — is the default and is
+     * what every caller but one passes; `FloatingBubbleService.warmLocalEngine` passes
+     * `NpuBackendSelector.backendFor(…)`, which answers `NpuWhisperBackend` for the 4.0 npu tier
+     * (Q9).
+     *
+     * **It is a `val`, and that is load-bearing rather than incidental.** Changing tiers means
+     * building a NEW engine, not reassigning this field, and the service does exactly that. A
+     * `var` would let a mid-session fallback swap the backend while [executor] is inside
+     * `transcribeStreaming` — handing a running segment a native context that is being torn down —
+     * and it would leave [ctxPtr] and [loadedModelPath] describing the previous backend's session
+     * with nothing in the type system objecting. The cost of the `val` is one rebuilt engine per
+     * tier change; the cost of the `var` is a class of races that only a device can find.
+     */
     private val backend: WhisperBackend = WhisperNativeBackend,
     /**
      * MUST be single-threaded. All native whisper context ([ctxPtr]) reads, writes, loads,

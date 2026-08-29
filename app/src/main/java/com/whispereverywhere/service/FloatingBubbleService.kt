@@ -38,10 +38,13 @@ import com.whispereverywhere.audio.EndpointerFactory
 import com.whispereverywhere.audio.SileroEndpointer
 import com.whispereverywhere.net.ConnectivityMonitor
 import com.whispereverywhere.net.OkHttpTransport
+import com.whispereverywhere.npu.NpuDiag
+import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.text.TextJoin
 import com.whispereverywhere.transcription.LocalWhisperEngine
+import com.whispereverywhere.transcription.NpuBackendSelector
 import com.whispereverywhere.transcription.SegmentOutcome
 import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine
@@ -385,6 +388,17 @@ class FloatingBubbleService : Service(),
     // provider choice produced.
     private var localEngine: LocalWhisperEngine? = null
 
+    // Which backend [localEngine] was built on (4.0, Q9). It cannot be asked of the engine —
+    // `backend` is a private val there — and it is what makes "the cached engine is still the right
+    // one" a comparison rather than a guess. Main-confined, like localEngine itself.
+    private var localEngineOnNpu: Boolean = false
+
+    // WhisperEverywhereApp.isNpuTierOffered()'s answer, memoised because warmLocalEngine() reads it
+    // on Main and that gate must never be evaluated there. Written only by refreshNpuTierOffer(),
+    // which does the dispatcher hop; false until the first refresh lands, which is the safe
+    // direction (the CPU tier always works). @Volatile: written on IO, read on Main.
+    @Volatile private var npuTierOffered: Boolean = false
+
     // The cloud wrapper (FallbackTranscriptionEngine) of the CURRENT/previous session, held so it
     // can be close()d — resolving everything it still owes — without shutting down the local engine
     // it wraps. Non-null only for cloud sessions; on-device-only users keep the pre-cloud path.
@@ -677,6 +691,10 @@ class FloatingBubbleService : Service(),
         // cloud/local question ~1.5 s after boot and then cache that answer for the service's
         // whole life, and (b) toast about a degraded mode before the user has asked for anything.
         serviceScope.launch {
+            // (4.0, Q9) The offer gate BEFORE the prewarm it decides, and off Main — its first
+            // evaluation dlopens two QNN libraries. Without this the first engine of every process
+            // is built on the CPU backend and an npu user pays a rebuild for it.
+            refreshNpuTierOffer()
             delay(1500)
             warmLocalEngine().prewarm()
         }
@@ -723,6 +741,12 @@ class FloatingBubbleService : Service(),
                     return@collectLatest
                 }
                 android.util.Log.i("WE-DIAG", "$reason: re-prewarming engine")
+                // (4.0, Q9) Both triggers can change the offer gate's answer, and the INSTALL one
+                // is the case a memo taken at service start cannot see: Q8's importer writes the
+                // 358 MB pair into files/models while this service is up, and the gate's installed
+                // half is a live stat. Re-read before warmLocalEngine() decides which backend the
+                // engine it may be about to rebuild is built on.
+                refreshNpuTierOffer()
                 // prewarmModelSwitch queues onto the engine's executor, which onDestroy shuts
                 // down — a rejection escaping here would kill this collector for good. Belt and
                 // braces only: onDestroy cancels serviceScope BEFORE it touches the engine, so
@@ -2167,9 +2191,76 @@ class FloatingBubbleService : Service(),
      * the native context costs seconds (model mmap + ~7 s Adreno OpenCL kernel compile). It
      * OUTLIVES every cloud wrapper built around it, and it is the only object here that owns a
      * native resource — so it is also the only one that may be `shutdown()`.
+     *
+     * ### Why the tier is decided HERE, and why "decided" means "rebuilt" (4.0, Q9)
+     *
+     * `LocalWhisperEngine.backend` is a **`val` with a constructor default**, and this is its only
+     * construction site in the bubble path. There is no factory to route through and no field to
+     * reassign: the tier a session runs on is fixed the moment the engine is built. So both of the
+     * things that can change it — the user selecting a different tier, and the NPU declining
+     * mid-session — are handled the same way, by dropping the cached engine and building another.
+     *
+     * **rebuild-on-fallback, chosen over making `backend` a `var`.** A `var` would let a fallback
+     * swap the backend under an in-flight `transcribe` on the engine's native executor, i.e. hand a
+     * running segment a half-torn-down native context. Rebuilding cannot: the swap happens between
+     * sessions, at the next warm, and the segment that triggered the fallback was already rescued
+     * inside `NpuWhisperBackend.fallBackAndRun`.
+     *
+     * **The ORDER below is an invariant, not a formatting choice (I11).** The stale engine is
+     * `shutdown()` — which queues its backend's release, and for `NpuWhisperBackend` that release
+     * frees the NPU's ~376 MiB *before* anything else — and only then is the replacement
+     * constructed. Constructing first would put a second path around I11: the new engine's
+     * `WhisperNative.init` (60-190 MB) racing an NPU teardown that has not run yet, which is the
+     * ~570 MB transient the whole fallback path exists to avoid, arriving through the service
+     * instead of through the backend.
      */
-    private fun warmLocalEngine(): LocalWhisperEngine =
-        localEngine ?: LocalWhisperEngine(app.whisperModelManager).also { localEngine = it }
+    private fun warmLocalEngine(): LocalWhisperEngine {
+        val tierId = app.preferencesManager.selectedModelId
+        // Session state, read from the mirror NpuWhisperBackend publishes from its own setter.
+        // Non-null means a stage has already declined, so the tier is not re-armed.
+        val reason = NpuTierStatus.unavailableReason.value
+        val onNpu = NpuBackendSelector.routesToNpu(tierId, npuTierOffered, reason != null)
+        val cached = localEngine
+        if (cached != null && onNpu == localEngineOnNpu) return cached
+        if (cached != null) {
+            // ONCE PER SESSION, never once per segment: this fires only on the transition, and the
+            // transition is one-way for as long as the reason stands.
+            if (localEngineOnNpu && reason != null) {
+                android.util.Log.w(NpuDiag.TAG, NpuDiag.fallbackRebuild(NpuTierStatus.stageOf(reason)))
+            }
+            cached.shutdown()
+            localEngine = null
+        }
+        val built = LocalWhisperEngine(
+            app.whisperModelManager,
+            backend = NpuBackendSelector.backendFor(
+                tierId = tierId,
+                npuAvailable = npuTierOffered,
+                declinedThisSession = reason != null,
+                paths = app.whisperModelManager,
+                appContext = applicationContext,
+            ),
+        )
+        localEngine = built
+        localEngineOnNpu = onNpu
+        return built
+    }
+
+    /**
+     * Re-reads [WhisperEverywhereApp.isNpuTierOffered] into [npuTierOffered], off Main.
+     *
+     * **The dispatcher hop is the point.** That gate forces the memoised capability probe, which
+     * `dlopen`s `libQnnSystem.so` and `libQnnHtp.so` on its first call, and `QnnAsrNative`'s
+     * threading contract forbids Main for every entry point — while [warmLocalEngine], which needs
+     * the answer, runs on Main from `startRecording`. Hence a memo written here and only read
+     * there, exactly as the two chooser screens do it with `produceState { withContext(IO) { … } }`.
+     *
+     * Re-read rather than cached forever because the *installed* half can change under a live
+     * service: Q8's importer writes the 358 MB pair while the app is running.
+     */
+    private suspend fun refreshNpuTierOffer() {
+        npuTierOffered = withContext(Dispatchers.IO) { app.isNpuTierOffered() }
+    }
 
     /** One shared client for the service's life — see the [httpTransport] field comment. */
     private fun sharedTransport(): com.whispereverywhere.net.OkHttpTransport =
