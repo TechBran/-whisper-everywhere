@@ -280,6 +280,35 @@ class WhisperCatalogHelpersTest {
         )
     }
 
+    @Test fun downloadability_tracks_the_artefact_count_and_not_the_device_gate() {
+        // On TODAY's catalog `!gated` and `pairedArtifact == null` agree on all seven tiers — npu
+        // is the only tier that is either, and it is both. So the census above CANNOT tell the two
+        // candidate predicates apart, and swapping one for the other is an equivalent mutation
+        // that a full-suite battery would report as a survivor. The choice only shows up on a tier
+        // that does not exist yet, which is exactly when nobody will be reading the comment that
+        // explains it. Both shapes are therefore constructed here, so the decision is PINNED
+        // rather than coincidentally right.
+        val gatedSingleFile = WhisperCatalog.byId("pro")!!.copy(id = "future-gated", gated = true)
+        assertTrue(
+            "a GATED single-file tier is still perfectly downloadable. `gated` answers 'may this " +
+                "device be offered it', which is a different question from 'can download() " +
+                "install it' — keying the refusal on `gated` would block a future tier that " +
+                "downloads fine",
+            WhisperCatalog.isInstallableByDownload(gatedSingleFile),
+        )
+        val ungatedPair = WhisperCatalog.byId("multi")!!.copy(
+            id = "future-pair",
+            pairedArtifact = WhisperCatalog.byId("npu")!!.pairedArtifact,
+        )
+        assertFalse(
+            "an UNGATED two-artefact tier is NOT downloadable, and this is the dangerous half: " +
+                "download() writes one file and never reads pairedArtifact, so keying the refusal " +
+                "on `gated` would let it through — deleting the first file and failing on the " +
+                "second, which is C1 all over again on a tier nobody thought to gate",
+            WhisperCatalog.isInstallableByDownload(ungatedPair),
+        )
+    }
+
     @Test fun the_refusal_names_the_tier_and_both_files_it_actually_needs() {
         // The reader of this line is working out what to do INSTEAD, so "import these two" has to
         // be in it. Asserted here because download() needs a Context and no JVM test reaches it.
