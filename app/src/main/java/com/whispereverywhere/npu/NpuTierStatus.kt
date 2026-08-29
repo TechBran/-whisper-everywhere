@@ -31,11 +31,31 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * ### What the value means
  *
- * `"<stage>: <detail>"` while a session has fallen back, null while the tier is live or has never
- * run. It is **session state, not device state**: `load()` clears it on every arm, so a decline
- * does not outlive the session that produced it, and a device that has never armed the tier shows
- * no note at all. That is the honest reading — "unavailable on this device" is a claim about a
- * measurement someone took, and until the tier runs, nobody took one.
+ * `"<stage>: <detail>"` once the tier has declined, null while it is live or has never run. It is
+ * **PROCESS state, not device state**, and that second distinction is the one that still holds:
+ * a device that has never armed the tier shows no note at all, because "unavailable on this device"
+ * is a claim about a measurement someone took, and until the tier runs, nobody took one.
+ *
+ * ### Why "process", corrected (4.0, final review F3 / I4)
+ *
+ * This said **session** state, on the reasoning that `load()` clears the value on every arm. True
+ * of this class in isolation; **false in the shipped composition.** The reason feeds
+ * `NpuBackendSelector.routesToNpu`'s `declinedThisSession`, which then returns false, so
+ * `FloatingBubbleService` builds the CPU engine — so `NpuWhisperBackend` is never constructed
+ * again, so `load()`, the only writer of `null`, never runs again. `releaseEverything()` does not
+ * clear it either. **One decline therefore persists until process death**, and the card said "for
+ * this session" about it on every later visit to the chooser, whatever tier was selected.
+ *
+ * **The wording was corrected rather than the lifetime, and that is a decision with a reason.** The
+ * obvious alternative — clear it in `releaseEverything()` — does not deliver what its name promises
+ * and is worse on two counts. (1) `releaseEverything()` does not run at session end: the engine
+ * caches its native context across sessions and frees it only on `onTrimMemory` or service destroy,
+ * so the lifetime would become *"until memory pressure"* — less predictable than process scope, not
+ * more. (2) Every clear re-opens the retry loop that process scope exists to close: a device where
+ * the tier reliably declines would pay a 342 MiB load and a guaranteed failure again on the next
+ * trigger. Q6's at-most-once funnel keeps the FIRST stage's reason precisely because that is the
+ * true one; carrying the same discipline out to the process is consistent with it. So the fix is to
+ * say what is true — here, in [cardNote], and in `NpuBackendSelector.routesToNpu`'s parameter doc.
  */
 object NpuTierStatus {
 
@@ -71,16 +91,22 @@ object NpuTierStatus {
     /**
      * The sentence the tier card shows, or null when there is nothing to say.
      *
-     * It states three things because leaving any one out is how a silent fallback happens: that the
+     * It states four things because leaving any one out is how a silent fallback happens: that the
      * NPU is not being used, that the multilingual CPU model is running instead **so the app still
-     * works**, and which stage declined so the report is actionable. A fallback that quietly ran on
-     * the CPU while the card still promised the AI chip is the failure this project has already
-     * paid for once.
+     * works**, which stage declined so the report is actionable, and — since the final review's F3
+     * — **how to get back**. A fallback that quietly ran on the CPU while the card still promised
+     * the AI chip is the failure this project has already paid for once.
+     *
+     * **"for this session" is gone, and the last sentence replaces it.** The decline outlives every
+     * session (see the class KDoc), so the old copy told the user something false on every later
+     * visit to this screen, including sessions they deliberately ran on another tier. The retry is
+     * an app restart and nothing else — there is no in-app route back — so the note now says that
+     * rather than leaving the user to discover it.
      */
     fun cardNote(reason: String?): String? {
         val stage = stageOf(reason) ?: return null
         return "The AI chip is unavailable on this device right now (stage: $stage), so speech is " +
-            "running on the multilingual CPU model for this session. Accuracy is unchanged; " +
-            "it is slower."
+            "running on the multilingual CPU model. Accuracy is unchanged; it is slower. " +
+            "Restart the app to try the AI chip again."
     }
 }

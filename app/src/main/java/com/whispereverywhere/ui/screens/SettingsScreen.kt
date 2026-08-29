@@ -362,9 +362,11 @@ fun SettingsScreen(
                 }
 
                 if (installedModel != null) {
+                    // Every file the tier occupies, not just its primary (final review F1): for
+                    // `npu` a single-file read omits the 225,316,864 B decoder and disagrees with
+                    // the "Model storage" directory walk on this same screen.
                     val onDiskBytes = remember(modelRefreshKey, installedModel.id) {
-                        val f = File(modelManager.modelsDir(), installedModel.fileName)
-                        if (f.exists()) f.length() else installedModel.approxBytes
+                        modelManager.installedBytes(installedModel)
                     }
                     val scopeLabel = when (installedModel.scope) {
                         ModelScope.ENGLISH -> "English"
@@ -424,10 +426,12 @@ fun SettingsScreen(
                     SettingsItem(
                         icon = Icons.Filled.Delete,
                         title = "Delete current model",
-                        subtitle = "Frees ${formatBytes(
-                            File(modelManager.modelsDir(), installedModel.fileName)
-                                .let { if (it.exists()) it.length() else installedModel.approxBytes }
-                        )} — you'll need to re-download to transcribe",
+                        // The SAME figure the storage row above uses and the same set of files
+                        // delete() removes (final review F1). Promising "Frees 127 MB" while
+                        // removing 342 MiB — or, before F1, promising 127 MB and stranding 215 MB —
+                        // is the shape of untruth this branch has already paid for four times.
+                        subtitle = "Frees ${formatBytes(modelManager.installedBytes(installedModel))}" +
+                            " — you'll need to re-download to transcribe",
                         onClick = { showDeleteModelDialog = true },
                         trailing = {
                             Icon(

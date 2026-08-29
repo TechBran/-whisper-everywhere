@@ -487,6 +487,26 @@ class NpuDiagTest {
                 "same whisper weights on a different processor: $note",
             note.contains("Accuracy is unchanged"),
         )
+
+        // THE LIFETIME THE NOTE CLAIMS (final review F3 / I4) — a MEASURED survivor of the F-round
+        // battery, which is worth stating: F3's entire subject is the truth of this sentence, and
+        // nothing asserted it, so reverting the copy was green.
+        //
+        // The decline is PROCESS state, not session state: the reason feeds routesToNpu's
+        // `declinedThisSession`, so the backend is never constructed again, so `load()` — the only
+        // writer of null — never runs again. The card therefore rendered "for this session" on
+        // every later visit to the chooser, including sessions deliberately run on another tier.
+        assertTrue(
+            "the note must NOT scope itself to a session: the decline outlives every session and " +
+                "there is no in-app route back. Saying \"for this session\" is the fifth truth-of-" +
+                "the-note defect this branch would have paid for: $note",
+            !note.contains("for this session"),
+        )
+        assertTrue(
+            "and it must name the way back, because there is exactly one and it is not obvious — " +
+                "a note that states an indefinite condition without its remedy is a dead end: $note",
+            note.contains("Restart the app"),
+        )
     }
 
     @Test

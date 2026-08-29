@@ -62,9 +62,14 @@ object NpuBackendSelector {
      *
      * @param tierId `PreferencesManager.selectedModelId`.
      * @param npuAvailable `WhisperEverywhereApp.isNpuTierOffered()` — capability AND installed.
-     * @param declinedThisSession whether an NPU stage has already declined in this process, i.e.
+     * @param declinedThisSession whether an NPU stage has already declined **in this process** —
      *        `NpuTierStatus.unavailableReason != null`. True means the CPU tier, however open the
      *        gate: re-arming a tier that just refused costs a 342 MiB load to reach the same answer.
+     *        **The name says "session" and the scope is the PROCESS**, and the parameter keeps the
+     *        name only because renaming it would touch every pin on this file for no behavioural
+     *        gain; the lifetime is stated in `NpuTierStatus`'s KDoc and now in the card copy too
+     *        (final review F3). Nothing clears it short of an app restart, by design — see that
+     *        KDoc for why a `releaseEverything()` clear was rejected.
      */
     fun routesToNpu(tierId: String?, npuAvailable: Boolean, declinedThisSession: Boolean): Boolean =
         tierId == NpuAssetImport.TIER_ID && npuAvailable && !declinedThisSession

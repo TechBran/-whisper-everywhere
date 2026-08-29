@@ -76,10 +76,54 @@ class WhisperModelManager(
         return if (model.unsupported) model else null
     }
 
-    /** Delete a tier's file from disk. Returns true if a file was actually removed. */
+    /**
+     * EVERY file this tier occupies: the primary, plus [WhisperModel.pairedArtifact] when it has
+     * one (4.0, final review F1). One list, so the three things that must agree about a tier's
+     * footprint — what deletion removes, what the delete dialog promises, and what the storage row
+     * shows — cannot answer differently.
+     */
+    private fun tierFiles(model: WhisperModel): List<File> =
+        listOfNotNull(
+            fileFor(model),
+            model.pairedArtifact?.let { File(modelsDir(), it.fileName) },
+        )
+
+    /**
+     * Bytes this tier occupies on disk right now, or [WhisperModel.approxBytes] when none of its
+     * files are present.
+     *
+     * Both size reads in Settings go through here. Reading `fileFor(model).length()` directly was
+     * the F1 defect on the UI side: for `npu` it reports the 132,927,488 B encoder and omits the
+     * 225,316,864 B decoder, so the delete dialog promised *"Frees 127 MB"* for a 342 MiB install
+     * while the "Model storage" walk directly above it on the same screen disagreed by 215 MB.
+     */
+    fun installedBytes(model: WhisperModel): Long {
+        val present = tierFiles(model).filter { it.exists() }
+        return if (present.isEmpty()) model.approxBytes else present.sumOf { it.length() }
+    }
+
+    /**
+     * Delete a tier's files from disk. Returns true if anything was actually removed.
+     *
+     * **Both files, and that is the whole fix (F1).** This removed `model.fileName` only, which for
+     * the paired `npu` tier stranded a 225,316,864 B decoder in `filesDir/models` with **no
+     * affordance that could ever remove it**: once the encoder is gone `installedModel()` is null,
+     * the Settings delete row disappears, and the only route left is clearing app data. The
+     * symmetry with the import is deliberate — that path installs both or neither, so removal has
+     * to take both or the tier's lifecycle is not closed.
+     *
+     * A file that refuses to delete is reported loudly rather than swallowed: the caller's Boolean
+     * cannot express "one of two", and a silent survivor is how this defect looked in the first
+     * place.
+     */
     fun deleteModelFile(model: WhisperModel): Boolean {
-        val f = fileFor(model)
-        return f.exists() && f.delete()
+        var removed = false
+        tierFiles(model).forEach { f ->
+            if (!f.exists()) return@forEach
+            if (f.delete()) removed = true
+            else android.util.Log.w("WEModelDL", "delete failed, file remains: ${f.name}")
+        }
+        return removed
     }
 
     /** Absolute path to the installed selected model file, or null. */
@@ -421,10 +465,16 @@ class WhisperModelManager(
         }
     }
 
-    /** Remove the installed file for [model], plus any external download leftovers / stale rows. */
+    /**
+     * Remove EVERY installed file for [model], plus any external download leftovers / stale rows.
+     *
+     * Paired-aware since the final review's F1 — see [deleteModelFile] for why leaving the second
+     * artefact behind was unrecoverable rather than untidy. The external-destination and
+     * DownloadManager sweeps below stay single-file on purpose: a paired tier is not installable by
+     * download at all ([WhisperCatalog.isInstallableByDownload]), so it can have no leftovers there.
+     */
     fun delete(model: WhisperModel) {
-        val f = fileFor(model)
-        if (f.exists()) f.delete()
+        tierFiles(model).forEach { if (it.exists()) it.delete() }
         // Also clear the external download destination + stale DownloadManager rows, so a later
         // re-download can't stall at 0 bytes on a leftover-file collision.
         val ext = externalDownloadDest(model)

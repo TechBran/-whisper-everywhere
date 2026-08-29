@@ -2234,12 +2234,36 @@ class FloatingBubbleService : Service(),
      * inside `NpuWhisperBackend.fallBackAndRun`.
      *
      * **The ORDER below is an invariant, not a formatting choice (I11).** The stale engine is
-     * `shutdown()` — which queues its backend's release, and for `NpuWhisperBackend` that release
-     * frees the NPU's ~376 MiB *before* anything else — and only then is the replacement
-     * constructed. Constructing first would put a second path around I11: the new engine's
-     * `WhisperNative.init` (60-190 MB) racing an NPU teardown that has not run yet, which is the
-     * ~570 MB transient the whole fallback path exists to avoid, arriving through the service
-     * instead of through the backend.
+     * `shutdown()` first and only then is the replacement constructed, so the two native operations
+     * are *issued* in the order the ~570 MB transient requires.
+     *
+     * ### What that order does NOT give you, and the invariant that actually holds this together
+     *
+     * **SOURCE ORDER IS NOT HAPPENS-BEFORE, and the final review is right that the earlier wording
+     * here elided it.** `LocalWhisperEngine.shutdown()` *queues* `backend.release` onto the **stale
+     * engine's** single-thread executor and returns; the replacement's `WhisperNative.init` runs
+     * later on the **new** engine's executor. Two executors, no happens-before between them —
+     * `NativeComputeGate` bounds concurrency, not order. So this order makes the teardown the
+     * earlier *issue*, not the earlier *execution*, and on a tier change away from an armed npu
+     * session the ~570 MB co-residency is reachable if the load wins the gate. Bounded and
+     * survivable on 8 Gen 3-class RAM; stated because it was previously claimed to be excluded.
+     *
+     * **The consequence that matters is worse and is excluded by something else entirely.** The QNN
+     * session is a process-global and `nativeInit` releases any existing one, so an `npu -> npu`
+     * rebuild has a losing interleaving: the new `load` tears down the old session and builds a new
+     * one, and *then* the stale engine's queued `release` runs `nativeRelease()` and destroys **the
+     * session that just came up**, leaving a backend `armed` with nothing behind it. It fails
+     * loudly at `encode` and falls back, so it is not silent — but it is wrong.
+     *
+     * **THE INVARIANT: `routesToNpu` cannot produce an `npu -> npu` rebuild.** It is a single-tier
+     * predicate — one id, one Boolean — so on any npu-to-npu transition `onNpu == localEngineOnNpu`
+     * and the guard above returns the cached engine without rebuilding at all. That is the only
+     * reason the paragraph above is a memory note rather than a correctness bug, **and until the
+     * final review nothing stated or pinned it.** `NpuBackendWiringTest` now asserts the property
+     * directly (the set of tier ids that route to the NPU has exactly one element), so the ruling
+     * that makes two npu tiers exist — the turbo A/B — trips a red here instead of a heisenbug on a
+     * device. The structural fix (an arming epoch on `NpuWhisperBackend`, so a stale instance's
+     * `release` cannot tear down a live session) is a 4.1 item and is not this task's.
      *
      * ### [allowRebuild] — the permission, and why it is a parameter rather than a state check
      *

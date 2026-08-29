@@ -85,6 +85,12 @@
 // the pipeline in it.
 #define LOGDIAG(...) __android_log_print(ANDROID_LOG_INFO, "WE-DIAG", __VA_ARGS__)
 
+// The error-level twin, and it exists for the same reason the INFO one does: whisper_jni.cpp
+// carries both spellings, and this file had only half the pair, so the one place that needed to
+// report a REFUSAL on the captured tag had nothing to report it with and reached for LOGW instead
+// — i.e. WE-NPU, i.e. invisible (final review F2). Same tag, same spelling as its counterpart.
+#define LOGDIAGE(...) __android_log_print(ANDROID_LOG_ERROR, "WE-DIAG", __VA_ARGS__)
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -862,17 +868,39 @@ std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
     LOGI("%s: IO totals in %" PRIu64 " B, out %" PRIu64 " B", expect.label,
          inBytesTotal, outBytesTotal);
 
-    // Compared, not enforced. Every downstream sizing decision in Q3/Q4 was made against these
-    // numbers, so a regenerated asset that differs has to be seen - but it must be seen as a
-    // warning naming both numbers, not as a build that mysteriously stops working.
+    // ENFORCED, and reported on the tag the owner actually captures (final review F2/I3).
+    //
+    // This was a LOGW - i.e. TAG "WE-NPU" - that execution then continued past, on the stated
+    // reasoning that a regenerated asset "must be seen as a warning naming both numbers, not as a
+    // build that mysteriously stops working". BOTH halves of that were wrong in composition:
+    //
+    //   - it was not seen at all. Run-book 9.2 makes `adb logcat -s WE-DIAG` the owner's only
+    //     capture, and WE-NPU is invisible to it. This is the third time this branch has paid for
+    //     that exact trap.
+    //   - continuing does not avoid a mysterious failure, it MANUFACTURES one. Every downstream
+    //     buffer size in Q3/Q4 was derived from these figures, so the session runs on sizing that
+    //     no longer describes the asset and the symptom surfaces much later as a fluent and wrong
+    //     transcript - the one failure mode this whole seam is built to refuse.
+    //
+    // It is also the FIRST guard a re-exported asset meets: the model-lab lineup (turbo's
+    // [1,128,3000] input, vocab 51866, 8 cross-KV) differs here by construction. So it has to be
+    // both LOUD and STRUCTURED - WE-DIAG for the human, and a returned stage error for the tier,
+    // which routes through fallBackToCpuTier to `npu: unavailable stage=init`, the card, and a CPU
+    // session that still works.
     if (numIn != expect.numIn || numOut != expect.numOut ||
         inBytesTotal != expect.inBytes || outBytesTotal != expect.outBytes) {
-        LOGW("%s: IO DIFFERS FROM THE PLANNED ASSET. expected %u in / %u out, %" PRIu64
-             " B in / %" PRIu64 " B out; got %u in / %u out, %" PRIu64 " B in / %" PRIu64 " B out. "
-             "Q3/Q4 buffer sizing was derived from the expected figures - re-derive before trusting "
-             "any transcript from this asset.",
-             expect.label, expect.numIn, expect.numOut, expect.inBytes, expect.outBytes,
-             numIn, numOut, inBytesTotal, outBytesTotal);
+        LOGDIAGE("%s: IO DIFFERS FROM THE PLANNED ASSET. expected %u in / %u out, %" PRIu64
+                 " B in / %" PRIu64 " B out; got %u in / %u out, %" PRIu64 " B in / %" PRIu64
+                 " B out. Q3/Q4 buffer sizing was derived from the expected figures - re-derive "
+                 "before trusting any transcript from this asset.",
+                 expect.label, expect.numIn, expect.numOut, expect.inBytes, expect.outBytes,
+                 numIn, numOut, inBytesTotal, outBytesTotal);
+        return expect.label + std::string(" io: differs from expected census - expected ") +
+               std::to_string(expect.numIn) + " in / " + std::to_string(expect.numOut) + " out, " +
+               std::to_string(expect.inBytes) + " B in / " + std::to_string(expect.outBytes) +
+               " B out; got " + std::to_string(numIn) + " in / " + std::to_string(numOut) +
+               " out, " + std::to_string(inBytesTotal) + " B in / " +
+               std::to_string(outBytesTotal) + " B out";
     }
 
     // ---- DEEP copy the descriptors -----------------------------------------------------
@@ -1265,11 +1293,23 @@ std::string checkMaskCodesLocked() {
                  static_cast<double>(scale), offset);
         return buf;
     }
-    if (!(blocked <= -1.0)) {
+    // THE THRESHOLD HAS TO REFLECT THE LOGIT SCALE (final review F5/I6). This arm accepted
+    // `blocked <= -1.0`, and -1.0 blocks nothing: these are ADDITIVE pre-softmax biases and D1
+    // measured this decoder's own logit spread at ~12,500, against which a -1.0 bias is a rounding
+    // error and the "blocked" column stays fully attended. The guard would therefore have passed an
+    // asset that leaks attention across every masked position and produces exactly the fluent and
+    // wrong transcript its own message warns about. The shipped asset dequantises to -100.0, so
+    // -30.0 leaves 2.5 orders of magnitude of slack while still meaning what it says.
+    //
+    // Why this became load-bearing only now: before the mask fix the fill ran backwards and the
+    // mask was wrong regardless, so the weakness was academic. The mask is correct now, blocked
+    // columns are doing real work, and the next asset through this file is a turbo export with its
+    // own quantisation parameters.
+    if (!(blocked <= -30.0)) {
         snprintf(buf, sizeof(buf),
                  "mask: code %u is supposed to BLOCK but dequantises to %.4f (scale %.12g, offset "
-                 "%d), which masks nothing.", kMaskBlocked, blocked, static_cast<double>(scale),
-                 offset);
+                 "%d), which masks nothing against a ~12500 logit spread.", kMaskBlocked, blocked,
+                 static_cast<double>(scale), offset);
         return buf;
     }
     LOGI("mask: attention_mask scale %.12g offset %d -> attend code %u = %.4f, blocked code %u = "

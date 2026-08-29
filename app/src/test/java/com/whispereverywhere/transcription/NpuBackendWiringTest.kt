@@ -196,6 +196,48 @@ class NpuBackendWiringTest {
     }
 
     /**
+     * THE INVARIANT `warmLocalEngine`'s ORDER PIN ACTUALLY RESTS ON (final review F4 / I1).
+     *
+     * The rebuild `shutdown()`s the stale engine and then constructs the replacement, and that was
+     * documented as excluding the ~570 MB transient. **It does not**: `shutdown()` *queues*
+     * `backend.release` on the stale engine's executor and returns, while the replacement loads on
+     * a different one — source order is not happens-before, and `NativeComputeGate` bounds
+     * concurrency, not order.
+     *
+     * What makes the rebuild *correct* rather than merely tidy is a different property, which
+     * nothing stated until the final review: **`routesToNpu` cannot produce an `npu -> npu`
+     * rebuild.** It matters because the QNN session is a process-global and `nativeInit` releases
+     * any existing one, so that transition has a losing interleaving in which the stale engine's
+     * queued `nativeRelease()` destroys the session the new `nativeInit` just built.
+     *
+     * It is unreachable today only because this predicate is single-tier: one id in, one Boolean
+     * out, so `onNpu == localEngineOnNpu` on every npu-to-npu transition and the rebuild never
+     * fires. **The owner's next ruling — a turbo NPU tier for an in-app A/B — is exactly the change
+     * that makes two npu-class tiers exist**, and this assertion is what turns that from a
+     * heisenbug on a device into a red here.
+     */
+    @Test
+    fun exactlyOneTierIdRoutesToTheNpuBackend() {
+        // Every id the catalog can name, plus the shapes that are not ids at all.
+        val candidates = com.whispereverywhere.model.WhisperCatalog.entries.map { it.id } +
+            listOf(null, "", "NPU", "npu ", "npu-turbo", "turbo", "nope")
+        val routed = candidates.filter {
+            NpuBackendSelector.routesToNpu(it, npuAvailable = true, declinedThisSession = false)
+        }
+        assertEquals(
+            "EXACTLY ONE tier id may route to the NPU backend. A second one makes `onNpu` — a " +
+                "Boolean — unable to tell two npu tiers apart, so an npu→npu switch reads as " +
+                "\"no change\" and never rebuilds; and if the guard were ever loosened so it DID " +
+                "rebuild, the stale engine's queued nativeRelease() would tear down the session " +
+                "the new nativeInit just built. If this went red because a turbo NPU tier was " +
+                "added, that is the test working: give NpuWhisperBackend an arming epoch before " +
+                "letting two npu-class tiers coexist. Routed: $routed",
+            listOf("npu"),
+            routed,
+        )
+    }
+
+    /**
      * REBUILD-ON-FALLBACK, half one: the decision. Half two — that the service acts on it by
      * dropping the cached engine — is [theRebuildOnFallbackSiteShutsTheStaleEngineDownFirst].
      */

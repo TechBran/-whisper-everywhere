@@ -78,6 +78,9 @@ class UnsupportedTierGatePinTest {
 
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
 
+    /** A multi-line needle, written as its own source lines so indentation is part of the match. */
+    private fun lines(vararg text: String) = text.joinToString("\n")
+
     private fun indexOfOrFail(haystack: String, what: String, needle: String): Int {
         val i = haystack.indexOf(needle)
         assertTrue("missing from $what: <<$needle>>", i >= 0)
@@ -708,6 +711,102 @@ class UnsupportedTierGatePinTest {
                     "SettingsScreen.kt",
                     "ModelMigration.targetIdFor(retiredModel.scope)",
                 ),
+        )
+    }
+
+    /**
+     * F1 (final review) — DELETING A PAIRED TIER TAKES BOTH FILES, AND THE TWO SIZE READS AGREE.
+     *
+     * `delete` / `deleteModelFile` removed `model.fileName` only. For `npu` that stranded the
+     * 225,316,864 B decoder in `filesDir/models` **with no affordance that could ever remove it**:
+     * once the encoder is gone `installedModel()` is null, the Settings delete row disappears, and
+     * the only remaining route is clearing app data. Meanwhile the dialog promised *"Frees 127 MB"*
+     * for a 342 MiB install and the "Model storage" directory walk on the same screen disagreed by
+     * 215 MB.
+     *
+     * Q7a's review found this and rated it Minor for one stated reason — *"unreachable today,
+     * nothing can select npu"* — and Q8's ratified `select()` is what expired that clause. So the
+     * pin is written against the FILE SET rather than against any one call site: what deletion
+     * removes, what the dialog promises and what the storage row shows all resolve through
+     * `tierFiles`, and none of them can drift back to a single file without moving a count here.
+     *
+     * `WhisperModelManager` needs a `Context` and cannot be executed by a JVM test, which is why
+     * this is source-contract — the same instrument, for the same reason, as everything else in
+     * this class.
+     */
+    @Test
+    fun deletingAPairedTierRemovesBothFilesAndTheSizeReadsAgree() {
+        assertEquals(
+            "one list defines the tier's footprint, and it includes the paired artefact",
+            1,
+            count(
+                manager,
+                lines(
+                    "    private fun tierFiles(model: WhisperModel): List<File> =",
+                    "        listOfNotNull(",
+                    "            fileFor(model),",
+                    "            model.pairedArtifact?.let { File(modelsDir(), it.fileName) },",
+                    "        )",
+                ),
+            ),
+        )
+        listOf(
+            "        tierFiles(model).forEach { if (it.exists()) it.delete() }" to "delete",
+            "        tierFiles(model).forEach { f ->" to "deleteModelFile",
+        ).forEach { (needle, who) ->
+            assertEquals(
+                "$who must sweep the whole tier, not fileFor(model) alone — the single-file form " +
+                    "is what stranded 225,316,864 B unrecoverably",
+                1,
+                count(manager, needle),
+            )
+        }
+        assertEquals(
+            "and neither deletion path may go back to a bare single-file read",
+            0,
+            count(
+                manager,
+                lines(
+                    "        val f = fileFor(model)",
+                    "        return f.exists() && f.delete()",
+                ),
+            ),
+        )
+        assertEquals(
+            "the byte figure is the SUM of what is present, with approxBytes only when nothing is",
+            1,
+            count(
+                manager,
+                lines(
+                    "        val present = tierFiles(model).filter { it.exists() }",
+                    "        return if (present.isEmpty()) model.approxBytes else " +
+                        "present.sumOf { it.length() }",
+                ),
+            ),
+        )
+        // BOTH Settings reads go through that one function, so the delete dialog and the storage
+        // row cannot disagree on the same screen again.
+        assertEquals(
+            "the storage figure beside the tier",
+            1,
+            count(
+                settings,
+                lines(
+                    "                        modelManager.installedBytes(installedModel)",
+                    "                    }",
+                ),
+            ),
+        )
+        assertEquals(
+            "and the delete dialog's freed-bytes promise",
+            1,
+            count(settings, "\"Frees \${formatBytes(modelManager.installedBytes(installedModel))}\""),
+        )
+        assertEquals(
+            "no raw single-file length read may remain in SettingsScreen for the installed tier — " +
+                "that expression IS the defect, and it reads perfectly naturally",
+            0,
+            count(settings, "File(modelManager.modelsDir(), installedModel.fileName)"),
         )
     }
 }

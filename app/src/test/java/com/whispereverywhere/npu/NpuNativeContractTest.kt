@@ -561,12 +561,17 @@ class NpuNativeContractTest {
      */
     @Test
     fun theNpuDebugInstrumentationIsGatedAndCannotPrintTranscriptContent() {
+        // EVERY LOGDIAG* macro, not just the first. This was `.single()` until the final review's
+        // F2 added the error-level twin `LOGDIAGE` — and `.single()` would have failed on the
+        // arrival of a SECOND correct macro while saying nothing about whether it was correct.
+        // `all { }` is the property the test is actually about: no member of this family may be
+        // defined against a tag the owner's capture cannot see.
         assertTrue(
-            "qnn_asr.cpp must define LOGDIAG against the house WE-DIAG tag on a live line — the " +
-                "owner's acceptance capture is `adb logcat -s WE-DIAG`, so a line under WE-NPU is " +
-                "a line nobody will ever read. Found: " + liveLines(cpp, "#define LOGDIAG"),
+            "every `#define LOGDIAG*` in qnn_asr.cpp must target the house WE-DIAG tag on a live " +
+                "line — the owner's acceptance capture is `adb logcat -s WE-DIAG`, so a line under " +
+                "WE-NPU is a line nobody will ever read. Found: " + liveLines(cpp, "#define LOGDIAG"),
             liveOffsets(cpp, "#define LOGDIAG").isNotEmpty() &&
-                liveLines(cpp, "#define LOGDIAG").single().contains("\"WE-DIAG\"")
+                liveLines(cpp, "#define LOGDIAG").all { it.contains("\"WE-DIAG\"") }
         )
 
         // Every live mention of the prefix must be an emission through LOGDIAG. A stray
@@ -959,7 +964,19 @@ class NpuNativeContractTest {
             liveOffsets(mask, "kMaskAttend) + offset) * scale").isNotEmpty() &&
                 liveOffsets(mask, "kMaskBlocked) + offset) * scale").isNotEmpty() &&
                 liveOffsets(mask, "attend > -0.01 && attend < 0.01").isNotEmpty() &&
-                liveOffsets(mask, "blocked <= -1.0").isNotEmpty()
+                liveOffsets(mask, "blocked <= -30.0").isNotEmpty()
+        )
+        // AND THE BLOCK THRESHOLD MUST MEAN SOMETHING (final review F5/I6). These are additive
+        // pre-softmax biases and D1 measured this decoder's logit spread at ~12,500, so the old
+        // `blocked <= -1.0` suppressed nothing: it would have passed an asset that leaks attention
+        // across every masked column and produces exactly the fluent-and-wrong transcript the
+        // guard's own message warns about. The shipped asset dequantises to -100.0, so -30.0 keeps
+        // 2.5 orders of magnitude of slack. Pinned as a NEGATIVE too, because the weak form is one
+        // character away and reads as a tightening rather than a loosening.
+        assertTrue(
+            "the -1.0 BLOCK threshold must not come back: against a ~12500 logit spread it is a " +
+                "rounding error, and the column stays fully attended.",
+            liveOffsets(mask, "blocked <= -1.0").isEmpty()
         )
         assertTrue(
             "bindDecoderLocked must compare the self-KV cache DEPTH against the mask width on a " +
@@ -1400,6 +1417,54 @@ class NpuNativeContractTest {
                 "(${release.first()}) — so no path out of load(), including the CPU fallback's " +
                 "own WhisperNativeBackend.load, can reach native code before it",
             ensure.first() < release.first()
+        )
+    }
+
+    /**
+     * F2 (final review) — THE ASSET-SHAPE GUARD IS LOUD ON THE RIGHT TAG AND RETURNS AN ERROR.
+     *
+     * `loadGraphSlot`'s IO census compared the loaded graph against the planned asset and, on a
+     * mismatch, emitted `LOGW` — tag `WE-NPU` — and **continued**. Two failures in one line:
+     *
+     *  - `WE-NPU` is invisible to `adb logcat -s WE-DIAG`, which run-book 9.2 makes the owner's
+     *    only capture. Third instance of that trap on this branch.
+     *  - continuing does not avoid a mysterious failure, it manufactures one: every downstream
+     *    buffer size in Q3/Q4 was derived from these figures, so the session runs on sizing that no
+     *    longer describes the asset and the symptom arrives later as a fluent and wrong transcript.
+     *
+     * It is also the FIRST guard a re-exported asset meets — the model-lab lineup differs here by
+     * construction — so it has to be both loud and structured: WE-DIAG for the human, a returned
+     * stage error for the tier, which routes through `fallBackToCpuTier` to `npu: unavailable`.
+     */
+    @Test
+    fun theIoCensusMismatchIsReportedOnWeDiagAndRefusesTheAsset() {
+        val slot = functionBody(cpp, "std::string loadGraphSlot(")
+
+        assertTrue(
+            "the mismatch must be reported through the WE-DIAG seam (LOGDIAG/LOGDIAGE), not the " +
+                "WE-NPU tag the owner never captures",
+            liveOffsets(slot, "LOGDIAGE(\"%s: IO DIFFERS FROM THE PLANNED ASSET").isNotEmpty()
+        )
+        assertTrue(
+            "and the WE-NPU form must not come back — it is one macro name away and looks " +
+                "identical in review",
+            liveOffsets(slot, "LOGW(\"%s: IO DIFFERS").isEmpty()
+        )
+
+        val report = liveOffsets(slot, "IO DIFFERS FROM THE PLANNED ASSET")
+        val refuse = liveOffsets(slot, "io: differs from expected census")
+        assertTrue("the census mismatch must be reported on a live line", report.isNotEmpty())
+        assertTrue(
+            "and it must RETURN a stage error naming the `io: differs from expected census` class. " +
+                "Logging alone leaves nativeInit to continue on sizing that no longer describes " +
+                "the asset, which is the fluent-and-wrong transcript this seam exists to refuse.",
+            refuse.isNotEmpty()
+        )
+        assertTrue(
+            "the report (${report.first()}) comes before the refusal (${refuse.first()}): the " +
+                "human-readable numbers must be on the wire even when the tier declines, because " +
+                "the returned string is what the card shows and the log is what the model lab acts on",
+            report.first() < refuse.first()
         )
     }
 }
