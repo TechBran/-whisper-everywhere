@@ -79,6 +79,12 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
+// The owner has no adb and their acceptance capture is `adb logcat -s WE-DIAG` run by someone else,
+// so an instrumentation line that lands under WE-NPU is a line nobody will ever see. Same tag and
+// same spelling as whisper_jni.cpp's LOGDIAG, deliberately: one grep, one capture, both halves of
+// the pipeline in it.
+#define LOGDIAG(...) __android_log_print(ANDROID_LOG_INFO, "WE-DIAG", __VA_ARGS__)
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -498,6 +504,15 @@ struct NpuState {
     /// Cleared on entry to nativeEncode (a FAILED execute may have left the cross-KV half written),
     /// set on its success, and cleared by releaseLocked and by a fresh nativeInit.
     bool encoded = false;
+
+    /// THE Q10a-D1 INSTRUMENTATION GATE. Off unless Kotlin turns it on (`nativeSetDiag`, wired to
+    /// `BuildConfig.DEBUG`), so a release build emits not one extra line and pays not one extra
+    /// full-vocabulary scan.
+    ///
+    /// The scans this gates are ~51,865 uint16 reads each, five times per segment - microseconds
+    /// against a ~4.5 ms graphExecute - but the reason it is gated is not cost. These lines describe
+    /// the model's own output distribution, and a shipping build has no business narrating that.
+    bool diag = false;
 
     std::string lastError;
 };
@@ -1547,6 +1562,75 @@ int32_t argmaxInRange(const uint16_t *logits, uint32_t lo, uint32_t hi) {
     return best;
 }
 
+// ------------------------------------------------- Q10a-D1: instrumentation, content-safe by
+// ------------------------------------------------- construction
+
+/// Renders a token id for a diagnostic line WITHOUT ever printing a text token's id.
+///
+/// **This is where the privacy rule lives, so that no call site has to remember it.** Every id
+/// below EOT is a piece of what the user just said: print one and this log contains transcript
+/// content, print a hundred and it contains the transcript. Ids at or above EOT (50257) are prompt
+/// scaffolding, language tags, control tokens and timestamps - configuration and metadata, never
+/// words - so those are named verbatim, and everything else collapses to the constant string
+/// "text-token".
+///
+/// Applied even to the PROMPT, which today is four specials and therefore prints in full. That is
+/// belt and braces with a reason: whisper's prompt format has a `<|startofprev|>` form that carries
+/// the previous segment's TEXT tokens, and if this tier ever adopts it the prompt echo below would
+/// start printing transcript. Routing the prompt through the same rule makes that impossible rather
+/// than merely unlikely.
+const char *diagToken(int32_t id, char *buf, size_t n) {
+    if (id < 0) snprintf(buf, n, "none");
+    else if (id >= kEotToken) snprintf(buf, n, "%d", id);
+    else snprintf(buf, n, "text-token");
+    return buf;
+}
+
+/// The prompt as a bracketed list, each id through [diagToken]. Capped, because a caller may pass
+/// up to 198 ids and a log line is not a place for them.
+std::string diagIdList(const std::vector<int32_t> &ids, size_t cap) {
+    std::string s = "[";
+    char b[24];
+    for (size_t i = 0; i < ids.size() && i < cap; ++i) {
+        if (i) s += ",";
+        s += diagToken(ids[i], b, sizeof(b));
+    }
+    if (ids.size() > cap) s += ",...";
+    return s + "]";
+}
+
+/// Raw, PRE-MASK logits health: the two rails and where the peak sits.
+struct LogitsHealth {
+    uint16_t lo = 0;
+    uint16_t hi = 0;
+    int32_t argmax = -1;
+};
+
+/// Scans the whole vocabulary once. **`min == max` is the single most decisive thing this round can
+/// report**: a constant distribution is not a decoding fault at all - it means the decoder graph
+/// produced nothing, which puts the defect in the cross-KV / encoder-output wiring and rules the
+/// prompt out entirely.
+///
+/// Ties resolve to the FIRST index, exactly as `suppressThenArgmax` and `argmaxInRange` do, so the
+/// argmax reported here is the one the decoder would actually have picked rather than a second
+/// opinion that could disagree for its own reasons.
+LogitsHealth scanLogitsRaw(const uint16_t *logits, uint32_t vocab) {
+    LogitsHealth h;
+    if (vocab == 0) return h;
+    h.lo = logits[0];
+    h.hi = logits[0];
+    h.argmax = 0;
+    for (uint32_t i = 1; i < vocab; ++i) {
+        const uint16_t v = logits[i];
+        if (v < h.lo) h.lo = v;
+        if (v > h.hi) {
+            h.hi = v;
+            h.argmax = static_cast<int32_t>(i);
+        }
+    }
+    return h;
+}
+
 /// One decoder execute at [position] with [tokenId] as `input_ids`. Writes the three step inputs
 /// and runs the graph; the caller owns the argmax and the ping-pong swap.
 std::string decodeStepLocked(int32_t tokenId, uint32_t position) {
@@ -2106,30 +2190,75 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     bool hitEot = false;
     const auto t0 = Clock::now();
 
+    // THE PROMPT ECHO. These are the ids as this function actually received them, not as the caller
+    // believes it sent them, which is the whole point of echoing them.
+    if (g.diag) {
+        LOGDIAG("npu-debug: prompt ids=%s len=%u maxTokens=%d positions=0..%u vocab=%u mask=%u",
+                diagIdList(prompt, 8).c_str(), promptLen, maxTokens, lastPosition, g.vocab,
+                g.maskLen);
+    }
+
+    int32_t firstGenerated = -1;
+    uint32_t lastPositionRun = 0;
+    uint32_t stepsRun = 0;
+
     for (uint32_t position = 0; position <= lastPosition; ++position) {
         const int32_t tokenIn = (position < promptLen) ? prompt[position] : next;
+        // The set bound as the decoder's self-KV INPUT for the execute about to run. Captured
+        // before the step, because the swap after it is what this is meant to prove alternates.
+        const int inSetForStep = g.selfInSet;
         err = decodeStepLocked(tokenIn, position);
         if (!err.empty()) {
             failure("decode: " + err);
             return -2;
         }
+        lastPositionRun = position;
+        ++stepsRun;
+
+        // The prompt walk plus one step past it. Bounded: for the shipped 4-token prompt that is
+        // five lines per segment and then silence, whatever the segment's length.
+        //
+        // A HEALTHY WALK IS READABLE AT A GLANCE, which is why the raw argmax is here rather than
+        // just the final token: after bare SOT the model must want a LANGUAGE token; after the
+        // language token it must want <|transcribe|> (50359); after that <|notimestamps|> (50363);
+        // and only at position promptLen-1 should the answer become a text token. Any step where
+        // that chain breaks is the step where the prompt stopped taking.
+        const bool trace = g.diag && position <= promptLen;
+        LogitsHealth h;
+        if (trace) h = scanLogitsRaw(logits, g.vocab);
+        char inName[24], rawName[24], maskedName[24];
 
         if (position + 1 < promptLen) {
             // Still feeding the prompt. This step's argmax is discarded - the self-KV slot it just
             // wrote is the whole reason the step ran. BEGIN_SUPPRESS deliberately does NOT apply
             // here: it belongs to the first GENERATED step, which is position promptLen - 1, not
             // position 0.
+            if (trace) {
+                LOGDIAG("npu-debug: step pos=%u in=%s inSet=%d raw[min=%u max=%u argmax=%s] "
+                        "masked=prefill-skipped",
+                        position, diagToken(tokenIn, inName, sizeof(inName)), inSetForStep,
+                        h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)));
+            }
             bindSelfKvLocked(1 - g.selfInSet);
             continue;
         }
 
         const int32_t tok = suppressThenArgmax(logits, g.vocab, suppress, beginSuppress,
                                                position == promptLen - 1);
+        if (trace) {
+            LOGDIAG("npu-debug: step pos=%u in=%s inSet=%d raw[min=%u max=%u argmax=%s] masked=%s "
+                    "beginSuppress=%d",
+                    position, diagToken(tokenIn, inName, sizeof(inName)), inSetForStep,
+                    h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)),
+                    diagToken(tok, maskedName, sizeof(maskedName)),
+                    position == promptLen - 1 ? 1 : 0);
+        }
         if (tok < 0) {
             failure("decode: every logit is at the bottom rail at position " +
                     std::to_string(position) + "; the graph produced no token");
             return -3;
         }
+        if (firstGenerated < 0) firstGenerated = tok;
         if (tok == kEotToken) {
             hitEot = true;
             break;
@@ -2143,10 +2272,18 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
 
     if (count > 0) env->SetIntArrayRegion(jOut, 0, count, reinterpret_cast<const jint *>(out.data()));
     const double ms = msSince(t0);
+    const char *terminator =
+            hitEot ? "eot" : (count >= maxTokens ? "count" : "cap");
     LOGI("decode: %d tokens in %.1f ms (%.2f ms/token), terminated by %s (vote: %s)",
          count, ms, count > 0 ? ms / count : 0.0,
          hitEot ? "EOT" : (count >= maxTokens ? "the token budget" : "the position cap"),
          g.voteNote.c_str());
+    if (g.diag) {
+        char firstName[24];
+        LOGDIAG("npu-debug: result count=%d first=%s terminator=%s steps=%u posFirst=0 posLast=%u",
+                count, diagToken(firstGenerated, firstName, sizeof(firstName)), terminator,
+                stepsRun, lastPositionRun);
+    }
     g.lastError.clear();
     return count;
 }
@@ -2188,6 +2325,40 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
     const int32_t best = argmaxInRange(logits, static_cast<uint32_t>(kLangTokenFirst),
                                        static_cast<uint32_t>(kLangTokenLast) + 1);
 
+    // THE DETECT ECHO, and the field that matters is `margin`.
+    //
+    // `en` is 50259 - the FIRST id in the band - and every argmax in this file resolves ties to the
+    // first index. So "detected en" has two completely different meanings that the returned id
+    // cannot distinguish: the model genuinely chose English, or every language logit was equal and
+    // the scan fell out at its starting index. The runner-up and the margin separate them, and
+    // there is no other reading in the system that can. The full-vocabulary rails come along on the
+    // same line because a band that is flat inside a vocabulary that is also flat is a different
+    // diagnosis from a band that is flat inside one that is not.
+    if (g.diag) {
+        int32_t runnerUp = -1;
+        uint16_t runnerVal = 0;
+        bool haveRunner = false;
+        for (uint32_t i = static_cast<uint32_t>(kLangTokenFirst);
+             i <= static_cast<uint32_t>(kLangTokenLast); ++i) {
+            if (static_cast<int32_t>(i) == best) continue;
+            if (!haveRunner || logits[i] > runnerVal) {
+                runnerVal = logits[i];
+                runnerUp = static_cast<int32_t>(i);
+                haveRunner = true;
+            }
+        }
+        const uint16_t bestVal = best >= 0 ? logits[best] : 0;
+        const LogitsHealth h = scanLogitsRaw(logits, g.vocab);
+        char rawName[24];
+        // Language ids are specials, so best/runnerUp print verbatim by the same rule diagToken
+        // applies - they are metadata about which language, never about what was said.
+        LOGDIAG("npu-debug: detect band=[%d..%d] best=%d val=%u runnerUp=%d val=%u margin=%d "
+                "raw[min=%u max=%u argmax=%s]",
+                kLangTokenFirst, kLangTokenLast, best, bestVal, runnerUp, runnerVal,
+                static_cast<int32_t>(bestVal) - static_cast<int32_t>(runnerVal),
+                h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)));
+    }
+
     // The step above wrote a self-KV slot for position 0 into set 1. Leave nothing behind: the
     // real decode is entitled to assume it starts from an empty cache, and a detect pass that
     // primed position 0 with SOT would silently give the transcript a phantom first token.
@@ -2201,6 +2372,20 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
          best - kLangTokenFirst);
     g.lastError.clear();
     return best;
+}
+
+/// Turns the `npu-debug:` instrumentation on or off. Off until this says otherwise.
+///
+/// Kotlin owns the decision because Kotlin is where `BuildConfig.DEBUG` exists; native cannot see it
+/// without a JNI round trip of its own, and a build-type ifdef here would be a second, separate
+/// definition of "is this a debug build" that could disagree with the app's.
+extern "C" JNIEXPORT void JNICALL
+Java_com_whispereverywhere_npu_QnnAsrNative_nativeSetDiag(
+        JNIEnv *env, jobject /* this */, jboolean enabled) {
+    (void) env;
+    std::lock_guard<std::mutex> lock(g.mu);
+    g.diag = (enabled == JNI_TRUE);
+    LOGI("npu-debug instrumentation %s", g.diag ? "ENABLED" : "disabled");
 }
 
 /// The last "stage: detail" recorded by any entry point, or "" if none. nativeDecodeSegment

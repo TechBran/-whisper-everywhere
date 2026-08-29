@@ -248,6 +248,12 @@ class NpuWhisperBackend(
                 return@serialized fallBackToCpuTier("init", initError)
             }
 
+            // Q10a-D1. The decoder runs and emits nothing, and every hypothesis about why is a
+            // statement about numbers only the native loop can see. Armed here, after init, because
+            // there is no session to instrument before it — and with BuildConfig.DEBUG, so the
+            // owner's debug build talks and a release build does not.
+            QnnAsrNative.nativeSetDiag(com.whispereverywhere.BuildConfig.DEBUG)
+
             melBuffer = NpuQuantize.newMelFloatBuffer()
             quantBuffer = NpuQuantize.newInputFeaturesBuffer()
             armed = true

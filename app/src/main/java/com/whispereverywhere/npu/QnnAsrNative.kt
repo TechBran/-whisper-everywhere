@@ -203,6 +203,28 @@ object QnnAsrNative {
     external fun nativeDetectLanguage(): Int
 
     /**
+     * Turns the native `npu-debug:` instrumentation on or off. **Off until this says otherwise**, so
+     * a release build emits nothing and pays for nothing.
+     *
+     * The lines it gates (Q10a-D1) go to the house `WE-DIAG` tag and describe the decode loop's own
+     * behaviour: the prompt as native actually received it, the raw pre-mask logits rails and argmax
+     * at each prompt step, the self-KV set bound as input at each of those steps, the terminator,
+     * and the language-detect band's winner, runner-up and margin.
+     *
+     * **They are content-safe by construction, not by care.** Native renders every token id through
+     * one helper that prints ids `>= WhisperTokens.EOT` verbatim — prompt scaffolding, language
+     * tags, control tokens, timestamps — and collapses everything below it to the constant string
+     * `text-token`. No id that could be a word ever reaches a log line, including in the prompt echo
+     * (which is four specials today, and would carry previous-segment text if this tier ever adopted
+     * whisper's `<|startofprev|>` form).
+     *
+     * Call it with `BuildConfig.DEBUG`. Kotlin owns the decision because that is where the flag
+     * exists; a build-type `#ifdef` native side would be a second definition of "debug build" that
+     * could disagree with the app's.
+     */
+    external fun nativeSetDiag(enabled: Boolean)
+
+    /**
      * The last `"stage: detail"` recorded by any entry point, or `""` if none. Exists because
      * [nativeDecodeSegment] and [nativeDetectLanguage] report failure as a negative number and need
      * somewhere to put the words. Cleared by every entry point that succeeds, so it is never a

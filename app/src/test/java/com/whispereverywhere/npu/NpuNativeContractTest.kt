@@ -540,6 +540,113 @@ class NpuNativeContractTest {
     }
 
     /**
+     * Q10a-D1 — the `npu-debug:` instrumentation: gated, greppable, and **incapable of printing
+     * transcript content**.
+     *
+     * The device run says the decoder emits exactly one token and it detokenises to nothing, and
+     * every hypothesis about why is a statement about numbers only the native loop can see. So the
+     * loop now narrates itself. That creates a new hazard the rest of this tier does not have: these
+     * lines are *about the model's output distribution*, and the ids in that distribution are the
+     * words the user just said.
+     *
+     * Four things are pinned, and the third is the one that matters:
+     *  - the lines carry the house `WE-DIAG` tag, or the owner's `adb logcat -s WE-DIAG` capture —
+     *    run by someone else, on their behalf — silently does not contain them;
+     *  - the `npu-debug: ` prefix is only ever emitted through `LOGDIAG`, so one grep finds all of
+     *    it and no half of it leaks to another tag;
+     *  - **`diagToken` is the only way a token id reaches a line, and it collapses everything below
+     *    `kEotToken` to the constant `text-token`.** Content-safety is a property of that function
+     *    rather than a rule each of the eight call sites has to remember;
+     *  - the whole thing is behind `g.diag`, off until Kotlin says otherwise.
+     */
+    @Test
+    fun theNpuDebugInstrumentationIsGatedAndCannotPrintTranscriptContent() {
+        assertTrue(
+            "qnn_asr.cpp must define LOGDIAG against the house WE-DIAG tag on a live line — the " +
+                "owner's acceptance capture is `adb logcat -s WE-DIAG`, so a line under WE-NPU is " +
+                "a line nobody will ever read. Found: " + liveLines(cpp, "#define LOGDIAG"),
+            liveOffsets(cpp, "#define LOGDIAG").isNotEmpty() &&
+                liveLines(cpp, "#define LOGDIAG").single().contains("\"WE-DIAG\"")
+        )
+
+        // Every live mention of the prefix must be an emission through LOGDIAG. A stray
+        // __android_log_print with the same prefix under a different tag would be invisible to the
+        // capture while looking, in review, exactly like the lines that are not.
+        val emissions = liveLines(cpp, "npu-debug:")
+        assertTrue(
+            "qnn_asr.cpp must emit npu-debug: lines; found none",
+            emissions.isNotEmpty()
+        )
+        assertTrue(
+            "every LIVE npu-debug: line must be emitted through LOGDIAG. Offenders: " +
+                emissions.filterNot { it.contains("LOGDIAG(") },
+            emissions.all { it.contains("LOGDIAG(") }
+        )
+
+        // THE PRIVACY RULE, as a property of one function.
+        val token = functionBody(cpp, "const char *diagToken(")
+        assertTrue(
+            "diagToken must print an id verbatim ONLY when it is >= kEotToken — at or above EOT " +
+                "the ids are prompt scaffolding, language tags, control tokens and timestamps, " +
+                "which are configuration and metadata. Below it they are the words the user said.",
+            liveOffsets(token, "id >= kEotToken").isNotEmpty()
+        )
+        assertTrue(
+            "diagToken must collapse every other id to the constant string \"text-token\". A " +
+                "diagnostic that prints one text id has logged transcript content; one that " +
+                "prints a hundred has logged the transcript.",
+            liveOffsets(token, "\"text-token\"").isNotEmpty()
+        )
+        val decode = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
+        assertTrue(
+            "nativeDecodeSegment's instrumentation must route every id it prints through " +
+                "diagToken — the step input, the raw argmax, the post-mask argmax and the first " +
+                "generated token. Found ${liveOffsets(decode, "diagToken(").size} live call " +
+                "sites, expected at least 5.",
+            liveOffsets(decode, "diagToken(").size >= 5
+        )
+        assertTrue(
+            "the prompt echo must go through diagIdList, which applies the same rule per id. The " +
+                "prompt is four specials today and would carry previous-segment TEXT if this tier " +
+                "ever adopted whisper's <|startofprev|> form.",
+            liveOffsets(decode, "diagIdList(").isNotEmpty()
+        )
+
+        // THE RAW READING MUST BE TAKEN BEFORE THE MASK, because the mask MUTATES the logits buffer.
+        val raw = liveOffsets(decode, "scanLogitsRaw(")
+        val masked = liveOffsets(decode, "suppressThenArgmax(")
+        assertTrue("nativeDecodeSegment must scan the raw logits on a live line", raw.isNotEmpty())
+        assertTrue(
+            "the raw logits scan (${raw.first()}) must run BEFORE suppressThenArgmax " +
+                "(${masked.first()}). suppressThenArgmax WRITES kLogitFloor into the logits " +
+                "buffer, so a `raw[min= max= argmax=]` reading taken after it reports the MASKED " +
+                "distribution while calling itself raw — and the whole point of this round is that " +
+                "someone reads those two numbers and decides which hypothesis is true.",
+            raw.first() < masked.first()
+        )
+
+        // The gate.
+        assertTrue(
+            "the instrumentation must be behind g.diag on live lines — a release build emits " +
+                "nothing and pays for no full-vocabulary scans.",
+            liveOffsets(decode, "g.diag").isNotEmpty()
+        )
+        val setter = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeSetDiag(")
+        assertTrue(
+            "nativeSetDiag must set g.diag on a live line",
+            liveOffsets(setter, "g.diag =").isNotEmpty()
+        )
+        assertTrue(
+            "NpuWhisperBackend must arm the instrumentation from BuildConfig.DEBUG on a live " +
+                "line — Kotlin owns that decision because that is where the flag exists, and a " +
+                "native build-type ifdef would be a second definition of \"debug build\" free to " +
+                "disagree with the app's.",
+            liveOffsets(backend, "nativeSetDiag(").isNotEmpty() &&
+                liveLines(backend, "nativeSetDiag(").single().contains("BuildConfig.DEBUG")
+        )
+    }
+
+    /**
      * The decode loop's four single-point invariants — each one line, each with no host-visible
      * signal, none of them defended before this pin existed.
      *
