@@ -517,8 +517,10 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastSegmentStats(
 // ---------------------------------------------------------------------------------------------
 // 4.0 NPU tier (Task Q2): the mel export.
 //
-// The NPU encoder's input_features tensor is ufixed16 [1,80,3000] - 80 mel bins over a fixed 30 s
-// window. whisper.cpp already computes exactly that spectrogram, with the filterbank the CPU and
+// The NPU encoder's input_features tensor is ufixed16 [1,melBins,3000] - the tier's own mel band
+// count over a fixed 30 s window. melBins is the CALLER's, passed to pcmToMel below off
+// NpuModelSpec.melBins (80 for the `npu` tier, 128 for a large-v3-class one); only the 3000 is
+// universal. whisper.cpp already computes exactly that spectrogram, with the filterbank the CPU and
 // GPU tiers are accurate with, so the NPU tier READS that one. A second mel implementation on the
 // Kotlin or QNN side would be free to drift from the other two tiers independently, and nothing
 // short of a transcript comparison would notice.
@@ -526,9 +528,12 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastSegmentStats(
 // THE STRIDE IS THE WHOLE JOB, and it is done on the far side of this call, in the fork's
 // whisper_get_mel_segment: whisper's internal mel is bin-major with stride mel.n_len, which is
 // 6000 for a 30 s window because log_mel_spectrogram appends 30 s of zeros before framing, while
-// the destination stride is 3000. A flat copy of the first 80*3000 floats would read bins 0-39 at
-// wrong offsets and never touch bins 40-79 - structured noise rather than an error. Q10a's
-// `mel: bins=80 frames=3000 row0=.. row40=.. row79=..` line is the first place a human sees it.
+// the destination stride is 3000. A flat copy of the first melBins*3000 floats would read the lower
+// half of the bands at wrong offsets and never touch the upper half - structured noise rather than
+// an error. Worked at 80 bins, which is where it was measured: bins 0-39 read wrong, bins 40-79
+// never written. The Q10a diag line is the first place a human sees it, and since 4.1 L2 its rows
+// are named per tier - `mel: bins=.. frames=3000 row0=.. rowMid=.. rowLast=..`, where rowMid ==
+// rowLast IS this defect.
 //
 // samples arrive as float32 in [-1,1], the backend seam's own type. No PCM16 round trip: it would
 // be lossy for no reason, and whisper_pcm_to_mel takes const float * anyway.
@@ -655,7 +660,8 @@ Java_com_whispereverywhere_whisper_WhisperNative_pcmToMel(
     auto *out = static_cast<float *>(base);
 
     // Zero-pad or truncate to the encoder's fixed window. The asset has no say in this:
-    // input_features is a fixed [1,80,3000], so 30 s is the only length it accepts. Whisper's own
+    // input_features is [1,melBins,3000] and only the BAND count varies - the 3000 does not, on
+    // either family - so 30 s is the only length it accepts whatever the tier. Whisper's own
     // pipeline pads short segments the same way.
     const jsize n    = env->GetArrayLength(samples);
     const jsize take = (n < kNpuMelSamples) ? n : kNpuMelSamples;

@@ -312,7 +312,9 @@ object WhisperNative {
      *        [initMelOnly] reads ~64 KB and returns a handle this function accepts unchanged.
      * @param samples float32 mono 16 kHz in `[-1,1]` — the backend seam's own type, never PCM16.
      *        **Zero-padded or truncated to exactly 480,000 samples (30 s)**: the encoder's
-     *        `input_features` is a fixed `[1,80,3000]` and has no say in the matter.
+     *        `input_features` is `[1,melBins,3000]`, and the window is the half of that shape which
+     *        does **not** vary — 3000 frames on every published asset of either family — so 30 s is
+     *        the only length it accepts whatever [melBins] says.
      * @param out a **direct** ByteBuffer of **exactly `melBins × 3000 × 4` bytes** — 960,000 for an
      *        80-bin tier, 1,536,000 for a 128-bin one — whose order is `ByteOrder.nativeOrder()`.
      *        Use `NpuQuantize.newMelFloatBuffer(spec)`, which is both. Native order cannot be
