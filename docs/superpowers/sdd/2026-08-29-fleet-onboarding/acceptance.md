@@ -58,9 +58,16 @@ disagree with, not as a promise):
 >
 > | Play limit | value | us |
 > |---|---|---|
-> | Individual asset pack | **1.5 GB** compressed | turbo's largest variant ≈ **860 MB** compressed |
+> | Individual asset pack | **1.5 GB** compressed | turbo's largest variant ≈ **871 MB** compressed — that is **7gen4**, not 8gen3 |
 > | Cumulative **on-demand + fast-follow** packs | **30 GB** | 4 turbo + 4 small ≈ **4.6 GB** — about **15 %** of the budget |
 > | Total compressed download per app | 34 GB | far below |
+>
+> The research's table quotes ~860 MB, which is **8gen3's** figure; the cap has to be compared
+> against the *largest* variant, and that is 7gen4. Measured from the vendor zips on disk (an upper
+> bound — the zips carry a little more than the two binaries): turbo 7gen4 **871,118,306 B**,
+> 8elite5 860,709,426 B, 8gen3 859,786,903 B, 8elite 859,689,781 B; the four small variants
+> 293–296 MB each. Eight variants together **4,627,181,307 B ≈ 4.63 GB**, which is where the 15 %
+> comes from. The conclusion is unchanged and the headroom is still ~600 MB on the worst variant.
 >
 > **The 4 GB row in that table is the cumulative INSTALL-TIME cap and does not apply here**: both
 > pack modules are `deliveryType.set("on-demand")`. So do not go into the upload expecting a
@@ -388,23 +395,32 @@ Upload the AAB to the **internal test track** (if the size probe in §0 has not 
 
 - **u4 first — mandatory, not conditional.** Rung 3 leaves the local-testing build installed, so
   it is always present at this point, and Play cannot install over it: same versionCode, and a
-  local `install-apks` set is not a Play-managed install in the first place.
+  local `install-apks` set is not a Play-managed install in the first place. **Do it on the phone
+  — Settings → Apps → Whisper Everywhere → Uninstall, or long-press the icon → Uninstall. This is
+  the section with no adb**, and u4 is the one uninstall in the window that has no command line;
+  §1's three are `adb uninstall` because §1 is already driving the phone from the laptop.
 - **Start the capture now** if you want §5.1's and §5.3's native evidence (§0.5 explains why these
   lines are the session's only NPU telemetry on a release build). Leave it running through step 8:
 
   ```powershell
-  cd "C:\Users\bastr\OneDrive\Desktop\whisper Everywhere"
   & "C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe" logcat -c
-  & "C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe" logcat -s WE-DIAG *> capture.txt
+  & "C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe" logcat -s WE-DIAG `
+      *> C:\Users\bastr\.androidbuild\capture.txt
   ```
 
   `logcat -c` clears the buffer first so the file holds this session and nothing else; `*>`
   redirects both streams (a bare `2>&1` on a native exe is forbidden here — PowerShell 5.1 wraps
-  stderr into ErrorRecords). **Ctrl-C to stop it after step 8.** `capture.txt` is what §3's greps
-  read and what fills §5.3's two timing columns; without it those columns cannot be filled and
-  §5.1 loses half its instrument. **This is the only adb use in §2 besides the getprop below, it
-  is passive, and it touches nothing on the device** — the acceptance itself is still "reach turbo
-  dictation without adb", and it is satisfied whether or not you take the capture.
+  stderr into ErrorRecords). **The path is absolute on purpose**: §3 and §5 read the same file,
+  they are naturally run in whatever window is open, and a relative name would both depend on the
+  working directory and drop a stray file into the repo. **Ctrl-C to stop it after step 8** — and
+  when §5 asks you to resume it, resume by APPENDING, never by re-running the block above (§5.1
+  gives the exact command, and the reason).
+
+  `capture.txt` is what §3's greps read and what fills §5.3's two timing columns; without it those
+  columns cannot be filled and §5.1 loses half its instrument. **This is the only adb use in §2
+  besides the getprop below, it is passive, and it touches nothing on the device** — the acceptance
+  itself is still "reach turbo dictation without adb", and it is satisfied whether or not you take
+  the capture.
 - Install **from the track**, in the Play Store app, like a user.
 - **Then put the laptop down. No adb for the flow itself** — the capture just runs.
 
@@ -436,29 +452,36 @@ what has already happened by the time you read it: **Play's server-side group re
 the 8gen3 variant to this phone IS the `-AC` suffix check executing in production.** The getprop
 just tells us which side of it fired.
 
-`capture.txt` (started before the install, stopped after step 8) holds the native lines from
-§0.5's first table — `encode: graphExecute OK`, `decode: N tokens`, `vote:`,
+`C:\Users\bastr\.androidbuild\capture.txt` (started before the install, stopped after step 8) holds
+the native lines from §0.5's first table — `encode: graphExecute OK`, `decode: N tokens`, `vote:`,
 `detect: language token`. It holds nothing from the second table, and that is not a fault. §3 greps
-it; §5.1 and §5.3 read their numbers out of it.
+it; §5.1 and §5.3 read their numbers out of it — **§5 appends to this same file rather than
+restarting it**, so one file holds the whole session.
 
 ---
 
 ## §3 — The greps
 
-Run against `capture.txt` — the file §2 tells you to start before the install and stop after step
-8. `-SimpleMatch` because several needles carry `(` `)` `>`.
+Run against the capture §2 started before the install and stopped after step 8. The path is
+absolute in every command below, so this section works in a fresh window with no `cd`:
+
+```powershell
+$cap = 'C:\Users\bastr\.androidbuild\capture.txt'
+```
+
+`-SimpleMatch` because several needles carry `(` `)` `>`.
 
 **On a RELEASE build (the track install and the §1 local installs) — these are the ones that exist:**
 
 ```powershell
-Select-String -SimpleMatch "nativeInit OK"        capture.txt
-Select-String -SimpleMatch "cold load"            capture.txt
-Select-String -SimpleMatch "alias guard:"         capture.txt
-Select-String -SimpleMatch "mask: attention_mask" capture.txt
-Select-String -SimpleMatch "vote: "               capture.txt
-Select-String -SimpleMatch "encode: graphExecute" capture.txt
-Select-String -SimpleMatch "decode: "             capture.txt
-Select-String -SimpleMatch "detect: language"     capture.txt
+Select-String -SimpleMatch "nativeInit OK"        $cap
+Select-String -SimpleMatch "cold load"            $cap
+Select-String -SimpleMatch "alias guard:"         $cap
+Select-String -SimpleMatch "mask: attention_mask" $cap
+Select-String -SimpleMatch "vote: "               $cap
+Select-String -SimpleMatch "encode: graphExecute" $cap
+Select-String -SimpleMatch "decode: "             $cap
+Select-String -SimpleMatch "detect: language"     $cap
 ```
 
 **On a DEBUG build only** — kept here because they are the greps every earlier sheet used, and
@@ -466,13 +489,13 @@ because a future debug session should not have to re-derive them. **Expect zero 
 capture; zero hits is the designed behaviour, not a finding:**
 
 ```powershell
-Select-String -SimpleMatch "pack: fetch "     capture.txt
-Select-String -SimpleMatch "pack: ok "        capture.txt
-Select-String -SimpleMatch "pack: refused "   capture.txt
-Select-String -SimpleMatch "npu: offer "      capture.txt
-Select-String -SimpleMatch "npu: encode="     capture.txt
-Select-String -SimpleMatch "segment-timing: " capture.txt
-Select-String -SimpleMatch "mel: bins="       capture.txt
+Select-String -SimpleMatch "pack: fetch "     $cap
+Select-String -SimpleMatch "pack: ok "        $cap
+Select-String -SimpleMatch "pack: refused "   $cap
+Select-String -SimpleMatch "npu: offer "      $cap
+Select-String -SimpleMatch "npu: encode="     $cap
+Select-String -SimpleMatch "segment-timing: " $cap
+Select-String -SimpleMatch "mel: bins="       $cap
 ```
 
 The success landmark those greps were written for, for the record and for any future debug run:
@@ -565,10 +588,25 @@ backend.
 
 On a release build the Kotlin `lang=` note is stripped, so the per-utterance evidence is the
 **transcript itself** plus the native `detect: language token …` line (one per segment) — the
-second half of that comes from `capture.txt`, so **keep §2's capture running for these rows too**
-(or restart it the same way before dictating). The transcript alone still carries the ruling if you
-would rather not. Dictate one deliberately code-switched utterance per npu-class tier — start in
-English, finish in another language:
+second half of that comes from the capture, so **keep §2's capture running for these rows too**.
+The transcript alone still carries the ruling if you would rather not.
+
+> **If you already stopped it after step 8, resume by APPENDING — do not re-run §2's block.**
+>
+> ```powershell
+> & "C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe" logcat -s WE-DIAG `
+>     *>> C:\Users\bastr\.androidbuild\capture.txt
+> ```
+>
+> `*>>` appends, and there is deliberately **no `logcat -c`** this time. §2's block does both of
+> the things that would destroy the evidence you already have: `-c` wipes the device buffer and a
+> single `*>` **truncates the file**. Re-running it would erase §2's install and verify lines —
+> `nativeInit OK`, the `cold load` timings, `alias guard:`, `mask:` — and §3's greps would then
+> come back empty and read as failures when nothing failed. Append, and the one file holds the
+> whole session.
+
+Dictate one deliberately code-switched utterance per npu-class tier — start in English, finish in
+another language:
 
 | tier | code-switched transcript (verbatim) | switched cleanly? | notes |
 |---|---|---|---|
@@ -592,10 +630,12 @@ pair bytes** (8gen3 turbo: 1,071,685,632 B), not a catalog approximation.
 ### 5.3 The A/B rows
 
 One fixed passage, three times per tier, switching tiers between rows. **The two timing columns are
-read out of `capture.txt`** (§2's capture, running): `encode: graphExecute OK in <ms> ms` and
-`decode: <n> tokens in <ms> ms (<x> ms/token)`, one of each per segment. Without the capture those
-two columns cannot be filled — the transcript column and the subjective note still can, and a sheet
-returned with only those is a partial row, not a failed one.
+read out of `C:\Users\bastr\.androidbuild\capture.txt`**: `encode: graphExecute OK in <ms> ms` and
+`decode: <n> tokens in <ms> ms (<x> ms/token)`, one of each per segment. **The capture has to be
+running for these rows** — if it was stopped after §2 step 8, resume it with §5.1's APPENDING
+command (`*>>`, no `logcat -c`), never with §2's block, for the reason §5.1 gives. Without the
+capture those two columns cannot be filled — the transcript column and the subjective note still
+can, and a sheet returned with only those is a partial row, not a failed one.
 
 | # | tier | transcript (verbatim) | encode ms (native `encode:` line) | decode ms / tokens | subjective note |
 |---|---|---|---|---|---|

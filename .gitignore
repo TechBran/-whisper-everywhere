@@ -132,3 +132,11 @@ app/src/main/cpp/include/QNN/
 *.dlc
 *.context
 app/src/main/cpp/include/Qnn*.h
+
+# (4.2 F8) The acceptance session's logcat capture. The run-book writes it to
+# C:\Users\bastr\.androidbuild\capture.txt — outside the repo, on purpose — so this line should
+# never fire. It is here as belt-and-braces for the one realistic way it would: an owner mid-
+# session, phone in one hand, typing a shorter relative redirect than the sheet's. This whole
+# branch's discipline gates on `git status --porcelain` being empty, and a stray capture file
+# would make the tree dirty at exactly the moment nobody wants to debug why.
+capture.txt
