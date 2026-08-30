@@ -1,6 +1,7 @@
 package com.whispereverywhere.ui.onboarding
 
 import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
@@ -165,10 +166,11 @@ class OnboardingLogicTest {
         )
     }
 
-    @Test fun fetch_failures_carry_the_reason_verbatim_and_cancelled_names_the_retry() {
-        // Failed is the F5 refusal CARRIER: the reason is finished user-facing copy, rendered
-        // verbatim — this mapping never rewrites a refusal.
-        val reason = NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_NOT_OWNED)
+    @Test fun fetch_failures_flow_verbatim_and_cancelled_names_the_retry() {
+        // Failed is the F5 refusal CARRIER: a reason flows verbatim — EXCEPT the ones naming
+        // the import adjacency this surface does not have (F6 fix round 1, I-1; the
+        // per-surface rewrite has its own tests below).
+        val reason = NpuPackFetch.failureReason(NpuPackFetch.ERROR_NETWORK_ERROR)
         assertEquals(
             EngineState.Failed(reason),
             OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Failed(reason)),
@@ -176,6 +178,101 @@ class OnboardingLogicTest {
         assertEquals(
             EngineState.Failed("Download cancelled — tap Retry to start again."),
             OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Cancelled),
+        )
+    }
+
+    @Test fun the_onboarding_surface_rewrites_refusals_that_name_an_affordance_it_lacks() {
+        // F6 fix round 1, I-1. F5's carrier rule conditioned the adjacency copy on the import
+        // control sitting below the card; onboarding has no import control, so every reason
+        // naming it renders this surface's own truthful copy instead — and the CHOOSER keeps
+        // the ruled adjacency copy untouched (the controller's table is not rewritten).
+        assertEquals(
+            "This install can't fetch from Google Play — finish setup with an on-device " +
+                "model and import from Settings later.",
+            OnboardingLogic.ONBOARDING_FETCH_REFUSAL,
+        )
+        // Every adjacency-carrying builder in the F5 table: the four sideload codes, the two
+        // "or use …" alternatives, and the empty delivery.
+        val adjacencyReasons = listOf(
+            NpuPackFetch.ERROR_API_NOT_AVAILABLE,
+            NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND,
+            NpuPackFetch.ERROR_APP_NOT_OWNED,
+            NpuPackFetch.ERROR_UNRECOGNIZED_INSTALLATION,
+            NpuPackFetch.ERROR_APP_UNAVAILABLE,
+            NpuPackFetch.ERROR_PACK_UNAVAILABLE,
+        ).map { NpuPackFetch.failureReason(it) } + NpuPackFetch.emptyDeliveryRefusal()
+        for (reason in adjacencyReasons) {
+            assertTrue(
+                "fixture premise — the reason names the adjacency: $reason",
+                reason.contains(OnboardingLogic.IMPORT_ADJACENCY_MARKER),
+            )
+            assertEquals(
+                EngineState.Failed(OnboardingLogic.ONBOARDING_FETCH_REFUSAL),
+                OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Failed(reason)),
+            )
+        }
+        // The chooser's ruled copy is UNTOUCHED at its source — the rewrite lives in this
+        // mapping alone (NpuPackFetchTest pins the ruled words exactly).
+        assertTrue(
+            NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_NOT_OWNED)
+                .contains("Use 'Import model pair…' below instead."),
+        )
+    }
+
+    @Test fun no_failed_terminal_can_wedge_the_model_step() {
+        // F6 fix round 1, I-1 — the executed no-wedge walk: EVERY Failed terminal the fetch
+        // can produce leaves the model step completable, because Failed always offers the way
+        // back to the chooser and the chooser always offers the CPU tiers.
+        val everyErrorCode =
+            listOf(0, -1, -2, -3, -4, -5, -6, -7, -10, -11, -13, -14, -15, -100, 12345)
+        for (code in everyErrorCode) {
+            val mapped = OnboardingLogic.engineStateForFetch(
+                NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(code))
+            )
+            assertTrue("code $code lands on the Failed card", mapped is EngineState.Failed)
+            assertTrue(
+                "and the Failed card offers the way back to the chooser (code $code)",
+                OnboardingLogic.showChooseDifferentModel(mapped),
+            )
+        }
+        assertTrue(
+            "a cancelled fetch offers it too",
+            OnboardingLogic.showChooseDifferentModel(
+                OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Cancelled)
+            ),
+        )
+        assertTrue(
+            "and the empty delivery",
+            OnboardingLogic.showChooseDifferentModel(
+                OnboardingLogic.engineStateForFetch(
+                    NpuPackFetch.FetchState.Failed(NpuPackFetch.emptyDeliveryRefusal())
+                )
+            ),
+        )
+        // No other state grows the escape — Working keeps its guard, Ready needs none, and
+        // the mandatory gate is untouched either way.
+        assertFalse(OnboardingLogic.showChooseDifferentModel(EngineState.Ready))
+        assertFalse(OnboardingLogic.showChooseDifferentModel(EngineState.Pending))
+        assertFalse(OnboardingLogic.showChooseDifferentModel(EngineState.Working(50, "x")))
+        // The chooser the escape returns to is completable on EVERY device: the CPU tiers are
+        // in the lineup whatever the gate answered — a sideloaded capable device's union
+        // included — and a fresh CPU pick re-arms Download.
+        for (gateSet in listOf(emptySet<String>(), setOf("npu"), setOf("npu", "npu-turbo"))) {
+            for (tag in listOf("en-US", "bn-BD")) {
+                val lineup = ModelTierCopy.orderedForLanguageTagFor(tag, gateSet)
+                assertTrue("pro pickable ($gateSet, $tag)", "pro" in lineup)
+                assertTrue("multi pickable ($gateSet, $tag)", "multi" in lineup)
+            }
+        }
+        val cpuPick = OnboardingLogic.enginesPrimaryAction(
+            downloadsBegun = false, tierPicked = true, speechReady = false,
+        )
+        assertTrue("a fresh CPU pick re-arms Download", cpuPick.enabled && cpuPick.startsDownloads)
+        // And the escape never weakens the mandatory-model gate: Failed still holds Continue.
+        assertFalse(
+            OnboardingLogic.enginesPrimaryAction(
+                downloadsBegun = true, tierPicked = true, speechReady = false,
+            ).enabled
         )
     }
 

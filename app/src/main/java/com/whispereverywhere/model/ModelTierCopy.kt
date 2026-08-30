@@ -119,8 +119,10 @@ object ModelTierCopy {
      *        [steerIdForLanguageTag] exactly, and so does any set naming neither npu-class tier.
      */
     fun steerIdForLanguageTagFor(languageTag: String, offeredGatedIds: Set<String>): String {
-        // The pick: offered means installed AND gate-passing, which is the only state the
-        // promotion was authorized for. Everything else is the pre-pick rule, verbatim.
+        // The pick: the set is the caller's SHOW set — routing surfaces pass installed AND
+        // gate-passing; the chooser surfaces since 4.2 F6 also name fetchable,
+        // census-deliverable tiers, where capability plus a measured pack is the promotion's
+        // authority (the widened @param above). Everything else is the pre-pick rule, verbatim.
         if ("npu-turbo" in offeredGatedIds) return "npu-turbo"
         val cpuSteer = steerIdForLanguageTag(languageTag)
         return if ("npu" in offeredGatedIds && cpuSteer == "multi") "npu" else cpuSteer

@@ -107,16 +107,65 @@ object OnboardingLogic {
     const val FETCH_CANCELLED_MESSAGE = "Download cancelled — tap Retry to start again."
 
     /**
+     * The one string every import-adjacency refusal carries — `NpuPackFetch.SIDELOAD_ANSWER`
+     * (four sideload codes), the APP/PACK_UNAVAILABLE alternatives and the empty-delivery
+     * refusal all name `'Import model pair…' below` — and the marker [onboardingFetchRefusal]
+     * rewrites on, because the onboarding flow has no import affordance below anything.
+     */
+    const val IMPORT_ADJACENCY_MARKER = "'Import model pair…' below"
+
+    /**
+     * The ONBOARDING surface's refusal for a fetch Play will not serve this install (F6 fix
+     * round 1, I-1): truthful on THIS surface — no reference to an affordance the flow lacks,
+     * and the way forward it actually has (an on-device model now, Settings' import later).
+     * The CHOOSER surface keeps the ruled adjacency copy; see [onboardingFetchRefusal].
+     */
+    const val ONBOARDING_FETCH_REFUSAL =
+        "This install can't fetch from Google Play — finish setup with an on-device model " +
+            "and import from Settings later."
+
+    /** The failed engine card's second action — the no-wedge escape (F6 fix round 1, I-1). */
+    const val CHOOSE_DIFFERENT_MODEL = "Choose a different model"
+
+    /**
+     * Per-surface refusal copy (F6 fix round 1, I-1). F5's carrier rule renders `Failed.reason`
+     * VERBATIM — conditioned, in F5's own handoff, on the SAF import affordance sitting below
+     * the card. The CHOOSER keeps that adjacency and the ruled copy; ONBOARDING has no import
+     * affordance, so a reason that names it would send the user to a control that does not
+     * exist (and, on a sideloaded install, wedge the mandatory step behind a dead Retry). Any
+     * reason carrying [IMPORT_ADJACENCY_MARKER] therefore renders [ONBOARDING_FETCH_REFUSAL]
+     * here; every other reason flows verbatim — the carrier rule, narrowed only where its own
+     * precondition fails.
+     */
+    fun onboardingFetchRefusal(reason: String): String =
+        if (IMPORT_ADJACENCY_MARKER in reason) ONBOARDING_FETCH_REFUSAL else reason
+
+    /**
+     * The NO-WEDGE rule (F6 fix round 1, I-1): a FAILED speech engine — every Failed terminal,
+     * gated fetch refusals included — offers the way back to the chooser, where the CPU tiers
+     * are always pickable, so the mandatory model step stays completable on every path. Retry
+     * stays the primary action (owner decision 2026-08-18); this is the second, and it never
+     * unlocks Continue.
+     */
+    fun showChooseDifferentModel(speech: EngineState): Boolean = speech is EngineState.Failed
+
+    /**
      * One [NpuPackFetch.FetchState] to exactly one [EngineState] — the whole translation between
      * the F5 pack controller and the engines step's card, total over the sealed vocabulary so
      * the card cannot receive a state this table never produced (4.2 F6).
      *
      * [NpuPackFetch.FetchState.Failed] is the F5 refusal CARRIER: its reason is finished,
-     * user-facing copy and flows through VERBATIM — this mapping never rewrites a refusal.
-     * `Idle` reads as preparing because the collector only ever runs after `start()`: the rest
-     * state mid-collect is a fetch that has not published yet, not an error. `Installed` maps
-     * to Ready — by the controller's contract it is only published after the pair is
-     * census-verified, renamed into place and announced.
+     * user-facing copy and flows through VERBATIM — except the import-adjacency family, which
+     * this surface rewrites through [onboardingFetchRefusal] (F6 fix round 1, I-1: the copy's
+     * own precondition, the import control below the card, does not hold here).
+     * `Idle` reads as preparing for two reasons: the collector only ever runs after `start()`,
+     * so the rest state mid-collect is usually a fetch that has not published yet — and Idle is
+     * ALSO `NOT_INSTALLED`'s mapping (`advance`), which Play can replay after an out-of-band
+     * cancel; StateFlow conflation can then skip the terminal Cancelled and park the card at
+     * Preparing (narrow, device-only — an F8 watch item beside the F5 replay note; recovery is
+     * relaunch). Failed-on-Idle would flash false refusals in the start gap, so non-terminal
+     * stays the right reading. `Installed` maps to Ready — by the controller's contract it is
+     * only published after the pair is census-verified, renamed into place and announced.
      */
     fun engineStateForFetch(fetch: NpuPackFetch.FetchState): EngineState = when (fetch) {
         is NpuPackFetch.FetchState.Idle,
@@ -132,7 +181,7 @@ object OnboardingLogic {
         is NpuPackFetch.FetchState.NeedsConfirmation ->
             EngineState.Working(OnboardingSetupViewModel.INDETERMINATE, FETCH_AWAITING_PLAY_CONSENT)
         is NpuPackFetch.FetchState.Installed -> EngineState.Ready
-        is NpuPackFetch.FetchState.Failed -> EngineState.Failed(fetch.reason)
+        is NpuPackFetch.FetchState.Failed -> EngineState.Failed(onboardingFetchRefusal(fetch.reason))
         is NpuPackFetch.FetchState.Cancelled -> EngineState.Failed(FETCH_CANCELLED_MESSAGE)
     }
 

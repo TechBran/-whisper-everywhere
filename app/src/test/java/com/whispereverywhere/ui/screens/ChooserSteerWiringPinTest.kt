@@ -832,5 +832,32 @@ class ChooserSteerWiringPinTest {
             1,
             count(flow, "NpuPackController.state.collectAsState()"),
         )
+        // F6 fix round 1 (I-1): the no-wedge escape. A Failed speech engine — a sideloaded
+        // install's Play refusal included — offers the way back to the chooser, where the CPU
+        // tiers are always pickable, so the mandatory step stays completable on every path.
+        assertEquals(
+            "the failed card renders the re-choice through the pure rule",
+            1,
+            count(flow, "if (OnboardingLogic.showChooseDifferentModel(speech)) {"),
+        )
+        assertEquals(
+            "its tap clears the pick and resets the phase — the one legal way back to the " +
+                "tier cards once downloads have begun",
+            1,
+            count(flow, "onChooseAgain = { pickedTierId = null; setupVm.resetSpeechForReChoice() },"),
+        )
+        assertEquals(
+            "and the VM reset is guarded to Failed — a Working fetch keeps its double-tap " +
+                "guard, a Ready model cannot be un-readied by a stray tap",
+            1,
+            count(
+                setupVm,
+                block(
+                    "        if (_speechState.value is EngineState.Failed) {",
+                    "            _speechState.value = EngineState.Pending",
+                    "        }",
+                ),
+            ),
+        )
     }
 }

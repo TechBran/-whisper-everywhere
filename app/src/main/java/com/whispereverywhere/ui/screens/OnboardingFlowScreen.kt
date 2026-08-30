@@ -60,9 +60,12 @@ import kotlinx.coroutines.withContext
 // dialog), and the cloud-keys teaching step. Replaces the two-path chooser: the chooser made
 // setup a fork; this makes it a walk, and the cloud fork is simply the last step.
 //
-// EXISTING INSTALLS NEVER RE-ENTER THIS FLOW: it renders only where onboarding was never
-// completed (the untouched completion pref), so the language step reaches fresh installs only —
-// existing users keep Settings' language picker, which edits the same one pref.
+// EXISTING INSTALLS DO NOT RE-ENTER THIS FLOW BY UPGRADING: the launch gate is
+// firstRunStartDestination's hasModel rule (ModeDashboard — a model on disk routes to Home;
+// onboardingCompleted is deliberately NOT consulted there), and F6 leaves it untouched. A
+// MODELLESS install (Auto-Backup restore, model deleted in Settings) re-enters by design —
+// pre-4.2, owner-mandated — and now also meets the language step, which is safe: the forced
+// tap writes the same selected_language pref that install's Settings picker edits.
 //
 // MANDATORY except the cloud step (owner decision 2026-08-18, reversing the earlier never-block
 // contract): Continue on the permissions step is gated on the bubble's three permissions, the
@@ -184,6 +187,7 @@ fun OnboardingFlowScreen(
                         languageTag = languageTag,
                         pickedTierId = pickedTierId,
                         onPick = { pickedTierId = it },
+                        onChooseAgain = { pickedTierId = null; setupVm.resetSpeechForReChoice() },
                     )
                     Step.CLOUD -> CloudStep(onCloudSetup = onCloudSetup, onFinish = onFinish)
                 }
@@ -519,6 +523,7 @@ private fun EnginesStep(
     languageTag: String,
     pickedTierId: String?,
     onPick: (String) -> Unit,
+    onChooseAgain: () -> Unit,
 ) {
     val speech by vm.speechState.collectAsState()
     val voice by vm.voiceState.collectAsState()
@@ -617,6 +622,15 @@ private fun EnginesStep(
             state = speech,
             onRetry = { vm.ensureSpeech() },
         )
+        if (OnboardingLogic.showChooseDifferentModel(speech)) {
+            // The no-wedge escape (F6 fix round 1, I-1): EVERY Failed terminal — a Play
+            // refusal on a sideloaded install included — leaves the step completable. Back to
+            // the chooser, where the CPU tiers are always pickable; Retry above stays the
+            // primary action and Continue stays locked (the mandatory-model gate holds).
+            TextButton(onClick = onChooseAgain) {
+                Text(OnboardingLogic.CHOOSE_DIFFERENT_MODEL)
+            }
+        }
         Spacer(Modifier.height(12.dp))
         EngineRow(
             title = "Read-aloud voice",

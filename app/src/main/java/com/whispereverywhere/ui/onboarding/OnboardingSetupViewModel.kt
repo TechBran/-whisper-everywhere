@@ -171,6 +171,20 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Return the speech card to the chooser phase — the no-wedge escape's other half (F6 fix
+     * round 1, I-1). ONLY from Failed: a Working fetch keeps its double-tap guard, a Ready
+     * model needs no re-choice, and the phase truth the engines step renders is speechState —
+     * so this is the one legal way back to the tier cards once downloads have begun, and every
+     * Failed terminal (a Play refusal on a sideloaded install included) leaves the mandatory
+     * step completable through the always-pickable CPU tiers.
+     */
+    fun resetSpeechForReChoice() {
+        if (_speechState.value is EngineState.Failed) {
+            _speechState.value = EngineState.Pending
+        }
+    }
+
     /** Make the on-device read-aloud voice exist, if it is not already. Same contract as [ensureSpeech]. */
     fun ensureVoice() {
         if (_voiceState.value is EngineState.Working) return // Ready can be stale; disk decides
