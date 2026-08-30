@@ -315,11 +315,19 @@ class NpuPackLayoutTest {
     fun bothPackGitignoresKeepThePayloadStructurallyUncommittable() {
         for (module in moduleByTier.values) {
             assertEquals(
-                "$module/.gitignore must ignore every #group_ payload dir — the vendor bins " +
+                "$module/.gitignore must ignore every payload variant dir — the vendor bins " +
                     "are BUILD artifacts assembled from the measured workspace, and the root " +
                     ".gitignore's blob walls (*.so, *.dlc) do not cover .bin, so this pattern " +
                     "IS the wall",
-                1, count(read("$module/.gitignore"), "src/main/assets/model#group_*/")
+                1, count(read("$module/.gitignore"), "src/main/assets/$module#group_soc_*/")
+            )
+            // (4.2 F8) And it must stop at `soc_`. A `#group_*` wall would also swallow the
+            // #group_other directory, whose .gitkeep is the one TRACKED file that proves the
+            // empty default exists at all — the wall would quietly un-track the empty-default
+            // rule's own evidence, and every test below it reads that directory from the repo.
+            assertEquals(
+                "$module/.gitignore must not carry a wall wide enough to hide #group_other",
+                0, count(read("$module/.gitignore"), "src/main/assets/$module#group_*/")
             )
         }
     }
@@ -327,16 +335,55 @@ class NpuPackLayoutTest {
     @Test
     fun theDefaultVariantsCarryNothingButTheGitkeep() {
         for (module in moduleByTier.values) {
-            val defaultDir = repoFile("$module/src/main/assets/model")
+            // (4.2 F8) The default variant is the EXPLICIT `#group_other` directory. An
+            // unsuffixed sibling of `#group_` dirs is not a fallback to bundletool, it is an
+            // error: it assigns such a directory an empty DeviceGroupTargeting and refuses the
+            // bundle by name ("Directory 'assets/npu_small' must have exactly one device group,
+            // but found []"). `other` is bundletool's implicit group — never declared in
+            // device_targeting_config.xml, named as defaultGroup in the bundle DSL — so naming
+            // it here changes the spelling and not one device's delivery.
+            val defaultDir = repoFile("$module/src/main/assets/$module#group_other")
             assertEquals(
-                "$module's DEFAULT variant (assets/model/) must contain exactly .gitkeep — " +
-                    "an unmatched device can never be prevented from receiving the default, " +
-                    "so the default must contain nothing worth receiving. verifyNpuPacks " +
-                    "holds the same rule before every bundle build",
+                "$module's DEFAULT variant (assets/$module#group_other/) must contain exactly " +
+                    ".gitkeep — an unmatched device can never be prevented from receiving the " +
+                    "default, so the default must contain nothing worth receiving. " +
+                    "verifyNpuPacks holds the same rule before every bundle build",
                 listOf(".gitkeep"),
                 (defaultDir.listFiles() ?: emptyArray()).map { it.name }.sorted()
             )
         }
+    }
+
+    @Test
+    fun eachPacksVariantDirsAreNamedAfterThePackSoNoEntryPathCanClashAcrossModules() {
+        // (4.2 F8) THE RULE THIS PINS, and the reason it is a rule: an AAB may not carry the
+        // same entry path in two modules with different bytes. Both packs used to write
+        // assets/model#group_<g>/metadata.json — one path, two documents — and the first
+        // bundleRelease ever attempted died on exactly that, naming the 7gen4 metadata.json.
+        // The two BINARIES were safe only by the turbo_ rename; a third shared filename would
+        // have reintroduced the fault. Naming each pack's directory after the pack retires the
+        // clash class instead of the instance, so this test pins the RULE (per-pack prefix,
+        // and no two modules sharing a variant dir name) rather than the one file that broke.
+        val dirNames = moduleByTier.values.map { module ->
+            val assets = repoFile("$module/src/main/assets")
+            val names = (assets.listFiles() ?: emptyArray()).map { it.name }.sorted()
+            for (n in names) {
+                assertTrue(
+                    "$module's variant dir '$n' must be named after the pack — an entry path " +
+                        "shared with the sibling module is refused at bundle time",
+                    n.startsWith("$module#group_")
+                )
+            }
+            assertEquals(
+                "$module must carry the four census variants plus the empty #group_other",
+                5, names.size
+            )
+            names.toSet()
+        }
+        assertEquals(
+            "the two modules must share no variant directory name at all",
+            emptySet<String>(), dirNames[0].intersect(dirNames[1])
+        )
     }
 
     // ------------------------------------------------------------------ the bundle gate
@@ -412,8 +459,10 @@ class NpuPackLayoutTest {
         // The tier-to-module mapping, once each:
         assertEquals(1, count(script, "\"npu\": \"npu_small\""))
         assertEquals(1, count(script, "\"npu-turbo\": \"npu_turbo\""))
-        // The payload path is constructed from the group, never hand-spelled per family:
-        assertEquals(1, count(script, "f\"model#group_{pack_group}\""))
+        // The payload path is constructed from the MODULE and the group, never hand-spelled per
+        // family — and the module half is what keeps the two packs' entry paths disjoint (F8).
+        assertEquals(1, count(script, "f\"{module}#group_{pack_group}\""))
+        assertEquals(1, count(script, "f\"{module}#group_other\""))
         // The delivery zip writes OUR metadata.json FIRST — the import peek refuses a
         // wrong-family zip from its own declaration before a GB inflates — and the bins
         // AFTER it (source order pin over the two write calls):

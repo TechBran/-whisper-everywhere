@@ -902,7 +902,7 @@ class WhisperModelManager(
      * DELIVERED and nothing more: everything below is what makes it installed.
      *
      * ```
-     * model/metadata.json exists?   (absent = the EMPTY default variant, refused by name)
+     * <packName>/metadata.json exists?  (absent = the EMPTY default variant, refused by name)
      *   ->  strict parse  ->  crossCheckRefusal   (IDENTITY: the wrong pack dies here by name)
      *   ->  reconcile .prev debris  ->  free-space precheck
      *   ->  stream-copy each bin to <name>.part, sha256 riding the copy   (INTEGRITY)
@@ -927,7 +927,11 @@ class WhisperModelManager(
      *        memo (the F2 chain) and refuses a null itself, so this parameter is non-null by
      *        construction.
      * @param packAssetsPath `AssetPackLocation.assetsPath()` — the delivered pack's assets
-     *        root, containing `model/` with exactly three files (F4's layout).
+     *        root, containing a directory named after the PACK with exactly three files in it
+     *        (F4's layout as F8 re-spelled it). Play strips the `#group_<g>` suffix on
+     *        delivery, so `assets/npu_turbo#group_soc_8gen3/` arrives as `npu_turbo/`; the
+     *        directory carries the pack's name because two modules may not ship the same entry
+     *        path with different bytes, which is what an AAB build refuses by name.
      */
     suspend fun installFromPack(
         tierId: String,
@@ -938,7 +942,14 @@ class WhisperModelManager(
         val model = WhisperCatalog.byId(tierId)
         val artifact = NpuFleetCensus.artifactFor(family.id, tierId)
         val required = NpuAssetImport.requiredEntriesFor(model, artifact)
-        if (model == null || artifact == null || required.isEmpty()) {
+        // (4.2 F8) The delivered pack's assets arrive in a directory named after the PACK, and
+        // the map that decides which pack serves this tier is the one that names it — so the
+        // fetch and the read cannot disagree about which pack this is. A tier with no pack row
+        // is a catalog fact, not a delivery fact, so it joins the catalog guard below rather
+        // than inventing a second empty-delivery site (the refusal has exactly one, and a pin
+        // says so).
+        val packDirName = NpuPackFetch.PACK_BY_TIER[tierId]
+        if (model == null || artifact == null || required.isEmpty() || packDirName == null) {
             return@withContext NpuAssetImport.ImportState.Refused(
                 "this build's catalog has no installable model pair for that tier, so there " +
                     "is nothing to install into."
@@ -949,7 +960,7 @@ class WhisperModelManager(
         // and self-verifies it); a delivered pack WITHOUT one is the empty default variant —
         // Play's answer for a device in no census group — refused by name, with the import
         // fallback named as the path forward.
-        val packModelDir = File(packAssetsPath, "model")
+        val packModelDir = File(packAssetsPath, packDirName)
         val metaFile = File(packModelDir, NpuPackMetadata.ENTRY_NAME)
         if (!metaFile.isFile) {
             return@withContext NpuAssetImport.ImportState.Refused(

@@ -50,8 +50,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 80
-        versionName = "4.1.0"  // NPU Model Lab: npu-turbo (large-v3-turbo on the AI chip), per-tier routing/decline, per-utterance language on NPU
+        versionCode = 81
+        versionName = "4.2.0"  // Fleet Onboarding: the four-family census + gate, the NPU packs on Play Asset Delivery, language-first onboarding, the chooser's fetch affordance
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
@@ -676,6 +676,20 @@ tasks.named("preBuild") { dependsOn(extractQnnSkel) }
 // built on a machine that never ran the script fails HERE with every missing variant named,
 // instead of shipping packs whose targeted variants are silently empty.
 //
+// THE VARIANT DIRECTORY IS NAMED AFTER THE PACK (4.2 F8), and the reason is a rule, not a
+// preference: an AAB merges nothing, but bundletool validates that any entry path appearing in
+// two modules carries the SAME bytes in both. Both packs used to write
+// assets/model#group_<g>/metadata.json — one path, two different documents — and the first
+// bundleRelease ever attempted died with "Modules 'npu_small' and 'npu_turbo' contain entry
+// 'assets/model#group_soc_7gen4/metadata.json' with different content". The two BINARIES were
+// already safe, but only by the turbo_ rename F4 introduced for the SAF import's flat directory;
+// metadata.json had no such prefix and nothing before a real bundle build could have said so.
+// Naming each pack's directory after the pack retires the whole clash class — no entry under
+// assets/npu_small/ can ever share a path with one under assets/npu_turbo/ — instead of adding a
+// second prefix and waiting for the third file. Play strips the #group_<g> suffix on delivery,
+// so the device sees assets/<packName>/, which is what installFromPack opens (through
+// NpuPackFetch.PACK_BY_TIER, the same map that names the pack to fetch).
+//
 // THE PACK TABLE: one row per variant — module, Play device group, encoder bytes, decoder
 // bytes. The byte counts are NpuFleetCensus.artifacts' own, restated because a build script
 // cannot read the app's classes, and pinned EQUAL to the census by NpuPackLayoutTest (the
@@ -708,26 +722,26 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
             val encoderBytes = row[2] as Long
             val decoderBytes = row[3] as Long
             val names = npuPackDeliveryNames.getValue(module)
-            val variantDir = rootProject.file("$module/src/main/assets/model#group_$group")
+            val variantDir = rootProject.file("$module/src/main/assets/$module#group_$group")
             if (!variantDir.isDirectory) {
-                problems += "$module: model#group_$group is MISSING"
+                problems += "$module: $module#group_$group is MISSING"
                 continue
             }
             val listed = (variantDir.listFiles() ?: emptyArray()).map { it.name }.sorted()
             val expected = (names + "metadata.json").sorted()
             if (listed != expected) {
-                problems += "$module/model#group_$group: carries $listed; a pack variant is " +
+                problems += "$module/$module#group_$group: carries $listed; a pack variant is " +
                     "exactly $expected"
                 continue
             }
             val encoder = File(variantDir, names[0])
             if (encoder.length() != encoderBytes) {
-                problems += "$module/model#group_$group: ${names[0]} is ${encoder.length()} B, " +
+                problems += "$module/$module#group_$group: ${names[0]} is ${encoder.length()} B, " +
                     "the census says $encoderBytes"
             }
             val decoder = File(variantDir, names[1])
             if (decoder.length() != decoderBytes) {
-                problems += "$module/model#group_$group: ${names[1]} is ${decoder.length()} B, " +
+                problems += "$module/$module#group_$group: ${names[1]} is ${decoder.length()} B, " +
                     "the census says $decoderBytes"
             }
             val meta = try {
@@ -737,9 +751,9 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
             }
             when {
                 meta == null ->
-                    problems += "$module/model#group_$group: metadata.json is not parseable JSON"
+                    problems += "$module/$module#group_$group: metadata.json is not parseable JSON"
                 meta["packGroup"] != group ->
-                    problems += "$module/model#group_$group: metadata.json names packGroup " +
+                    problems += "$module/$module#group_$group: metadata.json names packGroup " +
                         "'${meta["packGroup"]}' — the variant dir and its own metadata disagree"
             }
         }
@@ -747,13 +761,25 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
         // nothing: an unmatched device can never be prevented from receiving the default
         // variant, so the default must contain nothing worth receiving — a bundle whose
         // default variant gained content would hand those bytes to every unmatched device.
+        //
+        // (4.2 F8) The default variant is the EXPLICIT `#group_other` directory, not an
+        // unsuffixed sibling. bundletool assigns a group-targeted directory's unsuffixed
+        // neighbour an empty DeviceGroupTargeting and then refuses it by name — "Directory
+        // 'assets/npu_small' must have exactly one device group, but found []" — so the
+        // fallback has to name the group it serves. `other` is bundletool's IMPLICIT group —
+        // it must not appear in device_targeting_config.xml, and the bundle block's own
+        // default-group line above is what routes unmatched devices into it — which is why
+        // this is a spelling change and not a targeting change: the same devices receive the
+        // same nothing, and the app still finds no metadata.json and refuses by name.
+        // (The default-group line is spelled exactly once in this file, and a pin says so;
+        // quoting it again here would answer that pin from a comment.)
         for (module in npuPackDeliveryNames.keys) {
-            val defaultDir = rootProject.file("$module/src/main/assets/model")
+            val defaultDir = rootProject.file("$module/src/main/assets/$module#group_other")
             val extras = (defaultDir.listFiles() ?: emptyArray()).map { it.name }
                 .filter { it != ".gitkeep" }
             if (extras.isNotEmpty()) {
-                problems += "$module: the DEFAULT variant (assets/model/) must stay EMPTY " +
-                    "but carries $extras"
+                problems += "$module: the DEFAULT variant (assets/$module#group_other/) must " +
+                    "stay EMPTY but carries $extras"
             }
         }
         if (problems.isNotEmpty()) {
@@ -822,6 +848,25 @@ dependencies {
     // against THIS library's own classes — so a version bump that renumbers either enum fails
     // a JVM test rather than shipping a silent remap.
     implementation("com.google.android.play:asset-delivery-ktx:2.3.0")
+
+    // (4.2 F8) THE RELEASE-ONLY CONSEQUENCE of the line above, and it is here because it has
+    // exactly one cause. asset-delivery-ktx drags `androidx.fragment:fragment:1.1.0` onto the
+    // classpath — directly, and again through play-services-basement:18.4.0 — and those are the
+    // ONLY two paths to androidx.fragment in this graph (verified against the resolved
+    // releaseRuntimeClasspath; `main` has no path to fragment at all). Fragment 1.1.0 predates
+    // the ActivityResult contract wiring: its FragmentActivity does not call
+    // super.onRequestPermissionsResult and uses request codes the ActivityResult registry
+    // rejects, so androidx.activity ships a FATAL lint check for exactly this state
+    // (InvalidFragmentVersionForActivityResult). That check does not run on assembleDebug. It
+    // runs in lintVitalRelease — which means adding the Play client made every RELEASE build
+    // fail, on a branch whose acceptance is an internal-track upload, and nothing before F8's
+    // first release build could have said so.
+    //
+    // The version is raised rather than the check silenced or the transitive excluded: the
+    // check names a real defect, and play-services-basement genuinely references fragment
+    // classes at runtime, so an exclude would trade a build failure for a NoClassDefFoundError.
+    // 1.8.5 is the fragment release contemporary with activity 1.9.3 / lifecycle 2.8.7 above.
+    implementation("androidx.fragment:fragment:1.8.5")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.1.1")

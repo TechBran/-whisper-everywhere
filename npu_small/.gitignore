@@ -4,4 +4,20 @@
 # with a public remote, and the root .gitignore's blob walls (*.so, *.dlc, *.context) do not
 # cover .bin — so this pattern IS the wall. The default variant's .gitkeep stays tracked; the
 # payload dirs are structurally uncommittable.
-src/main/assets/model#group_*/
+#
+# (4.2 F8) The directory is named after the PACK, not "model". Both modules used to write
+# assets/model#group_<g>/, and every entry under it therefore had a twin at the same path in the
+# sibling module — which bundletool's EntryClashValidator refuses outright when the content
+# differs ("Modules 'npu_small' and 'npu_turbo' contain entry
+# 'assets/model#group_soc_7gen4/metadata.json' with different content"). The bins escaped it only
+# because turbo's carry the turbo_ prefix; metadata.json did not, and the FIRST bundleRelease
+# ever attempted failed on it. Naming the directory after the pack makes the whole clash class
+# impossible instead of fixing the one instance.
+#
+# (4.2 F8) The pattern stops at `soc_` DELIBERATELY. The EMPTY default variant is no longer an
+# unsuffixed sibling — bundletool refuses that outright ("Directory 'assets/npu_small' must have
+# exactly one device group, but found []") — it is the explicit `#group_other` variant, and its
+# .gitkeep is TRACKED. Every census packGroup begins `soc_`, so `#group_soc_*` is exactly the
+# four payload dirs and exactly nothing else; a wider `#group_*` would swallow the one directory
+# in this module that must stay visible to git.
+src/main/assets/npu_small#group_soc_*/

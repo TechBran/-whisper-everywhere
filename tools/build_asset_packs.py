@@ -36,16 +36,18 @@ Nothing binary is ever committed: the workspace lives outside the repo, and the 
 is DATA (digests, sizes, dates).
 
 ``build`` (F4) assembles the eight pack variants into the two asset-pack modules'
-``src/main/assets/model#group_<packGroup>/`` dirs -- RAW bins under the census's delivery
+``src/main/assets/<module>#group_<packGroup>/`` dirs -- RAW bins under the census's delivery
 names (turbo's renamed ``turbo_*`` -- all eight vendor zips share the same two bare names, so
 an unrenamed turbo pack could overwrite the npu pair) plus OUR ``metadata.json`` written from
 the census. It runs ``measure`` first (the F3 handoff: packs are always built from
 gate-verified bytes; idempotent and cheap on a warm workspace), streams each binary with
 sha256 riding the copy, asserts the census literals, then RE-VERIFIES what landed through the
 importer's own logic: exactly three files, both bins re-read and re-hashed to the census, the
-metadata parsed strictly and cross-checked equal to the census row. The default ``model/``
-dirs must carry nothing but ``.gitkeep`` -- the empty-default rule the ``verifyNpuPacks``
-Gradle gate re-proves before every bundle build.
+metadata parsed strictly and cross-checked equal to the census row. The default
+``<module>#group_other/`` dirs must carry nothing but ``.gitkeep`` -- the empty-default rule
+the ``verifyNpuPacks`` Gradle gate re-proves before every bundle build. (F8: the fallback
+names the implicit ``other`` group instead of being an unsuffixed sibling, which bundletool
+refuses -- "must have exactly one device group, but found []".)
 
 ``delivery-zip <familyId> <tierId>`` (F4) writes the per-family SAF sideload zip: OUR
 ``metadata.json`` FIRST -- and with its size DECLARED in the local header (``writestr``), plus
@@ -571,9 +573,9 @@ def build_packs(workspace: str) -> None:
         for family in FAMILIES:
             _, _, pack_group = FAMILIES[family]
             out_dir = os.path.join(root, module, "src", "main", "assets",
-                                   f"model#group_{pack_group}")
+                                   f"{module}#group_{pack_group}")
             print(f"BUILD tier={tier} family={family} -> "
-                  f"{module}/src/main/assets/model#group_{pack_group}")
+                  f"{module}/src/main/assets/{module}#group_{pack_group}")
             if verify_variant_dir(tier, family, out_dir) is None:
                 print("  already the census (re-hashed from disk), rewrite skipped")
                 current += 1
@@ -595,12 +597,13 @@ def build_packs(workspace: str) -> None:
     # The empty-default rule, checked at build time too so the fault is caught where it was
     # made rather than at the next bundle's verifyNpuPacks run.
     for module in PACK_MODULE_BY_TIER.values():
-        default_dir = os.path.join(root, module, "src", "main", "assets", "model")
+        default_dir = os.path.join(root, module, "src", "main", "assets",
+                                   f"{module}#group_other")
         extras = [n for n in os.listdir(default_dir) if n != ".gitkeep"]
         if extras:
-            raise fail(f"{module}: the DEFAULT variant (assets/model/) must stay EMPTY -- an "
-                       f"unmatched device can never be prevented from receiving it -- but it "
-                       f"carries {extras}")
+            raise fail(f"{module}: the DEFAULT variant (assets/{module}#group_other/) must "
+                       f"stay EMPTY -- an unmatched device can never be prevented from "
+                       f"receiving it -- but it carries {extras}")
     print(f"build OK: {built} variant(s) written+verified, {current} already current; both "
           f"default variants are empty")
 

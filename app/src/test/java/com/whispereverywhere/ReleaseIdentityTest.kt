@@ -5,33 +5,36 @@ import org.junit.Test
 
 /**
  * The release identity, pinned. This is the one piece of ship mechanics that fails SILENTLY when
- * it is forgotten: a 4.1.0 build still carrying versionCode 78 is rejected only AFTER the upload,
- * and a 4.1.0 build still NAMED "3.7.0" ships release notes that the in-app About screen
+ * it is forgotten: a 4.2.0 build still carrying versionCode 80 is rejected only AFTER the upload,
+ * and a 4.2.0 build still NAMED "4.1.0" ships release notes that the in-app About screen
  * contradicts. Both have a one-line fix and no other detector.
  *
- * **versionCode 80, not 79 — a deliberate skip, per the certified 4.1 plan.** No commit has ever
- * used 79 (verified in history: 78 was 3.7.0's); it is left for the 4.0 NPU release this branch
- * builds on, so the Model Lab ships above it whatever order the two reach the store in.
+ * **versionCode 81 — the plain successor to 80.** 4.1's 80 was itself a deliberate skip over 79
+ * (left for the 4.0 NPU release, per the certified 4.1 plan); nothing about 4.2 needs a second
+ * skip, so the fleet build takes the next integer. The 4.2 acceptance rests on it being exactly
+ * one above the local 4.1 builds: Play installs an 81 over any 81-signed local build, and the
+ * internal-track install in the run-book's §2 depends on that.
  *
  * It is also load-bearing beyond cosmetics. GpuPolicy keys its PERMANENT canary latches on
- * BuildConfig.VERSION_CODE (GpuPolicy.kt:101, 188, 261, 275, 284, 295), so moving 78 -> 80 clears
- * every recorded GPU verdict on every device — including the 3.6.0 "GPU-VERDICT: BAN
- * reason=slower" latch for multi. With the experimental multilingual-GPU toggle OFF (the shipped
+ * BuildConfig.VERSION_CODE (GpuPolicy.kt:101, 188, 261, 275, 284, 295), so moving 80 -> 81 clears
+ * every recorded GPU verdict on every device — the same side effect 78 -> 80 had at 4.1, and it
+ * recurs on every bump by design. With the experimental multilingual-GPU toggle OFF (the shipped
  * default) nothing re-runs; with it ON, the canary runs once more on the first cold multi load.
- * The acceptance sheet says so where it matters.
+ * The acceptance sheet says so where it matters
+ * (docs/superpowers/sdd/2026-08-29-fleet-onboarding/acceptance.md).
  */
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_1_0_at_version_code_80() {
+    fun release_identity_is_4_2_0_at_version_code_81() {
         assertEquals(
-            "versionName must be 4.1.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.1.0",
+            "versionName must be 4.2.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.2.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 80 for this release (app/build.gradle.kts defaultConfig)",
-            80,
+            "versionCode must be 81 for this release (app/build.gradle.kts defaultConfig)",
+            81,
             BuildConfig.VERSION_CODE,
         )
     }
