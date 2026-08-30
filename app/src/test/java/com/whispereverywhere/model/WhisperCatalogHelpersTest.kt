@@ -1,5 +1,7 @@
 package com.whispereverywhere.model
 
+import com.whispereverywhere.npu.NpuAssetImport
+import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuModelSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -267,17 +269,235 @@ class WhisperCatalogHelpersTest {
             listOf("pro", "multi", "npu"),
             WhisperCatalog.pickableFor(setOf("npu")).map { it.id },
         )
-        // The turbo-only device: the case the old `it.id == "npu"` literal could never answer —
-        // a second gated tier would have had to be REMEMBERED into it.
+        // 4.3 RE-SPEC — the owner's ruling, at the one place the lineup is built. A device that
+        // can be offered `npu-turbo` is offered THAT AND NOTHING ELSE: not the 190 MB CPU tiers,
+        // not the 358 MB `npu`. "Users shouldn't even see the 190 megabyte model or even the 358
+        // megabyte model." The two rows below asserted the pre-4.3 menu and now assert the answer.
         assertEquals(
-            listOf("pro", "multi", "npu-turbo"),
+            listOf("npu-turbo"),
             WhisperCatalog.pickableFor(setOf("npu-turbo")).map { it.id },
         )
         assertEquals(
-            listOf("pro", "multi", "npu", "npu-turbo"),
+            listOf("npu-turbo"),
             WhisperCatalog.pickableFor(setOf("npu", "npu-turbo")).map { it.id },
         )
-        assertTrue(WhisperCatalog.pickableFor(setOf("npu", "npu-turbo")).containsAll(WhisperCatalog.pickable))
+        // ...and the CPU tiers are no longer a subset of a capable device's lineup, which is the
+        // whole change stated as the assertion it deletes.
+        assertFalse(WhisperCatalog.pickableFor(setOf("npu", "npu-turbo")).containsAll(WhisperCatalog.pickable))
+    }
+
+    // --------------------------------------------------------- 4.3: one tier per device
+    //
+    // The owner's ruling, 2026-08-30: "If a phone is powerful enough with the NPU, we should only
+    // support the multilingual v3 turbo... The only time we should show the 190 megabyte model is
+    // if a user doesn't have an NPU." Three properties carry the whole branch — the non-capable
+    // fleet is untouched, an existing install is not disturbed, and `npu` is HIDDEN, not retired.
+
+    /**
+     * **THE NON-CAPABLE BYTE-IDENTITY PROOF.** Not asserted in prose and not pinned as source: the
+     * pre-4.3 body is written out below and the two are executed against each other over the
+     * WHOLE input space a device that cannot be offered turbo can present — every offer set that
+     * does not name `npu-turbo` (which is every non-capable device's answer, both producers
+     * returning `emptySet()` off the census or on a failed probe) crossed with every installed
+     * state, including installed states naming gated and retired tiers.
+     *
+     * The mutation it closes is the whole branch landing on the wrong fleet: a 4.3 rule that
+     * filtered unconditionally would take the 190 MB tiers away from precisely the users the owner
+     * ruled they are FOR — "if they don't have an NPU, that's the best model they can get".
+     */
+    @Test fun the_gate_fail_lineup_is_byte_identical_to_the_pre_4_3_construction() {
+        val nonCapableOfferSets = listOf(
+            emptySet(),
+            setOf("npu"),
+            setOf("ultra"),
+            setOf("eco", "nope"),
+            setOf("npu", "ultra", "nope"),
+            setOf("NPU-TURBO"),
+            setOf("npu-turbo-x"),
+        )
+        val installedStates = listOf(
+            emptySet(),
+            setOf("pro"),
+            setOf("multi"),
+            setOf("eco"),
+            setOf("pro", "multi", "eco", "base"),
+            setOf("npu"),
+            setOf("npu", "npu-turbo"),
+            WhisperCatalog.entries.map { it.id }.toSet(),
+        )
+        nonCapableOfferSets.forEach { offered ->
+            // The pre-4.3 body, verbatim — the expression `pickableFor` returned before this
+            // branch existed, and the one it still returns from its first line.
+            val preChange = WhisperCatalog.entries.filter {
+                !it.retired && (!it.gated || it.id in offered)
+            }
+            installedStates.forEach { installed ->
+                assertEquals(
+                    "$offered/$installed: the gate-fail path's set construction CHANGED",
+                    preChange,
+                    WhisperCatalog.pickableFor(offered, installed),
+                )
+                // ...and the installed set cannot reach it at all: a non-capable device's lineup
+                // is a function of the offer set alone, exactly as it has always been.
+                assertEquals(
+                    "$offered/$installed: the installed set leaked into the gate-fail lineup",
+                    WhisperCatalog.pickableFor(offered),
+                    WhisperCatalog.pickableFor(offered, installed),
+                )
+                // The ordering surface too, at every locale the 3.7 rules distinguish.
+                listOf("en-US", "bn-BD", "zh-Hans-CN", "").forEach { tag ->
+                    assertEquals(
+                        "'$tag'/$offered/$installed: the gate-fail ORDER changed",
+                        ModelTierCopy.orderedForLanguageTagFor(tag, offered),
+                        ModelTierCopy.orderedForLanguageTagFor(tag, offered, installed),
+                    )
+                }
+            }
+        }
+        // And the two device-independent spellings still agree, which is what keeps the whole
+        // ungated fleet — the overwhelming majority of installs — on one rule.
+        listOf("en-US", "bn-BD", "de-AT", "").forEach { tag ->
+            assertEquals(
+                ModelTierCopy.orderedForLanguageTag(tag),
+                ModelTierCopy.orderedForLanguageTagFor(tag, emptySet(), setOf("pro", "multi")),
+            )
+        }
+    }
+
+    /**
+     * **EXISTING INSTALLS ARE NOT DISTURBED.** A capable device already running `multi` or `npu`
+     * keeps its card — the chooser offers turbo GOING FORWARD, it does not repossess a model the
+     * user already downloaded. (Deleting a gigabyte someone paid bandwidth for is not ours to do.)
+     */
+    @Test fun a_capable_device_keeps_the_card_for_a_model_it_already_has() {
+        val capable = setOf("npu", "npu-turbo")
+        // Fresh capable install: exactly one card, in every locale. The spec's device acceptance.
+        assertEquals(listOf("npu-turbo"), WhisperCatalog.pickableFor(capable).map { it.id })
+        // The 190 MB CPU tier already on disk: still there, and turbo still leads.
+        assertEquals(
+            listOf("multi", "npu-turbo"),
+            WhisperCatalog.pickableFor(capable, setOf("multi")).map { it.id },
+        )
+        assertEquals(
+            listOf("npu-turbo", "multi"),
+            ModelTierCopy.orderedForLanguageTagFor("bn-BD", capable, setOf("multi")),
+        )
+        assertEquals(
+            listOf("npu-turbo", "multi"),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("multi")),
+        )
+        // The 358 MB npu pair already imported: same promise, and the L9 runner-up key still puts
+        // it directly below the pick.
+        assertEquals(
+            listOf("npu-turbo", "npu"),
+            ModelTierCopy.orderedForLanguageTagFor("bn-BD", capable, setOf("npu")),
+        )
+        // Both, plus pro — everything the user has, nothing they do not.
+        assertEquals(
+            listOf("npu-turbo", "npu", "pro"),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("npu", "pro")),
+        )
+        // A RETIRED tier on disk does NOT re-enter through this door: `!it.retired` runs first,
+        // which is why the screens may stat the whole catalog for the fallback question.
+        assertEquals(
+            listOf("npu-turbo"),
+            WhisperCatalog.pickableFor(capable, setOf("eco", "base", "extreme", "ultra"))
+                .map { it.id },
+        )
+        // Nothing here selects anything: the branch changes what is OFFERED, never what is
+        // chosen. The default fallback and the migration target are untouched.
+        assertEquals("pro", WhisperCatalog.DEFAULT_MODEL_ID)
+        assertEquals("multi", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
+        // And every tier a user could already be ON still RESOLVES, so `installedModel()` never
+        // returns null and nobody is force-marched into onboarding with a model on disk.
+        listOf("eco", "base", "pro", "extreme", "multi", "ultra", "npu", "npu-turbo").forEach {
+            assertNotNull("selected tier '$it' stopped resolving", WhisperCatalog.byId(it))
+        }
+    }
+
+    /**
+     * **`npu` IS HIDDEN, NOT RETIRED** — the constraint a future cleanup must not be able to
+     * violate quietly. The streaming arc (partials on small, finals on turbo) needs the tier, and
+     * every piece of machinery that carries it is asserted here rather than assumed: the catalog
+     * row, the spec table, the import pair list, and all four census families' measured artifacts.
+     * A "tidy-up" that deleted the tier because no chooser renders it any more fires here.
+     */
+    @Test fun the_npu_tier_stays_catalogued_and_fully_machined_while_no_chooser_offers_it() {
+        val npu = WhisperCatalog.byId("npu")
+        assertNotNull("npu left the catalog — hiding is not retiring", npu)
+        assertFalse("npu must NOT be marked retired: it is hidden by the offer rule", npu!!.retired)
+        assertFalse("nor unsupported — nobody is being migrated off it", npu.unsupported)
+        assertTrue("it is still the gated, device-decides tier it has always been", npu.gated)
+        assertNotNull("and still a PAIR — the import machinery's subject", npu.pairedArtifact)
+        // Hidden from a capable chooser...
+        assertFalse(
+            "npu must not be offered on a device that can be offered turbo",
+            WhisperCatalog.pickableFor(setOf("npu", "npu-turbo")).map { it.id }.contains("npu"),
+        )
+        // ...unless it is on disk, which is the non-disturbance rule, not an offer.
+        assertTrue(
+            WhisperCatalog.pickableFor(setOf("npu", "npu-turbo"), setOf("npu"))
+                .map { it.id }.contains("npu"),
+        )
+        // ...and STILL offered where turbo is not, which is the state the census makes
+        // unreachable today and which the rule must nonetheless answer correctly.
+        assertTrue(WhisperCatalog.pickableFor(setOf("npu")).map { it.id }.contains("npu"))
+        // The machinery, untouched: spec row, copy, import list, and every measured pack.
+        assertNotNull("the streaming arc's spec row", NpuModelSpec.forTier("npu"))
+        assertNotNull("a hidden tier still needs its card copy", ModelTierCopy.forId("npu"))
+        assertTrue("the importer still knows the pair", NpuAssetImport.PAIRED_TIER_IDS.contains("npu"))
+        NpuFleetCensus.families.forEach { family ->
+            assertNotNull(
+                "the census lost ${family.id}'s npu artifact — the pack machinery is untouched " +
+                    "by 4.3, which hides a tier from the chooser and nothing else",
+                NpuFleetCensus.artifactFor(family.id, "npu"),
+            )
+        }
+    }
+
+    /**
+     * 4.3 — the CPU-fallback predicate, lifted out of `WhisperModelManager.isMelDonorEligible` so
+     * the decline card and the backend ask ONE question. Clause for clause, the manager's own.
+     */
+    @Test fun the_cpu_fallback_predicate_admits_every_80_bin_ggml_and_nothing_else() {
+        fun eligible(id: String) = WhisperCatalog.isCpuFallbackEligible(WhisperCatalog.byId(id)!!)
+        // Retired tiers are eligible ON PURPOSE: an installed eco or base is a real fallback.
+        listOf("eco", "base", "pro", "extreme", "multi").forEach {
+            assertTrue("'$it' is an 80-bin ggml and must be a legal fallback", eligible(it))
+        }
+        // ultra by NAME (128-bin filterbank, refused by bin count); the npu class structurally.
+        assertFalse("ultra is 128-bin — pcmToMel refuses it", eligible("ultra"))
+        assertFalse("npu is a QAIRT context binary, not a ggml", eligible("npu"))
+        assertFalse("and so is npu-turbo", eligible("npu-turbo"))
+        // The set question the card asks.
+        assertFalse("nothing installed, nothing to fall back to", WhisperCatalog.hasCpuFallback(emptySet()))
+        assertFalse(
+            "THE 4.3 STATE: turbo alone on a capable device has nothing to fall back INTO — " +
+                "this false is what the decline card must say out loud instead of assuming",
+            WhisperCatalog.hasCpuFallback(setOf("npu-turbo")),
+        )
+        assertFalse("both npu-class pairs are still not a ggml", WhisperCatalog.hasCpuFallback(setOf("npu", "npu-turbo")))
+        assertFalse("an installed ultra cannot serve the 80-bin arm", WhisperCatalog.hasCpuFallback(setOf("ultra")))
+        assertTrue(WhisperCatalog.hasCpuFallback(setOf("multi")))
+        assertTrue(WhisperCatalog.hasCpuFallback(setOf("pro")))
+        assertTrue("a retired-but-installed tier answers yes", WhisperCatalog.hasCpuFallback(setOf("eco")))
+        assertTrue(WhisperCatalog.hasCpuFallback(setOf("npu-turbo", "multi")))
+        assertFalse("an unresolvable id admits nothing", WhisperCatalog.hasCpuFallback(setOf("nope")))
+    }
+
+    /**
+     * The one string the 4.3 rule turns on, and where it comes from. A literal here would be a
+     * fourth spelling of a tier id that already has one home.
+     */
+    @Test fun the_one_offered_tier_is_turbos_own_id_from_the_spec_table() {
+        assertEquals("npu-turbo", WhisperCatalog.ONE_TIER_ID)
+        assertEquals(NpuModelSpec.TURBO.tierId, WhisperCatalog.ONE_TIER_ID)
+        assertNotNull(WhisperCatalog.byId(WhisperCatalog.ONE_TIER_ID))
+        assertTrue(
+            "the one offered tier must be a GATED one, or the rule would fire on a device that " +
+                "never passed a gate at all",
+            WhisperCatalog.byId(WhisperCatalog.ONE_TIER_ID)!!.gated,
+        )
     }
 
     @Test fun an_id_in_the_offer_set_never_resurrects_a_retired_or_unknown_tier() {

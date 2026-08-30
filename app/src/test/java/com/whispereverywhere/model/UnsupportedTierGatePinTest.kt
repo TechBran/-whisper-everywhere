@@ -76,6 +76,17 @@ class UnsupportedTierGatePinTest {
         read("src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt")
     }
 
+    /**
+     * The catalog (4.3): the mel-donor / CPU-fallback predicate's new home. It moved out of the
+     * manager because the 4.3 decline card must ask *"is there anything to fall back to?"* without
+     * a `Context`, and a second copy of the rule in the pure layer could promise a fallback the
+     * manager then refuses to find. The three clause pins below moved with it, unedited in claim —
+     * a pin follows the code it is about.
+     */
+    private val catalog: String by lazy {
+        read("src/main/java/com/whispereverywhere/model/WhisperModel.kt")
+    }
+
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
 
     /** A multi-line needle, written as its own source lines so indentation is part of the match. */
@@ -353,11 +364,26 @@ class UnsupportedTierGatePinTest {
         // catalog mel-bin count). When that rewrite lands, THIS goes red asking for the catalog
         // decision — and a comment quoting the retired clause can neither satisfy it nor break
         // it, which is the exact hole the whole-file count had (measured: sweep P1).
+        // 4.3: the predicate MOVED to WhisperCatalog.isCpuFallbackEligible and the manager
+        // delegates. The three clause pins moved with it — same claims, new file — plus a
+        // live-zero holding the manager free of a re-grown copy, because two spellings of this
+        // rule is precisely the failure the move exists to prevent.
+        assertEquals(
+            "the manager DELEGATES rather than carrying its own copy of the rule",
+            1,
+            liveLineCount(manager, "WhisperCatalog.isCpuFallbackEligible(model)"),
+        )
         assertEquals(
             "128-bin large-v3-turbo is excluded BY NAME, on a LIVE line, with the reason in the " +
                 "KDoc — the real fix is a mel-bin count in the catalog, and replacing the " +
                 "literal is a catalog decision this pin exists to demand",
             1,
+            liveLineCount(catalog, "model.id != \"ultra\""),
+        )
+        assertEquals(
+            "and the manager grew no second copy of the clause — one rule, two readers, or the " +
+                "decline card can promise a fallback the backend then refuses to find",
+            0,
             liveLineCount(manager, "model.id != \"ultra\""),
         )
         // 4.1 L3. THE NPU EXCLUSION IS STRUCTURAL NOW, AND THIS PIN IS LIVE-SCOPED FOR IT.
@@ -376,8 +402,8 @@ class UnsupportedTierGatePinTest {
         // literal from live lines. `NpuModelSpec.forTier(id) == null` asks the question the
         // exclusion is actually about, at the one table that answers it.
         liveIndexOfOrFail(
-            manager,
-            "WhisperModelManager.kt — the npu-class exclusion must be STRUCTURAL: " +
+            catalog,
+            "WhisperModel.kt — the npu-class exclusion must be STRUCTURAL: " +
                 "`NpuModelSpec.forTier(model.id) == null` asks whether this id is an NPU tier at " +
                 "the single table that knows, so npu-turbo is excluded by the clause that already " +
                 "excludes npu rather than by a second literal nobody remembers to add",
@@ -388,7 +414,7 @@ class UnsupportedTierGatePinTest {
                 "structural clause it is the fix landed and bypassed, and it is what made this " +
                 "pin answerable by a comment in the first place",
             0,
-            liveLineCount(manager, "model.id != \"npu\""),
+            liveLineCount(catalog, "model.id != \"npu\"") + liveLineCount(manager, "model.id != \"npu\""),
         )
         // LIVE-SCOPED (4.1 L5 sweep, false-GREEN class): any pairedArtifact refactor plus a
         // comment quoting this clause kept the whole-file count green across the rewrite
@@ -399,7 +425,11 @@ class UnsupportedTierGatePinTest {
             "plus the structural clause that catches the NEXT two-artefact tier nobody thought to " +
                 "name here — the id says why, the structure catches the next one — on a LIVE line",
             1,
-            liveLineCount(manager, "model.pairedArtifact == null"),
+            // The leading `&&` scopes the needle to THIS predicate. Since 4.3 the clause shares a
+            // file with `isInstallableByDownload`, which is the same test standing alone for its
+            // own reason (a paired tier cannot be installed by `download()` at all) — a bare
+            // needle counts both and would go green on this one being deleted.
+            liveLineCount(catalog, "&& model.pairedArtifact == null"),
         )
         // The companion must come from the SAME tier as installedModelPath, not from the npu entry
         // directly. Resolving the two independently hands nativeInit an encoder from one tier and

@@ -177,8 +177,50 @@ object OnboardingLogic {
      * are always pickable, so the mandatory model step stays completable on every path. Retry
      * stays the primary action (owner decision 2026-08-18); this is the second, and it never
      * unlocks Continue.
+     *
+     * Its other half since 4.3 is [chooserAlsoOfferedIds] — the escape is only an escape if the
+     * chooser it returns to still HAS the CPU tiers.
      */
     fun showChooseDifferentModel(speech: EngineState): Boolean = speech is EngineState.Failed
+
+    /**
+     * What joins a capable device's one-card lineup on the ONBOARDING chooser (4.3) —
+     * `WhisperCatalog.pickableFor`'s `alsoOfferedIds`, produced for this surface.
+     *
+     * **This is the no-wedge escape's other half, and without it 4.3 breaks the F6 contract.**
+     * 4.3 narrows a capable device's chooser to `npu-turbo` alone. A SIDELOADED capable device is
+     * offered that tier — `fetchableNpuTierIds` asks the census whether the FAMILY has a measured
+     * pack, which it cannot know Play will refuse for this particular install — so the fetch
+     * fails, `showChooseDifferentModel` sends the user back to the chooser, and a chooser holding
+     * one undeliverable card would wedge a MANDATORY step with no completable path. That is
+     * precisely the defect I-1 was written to close, re-opened by a narrowing rule that could not
+     * see it.
+     *
+     * So the one-tier rule is **suspended once the delivery has actually failed** — not before.
+     * The owner's ruling is about what a working capable device is OFFERED; it was never about
+     * refusing a user any model at all on a device Play cannot serve. Before a failure this
+     * returns the installed ids alone, so a fresh capable install still sees exactly one card.
+     *
+     * The suspension carries no new mechanism: the CPU ids simply join `alsoOfferedIds`, the same
+     * door an already-installed tier walks through, so the ordering, the steer and the badge are
+     * untouched — turbo still heads the lineup wearing the chip, with the CPU tiers below it in
+     * the 3.7 language order.
+     *
+     * @param oneTierDeliveryFailed the user reached the chooser through the failed-engine escape.
+     *        It is DURABLE state on the flow screen rather than a read of the live engine state,
+     *        because `resetSpeechForReChoice()` returns that state to `Pending` on the way back —
+     *        by the time the chooser renders, the failure is over and only the reason the user is
+     *        standing here remains true.
+     */
+    fun chooserAlsoOfferedIds(
+        installedIds: Set<String>,
+        oneTierDeliveryFailed: Boolean,
+    ): Set<String> =
+        if (oneTierDeliveryFailed) {
+            installedIds + com.whispereverywhere.model.WhisperCatalog.pickable.map { it.id }
+        } else {
+            installedIds
+        }
 
     /**
      * The refusal published when the gated fetch cannot ATTACH: the controller answered

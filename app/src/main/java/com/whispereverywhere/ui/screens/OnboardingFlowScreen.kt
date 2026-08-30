@@ -99,6 +99,19 @@ fun OnboardingFlowScreen(
     // preselected and nothing persists until Continue — setSelectedLanguage is written then.
     var pickedLanguage by remember { mutableStateOf<String?>(null) }
 
+    // 4.3 — THE NO-WEDGE ESCAPE'S OTHER HALF. 4.3 narrows a capable device's chooser to one card;
+    // a sideloaded capable device is offered that card and Play then refuses to deliver it, and
+    // the F6 escape sends the user back to a chooser that would hold exactly one undeliverable
+    // tier — a MANDATORY step with no completable path. This latch says "the one tier's delivery
+    // already failed here", which suspends the narrowing (OnboardingLogic.chooserAlsoOfferedIds).
+    //
+    // DURABLE, and it has to be: `resetSpeechForReChoice()` returns the engine state to Pending on
+    // the way back, so by the time the chooser renders the failure is over — only the reason the
+    // user is standing here is still true. It is never cleared: a delivery that failed once has
+    // told us something about this install that a later Retry succeeding does not un-tell, and the
+    // cost of remembering is two extra cards on a chooser the user has already been sent back to.
+    var oneTierDeliveryFailed by remember { mutableStateOf(false) }
+
     // Read ONCE at flow level: the language step's row order and the engines step's steer must
     // answer from the same tag (and the one-read pin in ChooserSteerWiringPinTest stays true).
     val languageTag = java.util.Locale.getDefault().toLanguageTag()
@@ -186,8 +199,13 @@ fun OnboardingFlowScreen(
                         vm = setupVm,
                         languageTag = languageTag,
                         pickedTierId = pickedTierId,
+                        oneTierDeliveryFailed = oneTierDeliveryFailed,
                         onPick = { pickedTierId = it },
-                        onChooseAgain = { pickedTierId = null; setupVm.resetSpeechForReChoice() },
+                        onChooseAgain = {
+                            oneTierDeliveryFailed = true
+                            pickedTierId = null
+                            setupVm.resetSpeechForReChoice()
+                        },
                     )
                     Step.CLOUD -> CloudStep(onCloudSetup = onCloudSetup, onFinish = onFinish)
                 }
@@ -522,6 +540,7 @@ private fun EnginesStep(
     vm: OnboardingSetupViewModel,
     languageTag: String,
     pickedTierId: String?,
+    oneTierDeliveryFailed: Boolean,
     onPick: (String) -> Unit,
     onChooseAgain: () -> Unit,
 ) {
@@ -570,8 +589,28 @@ private fun EnginesStep(
                 app.offeredNpuTierIds() + app.fetchableNpuTierIds()
             }
         }
+        // 4.3: what is already ON DISK, so a capable device whose chooser is now one card long
+        // still shows a model the user already downloaded (the non-disturbance rule — deleting a
+        // gigabyte someone paid bandwidth for is not ours to do). Same producer shape and same
+        // key as the gate above: off Main because `isInstalled` stats one or two files per tier,
+        // keyed on the install generation so a landing pack reaches the lineup without leaving
+        // the screen. On the fresh install this step exists for it is empty, which is exactly
+        // how a capable device reaches "one model card, no comparison".
+        val installedIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
+            value = withContext(Dispatchers.IO) {
+                val app = WhisperEverywhereApp.getInstance()
+                WhisperCatalog.entries.filter { app.whisperModelManager.isInstalled(it) }
+                    .map { it.id }.toSet()
+            }
+        }
+        // 4.3: what joins the one-card lineup anyway — what is on disk, plus the CPU tiers once
+        // the one tier's delivery has failed here. The pure rule owns the decision; this surface
+        // owns only the two facts it is made of. Without the second producer a sideloaded capable
+        // device wedges the mandatory step behind one card Play will not deliver (F6 I-1).
+        val alsoOfferedIds =
+            OnboardingLogic.chooserAlsoOfferedIds(installedIds, oneTierDeliveryFailed)
         val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
-        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds)
+        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, alsoOfferedIds)
             .mapNotNull { WhisperCatalog.byId(it) }
             .forEach { model ->
                 TierChoiceCard(

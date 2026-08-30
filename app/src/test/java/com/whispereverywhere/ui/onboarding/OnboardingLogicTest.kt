@@ -326,13 +326,61 @@ class OnboardingLogicTest {
         // The chooser the escape returns to is completable on EVERY device: the CPU tiers are
         // in the lineup whatever the gate answered — a sideloaded capable device's union
         // included — and a fresh CPU pick re-arms Download.
+        //
+        // 4.3 RE-SPELL, and it is the branch's ONE behavioural interaction: 4.3 narrows a capable
+        // device's chooser to `npu-turbo` alone, which would have re-opened exactly the wedge I-1
+        // closed — a sideloaded capable device is OFFERED turbo (the census knows the family has
+        // a pack, not that Play will serve this install), Play refuses, and the escape returns to
+        // one undeliverable card on a MANDATORY step. The narrowing is therefore suspended once
+        // the delivery has failed, and the walk below composes the rule the screen composes,
+        // rather than asserting a lineup the screen no longer asks for.
         for (gateSet in listOf(emptySet<String>(), setOf("npu"), setOf("npu", "npu-turbo"))) {
             for (tag in listOf("en-US", "bn-BD")) {
-                val lineup = ModelTierCopy.orderedForLanguageTagFor(tag, gateSet)
+                val alsoOffered = OnboardingLogic.chooserAlsoOfferedIds(
+                    installedIds = emptySet(), oneTierDeliveryFailed = true,
+                )
+                val lineup = ModelTierCopy.orderedForLanguageTagFor(tag, gateSet, alsoOffered)
                 assertTrue("pro pickable ($gateSet, $tag)", "pro" in lineup)
                 assertTrue("multi pickable ($gateSet, $tag)", "multi" in lineup)
+                // The escape does not cost the user the tier they came for: turbo is still there
+                // where it was offered, still at the head, so Retry-by-re-picking stays possible.
+                if ("npu-turbo" in gateSet) {
+                    assertEquals("turbo still heads the suspended lineup", "npu-turbo", lineup.first())
+                }
             }
         }
+        // And the suspension is EARNED, never the default: before a delivery failure a capable
+        // device still sees exactly one card, which is the whole ruling.
+        for (tag in listOf("en-US", "bn-BD")) {
+            assertEquals(
+                "the one-tier rule must hold until a delivery actually fails ($tag)",
+                listOf("npu-turbo"),
+                ModelTierCopy.orderedForLanguageTagFor(
+                    tag,
+                    setOf("npu", "npu-turbo"),
+                    OnboardingLogic.chooserAlsoOfferedIds(emptySet(), oneTierDeliveryFailed = false),
+                ),
+            )
+        }
+        // A non-capable device is untouched by the suspension in either direction: its lineup was
+        // never narrowed, so adding the CPU ids to `alsoOfferedIds` changes nothing at all.
+        for (tag in listOf("en-US", "bn-BD")) {
+            assertEquals(
+                "the suspension leaked into the gate-fail lineup ($tag)",
+                ModelTierCopy.orderedForLanguageTagFor(tag, emptySet()),
+                ModelTierCopy.orderedForLanguageTagFor(
+                    tag, emptySet(), OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true),
+                ),
+            )
+        }
+        // The rule itself: installed ids always pass; the CPU ids join only after a failure.
+        assertEquals(
+            setOf("multi"),
+            OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), oneTierDeliveryFailed = false),
+        )
+        assertTrue(
+            OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), true).containsAll(setOf("multi", "pro")),
+        )
         val cpuPick = OnboardingLogic.enginesPrimaryAction(
             downloadsBegun = false, tierPicked = true, speechReady = false,
         )

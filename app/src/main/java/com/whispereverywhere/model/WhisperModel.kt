@@ -305,10 +305,21 @@ object WhisperCatalog {
     val pickable: List<WhisperModel> = entries.filter { !it.retired && !it.gated }
 
     /**
+     * The tier a device powerful enough to run it is offered, and the ONLY one (4.3).
+     *
+     * Owner ruling 2026-08-30: *"If a phone is powerful enough with the NPU, we should only
+     * support the multilingual v3 turbo... They should just go straight to the one gig version."*
+     * One home for the subject of that rule, resolved through [NpuModelSpec.TURBO]'s own `tierId`
+     * for the same reason the catalog entry below is — the string has one owner, not three
+     * literals that agree today.
+     */
+    val ONE_TIER_ID: String = NpuModelSpec.TURBO.tierId
+
+    /**
      * [pickable] plus every gated tier whose id is in [offeredGatedIds] — the caller's gate
-     * answer, i.e. `WhisperEverywhereApp.offeredNpuTierIds()`: hardware capability AND that
-     * tier's own files on disk, per tier. The set is produced off Main and memoised per process
-     * on the capability half — the probe dlopens two libraries on its first evaluation.
+     * answer, i.e. `WhisperEverywhereApp.offeredNpuTierIds()` (routing) or that UNION
+     * `fetchableNpuTierIds()` (the two chooser surfaces): hardware capability AND that tier's own
+     * files on disk, or a census-deliverable pack, per tier.
      *
      * **The Boolean became a set in 4.1 (L5)** because two gated tiers can be independently
      * installed and one bit cannot say which — and because the old `it.id == "npu"` was a literal
@@ -317,10 +328,91 @@ object WhisperCatalog {
      * so an id in the set never resurrects a retired tier, and an id the catalog cannot resolve
      * admits nothing.
      *
+     * ### 4.3 — one tier per device
+     *
+     * **When [ONE_TIER_ID] is in the set, the lineup IS that tier**, plus whatever the caller
+     * names in [alsoOfferedIds]. Everything else — the 190 MB CPU tiers, the 358 MB `npu` — is
+     * not offered, because on this hardware the answer is not a menu. `npu` STAYS CATALOGUED
+     * (the streaming arc needs it; hiding is not retiring) and its census/pack/import machinery
+     * is untouched — see `WhisperCatalogHelpersTest`'s catalogued-but-unoffered pin.
+     *
+     * **THE GATE-FAIL PATH IS UNTOUCHED, BY CONSTRUCTION.** Every device that cannot be offered
+     * turbo — the whole non-capable fleet, whose two producers both answer `emptySet()` — returns
+     * from the line above, which is this function's entire pre-4.3 body, verbatim.
+     * `WhisperCatalogHelpersTest` executes that equivalence over the whole non-turbo input space
+     * rather than asserting it in prose.
+     *
      * `emptySet()` is the every-other-device answer and reproduces [pickable] exactly.
+     *
+     * @param alsoOfferedIds the ids that join the one-card lineup ANYWAY. Two producers, and both
+     *        exist because the narrowing has two ways of being wrong:
+     *
+     *        1. **What is already on disk** — the non-disturbance rule. A capable device already
+     *           running `multi` or `npu` keeps its card, keeps transcribing on it, and is never
+     *           silently switched or deleted from; deleting a gigabyte the user paid bandwidth for
+     *           is not ours to do. It is also how the decline recovery resolves: the CPU tier is
+     *           absent until a decline downloads it, and is then simply an installed tier.
+     *        2. **The CPU tiers when the one tier could not be DELIVERED** —
+     *           `OnboardingLogic.chooserAlsoOfferedIds`, the no-wedge escape (4.2 F6 fix round 1,
+     *           I-1) carried into 4.3. A sideloaded capable device is offered turbo (the census
+     *           says the family HAS a pack; it cannot know Play will refuse this install), and
+     *           onboarding's model step is mandatory — so a chooser narrowed to one undeliverable
+     *           card would wedge setup with no completable path. The suspension is the existing
+     *           mechanism, not a new rule: the ids simply join the lineup, exactly as an installed
+     *           tier does.
+     *
+     *        `!it.retired` still runs FIRST either way, so an installed retired tier (eco, base)
+     *        cannot re-enter a lineup through this door. Defaulted to empty so the ungated callers
+     *        and the gate-fail path stay one argument shorter and one rule simpler.
      */
-    fun pickableFor(offeredGatedIds: Set<String>): List<WhisperModel> =
-        entries.filter { !it.retired && (!it.gated || it.id in offeredGatedIds) }
+    fun pickableFor(
+        offeredGatedIds: Set<String>,
+        alsoOfferedIds: Set<String> = emptySet(),
+    ): List<WhisperModel> {
+        val offered = entries.filter { !it.retired && (!it.gated || it.id in offeredGatedIds) }
+        if (ONE_TIER_ID !in offeredGatedIds) return offered
+        return offered.filter { it.id == ONE_TIER_ID || it.id in alsoOfferedIds }
+    }
+
+    /**
+     * May [model]'s file serve as the 80-bin mel donor and the NPU decline's CPU fallback? (4.3 —
+     * lifted out of `WhisperModelManager.isMelDonorEligible`, which now delegates here.)
+     *
+     * It moved because 4.3 gave it a SECOND reader that must never disagree with the first: the
+     * decline card asks *"is there anything to fall back to?"* and the backend asks *"what do I
+     * fall back to?"*, and a card that promises a fallback the backend cannot find is precisely
+     * the silent-failure shape the loud-fallback doctrine exists to prevent. One predicate, in the
+     * pure layer, executable — rather than two copies of it, one of which needs a `Context`.
+     *
+     * The clauses are the manager's own, unchanged and for its own reasons:
+     *  - `NpuModelSpec.forTier(id) == null` — STRUCTURAL, not a literal (4.1 L3): an npu-class
+     *    tier's file is a QAIRT context binary, not a ggml, and asking the table that knows which
+     *    tiers those are means the next row is excluded by the clause that excludes this one.
+     *  - `id != "ultra"` — by NAME, and deliberately: `large-v3-turbo` is a perfectly real whisper
+     *    model and a perfectly good fallback, refused here only because its filterbank is 128-bin
+     *    and `pcmToMel` rejects it by bin count. The real fix is a mel-bin count in the catalog,
+     *    which is a catalog change nobody has made yet.
+     *  - `pairedArtifact == null` — excludes the npu class a second time, structurally, and would
+     *    catch a future two-artefact tier nobody thought to name.
+     *
+     * Retired tiers are ELIGIBLE on purpose: eco and base are ordinary 80-bin whisper models, and
+     * an installed one is a real fallback.
+     */
+    fun isCpuFallbackEligible(model: WhisperModel): Boolean =
+        NpuModelSpec.forTier(model.id) == null && model.id != "ultra" && model.pairedArtifact == null
+
+    /**
+     * Does this device hold anything the NPU tier could decline INTO? (4.3)
+     *
+     * The pure mirror of `WhisperModelManager.cpuTierModelPath() != null` — the same
+     * [isCpuFallbackEligible] predicate over the same installed set, so the card's claim and the
+     * backend's fallback are one question asked twice rather than two questions. False is the
+     * state 4.3 creates and must answer for: a capable device that only ever installed turbo has
+     * nothing to fall back to, and a decline there must say so plainly instead of failing mute
+     * (see [com.whispereverywhere.npu.NpuTierStatus.cardNote]).
+     */
+    fun hasCpuFallback(installedIds: Set<String>): Boolean =
+        entries.any { it.id in installedIds && isCpuFallbackEligible(it) }
 
     /**
      * Whether `WhisperModelManager.download` can install this tier **at all**.

@@ -100,22 +100,35 @@ fun OnboardingModelScreen(
     val npuCapable by produceState(initialValue = false, key1 = installGeneration) {
         value = withContext(Dispatchers.IO) { app.npuCapableDevice }
     }
-    val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
-    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds)
-        .mapNotNull { WhisperCatalog.byId(it) }
-
     // Which tiers are actually on disk. Off Main — `isInstalled` stats one or two files per tier —
-    // and keyed on the same generation, so a finished download or import updates the cards without
-    // leaving the screen. A card for an installed tier must not offer to download it (Q7a §9.3).
-    val installedIds by produceState(
-        initialValue = emptySet<String>(),
-        key1 = installGeneration,
-        key2 = npuTierIds,
-    ) {
+    // and keyed on the install generation, so a finished download or import updates the cards
+    // without leaving the screen. A card for an installed tier must not offer to download it
+    // (Q7a §9.3).
+    //
+    // 4.3: the source is the WHOLE CATALOG, not the rendered lineup, and the dependency inverted
+    // with it — the lineup now READS this set (an existing install keeps its card on a capable
+    // device), so deriving it from the lineup would be circular. `entries` rather than `pickable`
+    // is deliberate twice over: a retired-but-installed eco/base is a legal CPU fallback and must
+    // count toward `hasCpuFallback` below, and `pickableFor`'s own `!retired` filter is what keeps
+    // it from re-entering a lineup through this door. The `key2 = npuTierIds` went with the
+    // inversion: this answer is a fact about the disk and never about the gate.
+    val installedIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
         value = withContext(Dispatchers.IO) {
-            models.filter { manager.isInstalled(it) }.map { it.id }.toSet()
+            WhisperCatalog.entries.filter { manager.isInstalled(it) }.map { it.id }.toSet()
         }
     }
+
+    val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
+    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, installedIds)
+        .mapNotNull { WhisperCatalog.byId(it) }
+
+    // 4.3: is there anything for a declining NPU tier to fall back INTO? The pure mirror of the
+    // `cpuTierModelPath() != null` the backend itself reads, over the set produced above — so the
+    // decline note's claim and the backend's fallback are one question, never two that can
+    // disagree. On a capable device offered turbo alone this is the state that must be answered
+    // honestly rather than assumed: false, until the recovery below downloads the standard model.
+    val cpuFallbackInstalled = WhisperCatalog.hasCpuFallback(installedIds)
+    val recoveryModel = WhisperCatalog.byId(NpuTierStatus.RECOVERY_TIER_ID)
 
     // 4.2 F7 — the F3 §7.3 residual, landed by name: a gated card's byte badge states THE
     // DEVICE FAMILY'S measured pair, because the catalog's approximation understates a 7gen4
@@ -256,9 +269,36 @@ fun OnboardingModelScreen(
                     isSteered = isSteered,
                     installed = installedIds.contains(model.id),
                     // Per-tier (4.1 L8): the note renders on the tier the decline is ABOUT.
-                    // cardNote(null) is null, so every undeclined tier — CPU tiers included —
+                    // cardNote(null, …) is null, so every undeclined tier — CPU tiers included —
                     // shows nothing, with no id check to forget when a third npu tier arrives.
-                    unavailableNote = NpuTierStatus.cardNote(npuTierReasons[model.id]),
+                    // 4.3: the second argument picks the arm. Without it the note would promise
+                    // "speech is running on the multilingual CPU model" on the one device shape
+                    // this branch creates — turbo alone, nothing to fall back to — which is the
+                    // load-bearing clause and would be false.
+                    unavailableNote = NpuTierStatus.cardNote(
+                        npuTierReasons[model.id], cpuFallbackInstalled,
+                    ),
+                    // 4.3 — the decline's one-tap recovery, on the card that declined. Non-null
+                    // from the SAME rule the note's arm split uses, so the button and the sentence
+                    // cannot disagree; the tap runs the EXISTING download path (the very
+                    // viewModel.download every CPU card's Download button calls), never a second
+                    // one. `activeModelId` names the recovery tier so its progress reports through
+                    // `recoveryState` below rather than silently.
+                    recovery = if (
+                        recoveryModel != null &&
+                        NpuTierStatus.needsCpuRecovery(npuTierReasons[model.id], cpuFallbackInstalled)
+                    ) {
+                        {
+                            activeModelId = recoveryModel.id
+                            viewModel.download(recoveryModel)
+                        }
+                    } else null,
+                    // The recovery's own progress, and only ever the recovery's: keyed on the
+                    // recovery tier id, so a download of THIS card's tier can never be narrated
+                    // by the recovery area (and vice versa).
+                    recoveryState = if (activeModelId == NpuTierStatus.RECOVERY_TIER_ID) {
+                        state
+                    } else DownloadState.Idle,
                     state = if (isActive) state else DownloadState.Idle,
                     // The fetch renders ONLY on the card whose tier the controller itself
                     // names — a sibling card can never wear another tier's progress.
@@ -495,6 +535,13 @@ private fun NpuImportPanel(
  * @param pairBytes the device family's measured pair size from the census, or null where the
  *        family cannot answer — the badge then falls back to the catalog's approximation.
  * @param onFetch starts (or retries) the Play fetch of this tier's pack (4.2 F7).
+ * @param recovery the decline's CPU-recovery tap (4.3), or null when this card does not need one.
+ *        Non-null EXACTLY when [unavailableNote] is the no-fallback arm — both come from
+ *        `NpuTierStatus`, whose two functions are pinned equivalent, so a card can never show the
+ *        sentence that says "download the standard model below" without the control below it.
+ * @param recoveryState that download's progress, so a recovery tap is never silent. It is the
+ *        recovery tier's state and never this card's own [state]: the two are separate arguments
+ *        because they narrate two different downloads that can only ever be told apart by id.
  */
 @Composable
 private fun ModelTierCard(
@@ -503,6 +550,8 @@ private fun ModelTierCard(
     isSteered: Boolean,
     installed: Boolean,
     unavailableNote: String?,
+    recovery: (() -> Unit)?,
+    recoveryState: DownloadState,
     state: DownloadState,
     fetch: NpuPackFetch.FetchState?,
     refusal: String?,
@@ -651,6 +700,13 @@ private fun ModelTierCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = Warning
                     )
+                }
+                // 4.3 — the recovery, DIRECTLY BELOW the sentence that says "below". The
+                // adjacency is the F7 carrier rule's own discipline: copy may name a control
+                // only where that control actually is.
+                if (recovery != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    CpuRecoveryAction(state = recoveryState, onDownload = recovery)
                 }
             }
 
@@ -815,6 +871,94 @@ private fun ModelTierCard(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * THE DECLINE'S CPU RECOVERY (4.3) — the spec's "hidden until relevant", rendered.
+ *
+ * A capable device is offered `npu-turbo` and nothing else, so it can reach a decline holding no
+ * CPU model at all; `fallBackToCpuTier` then finds nothing and the session has no backend. The
+ * card's note says so plainly and this is the one-tap answer beside it: a download of
+ * [NpuTierStatus.RECOVERY_TIER_ID] through the SAME `ModelDownloadViewModel.download` every other
+ * card's Download button calls — one download path in this app, not two.
+ *
+ * Every non-resting state is rendered for the reason the import panel states thirty lines from
+ * here: **a silent "nothing happened" is the one outcome this action is never allowed to have.**
+ * `Done` renders nothing on purpose — the install bumps the generation, the producers re-run,
+ * `hasCpuFallback` flips true, and the note and this whole block disappear together because the
+ * thing they were about is fixed. That is the existing machinery, not a bespoke success state.
+ */
+@Composable
+private fun CpuRecoveryAction(state: DownloadState, onDownload: () -> Unit) {
+    val downloading = state as? DownloadState.Downloading
+    val error = state as? DownloadState.Error
+    when {
+        downloading != null -> {
+            LinearProgressIndicator(
+                progress = downloading.pct / 100f,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(4.dp)),
+                color = Primary,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Downloading the standard model… ${downloading.pct}%  " +
+                    "(${formatBytes(downloading.soFar)} / ${formatBytes(downloading.total)})",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        state is DownloadState.Verifying -> {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(4.dp)),
+                color = Primary,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Verifying the standard model…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        error != null -> {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.ErrorOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = error.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onDownload) {
+                    Text("Retry")
+                }
+            }
+        }
+
+        // Done: nothing. The generation bump retires this whole block — see the KDoc.
+        state is DownloadState.Done -> Unit
+
+        else -> Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+            Icon(
+                Icons.Filled.CloudDownload,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(NpuTierStatus.RECOVERY_ACTION)
         }
     }
 }

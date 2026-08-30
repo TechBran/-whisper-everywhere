@@ -184,7 +184,8 @@ class ChooserSteerWiringPinTest {
             count(
                 flow,
                 block(
-                    "        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds)",
+                    "        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, " +
+                        "alsoOfferedIds)",
                     "            .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
             ),
@@ -231,6 +232,74 @@ class ChooserSteerWiringPinTest {
                 "            }",
                 "        }",
             ),
+            // 4.3: this surface's third argument is the RULE's answer, not the raw disk set —
+            // onboarding is the one place a narrowed lineup can wedge a mandatory step.
+            alsoOfferedArg = "alsoOfferedIds",
+        )
+    }
+
+    /**
+     * 4.3 — **THE NO-WEDGE ESCAPE SURVIVES THE NARROWING**, wired on the surface that needs it.
+     *
+     * 4.3 narrows a capable device's chooser to `npu-turbo` alone. A SIDELOADED capable device is
+     * offered that card — `fetchableNpuTierIds` asks the census whether the FAMILY has a measured
+     * pack, and cannot know Play will refuse this install — so the fetch fails, F6's escape sends
+     * the user back to the chooser, and a chooser holding one undeliverable card wedges a
+     * MANDATORY step. `OnboardingLogicTest` executes the rule; what it cannot see is whether this
+     * screen asks it, and whether the latch it depends on is ever set.
+     *
+     * **The mutations this closes**, both compile-clean and both green everywhere else:
+     *  - *The latch never set.* `onChooseAgain` without `oneTierDeliveryFailed = true` leaves the
+     *    rule permanently answering "not failed", which is the wedge with a rule bolted beside it.
+     *  - *The rule bypassed.* Passing `installedIds` straight to the ordering call — the picker's
+     *    own correct spelling — is one word, and it re-opens the wedge on this surface only.
+     */
+    @Test
+    fun theOnboardingChooserSuspendsTheOneTierRuleOnceDeliveryHasFailed() {
+        assertEquals(
+            "the flow composes the pure rule rather than deciding the suspension itself",
+            1,
+            count(
+                flow,
+                block(
+                    "        val alsoOfferedIds =",
+                    "            OnboardingLogic.chooserAlsoOfferedIds(installedIds, " +
+                        "oneTierDeliveryFailed)",
+                ),
+            ),
+        )
+        assertEquals(
+            "the escape SETS the latch the rule reads — an escape that returns the user to the " +
+                "same one undeliverable card is not an escape",
+            1,
+            count(
+                flow,
+                block(
+                    "                        onChooseAgain = {",
+                    "                            oneTierDeliveryFailed = true",
+                    "                            pickedTierId = null",
+                    "                            setupVm.resetSpeechForReChoice()",
+                    "                        },",
+                ),
+            ),
+        )
+        assertEquals(
+            "the latch is DURABLE screen state, not a read of the engine state — " +
+                "resetSpeechForReChoice() returns that state to Pending on the way back, so by " +
+                "the time the chooser renders the failure is over",
+            1,
+            count(flow, "var oneTierDeliveryFailed by remember { mutableStateOf(false) }"),
+        )
+        assertEquals(
+            "and it reaches the step it governs",
+            1,
+            count(flow, "oneTierDeliveryFailed = oneTierDeliveryFailed,"),
+        )
+        assertEquals(
+            "the flow never iterates the ungated catalog to build that escape — the CPU ids join " +
+                "through the pure rule, so catalog ORDER never reaches a card (the Bengali review)",
+            0,
+            count(flow, "WhisperCatalog.pickable"),
         )
     }
 
@@ -251,6 +320,7 @@ class ChooserSteerWiringPinTest {
         source: String,
         surface: String,
         producer: String,
+        alsoOfferedArg: String,
         booleanKeyedProducers: Int = 0,
     ) {
         assertEquals(
@@ -258,11 +328,40 @@ class ChooserSteerWiringPinTest {
             1,
             count(source, producer),
         )
+        // 4.3 RE-SPELL (in-commit — the old exact-paren needle tripped by name first, as a pin
+        // should): the ordering call gained a third argument, `installedIds`, so the two calls no
+        // longer share a byte-identical tail. The claim is UNCHANGED and is the one that matters —
+        // the same gate answer reaches BOTH calls — so the needle is the shared prefix.
         assertEquals(
             "$surface passes the SAME gate answer to the steer AND the ordering — an " +
                 "`emptySet()` literal in either one badges a card the lineup did not lead with",
             2,
-            count(source, "(languageTag, npuTierIds)"),
+            count(source, "(languageTag, npuTierIds"),
+        )
+        // 4.3: and the ordering call is the one that carries the installed set. Without it a
+        // capable device's lineup is `npu-turbo` ALONE even for a user who already has `multi` on
+        // disk — the card for a model they downloaded vanishes, which is the exact disturbance
+        // the branch's non-disturbance rule forbids. Compile-clean to drop (the parameter is
+        // defaulted, so that the gate-fail path stays one argument shorter), so it is pinned.
+        assertEquals(
+            "$surface hands the ordering the ids that join a one-card lineup anyway, so an " +
+                "existing install keeps its card on a device the 4.3 rule narrowed to one",
+            1,
+            count(source, "orderedForLanguageTagFor(languageTag, npuTierIds, $alsoOfferedArg)"),
+        )
+        // The set behind it: produced OFF Main (isInstalled stats files) and keyed on the same
+        // install generation, so a landing download or import reaches the lineup without the user
+        // leaving the screen. Both surfaces spell it identically — one shape, two files.
+        assertEquals(
+            "$surface produces the installed set off Main, over the WHOLE catalog (a retired " +
+                "but installed eco/base is a legal CPU fallback and `pickableFor`'s own " +
+                "`!retired` filter is what keeps it out of the lineup), keyed on the generation",
+            1,
+            count(
+                source,
+                "val installedIds by produceState(initialValue = emptySet<String>(), " +
+                    "key1 = installGeneration)",
+            ),
         )
         // 4.0 Q7b fix round, I1. The producer needle above already contains `key1 =`, but this
         // says WHY out loud, because the tempting "simplification" is to delete the key rather
@@ -272,12 +371,20 @@ class ChooserSteerWiringPinTest {
         // import is visible immediately — and an unkeyed producer throws that away one layer up,
         // in the very composition Q8's import affordance lives in. The user imports the pair and
         // the lineup does not change.
+        // 4.3 RE-SPELL: `npuTierIds by` now leads the needle, because the installed-set producer
+        // above is spelled identically from `produceState` onward and would otherwise raise this
+        // count to 2. Naming the variable keeps the assertion about the GATE producer, which is
+        // what it has always been about; the sibling producer has its own count directly above.
         assertEquals(
             "$surface keys the gate producer on the install generation, so an import that lands " +
                 "while the chooser is on screen re-reads the gate instead of being invisible until " +
                 "the user navigates away and back",
             1,
-            count(source, "produceState(initialValue = emptySet<String>(), key1 = installGeneration)"),
+            count(
+                source,
+                "val npuTierIds by produceState(initialValue = emptySet<String>(), " +
+                    "key1 = installGeneration)",
+            ),
         )
         // [booleanKeyedProducers] is the count of the picker's OTHER keyed device question —
         // `npuCapableDevice` alone, the import entry's capability-only gate, which must not be
@@ -388,7 +495,8 @@ class ChooserSteerWiringPinTest {
             count(
                 picker,
                 block(
-                    "    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds)",
+                    "    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, " +
+                        "npuTierIds, installedIds)",
                     "        .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
             ),
@@ -429,6 +537,11 @@ class ChooserSteerWiringPinTest {
                 "        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() + app.fetchableNpuTierIds() }",
                 "    }",
             ),
+            // 4.3: Settings' picker passes the DISK set directly and needs no suspension rule —
+            // it has no mandatory gate to wedge (a user reaches it with a model already chosen),
+            // and its own escape from an undeliverable tier is the per-card import route the
+            // F7 fix round put on every gated card.
+            alsoOfferedArg = "installedIds",
             // 4.0 Q8: the picker's second device question, capability-only. Its own test below.
             booleanKeyedProducers = 1,
         )
@@ -903,11 +1016,21 @@ class ChooserSteerWiringPinTest {
             1,
             count(flow, "if (OnboardingLogic.showChooseDifferentModel(speech)) {"),
         )
+        // 4.3 RE-SPELL: the one-liner became a block when the escape gained the latch that keeps
+        // it an escape on a capable device (see
+        // [theOnboardingChooserSuspendsTheOneTierRuleOnceDeliveryHasFailed], which owns the latch
+        // half). This assertion keeps its own claim, unchanged, over the two statements it names.
         assertEquals(
             "its tap clears the pick and resets the phase — the one legal way back to the " +
                 "tier cards once downloads have begun",
             1,
-            count(flow, "onChooseAgain = { pickedTierId = null; setupVm.resetSpeechForReChoice() },"),
+            count(
+                flow,
+                block(
+                    "                            pickedTierId = null",
+                    "                            setupVm.resetSpeechForReChoice()",
+                ),
+            ),
         )
         assertEquals(
             "and the VM reset is guarded to Failed — a Working fetch keeps its double-tap " +
@@ -976,6 +1099,103 @@ class ChooserSteerWiringPinTest {
                 "must precede the no-pack refusal ($noPackRefusal), or a denial is attributed " +
                 "to whichever tier fetched last",
             namesTheTier in 0 until noPackRefusal,
+        )
+    }
+
+    /**
+     * 4.3 — THE DECLINE'S CPU RECOVERY, wired to the EXISTING download path.
+     *
+     * The spec's one consequence and its resolution: a capable device is offered `npu-turbo`
+     * alone, so it can reach a decline holding no ggml at all, and `fallBackToCpuTier` then finds
+     * nothing. `NpuTierStatus` decides — both the arm of the sentence and whether the button
+     * exists — and `NpuTierStatusTest` executes that decision exhaustively. What no JVM test can
+     * see is whether the SCREEN asks it, and what the tap then does, so both are pinned here.
+     *
+     * **The mutations this closes, all compile-clean and all green everywhere else:**
+     *  - *The note's second argument hardcoded `true`.* The card then tells a user with no CPU
+     *    model that "speech is running on the multilingual CPU model" — false in the clause the
+     *    whole note exists for, on exactly the device shape 4.3 creates.
+     *  - *The `cpuFallbackInstalled` fact re-derived.* Anything other than
+     *    `WhisperCatalog.hasCpuFallback(installedIds)` is a second derivation of the question the
+     *    backend answers with `cpuTierModelPath()`, free to disagree with it.
+     *  - *The recovery tap given its own downloader.* A bespoke `manager.download(...)` here would
+     *    be a second download path in a screen that has exactly one; the pin holds the tap to
+     *    `viewModel.download`, the same sink every CPU card's Download button uses.
+     *  - *The recovery narrated by the declining card's own `state`.* The two downloads are only
+     *    ever told apart by tier id; sharing one state renders turbo's progress under the note
+     *    that asked for `multi`.
+     */
+    @Test
+    fun theDeclineRecoveryAsksTheOneRuleAndRidesTheExistingDownloadPath() {
+        assertEquals(
+            "the fallback question is the catalog's pure mirror of cpuTierModelPath(), asked " +
+                "once, over the installed set the screen already produces",
+            1,
+            count(picker, "val cpuFallbackInstalled = WhisperCatalog.hasCpuFallback(installedIds)"),
+        )
+        assertEquals(
+            "the note is composed with that answer — never a hardcoded `true`, which is the one " +
+                "mutation that makes the card lie in its load-bearing clause",
+            1,
+            count(
+                picker,
+                block(
+                    "                    unavailableNote = NpuTierStatus.cardNote(",
+                    "                        npuTierReasons[model.id], cpuFallbackInstalled,",
+                    "                    ),",
+                ),
+            ),
+        )
+        listOf("cardNote(npuTierReasons[model.id])", "cpuFallbackInstalled = true").forEach {
+            assertEquals(
+                "the picker must not spell <<$it>> — the single-argument note is gone and the " +
+                    "answer is never assumed",
+                0,
+                liveLineCount(picker, it),
+            )
+        }
+        assertEquals(
+            "whether the button exists is the SAME rule the note's arms split on, so the " +
+                "sentence and the control can never disagree",
+            1,
+            count(
+                picker,
+                "NpuTierStatus.needsCpuRecovery(npuTierReasons[model.id], cpuFallbackInstalled)",
+            ),
+        )
+        assertEquals(
+            "and the tap is the EXISTING download path — `viewModel.download`, the sink every " +
+                "CPU card's Download button already calls — on the tier NpuTierStatus names",
+            1,
+            count(
+                picker,
+                block(
+                    "                            activeModelId = recoveryModel.id",
+                    "                            viewModel.download(recoveryModel)",
+                ),
+            ),
+        )
+        assertEquals(
+            "the recovery tier comes from the one constant, never a literal beside it",
+            1,
+            count(picker, "WhisperCatalog.byId(NpuTierStatus.RECOVERY_TIER_ID)"),
+        )
+        assertEquals(
+            "the recovery's progress is keyed on the RECOVERY tier, so it can never narrate the " +
+                "declining card's own download",
+            1,
+            count(picker, "recoveryState = if (activeModelId == NpuTierStatus.RECOVERY_TIER_ID) {"),
+        )
+        assertEquals(
+            "the button's label is the pinned constant — the spec's own words for the action",
+            1,
+            count(picker, "Text(NpuTierStatus.RECOVERY_ACTION)"),
+        )
+        assertEquals(
+            "there is exactly ONE download sink on this screen: the recovery invents no second " +
+                "one (the manager is reached only through the ViewModel here)",
+            0,
+            liveLineCount(picker, "manager.download("),
         )
     }
 

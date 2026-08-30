@@ -331,34 +331,36 @@ class ModelTierCopyTest {
         assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("en-US", setOf("npu", "npu-turbo")))
     }
 
-    @Test fun a_turbo_only_device_steers_to_turbo_and_keeps_the_cpu_order_below_it() {
-        // RE-SPECCED at L9 (was: a_turbo_only_device_keeps_the_cpu_steer — the pre-pick truth
-        // for the state the old Boolean could not express). Turbo installed without npu is
-        // still a full gate pass for turbo, so the pick applies; below it the CPU tiers keep
-        // the exact 3.7 language order.
+    @Test fun a_capable_device_is_offered_turbo_and_nothing_else_in_every_locale() {
+        // RE-SPECCED at 4.3 (was: a_turbo_only_device_steers_to_turbo_and_keeps_the_cpu_order_
+        // below_it — the pre-4.3 menu, which kept "the CPU tiers below it" in the exact order the
+        // owner has now ruled out of existence on this hardware). The steer is UNCHANGED in body;
+        // what changed is the lineup it heads, which is now one card long.
         assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", setOf("npu-turbo")))
         assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("en", setOf("npu-turbo")))
         assertEquals(
-            listOf("npu-turbo", "multi", "pro"),
+            listOf("npu-turbo"),
             ModelTierCopy.orderedForLanguageTagFor("bn-BD", setOf("npu-turbo")),
         )
         assertEquals(
-            listOf("npu-turbo", "pro", "multi"),
+            listOf("npu-turbo"),
             ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu-turbo")),
         )
     }
 
-    @Test fun turbo_heads_the_lineup_and_the_npu_steer_rides_second() {
-        // RE-SPECCED at L9 (was: turbo_joins_the_lineup_below_the_steer, pinning
-        // [npu, multi, pro, npu-turbo] / [pro, multi, npu, npu-turbo]). The full both-tier
-        // lineups, exact: the pick leads, its A/B runner-up sits directly below it, and the
-        // 3.7 second key still keeps `multi` ahead of `pro` for a non-English user.
+    @Test fun the_npu_small_tier_is_hidden_from_a_capable_chooser_and_is_not_retired_for_it() {
+        // RE-SPECCED at 4.3 (was: turbo_heads_the_lineup_and_the_npu_steer_rides_second, pinning
+        // [npu-turbo, npu, multi, pro] / [npu-turbo, npu, pro, multi] — the four-card menu). The
+        // owner's ruling: "Users shouldn't even see the 190 megabyte model or even the 358
+        // megabyte model. They should just go straight to the one gig version." `npu` is HIDDEN,
+        // not retired — the streaming arc needs it, and the catalogued-but-unoffered property is
+        // pinned in WhisperCatalogHelpersTest.
         assertEquals(
-            listOf("npu-turbo", "npu", "multi", "pro"),
+            listOf("npu-turbo"),
             ModelTierCopy.orderedForLanguageTagFor("bn-BD", setOf("npu", "npu-turbo")),
         )
         assertEquals(
-            listOf("npu-turbo", "npu", "pro", "multi"),
+            listOf("npu-turbo"),
             ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu", "npu-turbo")),
         )
     }
@@ -370,10 +372,12 @@ class ModelTierCopyTest {
         // multi/pro on the strength of a verdict that was about turbo.
         val table = listOf(
             // offered set              tag      expected lineup
-            Triple(setOf("npu", "npu-turbo"), "bn-BD", listOf("npu-turbo", "npu", "multi", "pro")),
-            Triple(setOf("npu", "npu-turbo"), "en-US", listOf("npu-turbo", "npu", "pro", "multi")),
-            Triple(setOf("npu-turbo"), "bn-BD", listOf("npu-turbo", "multi", "pro")),
-            Triple(setOf("npu-turbo"), "en-US", listOf("npu-turbo", "pro", "multi")),
+            // 4.3: every turbo-naming row collapsed to the single card the owner ruled — the
+            // menu rows this table used to carry are the assertions the branch DELETES.
+            Triple(setOf("npu", "npu-turbo"), "bn-BD", listOf("npu-turbo")),
+            Triple(setOf("npu", "npu-turbo"), "en-US", listOf("npu-turbo")),
+            Triple(setOf("npu-turbo"), "bn-BD", listOf("npu-turbo")),
+            Triple(setOf("npu-turbo"), "en-US", listOf("npu-turbo")),
             Triple(setOf("npu"), "bn-BD", listOf("npu", "multi", "pro")),
             Triple(setOf("npu"), "en-US", listOf("pro", "multi", "npu")),
             Triple(emptySet(), "bn-BD", listOf("multi", "pro")),
@@ -397,7 +401,8 @@ class ModelTierCopyTest {
 
     @Test fun the_lineup_with_both_npu_tiers_is_a_permutation_of_pickableFor_with_the_steer_leading() {
         // The brief's exact claim, stated against the both-tiers set specifically (the loop above
-        // drives it too — this is the named case a reader will look for).
+        // drives it too — this is the named case a reader will look for). The SIZE is 1 since 4.3:
+        // the permutation claim is unchanged, the thing it is a permutation OF is one card.
         listOf("en-US", "bn-BD", "zh-Hans-CN", "").forEach { tag ->
             val both = setOf("npu", "npu-turbo")
             val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, both)
@@ -406,12 +411,114 @@ class ModelTierCopyTest {
                 WhisperCatalog.pickableFor(both).map { it.id }.toSet(),
                 ordered.toSet(),
             )
-            assertEquals("'$tag': lost or duplicated a tier", 4, ordered.size)
+            assertEquals("'$tag': lost or duplicated a tier", 1, ordered.size)
             assertEquals(
                 "'$tag': the steered tier does not lead",
                 ModelTierCopy.steerIdForLanguageTagFor(tag, both),
                 ordered.first(),
             )
+        }
+    }
+
+    // -------------------------------------------------------- 4.3: one tier per device
+    //
+    // The spec's own acceptance list: "the offer-set truth table (capable x installed-state x
+    // locale)". The steer and the three ordering keys are UNCHANGED IN BODY — what changed is the
+    // list they order, which `WhisperCatalog.pickableFor` now narrows on a capable device. These
+    // drive the composition end to end, which is what the two chooser surfaces actually perform.
+
+    @Test fun the_offer_set_truth_table_capable_x_installed_x_locale() {
+        // rows: offered gate answer, installed ids, locale -> the exact lineup, in order
+        data class Row(
+            val offered: Set<String>,
+            val installed: Set<String>,
+            val tag: String,
+            val expected: List<String>,
+        )
+        val table = listOf(
+            // ---- CAPABLE. Fresh install: ONE card, whatever the locale. The owner's ruling.
+            Row(setOf("npu", "npu-turbo"), emptySet(), "en-US", listOf("npu-turbo")),
+            Row(setOf("npu", "npu-turbo"), emptySet(), "bn-BD", listOf("npu-turbo")),
+            Row(setOf("npu", "npu-turbo"), emptySet(), "zh-Hans-CN", listOf("npu-turbo")),
+            Row(setOf("npu", "npu-turbo"), emptySet(), "", listOf("npu-turbo")),
+            Row(setOf("npu-turbo"), emptySet(), "en-US", listOf("npu-turbo")),
+            Row(setOf("npu-turbo"), emptySet(), "bn-BD", listOf("npu-turbo")),
+            // ---- CAPABLE, with history. The card for a model the user already has survives.
+            Row(setOf("npu", "npu-turbo"), setOf("multi"), "bn-BD", listOf("npu-turbo", "multi")),
+            Row(setOf("npu", "npu-turbo"), setOf("multi"), "en-US", listOf("npu-turbo", "multi")),
+            Row(setOf("npu", "npu-turbo"), setOf("pro"), "en-US", listOf("npu-turbo", "pro")),
+            Row(setOf("npu", "npu-turbo"), setOf("pro"), "bn-BD", listOf("npu-turbo", "pro")),
+            Row(setOf("npu", "npu-turbo"), setOf("npu"), "bn-BD", listOf("npu-turbo", "npu")),
+            Row(
+                setOf("npu", "npu-turbo"), setOf("npu", "multi", "pro"), "bn-BD",
+                listOf("npu-turbo", "npu", "multi", "pro"),
+            ),
+            Row(
+                setOf("npu", "npu-turbo"), setOf("npu", "multi", "pro"), "en-US",
+                listOf("npu-turbo", "npu", "pro", "multi"),
+            ),
+            // Turbo already installed: it is both the one offer and an existing install.
+            Row(setOf("npu", "npu-turbo"), setOf("npu-turbo"), "en-US", listOf("npu-turbo")),
+            // An installed RETIRED tier changes nothing — `!retired` runs first.
+            Row(setOf("npu-turbo"), setOf("eco", "base"), "bn-BD", listOf("npu-turbo")),
+            // ---- NOT CAPABLE. Byte-identical to 3.7/4.1, installed state irrelevant.
+            Row(emptySet(), emptySet(), "en-US", listOf("pro", "multi")),
+            Row(emptySet(), emptySet(), "bn-BD", listOf("multi", "pro")),
+            Row(emptySet(), setOf("pro", "multi"), "bn-BD", listOf("multi", "pro")),
+            Row(emptySet(), setOf("npu", "npu-turbo"), "en-US", listOf("pro", "multi")),
+            // ---- CAPABLE FOR `npu` ONLY (no turbo row for this family). Unreachable on today's
+            // census — every family carries both, pinned in NpuFleetCensusTest — but the rule
+            // must still answer it, and its answer is the pre-4.3 one: turbo is what the ruling
+            // is about, and a device that cannot be offered turbo keeps its menu.
+            Row(setOf("npu"), emptySet(), "bn-BD", listOf("npu", "multi", "pro")),
+            Row(setOf("npu"), emptySet(), "en-US", listOf("pro", "multi", "npu")),
+            Row(setOf("npu"), setOf("npu"), "bn-BD", listOf("npu", "multi", "pro")),
+        )
+        table.forEach { (offered, installed, tag, expected) ->
+            assertEquals(
+                "$offered/$installed/'$tag': the 4.3 offer-set row",
+                expected,
+                ModelTierCopy.orderedForLanguageTagFor(tag, offered, installed),
+            )
+            // The two calls every chooser makes must agree: the badged card is the head.
+            assertEquals(
+                "$offered/$installed/'$tag': the steer chip is not on the card that leads",
+                expected.first(),
+                ModelTierCopy.steerIdForLanguageTagFor(tag, offered),
+            )
+            // A permutation of what this device can pick — never a card invented or lost.
+            assertEquals(
+                "$offered/$installed/'$tag': not a permutation of pickableFor",
+                WhisperCatalog.pickableFor(offered, installed).map { it.id }.toSet(),
+                expected.toSet(),
+            )
+            expected.forEach {
+                assertNotNull("'$it' does not resolve", WhisperCatalog.byId(it))
+                assertNotNull("'$it' has no card copy", ModelTierCopy.forId(it))
+            }
+        }
+    }
+
+    @Test fun a_fresh_capable_install_sees_exactly_one_card_and_makes_no_comparison() {
+        // The spec's device acceptance, stated as the assertion an owner session verifies: "a
+        // fresh capable install sees exactly one model card and reaches dictation without a
+        // choice". Fresh = nothing installed; capable = the census union names turbo, which on a
+        // fresh capable Play install is the fetchable half alone (4.2 F6).
+        listOf("en", "en-US", "en_GB", "bn", "bn-BD", "de-AT", "zh-Hans-CN", "fr-CA", "").forEach { tag ->
+            listOf(setOf("npu-turbo"), setOf("npu", "npu-turbo")).forEach { offered ->
+                val ordered = ModelTierCopy.orderedForLanguageTagFor(tag, offered, emptySet())
+                assertEquals("'$tag'/$offered: more than one card on a fresh capable install", 1, ordered.size)
+                assertEquals("'$tag'/$offered", "npu-turbo", ordered.single())
+                assertEquals(
+                    "'$tag'/$offered: and it wears the steer chip",
+                    ordered.single(),
+                    ModelTierCopy.steerIdForLanguageTagFor(tag, offered),
+                )
+                // The two tiers the owner named are the ones that must NOT be there.
+                assertFalse("'$tag'/$offered: the 190 MB tier is visible", ordered.contains("multi"))
+                assertFalse("'$tag'/$offered: the 190 MB English tier is visible", ordered.contains("pro"))
+                assertFalse("'$tag'/$offered: the 358 MB tier is visible", ordered.contains("npu"))
+            }
         }
     }
 

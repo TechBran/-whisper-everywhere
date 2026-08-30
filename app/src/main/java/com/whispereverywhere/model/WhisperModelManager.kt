@@ -213,21 +213,17 @@ class WhisperModelManager(
      * why each clause is here; `retired` tiers are deliberately eligible — eco and base are ordinary
      * 80-bin whisper models, and an installed one is a perfectly good donor and a real fallback.
      *
-     * **The first clause is STRUCTURAL, not a literal** (4.1 L3). It was `model.id != "npu"`, which
-     * excluded exactly one id: `npu-turbo` is also a QAIRT context binary rather than a ggml file,
-     * and a second literal is something somebody has to remember to add for every npu-class tier
-     * that ever ships. `NpuModelSpec.forTier(model.id) == null` asks the question the exclusion is
-     * actually about — *is this an NPU tier?* — at the one table that answers it, so the next row
-     * is excluded by the clause that already excludes this one.
-     *
-     * `ultra` stays excluded **by name**, and that is not an oversight. It is a 128-bin *ggml*,
-     * which is a different fact from being an NPU tier: it is a perfectly real whisper model and a
-     * perfectly good CPU fallback, and it is refused here only because its filterbank is the wrong
-     * width for the 80-bin arm. The real fix is a mel-bin count in the catalog, which is a catalog
-     * change rather than a manager change.
+     * **THE RULE ITSELF MOVED TO [WhisperCatalog.isCpuFallbackEligible] AT 4.3 AND THIS
+     * DELEGATES** — unchanged in body, clause for clause, with every clause's reasoning (the
+     * structural npu-class exclusion from 4.1 L3, `ultra` excluded by name for its 128-bin
+     * filterbank, `pairedArtifact == null` as the second structural catch) carried to its new
+     * home. It moved because 4.3 gave the predicate a SECOND reader: the decline card must answer
+     * *"is there anything to fall back to?"* without a `Context`, and a copy of this rule in the
+     * pure layer could promise a fallback that this one then refuses to find — which is the
+     * silent-failure shape the loud-fallback doctrine exists to prevent. One rule, two readers.
      */
     private fun isMelDonorEligible(model: WhisperModel): Boolean =
-        NpuModelSpec.forTier(model.id) == null && model.id != "ultra" && model.pairedArtifact == null
+        WhisperCatalog.isCpuFallbackEligible(model)
 
     /** Total device RAM in bytes (ActivityManager.MemoryInfo.totalMem). */
     fun deviceTotalRamBytes(): Long {

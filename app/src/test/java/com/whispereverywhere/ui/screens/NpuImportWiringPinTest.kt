@@ -255,16 +255,27 @@ class NpuImportWiringPinTest {
                 picker,
                 block(
                     "        value = withContext(Dispatchers.IO) {",
-                    "            models.filter { manager.isInstalled(it) }.map { it.id }.toSet()",
+                    "            WhisperCatalog.entries.filter { manager.isInstalled(it) }" +
+                        ".map { it.id }.toSet()",
                     "        }",
                 ),
             ),
         )
+        // 4.3 RE-SPELL (in-commit; the old `models.filter` needle tripped by name first). The
+        // SOURCE widened from the rendered lineup to the whole catalog, and the dependency
+        // inverted with it: the lineup now READS this set, so deriving it from the lineup would
+        // be circular. `entries` is also what the CPU-fallback question needs — a retired but
+        // installed eco/base IS a legal 80-bin donor — and `pickableFor`'s own `!retired` filter
+        // is what keeps it out of the lineup regardless.
         assertEquals(
             "and keyed on the install generation, so the import that just landed changes the card " +
                 "it landed for",
             1,
-            count(picker, "key1 = installGeneration,"),
+            count(
+                picker,
+                "val installedIds by produceState(initialValue = emptySet<String>(), " +
+                    "key1 = installGeneration)",
+            ),
         )
         assertEquals(
             "the card is told the answer for ITS tier",
@@ -291,7 +302,11 @@ class NpuImportWiringPinTest {
             1,
             count(
                 picker,
-                "                    unavailableNote = NpuTierStatus.cardNote(npuTierReasons[model.id]),",
+                block(
+                    "                    unavailableNote = NpuTierStatus.cardNote(",
+                    "                        npuTierReasons[model.id], cpuFallbackInstalled,",
+                    "                    ),",
+                ),
             ),
         )
         assertEquals(

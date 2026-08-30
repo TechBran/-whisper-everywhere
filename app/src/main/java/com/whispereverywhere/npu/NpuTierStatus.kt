@@ -114,6 +114,16 @@ object NpuTierStatus {
     }
 
     /**
+     * The tier the decline recovery downloads (4.3) — `multi`, the multilingual CPU tier, which is
+     * both a legal 80-bin mel donor and the fallback `cpuTierModelPath()` will then find. Named
+     * here, once, because the card's button and any test of it must mean the same tier.
+     */
+    const val RECOVERY_TIER_ID = "multi"
+
+    /** The recovery button's label — the spec's own words for the one-tap action. */
+    const val RECOVERY_ACTION = "Download the standard model"
+
+    /**
      * The sentence the tier card shows, or null when there is nothing to say.
      *
      * It states four things because leaving any one out is how a silent fallback happens: that the
@@ -127,11 +137,50 @@ object NpuTierStatus {
      * visit to this screen, including sessions they deliberately ran on another tier. The retry is
      * an app restart and nothing else — there is no in-app route back — so the note now says that
      * rather than leaving the user to discover it.
+     *
+     * ### 4.3 — the arm for a device with nothing to fall back to
+     *
+     * The paragraph above describes a decline on a device that HAS a CPU model. 4.3 creates the
+     * state where that is false: the chooser offers a capable device `npu-turbo` alone, so a fresh
+     * capable install can hold turbo and nothing else — and `fallBackToCpuTier` then returns `0L`
+     * at `paths.cpuTierModelPath() ?: return 0L`, leaving the session with no backend at all.
+     * Rendering the sentence above there would be a **lie in the load-bearing clause**: it
+     * promises speech is running on the CPU model, and no CPU model exists.
+     *
+     * So [cpuFallbackInstalled] selects the arm, and the false arm says exactly that — the chip
+     * declined, at which stage, that there is nothing installed to fall back to, and what to do
+     * about it. This is the spec's "hidden until relevant": the CPU tier is absent from a capable
+     * chooser and appears the moment a decline makes it the answer, through
+     * [RECOVERY_ACTION] beside this note. [needsCpuRecovery] answers the same question the arm
+     * split answers, so the button and the sentence cannot disagree.
+     *
+     * @param cpuFallbackInstalled `WhisperCatalog.hasCpuFallback(installedIds)` — the pure mirror
+     *        of the `cpuTierModelPath() != null` the backend itself reads. NO DEFAULT, deliberately:
+     *        a default would let a caller silently claim the CPU model is running, which is the one
+     *        thing this parameter exists to stop being assumed.
      */
-    fun cardNote(reason: String?): String? {
+    fun cardNote(reason: String?, cpuFallbackInstalled: Boolean): String? {
         val stage = stageOf(reason) ?: return null
+        if (!cpuFallbackInstalled) {
+            return "The AI chip is unavailable on this device right now (stage: $stage), and no " +
+                "CPU speech model is installed to fall back to — so dictation cannot run until " +
+                "one is. Download the standard multilingual model below, or restart the app to " +
+                "try the AI chip again."
+        }
         return "The AI chip is unavailable on this device right now (stage: $stage), so speech is " +
             "running on the multilingual CPU model. Accuracy is unchanged; it is slower. " +
             "Restart the app to try the AI chip again."
     }
+
+    /**
+     * Whether this tier's card must offer [RECOVERY_ACTION] (4.3): there is a decline on record
+     * AND nothing on disk to fall back to.
+     *
+     * **It is the same predicate [cardNote] splits its arms on, spelled once**, so the button can
+     * never appear beside the sentence that says the CPU model is already running, nor be missing
+     * beside the sentence that tells the user to tap it. `NpuTierStatusTest` executes that
+     * equivalence over the whole input space rather than trusting the two to be edited together.
+     */
+    fun needsCpuRecovery(reason: String?, cpuFallbackInstalled: Boolean): Boolean =
+        !cpuFallbackInstalled && stageOf(reason) != null
 }

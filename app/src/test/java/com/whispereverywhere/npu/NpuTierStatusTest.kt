@@ -1,7 +1,11 @@
 package com.whispereverywhere.npu
 
+import com.whispereverywhere.model.ModelScope
+import com.whispereverywhere.model.WhisperCatalog
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -128,15 +132,131 @@ class NpuTierStatusTest {
         // stageOf/cardNote are byte-unchanged by the re-spec (their contract is F3's, corrected
         // to PROCESS lifetime); what changed is only WHICH record they are handed. Asserted
         // through the per-tier read so the composition the screen actually performs is the thing
-        // proved.
+        // proved. 4.3 added the fallback argument; the CPU-model-present arm below is the note
+        // this test has always asserted, verbatim.
         NpuTierStatus.publish("npu-turbo", "init: could not deserialise the 740 MB encoder")
-        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu-turbo"))!!
+        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu-turbo"), true)!!
         assertTrue("the note names the stage of THIS tier's decline: $note", note.contains("init"))
         assertTrue("and the way back: $note", note.contains("Restart the app"))
         assertNull(
             "while the sibling tier — never declined — composes NO note from its own null " +
                 "record, which is what keeps the warning off the card it is not about",
-            NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu")),
+            NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), true),
         )
+        // ...and a never-declined tier composes nothing in the no-fallback state either: the
+        // absence of a CPU model is not itself a decline, and a device that has never armed the
+        // tier has no measurement to report (the class KDoc's oldest rule).
+        assertNull(NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), false))
+    }
+
+    // ------------------------------------------------------------- 4.3: the decline's recovery
+
+    @Test
+    fun theCpuModelPresentArmIsTheOldNoteVERBATIM() {
+        // The 4.0/F3 sentence, byte for byte. 4.3 added an arm; it may not have edited this one —
+        // a device WITH a CPU model still falls back exactly as it always has, and the copy that
+        // says so is not this branch's to reword.
+        assertEquals(
+            "The AI chip is unavailable on this device right now (stage: init), so speech is " +
+                "running on the multilingual CPU model. Accuracy is unchanged; it is slower. " +
+                "Restart the app to try the AI chip again.",
+            NpuTierStatus.cardNote("init: nativeInit failed at 0", true),
+        )
+    }
+
+    @Test
+    fun theNoFallbackArmSaysSoPlainlyAndNeverClaimsTheCpuModelIsRunning() {
+        // THE STATE 4.3 CREATES: the chooser offers a capable device `npu-turbo` alone, so a
+        // fresh capable install can hold turbo and nothing else — and `fallBackToCpuTier` then
+        // returns 0L at `paths.cpuTierModelPath() ?: return 0L`, leaving the session with no
+        // backend. The old note's load-bearing clause ("speech is running on the multilingual CPU
+        // model") would be FALSE there, which is the whole reason the arm exists.
+        val note = NpuTierStatus.cardNote("init: nativeInit failed at 0", false)!!
+        assertTrue("it still names the stage: $note", note.contains("stage: init"))
+        assertFalse(
+            "it must NOT claim speech is running on the CPU model — nothing is installed: $note",
+            note.contains("running on the multilingual CPU model"),
+        )
+        assertTrue(
+            "it says plainly that there is nothing to fall back to: $note",
+            note.contains("no CPU speech model is installed to fall back to"),
+        )
+        assertTrue(
+            "it says what that costs, rather than failing mute: $note",
+            note.contains("dictation cannot run until one is"),
+        )
+        assertTrue(
+            "and it points at the control that fixes it, which the card renders directly " +
+                "below this sentence: $note",
+            note.contains("Download the standard multilingual model below"),
+        )
+        assertTrue("the restart route survives beside it: $note", note.contains("restart the app"))
+    }
+
+    @Test
+    fun theRecoveryConstantsNameOneTierAndOneAction() {
+        // `multi` and nothing else: it is MULTILINGUAL (so the recovery never hands a non-English
+        // speaker an English-only model — the Bengali-review discipline), it is a single-file URL
+        // tier the existing download path can actually install, and it is a legal 80-bin CPU
+        // fallback, which is the entire point of downloading it.
+        assertEquals("multi", NpuTierStatus.RECOVERY_TIER_ID)
+        val model = WhisperCatalog.byId(NpuTierStatus.RECOVERY_TIER_ID)
+        assertNotNull("the recovery tier must resolve in the catalog", model)
+        assertEquals(ModelScope.MULTILINGUAL, model!!.scope)
+        assertTrue(
+            "the recovery must be installable by the EXISTING download path — a paired tier " +
+                "cannot be, and download()'s first act would delete the file at `fileName`",
+            WhisperCatalog.isInstallableByDownload(model),
+        )
+        assertTrue(
+            "and what it installs must actually BE a fallback, or the recovery fixes nothing",
+            WhisperCatalog.isCpuFallbackEligible(model),
+        )
+        assertTrue(
+            "downloading it is what flips the question the note asked",
+            WhisperCatalog.hasCpuFallback(setOf(NpuTierStatus.RECOVERY_TIER_ID)),
+        )
+        assertEquals("Download the standard model", NpuTierStatus.RECOVERY_ACTION)
+    }
+
+    @Test
+    fun theButtonAndTheSentenceCanNeverDisagree() {
+        // needsCpuRecovery is the SAME predicate cardNote splits its arms on, and this executes
+        // the equivalence over the whole input space rather than trusting two functions to be
+        // edited together. The mutation it closes is a one-word drift in either direction: a
+        // button beside the "already falling back" sentence, or the "download it below" sentence
+        // with no control below it.
+        val reasons = listOf(
+            null, "", "   ", ":", "init: nativeInit failed at 0",
+            "encode: graphExecute failed at 0", "skel", "  decode: x  ",
+        )
+        listOf(true, false).forEach { installed ->
+            reasons.forEach { reason ->
+                val note = NpuTierStatus.cardNote(reason, installed)
+                val needs = NpuTierStatus.needsCpuRecovery(reason, installed)
+                if (needs) {
+                    assertNotNull("<<$reason>>/$installed: a button with no note", note)
+                    assertTrue(
+                        "<<$reason>>/$installed: the button rides the wrong arm",
+                        note!!.contains("no CPU speech model is installed"),
+                    )
+                } else {
+                    assertFalse(
+                        "<<$reason>>/$installed: the no-fallback sentence renders without the " +
+                            "control it names",
+                        note?.contains("no CPU speech model is installed") == true,
+                    )
+                }
+                // And the recovery is never offered where there is nothing to recover FROM: no
+                // decline on record means no note and no button, whatever the disk holds.
+                if (NpuTierStatus.stageOf(reason) == null) {
+                    assertNull("<<$reason>>: no decline, no note", note)
+                    assertFalse("<<$reason>>: no decline, no button", needs)
+                }
+            }
+        }
+        // The card's two reads compose: an undeclined tier on a device with no CPU model at all
+        // still shows nothing. The recovery belongs to a decline, not to an empty disk.
+        assertFalse(NpuTierStatus.needsCpuRecovery(null, false))
     }
 }

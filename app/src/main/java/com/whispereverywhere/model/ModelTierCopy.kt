@@ -158,12 +158,32 @@ object ModelTierCopy {
      * jump `multi`/`pro` on the strength of a verdict that was about turbo). The sort is
      * stable, so every tier no key names keeps the order the catalog declares it in.
      *
-     * The result is a permutation of `pickableFor(offeredGatedIds)` — of the caller's OWN input
-     * list, not of [WhisperCatalog.pickable] — so a gate-passing device never loses a card to a
-     * rule written for the ungated lineup.
+     * The result is a permutation of `pickableFor(offeredGatedIds, installedIds)` — of the
+     * caller's OWN input list, not of [WhisperCatalog.pickable] — so a gate-passing device never
+     * loses a card to a rule written for the ungated lineup.
+     *
+     * **4.3 — the ordering rules are UNCHANGED IN BODY; the LIST they order got shorter.** The
+     * owner's ruling ("only the multilingual v3 turbo" where the NPU can run it) lives entirely in
+     * [WhisperCatalog.pickableFor], which this delegates to: on a capable device that list is
+     * `npu-turbo` plus whatever is already installed, so the three keys below sort one or two
+     * cards instead of four. The keys still earn their place for every OTHER device — the whole
+     * non-capable fleet still reads the 3.7 language ordering, and the L9 npu-runner-up key still
+     * fires on a device offered `npu` without turbo. Not one key was deleted to make the lineup
+     * short: the SET is what shrank, which is why the gate-fail path is byte-identical.
+     *
+     * @param alsoOfferedIds forwarded verbatim to [WhisperCatalog.pickableFor] — the ids that join
+     *        a capable device's one-card lineup anyway: what is already on disk (an existing
+     *        install keeps its card) and, on the onboarding surface, the CPU tiers once the one
+     *        tier's delivery has failed (`OnboardingLogic.chooserAlsoOfferedIds` — the no-wedge
+     *        escape). Defaulted to empty: the ungated delegate and every caller that cannot answer
+     *        the question keep exactly the lineup they had.
      */
-    fun orderedForLanguageTagFor(languageTag: String, offeredGatedIds: Set<String>): List<String> {
-        val ids = WhisperCatalog.pickableFor(offeredGatedIds).map { it.id }
+    fun orderedForLanguageTagFor(
+        languageTag: String,
+        offeredGatedIds: Set<String>,
+        alsoOfferedIds: Set<String> = emptySet(),
+    ): List<String> {
+        val ids = WhisperCatalog.pickableFor(offeredGatedIds, alsoOfferedIds).map { it.id }
         val steer = steerIdForLanguageTagFor(languageTag, offeredGatedIds)
         val languageSteer = steerIdForLanguageTag(languageTag)
         return ids.sortedBy {

@@ -4,6 +4,7 @@ import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -603,8 +604,13 @@ class NpuFleetCensusTest {
         // F6's headline, executed end to end in the pure layer: on a capable FRESH install the
         // offered half is empty (nothing on disk) and the fetchable half names both tiers, so
         // the union hands ModelTierCopy exactly the set L9's ordering was already written for.
-        // npu-turbo heads the steer and the lineup for EVERY locale (the owner's measured pick),
-        // npu rides second — and not one ordering rule was added or changed in F6.
+        // npu-turbo heads the steer and the lineup for EVERY locale (the owner's measured pick)
+        // — and not one ordering rule was added or changed in F6, nor in 4.3.
+        //
+        // RE-SPECCED at 4.3: the lineup was `[npu-turbo, npu]` and is now `[npu-turbo]` alone —
+        // the owner's ruling, applied at `WhisperCatalog.pickableFor`. The STEER assertion is
+        // untouched, which is the point: 4.3 narrowed the offer set and left the steering rules
+        // exactly as L9 measured them.
         val union = emptySet<String>() +
             NpuFleetCensus.fetchableTierIds(byId("8gen3"), true, gatedTierIds, emptySet())
         for (tag in listOf("en-US", "bn-BD", "es-MX")) {
@@ -613,8 +619,46 @@ class NpuFleetCensusTest {
                 ModelTierCopy.steerIdForLanguageTagFor(tag, union)
             )
             assertEquals(
-                "$tag's lineup leads turbo-then-npu", listOf("npu-turbo", "npu"),
-                ModelTierCopy.orderedForLanguageTagFor(tag, union).take(2)
+                "$tag's lineup is turbo and nothing else", listOf("npu-turbo"),
+                ModelTierCopy.orderedForLanguageTagFor(tag, union)
+            )
+        }
+    }
+
+    /**
+     * 4.3 — **the census is what makes "capable" mean "offered turbo"**, and that equivalence is
+     * the whole branch's load-bearing assumption.
+     *
+     * `WhisperCatalog.pickableFor` narrows the lineup exactly when `npu-turbo` is in the offer
+     * set. A family carrying an `npu` row but NO `npu-turbo` row would be capable hardware that
+     * the rule leaves on the full pre-4.3 menu with a 358 MB card at the top — the one shape the
+     * owner ruled out ("they should just go straight to the one gig version"), reachable purely
+     * by adding half a census row. Nothing else in the suite would notice: the offer rule would
+     * be correct, the ordering correct, and the device wrong.
+     *
+     * So the census asserts the implication it is the sole source of: every family that can
+     * deliver the small pair can deliver turbo.
+     */
+    @Test
+    fun everyFamilyThatCanDeliverTheSmallPairCanAlsoDeliverTurbo() {
+        families.forEach { family ->
+            if (NpuFleetCensus.artifactFor(family.id, "npu") != null) {
+                assertNotNull(
+                    "${family.id} has an npu pack but no npu-turbo pack — a capable device on " +
+                        "this family would be offered the 358 MB tier at the head of a full " +
+                        "menu, which is exactly what the 4.3 ruling removes. Either measure the " +
+                        "turbo pack or take the npu row out.",
+                    NpuFleetCensus.artifactFor(family.id, "npu-turbo"),
+                )
+            }
+        }
+        // And the composition, on every family: a capable fresh install is offered ONE card.
+        families.forEach { family ->
+            val union = NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, emptySet())
+            assertEquals(
+                "${family.id}: a capable fresh install must see exactly one model card",
+                listOf("npu-turbo"),
+                ModelTierCopy.orderedForLanguageTagFor("bn-BD", union),
             )
         }
     }
