@@ -50,8 +50,8 @@ android {
         applicationId = "com.whispereverywhere"
         minSdk = 26
         targetSdk = 36
-        versionCode = 81
-        versionName = "4.2.0"  // Fleet Onboarding: the four-family census + gate, the NPU packs on Play Asset Delivery, language-first onboarding, the chooser's fetch affordance
+        versionCode = 82
+        versionName = "4.3.0"  // One tier per device: a capable phone is offered turbo and nothing else; the CPU model is hidden until a decline makes it the answer. (4.2.0/81 was Fleet Onboarding: the four-family census + gate, the NPU packs on Play Asset Delivery, language-first onboarding, the chooser's fetch affordance.)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

@@ -9,22 +9,24 @@ import org.junit.Test
  * and a 4.2.0 build still NAMED "4.1.0" ships release notes that the in-app About screen
  * contradicts. Both have a one-line fix and no other detector.
  *
- * **versionCode 81 — the plain successor to 80.** 4.1's 80 was itself a deliberate skip over 79
- * (left for the 4.0 NPU release, per the certified 4.1 plan); nothing about 4.2 needs a second
- * skip, so the fleet build takes the next integer.
+ * **versionCode 82 — the plain successor to 81.** 81 was consumed by the first internal-track
+ * upload (the fleet-onboarding build the owner installed and validated on 2026-08-30), so it is
+ * spent: Play will refuse a second upload at the same code. 4.3 takes the next integer, and its
+ * NAME moves with it — the trunk now carries the one-tier-per-device lineup, and a build named for
+ * the release before the one it contains is the exact silent mismatch this test exists to catch.
  *
- * **What 81 buys, stated precisely, because an earlier draft of this KDoc got it backwards.** It
- * buys an upgrade over the 4.1 builds already on the device: 81 > 80, so a track install replaces
- * them. It does NOT let Play install over an 81-signed LOCAL build — Play offers no update path at
- * equal versionCode, and a bundletool `install-apks` set is not a Play-managed install in the first
- * place. That is exactly why the run-book's §2 makes u4 (uninstall before the track install) a
- * MANDATORY step rather than a conditional one. If this KDoc and
+ * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
+ * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
+ * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
+ * the local build was 81-signed and Play offers no update path at equal versionCode. A local
+ * bundletool `install-apks` set is still not a Play-managed install, so u4 remains mandatory
+ * whenever a LOCAL 82 build has been installed by hand. If this KDoc and
  * docs/superpowers/sdd/2026-08-29-fleet-onboarding/acceptance.md ever disagree, the sheet is the
  * instrument and the sheet is right.
  *
  * It is also load-bearing beyond cosmetics. GpuPolicy keys its PERMANENT canary latches on
- * BuildConfig.VERSION_CODE (GpuPolicy.kt:101, 188, 261, 275, 284, 295), so moving 80 -> 81 clears
- * every recorded GPU verdict on every device — the same side effect 78 -> 80 had at 4.1, and it
+ * BuildConfig.VERSION_CODE (GpuPolicy.kt:101, 188, 261, 275, 284, 295), so moving 81 -> 82 clears
+ * every recorded GPU verdict on every device — the same side effect 78 -> 80 and 80 -> 81 had, and it
  * recurs on every bump by design. With the experimental multilingual-GPU toggle OFF (the shipped
  * default) nothing re-runs; with it ON, the canary runs once more on the first cold multi load.
  * The acceptance sheet says so where it matters
@@ -33,15 +35,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_2_0_at_version_code_81() {
+    fun release_identity_is_4_3_0_at_version_code_82() {
         assertEquals(
-            "versionName must be 4.2.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.2.0",
+            "versionName must be 4.3.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.3.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 81 for this release (app/build.gradle.kts defaultConfig)",
-            81,
+            "versionCode must be 82 for this release (app/build.gradle.kts defaultConfig)",
+            82,
             BuildConfig.VERSION_CODE,
         )
     }
