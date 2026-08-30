@@ -309,6 +309,31 @@ object NpuFleetCensus {
         artifacts.firstOrNull { it.familyId == familyId && it.tierId == tierId }
 
     /**
+     * The gated tiers a CHOOSER may offer to fetch from Play for this device (4.2 F6) — pure,
+     * so the truth table is executable: with a resolved [family] and a passing capability probe,
+     * every id in [gatedTierIds] the family has a measured [artifactFor] row for, minus
+     * [installedGatedIds] (an installed tier is OFFERED, never fetchable); anything less than
+     * that — no family, probe failed — answers empty. That emptiness is the whole non-capable
+     * fleet's answer, and it is why this function cannot change their chooser by a byte: the
+     * chooser's set is offered UNION fetchable, and union with the empty set is the identity.
+     *
+     * DISPLAY/STEER ONLY, never routing: a fetchable tier has nothing on disk to run. The
+     * routing gate stays `WhisperEverywhereApp.offeredNpuTierIds` (installed AND capable), and
+     * nothing that routes a session reads this set — pinned by name in
+     * `ChooserSteerWiringPinTest`.
+     */
+    fun fetchableTierIds(
+        family: NpuSocFamily?,
+        capable: Boolean,
+        gatedTierIds: Set<String>,
+        installedGatedIds: Set<String>,
+    ): Set<String> {
+        if (family == null || !capable) return emptySet()
+        val deliverable = gatedTierIds.filterTo(mutableSetOf()) { artifactFor(family.id, it) != null }
+        return deliverable - installedGatedIds
+    }
+
+    /**
      * The parts WITHOUT a published package, each mapped to its evidence line — documentation with
      * an assertion attached. A reader who wonders why the 8 Gen 2 is not in [families] gets the
      * answer HERE, with a date: the absence was CHECKED, not overlooked. The tests hold this map

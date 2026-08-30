@@ -427,6 +427,14 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
+        // (4.2 F6) OnboardingSetupViewModel.kt joins by the list's stated rule — membership
+        // follows what the tests READ. ChooserSteerWiringPinTest now source-pins the gated
+        // fetch branch (ensureSpeech hands gated tiers to NpuPackController, mirrors its state
+        // through the one pure mapping, and stops at the first terminal state); the branch is
+        // viewModelScope-bound so no JVM test can execute it, and without this entry an edit
+        // confined to this file leaves the task UP-TO-DATE and those pins passing against
+        // stale evidence.
+        "src/main/java/com/whispereverywhere/ui/onboarding/OnboardingSetupViewModel.kt",
         "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt",
         "src/main/java/com/whispereverywhere/MainActivity.kt",
         "src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt",

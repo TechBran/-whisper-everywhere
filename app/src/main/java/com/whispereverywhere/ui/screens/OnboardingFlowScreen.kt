@@ -35,6 +35,8 @@ import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
+import com.whispereverywhere.npu.NpuPackController
+import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.service.MediaNotificationListener
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.ui.onboarding.OnboardingLogic
@@ -48,11 +50,19 @@ import kotlinx.coroutines.withContext
 
 // ---------------------------------------------------------------------------------------------
 // Guided first-run onboarding (owner decision 2026-08-01): everything the app needs, configured
-// in one pass on first startup. Three steps — permissions (all four, granted in place), engines
-// (3.5.0: the user PICKS one of four speech tiers from honest cards — no preselection — and that
-// single confirmed pick starts BOTH downloads, chosen tier + read-aloud voice, with no further
-// button presses), and the cloud-keys teaching step. Replaces the two-path chooser: the chooser
-// made setup a fork; this makes it a walk, and the cloud fork is simply the last step.
+// in one pass on first startup. Four steps — permissions (all four, granted in place), language
+// (4.2 F6, the 3.8 owner ruling: the pick lands BEFORE the model step, device-locale-first with
+// auto one tap away and honestly subtitled, and Continue writes the EXISTING selected_language
+// pref — no new storage), engines (3.5.0: the user PICKS a speech tier from honest cards — no
+// preselection — and that single confirmed pick starts BOTH downloads, chosen tier + read-aloud
+// voice, with no further button presses; since 4.2 F6 a capable device's lineup is offered UNION
+// fetchable, and a gated pick fetches from Google Play inside the flow with Play's own consent
+// dialog), and the cloud-keys teaching step. Replaces the two-path chooser: the chooser made
+// setup a fork; this makes it a walk, and the cloud fork is simply the last step.
+//
+// EXISTING INSTALLS NEVER RE-ENTER THIS FLOW: it renders only where onboarding was never
+// completed (the untouched completion pref), so the language step reaches fresh installs only —
+// existing users keep Settings' language picker, which edits the same one pref.
 //
 // MANDATORY except the cloud step (owner decision 2026-08-18, reversing the earlier never-block
 // contract): Continue on the permissions step is gated on the bubble's three permissions, the
@@ -81,6 +91,14 @@ fun OnboardingFlowScreen(
     // The chooser's transient pick (3.5.0). Deliberately NOT persisted until the confirm tap:
     // prefs.selectedModelId is written the moment Download is pressed, never before.
     var pickedTierId by remember { mutableStateOf<String?>(null) }
+
+    // The language step's transient pick (4.2 F6). Same discipline as the tier pick: nothing is
+    // preselected and nothing persists until Continue — setSelectedLanguage is written then.
+    var pickedLanguage by remember { mutableStateOf<String?>(null) }
+
+    // Read ONCE at flow level: the language step's row order and the engines step's steer must
+    // answer from the same tag (and the one-read pin in ChooserSteerWiringPinTest stays true).
+    val languageTag = java.util.Locale.getDefault().toLanguageTag()
 
     // Permission state lives at flow level (3.5.x): the pinned footer gates Continue on the
     // bubble's three permissions, so the step and the footer read the same truth. Re-checked on
@@ -122,6 +140,7 @@ fun OnboardingFlowScreen(
                     Text(
                         when (step) {
                             Step.PERMISSIONS -> "Welcome — permissions"
+                            Step.LANGUAGE -> "What language will you speak?"
                             Step.ENGINES -> "Setting up your engines"
                             Step.CLOUD -> "Cloud providers (optional)"
                         },
@@ -155,8 +174,14 @@ fun OnboardingFlowScreen(
                         notifListener = notifListener,
                         onMicGranted = { mic = it },
                     )
+                    Step.LANGUAGE -> LanguageStep(
+                        languageTag = languageTag,
+                        picked = pickedLanguage,
+                        onPick = { pickedLanguage = it },
+                    )
                     Step.ENGINES -> EnginesStep(
                         vm = setupVm,
+                        languageTag = languageTag,
                         pickedTierId = pickedTierId,
                         onPick = { pickedTierId = it },
                     )
@@ -183,6 +208,24 @@ fun OnboardingFlowScreen(
                     Button(
                         onClick = { OnboardingLogic.next(step)?.let { next -> step = next } },
                         enabled = OnboardingLogic.permissionsContinueEnabled(mic, overlay, accessibility),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Continue")
+                    }
+                } else if (step == Step.LANGUAGE) {
+                    // LANGUAGE (4.2 F6): Continue is locked until a row is picked — the 3.8
+                    // mandate is a forced choice — and the tap writes the EXISTING
+                    // selected_language store (the same pref Settings' picker edits; nothing
+                    // new is stored anywhere) before advancing.
+                    Button(
+                        onClick = {
+                            pickedLanguage?.let { picked ->
+                                WhisperEverywhereApp.getInstance()
+                                    .preferencesManager.setSelectedLanguage(picked)
+                                OnboardingLogic.next(step)?.let { next -> step = next }
+                            }
+                        },
+                        enabled = OnboardingLogic.languageContinueEnabled(pickedLanguage),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Continue")
@@ -371,6 +414,96 @@ private fun hasMic(context: android.content.Context): Boolean =
         context, android.Manifest.permission.RECORD_AUDIO
     ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
+// ------------------------------------------------------------------------------- language
+
+/**
+ * The language step (4.2 F6 — the 3.8 owner ruling folds in: language BEFORE model download).
+ * The rows come from [OnboardingLogic.languageRows]: the device's language first and badged when
+ * the 54-language list carries it, auto one tap away with its cost honestly subtitled — the
+ * ruled text, verbatim. No preselection, the model pick's own discipline: the badge suggests,
+ * the user still taps, and the footer's Continue stays locked until they do.
+ */
+@Composable
+private fun LanguageStep(
+    languageTag: String,
+    picked: String?,
+    onPick: (String) -> Unit,
+) {
+    Text(
+        OnboardingLogic.LANGUAGE_HINT,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(16.dp))
+    val deviceCode = OnboardingLogic.deviceLanguageCode(languageTag)
+    OnboardingLogic.languageRows(languageTag).forEach { (code, displayName) ->
+        LanguageRow(
+            title = displayName,
+            subtitle = if (code == "auto") OnboardingLogic.AUTO_LANGUAGE_SUBTITLE else null,
+            badged = code == deviceCode,
+            selected = picked == code,
+            onClick = { onPick(code) },
+        )
+    }
+}
+
+/** One selectable language card — the [PermissionRow] visual family, selectable like a tier card. */
+@Composable
+private fun LanguageRow(
+    title: String,
+    subtitle: String?,
+    badged: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) Primary.copy(alpha = 0.08f)
+            else MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(
+            if (selected) 2.dp else 1.dp,
+            if (selected) Primary else MaterialTheme.colorScheme.outline,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (selected) 2.dp else 1.dp),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                subtitle?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (badged) {
+                Spacer(Modifier.width(12.dp))
+                Surface(
+                    color = Primary.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text(
+                        OnboardingLogic.DEVICE_LANGUAGE_BADGE,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Primary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            if (selected) {
+                Spacer(Modifier.width(12.dp))
+                Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = Primary)
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------------------------- engines
 
 /**
@@ -383,6 +516,7 @@ private fun hasMic(context: android.content.Context): Boolean =
 @Composable
 private fun EnginesStep(
     vm: OnboardingSetupViewModel,
+    languageTag: String,
     pickedTierId: String?,
     onPick: (String) -> Unit,
 ) {
@@ -413,14 +547,22 @@ private fun EnginesStep(
         // `pickedTierId` still starts null: the steer moves a card to the top and badges it,
         // and the user still has to tap it.
         //
+        // 4.2 F6: the set is offered UNION fetchable — a DISPLAY/steer set, and the union is
+        // the ONLY change here. On a capable fresh Play install the offered half is empty and
+        // the fetchable half names both gated tiers, so L9's ordering (unchanged in body) puts
+        // turbo at the head wearing the steer badge — "turbo recommended", ridden entirely on
+        // the existing rules. Routing never reads the union: everything that routes a session
+        // keeps reading offeredNpuTierIds alone, because a fetchable tier has nothing on disk
+        // to run.
+        //
         // KEYED on the install generation, for the reason spelled out at the Settings picker's
         // copy of this block: an unkeyed produceState samples once per composition entry, so an
         // import landing while the chooser is on screen would never reach the lineup.
-        val languageTag = java.util.Locale.getDefault().toLanguageTag()
         val installGeneration by ModelInstallSignal.generation.collectAsState()
         val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
             value = withContext(Dispatchers.IO) {
-                WhisperEverywhereApp.getInstance().offeredNpuTierIds()
+                val app = WhisperEverywhereApp.getInstance()
+                app.offeredNpuTierIds() + app.fetchableNpuTierIds()
             }
         }
         val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
@@ -446,6 +588,22 @@ private fun EnginesStep(
         val chosen = WhisperCatalog.byId(
             WhisperEverywhereApp.getInstance().preferencesManager.selectedModelId
         ) ?: WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!
+        if (chosen.gated) {
+            // 4.2 F6: Play's own confirmation dialog — wifi-wait and the >200 MB cellular
+            // consent both — shown ONCE PER ENTRY into NeedsConfirmation. The LaunchedEffect
+            // key is the state VALUE: entering the state changes the key and fires the dialog
+            // once; staying in it re-fires nothing; leaving and re-entering fires again.
+            // Deliberately NO custom re-ask anywhere: the consent is Play's to word and to
+            // size (the controller's own contract), and the engine row meanwhile reads the
+            // mapped "Waiting for your OK in the Google Play dialog" label.
+            val context = LocalContext.current
+            val fetch by NpuPackController.state.collectAsState()
+            LaunchedEffect(fetch) {
+                if (fetch is NpuPackFetch.FetchState.NeedsConfirmation) {
+                    NpuPackController.confirm(context as ComponentActivity)
+                }
+            }
+        }
         Text(
             "Downloading your engines — nothing to press. Both stay on your phone; audio " +
                 "never has to leave it.",

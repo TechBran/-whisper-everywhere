@@ -548,11 +548,22 @@ class NpuDiagTest {
             liveLineCount(gate, "NpuDiag.offer("),
         )
         assertEquals(
-            "the emitter is behind the generation compare-and-swap, so it runs once per install " +
-                "epoch and not once per chooser open — getAndSet keeps concurrent evaluations of " +
-                "the same generation to one line",
+            "the emitter is behind the generation latch, so it runs once per install epoch and " +
+                "not once per chooser open — and the update is MONOTONIC since 4.2 F6 (4.1 L8 " +
+                "review M3): getAndSet could REGRESS the latch when two concurrent evaluations " +
+                "held different generations, the older writer landing second re-arming the line " +
+                "for a spurious extra emission; max() cannot go backwards, and concurrent " +
+                "evaluations of the SAME generation still emit exactly once",
             1,
-            liveLineCount(gate, "if (npuOfferLoggedGeneration.getAndSet(generation) != generation) {"),
+            liveLineCount(
+                gate,
+                "if (npuOfferLoggedGeneration.getAndUpdate { maxOf(it, generation) } < generation) {",
+            ),
+        )
+        assertEquals(
+            "the regressable getAndSet form is gone from live code",
+            0,
+            liveLineCount(gate, "npuOfferLoggedGeneration.getAndSet"),
         )
         assertEquals(
             "and the epoch it keys on is the install signal's OWN generation — the one value " +

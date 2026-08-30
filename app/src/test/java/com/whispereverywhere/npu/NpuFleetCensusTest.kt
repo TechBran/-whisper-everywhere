@@ -1,5 +1,6 @@
 package com.whispereverywhere.npu
 
+import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -516,6 +517,104 @@ class NpuFleetCensusTest {
                 "the 8gen3 $tierId row records that it reproduced the catalog's pins " +
                     "(the run's self-check)",
                 artifact("8gen3", tierId).evidence.contains("self-check")
+            )
+        }
+    }
+
+    // -------------------------------------------------------------- fetchableTierIds (4.2 F6)
+
+    /** The catalog's own gated set — the exact argument WhisperEverywhereApp's binding passes. */
+    private val gatedTierIds = WhisperCatalog.entries.filter { it.gated }.map { it.id }.toSet()
+
+    @Test
+    fun fetchableTierIdsOffersEveryMeasuredTierOnACapableFamilyMinusInstalled() {
+        assertEquals(
+            "the truth table's gated input is the two npu-class tiers",
+            setOf("npu", "npu-turbo"), gatedTierIds
+        )
+        for (family in families) {
+            assertEquals(
+                "${family.id}: capable with nothing installed -> both measured tiers fetchable",
+                setOf("npu", "npu-turbo"),
+                NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, emptySet())
+            )
+            assertEquals(
+                "${family.id}: an installed tier is OFFERED, never fetchable",
+                setOf("npu-turbo"),
+                NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, setOf("npu"))
+            )
+            assertEquals(
+                setOf("npu"),
+                NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, setOf("npu-turbo"))
+            )
+            assertEquals(
+                "${family.id}: everything installed leaves nothing to fetch",
+                emptySet<String>(),
+                NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, gatedTierIds)
+            )
+        }
+    }
+
+    @Test
+    fun fetchableTierIdsIsEmptyOffTheCensusOrWhenTheProbeFails() {
+        // This emptiness IS F6's non-capable byte-identity proof: the chooser's set is offered
+        // UNION fetchable, union with the empty set is the identity, and every device this
+        // function answers empty for therefore keeps today's model step exactly.
+        assertEquals(
+            "no resolved family -> nothing fetchable, whatever the probe said",
+            emptySet<String>(),
+            NpuFleetCensus.fetchableTierIds(null, true, gatedTierIds, emptySet())
+        )
+        for (family in families) {
+            assertEquals(
+                "${family.id}: a failed probe means no NPU class at all",
+                emptySet<String>(),
+                NpuFleetCensus.fetchableTierIds(family, false, gatedTierIds, emptySet())
+            )
+        }
+        assertEquals(
+            emptySet<String>(),
+            NpuFleetCensus.fetchableTierIds(null, false, gatedTierIds, emptySet())
+        )
+    }
+
+    @Test
+    fun fetchableTierIdsNeverNamesATierTheFamilyHasNoMeasuredRowFor() {
+        // The artifactFor gate: a gated id without a measured pair for THIS family must not
+        // grow a fetch affordance — offering a pack the census cannot verify would be the F3
+        // disease with a storefront. "npu-max" stands in for the next gated tier added to the
+        // catalog before anyone measures its pairs.
+        for (family in families) {
+            assertEquals(
+                "${family.id}: an unmeasured gated id is absent, the measured two remain",
+                setOf("npu", "npu-turbo"),
+                NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds + "npu-max", emptySet())
+            )
+        }
+        assertEquals(
+            "no gated tiers, nothing to fetch",
+            emptySet<String>(),
+            NpuFleetCensus.fetchableTierIds(byId("8gen3"), true, emptySet(), emptySet())
+        )
+    }
+
+    @Test
+    fun aCapableFreshPlayInstallSteersToTurboThroughTheUnionWithZeroNewRules() {
+        // F6's headline, executed end to end in the pure layer: on a capable FRESH install the
+        // offered half is empty (nothing on disk) and the fetchable half names both tiers, so
+        // the union hands ModelTierCopy exactly the set L9's ordering was already written for.
+        // npu-turbo heads the steer and the lineup for EVERY locale (the owner's measured pick),
+        // npu rides second — and not one ordering rule was added or changed in F6.
+        val union = emptySet<String>() +
+            NpuFleetCensus.fetchableTierIds(byId("8gen3"), true, gatedTierIds, emptySet())
+        for (tag in listOf("en-US", "bn-BD", "es-MX")) {
+            assertEquals(
+                "$tag steers to turbo", "npu-turbo",
+                ModelTierCopy.steerIdForLanguageTagFor(tag, union)
+            )
+            assertEquals(
+                "$tag's lineup leads turbo-then-npu", listOf("npu-turbo", "npu"),
+                ModelTierCopy.orderedForLanguageTagFor(tag, union).take(2)
             )
         }
     }

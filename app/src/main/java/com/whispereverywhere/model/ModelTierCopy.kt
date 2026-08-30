@@ -108,10 +108,15 @@ object ModelTierCopy {
      * stays `multi`. A gated tier that could become the default by locale alone would be
      * selected on devices whose assets are absent.
      *
-     * @param offeredGatedIds the caller's gate answer — the ids of gated tiers this device may
-     *        offer (`WhisperEverywhereApp.offeredNpuTierIds()`: the SoC gate, the QNN probe AND
-     *        that tier's own files on disk). `emptySet()` reproduces [steerIdForLanguageTag]
-     *        exactly, and so does any set naming neither npu-class tier.
+     * @param offeredGatedIds the caller's gate answer — the ids of gated tiers this device's
+     *        chooser may SHOW. Two producers since 4.2 F6: routing surfaces still pass
+     *        `WhisperEverywhereApp.offeredNpuTierIds()` alone (the SoC gate, the QNN probe AND
+     *        that tier's own files on disk), while the two chooser surfaces pass the UNION
+     *        `offeredNpuTierIds() + fetchableNpuTierIds()` — a DISPLAY/steer set, so a capable
+     *        fresh Play install steers to the tier it can fetch before any pair is on disk (the
+     *        promotion's condition is capability plus a deliverable, census-measured pack; the
+     *        pick still writes nothing until the user taps). `emptySet()` reproduces
+     *        [steerIdForLanguageTag] exactly, and so does any set naming neither npu-class tier.
      */
     fun steerIdForLanguageTagFor(languageTag: String, offeredGatedIds: Set<String>): String {
         // The pick: offered means installed AND gate-passing, which is the only state the

@@ -5,12 +5,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.model.WhisperCatalog
+import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.model.WhisperModelManager
+import com.whispereverywhere.npu.NpuPackController
 import com.whispereverywhere.tts.TtsModelManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 
 /**
@@ -70,6 +75,9 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
      * selected. Already-installed reports Ready without a network touch. Idempotent while
      * running; callable again from Failed, which is what Retry is.
      *
+     * Since 4.2 F6 a GATED tier routes through [ensureGatedSpeech] — the Play pack flow — and
+     * the download path below stays byte-for-byte the non-gated tiers' route.
+     *
      * Serves BOTH onboarding's engines step and Home's missing-engine status row (owner request
      * 2026-08-01: "a status and download shortcuts right there, in case someone has deleted
      * them") — one activity-scoped instance, so progress started on either surface shows on
@@ -92,6 +100,15 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
             _speechState.value = EngineState.Ready
             return
         }
+        if (model.gated) {
+            // 4.2 F6: a gated tier's files arrive from Play's asset pack, never from
+            // DownloadManager — download() would delete the encoder it cannot re-fetch
+            // (WhisperCatalog.isInstallableByDownload's own warning) and size-gate the wreck
+            // against the pair sum. The pack flow below; the download path underneath stays
+            // byte-for-byte the non-gated tiers' route.
+            ensureGatedSpeech(model)
+            return
+        }
         _speechState.value = EngineState.Working(0, DOWNLOADING)
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -112,6 +129,45 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 _speechState.value = EngineState.Failed(e.message ?: "Download failed")
             }
+        }
+    }
+
+    /**
+     * [ensureSpeech]'s gated route (4.2 F6): hand the tier to [NpuPackController] — Play fetch,
+     * census verify, the shared parking transaction — and mirror its state onto the engine card
+     * through the ONE pure mapping ([OnboardingLogic.engineStateForFetch]) until a terminal
+     * state lands. Retry is ensureSpeech again: `start` is single-flight (a double tap is
+     * refused; a relaunch re-attaches to Play's surviving download), and a failed VERIFY leaves
+     * the delivered pack on disk, so the retry costs nothing. On Ready, the same persistence as
+     * the download path: the selection re-asserted and the first-run gate cleared the moment
+     * dictation is actually possible — `Installed` is only ever published after the pair is
+     * census-verified, renamed into place and announced, so Ready here is as true as the
+     * download path's.
+     *
+     * Play's own consent dialog is the FLOW SCREEN's job: it observes the controller directly
+     * and calls `confirm(activity)` once per NeedsConfirmation entry. This ViewModel never
+     * talks to an Activity, and there is no custom re-ask anywhere — the consent is Play's.
+     */
+    private fun ensureGatedSpeech(model: WhisperModel) {
+        // Published before start() so the Working guard above holds from this instant — the
+        // same double-tap discipline as the download path's first Working write.
+        _speechState.value = EngineState.Working(INDETERMINATE, OnboardingLogic.FETCH_PREPARING)
+        NpuPackController.start(appInstance, model.id)
+        viewModelScope.launch {
+            NpuPackController.state
+                .map(OnboardingLogic::engineStateForFetch)
+                .onEach { mapped ->
+                    if (mapped is EngineState.Ready) {
+                        // Same order as the download path: persistence first, then Ready.
+                        prefs.selectedModelId = model.id
+                        prefs.onboardingCompleted = true
+                    }
+                    _speechState.value = mapped
+                }
+                // Collect to the FIRST terminal state, then stop: a collector left running
+                // would keep mirroring later fetches (F7's chooser can start one for another
+                // tier) onto this card. first() cancels the upstream collection itself.
+                .first { it is EngineState.Ready || it is EngineState.Failed }
         }
     }
 

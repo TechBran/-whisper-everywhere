@@ -1,6 +1,9 @@
 package com.whispereverywhere.ui.onboarding
 
+import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
+import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -11,16 +14,169 @@ class OnboardingLogicTest {
 
     // ---------------------------------------------------------------- step order
 
-    @Test fun the_flow_walks_permissions_engines_cloud_and_ends() {
-        assertEquals(Step.ENGINES, OnboardingLogic.next(Step.PERMISSIONS))
+    @Test fun the_flow_walks_permissions_language_engines_cloud_and_ends() {
+        assertEquals(Step.LANGUAGE, OnboardingLogic.next(Step.PERMISSIONS))
+        assertEquals(Step.ENGINES, OnboardingLogic.next(Step.LANGUAGE))
         assertEquals(Step.CLOUD, OnboardingLogic.next(Step.ENGINES))
         assertNull(OnboardingLogic.next(Step.CLOUD))
     }
 
     @Test fun back_walks_the_flow_in_reverse_and_null_means_skip() {
         assertNull("back on the first step is a skip, never a block", OnboardingLogic.previous(Step.PERMISSIONS))
-        assertEquals(Step.PERMISSIONS, OnboardingLogic.previous(Step.ENGINES))
+        assertEquals(Step.PERMISSIONS, OnboardingLogic.previous(Step.LANGUAGE))
+        assertEquals(Step.LANGUAGE, OnboardingLogic.previous(Step.ENGINES))
         assertEquals(Step.ENGINES, OnboardingLogic.previous(Step.CLOUD))
+    }
+
+    // ---------------------------------------------------------------- language step (4.2 F6)
+
+    @Test fun theLanguageStepSitsBetweenPermissionsAndEngines() {
+        // The 3.8 owner ruling: language BEFORE model download — the step walks
+        // PERMISSIONS -> LANGUAGE -> ENGINES, and back retraces the same road.
+        assertEquals(Step.LANGUAGE, OnboardingLogic.next(Step.PERMISSIONS))
+        assertEquals(Step.ENGINES, OnboardingLogic.next(Step.LANGUAGE))
+        assertEquals(Step.LANGUAGE, OnboardingLogic.previous(Step.ENGINES))
+        assertEquals(Step.PERMISSIONS, OnboardingLogic.previous(Step.LANGUAGE))
+    }
+
+    @Test fun the_language_rows_lead_with_the_device_language_when_the_list_carries_it() {
+        val rows = OnboardingLogic.languageRows("es-MX")
+        assertEquals("the device's language renders first", "es", rows[0].first)
+        assertEquals("auto is one tap away, directly under it", "auto", rows[1].first)
+        assertEquals(
+            "the remainder is the supported list in its own order, minus the promoted rows",
+            PreferencesManager.SUPPORTED_LANGUAGES.filter { it.first != "es" && it.first != "auto" },
+            rows.drop(2),
+        )
+        // Either separator and any case — callers pass whatever the Locale handed them.
+        assertEquals("es", OnboardingLogic.languageRows("es_ES")[0].first)
+        assertEquals("es", OnboardingLogic.languageRows("ES")[0].first)
+        assertEquals("es", OnboardingLogic.deviceLanguageCode("es-419"))
+    }
+
+    @Test fun the_language_rows_lead_with_auto_when_the_device_language_is_absent() {
+        val rows = OnboardingLogic.languageRows("sq-AL") // Albanian: not in the 54-language list
+        assertEquals("device language absent -> auto leads", "auto", rows[0].first)
+        assertEquals(
+            PreferencesManager.SUPPORTED_LANGUAGES.filter { it.first != "auto" },
+            rows.drop(1),
+        )
+        assertNull(OnboardingLogic.deviceLanguageCode("sq-AL"))
+        // "auto" is a list entry, never a device language: no tag can promote it twice.
+        assertEquals("auto", OnboardingLogic.languageRows("auto")[0].first)
+        assertEquals(1, OnboardingLogic.languageRows("auto").count { it.first == "auto" })
+        assertNull(OnboardingLogic.deviceLanguageCode("auto"))
+    }
+
+    @Test fun the_language_rows_are_always_a_permutation_of_the_supported_list() {
+        // The same 54-plus-auto set Settings' picker offers — nothing lost, nothing invented,
+        // whatever the device reports (including degenerate tags).
+        for (tag in listOf("en-US", "bn-BD", "sq-AL", "zh_CN", "auto", "")) {
+            val rows = OnboardingLogic.languageRows(tag)
+            assertEquals(
+                "no row lost, none invented ($tag)",
+                PreferencesManager.SUPPORTED_LANGUAGES.toSet(),
+                rows.toSet(),
+            )
+            assertEquals(
+                "no row duplicated ($tag)",
+                PreferencesManager.SUPPORTED_LANGUAGES.size,
+                rows.size,
+            )
+        }
+    }
+
+    @Test fun language_continue_stays_locked_until_a_row_is_picked() {
+        // The 3.8 mandate is a FORCED choice — the same no-preselection discipline as the model
+        // pick: the device-locale row renders first and badged, and the user still taps.
+        assertFalse(OnboardingLogic.languageContinueEnabled(null))
+        assertTrue(OnboardingLogic.languageContinueEnabled("en"))
+        assertTrue(OnboardingLogic.languageContinueEnabled("auto"))
+    }
+
+    @Test fun the_language_hint_is_the_38_specs_own_sentence() {
+        // Our-own-app relative — a fact about this app's multilingual models, no cross-app claim.
+        assertEquals(
+            "Choosing a language makes multilingual transcription faster.",
+            OnboardingLogic.LANGUAGE_HINT,
+        )
+        assertEquals("Your device's language", OnboardingLogic.DEVICE_LANGUAGE_BADGE)
+    }
+
+    @Test fun the_auto_subtitle_is_the_ruled_text_verbatim() {
+        // THE 3.8 OWNER RULING, CARRIED VERBATIM — the plan certification already restored this
+        // text once after a softer substitute dropped the disclosed cost (cert round 1, revision
+        // 5). It is the honest disclosure of the cost LANGUAGE_HINT beside it asserts; the
+        // ruling stands unless the owner re-rules, and nothing here re-asks.
+        assertEquals(
+            "Slower on multilingual models — detects per session.",
+            OnboardingLogic.AUTO_LANGUAGE_SUBTITLE,
+        )
+    }
+
+    // ------------------------------------------- the pack fetch on the engine card (4.2 F6)
+
+    @Test fun fetch_pending_transferring_and_idle_all_read_preparing() {
+        val preparing = EngineState.Working(OnboardingSetupViewModel.INDETERMINATE, "Preparing")
+        assertEquals(preparing, OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Pending))
+        assertEquals(preparing, OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Transferring))
+        // Idle mid-collect is a fetch that has not published yet (the collector only runs after
+        // start()), not an error — it reads as preparing, never as a refusal.
+        assertEquals(preparing, OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Idle))
+    }
+
+    @Test fun fetch_downloading_names_google_play_and_carries_the_pct() {
+        assertEquals(
+            EngineState.Working(25, "Downloading from Google Play"),
+            OnboardingLogic.engineStateForFetch(
+                NpuPackFetch.FetchState.Downloading(soFar = 225_443_840L, total = 901_775_360L)
+            ),
+        )
+        // Total-safe like every pct in this codebase: an unknown total is 0%, never a crash.
+        assertEquals(
+            EngineState.Working(0, "Downloading from Google Play"),
+            OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Downloading(0L, 0L)),
+        )
+    }
+
+    @Test fun fetch_verifying_reads_verifying_with_the_pct() {
+        // The same word the download path's verify phase uses — one vocabulary on the card.
+        assertEquals(
+            EngineState.Working(50, OnboardingSetupViewModel.VERIFYING),
+            OnboardingLogic.engineStateForFetch(
+                NpuPackFetch.FetchState.Verifying(soFar = 535_842_816L, total = 1_071_685_632L)
+            ),
+        )
+    }
+
+    @Test fun fetch_needs_confirmation_names_plays_dialog_and_installed_means_ready() {
+        assertEquals(
+            EngineState.Working(
+                OnboardingSetupViewModel.INDETERMINATE,
+                "Waiting for your OK in the Google Play dialog",
+            ),
+            OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.NeedsConfirmation),
+        )
+        // Installed is only ever published after the pair is census-verified, renamed into
+        // place and announced (the controller's contract) — so it IS Ready, nothing more to do.
+        assertEquals(
+            EngineState.Ready,
+            OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Installed),
+        )
+    }
+
+    @Test fun fetch_failures_carry_the_reason_verbatim_and_cancelled_names_the_retry() {
+        // Failed is the F5 refusal CARRIER: the reason is finished user-facing copy, rendered
+        // verbatim — this mapping never rewrites a refusal.
+        val reason = NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_NOT_OWNED)
+        assertEquals(
+            EngineState.Failed(reason),
+            OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Failed(reason)),
+        )
+        assertEquals(
+            EngineState.Failed("Download cancelled — tap Retry to start again."),
+            OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Cancelled),
+        )
     }
 
     // ---------------------------------------------------------------- engines gating

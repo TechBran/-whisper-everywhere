@@ -14,6 +14,7 @@ import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModelManager
 import com.whispereverywhere.npu.NpuDiag
+import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.transcription.NpuWhisperBackend
@@ -163,10 +164,13 @@ class WhisperEverywhereApp : Application() {
             .toSet()
         val capable: Boolean? = if (installed.isEmpty()) null else npuCapableDevice
         val offered: Set<String> = if (capable == true) installed else emptySet()
-        // Once per install epoch — see [npuOfferLoggedGeneration]. getAndSet keeps the emission
-        // atomic under concurrent evaluations of the same generation.
+        // Once per install epoch — see [npuOfferLoggedGeneration]. MONOTONIC since 4.2 F6 (4.1
+        // L8 review M3, folded): getAndSet could REGRESS the latch when two concurrent
+        // evaluations held different generations — the older writer landing second re-armed the
+        // line and bought a spurious extra emission; max() cannot go backwards, and concurrent
+        // evaluations of the same generation still emit exactly once.
         val generation = ModelInstallSignal.generation.value
-        if (npuOfferLoggedGeneration.getAndSet(generation) != generation) {
+        if (npuOfferLoggedGeneration.getAndUpdate { maxOf(it, generation) } < generation) {
             // isSocSupported is called here for REPORTING only — it is a pure two-string table
             // lookup, it cannot dlopen, and the DECISION is `capable` above. The gate is not
             // re-run and is not duplicated: this only recovers which HALF of `capable` answered,
@@ -189,6 +193,44 @@ class WhisperEverywhereApp : Application() {
     // declinedTiers)`, fed by the service's own offeredNpuTierIds() memo), so the shim's one
     // consumer went with it. Nothing may re-grow a Boolean view: it is a second derivation of
     // the gate, and one bit cannot say WHICH of two independently-installed tiers is offered.
+
+    /**
+     * The gated tiers a chooser may offer to FETCH from Google Play (4.2 F6): every gated
+     * catalog tier the DEVICE FAMILY has a measured artifact row for, minus the ones already
+     * installed — [NpuFleetCensus.fetchableTierIds]'s executed truth table, bound to this
+     * device. Empty off the census, empty when the probe fails: every non-capable device
+     * answers empty, and since the chooser's set is offered UNION fetchable, empty means this
+     * function cannot change that device's model step by a byte.
+     *
+     * **This is a CHOOSER fact — display and steer — and it must never route.** A fetchable
+     * tier has nothing on disk to run; everything that routes a session (the service's memo,
+     * the selector) keeps reading [offeredNpuTierIds], which is untouched — offered still
+     * means installed AND capable. `ChooserSteerWiringPinTest` holds the routing files to
+     * zero live reads of this set.
+     *
+     * **Never call from Main** — the same contract as [offeredNpuTierIds], pinned the same
+     * way: on a census device the `capable` argument forces [npuCapableDevice], whose first
+     * read dlopens two QNN libraries. The family conjunct is evaluated FIRST, so the whole
+     * off-census fleet answers empty without ever paying the probe — the same cost shape the
+     * offer gate's installed-first ordering bought.
+     *
+     * Re-read on every call rather than memoised, [offeredNpuTierIds]'s own reasoning: the
+     * installed subtraction changes while the app runs (a pack lands, an import lands), and a
+     * chooser that cached "fetchable" would keep a Get button on a tier the user just
+     * installed. It is a handful of `File` stats, a table lookup, and a memoised probe read.
+     */
+    fun fetchableNpuTierIds(): Set<String> {
+        val gated = WhisperCatalog.entries.filter { it.gated }
+        return NpuFleetCensus.fetchableTierIds(
+            family = npuSocFamily,
+            capable = npuSocFamily != null && npuCapableDevice,
+            gatedTierIds = gated.map { it.id }.toSet(),
+            installedGatedIds = gated
+                .filter { whisperModelManager.isInstalled(it) }
+                .map { it.id }
+                .toSet(),
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()

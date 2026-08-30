@@ -1,24 +1,139 @@
 package com.whispereverywhere.ui.onboarding
 
+import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.npu.NpuPackFetch
+import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
+
 /**
  * Pure decisions for the guided onboarding flow and Home's permission chip — kept free of Compose
  * and Android so every rule is a plain JVM test ([OnboardingLogicTest]).
  */
 object OnboardingLogic {
 
-    /** The flow's fixed step order. */
-    enum class Step { PERMISSIONS, ENGINES, CLOUD }
+    /**
+     * The flow's fixed step order. LANGUAGE sits between PERMISSIONS and ENGINES since 4.2 F6 —
+     * the 3.8 owner ruling folded in (language BEFORE model download): the pick lands before the
+     * model step, so the steer, the download and the first session all read it.
+     */
+    enum class Step { PERMISSIONS, LANGUAGE, ENGINES, CLOUD }
 
     fun next(step: Step): Step? = when (step) {
-        Step.PERMISSIONS -> Step.ENGINES
+        Step.PERMISSIONS -> Step.LANGUAGE
+        Step.LANGUAGE -> Step.ENGINES
         Step.ENGINES -> Step.CLOUD
         Step.CLOUD -> null
     }
 
     fun previous(step: Step): Step? = when (step) {
         Step.PERMISSIONS -> null
-        Step.ENGINES -> Step.PERMISSIONS
+        Step.LANGUAGE -> Step.PERMISSIONS
+        Step.ENGINES -> Step.LANGUAGE
         Step.CLOUD -> Step.ENGINES
+    }
+
+    // ------------------------------------------------------------------ language step (4.2 F6)
+
+    /**
+     * The language step's hint — the 3.8 spec's own sentence. OUR-OWN-APP relative (a fact about
+     * how this app's multilingual models behave when handed a language), never a cross-app claim.
+     */
+    const val LANGUAGE_HINT = "Choosing a language makes multilingual transcription faster."
+
+    /**
+     * The auto row's subtitle — THE 3.8 OWNER RULING'S TEXT, CARRIED VERBATIM. It is the honest
+     * disclosure of the cost [LANGUAGE_HINT] beside it asserts, and the plan certification
+     * already restored it once after a softer substitute dropped the disclosed cost (cert round
+     * 1, revision 5). The ruling stands unless the owner re-rules; nothing here re-asks.
+     */
+    const val AUTO_LANGUAGE_SUBTITLE = "Slower on multilingual models — detects per session."
+
+    /** The chip on the device-locale row. A suggestion with a stated reason, never a pick. */
+    const val DEVICE_LANGUAGE_BADGE = "Your device's language"
+
+    /**
+     * The supported code the device's language tag resolves to, or null when the 54-language
+     * list does not carry it. Accepts either separator ("en-US", "en_GB") and any case — the
+     * same tolerance as [com.whispereverywhere.model.ModelTierCopy.steerIdForLanguageTag],
+     * because callers pass whatever `Locale.toLanguageTag()` handed them. `"auto"` is a list
+     * entry, never a device language — no tag can resolve to it here.
+     */
+    fun deviceLanguageCode(deviceLanguageTag: String): String? {
+        val code = deviceLanguageTag.substringBefore('-').substringBefore('_').lowercase()
+        return PreferencesManager.SUPPORTED_LANGUAGES
+            .firstOrNull { it.first != "auto" && it.first == code }
+            ?.first
+    }
+
+    /**
+     * The language step's rows, in render order: the DEVICE'S language first when
+     * [PreferencesManager.SUPPORTED_LANGUAGES] carries it, then `"auto"`, then the remaining
+     * entries in the list's own order (device language absent → auto leads). Always a
+     * permutation of the one supported-language list — the same 54-plus-auto set Settings'
+     * picker offers, so the two surfaces can never disagree about what exists.
+     */
+    fun languageRows(deviceLanguageTag: String): List<Pair<String, String>> {
+        val all = PreferencesManager.SUPPORTED_LANGUAGES
+        val device = deviceLanguageCode(deviceLanguageTag)?.let { code ->
+            all.first { it.first == code }
+        }
+        val auto = all.first { it.first == "auto" }
+        val leads = listOfNotNull(device, auto)
+        return leads + all.filterNot { it in leads }
+    }
+
+    /**
+     * The language step's Continue gate — enabled only once a row is PICKED. The 3.8 mandate is
+     * a forced choice, the same no-preselection discipline as the model pick: the device-locale
+     * row renders first and badged, and the user still taps.
+     */
+    fun languageContinueEnabled(picked: String?): Boolean = picked != null
+
+    // ---------------------------------------------- the pack fetch on the engine card (4.2 F6)
+
+    /** The engine card's label while the pack fetch is queued, transferring, or not yet begun. */
+    const val FETCH_PREPARING = "Preparing"
+
+    /** The engine card's label while Play's own download is moving bytes. Names the source. */
+    const val FETCH_DOWNLOADING_FROM_PLAY = "Downloading from Google Play"
+
+    /**
+     * The engine card's label while Play waits for ITS OWN dialog to be answered — wifi-wait
+     * and the >200 MB cellular consent both. The flow screen shows Play's dialog; this label is
+     * what the row says meanwhile, so the wait is never silent.
+     */
+    const val FETCH_AWAITING_PLAY_CONSENT = "Waiting for your OK in the Google Play dialog"
+
+    /** A cancelled fetch surfaces as Failed WITH the way forward — Retry re-enters ensureSpeech. */
+    const val FETCH_CANCELLED_MESSAGE = "Download cancelled — tap Retry to start again."
+
+    /**
+     * One [NpuPackFetch.FetchState] to exactly one [EngineState] — the whole translation between
+     * the F5 pack controller and the engines step's card, total over the sealed vocabulary so
+     * the card cannot receive a state this table never produced (4.2 F6).
+     *
+     * [NpuPackFetch.FetchState.Failed] is the F5 refusal CARRIER: its reason is finished,
+     * user-facing copy and flows through VERBATIM — this mapping never rewrites a refusal.
+     * `Idle` reads as preparing because the collector only ever runs after `start()`: the rest
+     * state mid-collect is a fetch that has not published yet, not an error. `Installed` maps
+     * to Ready — by the controller's contract it is only published after the pair is
+     * census-verified, renamed into place and announced.
+     */
+    fun engineStateForFetch(fetch: NpuPackFetch.FetchState): EngineState = when (fetch) {
+        is NpuPackFetch.FetchState.Idle,
+        is NpuPackFetch.FetchState.Pending,
+        is NpuPackFetch.FetchState.Transferring,
+        -> EngineState.Working(OnboardingSetupViewModel.INDETERMINATE, FETCH_PREPARING)
+        is NpuPackFetch.FetchState.Downloading -> EngineState.Working(
+            NpuPackFetch.pct(fetch.soFar, fetch.total), FETCH_DOWNLOADING_FROM_PLAY,
+        )
+        is NpuPackFetch.FetchState.Verifying -> EngineState.Working(
+            NpuPackFetch.pct(fetch.soFar, fetch.total), OnboardingSetupViewModel.VERIFYING,
+        )
+        is NpuPackFetch.FetchState.NeedsConfirmation ->
+            EngineState.Working(OnboardingSetupViewModel.INDETERMINATE, FETCH_AWAITING_PLAY_CONSENT)
+        is NpuPackFetch.FetchState.Installed -> EngineState.Ready
+        is NpuPackFetch.FetchState.Failed -> EngineState.Failed(fetch.reason)
+        is NpuPackFetch.FetchState.Cancelled -> EngineState.Failed(FETCH_CANCELLED_MESSAGE)
     }
 
     /**

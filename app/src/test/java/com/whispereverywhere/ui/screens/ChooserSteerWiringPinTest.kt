@@ -70,6 +70,16 @@ import org.junit.Test
  * [theProbeRunsOnlyWhenAGatedPairIsAlreadyOnDisk], which re-spells the pin that used to enforce
  * the eager form.
  *
+ * **4.2 F6: the guided flow's producer became the UNION `offeredNpuTierIds() +
+ * fetchableNpuTierIds()`** — a conscious re-spell of the flow's producer needle (the old
+ * offered-only needle tripped first, as a pin should). The union is a DISPLAY/steer set: on a
+ * capable fresh Play install the offered half is empty and the fetchable half names both gated
+ * tiers, so L9's ordering puts turbo at the head with zero new rules. The `WhisperCatalog.pickable`
+ * live-zeros are UNCHANGED (the Bengali-review encoding does not relax for a storefront), the
+ * Build-read counts are unchanged, and two new pins join: the fetchable set must never reach a
+ * routing surface, and the language step / gated-fetch wiring is held as source
+ * ([theLanguagePickWritesTheOneStoreAndTheGatedFetchRidesThePackController]).
+ *
  * **The source is read LF-NORMALISED.** `core.autocrlf=true` checks this repo out with CRLF, so a
  * needle written with a bare `\n` finds nothing and every assertion would pass or fail for the wrong
  * reason. The normalisation happens once, at each read site below.
@@ -114,6 +124,11 @@ class ChooserSteerWiringPinTest {
     /** The fifth (4.1, m2): the Settings row that opens the chooser must not describe its lineup. */
     private val settings: String by lazy {
         read("src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt")
+    }
+
+    /** The sixth (4.2 F6): the gated fetch's ViewModel wiring — coroutine-bound, pinned as source. */
+    private val setupVm: String by lazy {
+        read("src/main/java/com/whispereverywhere/ui/onboarding/OnboardingSetupViewModel.kt")
     }
 
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
@@ -174,6 +189,10 @@ class ChooserSteerWiringPinTest {
                 "val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)",
             ),
         )
+        // 4.2 F6: the producer is the UNION — offered (installed + capable) plus fetchable (the
+        // family's measured, deliverable, not-yet-installed tiers). A DISPLAY/steer set; the
+        // steer and ordering calls below consume it unchanged, which is the whole mechanism by
+        // which a capable fresh Play install leads with turbo.
         assertGateAnswerReachesBothCallsOffMain(
             flow,
             "the guided flow",
@@ -181,7 +200,8 @@ class ChooserSteerWiringPinTest {
                 "        val installGeneration by ModelInstallSignal.generation.collectAsState()",
                 "        val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {",
                 "            value = withContext(Dispatchers.IO) {",
-                "                WhisperEverywhereApp.getInstance().offeredNpuTierIds()",
+                "                val app = WhisperEverywhereApp.getInstance()",
+                "                app.offeredNpuTierIds() + app.fetchableNpuTierIds()",
                 "            }",
                 "        }",
             ),
@@ -670,6 +690,147 @@ class ChooserSteerWiringPinTest {
             "the row keeps its invitation copy",
             1,
             count(settings, "subtitle = \"Pick a speech-model tier\","),
+        )
+    }
+
+    /**
+     * 4.2 F6 — the fetchable set is a CHOOSER fact, and it must never route.
+     *
+     * `offeredNpuTierIds` (installed AND capable) is what every routing surface reads: the
+     * service's memo feeds the selector, and a session routed to a tier whose pair is not on
+     * disk dies at load with a user-facing decline. `fetchableNpuTierIds` says only "Play could
+     * deliver this" — it joins the two chooser lineups and NOTHING else. The mutation this
+     * closes is one identifier in either routing file: compile-clean, green everywhere else,
+     * and it routes sessions to models that do not exist.
+     */
+    @Test
+    fun theFetchableSetIsAChooserFactAndNothingThatRoutesASessionReadsIt() {
+        val service = read("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt")
+        val selector = read("src/main/java/com/whispereverywhere/transcription/NpuBackendSelector.kt")
+        assertEquals(
+            "the service's routing memo never reads the fetchable set",
+            0,
+            liveLineCount(service, "fetchable"),
+        )
+        assertEquals(
+            "the selector never hears of it either",
+            0,
+            liveLineCount(selector, "fetchable"),
+        )
+        assertEquals(
+            "the Android binding exists exactly once, in the app object beside the offer gate",
+            1,
+            count(app, "fun fetchableNpuTierIds(): Set<String> {"),
+        )
+        assertEquals(
+            "and it derives from the census's executed truth table, never a second derivation",
+            1,
+            count(app, "return NpuFleetCensus.fetchableTierIds("),
+        )
+        // The family conjunct runs FIRST so the whole off-census fleet answers empty without
+        // paying the ~7.9 MiB QNN dlopen — the offer gate's installed-first cost shape, kept.
+        assertEquals(
+            "the probe is conditional on a resolved census family",
+            1,
+            count(app, "capable = npuSocFamily != null && npuCapableDevice,"),
+        )
+        assertEquals(
+            "the offer gate itself never consults the fetchable set — offered stays installed " +
+                "AND capable, exactly as every routing reader assumes",
+            0,
+            count(
+                app.substringAfter("fun offeredNpuTierIds(): Set<String> {")
+                    .substringBefore("\n    }"),
+                "fetchable",
+            ),
+        )
+    }
+
+    /**
+     * 4.2 F6 — the language step writes the ONE store, and the gated fetch rides the pack
+     * controller with PLAY'S OWN consent dialog. Both are Android-bound (a Compose step and a
+     * viewModelScope branch), so the wiring is pinned as source — the house instrument, the
+     * same one every other test in this class uses.
+     */
+    @Test
+    fun theLanguagePickWritesTheOneStoreAndTheGatedFetchRidesThePackController() {
+        // The 3.8 shape: the pick writes the EXISTING selected_language pref through the
+        // existing setter, exactly once — no new storage anywhere in the flow.
+        assertEquals(
+            "Continue writes the one existing language store, once",
+            1,
+            count(flow, ".preferencesManager.setSelectedLanguage(picked)"),
+        )
+        assertEquals(
+            "the language Continue is gated on a real pick — the 3.8 forced choice",
+            1,
+            count(flow, "enabled = OnboardingLogic.languageContinueEnabled(pickedLanguage),"),
+        )
+        assertEquals(
+            "the language step preselects NOTHING: the device row renders first and badged, " +
+                "and the user still taps",
+            1,
+            count(flow, "var pickedLanguage by remember { mutableStateOf<String?>(null) }"),
+        )
+        // The gated branch: ensureSpeech hands a gated, not-installed tier to the pack
+        // controller — the download path below it stays byte-for-byte the non-gated route,
+        // which is what keeps DownloadManager's delete-first behaviour away from a pair it
+        // could never re-fetch.
+        assertEquals(
+            "ensureSpeech routes gated tiers to the pack flow before the download path",
+            1,
+            count(setupVm, "        if (model.gated) {"),
+        )
+        assertEquals(
+            "and the gated branch dispatches and RETURNS — the download path is unreachable " +
+                "for a gated tier",
+            1,
+            count(
+                setupVm,
+                block(
+                    "            ensureGatedSpeech(model)",
+                    "            return",
+                ),
+            ),
+        )
+        assertEquals(
+            "the gated route starts the F5 controller on the selected tier",
+            1,
+            count(setupVm, "NpuPackController.start(appInstance, model.id)"),
+        )
+        assertEquals(
+            "every fetch state reaches the card through the ONE pure mapping — no second " +
+                "translation can drift from the tested table",
+            1,
+            count(setupVm, ".map(OnboardingLogic::engineStateForFetch)"),
+        )
+        assertEquals(
+            "the collector stops at the first terminal state, so a later fetch for another " +
+                "tier is never mirrored onto this card",
+            1,
+            count(setupVm, ".first { it is EngineState.Ready || it is EngineState.Failed }"),
+        )
+        // Play's own >200 MB cellular dialog: shown once per ENTRY into NeedsConfirmation
+        // (LaunchedEffect keyed on the state VALUE), and no custom re-ask exists anywhere —
+        // the consent is Play's to word and to size.
+        assertEquals(
+            "the flow shows Play's dialog once per NeedsConfirmation entry",
+            1,
+            count(
+                flow,
+                block(
+                    "            LaunchedEffect(fetch) {",
+                    "                if (fetch is NpuPackFetch.FetchState.NeedsConfirmation) {",
+                    "                    NpuPackController.confirm(context as ComponentActivity)",
+                    "                }",
+                    "            }",
+                ),
+            ),
+        )
+        assertEquals(
+            "the flow observes the controller's state for exactly that purpose",
+            1,
+            count(flow, "NpuPackController.state.collectAsState()"),
         )
     }
 }
