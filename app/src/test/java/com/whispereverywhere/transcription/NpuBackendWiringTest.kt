@@ -834,12 +834,21 @@ class NpuBackendWiringTest {
         )
         assertEquals(
             "the decline arm and the switch arm are one if/else — one rebuild, one line, never " +
-                "zero and never two",
+                "zero and never two — and the fallback arm ADDITIONALLY requires " +
+                "`routedNpuTierId == null` (RE-SPECCED by the L8 review's I2; the old block " +
+                "keyed on the decline alone). Without that conjunct, decline-then-switch — a " +
+                "tier declines mid-A/B and the owner switches to the OTHER npu tier, the A/B's " +
+                "natural next move — printed \"rebuilt on the CPU tier\" while the replacement " +
+                "routed to the other NPU tier: false text on the sheet's own instrument, " +
+                "contradicting §7's expected `tier rebuild` rhythm. With it, every arm tells " +
+                "the truth in all four decline/switch combinations: the fallback line fires " +
+                "exactly when the replacement IS the CPU tier, and every other rebuild names " +
+                "the ACTUAL target through tierRebuild.",
             1,
             count(
                 warm,
                 block(
-                    "            if (localEngineNpuTierId != null && reason != null) {",
+                    "            if (localEngineNpuTierId != null && reason != null && routedNpuTierId == null) {",
                     "                android.util.Log.w(NpuDiag.TAG, NpuDiag.fallbackRebuild(NpuTierStatus.stageOf(reason)))",
                     "            } else {",
                     "                android.util.Log.i(NpuDiag.TAG, NpuDiag.tierRebuild(localEngineNpuTierId, routedNpuTierId))",

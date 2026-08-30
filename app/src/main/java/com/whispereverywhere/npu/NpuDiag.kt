@@ -161,7 +161,12 @@ object NpuDiag {
     /**
      * `npu: fallback rebuild stage=encode (the cached local engine is rebuilt on the CPU tier)` —
      * emitted **once per session**, by the service, when it drops the engine it built on the NPU
-     * backend and builds the CPU one in its place (4.0, Q9).
+     * backend and builds the CPU one in its place (4.0, Q9). **Only then (L8 review I2):** the
+     * service's partition also requires the replacement to actually route to the CPU tier, so
+     * this line's parenthetical is true whenever it prints. A decline followed by a switch to
+     * the OTHER npu tier is narrated by [tierRebuild] instead, naming the real target — under
+     * the old decline-only partition this line would have claimed a CPU rebuild while the
+     * replacement routed to the other NPU tier.
      *
      * **It is a second line about the same event, and that is deliberate.** [unavailable] is the
      * BACKEND saying "this stage declined"; this is the ENGINE LAYER saying "and here is what I did
@@ -181,9 +186,11 @@ object NpuDiag {
 
     /**
      * `npu: tier rebuild from=npu to=npu-turbo (the cached local engine is rebuilt for the
-     * selected tier)` — emitted **once per rebuild**, by the service, when it drops a cached
-     * engine for a reason that is NOT a decline: the user switched tiers (4.0 Q9 M3, folded at
-     * 4.1 L8).
+     * selected tier)` — emitted **once per rebuild**, by the service, for every rebuild whose
+     * target is not the decline-forced CPU fallback: the user switched tiers — **including a
+     * switch away from a tier that had declined** (4.0 Q9 M3, folded at 4.1 L8; the
+     * decline-then-switch arm re-specced here by the L8 review's I2, because the line must name
+     * the ACTUAL target and the fallback line's "CPU tier" claim would be false on that path).
      *
      * **The silent rebuild was correct behaviour with missing narration, and the A/B makes it
      * the ordinary path.** The owner's session is a sequence of exactly these switches — multi ->
@@ -202,7 +209,9 @@ object NpuDiag {
 
     /**
      * `npu: offer soc=SM8650:pass probe=pass installed=npu,npu-turbo offered=npu,npu-turbo` —
-     * emitted **once per process**, at the first evaluation of the offer gate.
+     * emitted **once per install epoch** (once per process per `ModelInstallSignal` generation —
+     * re-armed by an install, never by a chooser open; 4.1 L8, L5 review I1), at the gate's
+     * first evaluation of each epoch.
      *
      * **This line is the run-book's first read.** The gate composes three predicates and its
      * answer is one set, so "the card never showed" collapses three very different next actions
@@ -230,9 +239,11 @@ object NpuDiag {
      * @param capable the memoised gate — `isSocSupported && probe` — or **null when the gate
      *        returned before evaluating it** because nothing was installed. Null is reported as
      *        `probe=skipped`, never as `fail`.
-     * @param installedTierIds the gated tiers whose files were on disk **at this first
-     *        evaluation**. The SoC and probe verdicts are process-permanent; this one is a
-     *        snapshot, because the line is emitted once and an import can land afterwards.
+     * @param installedTierIds the gated tiers whose files were on disk **at this emission**.
+     *        The SoC and probe verdicts are process-permanent; this one is a snapshot — and
+     *        since the L8 re-arm, an import refreshes it: the next evaluation emits a fresh
+     *        line for the new epoch. Only the signal-less `adb push` route leaves a stale
+     *        snapshot until restart, and the run-book says so where it prescribes that route.
      */
     fun offer(
         socModel: String?,

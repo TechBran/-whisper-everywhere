@@ -2328,12 +2328,17 @@ class FloatingBubbleService : Service(),
         if (cached != null && (routedNpuTierId == localEngineNpuTierId || !allowRebuild)) return cached
         if (cached != null) {
             // ONCE PER SESSION, never once per segment: these fire only on the transition. Two
-            // narrations for two different events (Q9 M3, folded at 4.1 L8): a rebuild because
-            // the cached engine's OWN npu tier declined keeps its stage-carrying line, and every
-            // other rebuild — a tier switch, which the A/B makes the ordinary path — names the
-            // from-tier and the to-tier instead of happening silently.
+            // narrations for two different events (Q9 M3, folded at 4.1 L8; partition re-specced
+            // by the L8 review's I2): the stage-carrying fallback line fires only when the cached
+            // engine's OWN npu tier declined AND that decline is what the replacement routes on —
+            // i.e. the new engine really is the CPU tier. Every other rebuild — a tier switch,
+            // which the A/B makes the ordinary path, INCLUDING a switch away from a tier that
+            // had declined — names the from-tier and the ACTUAL target tier, the selector's own
+            // answer. The old partition keyed on the decline alone, so decline-then-switch
+            // printed "rebuilt on the CPU tier" while the replacement routed to the OTHER npu
+            // tier: false text on the one log the A/B sheet reads as its instrument.
             val reason = NpuTierStatus.reasonFor(localEngineNpuTierId)
-            if (localEngineNpuTierId != null && reason != null) {
+            if (localEngineNpuTierId != null && reason != null && routedNpuTierId == null) {
                 android.util.Log.w(NpuDiag.TAG, NpuDiag.fallbackRebuild(NpuTierStatus.stageOf(reason)))
             } else {
                 android.util.Log.i(NpuDiag.TAG, NpuDiag.tierRebuild(localEngineNpuTierId, routedNpuTierId))

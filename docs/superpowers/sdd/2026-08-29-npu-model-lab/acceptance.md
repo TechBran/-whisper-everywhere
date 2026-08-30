@@ -245,13 +245,16 @@ switch. The CPU `multi` tier by contrast LATCHES: first usable detection pins th
 Every A/B tier change rebuilds the cached engine, and every rebuild narrates itself (Q9 M3,
 closed at L8):
 
-- a switch (no decline): `npu: tier rebuild from=npu to=npu-turbo (the cached local engine is
-  rebuilt for the selected tier)` — `cpu` stands for every CPU tier at once;
-- a decline-driven rebuild: `npu: fallback rebuild stage=… (the cached local engine is rebuilt
-  on the CPU tier)`.
+- a switch: `npu: tier rebuild from=npu to=npu-turbo (the cached local engine is rebuilt for
+  the selected tier)` — `cpu` stands for every CPU tier at once. This is the line for EVERY
+  switch, **including a switch away from a tier that has declined** (it names the actual target
+  tier);
+- a decline-driven rebuild — the declined tier still selected, so the replacement really IS the
+  CPU tier: `npu: fallback rebuild stage=… (the cached local engine is rebuilt on the CPU
+  tier)`.
 
 A rebuild with NEITHER line is a bug; a `tier rebuild` line on every sheet-row switch is the
-expected rhythm of §6.
+expected rhythm of §6, decline or no decline.
 
 **The epoch row — the L1 mechanism's first cross-tier exercise, and the reason two npu tiers are
 safe at all.** On an `npu → npu-turbo` (or reverse) switch, the stale engine's queued release may
@@ -287,6 +290,14 @@ Record which of the two shapes each switch produced:
   delegating overrides). While the NPU is live those two are honestly absent — never forged.
 
 ## §9 — Peak RSS on both npu-class tiers
+
+**RESTART THE APP BEFORE THIS SECTION.** §8 deliberately declined the npu tier (the
+small-refuses-yue check is a real `stage=lang` decline), and a decline is PROCESS-scoped by
+design — nothing clears it short of an app restart; there is no in-app route back (the card's
+own F3 wording says exactly this). Without the restart, `npu` routes to the CPU backend and its
+RSS row below would silently measure a CPU session — the tell is a `fallback rebuild` line and
+missing `npu: encode=` lines, which is not a row you want to discover was hollow after the
+session ends.
 
 Turbo is ~1,043 MiB of NPU-side residency against npu's ~376 MiB, and I11's no-co-residency rule
 was written for the smaller one. After a few segments on each tier:
