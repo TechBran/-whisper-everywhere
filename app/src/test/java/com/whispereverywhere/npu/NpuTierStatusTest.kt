@@ -152,15 +152,22 @@ class NpuTierStatusTest {
     // ------------------------------------------------------------- 4.3: the decline's recovery
 
     @Test
-    fun theCpuModelPresentArmIsTheOldNoteVERBATIM() {
-        // The 4.0/F3 sentence, byte for byte, in the state it was written for: a CPU model
-        // installed AND the selection still on this tier. 4.3 added an arm and the micro-round
-        // added a remedy split; neither may edit THIS string — a device that falls back exactly
-        // as it always has reads exactly what it always did.
+    fun theCpuModelPresentArmStatesTheREALTradeAndPinsItVerbatim() {
+        // This assertion carried the 4.0/F3 sentence byte for byte and forbade editing it, on the
+        // reasoning that a device falling back "exactly as it always has" should read exactly what
+        // it always did. That reasoning outlived its fact. In 4.0 the only NPU tier ran
+        // whisper-small — the SAME checkpoint the CPU multilingual model carries — so "Accuracy is
+        // unchanged; it is slower" was measurably true. 4.1 shipped npu-turbo (large-v3-turbo) and
+        // 4.3 made turbo the ONLY tier a capable device is offered, so the overwhelmingly likely
+        // decline is now turbo -> CPU, where accuracy IS lost: the owner's own A/B called turbo
+        // "much more accurate", and their production field report (2026-08-30, an S23 Ultra on
+        // 8 Gen 2 and a MediaTek tablet, both correctly declined and both on the CPU model) read
+        // "accuracy just suffers a bit". The pin stays verbatim — the string is still one edit away
+        // from a comfortable lie — but it pins the TRUE sentence now.
         assertEquals(
             "The AI chip is unavailable on this device right now (stage: init), so speech is " +
-                "running on the multilingual CPU model. Accuracy is unchanged; it is slower. " +
-                "Restart the app to try the AI chip again.",
+                "running on the multilingual CPU model. It is slower, and a little less accurate " +
+                "than the AI chip model. Restart the app to try the AI chip again.",
             NpuTierStatus.cardNote("init: nativeInit failed at 0", true, stillSelected = true),
         )
     }

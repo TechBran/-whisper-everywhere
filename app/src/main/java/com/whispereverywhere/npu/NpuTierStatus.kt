@@ -216,9 +216,18 @@ object NpuTierStatus {
                 "multilingual model below — that switches you to it, and leaves your AI chip " +
                 "model installed and one tap away on this screen."
         }
+        // "Accuracy is unchanged" was TRUE in 4.0, when the only NPU tier ran whisper-small's own
+        // weights — the same checkpoint the CPU multilingual model carries, so a decline really did
+        // cost nothing but speed. 4.1 shipped `npu-turbo` (large-v3-turbo) and the claim quietly
+        // went false: the owner's own A/B called turbo "much more accurate", and their field report
+        // from a declining device (2026-08-30, a Galaxy S23 Ultra and a MediaTek tablet, both
+        // correctly on the CPU model in production) put it plainly — "accuracy just suffers a bit".
+        // A fallback card that tells a user they lost only speed, when they also lost the accuracy
+        // they chose the tier for, is the same class of comfortable falsehood this file has now
+        // corrected twice. State the real trade; it is still a good outcome, and it is honest.
         return "The AI chip is unavailable on this device right now (stage: $stage), so speech is " +
-            "running on the multilingual CPU model. Accuracy is unchanged; it is slower. " +
-            retryRemedy(stillSelected)
+            "running on the multilingual CPU model. It is slower, and a little less accurate than " +
+            "the AI chip model. " + retryRemedy(stillSelected)
     }
 
     /**

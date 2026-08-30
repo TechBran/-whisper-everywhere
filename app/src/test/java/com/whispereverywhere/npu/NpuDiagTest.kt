@@ -632,9 +632,15 @@ class NpuDiagTest {
             note.contains("CPU model"),
         )
         assertTrue(
-            "and it does not claim accuracy was lost, because it was not — the fallback is the " +
-                "same whisper weights on a different processor: $note",
-            note.contains("Accuracy is unchanged"),
+            "AND it states the real trade. This assertion used to require \"Accuracy is unchanged\" " +
+                "and justified it with \"the fallback is the same whisper weights on a different " +
+                "processor\" — true in 4.0, when the only NPU tier WAS whisper-small. 4.1 shipped " +
+                "npu-turbo (large-v3-turbo), the owner's A/B measured it \"much more accurate\", " +
+                "and their production field report from two declining devices said \"accuracy " +
+                "just suffers a bit\". Telling a user they lost only speed when they also lost " +
+                "the accuracy they chose the tier for is a comfortable falsehood, and this file " +
+                "does not ship those: $note",
+            note.contains("less accurate than the AI chip model"),
         )
 
         // THE LIFETIME THE NOTE CLAIMS (final review F3 / I4) — a MEASURED survivor of the F-round
