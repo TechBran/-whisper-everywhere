@@ -188,9 +188,54 @@ class NpuTierStatusTest {
         assertTrue(
             "and it points at the control that fixes it, which the card renders directly " +
                 "below this sentence: $note",
-            note.contains("Download the standard multilingual model below"),
+            note.contains("download the standard multilingual model below"),
         )
-        assertTrue("the restart route survives beside it: $note", note.contains("restart the app"))
+        assertTrue(
+            "the restart route survives beside it: $note",
+            note.contains("Restart the app to try the AI chip again"),
+        )
+    }
+
+    @Test
+    fun theTwoRemediesAreTrueTOGETHERAndTheSwitchIsNamedBeforeItHappens() {
+        // 4.3 fix round, I-1(b). The first shipping wording offered the download and the restart
+        // as if both survived the tap. They do not: the download persists selectedModelId onto
+        // the CPU tier, so "restart the app to try the AI chip again" went FALSE the instant the
+        // user acted on the button printed directly beneath it — a remedy that expires when you
+        // use the remedy next to it, on a note whose whole job is to be honest about a decline.
+        val note = NpuTierStatus.cardNote("init: nativeInit failed at 0", false)!!
+        assertTrue(
+            "the restart must be offered as the remedy that keeps the AI chip, and FIRST — it " +
+                "costs nothing and a process-scoped decline is exactly what it fixes: $note",
+            note.indexOf("Restart the app") < note.indexOf("download the standard"),
+        )
+        assertTrue(
+            "and the download must carry its CONSEQUENCE, so the two are alternatives rather " +
+                "than a promise the second one breaks: $note",
+            note.contains("that switches you to it"),
+        )
+        assertTrue(
+            "...including that the gigabyte the user already paid for is not lost: $note",
+            note.contains("leaves your AI chip model installed"),
+        )
+        assertTrue(
+            "...and where the way back is, which must be a place they are actually standing: $note",
+            note.contains("one tap away on this screen"),
+        )
+        // The switch is then RE-stated at the moment it happens, because a sentence read before
+        // a tap is not a receipt for what the tap did.
+        val switched = NpuTierStatus.RECOVERY_SWITCH_NOTE
+        assertEquals(
+            "Switched to the standard model. Your AI chip model stays installed — pick it " +
+                "again from this screen any time.",
+            switched,
+        )
+        assertTrue("it states the change", switched.contains("Switched to the standard model"))
+        assertTrue("it states what was NOT lost", switched.contains("stays installed"))
+        assertTrue("and it states the way back", switched.contains("pick it again"))
+        // The CPU-model-present arm makes no switch claim at all: nothing switches there.
+        val other = NpuTierStatus.cardNote("init: nativeInit failed at 0", true)!!
+        assertFalse("the fallback arm must not talk about switching", other.contains("switches you"))
     }
 
     @Test

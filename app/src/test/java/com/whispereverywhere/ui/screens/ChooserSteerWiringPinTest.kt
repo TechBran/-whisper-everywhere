@@ -178,16 +178,29 @@ class ChooserSteerWiringPinTest {
 
     @Test
     fun theGuidedFlowOffersTheOrderedListAndNeverRawCatalogOrder() {
+        // 4.3 fix round (I-3) RE-SPELL: the ordering call is now bound to a name, because the
+        // revalidation guard and the cards must be validated against ONE list — two calls could
+        // drift and the guard would then clear a pick whose card is still on screen (or keep one
+        // whose card is gone). The claim is unchanged: this chooser renders the ORDERED list,
+        // resolved through the catalog, and never raw catalog order.
         assertEquals(
             "the guided chooser renders orderedForLanguageTagFor, resolved through the catalog",
             1,
             count(
                 flow,
                 block(
-                    "        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, " +
-                        "alsoOfferedIds)",
+                    "        lineup",
                     "            .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
+            ),
+        )
+        assertEquals(
+            "and that name is bound from the ordering rule, not assembled some other way",
+            1,
+            count(
+                flow,
+                "        val lineup = ModelTierCopy.orderedForLanguageTagFor(languageTag, " +
+                    "npuTierIds, alsoOfferedIds)",
             ),
         )
         assertEquals(
@@ -268,20 +281,45 @@ class ChooserSteerWiringPinTest {
                 ),
             ),
         )
+        // 4.3 fix round (I-2) RE-SPELL: the latch is no longer set unconditionally. The escape is
+        // still offered for every Failed terminal — that is the no-wedge contract and it did not
+        // change — but only a genuine DELIVERY failure of the gated tier suspends the ruling, so
+        // a user's own cancel or a busy-refusal can no longer permanently restore the menu the
+        // owner just removed. The latch is OR-ed, never overwritten: one undeliverable answer
+        // stands however many cancels follow it.
         assertEquals(
-            "the escape SETS the latch the rule reads — an escape that returns the user to the " +
-                "same one undeliverable card is not an escape",
+            "the escape sets the latch ONLY on a real delivery failure, and never clears it",
             1,
             count(
                 flow,
                 block(
-                    "                        onChooseAgain = {",
-                    "                            oneTierDeliveryFailed = true",
+                    "                        onChooseAgain = { deliveryFailed ->",
+                    "                            if (deliveryFailed) oneTierDeliveryFailed = true",
                     "                            pickedTierId = null",
                     "                            setupVm.resetSpeechForReChoice()",
                     "                        },",
                 ),
             ),
+        )
+        assertEquals(
+            "and the answer comes from the pure rule, computed where the REASON and the TIER are " +
+                "both in scope — nowhere above the engine card has either",
+            1,
+            count(
+                flow,
+                block(
+                    "            val deliveryFailed = OnboardingLogic.oneTierDeliveryFailed(",
+                    "                pickedTierId, (speech as? EngineState.Failed)?.message.orEmpty(),",
+                    "            )",
+                ),
+            ),
+        )
+        assertEquals(
+            "the latch has exactly ONE write site — the guarded one the block above pins. A " +
+                "second, unguarded write anywhere would restore the menu for reasons the rule " +
+                "just finished excluding, and the block needle alone could not see it",
+            1,
+            liveLineCount(flow, "oneTierDeliveryFailed = true"),
         )
         assertEquals(
             "the latch is DURABLE screen state, not a read of the engine state — " +
@@ -300,6 +338,67 @@ class ChooserSteerWiringPinTest {
                 "through the pure rule, so catalog ORDER never reaches a card (the Bengali review)",
             0,
             count(flow, "WhisperCatalog.pickable"),
+        )
+    }
+
+    /**
+     * 4.3 fix round (I-3) — **THE PICK MUST NOT OUTLIVE ITS CARD.**
+     *
+     * Both producers on the engines step are async (the gate's first read dlopens ~7.9 MiB of
+     * QNN), so a capable device renders the pre-4.3 `[pro, multi]` lineup for that window and
+     * then narrows to `[npu-turbo]`. A tap inside the window survived the narrowing: the card
+     * vanished, `pickedTierId` kept its value, `tierPicked` stayed true, and the footer's Download
+     * wrote `prefs.selectedModelId = pro|multi` **on a capable device with no card on screen for
+     * it** — the outcome the ruling forbids, reached by a user who did nothing wrong. Pre-4.3 the
+     * race existed and was harmless, because a pick's card never left the list; 4.3 made a lineup
+     * able to shrink under a pick, so 4.3 owns the guard.
+     *
+     * `OnboardingLogicTest` executes the rule. This holds the screen to (a) keying the guard on
+     * the LINEUP — the thing that moves — and (b) actually being able to clear the pick, which a
+     * non-null `onPick` signature cannot express.
+     */
+    @Test
+    fun theTierPickIsRevalidatedWheneverTheLineupMovesUnderIt() {
+        assertEquals(
+            "the lineup is computed ONCE and named, so the guard and the cards cannot be " +
+                "validated against two different lists",
+            1,
+            count(
+                flow,
+                "        val lineup = ModelTierCopy.orderedForLanguageTagFor(languageTag, " +
+                    "npuTierIds, alsoOfferedIds)",
+            ),
+        )
+        assertEquals(
+            "the guard is keyed on the LINEUP, so it re-runs exactly when the list moves — " +
+                "keyed on anything else (or unkeyed) it cannot see the narrowing it exists for",
+            1,
+            count(
+                flow,
+                block(
+                    "        LaunchedEffect(lineup) {",
+                    "            val kept = OnboardingLogic.revalidatePick(pickedTierId, lineup)",
+                    "            if (kept != pickedTierId) onPick(kept)",
+                    "        }",
+                ),
+            ),
+        )
+        assertEquals(
+            "and the pick callback is NULLABLE — a guard that cannot clear the pick is not a " +
+                "guard, and the type is what makes that impossible to regress",
+            1,
+            count(flow, "    onPick: (String?) -> Unit,"),
+        )
+        assertEquals(
+            "the cards render the SAME named lineup the guard validated against",
+            1,
+            count(
+                flow,
+                block(
+                    "        lineup",
+                    "            .mapNotNull { WhisperCatalog.byId(it) }",
+                ),
+            ),
         )
     }
 
@@ -1196,6 +1295,93 @@ class ChooserSteerWiringPinTest {
                 "one (the manager is reached only through the ViewModel here)",
             0,
             liveLineCount(picker, "manager.download("),
+        )
+    }
+
+    /**
+     * 4.3 fix round (I-1) — **THE SWITCH IS STATED, AND THE USER IS STILL THERE TO READ IT.**
+     *
+     * The recovery rides `viewModel.download`, which persists `prefs.selectedModelId` — the right
+     * sink (leaving the selection on a declined npu-class tier routes a QAIRT blob to
+     * `WhisperNativeBackend` and yields no working backend), but a PERMANENT write provoked by a
+     * PROCESS-SCOPED decline. Shipped silently it meant: the note's own "restart the app to try
+     * the AI chip again" went false at the instant the user acted on the button beneath it; the
+     * `Done` navigation popped them to Home before anything could be seen; and after the next
+     * process start the decline record was gone, so a capable phone showed `npu-turbo` at the
+     * head of its one-card chooser, badged "Best match for your language", while transcribing on
+     * the 190 MB CPU model — discoverable only in Settings. The behaviour was right; the silence
+     * was not.
+     *
+     * **The mutations this closes:**
+     *  - *The navigation suppression removed.* One `LaunchedEffect` condition; the user is ejected
+     *    mid-explanation and the KDoc's "the note and this block retire together" describes a
+     *    frame nobody is on the screen to see.
+     *  - *The suppression widened to the tier id alone.* Then an ordinary Download tap on the
+     *    `multi` card — the whole non-capable fleet's normal path — stops finishing onboarding.
+     *  - *The confirmation moved inside the recovery block.* It would vanish in the same frame it
+     *    appeared, because the landing install flips `hasCpuFallback` and retires that block.
+     */
+    @Test
+    fun theRecoveryStatesItsSwitchAndKeepsTheScreenThatExplainsIt() {
+        assertEquals(
+            "the recovery tap is REMEMBERED — Done(modelId) alone cannot tell the recovery apart " +
+                "from an ordinary Download tap on the multi card",
+            1,
+            count(picker, "var recoveryTapped by remember { mutableStateOf(false) }"),
+        )
+        assertEquals(
+            "and the tap sets it, on the same one start site that runs the download",
+            1,
+            count(
+                picker,
+                block(
+                    "                            recoveryTapped = true",
+                    "                            activeModelId = recoveryModel.id",
+                    "                            viewModel.download(recoveryModel)",
+                ),
+            ),
+        )
+        assertEquals(
+            "the ready callback is gated by the PURE rule, so the recovery keeps the screen and " +
+                "every other download navigates exactly as it always has",
+            1,
+            count(
+                picker,
+                block(
+                    "        if (s is DownloadState.Done &&",
+                    "            OnboardingLogic.downloadLeavesTheChooser(s.modelId, recoveryTapped)",
+                    "        ) {",
+                    "            onModelReady()",
+                ),
+            ),
+        )
+        assertEquals(
+            "the unconditional pop is gone from live code",
+            0,
+            liveLineCount(picker, "if (s is DownloadState.Done) {"),
+        )
+        assertEquals(
+            "the switch note is composed at SCREEN level, not inside the recovery block — the " +
+                "landing install retires that block in the same frame the note would appear in",
+            1,
+            count(
+                picker,
+                block(
+                    "    val recoverySwitched =",
+                    "        recoveryTapped && (state as? DownloadState.Done)?.modelId == " +
+                        "NpuTierStatus.RECOVERY_TIER_ID",
+                ),
+            ),
+        )
+        assertEquals(
+            "and it renders the one pinned sentence, never a second wording",
+            1,
+            count(picker, "text = NpuTierStatus.RECOVERY_SWITCH_NOTE,"),
+        )
+        assertEquals(
+            "gated on that one fact",
+            1,
+            count(picker, "            if (recoverySwitched) {"),
         )
     }
 

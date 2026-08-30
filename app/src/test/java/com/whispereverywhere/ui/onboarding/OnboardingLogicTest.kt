@@ -381,6 +381,176 @@ class OnboardingLogicTest {
         assertTrue(
             OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), true).containsAll(setOf("multi", "pro")),
         )
+    }
+
+    // ------------------------------------------------------- 4.3 fix round: the narrowed latch
+
+    @Test fun only_a_real_delivery_failure_of_the_gated_tier_restores_the_menu() {
+        // I-2. The escape is offered for EVERY Failed terminal (unchanged — that IS the no-wedge
+        // contract), but the first shipping version LATCHED on every one of them. So a user on a
+        // perfectly deliverable Play device who cancelled the pack download once, or hit one
+        // transient refusal, and then tapped "Choose a different model" had the 190 MB and 358 MB
+        // tiers restored for the rest of onboarding — permanently, since the latch is never
+        // cleared. A transient event undoing the ruling the branch exists to apply.
+
+        // The two NON-DELIVERIES. Neither is Play answering about this install: one is a fetch
+        // that never began, the other is the user's own cancel. Neither may cost the owner the
+        // ruling, and this is the finding's hard requirement.
+        assertFalse(
+            "a busy refusal is a fetch that NEVER STARTED — it says nothing about delivery",
+            OnboardingLogic.oneTierDeliveryFailed(
+                "npu-turbo", OnboardingLogic.FETCH_BUSY_WITH_ANOTHER_MODEL,
+            ),
+        )
+        assertFalse(
+            "the user's OWN cancel must never restore the menu they were not complaining about",
+            OnboardingLogic.oneTierDeliveryFailed(
+                "npu-turbo", OnboardingLogic.FETCH_CANCELLED_MESSAGE,
+            ),
+        )
+        // Composed through the real mapping, so the constants above cannot drift from the states
+        // that actually produce them.
+        listOf(
+            NpuPackFetch.FetchState.Cancelled,
+        ).forEach { fetch ->
+            val mapped = OnboardingLogic.engineStateForFetch(fetch)
+            val reason = (mapped as EngineState.Failed).message
+            assertTrue("the escape is still offered for $fetch", OnboardingLogic.showChooseDifferentModel(mapped))
+            assertFalse("but $fetch must not latch", OnboardingLogic.oneTierDeliveryFailed("npu-turbo", reason))
+        }
+
+        // The DELIVERY OUTCOMES — the sideload family, the undeliverable family, and (one step
+        // wider, deliberately) a pack that arrives and fails verification: a delivery that did
+        // not produce a model, and one that can be persistent. Narrowing past it would re-open
+        // the very wedge the latch was added inside of.
+        listOf(
+            OnboardingLogic.ONBOARDING_FETCH_REFUSAL,
+            OnboardingLogic.ONBOARDING_FETCH_UNDELIVERED,
+            "verify: the delivered encoder does not match the census digest",
+        ).forEach { reason ->
+            assertTrue(
+                "a real delivery outcome must suspend the rule: <<$reason>>",
+                OnboardingLogic.oneTierDeliveryFailed("npu-turbo", reason),
+            )
+        }
+        // Every Play error code, through the real refusal builder and the real mapping.
+        listOf(0, -1, -2, -3, -4, -5, -6, -7, -10, -11, -13, -14, -15, -100, 12345).forEach { code ->
+            val mapped = OnboardingLogic.engineStateForFetch(
+                NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(code))
+            )
+            assertTrue(
+                "Play error $code is a delivery answer and must latch",
+                OnboardingLogic.oneTierDeliveryFailed("npu-turbo", (mapped as EngineState.Failed).message),
+            )
+        }
+
+        // THE TIER CLAUSE. A CPU tier's own download exception says nothing about Play's ability
+        // to deliver a pack — and on a capable device a CPU tier can only have been picked from
+        // an ALREADY suspended lineup, so latching on it would be circular.
+        listOf("pro", "multi", "eco", null, "nope").forEach { tier ->
+            assertFalse(
+                "a non-gated (or unresolvable) tier's failure must never latch: $tier",
+                OnboardingLogic.oneTierDeliveryFailed(tier, "Download failed"),
+            )
+        }
+        assertTrue("the other gated tier latches too", OnboardingLogic.oneTierDeliveryFailed("npu", "boom"))
+
+        // And the composition the screen performs: a cancel leaves a capable device on ONE card,
+        // an undeliverable answer restores the menu with turbo still at its head.
+        val cancelLatch = OnboardingLogic.oneTierDeliveryFailed(
+            "npu-turbo", OnboardingLogic.FETCH_CANCELLED_MESSAGE,
+        )
+        assertEquals(
+            "a cancel must leave the ruling intact",
+            listOf("npu-turbo"),
+            ModelTierCopy.orderedForLanguageTagFor(
+                "en-US",
+                setOf("npu", "npu-turbo"),
+                OnboardingLogic.chooserAlsoOfferedIds(emptySet(), cancelLatch),
+            ),
+        )
+        val realLatch = OnboardingLogic.oneTierDeliveryFailed(
+            "npu-turbo", OnboardingLogic.ONBOARDING_FETCH_REFUSAL,
+        )
+        val restored = ModelTierCopy.orderedForLanguageTagFor(
+            "en-US",
+            setOf("npu", "npu-turbo"),
+            OnboardingLogic.chooserAlsoOfferedIds(emptySet(), realLatch),
+        )
+        assertTrue("an undeliverable answer restores the CPU tiers", restored.containsAll(listOf("pro", "multi")))
+        assertEquals("with turbo still at the head", "npu-turbo", restored.first())
+    }
+
+    // -------------------------------------------- 4.3 fix round: the pick the narrowing outran
+
+    @Test fun a_pick_does_not_survive_the_card_it_was_made_on_leaving_the_lineup() {
+        // I-3. Both producers on the engines step are async, so a capable device renders
+        // [pro, multi] for that window and then narrows to [npu-turbo]. A tap inside the window
+        // used to survive: the card vanished, pickedTierId kept its value, tierPicked stayed
+        // true, and Download wrote prefs.selectedModelId = pro|multi ON A CAPABLE DEVICE with no
+        // card on screen for it — the exact outcome the ruling forbids, reached by a user who
+        // did nothing wrong.
+        assertNull(
+            "THE RACE: a pro pick made before the gate answered must not survive the narrowing",
+            OnboardingLogic.revalidatePick("pro", listOf("npu-turbo")),
+        )
+        assertNull(OnboardingLogic.revalidatePick("multi", listOf("npu-turbo")))
+        // A pick whose card is still there is untouched — the guard must not eat live picks.
+        assertEquals("npu-turbo", OnboardingLogic.revalidatePick("npu-turbo", listOf("npu-turbo")))
+        assertEquals("pro", OnboardingLogic.revalidatePick("pro", listOf("pro", "multi")))
+        assertEquals("multi", OnboardingLogic.revalidatePick("multi", listOf("multi", "pro")))
+        // Nothing picked stays nothing; the initial empty lineup (before either producer answers)
+        // drops nothing that was never there.
+        assertNull(OnboardingLogic.revalidatePick(null, listOf("npu-turbo")))
+        assertNull(OnboardingLogic.revalidatePick(null, emptyList()))
+        // It DROPS rather than re-points: choosing for the user is the one thing this chooser has
+        // never done, and Download simply returns to disabled — a fresh capable install's state.
+        assertNull(
+            "the guard must not silently re-point the pick at the surviving card",
+            OnboardingLogic.revalidatePick("pro", listOf("npu-turbo")),
+        )
+        // The suspended lineup keeps a pro pick alive, because its card is back on screen.
+        val restored = ModelTierCopy.orderedForLanguageTagFor(
+            "en-US", setOf("npu", "npu-turbo"),
+            OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true),
+        )
+        assertEquals("pro", OnboardingLogic.revalidatePick("pro", restored))
+    }
+
+    // ------------------------------- 4.3 fix round: the recovery keeps the screen that explains
+
+    @Test fun only_the_recovery_download_keeps_the_user_on_the_chooser() {
+        // I-1(c). Done is the screen's global model-ready signal and the activity pops the picker
+        // to Home on it — right for a model the user CHOSE, wrong for a repair of a broken one,
+        // which would eject them from the screen mid-explanation, before the switch note could be
+        // read and before the note and button they were looking at retire.
+        assertFalse(
+            "the recovery must NOT navigate away from its own explanation",
+            OnboardingLogic.downloadLeavesTheChooser("multi", recoveryTapped = true),
+        )
+        // The entire non-capable fleet's normal path: an ordinary Download tap on the multi card
+        // completes with the SAME Done(modelId) and must keep navigating exactly as it always
+        // has. This is why the rule is keyed on the tap and not on the tier id alone.
+        assertTrue(
+            "an ordinary multi download must still finish onboarding",
+            OnboardingLogic.downloadLeavesTheChooser("multi", recoveryTapped = false),
+        )
+        listOf("pro", "npu-turbo", "npu", null, "nope").forEach { id ->
+            assertTrue(
+                "every non-recovery tier navigates, tapped or not: $id",
+                OnboardingLogic.downloadLeavesTheChooser(id, recoveryTapped = false),
+            )
+            assertTrue(
+                "and a recovery tap does not suppress OTHER tiers' navigation: $id",
+                OnboardingLogic.downloadLeavesTheChooser(id, recoveryTapped = true),
+            )
+        }
+        // The tier it suppresses for is the one NpuTierStatus names, never a second literal.
+        assertFalse(
+            OnboardingLogic.downloadLeavesTheChooser(
+                com.whispereverywhere.npu.NpuTierStatus.RECOVERY_TIER_ID, recoveryTapped = true,
+            ),
+        )
         val cpuPick = OnboardingLogic.enginesPrimaryAction(
             downloadsBegun = false, tierPicked = true, speechReady = false,
         )

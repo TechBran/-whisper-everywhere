@@ -223,6 +223,85 @@ object OnboardingLogic {
         }
 
     /**
+     * Whether escaping THIS failed engine means the one tier could not be DELIVERED here — the
+     * input [chooserAlsoOfferedIds] actually needs (4.3 fix round, I-2).
+     *
+     * **The first shipping version latched on the escape itself**, and the escape is offered for
+     * every `EngineState.Failed` there is. So a user on a perfectly deliverable Play device who
+     * cancelled the pack download once — their OWN cancel — or hit one transient refusal, and then
+     * tapped "Choose a different model", had the 190 MB and 358 MB tiers restored for the rest of
+     * onboarding. The latch is never cleared, so that is permanent: a transient event undoing the
+     * ruling the branch exists to apply. It failed safe (no wedge, turbo still heads the lineup)
+     * but it was broader than its own contract, and the contract is the honest one.
+     *
+     * **Two conditions, and each excludes a different non-delivery.**
+     *
+     *  1. **The failure must be the GATED tier's.** A CPU tier's own download exception
+     *     (`OnboardingSetupViewModel`'s catch) says nothing about Play's ability to deliver a
+     *     pack — and on a capable device a CPU tier can only have been picked from an already
+     *     suspended lineup, so latching on it would be circular.
+     *  2. **It must be an OUTCOME of a delivery, not a non-start.** [FETCH_CANCELLED_MESSAGE] is
+     *     the user's own cancel and [FETCH_BUSY_WITH_ANOTHER_MODEL] is a fetch that never began;
+     *     neither is Play answering about this install, and neither may cost the owner the ruling.
+     *
+     * **Everything else about a gated tier's fetch DOES latch, and that is deliberately one step
+     * wider than "the sideload/undeliverable family".** That family (the two `ONBOARDING_FETCH_*`
+     * refusals) is the clear case, but a pack that downloads and then fails VERIFICATION is also a
+     * delivery that did not produce a model, and it can be persistent — a device whose pack never
+     * verifies would otherwise sit on one card it can never install, on a MANDATORY step, which is
+     * the wedge this whole mechanism exists to prevent. The narrowing must not re-open the hole it
+     * was narrowed inside of. Retry stays the primary action either way.
+     *
+     * @param failedTierId the tier the failed engine was working on — the flow's `pickedTierId`,
+     *        read BEFORE the escape clears it.
+     */
+    fun oneTierDeliveryFailed(failedTierId: String?, reason: String): Boolean {
+        val tier = com.whispereverywhere.model.WhisperCatalog.byId(failedTierId) ?: return false
+        if (!tier.gated) return false
+        return reason != FETCH_CANCELLED_MESSAGE && reason != FETCH_BUSY_WITH_ANOTHER_MODEL
+    }
+
+    /**
+     * The tier pick, revalidated against the lineup actually on screen (4.3 fix round, I-3).
+     *
+     * **Both producers on the engines step are async** — `produceState`, and the gate's first read
+     * dlopens ~7.9 MiB of QNN — so a capable device renders the pre-4.3 `[pro, multi]` lineup for
+     * the length of that window and then narrows to `[npu-turbo]`. A tap inside the window used to
+     * SURVIVE the narrowing: the card vanished, `pickedTierId` kept its value, `tierPicked` stayed
+     * true, and the footer's Download wrote `prefs.selectedModelId = pro` or `multi` **on a capable
+     * device, with no card on screen for it** — precisely the outcome the ruling forbids, reached
+     * without the user doing anything wrong.
+     *
+     * Pre-4.3 the same race existed and was harmless, because a pick's card never left the list.
+     * 4.3 is what made a lineup able to shrink under a pick, so 4.3 owns the guard.
+     *
+     * Dropping the pick rather than re-pointing it is the honest repair: re-pointing would choose
+     * FOR the user, and this chooser's oldest rule is that the steer suggests and the user taps.
+     * The Download button simply returns to disabled, which is the state a fresh capable install
+     * is in anyway.
+     */
+    fun revalidatePick(picked: String?, lineup: List<String>): String? =
+        if (picked != null && picked in lineup) picked else null
+
+    /**
+     * Whether a finished download should LEAVE the chooser (4.3 fix round, I-1c).
+     *
+     * `DownloadState.Done` is the screen's global model-ready signal and the activity pops the
+     * picker to Home on it. That is right for every download the user started by choosing a
+     * model — and wrong for the decline recovery, which is not a choice of model but a repair of
+     * a broken one: it pops the user off the very screen that was explaining what just happened,
+     * before [com.whispereverywhere.npu.NpuTierStatus.RECOVERY_SWITCH_NOTE] can be read and
+     * before the note and button they were looking at retire. The explanation must outlive the
+     * action that needs explaining.
+     *
+     * Keyed on the RECOVERY TAP, not on the tier id alone: an ordinary Download tap on the
+     * `multi` card — the entire non-capable fleet's normal path — completes with the same
+     * `Done(modelId)` and must keep navigating exactly as it always has.
+     */
+    fun downloadLeavesTheChooser(doneModelId: String?, recoveryTapped: Boolean): Boolean =
+        !(recoveryTapped && doneModelId == com.whispereverywhere.npu.NpuTierStatus.RECOVERY_TIER_ID)
+
+    /**
      * The refusal published when the gated fetch cannot ATTACH: the controller answered
      * `start() == false` while ITS active fetch is some other tier's (F6 review M-3, landed in
      * F7 — the chooser can start a fetch this ViewModel never asked for). Retry re-enters

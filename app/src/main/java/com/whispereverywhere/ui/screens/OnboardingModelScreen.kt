@@ -194,13 +194,30 @@ fun OnboardingModelScreen(
         if (!OnboardingLogic.chooserRefusalStillStands(fetchState)) fetchRefusal = null
     }
 
-    // Fire the ready callback exactly once when the download completes.
+    // 4.3 fix round (I-1): did the user get here by tapping the DECLINE RECOVERY? Remembered
+    // rather than derived, because `Done(modelId)` alone cannot tell the recovery apart from an
+    // ordinary Download tap on the multi card — which is the whole non-capable fleet's normal
+    // path and must keep behaving exactly as it always has.
+    var recoveryTapped by remember { mutableStateOf(false) }
+
+    // Fire the ready callback exactly once when the download completes — EXCEPT for the recovery,
+    // which must not pop the user off the screen that is explaining what just happened (I-1c).
+    // The rule is pure and executed; this reads it and nothing else.
     LaunchedEffect(state) {
         val s = state
-        if (s is DownloadState.Done) {
+        if (s is DownloadState.Done &&
+            OnboardingLogic.downloadLeavesTheChooser(s.modelId, recoveryTapped)
+        ) {
             onModelReady()
         }
     }
+
+    // 4.3 fix round (I-1a): the switch, stated where and when it happens. It lives at SCREEN
+    // level, above the cards, deliberately: the moment the recovery lands, the install generation
+    // bumps, `hasCpuFallback` flips true and the note and button it belonged to retire — so a
+    // confirmation rendered inside that block would vanish in the same frame it appeared.
+    val recoverySwitched =
+        recoveryTapped && (state as? DownloadState.Done)?.modelId == NpuTierStatus.RECOVERY_TIER_ID
 
     val scrollState = rememberScrollState()
 
@@ -228,6 +245,35 @@ fun OnboardingModelScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            // 4.3 fix round (I-1a) — the switch the recovery just made, said out loud on the
+            // screen the user is still standing on. Success surface, not the Warning one: nothing
+            // went wrong here, a repair completed.
+            if (recoverySwitched) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    color = Success.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = Success,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = NpuTierStatus.RECOVERY_SWITCH_NOTE,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Success,
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -289,6 +335,7 @@ fun OnboardingModelScreen(
                         NpuTierStatus.needsCpuRecovery(npuTierReasons[model.id], cpuFallbackInstalled)
                     ) {
                         {
+                            recoveryTapped = true
                             activeModelId = recoveryModel.id
                             viewModel.download(recoveryModel)
                         }

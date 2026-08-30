@@ -124,6 +124,25 @@ object NpuTierStatus {
     const val RECOVERY_ACTION = "Download the standard model"
 
     /**
+     * What the user is told AT THE MOMENT OF THE SWITCH (4.3 fix round, I-1).
+     *
+     * The recovery rides `ModelDownloadViewModel.download`, which persists
+     * `prefs.selectedModelId` on success — the right sink, because leaving the selection on a
+     * declined npu-class tier routes a QAIRT context binary to `WhisperNativeBackend` and yields
+     * no working backend at all. But the write is PERMANENT while the decline that provoked it is
+     * only process-scoped, so without this sentence a capable phone comes back after a restart
+     * showing `npu-turbo` at the head of its one-card chooser, badged "Best match for your
+     * language", while quietly transcribing on the 190 MB CPU model — discoverable only in
+     * Settings. The behaviour is right; the silence was not.
+     *
+     * Three things, because dropping any one leaves the switch half-explained: that the model
+     * CHANGED, that the gigabyte the user already paid for is NOT gone, and where the way back is.
+     */
+    const val RECOVERY_SWITCH_NOTE =
+        "Switched to the standard model. Your AI chip model stays installed — pick it again from " +
+            "this screen any time."
+
+    /**
      * The sentence the tier card shows, or null when there is nothing to say.
      *
      * It states four things because leaving any one out is how a silent fallback happens: that the
@@ -162,10 +181,20 @@ object NpuTierStatus {
     fun cardNote(reason: String?, cpuFallbackInstalled: Boolean): String? {
         val stage = stageOf(reason) ?: return null
         if (!cpuFallbackInstalled) {
+            // 4.3 fix round, I-1(b): the two remedies are stated as ALTERNATIVES, in that order,
+            // because they are not compatible. The first shipping wording read "...download the
+            // standard model below, OR restart the app to try the AI chip again" as if both
+            // survived the tap — but the download persists `selectedModelId` onto the CPU tier,
+            // so the restart clause went FALSE the instant the user acted on the button printed
+            // directly beneath it. Naming the switch here (and again at
+            // [RECOVERY_SWITCH_NOTE] when it happens) is what makes the two sentences true
+            // together: restart FIRST, as the remedy that costs nothing and keeps the AI chip;
+            // the download SECOND, with its consequence and its way back attached.
             return "The AI chip is unavailable on this device right now (stage: $stage), and no " +
                 "CPU speech model is installed to fall back to — so dictation cannot run until " +
-                "one is. Download the standard multilingual model below, or restart the app to " +
-                "try the AI chip again."
+                "one is. Restart the app to try the AI chip again, or download the standard " +
+                "multilingual model below — that switches you to it, and leaves your AI chip " +
+                "model installed and one tap away on this screen."
         }
         return "The AI chip is unavailable on this device right now (stage: $stage), so speech is " +
             "running on the multilingual CPU model. Accuracy is unchanged; it is slower. " +

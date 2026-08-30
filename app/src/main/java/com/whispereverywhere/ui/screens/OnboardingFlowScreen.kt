@@ -200,9 +200,15 @@ fun OnboardingFlowScreen(
                         languageTag = languageTag,
                         pickedTierId = pickedTierId,
                         oneTierDeliveryFailed = oneTierDeliveryFailed,
+                        // 4.3 fix round (I-3): nullable, because the step must be able to DROP a
+                        // pick whose card the narrowing removed under it.
                         onPick = { pickedTierId = it },
-                        onChooseAgain = {
-                            oneTierDeliveryFailed = true
+                        // 4.3 fix round (I-2): the step hands up whether THIS failure was a
+                        // delivery failure — it is the only caller that can see the reason and
+                        // the tier together. The latch is OR-ed, never overwritten: one genuine
+                        // undeliverable answer stands however many cancels follow it.
+                        onChooseAgain = { deliveryFailed ->
+                            if (deliveryFailed) oneTierDeliveryFailed = true
                             pickedTierId = null
                             setupVm.resetSpeechForReChoice()
                         },
@@ -541,8 +547,8 @@ private fun EnginesStep(
     languageTag: String,
     pickedTierId: String?,
     oneTierDeliveryFailed: Boolean,
-    onPick: (String) -> Unit,
-    onChooseAgain: () -> Unit,
+    onPick: (String?) -> Unit,
+    onChooseAgain: (deliveryFailed: Boolean) -> Unit,
 ) {
     val speech by vm.speechState.collectAsState()
     val voice by vm.voiceState.collectAsState()
@@ -610,7 +616,18 @@ private fun EnginesStep(
         val alsoOfferedIds =
             OnboardingLogic.chooserAlsoOfferedIds(installedIds, oneTierDeliveryFailed)
         val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
-        ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, alsoOfferedIds)
+        val lineup = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, alsoOfferedIds)
+        // 4.3 fix round (I-3): THE LINEUP CAN SHRINK UNDER A PICK. Both producers above are
+        // async — the gate's first read dlopens ~7.9 MiB of QNN — so a capable device renders
+        // [pro, multi] for that window and then narrows to [npu-turbo]. A tap inside the window
+        // used to survive the narrowing and Download then wrote a CPU tier on a capable device,
+        // with no card on screen for it. Keyed on the lineup, so it re-runs exactly when the
+        // list moves; the rule is pure and drops the pick rather than choosing a new one.
+        LaunchedEffect(lineup) {
+            val kept = OnboardingLogic.revalidatePick(pickedTierId, lineup)
+            if (kept != pickedTierId) onPick(kept)
+        }
+        lineup
             .mapNotNull { WhisperCatalog.byId(it) }
             .forEach { model ->
                 TierChoiceCard(
@@ -666,7 +683,14 @@ private fun EnginesStep(
             // refusal on a sideloaded install included — leaves the step completable. Back to
             // the chooser, where the CPU tiers are always pickable; Retry above stays the
             // primary action and Continue stays locked (the mandatory-model gate holds).
-            TextButton(onClick = onChooseAgain) {
+            // 4.3 fix round (I-2): the escape is offered for EVERY Failed terminal — that part is
+            // unchanged and is the no-wedge contract — but only a genuine DELIVERY failure of the
+            // gated tier suspends the one-tier rule. The reason and the tier are both in scope
+            // here and nowhere above, which is why the answer is computed here and handed up.
+            val deliveryFailed = OnboardingLogic.oneTierDeliveryFailed(
+                pickedTierId, (speech as? EngineState.Failed)?.message.orEmpty(),
+            )
+            TextButton(onClick = { onChooseAgain(deliveryFailed) }) {
                 Text(OnboardingLogic.CHOOSE_DIFFERENT_MODEL)
             }
         }
