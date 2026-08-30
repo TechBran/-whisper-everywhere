@@ -853,19 +853,37 @@ dependencies {
     // exactly one cause. asset-delivery-ktx drags `androidx.fragment:fragment:1.1.0` onto the
     // classpath — directly, and again through play-services-basement:18.4.0 — and those are the
     // ONLY two paths to androidx.fragment in this graph (verified against the resolved
-    // releaseRuntimeClasspath; `main` has no path to fragment at all). Fragment 1.1.0 predates
-    // the ActivityResult contract wiring: its FragmentActivity does not call
-    // super.onRequestPermissionsResult and uses request codes the ActivityResult registry
-    // rejects, so androidx.activity ships a FATAL lint check for exactly this state
-    // (InvalidFragmentVersionForActivityResult). That check does not run on assembleDebug. It
-    // runs in lintVitalRelease — which means adding the Play client made every RELEASE build
-    // fail, on a branch whose acceptance is an internal-track upload, and nothing before F8's
-    // first release build could have said so.
+    // releaseRuntimeClasspath; `main` has no path to fragment at all).
     //
-    // The version is raised rather than the check silenced or the transitive excluded: the
-    // check names a real defect, and play-services-basement genuinely references fragment
-    // classes at runtime, so an exclude would trade a build failure for a NoClassDefFoundError.
-    // 1.8.5 is the fragment release contemporary with activity 1.9.3 / lifecycle 2.8.7 above.
+    // WHAT ACTUALLY FAILED, stated as what it was rather than as the defect the check is named
+    // after. androidx.activity ships a FATAL lint check, InvalidFragmentVersionForActivityResult,
+    // that fires whenever androidx.fragment BELOW 1.3.0 is on the classpath and ActivityResult
+    // APIs are called. It keys on the CLASSPATH VERSION, not on our code — and the underlying
+    // defect it is named for (FragmentActivity mishandling onRequestPermissionsResult) cannot
+    // reach this app at all: there is no Fragment, no FragmentActivity and no appcompat here, and
+    // both activities lint flagged are plain ComponentActivity. The reason to fix it is therefore
+    // the plain one, which is sufficient on its own: this is a FATAL check, it runs in
+    // lintVitalRelease and NOT in assembleDebug, so adding the Play client made every RELEASE
+    // build fail on a branch whose acceptance is a store upload — and nothing before F8's first
+    // release build could have said so.
+    //
+    // The version is raised rather than the check silenced or the transitive excluded. Silencing
+    // (a baseline, or abortOnError=false) turns off a gate for the whole app to get past one
+    // stale coordinate; excluding trades a build failure for a runtime NoClassDefFoundError,
+    // because play-services-basement genuinely references fragment classes. Raising a stale
+    // transitive to its contemporary release is the only option that neither hides a check nor
+    // risks the app. 1.8.5 is the fragment release contemporary with activity 1.9.3 /
+    // lifecycle 2.8.7 above; compileSdk 36 clears its floor.
+    //
+    // WHAT THIS SHIPS: nothing. Measured, because "it is only a version raise" is exactly the
+    // kind of claim that turns out to be false. (1) ZERO androidx.fragment classes survive R8 in
+    // the release dex — the app calls none of it, so the library lives on the compile and lint
+    // classpath and nowhere else. (2) The merged RELEASE manifest is BYTE-IDENTICAL with and
+    // without this line (same sha256, built both ways). In particular the profileinstaller
+    // receiver and startup initializer in that manifest are NOT ours: profileinstaller:1.3.1 was
+    // already on the release classpath through androidx.core:core-ktx -> lifecycle-runtime-android
+    // and through compose.ui/activity, and viewpager/loader arrived with fragment 1.1.0 long
+    // before this line existed. This raise adds no shipped surface of any kind.
     implementation("androidx.fragment:fragment:1.8.5")
 
     // DataStore for preferences

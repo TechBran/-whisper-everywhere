@@ -22,6 +22,9 @@ session.
 ## §0 — Build the payload and the bundle (controller machine, before any device work)
 
 ```powershell
+# The cd is not decoration: every command in this sheet that is not an absolute interpreter is
+# relative to the repo root — the script paths here, .\gradlew.bat, and keystore.properties in §1.
+cd "C:\Users\bastr\OneDrive\Desktop\whisper Everywhere"
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'
 & "C:\Users\bastr\AppData\Local\Programs\Python\Python313\python.exe" tools\build_asset_packs.py measure
 & "C:\Users\bastr\AppData\Local\Programs\Python\Python313\python.exe" tools\build_asset_packs.py build
@@ -46,13 +49,32 @@ disagree with, not as a promise):
 | release APK (the `assembleRelease` rung) | 120,305,933 B |
 | `bundletool validate` | clean; both asset packs listed with five variants each |
 
-> **THE UPLOAD-SIZE QUESTION, and it is genuinely open.** The AAB is ~4.36 GiB because it carries
-> **all four** device-group variants of **both** packs; Play delivers exactly one variant of each
-> per device (~1.07 GB for turbo, well inside the 1.5 GB on-demand cap the research verified), but
-> the uploaded artifact is the whole thing. Nothing local can test Play's upload limit. **Before
-> spending a session on this: start the internal-track upload first and let the Console accept or
-> refuse the file.** If it refuses on size, that is a delivery-architecture task (split the packs
-> per family, or move to a fetch-from-our-own-bucket route) and not a bug in anything below.
+> **THE UPLOAD SIZE — ANSWERED, and the answer is that we are well inside the budget.** The AAB is
+> ~4.68 GB (the same number the table above states; ~4.36 **GiB** if your tool reports binary units)
+> because it carries **all four** device-group variants of **both** packs. That total is the right
+> thing to compare, and the branch's own research already did the comparison —
+> `docs/superpowers/research/2026-08-29-pad-soc-delivery.md` §1, from the Play size-limits page
+> (support answer 9859372):
+>
+> | Play limit | value | us |
+> |---|---|---|
+> | Individual asset pack | **1.5 GB** compressed | turbo's largest variant ≈ **860 MB** compressed |
+> | Cumulative **on-demand + fast-follow** packs | **30 GB** | 4 turbo + 4 small ≈ **4.6 GB** — about **15 %** of the budget |
+> | Total compressed download per app | 34 GB | far below |
+>
+> **The 4 GB row in that table is the cumulative INSTALL-TIME cap and does not apply here**: both
+> pack modules are `deliveryType.set("on-demand")`. So do not go into the upload expecting a
+> refusal, and — more importantly — **if the upload fails for some other reason, do not misdiagnose
+> it as the size cap**: that mistake would escalate an unrelated fault into a delivery-architecture
+> task the research says is unnecessary. The Console remains the only authority that can *confirm*
+> it, so treat a successful upload as the confirmation and nothing more.
+>
+> **ORDERING, and the sheet means this exactly.** The upload *attempt* may come first — it is a
+> cheap size probe and it is worth knowing the Console accepts the file before the owner spends
+> three uninstalls. **The TRACK INSTALL (§2) must not happen until §1 rung 1 has passed.** Rung 1 is
+> the gate that proves a release-built, release-signed app reaches turbo dictation at all; installing
+> from the track before it would mean discovering a release-only fault with the packs already
+> published and the device already wiped. Upload early if you like; install late.
 
 ### §0.1 — THE RELEASE RUNG (4.1 residual risk 7, now due and now DISCHARGED locally)
 
@@ -221,9 +243,14 @@ Both commands need absolute interpreters (`java` is not on PATH, and `install-ap
 ### Rung 1 — the plumbing (and the §0 release gate)
 
 ```powershell
+# keystore.properties below is RELATIVE to the repo root, like §0's script paths.
+cd "C:\Users\bastr\OneDrive\Desktop\whisper Everywhere"
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio1\jbr'
-# Build the APK set once. Signed with the RELEASE key so the set is the artifact the store
-# will build too, and so Play can later replace it (same signer) after u4.
+# Build the APK set once, signed with the RELEASE key: the dex, the native libs and the R8 output
+# are the same ones the store build carries, so this really is the release gate. (It is not a
+# byte-identical twin of the uploaded artifact — `--local-testing` injects local_testing metadata
+# into the base APK's manifest. That is the only difference, and it is why this set can be
+# side-loaded at all.)
 # Read the three secrets out of keystore.properties; never type or echo them.
 $p = @{}; Get-Content keystore.properties | ForEach-Object {
   if ($_ -match '^\s*([^#=]+)=(.*)$') { $p[$matches[1].Trim()] = $matches[2].Trim() } }
@@ -234,8 +261,13 @@ $p = @{}; Get-Content keystore.properties | ForEach-Object {
   --ks='C:\Users\bastr\.keystores\whispereverywhere-release.jks' `
   --ks-pass="pass:$($p['storePassword'])" --ks-key-alias=$($p['keyAlias']) `
   --key-pass="pass:$($p['keyPassword'])"
+# The keystore PATH is spelled out rather than read from $p['storeFile'] on purpose, and please
+# leave it that way: keystore.properties is a Java properties file, so its storeFile value carries
+# Java backslash escaping that Gradle's Properties.load() resolves and the naive regex above does
+# NOT. Only the three secrets are read from the file; the path is the one field it would get wrong.
 
-# u1 here IF a dev build is present:  & "...\adb.exe" uninstall com.whispereverywhere
+# u1 here IF a dev build is present:
+# & "C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe" uninstall com.whispereverywhere
 & "C:\Program Files\Android\Android Studio1\jbr\bin\java.exe" -jar `
   C:\Users\bastr\.androidbuild\fleet-packs\bundletool-all-1.18.3.jar install-apks `
   --apks=C:\Users\bastr\.androidbuild\fleet-packs\fleet.apks `
@@ -283,8 +315,10 @@ the turbo pack is already on the device (local testing side-loads it), so the "f
 essentially instantly and goes straight to **Verifying** — a streamed sha256 over 1,071,685,632 B,
 which takes **minutes** and is the honest cost of the guarantee. Then the card flips to installed
 and turbo dictation works. **This is §0's gate: a release-built, release-signed app reaching turbo
-dictation before anything is uploaded.** A failure here is a proguard-rules or packaging task, not
-a track surprise — and it is precisely why this rung exists before the upload rather than after.
+dictation before anything is INSTALLED FROM THE TRACK.** A failure here is a proguard-rules or
+packaging task, not a track surprise — which is exactly why the gate sits before §2 rather than
+after it. (Per §0's ordering note: the upload *attempt* may already have happened as a size probe;
+what this rung gates is the track INSTALL, not the upload.)
 
 ### Rung 2 — the wrong variant, refused BY NAME
 
@@ -349,12 +383,30 @@ every unmatched device on the store is downloading model bytes it can never use.
 
 ## §2 — THE INTERNAL-TRACK SESSION (this is the acceptance)
 
-Upload the AAB to the **internal test track**. Then, on the Fold6:
+Upload the AAB to the **internal test track** (if the size probe in §0 has not already done it).
+**Do not start this section until §1 rung 1 has passed.** Then, on the Fold6:
 
-- **u4 first** if the §1 local-testing build is still installed — Play cannot install over it
-  (same versionCode, and a local `install-apks` set is not a Play-managed install).
+- **u4 first — mandatory, not conditional.** Rung 3 leaves the local-testing build installed, so
+  it is always present at this point, and Play cannot install over it: same versionCode, and a
+  local `install-apks` set is not a Play-managed install in the first place.
+- **Start the capture now** if you want §5.1's and §5.3's native evidence (§0.5 explains why these
+  lines are the session's only NPU telemetry on a release build). Leave it running through step 8:
+
+  ```powershell
+  cd "C:\Users\bastr\OneDrive\Desktop\whisper Everywhere"
+  & "C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe" logcat -c
+  & "C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe" logcat -s WE-DIAG *> capture.txt
+  ```
+
+  `logcat -c` clears the buffer first so the file holds this session and nothing else; `*>`
+  redirects both streams (a bare `2>&1` on a native exe is forbidden here — PowerShell 5.1 wraps
+  stderr into ErrorRecords). **Ctrl-C to stop it after step 8.** `capture.txt` is what §3's greps
+  read and what fills §5.3's two timing columns; without it those columns cannot be filled and
+  §5.1 loses half its instrument. **This is the only adb use in §2 besides the getprop below, it
+  is passive, and it touches nothing on the device** — the acceptance itself is still "reach turbo
+  dictation without adb", and it is satisfied whether or not you take the capture.
 - Install **from the track**, in the Play Store app, like a user.
-- **Then put the laptop down. No adb for the whole flow.**
+- **Then put the laptop down. No adb for the flow itself** — the capture just runs.
 
 The walk, in order, with what to record at each step:
 
@@ -365,12 +417,13 @@ The walk, in order, with what to record at each step:
 | 3 | **The model step** | that **turbo heads the list with the steer badge**, and the byte figure on its card (turbo's 8gen3 pair is **1,071,685,632 B**) |
 | 4 | Tap Get / Download on turbo | the progress copy as it moves: *"Starting the download from Google Play…"* → *"Downloading from Google Play… N%  (x / y)"* with **Play's own byte counts** |
 | 5 | **If on cellular**: the >200 MB consent dialog | **screenshot it.** This is its first exercise ever — it cannot be tested locally (research §5), so this is the only place it is ever seen |
-| 6 | Verifying | *"Verifying… N%"* — minutes on a 1.07 GB pair, and **no Cancel button** in this phase (deliberate; see watch item 5) |
+| 6 | Verifying | *"Verifying… N%"* — minutes on a 1.07 GB pair, and **no Cancel button** in this phase (deliberate, and NOT a hang; see **§4 watch item 7**) |
 | 7 | The card flips to installed | **that it flips at all, without leaving the screen** — see watch item 4 |
 | 8 | Dictate on turbo | **the transcript, verbatim** |
 
-**The one adb read in the whole session, and it is evidence-gathering, not acceptance.** After the
-flow is finished, with nothing left to prove:
+**The one adb READ in the whole session, and it is evidence-gathering, not acceptance** (the
+capture above is passive; this is the only command that asks the device a question). After the flow
+is finished, with nothing left to prove:
 
 ```powershell
 & "C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe" shell getprop ro.soc.model
@@ -383,13 +436,17 @@ what has already happened by the time you read it: **Play's server-side group re
 the 8gen3 variant to this phone IS the `-AC` suffix check executing in production.** The getprop
 just tells us which side of it fired.
 
-Optional, and only if a capture is wanted: `adb logcat -s WE-DIAG` during step 8 shows the native
-lines from §0.5's first table — `encode: graphExecute OK`, `decode: N tokens`, `vote:`,
-`detect: language token`. It shows nothing from the second table, and that is not a fault.
+`capture.txt` (started before the install, stopped after step 8) holds the native lines from
+§0.5's first table — `encode: graphExecute OK`, `decode: N tokens`, `vote:`,
+`detect: language token`. It holds nothing from the second table, and that is not a fault. §3 greps
+it; §5.1 and §5.3 read their numbers out of it.
 
 ---
 
-## §3 — The greps (against a saved capture, `-SimpleMatch` because several needles carry `(` `)` `>`)
+## §3 — The greps
+
+Run against `capture.txt` — the file §2 tells you to start before the install and stop after step
+8. `-SimpleMatch` because several needles carry `(` `)` `>`.
 
 **On a RELEASE build (the track install and the §1 local installs) — these are the ones that exist:**
 
@@ -507,9 +564,11 @@ detection. The CPU `multi` tier by contrast latches deliberately; both behaviour
 backend.
 
 On a release build the Kotlin `lang=` note is stripped, so the per-utterance evidence is the
-**transcript itself** plus the native `detect: language token …` line (one per segment) if a capture
-is taken. Dictate one deliberately code-switched utterance per npu-class tier — start in English,
-finish in another language:
+**transcript itself** plus the native `detect: language token …` line (one per segment) — the
+second half of that comes from `capture.txt`, so **keep §2's capture running for these rows too**
+(or restart it the same way before dictating). The transcript alone still carries the ruling if you
+would rather not. Dictate one deliberately code-switched utterance per npu-class tier — start in
+English, finish in another language:
 
 | tier | code-switched transcript (verbatim) | switched cleanly? | notes |
 |---|---|---|---|
@@ -532,7 +591,11 @@ pair bytes** (8gen3 turbo: 1,071,685,632 B), not a catalog approximation.
 
 ### 5.3 The A/B rows
 
-One fixed passage, three times per tier, switching tiers between rows.
+One fixed passage, three times per tier, switching tiers between rows. **The two timing columns are
+read out of `capture.txt`** (§2's capture, running): `encode: graphExecute OK in <ms> ms` and
+`decode: <n> tokens in <ms> ms (<x> ms/token)`, one of each per segment. Without the capture those
+two columns cannot be filled — the transcript column and the subjective note still can, and a sheet
+returned with only those is a partial row, not a failed one.
 
 | # | tier | transcript (verbatim) | encode ms (native `encode:` line) | decode ms / tokens | subjective note |
 |---|---|---|---|---|---|
@@ -589,6 +652,8 @@ One fixed passage, three times per tier, switching tiers between rows.
 | §1 rung 1 — right variant installs and dictates | |
 | §1 rung 2 — **wrong variant refused BY NAME** (the family sentence), CPU tiers unharmed | |
 | §1 rung 3 — **empty default refused BY NAME**, with the import control actually below it | |
+| AAB uploaded to the internal track and **accepted** by the Console (the size answer confirmed, §0) | |
+| §2 u4 performed (mandatory) before the track install | |
 | §2 track install → language step → turbo recommended → fetch → verify → **turbo dictation, no adb** | |
 | §2 cellular consent dialog seen and screenshotted (if on cellular) | |
 | §2 `getprop ro.soc.model` recorded: `SM8650` / `SM8650-AC` | |

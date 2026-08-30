@@ -11,9 +11,16 @@ import org.junit.Test
  *
  * **versionCode 81 — the plain successor to 80.** 4.1's 80 was itself a deliberate skip over 79
  * (left for the 4.0 NPU release, per the certified 4.1 plan); nothing about 4.2 needs a second
- * skip, so the fleet build takes the next integer. The 4.2 acceptance rests on it being exactly
- * one above the local 4.1 builds: Play installs an 81 over any 81-signed local build, and the
- * internal-track install in the run-book's §2 depends on that.
+ * skip, so the fleet build takes the next integer.
+ *
+ * **What 81 buys, stated precisely, because an earlier draft of this KDoc got it backwards.** It
+ * buys an upgrade over the 4.1 builds already on the device: 81 > 80, so a track install replaces
+ * them. It does NOT let Play install over an 81-signed LOCAL build — Play offers no update path at
+ * equal versionCode, and a bundletool `install-apks` set is not a Play-managed install in the first
+ * place. That is exactly why the run-book's §2 makes u4 (uninstall before the track install) a
+ * MANDATORY step rather than a conditional one. If this KDoc and
+ * docs/superpowers/sdd/2026-08-29-fleet-onboarding/acceptance.md ever disagree, the sheet is the
+ * instrument and the sheet is right.
  *
  * It is also load-bearing beyond cosmetics. GpuPolicy keys its PERMANENT canary latches on
  * BuildConfig.VERSION_CODE (GpuPolicy.kt:101, 188, 261, 275, 284, 295), so moving 80 -> 81 clears
