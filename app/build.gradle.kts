@@ -1,3 +1,6 @@
+// 4.2 F4: verifyNpuPacks parses each pack variant's metadata.json; Groovy's JsonSlurper is
+// already on the buildscript classpath, so no new dependency rides in with the gate.
+import groovy.json.JsonSlurper
 import java.security.MessageDigest
 import java.util.Properties
 // 4.1 L6: extractQnnSkel reads the skel entry straight out of the resolved AAR. Imported here
@@ -223,6 +226,30 @@ android {
         // tests; return default (no-op) values instead of throwing "Method not mocked".
         unitTests.isReturnDefaultValues = true
     }
+
+    // (4.2 F4) The two on-demand NPU asset packs. Play delivers ONE #group_ variant of each —
+    // resolved server-side against device_targeting_config.xml — and under on-demand only when
+    // the app calls fetch(), which the census gate never does on a non-NPU device: unmatched
+    // devices get the EMPTY default variant AND no fetch, two independent mechanisms. An APK
+    // build (assembleDebug) carries no packs at all; only bundle builds demand the payload,
+    // and verifyNpuPacks below is what demands it.
+    assetPacks += listOf(":npu_turbo", ":npu_small")
+
+    bundle {
+        // The census spelled for Play — committed, and byte-pinned to NpuFleetCensus by
+        // NpuPackLayoutTest: a census edit that forgets to regenerate the XML fails the suite,
+        // which is maintenance rule 1's teeth. Play targeting stays a bandwidth optimization;
+        // the app gate remains the correctness authority.
+        deviceTargetingConfig = file("device_targeting_config.xml")
+        deviceGroup {
+            enableSplit = true
+            // Unmatched devices land in "other" and receive the packs' DEFAULT variants —
+            // which verifyNpuPacks holds EMPTY, because Play cannot be told to deliver
+            // nothing: a device that can't be prevented from receiving the default must
+            // find nothing worth receiving in it.
+            defaultGroup = "other"
+        }
+    }
 }
 
 // NativeVadSourceContractTest asserts over C++ SOURCE TEXT, but Gradle cannot see that: the .cpp
@@ -430,7 +457,26 @@ tasks.withType<Test>().configureEach {
         // carries every artifact digest and byte count as literals (the cross-pin that stops
         // the committed census and the instrument that fills the packs drifting apart), and
         // loosening any of that is a pure-Python edit no compile task would notice.
+        // (4.2 F4) NpuPackLayoutTest joins its readers: the FAMILIES htp↔packGroup pairing, the
+        // metadata-first and declared-size writer pins, and the self-verification needles.
         rootProject.file("tools/build_asset_packs.py"),
+        // (4.2 F4) The device-group XML — the sharpest asset case since the melbank: it is an
+        // input to no compile task (it enters the AAB, not the APK), and NpuPackLayoutTest holds
+        // it byte-equal to the census rendering. Without this entry, an edit confined to the XML
+        // leaves the task UP-TO-DATE and the store ships strings the census never named while
+        // every pin passes against the file as it used to be.
+        "device_targeting_config.xml",
+        // (4.2 F4) The rest of NpuPackLayoutTest's read set, by the list's stated rule —
+        // membership follows what the tests READ, and none of these is an input to any compile
+        // task: the two pack module build files (packName/on-demand pins), their .gitignores
+        // (the payload wall), the settings include line, and the gradle.properties flag that
+        // the whole device-targeting mechanism silently vanishes without.
+        rootProject.file("settings.gradle.kts"),
+        rootProject.file("gradle.properties"),
+        rootProject.file("npu_turbo/build.gradle.kts"),
+        rootProject.file("npu_small/build.gradle.kts"),
+        rootProject.file("npu_turbo/.gitignore"),
+        rootProject.file("npu_small/.gitignore"),
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a
@@ -602,6 +648,112 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
     .configureEach { dependsOn(extractQnnSkel) }
 // preBuild too, so a build that never reaches the merge still leaves the blob materialised.
 tasks.named("preBuild") { dependsOn(extractQnnSkel) }
+
+// The Play pack gate (4.2 F4): every bundle build re-proves that the pack payload on disk IS
+// the census before AGP packages it. The payload is a BUILD artifact — tools/build_asset_packs.py
+// build assembles the eight #group_ variants from the measured vendor zips, hash-verifying every
+// byte on the way in and out — so the committed tree carries no payload at all, and a bundle
+// built on a machine that never ran the script fails HERE with every missing variant named,
+// instead of shipping packs whose targeted variants are silently empty.
+//
+// THE PACK TABLE: one row per variant — module, Play device group, encoder bytes, decoder
+// bytes. The byte counts are NpuFleetCensus.artifacts' own, restated because a build script
+// cannot read the app's classes, and pinned EQUAL to the census by NpuPackLayoutTest (the
+// extractQnnSkel fleet-table discipline, one gate over). sha256 of ~4.3 GB per bundle build is
+// deliberately NOT taken here: the script's own build step hash-verifies what it writes, the
+// app's arrival hash stays the invariant on device, and this gate's job is missing, stale or
+// swapped VARIANTS — which exact byte counts catch in milliseconds.
+val npuPackDeliveryNames = mapOf(
+    "npu_small" to listOf("encoder_qairt_context.bin", "decoder_qairt_context.bin"),
+    "npu_turbo" to listOf("turbo_encoder_qairt_context.bin", "turbo_decoder_qairt_context.bin"),
+)
+val npuPackCensusRows = listOf(
+    listOf("npu_small", "soc_8gen3", 132_927_488L, 225_316_864L),
+    listOf("npu_small", "soc_8elite_galaxy", 132_333_568L, 225_234_944L),
+    listOf("npu_small", "soc_8elite5_galaxy", 133_554_176L, 225_411_072L),
+    listOf("npu_small", "soc_7gen4", 147_595_264L, 225_382_400L),
+    listOf("npu_turbo", "soc_8gen3", 775_831_552L, 295_854_080L),
+    listOf("npu_turbo", "soc_8elite_galaxy", 775_544_832L, 295_821_312L),
+    listOf("npu_turbo", "soc_8elite5_galaxy", 777_441_280L, 295_911_424L),
+    listOf("npu_turbo", "soc_7gen4", 846_360_576L, 295_895_040L),
+)
+val verifyNpuPacks = tasks.register("verifyNpuPacks") {
+    description = "Verifies every NPU asset-pack variant against the census byte counts and " +
+        "that both default variants are EMPTY. Runs before every bundle packaging task."
+    doLast {
+        val problems = mutableListOf<String>()
+        for (row in npuPackCensusRows) {
+            val module = row[0] as String
+            val group = row[1] as String
+            val encoderBytes = row[2] as Long
+            val decoderBytes = row[3] as Long
+            val names = npuPackDeliveryNames.getValue(module)
+            val variantDir = rootProject.file("$module/src/main/assets/model#group_$group")
+            if (!variantDir.isDirectory) {
+                problems += "$module: model#group_$group is MISSING"
+                continue
+            }
+            val listed = (variantDir.listFiles() ?: emptyArray()).map { it.name }.sorted()
+            val expected = (names + "metadata.json").sorted()
+            if (listed != expected) {
+                problems += "$module/model#group_$group: carries $listed; a pack variant is " +
+                    "exactly $expected"
+                continue
+            }
+            val encoder = File(variantDir, names[0])
+            if (encoder.length() != encoderBytes) {
+                problems += "$module/model#group_$group: ${names[0]} is ${encoder.length()} B, " +
+                    "the census says $encoderBytes"
+            }
+            val decoder = File(variantDir, names[1])
+            if (decoder.length() != decoderBytes) {
+                problems += "$module/model#group_$group: ${names[1]} is ${decoder.length()} B, " +
+                    "the census says $decoderBytes"
+            }
+            val meta = try {
+                JsonSlurper().parse(File(variantDir, "metadata.json")) as? Map<*, *>
+            } catch (bad: Exception) {
+                null
+            }
+            when {
+                meta == null ->
+                    problems += "$module/model#group_$group: metadata.json is not parseable JSON"
+                meta["packGroup"] != group ->
+                    problems += "$module/model#group_$group: metadata.json names packGroup " +
+                        "'${meta["packGroup"]}' — the variant dir and its own metadata disagree"
+            }
+        }
+        // THE EMPTY-DEFAULT RULE (the research §6 CI check). Play cannot be told to deliver
+        // nothing: an unmatched device can never be prevented from receiving the default
+        // variant, so the default must contain nothing worth receiving — a bundle whose
+        // default variant gained content would hand those bytes to every unmatched device.
+        for (module in npuPackDeliveryNames.keys) {
+            val defaultDir = rootProject.file("$module/src/main/assets/model")
+            val extras = (defaultDir.listFiles() ?: emptyArray()).map { it.name }
+                .filter { it != ".gitkeep" }
+            if (extras.isNotEmpty()) {
+                problems += "$module: the DEFAULT variant (assets/model/) must stay EMPTY " +
+                    "but carries $extras"
+            }
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "verifyNpuPacks: the pack payload is not the census — a bundle built now " +
+                    "would ship wrong, stale or missing variants.\n  " +
+                    problems.joinToString("\n  ") +
+                    "\n  Assemble the payload with: python tools/build_asset_packs.py build"
+            )
+        }
+        logger.lifecycle(
+            "verifyNpuPacks: all ${npuPackCensusRows.size} pack variants match the census " +
+                "byte counts and both default variants are empty."
+        )
+    }
+}
+// Wired before bundle PACKAGING only. assembleDebug must NOT depend on this gate: an APK build
+// carries no packs at all, and the everyday build must never demand 4.3 GB of payload.
+tasks.matching { it.name.startsWith("package") && it.name.endsWith("Bundle") }
+    .configureEach { dependsOn(verifyNpuPacks) }
 
 dependencies {
     // On-device TTS (Track F): sherpa-onnx runs Kokoro-82M on CPU (fetched above). arm64

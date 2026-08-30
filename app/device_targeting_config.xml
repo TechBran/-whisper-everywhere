@@ -1,0 +1,38 @@
+<config:device-targeting-config xmlns:config="http://schemas.android.com/apk/config">
+  <config:device-group name="soc_8gen3">
+    <config:device-selector>
+      <config:system-on-chip manufacturer="QTI" model="SM8650"/>
+      <config:system-on-chip manufacturer="QTI" model="SM8650-AC"/>
+    </config:device-selector>
+    <config:device-selector>
+      <config:system-on-chip manufacturer="Qualcomm" model="SM8650"/>
+      <config:system-on-chip manufacturer="Qualcomm" model="SM8650-AC"/>
+    </config:device-selector>
+  </config:device-group>
+  <config:device-group name="soc_8elite_galaxy">
+    <config:device-selector>
+      <config:system-on-chip manufacturer="QTI" model="SM8750-AC"/>
+    </config:device-selector>
+    <config:device-selector>
+      <config:system-on-chip manufacturer="Qualcomm" model="SM8750-AC"/>
+    </config:device-selector>
+  </config:device-group>
+  <config:device-group name="soc_8elite5_galaxy">
+    <config:device-selector>
+      <config:system-on-chip manufacturer="QTI" model="SM8850-AD"/>
+    </config:device-selector>
+    <config:device-selector>
+      <config:system-on-chip manufacturer="Qualcomm" model="SM8850-AD"/>
+    </config:device-selector>
+  </config:device-group>
+  <config:device-group name="soc_7gen4">
+    <config:device-selector>
+      <config:system-on-chip manufacturer="QTI" model="SM7750"/>
+    </config:device-selector>
+    <config:device-selector>
+      <config:system-on-chip manufacturer="Qualcomm" model="SM7750"/>
+    </config:device-selector>
+  </config:device-group>
+  <!-- everything else → default group "other" → the EMPTY variant. Groups are pairwise
+       disjoint by exact string, so XML order carries no priority weight here. -->
+</config:device-targeting-config>

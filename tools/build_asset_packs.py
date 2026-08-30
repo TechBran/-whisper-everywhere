@@ -35,12 +35,32 @@ pattern, so the committed census and the instrument that fills the packs cannot 
 Nothing binary is ever committed: the workspace lives outside the repo, and the census output
 is DATA (digests, sizes, dates).
 
+``build`` (F4) assembles the eight pack variants into the two asset-pack modules'
+``src/main/assets/model#group_<packGroup>/`` dirs -- RAW bins under the census's delivery
+names (turbo's renamed ``turbo_*`` -- all eight vendor zips share the same two bare names, so
+an unrenamed turbo pack could overwrite the npu pair) plus OUR ``metadata.json`` written from
+the census. It runs ``measure`` first (the F3 handoff: packs are always built from
+gate-verified bytes; idempotent and cheap on a warm workspace), streams each binary with
+sha256 riding the copy, asserts the census literals, then RE-VERIFIES what landed through the
+importer's own logic: exactly three files, both bins re-read and re-hashed to the census, the
+metadata parsed strictly and cross-checked equal to the census row. The default ``model/``
+dirs must carry nothing but ``.gitkeep`` -- the empty-default rule the ``verifyNpuPacks``
+Gradle gate re-proves before every bundle build.
+
+``delivery-zip <familyId> <tierId>`` (F4) writes the per-family SAF sideload zip: OUR
+``metadata.json`` FIRST -- and with its size DECLARED in the local header (``writestr``), plus
+a data-descriptor refusal on every entry, because the app's import peek triggers on
+``ZipEntry.getSize()`` and a streamed entry declaring -1 silently skips it -- then the two
+binaries under the census's delivery names. Same verification, then the zip's own sha256 for
+publishing beside the file. ``tools/pack_npu_zip.py`` is untouched: its pins stand, and it
+remains the 8gen3 recipe the 4.1 acceptance used.
+
 Usage:
     python build_asset_packs.py measure [workspace]
+    python build_asset_packs.py build [workspace]
+    python build_asset_packs.py delivery-zip <familyId> <tierId> [workspace]
 
     workspace   defaults to C:\\Users\\bastr\\.androidbuild\\fleet-packs
-
-``build`` and ``delivery-zip`` land in F4.
 """
 
 import hashlib
@@ -92,15 +112,23 @@ MODELS = {
     },
 }
 
-# census family id -> (the vendor manifest's chipset key, HTP version). THE MAPPING LIVES
-# HERE, deliberately not in NpuFleetCensus: the app never talks to the vendor bucket, and a
-# runtime field nothing at runtime reads would be one more string to keep true (F1 handoff).
+# census family id -> (the vendor manifest's chipset key, HTP version, Play device group).
+# THE CHIPSET MAPPING LIVES HERE, deliberately not in NpuFleetCensus: the app never talks to
+# the vendor bucket, and a runtime field nothing at runtime reads would be one more string to
+# keep true (F1 handoff). The pack group IS a census field (NpuSocFamily.packGroup) restated
+# for the build side -- NpuPackLayoutTest pins each htp/packGroup pairing here equal to the
+# census, so the payload dirs cannot drift from the device-group XML.
 FAMILIES = {
-    "8gen3": ("qualcomm-snapdragon-8gen3", 75),
-    "8elite_galaxy": ("qualcomm-snapdragon-8-elite-for-galaxy", 79),
-    "8elite5_galaxy": ("qualcomm-snapdragon-8-elite-gen5-for-galaxy", 81),
-    "7gen4": ("qualcomm-snapdragon-7gen4", 73),
+    "8gen3": ("qualcomm-snapdragon-8gen3", 75, "soc_8gen3"),
+    "8elite_galaxy": ("qualcomm-snapdragon-8-elite-for-galaxy", 79, "soc_8elite_galaxy"),
+    "8elite5_galaxy": ("qualcomm-snapdragon-8-elite-gen5-for-galaxy", 81, "soc_8elite5_galaxy"),
+    "7gen4": ("qualcomm-snapdragon-7gen4", 73, "soc_7gen4"),
 }
+
+# tier id -> the asset-pack MODULE that ships it. The delivery names above are per-TIER; the
+# module split is what lets Play deliver small without turbo (and price the fetch decision per
+# tier in the app's UI).
+PACK_MODULE_BY_TIER = {"npu": "npu_small", "npu-turbo": "npu_turbo"}
 
 # Vendor zip Content-Length, asserted at HEAD where a measurement already existed BEFORE this
 # script first ran: the four turbo zips (research section 7) and the 8gen3 small zip. The
@@ -189,7 +217,7 @@ def fetch_manifest(tier: str) -> dict:
 
 
 def resolve_zip_url(tier: str, manifest: dict, family: str) -> str:
-    chipset_key, _ = FAMILIES[family]
+    chipset_key, _, _ = FAMILIES[family]
     try:
         assets = manifest["precisions"]["w8a16"]["chipset_assets"]
     except KeyError as e:
@@ -299,7 +327,7 @@ def metadata_gate(tier: str, family: str, zf: zipfile.ZipFile) -> None:
     metadata. A pack that disagrees is not a variant of our model -- it is another model."""
     import json
 
-    chipset_key, htp = FAMILIES[family]
+    chipset_key, htp, _ = FAMILIES[family]
     info = find_entry(zf, VENDOR_METADATA)
     with zf.open(info) as f:
         md = json.load(f)
@@ -361,9 +389,10 @@ def extract_and_hash(tier: str, family: str, zf: zipfile.ZipFile, workspace: str
     return measured
 
 
-def measure(workspace: str) -> None:
+def measure(workspace: str) -> dict:
     os.makedirs(workspace, exist_ok=True)
     unmeasured = []
+    paths = {}
     for tier in MODELS:
         manifest = fetch_manifest(tier)
         print(f"manifest ok: {tier} release v{RELEASE}")
@@ -373,6 +402,7 @@ def measure(workspace: str) -> None:
             print(f"  url: {url}")
             length = head_gate(tier, family, url)
             path = ensure_local_zip(tier, family, url, length, workspace)
+            paths[(tier, family)] = path
             with zipfile.ZipFile(path, "r") as zf:
                 bad = zf.testzip()
                 if bad is not None:
@@ -408,18 +438,298 @@ def measure(workspace: str) -> None:
             print(f"  ({tier}, {family})")
         raise SystemExit(2)
     print("measure OK: all 8 rows reproduce the embedded 16-digest census exactly")
+    return paths
+
+
+# ---------------------------------------------------------------------------- build (F4)
+
+def repo_root() -> str:
+    """This repo's root -- the script lives in tools/, one level down."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(CHUNK)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def expected_metadata(tier: str, family: str) -> dict:
+    """OUR metadata.json for one variant, values FROM the census -- the exact document
+    NpuPackMetadata.parse reads strictly (version 1; entries encoder then decoder) and
+    crossCheckRefusal answers null for. One builder for the writer AND the verifier, so the
+    two cannot disagree about what a variant's metadata says."""
+    _, htp, pack_group = FAMILIES[family]
+    _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
+    return {
+        "version": 1,
+        "tierId": tier,
+        "familyId": family,
+        "htpVersion": htp,
+        "packGroup": pack_group,
+        "entries": [
+            {"fileName": MODELS[tier]["delivery_encoder"], "bytes": enc_bytes,
+             "sha256": enc_sha},
+            {"fileName": MODELS[tier]["delivery_decoder"], "bytes": dec_bytes,
+             "sha256": dec_sha},
+        ],
+    }
+
+
+def pack_metadata_text(tier: str, family: str) -> str:
+    import json
+
+    return json.dumps(expected_metadata(tier, family), indent=2) + "\n"
+
+
+def verify_variant_dir(tier: str, family: str, out_dir: str) -> "str | None":
+    """The importer's own logic re-applied to what LANDED: exactly three files, both bins
+    re-read and re-hashed to the census literals, the metadata parsed and compared EQUAL to
+    the census document (stricter than the app's parse-then-cross-check -- this script wrote
+    the file, so any difference at all is a build fault). None when green, else the first
+    problem as one sentence."""
+    import json
+
+    _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
+    enc_name = MODELS[tier]["delivery_encoder"]
+    dec_name = MODELS[tier]["delivery_decoder"]
+    if not os.path.isdir(out_dir):
+        return f"{out_dir} does not exist"
+    names = sorted(os.listdir(out_dir))
+    want = sorted([VENDOR_METADATA, enc_name, dec_name])
+    if names != want:
+        return f"carries {names}; a pack variant is exactly {want}"
+    for name, want_bytes, want_sha in ((enc_name, enc_bytes, enc_sha),
+                                       (dec_name, dec_bytes, dec_sha)):
+        path = os.path.join(out_dir, name)
+        got = os.path.getsize(path)
+        if got != want_bytes:
+            return f"{name} is {got} B, the census says {want_bytes}"
+        got_sha = sha256_file(path)
+        if got_sha != want_sha:
+            return f"{name} sha256 {got_sha} != the census {want_sha}"
+    try:
+        with open(os.path.join(out_dir, VENDOR_METADATA), "r", encoding="utf-8") as f:
+            md = json.load(f)
+    except ValueError as bad:
+        return f"metadata.json is not valid JSON ({bad})"
+    if md != expected_metadata(tier, family):
+        return f"metadata.json disagrees with the census: {md}"
+    return None
+
+
+def extract_pair_to(tier: str, family: str, zip_path: str, out_dir: str) -> None:
+    """Stream the two context binaries out of the measured vendor zip into out_dir under the
+    census's delivery names -- the directory prefix stripped, turbo's entries renamed -- with
+    sha256 riding the copy and ASSERTED against the census before the .part is promoted."""
+    _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
+    os.makedirs(out_dir, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for bare, delivery, want_bytes, want_sha in (
+            (VENDOR_ENCODER, MODELS[tier]["delivery_encoder"], enc_bytes, enc_sha),
+            (VENDOR_DECODER, MODELS[tier]["delivery_decoder"], dec_bytes, dec_sha),
+        ):
+            info = find_entry(zf, bare)
+            digest = hashlib.sha256()
+            copied = 0
+            dest = os.path.join(out_dir, delivery)
+            part = dest + ".part"
+            with zf.open(info) as src, open(part, "wb") as dst:
+                while True:
+                    chunk = src.read(CHUNK)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    dst.write(chunk)
+                    copied += len(chunk)
+            if copied != want_bytes:
+                raise fail(f"{tier}/{family}: {delivery} produced {copied} B, the census "
+                           f"says {want_bytes}")
+            if digest.hexdigest() != want_sha:
+                raise fail(f"{tier}/{family}: {delivery} sha256 {digest.hexdigest()} != the "
+                           f"census {want_sha}")
+            os.replace(part, dest)
+            print(f"  {delivery}: {copied} B, census digest reproduced")
+
+
+def build_packs(workspace: str) -> None:
+    """Assemble all eight pack variants into the two module trees. Measure runs FIRST (the F3
+    handoff: packs are always built from gate-verified bytes; idempotent and cheap on a warm
+    workspace), so every zip this reads has just passed the HEAD, length, CRC and vendor
+    metadata gates."""
+    paths = measure(workspace)
+    root = repo_root()
+    built = 0
+    current = 0
+    for tier in MODELS:
+        module = PACK_MODULE_BY_TIER[tier]
+        for family in FAMILIES:
+            _, _, pack_group = FAMILIES[family]
+            out_dir = os.path.join(root, module, "src", "main", "assets",
+                                   f"model#group_{pack_group}")
+            print(f"BUILD tier={tier} family={family} -> "
+                  f"{module}/src/main/assets/model#group_{pack_group}")
+            if verify_variant_dir(tier, family, out_dir) is None:
+                print("  already the census (re-hashed from disk), rewrite skipped")
+                current += 1
+                continue
+            if os.path.isdir(out_dir):
+                for stale in os.listdir(out_dir):
+                    os.remove(os.path.join(out_dir, stale))
+            extract_pair_to(tier, family, paths[(tier, family)], out_dir)
+            with open(os.path.join(out_dir, VENDOR_METADATA), "w", encoding="utf-8",
+                      newline="\n") as f:
+                f.write(pack_metadata_text(tier, family))
+            problem = verify_variant_dir(tier, family, out_dir)
+            if problem is not None:
+                raise fail(f"{tier}/{family}: built variant failed its own verification: "
+                           f"{problem}")
+            print("  verified: three files, census bytes, census digests, metadata equal "
+                  "to the census")
+            built += 1
+    # The empty-default rule, checked at build time too so the fault is caught where it was
+    # made rather than at the next bundle's verifyNpuPacks run.
+    for module in PACK_MODULE_BY_TIER.values():
+        default_dir = os.path.join(root, module, "src", "main", "assets", "model")
+        extras = [n for n in os.listdir(default_dir) if n != ".gitkeep"]
+        if extras:
+            raise fail(f"{module}: the DEFAULT variant (assets/model/) must stay EMPTY -- an "
+                       f"unmatched device can never be prevented from receiving it -- but it "
+                       f"carries {extras}")
+    print(f"build OK: {built} variant(s) written+verified, {current} already current; both "
+          f"default variants are empty")
+
+
+# ---------------------------------------------------------------------------- delivery-zip (F4)
+
+def delivery_zip(workspace: str, family: str, tier: str) -> None:
+    """The per-family SAF sideload zip -- the fleet's non-Play story, importable through the
+    exact same WhisperModelManager.importNpuAssetPair flow as the published 8gen3 zips.
+
+    OUR metadata.json goes FIRST and with its size DECLARED in the local header: the import
+    peek triggers on ``entry.size in 0..MAX_BYTES``, and a streamed entry (data descriptor,
+    size -1) silently skips the peek -- the wrong-family refusal would then arrive after a GB
+    of hashing instead of before it (the F3 review's M2 carry, made a checked property here).
+    The two binaries follow under the census's delivery names, each streamed with sha256
+    riding the copy; the finished zip is re-opened and held to entry order, no data
+    descriptors, declared sizes, census digests and a census-equal metadata document before
+    the .part is promoted. Prints the zip's own sha256 for publishing beside the file."""
+    import json
+
+    if family not in FAMILIES:
+        raise fail(f"unknown family '{family}' (census families: {', '.join(FAMILIES)})")
+    if tier not in MODELS:
+        raise fail(f"unknown tier '{tier}' (tiers: {', '.join(MODELS)})")
+    _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
+    enc_name = MODELS[tier]["delivery_encoder"]
+    dec_name = MODELS[tier]["delivery_decoder"]
+    src_dir = os.path.join(workspace, "extracted", f"{tier}-{family}")
+    for name, want_bytes in ((enc_name, enc_bytes), (dec_name, dec_bytes)):
+        p = os.path.join(src_dir, name)
+        if not os.path.isfile(p) or os.path.getsize(p) != want_bytes:
+            raise fail(f"{tier}/{family}: {p} is absent or not the census length -- run "
+                       f"'measure' first to populate the workspace")
+    out = os.path.join(workspace, f"whisper-{tier}-{family}-delivery.zip")
+    part = out + ".part"
+    meta_text = pack_metadata_text(tier, family)
+    # The fixed date is the vendor bucket's hash-stable re-upload day: zip bytes stay
+    # reproducible across runs, so the printed sha256 is a stable identity for the release.
+    stamp = (2026, 8, 25, 0, 0, 0)
+    with zipfile.ZipFile(part, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        info = zipfile.ZipInfo(VENDOR_METADATA, date_time=stamp)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        # writestr knows the payload up front, so the local header carries the exact sizes
+        # and CRC -- no data descriptor, which is what makes the peek's declared-size gate
+        # see this entry at all.
+        zf.writestr(info, meta_text)
+        for name, want_bytes, want_sha in ((enc_name, enc_bytes, enc_sha),
+                                           (dec_name, dec_bytes, dec_sha)):
+            src = os.path.join(src_dir, name)
+            digest = hashlib.sha256()
+            binfo = zipfile.ZipInfo(name, date_time=stamp)
+            binfo.compress_type = zipfile.ZIP_DEFLATED
+            copied = 0
+            # Streaming through open(w) on a SEEKABLE output: CPython writes the local header
+            # up front and seeks back at entry close to patch the real sizes and CRC in --
+            # declared sizes without buffering a GB, and the reopen below REFUSES the output
+            # if that mechanic ever stops holding.
+            with open(src, "rb") as fsrc, zf.open(binfo, "w") as dst:
+                while True:
+                    chunk = fsrc.read(CHUNK)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    dst.write(chunk)
+                    copied += len(chunk)
+            if copied != want_bytes:
+                raise fail(f"{tier}/{family}: {name} wrote {copied} B, the census says "
+                           f"{want_bytes}")
+            if digest.hexdigest() != want_sha:
+                raise fail(f"{tier}/{family}: {name} sha256 {digest.hexdigest()} != the "
+                           f"census {want_sha}")
+    # The self-verification, from the finished zip's own headers and bytes:
+    with zipfile.ZipFile(part, "r") as zf:
+        infos = zf.infolist()
+        if [i.filename for i in infos] != [VENDOR_METADATA, enc_name, dec_name]:
+            raise fail(f"delivery zip entry order is {[i.filename for i in infos]} -- "
+                       f"metadata.json must be FIRST so the peek refuses a wrong-family zip "
+                       f"before a byte of binary inflates")
+        for i in infos:
+            if i.flag_bits & 0x08:
+                raise fail(f"'{i.filename}' was written with a data descriptor -- its local "
+                           f"header declares no size, ZipEntry.getSize() answers -1, and the "
+                           f"import peek would silently skip it")
+        sizes = {i.filename: i.file_size for i in infos}
+        if sizes[VENDOR_METADATA] > 65_536:
+            raise fail(f"metadata.json is {sizes[VENDOR_METADATA]} B -- past the peek's "
+                       f"65536 B buffer bound, so the app would never read it")
+        if sizes[enc_name] != enc_bytes or sizes[dec_name] != dec_bytes:
+            raise fail(f"declared sizes {sizes} disagree with the census")
+        for name, want_sha in ((enc_name, enc_sha), (dec_name, dec_sha)):
+            digest = hashlib.sha256()
+            with zf.open(name) as f:
+                while True:
+                    chunk = f.read(CHUNK)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            if digest.hexdigest() != want_sha:
+                raise fail(f"{name} re-inflated to sha256 {digest.hexdigest()} != the census "
+                           f"{want_sha}")
+        md = json.loads(zf.read(VENDOR_METADATA).decode("utf-8"))
+        if md != expected_metadata(tier, family):
+            raise fail(f"the zip's metadata.json disagrees with the census: {md}")
+    os.replace(part, out)
+    print(f"delivery zip OK: {out} ({os.path.getsize(out)} B)")
+    print(f"  metadata.json first, declared sizes, no data descriptors, census digests")
+    print(f"  sha256 {sha256_file(out)}")
 
 
 def main(argv: list) -> None:
+    usage = (
+        f"usage: python {os.path.basename(argv[0])} measure [workspace]\n"
+        f"       python {os.path.basename(argv[0])} build [workspace]\n"
+        f"       python {os.path.basename(argv[0])} delivery-zip <familyId> <tierId> [workspace]"
+    )
     if len(argv) < 2 or argv[1] not in ("measure", "build", "delivery-zip"):
-        raise SystemExit(
-            f"usage: python {os.path.basename(argv[0])} measure [workspace]\n"
-            f"       (build and delivery-zip land in F4)"
-        )
-    if argv[1] != "measure":
-        raise SystemExit(f"'{argv[1]}' lands in F4; this task ships measure only")
-    workspace = argv[2] if len(argv) > 2 else DEFAULT_WORKSPACE
-    measure(workspace)
+        raise SystemExit(usage)
+    if argv[1] == "measure":
+        workspace = argv[2] if len(argv) > 2 else DEFAULT_WORKSPACE
+        measure(workspace)
+    elif argv[1] == "build":
+        workspace = argv[2] if len(argv) > 2 else DEFAULT_WORKSPACE
+        build_packs(workspace)
+    else:
+        if len(argv) < 4:
+            raise SystemExit(usage)
+        family, tier = argv[2], argv[3]
+        workspace = argv[4] if len(argv) > 4 else DEFAULT_WORKSPACE
+        delivery_zip(workspace, family, tier)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,9 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
     id("com.android.application") version "8.13.2" apply false
+    // (4.2 F4) The plugin the two NPU asset-pack modules apply — pinned to the same AGP
+    // version as the application plugin, because they are the same artifact.
+    id("com.android.asset-pack") version "8.13.2" apply false
     id("org.jetbrains.kotlin.android") version "2.0.21" apply false
     // Kotlin 2.0 moves the Compose compiler into the Kotlin repo — this plugin replaces the
     // old composeOptions { kotlinCompilerExtensionVersion } pinning entirely.

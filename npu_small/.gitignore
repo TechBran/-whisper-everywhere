@@ -1,0 +1,7 @@
+# The pack payload is a BUILD artifact (4.2 F4): tools/build_asset_packs.py build assembles the
+# four SoC #group_ variants here from the measured vendor zips, every byte hash-verified against
+# the census on the way in and out. The vendor-licensed model binaries must never enter a repo
+# with a public remote, and the root .gitignore's blob walls (*.so, *.dlc, *.context) do not
+# cover .bin — so this pattern IS the wall. The default variant's .gitkeep stays tracked; the
+# payload dirs are structurally uncommittable.
+src/main/assets/model#group_*/
