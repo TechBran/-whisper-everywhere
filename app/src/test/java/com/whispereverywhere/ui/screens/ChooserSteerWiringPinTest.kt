@@ -159,6 +159,23 @@ class ChooserSteerWiringPinTest {
     /** A multi-line needle, written as its own source lines so indentation is part of the match. */
     private fun block(vararg lines: String) = lines.joinToString("\n")
 
+    /**
+     * Byte offset of a needle's first LIVE occurrence — `NpuDiagTest`'s idiom, borrowed for the
+     * order claim below (F7 micro-round). A count cannot express an order, and the m-1 fix is
+     * entirely an order.
+     */
+    private fun offsetOfLive(scope: String, needle: String): Int {
+        var at = 0
+        for (line in scope.split("\n")) {
+            val trimmed = line.trimStart()
+            val commented =
+                trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")
+            if (!commented && line.contains(needle)) return at
+            at += line.length + 1
+        }
+        return -1
+    }
+
     @Test
     fun theGuidedFlowOffersTheOrderedListAndNeverRawCatalogOrder() {
         assertEquals(
@@ -941,6 +958,24 @@ class ChooserSteerWiringPinTest {
                 "screens' \"is this fetch mine?\" answer is the fetch's own",
             1,
             count(controller, "_activeTier.value = tierId"),
+        )
+        // THE ORDER, and it is a different claim from the count (F7 micro-round, m-3 of the
+        // re-review — a REAL pin gap, found by the reviewer re-scoring my own battery row).
+        // The count above is position-blind: moving this write back BELOW the no-pack early
+        // return leaves it at 1 and no executed test constructs the controller, so the m-1 fix
+        // was unpinned in the only direction that matters. Below the branch, a no-pack denial
+        // inherits the PREVIOUS tier's name, both refusal rules then read "another tier is
+        // busy", and the controller's own just-published "This build has no Google Play pack
+        // for the '<id>' tier." is buried under a false busy story.
+        val namesTheTier = offsetOfLive(controller, "_activeTier.value = tierId")
+        val noPackRefusal =
+            offsetOfLive(controller, "\"This build has no Google Play pack for the '\$tierId' tier.\"")
+        assertTrue("the no-pack refusal was found", noPackRefusal >= 0)
+        assertTrue(
+            "THE REQUESTED TIER IS NAMED BEFORE ANY REFUSAL CAN RETURN: the write ($namesTheTier) " +
+                "must precede the no-pack refusal ($noPackRefusal), or a denial is attributed " +
+                "to whichever tier fetched last",
+            namesTheTier in 0 until noPackRefusal,
         )
     }
 

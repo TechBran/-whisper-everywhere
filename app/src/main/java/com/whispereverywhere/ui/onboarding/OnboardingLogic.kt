@@ -198,8 +198,8 @@ object OnboardingLogic {
      * below this one depending on the steer.
      */
     const val CHOOSER_FETCH_BUSY =
-        "Another model is already downloading from Google Play. Cancel that download, or wait " +
-            "for it to finish, then tap Get again."
+        "Another model is already downloading from Google Play. Wait for it to finish, then " +
+            "tap Get again."
 
     /**
      * Whether the gated route may attach its collector to the controller's state — null — or
@@ -238,6 +238,33 @@ object OnboardingLogic {
      */
     fun chooserFetchRefusal(started: Boolean, activeTierId: String?, tierId: String): String? =
         if (fetchAttachRefusal(started, activeTierId, tierId) == null) null else CHOOSER_FETCH_BUSY
+
+    /**
+     * Whether a shown [CHOOSER_FETCH_BUSY] is STILL TRUE (F7 micro-round, m-2 of the re-review).
+     * The sentence claims another fetch is running; the moment that fetch reaches a terminal
+     * state it becomes a lie that the card would otherwise keep displaying until the user
+     * happened to tap again. The screen clears the refusal on every controller-state change
+     * this answers false for.
+     *
+     * These are the STATE half of `NpuPackController.isBusy()` — the half a screen can observe.
+     * The job half (an install coroutine finishing just after `Installed` is published) is not
+     * observable here, so this can clear a refusal a moment EARLY: the safe direction, since a
+     * stale-cleared card simply offers Get again and a genuinely busy controller answers with a
+     * fresh, accurate refusal on the next tap.
+     */
+    fun chooserRefusalStillStands(fetch: NpuPackFetch.FetchState): Boolean = when (fetch) {
+        is NpuPackFetch.FetchState.Pending,
+        is NpuPackFetch.FetchState.Downloading,
+        is NpuPackFetch.FetchState.Transferring,
+        is NpuPackFetch.FetchState.NeedsConfirmation,
+        is NpuPackFetch.FetchState.Verifying,
+        -> true
+        is NpuPackFetch.FetchState.Idle,
+        is NpuPackFetch.FetchState.Installed,
+        is NpuPackFetch.FetchState.Failed,
+        is NpuPackFetch.FetchState.Cancelled,
+        -> false
+    }
 
     /**
      * One [NpuPackFetch.FetchState] to exactly one [EngineState] — the whole translation between

@@ -518,6 +518,21 @@ class NpuImportWiringPinTest {
             0,
             count(picker, "FETCH_BUSY_WITH_ANOTHER_MODEL"),
         )
+        // F7 micro-round (m-2 of the re-review): the refusal claims another fetch is RUNNING,
+        // so it must die when that stops being true — not merely on the user's next tap, which
+        // left a false sentence on the card for as long as they did not tap.
+        assertEquals(
+            "the refusal is cleared by the controller's own state, through the pure rule",
+            1,
+            count(
+                picker,
+                block(
+                    "    LaunchedEffect(fetchState, fetchTierId) {",
+                    "        if (!OnboardingLogic.chooserRefusalStillStands(fetchState)) fetchRefusal = null",
+                    "    }",
+                ),
+            ),
+        )
     }
 
     /**

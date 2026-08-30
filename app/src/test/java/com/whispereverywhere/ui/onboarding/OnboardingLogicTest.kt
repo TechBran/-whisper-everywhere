@@ -351,10 +351,19 @@ class OnboardingLogicTest {
         // the second while the first fetches is one tap away. Before this fix that tap was a
         // SILENT no-op (start() false, the controller publishes nothing, the card keeps its
         // enabled button). Walked here as the two surfaces actually call it.
+        // Micro-round m-1: the sentence may name only controls that are ALWAYS there while it
+        // shows. The earlier "Cancel that download" was false through Verifying — isBusy() is
+        // true there, but the fetching card renders no Cancel in that arm, and a 1.07 GB turbo
+        // verify is minutes long. "Wait for it to finish, then tap Get again" is true in both
+        // windows, and the Get button it names is on the card the sentence is rendered on.
         assertEquals(
-            "Another model is already downloading from Google Play. Cancel that download, " +
-                "or wait for it to finish, then tap Get again.",
+            "Another model is already downloading from Google Play. Wait for it to finish, " +
+                "then tap Get again.",
             OnboardingLogic.CHOOSER_FETCH_BUSY,
+        )
+        assertFalse(
+            "the chooser's sentence names no control that can be absent while it shows",
+            OnboardingLogic.CHOOSER_FETCH_BUSY.contains("Cancel"),
         )
         // 1. Tap Get on turbo: start() true, the controller names turbo. Nothing is refused.
         assertNull(
@@ -425,6 +434,54 @@ class OnboardingLogicTest {
             OnboardingLogic.fetchAttachRefusal(
                 started = false, activeTierId = "npu-max", tierId = "npu-max",
             ),
+        )
+    }
+
+    @Test fun the_chooser_refusal_stops_standing_the_moment_the_blocking_fetch_ends() {
+        // F7 micro-round, m-2 of the re-review: the refusal claims another fetch is RUNNING.
+        // It was cleared only by the next tap, so after the blocking fetch finished the card
+        // kept rendering a sentence that had become false. It now stands exactly while the
+        // controller is in a busy STATE — the half a screen can observe.
+        for (busy in listOf(
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.FetchState.Downloading(1L, 2L),
+            NpuPackFetch.FetchState.Transferring,
+            NpuPackFetch.FetchState.NeedsConfirmation,
+            NpuPackFetch.FetchState.Verifying(1L, 2L),
+        )) {
+            assertTrue(
+                "the refusal is still true while the other fetch runs ($busy)",
+                OnboardingLogic.chooserRefusalStillStands(busy),
+            )
+        }
+        // Every terminal — and the rest state — makes it false, so the card stops claiming it.
+        for (done in listOf(
+            NpuPackFetch.FetchState.Installed,
+            NpuPackFetch.FetchState.Cancelled,
+            NpuPackFetch.FetchState.Failed("whatever the machine said"),
+            NpuPackFetch.FetchState.Idle,
+        )) {
+            assertFalse(
+                "a finished fetch cannot keep another card's refusal on screen ($done)",
+                OnboardingLogic.chooserRefusalStillStands(done),
+            )
+        }
+        // The rule tracks isBusy()'s STATE half exactly — the same vocabulary, so the sentence
+        // and the controller's own single-flight answer cannot drift apart.
+        assertEquals(
+            "busy states and standing-refusal states are the same set",
+            listOf(true, true, true, true, true, false, false, false, false),
+            listOf(
+                NpuPackFetch.FetchState.Pending,
+                NpuPackFetch.FetchState.Downloading(0L, 0L),
+                NpuPackFetch.FetchState.Transferring,
+                NpuPackFetch.FetchState.NeedsConfirmation,
+                NpuPackFetch.FetchState.Verifying(0L, 0L),
+                NpuPackFetch.FetchState.Installed,
+                NpuPackFetch.FetchState.Cancelled,
+                NpuPackFetch.FetchState.Failed("x"),
+                NpuPackFetch.FetchState.Idle,
+            ).map { OnboardingLogic.chooserRefusalStillStands(it) },
         )
     }
 

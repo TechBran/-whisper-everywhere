@@ -174,6 +174,13 @@ fun OnboardingModelScreen(
     // otherwise own it. Cleared by any tap that succeeds (the rule answers null).
     var fetchRefusal by remember { mutableStateOf<Pair<String, String>?>(null) }
 
+    // F7 micro-round: a shown refusal says another fetch is RUNNING. Clearing it only at the
+    // next tap left that sentence on the card after the blocking fetch had finished — false,
+    // and for as long as the user did not tap. The controller's own state retires it.
+    LaunchedEffect(fetchState, fetchTierId) {
+        if (!OnboardingLogic.chooserRefusalStillStands(fetchState)) fetchRefusal = null
+    }
+
     // Fire the ready callback exactly once when the download completes.
     LaunchedEffect(state) {
         val s = state
