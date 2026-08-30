@@ -80,6 +80,15 @@ import org.junit.Test
  * routing surface, and the language step / gated-fetch wiring is held as source
  * ([theLanguagePickWritesTheOneStoreAndTheGatedFetchRidesThePackController]).
  *
+ * **4.2 F7: the Settings picker's producer joins the union** — the same conscious re-spell the
+ * flow's needle took at F6, tripped by name first — and the picker gains the fetch affordance,
+ * whose wiring pins live in `NpuImportWiringPinTest` beside the import wiring they extend. Here:
+ * the union needle, the panel's installed-wording gate re-spelled to the DISK set (lineup
+ * membership stopped meaning installed), the picker's process-scoped fetch mirror and
+ * confirm-once idiom, and the M-3 attach guard on the ViewModel's gated route. The
+ * `WhisperCatalog.pickable` live-zeros and the routing files' `fetchable` live-zeros are
+ * UNCHANGED — a fetchable tier still must never route.
+ *
  * **The source is read LF-NORMALISED.** `core.autocrlf=true` checks this repo out with CRLF, so a
  * needle written with a bare `\n` finds nothing and every assertion would pass or fail for the wrong
  * reason. The normalisation happens once, at each read site below.
@@ -390,13 +399,17 @@ class ChooserSteerWiringPinTest {
                 "val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)",
             ),
         )
+        // 4.2 F7: the producer is the UNION — the same DISPLAY/steer set F6 gave the flow
+        // (offered = installed-and-capable; fetchable = census-deliverable, not yet arrived).
+        // A conscious re-spell of this needle, resolved in-commit: the old offered-only
+        // spelling tripped this test by name first, exactly as a pin should.
         assertGateAnswerReachesBothCallsOffMain(
             picker,
             "the Settings picker",
             block(
                 "    val installGeneration by ModelInstallSignal.generation.collectAsState()",
                 "    val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {",
-                "        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }",
+                "        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() + app.fetchableNpuTierIds() }",
                 "    }",
             ),
             // 4.0 Q8: the picker's second device question, capability-only. Its own test below.
@@ -455,10 +468,15 @@ class ChooserSteerWiringPinTest {
         // What the panel SAYS keys on the npu (small) pair specifically — the pair this importer
         // installs — not on the set being non-empty, which a turbo-only device would satisfy
         // while the npu pair is still absent, telling the user a model is installed that is not.
+        // RE-SPELLED at F7 (in-commit — the old spelling tripped this test by name first): the
+        // lineup set became the union, so membership in it stopped meaning installed — a
+        // fetchable npu with nothing on disk is in the set, and the old gate would have told
+        // the user their model was installed. The wording gate reads the DISK set now, which
+        // is what "installed" has meant on this panel since 4.0.
         assertEquals(
-            "the panel's installed-wording gate is the npu tier's OWN membership",
+            "the panel's installed-wording gate is the npu tier's own INSTALLED membership",
             1,
-            count(picker, "offered = NpuAssetImport.TIER_ID in npuTierIds,"),
+            count(picker, "offered = NpuAssetImport.TIER_ID in installedIds,"),
         )
     }
 
@@ -798,6 +816,34 @@ class ChooserSteerWiringPinTest {
             1,
             count(setupVm, "NpuPackController.start(appInstance, model.id)"),
         )
+        // 4.2 F7 (F6 review M-3, landed by name): the start Boolean is CONSUMED and the attach
+        // is guarded through the pure executed rule — a controller busy with ANOTHER tier's
+        // fetch (the F7 chooser can start one) is refused by name and never mirrored; an
+        // attached collector would, on that fetch's Installed, have persisted selectedModelId
+        // for a tier this card never fetched.
+        assertEquals(
+            "the gated route consumes start()'s answer",
+            1,
+            count(setupVm, "val started = NpuPackController.start(appInstance, model.id)"),
+        )
+        assertEquals(
+            "and refuses to attach to another tier's fetch, through the pure rule — asserted " +
+                "as one block so the consult, the Failed publish and the return cannot be " +
+                "separated",
+            1,
+            count(
+                setupVm,
+                block(
+                    "        val refusal = OnboardingLogic.fetchAttachRefusal(",
+                    "            started, NpuPackController.activeTier.value, model.id,",
+                    "        )",
+                    "        if (refusal != null) {",
+                    "            _speechState.value = EngineState.Failed(refusal)",
+                    "            return",
+                    "        }",
+                ),
+            ),
+        )
         assertEquals(
             "every fetch state reaches the card through the ONE pure mapping — no second " +
                 "translation can drift from the tested table",
@@ -856,6 +902,69 @@ class ChooserSteerWiringPinTest {
                     "        if (_speechState.value is EngineState.Failed) {",
                     "            _speechState.value = EngineState.Pending",
                     "        }",
+                ),
+            ),
+        )
+    }
+
+    /**
+     * 4.2 F7 — the picker's fetch mirror is the PROCESS-SCOPED controller's, never the
+     * composition's (the I3 lesson, fetch edition: what a rotation destroys may not own an
+     * ~860 MB fetch), and the OTHER end of the wiring is held too: the controller actually
+     * SETS the active tier at start, once — the same both-ends discipline as
+     * [theInstallGenerationIsBumpedAtTheOneFunnelEveryInstallPathGoesThrough], because a
+     * screen gating on a fact nothing writes is decoration.
+     */
+    @Test
+    fun thePickerMirrorsTheProcessScopedFetchAndTheControllerNamesItsTier() {
+        assertEquals(
+            "the fetch state is collected from the process-scoped owner — a recreation " +
+                "re-subscribes and finds the fetch exactly where it was",
+            1,
+            count(picker, "val fetchState by NpuPackController.state.collectAsState()"),
+        )
+        assertEquals(
+            "and WHICH tier it is for comes from the same owner, so the state can never wear " +
+                "a sibling card and a pre-rotation fetch still lands on the right one",
+            1,
+            count(picker, "val fetchTierId by NpuPackController.activeTier.collectAsState()"),
+        )
+        assertEquals(
+            "the fetch state is never held in a remember — the composition owning it dies on " +
+                "the next rotation",
+            0,
+            count(picker, "mutableStateOf<NpuPackFetch.FetchState>"),
+        )
+        val controller = read("src/main/java/com/whispereverywhere/npu/NpuPackController.kt")
+        assertEquals(
+            "the controller sets the active tier at exactly one place — start — so the " +
+                "screens' \"is this fetch mine?\" answer is the fetch's own",
+            1,
+            count(controller, "_activeTier.value = tierId"),
+        )
+    }
+
+    /**
+     * 4.2 F7 — Play's consent on the PICKER: the F6-established idiom, its second surface.
+     * The flow's own block is pinned in
+     * [theLanguagePickWritesTheOneStoreAndTheGatedFetchRidesThePackController] and is scoped
+     * to the flow file, so this copy counts independently.
+     */
+    @Test
+    fun thePickerShowsPlaysDialogOncePerNeedsConfirmationEntry() {
+        assertEquals(
+            "the picker shows Play's dialog once per ENTRY into NeedsConfirmation — the " +
+                "LaunchedEffect key is the state VALUE: entering fires once, staying re-fires " +
+                "nothing, leaving and re-entering fires again; no custom re-ask exists",
+            1,
+            count(
+                picker,
+                block(
+                    "    LaunchedEffect(fetchState) {",
+                    "        if (fetchState is NpuPackFetch.FetchState.NeedsConfirmation) {",
+                    "            NpuPackController.confirm(context as ComponentActivity)",
+                    "        }",
+                    "    }",
                 ),
             ),
         )

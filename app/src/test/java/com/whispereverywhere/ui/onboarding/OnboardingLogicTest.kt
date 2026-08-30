@@ -182,40 +182,109 @@ class OnboardingLogicTest {
     }
 
     @Test fun the_onboarding_surface_rewrites_refusals_that_name_an_affordance_it_lacks() {
-        // F6 fix round 1, I-1. F5's carrier rule conditioned the adjacency copy on the import
-        // control sitting below the card; onboarding has no import control, so every reason
-        // naming it renders this surface's own truthful copy instead — and the CHOOSER keeps
-        // the ruled adjacency copy untouched (the controller's table is not rewritten).
+        // F6 fix round 1, I-1 + the F6 re-review's F7 rider: onboarding has no import control,
+        // so every adjacency-marked reason renders this surface's own copy — SPLIT BY MARKER
+        // FAMILY since F7, so each reason's leading claim is true: "This install can't fetch"
+        // only where the install IS the cause (the four sideload codes), the neutral
+        // "couldn't deliver" where the cause is Play-side, app-version or device-group. The
+        // CHOOSER keeps the ruled adjacency copy untouched (it HAS the affordance).
         assertEquals(
             "This install can't fetch from Google Play — finish setup with an on-device " +
                 "model and import from Settings later.",
             OnboardingLogic.ONBOARDING_FETCH_REFUSAL,
         )
-        // Every adjacency-carrying builder in the F5 table: the four sideload codes, the two
-        // "or use …" alternatives, and the empty delivery.
-        val adjacencyReasons = listOf(
+        assertEquals(
+            "Google Play couldn't deliver this model — finish setup with an on-device model " +
+                "and import from Settings later.",
+            OnboardingLogic.ONBOARDING_FETCH_UNDELIVERED,
+        )
+        // The install-cause family: the four sideload codes, each carrying BOTH markers.
+        val sideloadReasons = listOf(
             NpuPackFetch.ERROR_API_NOT_AVAILABLE,
             NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND,
             NpuPackFetch.ERROR_APP_NOT_OWNED,
             NpuPackFetch.ERROR_UNRECOGNIZED_INSTALLATION,
-            NpuPackFetch.ERROR_APP_UNAVAILABLE,
-            NpuPackFetch.ERROR_PACK_UNAVAILABLE,
-        ).map { NpuPackFetch.failureReason(it) } + NpuPackFetch.emptyDeliveryRefusal()
-        for (reason in adjacencyReasons) {
+        ).map { NpuPackFetch.failureReason(it) }
+        for (reason in sideloadReasons) {
             assertTrue(
                 "fixture premise — the reason names the adjacency: $reason",
                 reason.contains(OnboardingLogic.IMPORT_ADJACENCY_MARKER),
+            )
+            assertTrue(
+                "fixture premise — the reason names the install as the cause: $reason",
+                reason.contains(OnboardingLogic.SIDELOAD_MARKER),
             )
             assertEquals(
                 EngineState.Failed(OnboardingLogic.ONBOARDING_FETCH_REFUSAL),
                 OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Failed(reason)),
             )
         }
-        // The chooser's ruled copy is UNTOUCHED at its source — the rewrite lives in this
-        // mapping alone (NpuPackFetchTest pins the ruled words exactly).
+        // The not-the-install's-fault family: the two "or use …" alternatives (transient and
+        // app-version causes) and the empty delivery (a device-group cause). "This install
+        // can't fetch" would be FALSE for each — the F6 re-review's finding — so they render
+        // the neutral copy whose leading claim is true for all of them.
+        val undeliveredReasons = listOf(
+            NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_UNAVAILABLE),
+            NpuPackFetch.failureReason(NpuPackFetch.ERROR_PACK_UNAVAILABLE),
+            NpuPackFetch.emptyDeliveryRefusal(),
+        )
+        for (reason in undeliveredReasons) {
+            assertTrue(
+                "fixture premise — the reason names the adjacency: $reason",
+                reason.contains(OnboardingLogic.IMPORT_ADJACENCY_MARKER),
+            )
+            assertFalse(
+                "fixture premise — the reason does NOT blame the install: $reason",
+                reason.contains(OnboardingLogic.SIDELOAD_MARKER),
+            )
+            assertEquals(
+                EngineState.Failed(OnboardingLogic.ONBOARDING_FETCH_UNDELIVERED),
+                OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Failed(reason)),
+            )
+        }
+        // The chooser's ruled copy is UNTOUCHED at its source — both rewrites live in the
+        // onboarding mapping alone (NpuPackFetchTest pins the ruled words exactly).
         assertTrue(
             NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_NOT_OWNED)
                 .contains("Use 'Import model pair…' below instead."),
+        )
+    }
+
+    @Test fun a_fetch_the_controller_refused_for_another_tier_is_refused_by_name_never_mirrored() {
+        // F6 review M-3, landed in F7 by the carry's own instruction: start() == false while
+        // the controller's active fetch is some OTHER tier's means the chooser got there
+        // first — a collector attached now would mirror that tier's states, and on its
+        // Installed persist selectedModelId for a tier this card never fetched. The attach
+        // rule is pure and executed here; the ViewModel's consult of it is pinned as source.
+        assertEquals(
+            "Another model is downloading from Google Play right now. Wait for it to " +
+                "finish, then tap Retry.",
+            OnboardingLogic.FETCH_BUSY_WITH_ANOTHER_MODEL,
+        )
+        // A successful start is OURS by definition — attach, whatever the tier field reads.
+        assertNull(OnboardingLogic.fetchAttachRefusal(started = true, activeTierId = "npu", tierId = "npu"))
+        assertNull(OnboardingLogic.fetchAttachRefusal(started = true, activeTierId = null, tierId = "npu"))
+        // Denied with NO active tier: the controller's own no-pack refusal is already
+        // published — attach and mirror ITS words, never bury them under a busy story.
+        assertNull(OnboardingLogic.fetchAttachRefusal(started = false, activeTierId = null, tierId = "npu"))
+        // Denied while OUR OWN tier is active: the re-attach path (double tap; relaunch onto
+        // Play's surviving download).
+        assertNull(OnboardingLogic.fetchAttachRefusal(started = false, activeTierId = "npu", tierId = "npu"))
+        // Denied while ANOTHER tier's fetch runs: the M-3 edge — refused by name.
+        assertEquals(
+            OnboardingLogic.FETCH_BUSY_WITH_ANOTHER_MODEL,
+            OnboardingLogic.fetchAttachRefusal(
+                started = false, activeTierId = "npu-turbo", tierId = "npu",
+            ),
+        )
+        // And the refusal wedges nothing: it is a Failed terminal like any other — Retry plus
+        // the choose-different escape, with the mandatory-model gate untouched.
+        val failed = EngineState.Failed(OnboardingLogic.FETCH_BUSY_WITH_ANOTHER_MODEL)
+        assertTrue(OnboardingLogic.showChooseDifferentModel(failed))
+        assertFalse(
+            OnboardingLogic.enginesPrimaryAction(
+                downloadsBegun = true, tierPicked = true, speechReady = false,
+            ).enabled
         )
     }
 

@@ -152,7 +152,20 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
         // Published before start() so the Working guard above holds from this instant — the
         // same double-tap discipline as the download path's first Working write.
         _speechState.value = EngineState.Working(INDETERMINATE, OnboardingLogic.FETCH_PREPARING)
-        NpuPackController.start(appInstance, model.id)
+        val started = NpuPackController.start(appInstance, model.id)
+        // F6 review M-3, landed here by name (4.2 F7): a denied start while the controller's
+        // active fetch is some OTHER tier's means the F7 chooser got there first. A collector
+        // attached now would mirror that tier's states onto this card — and on its Installed
+        // persist selectedModelId for a tier this card never fetched. The attach rule is pure
+        // and executed (OnboardingLogicTest); its answer here is refused-by-name, a Failed
+        // terminal like any other: Retry re-enters ensureSpeech, the escape stays, no wedge.
+        val refusal = OnboardingLogic.fetchAttachRefusal(
+            started, NpuPackController.activeTier.value, model.id,
+        )
+        if (refusal != null) {
+            _speechState.value = EngineState.Failed(refusal)
+            return
+        }
         viewModelScope.launch {
             NpuPackController.state
                 .map(OnboardingLogic::engineStateForFetch)

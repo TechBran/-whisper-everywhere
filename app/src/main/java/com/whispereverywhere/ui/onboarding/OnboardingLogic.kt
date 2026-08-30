@@ -115,30 +115,61 @@ object OnboardingLogic {
     const val IMPORT_ADJACENCY_MARKER = "'Import model pair…' below"
 
     /**
+     * The sideload family's own sentence — present in exactly the refusals whose CAUSE is the
+     * install itself (`NpuPackFetch`'s sideload answer: API_NOT_AVAILABLE, PLAY_STORE_NOT_FOUND,
+     * APP_NOT_OWNED, UNRECOGNIZED_INSTALLATION). [onboardingFetchRefusal] splits the adjacency
+     * family on it (4.2 F7, the F6 re-review's rider): "This install can't fetch" is TRUE for
+     * these and FALSE for the family's other members — APP/PACK_UNAVAILABLE and the empty
+     * delivery are transient, app-version or device-group causes, not install causes.
+     */
+    const val SIDELOAD_MARKER = "it wasn't installed from Play"
+
+    /**
      * The ONBOARDING surface's refusal for a fetch Play will not serve this install (F6 fix
      * round 1, I-1): truthful on THIS surface — no reference to an affordance the flow lacks,
      * and the way forward it actually has (an on-device model now, Settings' import later).
-     * The CHOOSER surface keeps the ruled adjacency copy; see [onboardingFetchRefusal].
+     * Since 4.2 F7 it renders only for the INSTALL-CAUSE family ([SIDELOAD_MARKER]), whose
+     * refusals its leading clause is true of. The CHOOSER surface keeps the ruled adjacency
+     * copy; see [onboardingFetchRefusal].
      */
     const val ONBOARDING_FETCH_REFUSAL =
         "This install can't fetch from Google Play — finish setup with an on-device model " +
+            "and import from Settings later."
+
+    /**
+     * The onboarding refusal for an adjacency-family failure that is NOT the install's fault
+     * (4.2 F7, the F6 re-review's rider): APP_UNAVAILABLE is transient, PACK_UNAVAILABLE is an
+     * app-version cause, the empty delivery a device-group one — "This install can't fetch"
+     * would be false for each. The leading claim here is deliberately the weakest true one:
+     * "couldn't deliver" holds for all three, and for any FUTURE adjacency-marked refusal that
+     * lacks the sideload sentence (the fail-safe direction: an unknown family member gets the
+     * claim that cannot be false, never the one that blames the install).
+     */
+    const val ONBOARDING_FETCH_UNDELIVERED =
+        "Google Play couldn't deliver this model — finish setup with an on-device model " +
             "and import from Settings later."
 
     /** The failed engine card's second action — the no-wedge escape (F6 fix round 1, I-1). */
     const val CHOOSE_DIFFERENT_MODEL = "Choose a different model"
 
     /**
-     * Per-surface refusal copy (F6 fix round 1, I-1). F5's carrier rule renders `Failed.reason`
-     * VERBATIM — conditioned, in F5's own handoff, on the SAF import affordance sitting below
-     * the card. The CHOOSER keeps that adjacency and the ruled copy; ONBOARDING has no import
-     * affordance, so a reason that names it would send the user to a control that does not
-     * exist (and, on a sideloaded install, wedge the mandatory step behind a dead Retry). Any
-     * reason carrying [IMPORT_ADJACENCY_MARKER] therefore renders [ONBOARDING_FETCH_REFUSAL]
-     * here; every other reason flows verbatim — the carrier rule, narrowed only where its own
-     * precondition fails.
+     * Per-surface refusal copy (F6 fix round 1, I-1; split by marker family at F7 per the F6
+     * re-review's rider). F5's carrier rule renders `Failed.reason` VERBATIM — conditioned, in
+     * F5's own handoff, on the SAF import affordance sitting below the card. The CHOOSER keeps
+     * that adjacency and the ruled copy; ONBOARDING has no import affordance, so a reason that
+     * names it would send the user to a control that does not exist (and, on a sideloaded
+     * install, wedge the mandatory step behind a dead Retry). Any reason carrying
+     * [IMPORT_ADJACENCY_MARKER] therefore renders this surface's own copy — SPLIT so each
+     * family's leading claim is true: the install-cause family ([SIDELOAD_MARKER]) renders
+     * [ONBOARDING_FETCH_REFUSAL], everything else in the adjacency family renders
+     * [ONBOARDING_FETCH_UNDELIVERED]. Every non-adjacency reason flows verbatim — the carrier
+     * rule, narrowed only where its own precondition fails.
      */
-    fun onboardingFetchRefusal(reason: String): String =
-        if (IMPORT_ADJACENCY_MARKER in reason) ONBOARDING_FETCH_REFUSAL else reason
+    fun onboardingFetchRefusal(reason: String): String = when {
+        IMPORT_ADJACENCY_MARKER !in reason -> reason
+        SIDELOAD_MARKER in reason -> ONBOARDING_FETCH_REFUSAL
+        else -> ONBOARDING_FETCH_UNDELIVERED
+    }
 
     /**
      * The NO-WEDGE rule (F6 fix round 1, I-1): a FAILED speech engine — every Failed terminal,
@@ -148,6 +179,36 @@ object OnboardingLogic {
      * unlocks Continue.
      */
     fun showChooseDifferentModel(speech: EngineState): Boolean = speech is EngineState.Failed
+
+    /**
+     * The refusal published when the gated fetch cannot ATTACH: the controller answered
+     * `start() == false` while ITS active fetch is some other tier's (F6 review M-3, landed in
+     * F7 — the chooser can start a fetch this ViewModel never asked for). Retry re-enters
+     * ensureSpeech once the other fetch reaches a terminal state; the choose-different escape
+     * stays available, so nothing wedges.
+     */
+    const val FETCH_BUSY_WITH_ANOTHER_MODEL =
+        "Another model is downloading from Google Play right now. Wait for it to finish, " +
+            "then tap Retry."
+
+    /**
+     * Whether the gated route may attach its collector to the controller's state — null — or
+     * must refuse instead (the returned copy). The ONE shape that refuses: `start()` was
+     * denied AND the controller's active fetch names a DIFFERENT tier — attaching there would
+     * mirror that tier's states onto this card and, on its Installed, persist the selection
+     * for a tier this card never fetched (F6 review M-3, carried to F7 by name). Every other
+     * shape attaches: a successful start is ours by definition; a denied start with OUR tier
+     * active is the re-attach path (double tap, relaunch onto Play's surviving download); and
+     * a denied start with NO active tier is the controller's own no-pack refusal, whose
+     * published words the collector should mirror rather than bury under an invented busy
+     * story.
+     */
+    fun fetchAttachRefusal(started: Boolean, activeTierId: String?, tierId: String): String? =
+        if (!started && activeTierId != null && activeTierId != tierId) {
+            FETCH_BUSY_WITH_ANOTHER_MODEL
+        } else {
+            null
+        }
 
     /**
      * One [NpuPackFetch.FetchState] to exactly one [EngineState] — the whole translation between

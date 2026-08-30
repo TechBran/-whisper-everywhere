@@ -78,8 +78,17 @@ object NpuPackController {
     @Volatile
     private var appContext: Context? = null
 
-    @Volatile
-    private var activeTierId: String? = null
+    private val _activeTier = MutableStateFlow<String?>(null)
+
+    /**
+     * WHICH tier the current (or most recent) fetch is for (4.2 F7). The chooser's fetch card
+     * renders [state] only while this names its own tier — the controller is the one owner of
+     * that fact, so a recreated screen still puts the fetch on the right card and a sibling
+     * card can never wear it — and the onboarding ViewModel's attach guard reads it to refuse
+     * mirroring another surface's fetch (F6 review M-3). Set at [start], never cleared: the
+     * last fetch's terminal state stays attributable after the fact.
+     */
+    val activeTier: StateFlow<String?> = _activeTier.asStateFlow()
 
     @Volatile
     private var activePackName: String? = null
@@ -115,7 +124,7 @@ object NpuPackController {
         }
         val appCtx = context.applicationContext
         appContext = appCtx
-        activeTierId = tierId
+        _activeTier.value = tierId
         activePackName = packName
         lastLoggedPct = -1
         val mgr = manager ?: AssetPackManagerFactory.getInstance(appCtx).also {
@@ -143,7 +152,7 @@ object NpuPackController {
      * fetch they cancelled is over the moment they say so.
      */
     fun cancel() {
-        val tierId = activeTierId
+        val tierId = _activeTier.value
         val packName = activePackName
         if (packName != null) runCatching { manager?.cancel(listOf(packName)) }
         job?.cancel()
@@ -166,7 +175,7 @@ object NpuPackController {
     private val listener = AssetPackStateUpdateListener { packState -> onPackState(packState) }
 
     private fun onPackState(packState: AssetPackState) {
-        val tierId = activeTierId ?: return
+        val tierId = _activeTier.value ?: return
         val packName = activePackName ?: return
         if (packState.name() != packName) return
         // EVERY AssetPackState goes through the one pure mapping — no status is interpreted

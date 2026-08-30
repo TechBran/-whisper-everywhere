@@ -1,5 +1,6 @@
 package com.whispereverywhere.ui.screens
 
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -27,7 +29,10 @@ import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.npu.NpuAssetImport
+import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuImportController
+import com.whispereverywhere.npu.NpuPackController
+import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel.DownloadState
@@ -72,9 +77,16 @@ fun OnboardingModelScreen(
     // once and frozen — and Q8's import affordance lives in THIS composition, so the user would
     // import the pair and watch the lineup not change. The key is bumped by
     // PreferencesManager.notifyModelInstalled(), which every install path calls.
+    //
+    // 4.2 F7: the set is offered UNION fetchable — the same DISPLAY/steer union the guided
+    // flow adopted at F6. The offered half is installed-and-capable; the fetchable half is
+    // the tiers the census says Play can deliver here whose files have NOT arrived — each of
+    // those renders a card whose action is the Play fetch (below). Routing never reads the
+    // union: everything that routes a session keeps reading the offered set alone, because a
+    // fetchable tier has nothing on disk to run.
     val installGeneration by ModelInstallSignal.generation.collectAsState()
     val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
-        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }
+        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() + app.fetchableNpuTierIds() }
     }
     // THE SECOND PRODUCER, and it is a different question from the first (4.0, Q8).
     // The offer gate requires each tier's files on disk, so on a gate-passing device with no
@@ -101,6 +113,42 @@ fun OnboardingModelScreen(
     ) {
         value = withContext(Dispatchers.IO) {
             models.filter { manager.isInstalled(it) }.map { it.id }.toSet()
+        }
+    }
+
+    // 4.2 F7 — the F3 §7.3 residual, landed by name: a gated card's byte badge states THE
+    // DEVICE FAMILY'S measured pair, because the catalog's approximation understates a 7gen4
+    // pair by ~4% and the census carries the honest number. Catalog fallback everywhere the
+    // family cannot answer (CPU tiers, off-census devices). The answer is immutable while the
+    // process lives — family and census cannot change — so this producer deliberately has no
+    // key; it runs off Main because npuSocFamily's first read resolves Build fields.
+    val censusPairBytes by produceState(initialValue = emptyMap<String, Long>()) {
+        value = withContext(Dispatchers.IO) {
+            val family = app.npuSocFamily ?: return@withContext emptyMap<String, Long>()
+            WhisperCatalog.entries.filter { it.gated }.mapNotNull { m ->
+                NpuFleetCensus.artifactFor(family.id, m.id)
+                    ?.let { m.id to (it.encoder.bytes + it.decoder.bytes) }
+            }.toMap()
+        }
+    }
+
+    // 4.2 F7 — THE FETCH AFFORDANCE's state, mirrored from the process-scoped owner (F5). The
+    // composition may not own an ~860 MB fetch any more than it may own a 358 MB import (the
+    // I3 lesson): a recreation re-subscribes and finds the fetch exactly where it was — and
+    // WHICH card renders it is the controller's own answer, so the state can never wear a
+    // sibling card, and a fetch started before a rotation still lands on the right one.
+    val fetchState by NpuPackController.state.collectAsState()
+    val fetchTierId by NpuPackController.activeTier.collectAsState()
+
+    // Play's own consent dialog (wifi-wait and the >200 MB cellular consent both), shown once
+    // per ENTRY into NeedsConfirmation — the F6-established idiom: the LaunchedEffect key is
+    // the state VALUE, so entering fires once, staying re-fires nothing, leaving and
+    // re-entering fires again. Deliberately no custom re-ask anywhere: the consent is Play's
+    // to word and to size.
+    val context = LocalContext.current
+    LaunchedEffect(fetchState) {
+        if (fetchState is NpuPackFetch.FetchState.NeedsConfirmation) {
+            NpuPackController.confirm(context as ComponentActivity)
         }
     }
 
@@ -166,6 +214,15 @@ fun OnboardingModelScreen(
                 // comment that apologises for it.
                 val isSteered = model.id == steerId
                 val isActive = activeModelId == model.id
+                // 4.2 F7: a gated tier in the lineup that is NOT on disk joined it through the
+                // union's fetchable half (offered requires installed), so its card's action is
+                // the Play fetch. Selection is untouched: installedIds stays the only answer
+                // to "can this be selected", and a fetchable card has nothing on disk to select.
+                val fetchable = model.gated && !installedIds.contains(model.id)
+                // ONE start site, handed this card's own tier id. The Get button, Retry and
+                // the card-body tap all share it; the controller is single-flight and safe to
+                // call again after any terminal state, so sharing costs nothing.
+                val startFetch: () -> Unit = { NpuPackController.start(app, model.id) }
 
                 ModelTierCard(
                     model = model,
@@ -177,14 +234,25 @@ fun OnboardingModelScreen(
                     // shows nothing, with no id check to forget when a third npu tier arrives.
                     unavailableNote = NpuTierStatus.cardNote(npuTierReasons[model.id]),
                     state = if (isActive) state else DownloadState.Idle,
+                    // The fetch renders ONLY on the card whose tier the controller itself
+                    // names — a sibling card can never wear another tier's progress.
+                    fetch = if (fetchable && fetchTierId == model.id) fetchState else null,
+                    // The honest size where the family's census answers; catalog otherwise.
+                    pairBytes = censusPairBytes[model.id],
+                    // 4.2 F7: a fetchable card's body tap FETCHES — the same one start site as
+                    // the Get button — never the URL download, whose sink refuses gated tiers.
+                    // Every other card keeps today's select.
                     onSelect = {
-                        activeModelId = model.id
-                        viewModel.download(model)
+                        if (fetchable) startFetch() else {
+                            activeModelId = model.id
+                            viewModel.download(model)
+                        }
                     },
                     onRetry = {
                         activeModelId = model.id
                         viewModel.download(model)
                     },
+                    onFetch = startFetch,
                     // The card's Import button passes ITS OWN tier id — turbo's card must never
                     // import under npu's names and numbers, or vice versa.
                     onImport = { onImportNpuAssets(model.id) },
@@ -205,10 +273,15 @@ fun OnboardingModelScreen(
             // pair being on the device.
             if (npuCapable) {
                 NpuImportPanel(
-                    // The panel imports the npu (small) pair, so what it SAYS keys on that tier
-                    // being offered — not on the set being non-empty, which a turbo-only device
-                    // would satisfy while the npu pair is still absent.
-                    offered = NpuAssetImport.TIER_ID in npuTierIds,
+                    // The panel imports the npu (small) pair, so what it SAYS keys on that
+                    // tier being ON DISK — not on lineup membership, which since the F7 union
+                    // a fetchable (nothing-on-disk) npu also satisfies, and not on the set
+                    // being non-empty, which a turbo-only device would satisfy too.
+                    offered = NpuAssetImport.TIER_ID in installedIds,
+                    // 4.2 F7: one leading sentence exactly while a Get-on-Google-Play card
+                    // renders above — derived from the same two sets the cards render from,
+                    // so the sentence and the card cannot disagree.
+                    fetchAbove = npuTierIds.any { it !in installedIds },
                     state = npuImportState,
                     // The panel imports the npu (small) pair — its copy says so — so it passes
                     // that tier's id, not whatever card happens to be above it.
@@ -224,13 +297,17 @@ fun OnboardingModelScreen(
 /**
  * The npu tier's asset-pair import, on any device whose silicon can run the tier (4.0, Q8).
  *
- * Rendered for capability alone, so it is present in exactly the state the chooser cannot show a
- * card for: the right phone, and 358 MB that has not arrived yet. [offered] only changes what it
- * SAYS — "enable it" before the pair lands, "replace it" afterwards — never whether it is there.
+ * Rendered for capability alone, so it is present in exactly the state the chooser cannot show
+ * an installed card for: the right phone, and 358 MB that has not arrived yet. [offered] only
+ * changes what it SAYS — "enable it" before the pair lands, "replace it" afterwards — never
+ * whether it is there. Since 4.2 F7 it is the sideload path AND the Play-failure fallback both:
+ * [fetchAbove] adds one leading sentence while a fetch card renders above, so the two
+ * affordances read as one story — primary and fallback — rather than two competing buttons.
  */
 @Composable
 private fun NpuImportPanel(
     offered: Boolean,
+    fetchAbove: Boolean,
     state: NpuAssetImport.ImportState,
     onImport: () -> Unit,
 ) {
@@ -247,6 +324,17 @@ private fun NpuImportPanel(
                 color = Primary,
             )
             Spacer(modifier = Modifier.height(6.dp))
+            if (fetchAbove) {
+                // 4.2 F7: the one-story sentence — the card's Play fetch is the primary
+                // route, this panel the manual one. Only while such a card actually exists.
+                Text(
+                    text = "On Google Play installs the model downloads right from the card " +
+                        "above — importing is the manual route.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+            }
             Text(
                 text = if (offered)
                     "The multilingual NPU model is installed. Import the pair again only if you " +
@@ -357,6 +445,12 @@ private fun NpuImportPanel(
  * @param onUse adopt an already-installed tier without touching the network. Before 4.0 the only
  *        way to choose a tier here was to download it, which for `npu` is a refusal — so the one
  *        tier that can only be installed by import had no way to be SELECTED from this screen.
+ * @param fetch the Play fetch's state, non-null ONLY while the controller's running fetch is
+ *        THIS tier's (4.2 F7). Null renders the resting affordance for a fetchable card and
+ *        nothing extra for every other card.
+ * @param pairBytes the device family's measured pair size from the census, or null where the
+ *        family cannot answer — the badge then falls back to the catalog's approximation.
+ * @param onFetch starts (or retries) the Play fetch of this tier's pack (4.2 F7).
  */
 @Composable
 private fun ModelTierCard(
@@ -366,10 +460,13 @@ private fun ModelTierCard(
     installed: Boolean,
     unavailableNote: String?,
     state: DownloadState,
+    fetch: NpuPackFetch.FetchState?,
+    pairBytes: Long?,
     onSelect: () -> Unit,
     onRetry: () -> Unit,
     onImport: () -> Unit = {},
     onUse: () -> Unit = {},
+    onFetch: () -> Unit = {},
 ) {
     // 3.5.0: same source of truth as the onboarding chooser (ModelTierCopy) — the headline takes
     // the speed-vs-accuracy position, the badges make language coverage impossible to miss, the
@@ -429,7 +526,9 @@ private fun ModelTierCard(
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = formatBytes(model.approxBytes),
+                    // The family's measured pair where the census answers (4.2 F7 — the F3
+                    // §7.3 residual: the approximation understates a 7gen4 pair by ~4%).
+                    text = formatBytes(pairBytes ?: model.approxBytes),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Medium
@@ -645,13 +744,14 @@ private fun ModelTierCard(
                     }
                 }
 
-                // Not installed, and not installable from a URL: npu. The Download button is not
-                // merely wrong here, it is the one action this tier can never perform.
+                // Not installed, and not installable from a URL: the gated pair. Since 4.2 F7
+                // this card only joins the lineup when the census says Play can deliver the
+                // pair (the union's fetchable half), so its action is the Play fetch — the
+                // import panel below stays the manual route and the failure fallback, and the
+                // failed branch names it in one sentence.
                 !downloadable -> {
                     Spacer(modifier = Modifier.height(12.dp))
-                    Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
-                        Text("Import model pair…")
-                    }
+                    FetchActionArea(fetch = fetch, onFetch = onFetch)
                 }
 
                 else -> {
@@ -670,6 +770,147 @@ private fun ModelTierCard(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The fetchable card's action slot (4.2 F7): "Get on Google Play" while no fetch runs, the live
+ * fetch state while the controller says this tier's fetch is in flight, and on failure the
+ * machine's own words — [NpuPackFetch.FetchState.Failed]'s reason VERBATIM, the F5 carrier
+ * rule, which holds on THIS surface because the import affordance the ruled copy points at
+ * ("below") really is below: the SAF panel sits under the lineup on this screen.
+ *
+ * Installed deliberately renders nothing special: `notifyModelInstalled()` bumps the install
+ * generation, the producers re-run, and the card becomes the installed card — the existing
+ * machinery, nothing bespoke. That is also why a post-removePack listener replay (the F5
+ * review's watch item) cannot overwrite an installed card here: the installed rendering reads
+ * the DISK through the generation-keyed producers, never this flow.
+ */
+@Composable
+private fun FetchActionArea(
+    fetch: NpuPackFetch.FetchState?,
+    onFetch: () -> Unit,
+) {
+    when (fetch) {
+        is NpuPackFetch.FetchState.Pending,
+        is NpuPackFetch.FetchState.Transferring,
+        -> FetchProgress(
+            pct = null,
+            line = "Starting the download from Google Play…",
+            cancellable = true,
+        )
+
+        is NpuPackFetch.FetchState.NeedsConfirmation -> FetchProgress(
+            pct = null,
+            line = "Waiting for your OK in the Google Play dialog…",
+            cancellable = true,
+        )
+
+        is NpuPackFetch.FetchState.Downloading -> {
+            val pct = NpuPackFetch.pct(fetch.soFar, fetch.total)
+            FetchProgress(
+                pct = pct,
+                line = "Downloading from Google Play… $pct%  " +
+                    "(${formatBytes(fetch.soFar)} / ${formatBytes(fetch.total)})",
+                cancellable = true,
+            )
+        }
+
+        is NpuPackFetch.FetchState.Verifying -> {
+            val pct = NpuPackFetch.pct(fetch.soFar, fetch.total)
+            // The download is over — our checks are running, and they either land the pair
+            // or refuse loudly, so there is nothing here a cancel would honestly stop.
+            FetchProgress(pct = pct, line = "Verifying… $pct%", cancellable = false)
+        }
+
+        is NpuPackFetch.FetchState.Failed -> {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.ErrorOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                // The machine's words, verbatim — the same render-what-the-machine-said rule
+                // the import panel is pinned to. Never rewritten on this surface: the ruled
+                // adjacency copy's precondition (the import control below) holds here.
+                Text(
+                    text = fetch.reason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onFetch) {
+                    Text("Retry")
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            // The honest bridge to the panel that has always existed — one plain sentence.
+            Text(
+                text = "You can also import the model pair from a zip below.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        // Idle, Cancelled, Installed (transiently, until the generation-keyed producers
+        // re-render this card as the installed card), or another card's fetch (null): the
+        // resting offer.
+        else -> {
+            Button(onClick = onFetch, modifier = Modifier.fillMaxWidth()) {
+                Icon(
+                    Icons.Filled.CloudDownload,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Get on Google Play")
+            }
+        }
+    }
+}
+
+/**
+ * One fetch-progress rendering: the bar (determinate when [pct] is known), the status line,
+ * and — while Play still owns the phase — a real cancel. The fetch survives leaving this
+ * screen (the controller is process-scoped), so there has to be a way to stop it; cancelling
+ * is honest: Play stops the download, the install job dies, and its `.part` files die with it.
+ */
+@Composable
+private fun FetchProgress(pct: Int?, line: String, cancellable: Boolean) {
+    if (pct != null) {
+        LinearProgressIndicator(
+            progress = pct / 100f,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp)),
+            color = Primary,
+        )
+    } else {
+        LinearProgressIndicator(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp)),
+            color = Primary,
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        text = line,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (cancellable) {
+        TextButton(
+            onClick = { NpuPackController.cancel() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Cancel download")
         }
     }
 }

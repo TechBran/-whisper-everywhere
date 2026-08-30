@@ -330,4 +330,241 @@ class NpuImportWiringPinTest {
             ),
         )
     }
+
+    /**
+     * 4.2 F7 — THE FETCH AFFORDANCE (the brief's named red). Where the gate passes and the
+     * tier's files have not arrived, the card's action is the Play fetch, and every wire of it
+     * runs through the process-scoped F5 controller: start with THIS card's own tier id (never
+     * a literal — turbo's card must never fetch npu's pack, nor npu's the ~860 MB one), one
+     * real cancel, and Play's own consent dialog with no custom re-ask. The affordance is
+     * Compose-bound, so the calls are pinned as source — the house instrument.
+     */
+    @Test
+    fun theFetchAffordanceRoutesThroughNpuPackController() {
+        assertEquals(
+            "the fetchable card's button names the storefront, exactly",
+            1,
+            count(picker, "Text(\"Get on Google Play\")"),
+        )
+        assertEquals(
+            "ONE start site in this file — shared by the Get button, Retry and the card-body " +
+                "tap, so no second site can drift",
+            1,
+            count(picker, "NpuPackController.start("),
+        )
+        assertEquals(
+            "and that one site passes the card's own model.id — never a literal",
+            1,
+            count(picker, "val startFetch: () -> Unit = { NpuPackController.start(app, model.id) }"),
+        )
+        assertEquals(
+            "a real cancel, at one site, through the same owner",
+            1,
+            count(picker, "onClick = { NpuPackController.cancel() },"),
+        )
+        assertEquals(
+            "Play's own dialog at one site — no custom re-ask anywhere on this screen",
+            1,
+            count(picker, "NpuPackController.confirm("),
+        )
+    }
+
+    /**
+     * 4.2 F7 — the fetch card SPEAKS THE MACHINE'S WORDS. Progress carries Play's own numbers;
+     * failure renders `FetchState.Failed.reason` VERBATIM — the F5 carrier rule, which holds
+     * unrewritten on THIS surface because the import affordance the ruled adjacency copy
+     * points at ("below") really is below: the SAF panel sits under the lineup on this screen.
+     * The onboarding surface's per-surface rewrite exists precisely because THAT surface lacks
+     * the affordance (F6 fix round 1, I-1) — so this surface must never borrow it.
+     */
+    @Test
+    fun theFetchCardSpeaksTheMachinesWordsAndBridgesToTheImportPanel() {
+        assertEquals(
+            "the downloading line names the source and the percentage",
+            1,
+            count(picker, "line = \"Downloading from Google Play… ${'$'}pct%  \" +"),
+        )
+        assertEquals(
+            "and carries Play's own byte counts, formatted like every other progress line",
+            1,
+            count(picker, "\"(${'$'}{formatBytes(fetch.soFar)} / ${'$'}{formatBytes(fetch.total)})\","),
+        )
+        assertEquals(
+            "the failure branch renders the machine's reason, verbatim — the same " +
+                "render-what-the-machine-said rule the import panel above is pinned to",
+            1,
+            count(picker, "text = fetch.reason,"),
+        )
+        assertEquals(
+            "with Retry as the primary action — start is single-flight and safe after any " +
+                "terminal state, and a failed verify left the delivered pack on disk",
+            1,
+            count(picker, "TextButton(onClick = onFetch) {"),
+        )
+        assertEquals(
+            "and the honest bridge to the panel that has always existed, one plain sentence",
+            1,
+            count(picker, "\"You can also import the model pair from a zip below.\""),
+        )
+        assertEquals(
+            "the reason is never rewritten on this surface — the onboarding rewrite belongs " +
+                "to the surface without the affordance",
+            0,
+            count(picker, "onboardingFetchRefusal"),
+        )
+        assertEquals(
+            "nor mapped through the onboarding card vocabulary — the chooser renders the " +
+                "fetch machine's own state",
+            0,
+            count(picker, "engineStateForFetch"),
+        )
+    }
+
+    /**
+     * 4.2 F7 — WHICH card wears the fetch is the CONTROLLER'S fact, and an installed card can
+     * never wear it at all. The fetch arm lives in the not-downloadable arm, which the
+     * installed arm precedes (the order pinned in [anInstalledTierIsNeverOfferedADownload]),
+     * and the installed rendering reads the DISK through the generation-keyed producers — so a
+     * post-removePack listener replay (the F5 review's watch item) can at worst re-offer a
+     * card the disk already contradicts for one recomposition, never overwrite an installed
+     * one, and another tier's fetch can never bleed onto this card.
+     */
+    @Test
+    fun theFetchStateRendersOnlyOnTheTierTheFetchIsFor() {
+        assertEquals(
+            "the card is handed the fetch ONLY while the controller names ITS tier",
+            1,
+            count(picker, "fetch = if (fetchable && fetchTierId == model.id) fetchState else null,"),
+        )
+        assertEquals(
+            "fetchable is gated-and-not-on-disk — exactly the union's fetchable half, and the " +
+                "SELECTION answer stays installedIds (a fetchable card has nothing to select)",
+            1,
+            count(picker, "val fetchable = model.gated && !installedIds.contains(model.id)"),
+        )
+        assertEquals(
+            "the controller's active tier is collected from the process-scoped owner",
+            1,
+            count(picker, "val fetchTierId by NpuPackController.activeTier.collectAsState()"),
+        )
+        assertEquals(
+            "Installed needs no rendering here: the install signal bumps the generation and " +
+                "the producers re-render the card as installed — no bespoke arm",
+            0,
+            count(picker, "is NpuPackFetch.FetchState.Installed ->"),
+        )
+    }
+
+    /**
+     * 4.2 F7 — a fetchable card's BODY TAP fetches, through the same one start site as the Get
+     * button, and never reaches the URL download (whose sink refuses gated tiers — the
+     * delete-first behaviour that once destroyed a hand-imported encoder must stay unreachable
+     * from a card that fetches from Play).
+     */
+    @Test
+    fun aFetchableCardsBodyTapStartsTheFetchAndNeverTheUrlDownload() {
+        assertEquals(
+            "the body-tap redirect: a fetchable card fetches; every other card keeps today's " +
+                "select — asserted as one block so the redirect and the download call cannot " +
+                "be separated",
+            1,
+            count(
+                picker,
+                block(
+                    "                    onSelect = {",
+                    "                        if (fetchable) startFetch() else {",
+                    "                            activeModelId = model.id",
+                    "                            viewModel.download(model)",
+                    "                        }",
+                    "                    },",
+                ),
+            ),
+        )
+        assertEquals(
+            "the clickable itself is untouched — installed adopts, uninstalled selects (which " +
+                "for a fetchable card now means the Play fetch, via the redirect above)",
+            1,
+            count(picker, "Modifier.clickable(onClick = if (installed) onUse else onSelect)"),
+        )
+    }
+
+    /**
+     * 4.2 F7 — the import panel: SAME GATE, SAME JOB, one new sentence. It stays
+     * capability-gated (the sideload path and the Play-failure fallback both need it exactly
+     * when the chooser cannot show an installed card), and its idle copy gains one leading
+     * sentence exactly while a Get-on-Google-Play card renders above, so the two affordances
+     * read as one story — primary and fallback — rather than two competing buttons.
+     */
+    @Test
+    fun theImportPanelKeepsItsGateAndGainsTheOneStorySentence() {
+        assertEquals(
+            "the one leading sentence, verbatim, present exactly once",
+            1,
+            count(
+                picker,
+                "text = \"On Google Play installs the model downloads right from the card \" +",
+            ),
+        )
+        assertEquals(
+            "the sentence's second half, unbroken",
+            1,
+            count(picker, "\"above — importing is the manual route.\","),
+        )
+        assertEquals(
+            "and it renders exactly while a fetch card exists above — derived from the same " +
+                "two sets the cards themselves render from, so the sentence and the card " +
+                "cannot disagree",
+            1,
+            count(picker, "fetchAbove = npuTierIds.any { it !in installedIds },"),
+        )
+        assertEquals(
+            "the panel's installed-wording gate reads the DISK set: since the F7 union, " +
+                "lineup membership no longer means installed",
+            1,
+            count(picker, "offered = NpuAssetImport.TIER_ID in installedIds,"),
+        )
+        assertEquals(
+            "and the union spelling of that gate is gone — it would claim a fetchable pair " +
+                "was already installed",
+            0,
+            count(picker, "offered = NpuAssetImport.TIER_ID in npuTierIds,"),
+        )
+    }
+
+    /**
+     * 4.2 F7 — the byte badge tells the census's truth (the F3 §7.3 residual, landed by name):
+     * on a census family a gated card's size is THE FAMILY'S measured pair — encoder plus
+     * decoder — because the catalog's approximation understates a 7gen4 pair by ~4%. Every
+     * tier the census cannot answer for keeps the catalog figure.
+     */
+    @Test
+    fun theByteBadgeStatesTheFamilysMeasuredPairBytesWhereTheFamilyAnswers() {
+        assertEquals(
+            "the census map is produced off Main from the family's own rows",
+            1,
+            count(
+                picker,
+                block(
+                    "    val censusPairBytes by produceState(initialValue = emptyMap<String, Long>()) {",
+                    "        value = withContext(Dispatchers.IO) {",
+                ),
+            ),
+        )
+        assertEquals(
+            "the pair bytes are the family row's encoder plus decoder — the honest number",
+            1,
+            count(picker, "?.let { m.id to (it.encoder.bytes + it.decoder.bytes) }"),
+        )
+        assertEquals(
+            "the badge renders the census figure where the family answers, the catalog " +
+                "approximation otherwise",
+            1,
+            count(picker, "text = formatBytes(pairBytes ?: model.approxBytes),"),
+        )
+        assertEquals(
+            "and each card is handed ITS tier's figure",
+            1,
+            count(picker, "pairBytes = censusPairBytes[model.id],"),
+        )
+    }
 }
