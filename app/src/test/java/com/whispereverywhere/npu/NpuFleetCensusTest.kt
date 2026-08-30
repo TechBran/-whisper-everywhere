@@ -1,10 +1,13 @@
 package com.whispereverywhere.npu
 
+import com.whispereverywhere.model.WhisperCatalog
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * The census AS DATA: every value pinned to the measured table the 2026-08-29 plan bound
@@ -21,9 +24,35 @@ import org.junit.Test
 class NpuFleetCensusTest {
 
     private val families = NpuFleetCensus.families
+    private val artifacts = NpuFleetCensus.artifacts
 
     private fun byId(id: String): NpuSocFamily =
         requireNotNull(NpuFleetCensus.familyById(id)) { "census must carry family $id" }
+
+    private fun artifact(familyId: String, tierId: String): PackArtifact =
+        requireNotNull(NpuFleetCensus.artifactFor(familyId, tierId)) {
+            "census must carry the $familyId/$tierId artifact"
+        }
+
+    /** The house locator, so the script cross-pin finds the repo root from any test cwd. */
+    private fun read(relative: String): String {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(File(dir, relative), File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate.readText().replace("\r\n", "\n")
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
+    }
+
+    private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
+
+    private fun lines(vararg text: String) = text.joinToString("\n")
+
+    /** 293598974 -> "293_598_974", the underscore grouping every literal in the script uses. */
+    private fun grouped(n: Long): String =
+        n.toString().reversed().chunked(3).joinToString("_").reversed()
 
     @Test
     fun theCensusHasExactlyTheFourPublishedFamiliesInTableOrder() {
@@ -239,6 +268,237 @@ class NpuFleetCensusTest {
                     "compile error",
                 "libQnnHtpV${f.htpVersion}Skel.so",
                 f.skelAsset
+            )
+        }
+    }
+
+    // ------------------------------------------------------------------ the artifact census (F3)
+
+    @Test
+    fun theArtifactCensusHasEightRowsFamilyMajorInTableOrderUnderTheCatalogsNames() {
+        assertEquals(
+            "eight measured pairs: 4 families x 2 tiers, family-major in families order, " +
+                "npu before npu-turbo — a missing row is a family that cannot verify an " +
+                "arrival, a surplus row is a measurement nobody made",
+            families.flatMap { f -> listOf(f.id to "npu", f.id to "npu-turbo") },
+            artifacts.map { it.familyId to it.tierId }
+        )
+        assertEquals(
+            "and the artifact tier ids ARE the catalog's paired tiers — the census spells " +
+                "them as literals (forcing the catalog's <clinit> from the census's would " +
+                "re-open the initialization-order caution), so this equality is the pin " +
+                "that keeps the two spellings one fact",
+            NpuAssetImport.PAIRED_TIER_IDS.toSet(),
+            artifacts.map { it.tierId }.toSet()
+        )
+        for (a in artifacts) {
+            val model = requireNotNull(WhisperCatalog.byId(a.tierId))
+            assertEquals(
+                "every family's ${a.tierId} encoder lands under the catalog's fileName — " +
+                    "delivery names are per-TIER (turbo's renamed so it can never overwrite " +
+                    "the npu pair), never per-family",
+                model.fileName,
+                a.encoder.fileName
+            )
+            assertEquals(
+                "and the decoder under the catalog's paired fileName (${a.familyId})",
+                requireNotNull(model.pairedArtifact).fileName,
+                a.decoder.fileName
+            )
+        }
+    }
+
+    @Test
+    fun allSixteenArtifactDigestsAreSixtyFourHexAndPairwiseDistinct() {
+        val hex = Regex("^[0-9a-f]{64}$")
+        val digests = artifacts.flatMap { listOf(it.encoder.sha256, it.decoder.sha256) }
+        assertEquals("eight pairs carry sixteen digests", 16, digests.size)
+        for (d in digests) {
+            assertTrue(
+                "every artifact digest is 64 lowercase hex — got \"$d\"; anything else is a " +
+                    "placeholder that would refuse every import",
+                hex.matches(d)
+            )
+        }
+        assertEquals(
+            "sixteen DISTINCT digests — a copy-paste between rows would install one " +
+                "family's binary under another family's verification with a passing " +
+                "metadata check",
+            16, digests.toSet().size
+        )
+        assertEquals(
+            "and none of them collides with a skel digest — twenty distinct measurements " +
+                "across the two censuses",
+            20, (digests + families.map { it.skelSha256 }).toSet().size
+        )
+    }
+
+    @Test
+    fun theEightGenThreeArtifactRowsEqualTheCatalogsRecordValueForValue() {
+        // The catalog cross-pin: WhisperCatalog keeps its constants as the REFERENCE family's
+        // record (provenance + the published delivery zips), and this equality is what makes
+        // the two records one record — the measure run's own 8gen3 self-check, re-executed
+        // against the committed tables on every suite run.
+        for (tierId in listOf("npu", "npu-turbo")) {
+            val model = requireNotNull(WhisperCatalog.byId(tierId))
+            val row = artifact("8gen3", tierId)
+            assertEquals("$tierId encoder bytes are the catalog's primaryBytes",
+                model.primaryBytes, row.encoder.bytes)
+            assertEquals("$tierId encoder digest is the catalog's own",
+                model.sha256, row.encoder.sha256)
+            val paired = requireNotNull(model.pairedArtifact)
+            assertEquals("$tierId decoder bytes are the pairedArtifact's own",
+                paired.approxBytes, row.decoder.bytes)
+            assertEquals("$tierId decoder digest is the pairedArtifact's own",
+                paired.sha256, row.decoder.sha256)
+            assertEquals(
+                "and the pair sums to the size the tier card advertises",
+                model.approxBytes, row.encoder.bytes + row.decoder.bytes
+            )
+        }
+    }
+
+    @Test
+    fun everyVendorZipByteCountIsTheMeasuredExactValue() {
+        for (a in artifacts) {
+            assertTrue(
+                "${a.familyId}/${a.tierId}: vendorZipBytes must be positive, measured, real",
+                a.vendorZipBytes > 0L
+            )
+        }
+        // The four turbo zips: the research's HEAD-measured table, byte for byte (the values
+        // the measure run ASSERTS at HEAD rather than records).
+        assertEquals(859_786_903L, artifact("8gen3", "npu-turbo").vendorZipBytes)
+        assertEquals(859_689_781L, artifact("8elite_galaxy", "npu-turbo").vendorZipBytes)
+        assertEquals(860_709_426L, artifact("8elite5_galaxy", "npu-turbo").vendorZipBytes)
+        assertEquals(871_118_306L, artifact("7gen4", "npu-turbo").vendorZipBytes)
+        // The small zips: 8gen3 was known (the spike's download); the other three were
+        // RECORDED by the 2026-08-30 measure run and are exact values from here on.
+        assertEquals(293_598_974L, artifact("8gen3", "npu").vendorZipBytes)
+        assertEquals(293_117_989L, artifact("8elite_galaxy", "npu").vendorZipBytes)
+        assertEquals(293_798_379L, artifact("8elite5_galaxy", "npu").vendorZipBytes)
+        assertEquals(295_361_549L, artifact("7gen4", "npu").vendorZipBytes)
+    }
+
+    @Test
+    fun theSevenGenFourEncodersSitOutsideTheInstalledToleranceAndTheCensusSaysSo() {
+        // MEASURED 2026-08-30, and stated rather than blurred: HTP v73 packs weights less
+        // densely, so BOTH 7gen4 encoders exceed the ±5% tolerance isInstalled applies around
+        // the catalog's reference record (+11.0% small, +9.1% turbo). Until the installed-size
+        // gate reads the family's census bytes — F5's install-flow work, carried BY NAME —
+        // a correct 7gen4 import verifies its copy and then fails the finalise's isInstalled
+        // check. This test is the fact's tripwire in BOTH directions: if a vendor re-release
+        // brings the encoders inside tolerance, or pushes any other row outside, the census
+        // was re-measured and this statement must be re-made, not inherited.
+        for (a in artifacts) {
+            val model = requireNotNull(WhisperCatalog.byId(a.tierId))
+            val encoderInside =
+                WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, model.primaryBytes)
+            if (a.familyId == "7gen4") {
+                assertFalse(
+                    "${a.familyId}/${a.tierId}: the v73 encoder (${a.encoder.bytes} B) is " +
+                        "OUTSIDE the ±5% gate around the reference ${model.primaryBytes} B — " +
+                        "the F5 carry this test exists to keep loud",
+                    encoderInside
+                )
+            } else {
+                assertTrue(
+                    "${a.familyId}/${a.tierId}: encoder ${a.encoder.bytes} B within ±5% of " +
+                        "the reference ${model.primaryBytes} B — the strict-inside-tolerant " +
+                        "nesting holds for this family today",
+                    encoderInside
+                )
+            }
+            assertTrue(
+                "${a.familyId}/${a.tierId}: every family's decoder sits within ±5% of the " +
+                    "reference record",
+                WhisperCatalog.sizeWithinTolerance(
+                    a.decoder.bytes, requireNotNull(model.pairedArtifact).approxBytes
+                )
+            )
+        }
+    }
+
+    @Test
+    fun theMeasureScriptCarriesEveryCensusRowAsOnePairedLiteralBlock() {
+        // The pack_npu_zip.py pattern, one instrument further out: build_asset_packs.py is the
+        // script that measured these values and will FILL the packs (F4), so its embedded
+        // CENSUS table must carry every row's zip bytes, entry bytes and digests as literals —
+        // and PAIRED, as one block per row, because a table with two digests swapped between
+        // rows still contains all sixteen (the L8 battery's finding, applied here on day one).
+        val script = read("tools/build_asset_packs.py")
+        for (a in artifacts) {
+            assertEquals(
+                "the script's CENSUS pairs ${a.familyId}/${a.tierId}'s five values in one " +
+                    "block, exactly once",
+                1,
+                count(
+                    script,
+                    lines(
+                        "    (\"${a.tierId}\", \"${a.familyId}\"): (",
+                        "        ${grouped(a.vendorZipBytes)},",
+                        "        ${grouped(a.encoder.bytes)}, \"${a.encoder.sha256}\",",
+                        "        ${grouped(a.decoder.bytes)}, \"${a.decoder.sha256}\",",
+                    ),
+                )
+            )
+        }
+        assertEquals(
+            "the script pins the release the census describes",
+            1, count(script, "RELEASE = \"0.61.0\"")
+        )
+        assertEquals(
+            "and the hash-stable Last-Modified day every HEAD must reproduce",
+            1, count(script, "LAST_MODIFIED_DAY = \"25 Aug 2026\"")
+        )
+    }
+
+    @Test
+    fun artifactForResolvesEveryRowAndAnswersNullOffTheCensus() {
+        for (a in artifacts) {
+            assertSame(
+                "artifactFor(${a.familyId}, ${a.tierId}) must answer the row object itself — " +
+                    "downstream holds row identity, not row copies",
+                a, NpuFleetCensus.artifactFor(a.familyId, a.tierId)
+            )
+            assertSame(
+                "and every artifact's familyId resolves in the family census — an orphan row " +
+                    "is a pack no device can ever receive",
+                byId(a.familyId), NpuFleetCensus.familyById(a.familyId)
+            )
+        }
+        assertNull("an unknown family has no artifact", NpuFleetCensus.artifactFor("8gen2", "npu"))
+        assertNull("an unknown tier has no artifact", NpuFleetCensus.artifactFor("8gen3", "cpu"))
+        assertNull("exact matching — no case folding on the family",
+            NpuFleetCensus.artifactFor("8GEN3", "npu"))
+        assertNull("nor on the tier", NpuFleetCensus.artifactFor("8gen3", "NPU-TURBO"))
+        assertNull("soc strings are not family ids here either",
+            NpuFleetCensus.artifactFor("SM8650", "npu"))
+    }
+
+    @Test
+    fun everyArtifactEvidenceLineCarriesTheMeasurementRecord() {
+        for (a in artifacts) {
+            assertTrue(
+                "${a.familyId}/${a.tierId}: evidence must carry the measure date — got " +
+                    "\"${a.evidence}\"",
+                a.evidence.contains("2026-08-30")
+            )
+            assertTrue(
+                "and the pinned Last-Modified event the gates held it to",
+                a.evidence.contains("Last-Modified 2026-08-25")
+            )
+            assertTrue(
+                "and the instrument, by name — a row nobody can re-measure is a row nobody " +
+                    "can defend",
+                a.evidence.contains("build_asset_packs.py measure")
+            )
+        }
+        for (tierId in listOf("npu", "npu-turbo")) {
+            assertTrue(
+                "the 8gen3 $tierId row records that it reproduced the catalog's pins " +
+                    "(the run's self-check)",
+                artifact("8gen3", tierId).evidence.contains("self-check")
             )
         }
     }

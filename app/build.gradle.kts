@@ -377,6 +377,13 @@ tasks.withType<Test>().configureEach {
         // so a comment-only edit could not fool them — the entry is here because the next
         // assertion added is not required to remember the distinction.
         "src/main/java/com/whispereverywhere/npu/NpuGate.kt",
+        // (4.2 F3) NpuFleetCensus.kt joins by the list's stated rule — membership follows what
+        // the tests READ. NpuFleetCensusTest and NpuAssetImportTest execute against the census
+        // object (compiled, so an edit re-runs them anyway); the entry is here because the
+        // census's artifact rows are now also pinned AGAINST A SCRIPT (build_asset_packs.py
+        // below), and the next assertion that reads this file as text is not required to
+        // remember the distinction.
+        "src/main/java/com/whispereverywhere/npu/NpuFleetCensus.kt",
         "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
@@ -418,6 +425,12 @@ tasks.withType<Test>().configureEach {
         // from quietly renaming or re-hashing a ~GB artefact), and loosening any of that is a
         // pure-Python edit no compile task would notice.
         rootProject.file("tools/pack_npu_zip.py"),
+        // (4.2 F3) The pack measure/build instrument, same rule as the three scripts above it:
+        // it lives outside the app module, NpuFleetCensusTest asserts its embedded CENSUS table
+        // carries every artifact digest and byte count as literals (the cross-pin that stops
+        // the committed census and the instrument that fills the packs drifting apart), and
+        // loosening any of that is a pure-Python edit no compile task would notice.
+        rootProject.file("tools/build_asset_packs.py"),
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a

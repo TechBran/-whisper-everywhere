@@ -8,10 +8,13 @@ import android.net.Uri
 import android.os.Environment
 import android.os.StatFs
 import androidx.core.net.toUri
+import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuDiag
+import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuModelSpec
+import com.whispereverywhere.npu.NpuPackMetadata
 import com.whispereverywhere.transcription.ModelPathProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -573,8 +576,21 @@ class WhisperModelManager(
         // The ARGUMENT resolves the tier — never the npu constant. The card that launched the
         // picker passed its own id, and everything below is that one tier's names and numbers.
         val model = WhisperCatalog.byId(tierId)
-        val required = NpuAssetImport.requiredEntriesFor(model)
-        if (model == null || required.isEmpty()) {
+        // THE FAMILY ANSWERS FIRST (4.2 F3). Which digests these bytes must hash to is a
+        // property of the DEVICE's silicon family, not of the reference family the catalog
+        // records — so the map below is built from the family's own artifact row. The import
+        // affordance is capability-gated, so a null family here is a belt for a suspenders
+        // failure: refused by name, never defaulted to the reference row, which would refuse
+        // every correct non-reference zip with a "corrupted download" story.
+        val family = (context.applicationContext as? WhisperEverywhereApp)?.npuSocFamily
+            ?: return@withContext refuseImport(
+                "this device's silicon family could not be resolved, so imported model files " +
+                    "could not be verified against the family's published digests. Nothing " +
+                    "was installed."
+            )
+        val artifact = NpuFleetCensus.artifactFor(family.id, tierId)
+        val required = NpuAssetImport.requiredEntriesFor(model, artifact)
+        if (model == null || artifact == null || required.isEmpty()) {
             return@withContext refuseImport(
                 "this build's catalog has no importable model pair for that tier, so there is " +
                     "nothing to import into."
@@ -620,6 +636,44 @@ class WhisperModelManager(
                         if (entry.isDirectory) {
                             zis.closeEntry()
                             continue
+                        }
+                        // THE METADATA PEEK (4.2 F3). Our packs write metadata.json as the
+                        // FIRST entry, so a wrong-family zip is refused HERE, from its own
+                        // declaration, in one second — instead of "sha256 mismatch" after
+                        // 776 MB has inflated and hashed to learn the same thing. Bounded to a
+                        // metadata-sized entry (a ~GB entry wearing the name is never buffered)
+                        // and IDENTITY-only: the streamed digest below stays the integrity
+                        // gate. A zip WITHOUT metadata (the 4.0/4.1 published zips) never
+                        // enters this block and proceeds straight to the digest gate,
+                        // unchanged — legacy zips stay importable on the reference family.
+                        val isPackMetadata = entry.name == NpuPackMetadata.ENTRY_NAME &&
+                            entry.size in 0L..NpuPackMetadata.MAX_BYTES.toLong()
+                        if (isPackMetadata) {
+                            val metaBuffer = ByteArray(NpuPackMetadata.MAX_BYTES)
+                            var metaLen = 0
+                            while (metaLen < metaBuffer.size) {
+                                val n = zis.read(metaBuffer, metaLen, metaBuffer.size - metaLen)
+                                if (n <= 0) break
+                                metaLen += n
+                            }
+                            val meta = try {
+                                NpuPackMetadata.parse(String(metaBuffer, 0, metaLen, Charsets.UTF_8))
+                            } catch (badMeta: IllegalStateException) {
+                                return@withContext refuseImport(
+                                    NpuAssetImport.unreadableRefusal(
+                                        "metadata.json: ${badMeta.message}"
+                                    )
+                                )
+                            }
+                            NpuPackMetadata.crossCheckRefusal(meta, family, artifact, tierId)
+                                ?.let { return@withContext refuseImport(it) }
+                            android.util.Log.i(
+                                NpuDiag.TAG,
+                                "npu: import metadata cross-check ok family=${family.id} " +
+                                    "tier=$tierId"
+                            )
+                            // Fall through: classifyEntry Ignores the metadata entry itself —
+                            // it is not a model file and is never written to disk.
                         }
                         val verdict =
                             NpuAssetImport.classifyEntry(required, entry.name, entry.size, accepted)
@@ -909,7 +963,11 @@ class WhisperModelManager(
     fun reconcileNpuStagingDebris() {
         val dir = modelsDir()
         NpuAssetImport.PAIRED_TIER_IDS.forEach { tierId ->
-            val names = NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId(tierId)).keys
+            // NAMES, not the verifying map (4.2 F3): sweeping parked `.prev`/`.part` debris
+            // settles paths and needs no digests, so it must not depend on the family
+            // resolution the map now requires — debris is swept even on a device whose family
+            // answer is null or changed between launches.
+            val names = NpuAssetImport.pairedFileNames(WhisperCatalog.byId(tierId))
             if (names.isNotEmpty()) reconcileStagingDebris(dir, names)
         }
     }

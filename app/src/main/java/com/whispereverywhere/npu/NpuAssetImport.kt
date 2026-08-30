@@ -27,14 +27,17 @@ import java.io.File
  *    different ways: (1) dies if someone widens the allow-list, (2) dies if a symlink or a
  *    filesystem quirk makes a legal name resolve somewhere illegal.
  *
- * ### The sizes AND the digests are the CATALOG's, and there is exactly one record of them
+ * ### The NAMES are the catalog's; the sizes AND digests are the DEVICE FAMILY's (4.2 F3)
  *
- * [requiredEntriesFor] reads `fileName`/`primaryBytes`/`sha256` and
- * `pairedArtifact.fileName`/`approxBytes`/`sha256` off the catalog entry rather than restating
- * them. A second copy of `132_927_488` in this file would be a second thing to keep true, and the
- * one that drifted would be the one the importer enforced. The digests were placeholders nowhere:
- * every one is MEASURED from the extracted vendor files, and the two ~GB turbo entries flow
- * through the same map the moment their tier id is passed.
+ * [requiredEntriesFor] keys the map on `fileName`/`pairedArtifact.fileName` off the catalog
+ * entry, and takes every byte count and digest from the family's [PackArtifact] row: the same
+ * model compiled for a different Hexagon is a different file, and the one-argument form of this
+ * function verified every family against the reference family's (8gen3's) digests — a TRUE
+ * refusal for the WRONG stated reason ("corrupted download") on every non-reference device.
+ * `WhisperCatalog` keeps its constants as the reference family's record, and the census test
+ * pins the 8gen3 artifact rows equal to them, so there is still exactly one record of those.
+ * Nothing here restates either: a second copy of `132_927_488` in this file would be a second
+ * thing to keep true, and the one that drifted would be the one the importer enforced.
  *
  * **The import gate is deliberately STRICTER than `WhisperModelManager.isInstalled`.** That
  * predicate is tolerance-based (±5 %, `WhisperCatalog.sizeWithinTolerance`) because it must accept
@@ -99,20 +102,44 @@ object NpuAssetImport {
     data class RequiredEntry(val bytes: Long, val sha256: String)
 
     /**
-     * What may be written, at exactly what length, hashing to exactly what digest. Derived from
-     * the catalog entry so the pinned values have one home; empty when the tier is absent or
-     * unpaired, which refuses every entry.
+     * What may be written, at exactly what length, hashing to exactly what digest — the NAMES
+     * from the catalog entry, the bytes and digests from THE DEVICE FAMILY's [artifact] row
+     * (4.2 F3). Empty when the tier is absent or unpaired, and empty when [artifact] is null —
+     * a device whose family is unknown must not import NPU bytes it cannot verify, and the
+     * empty map refuses every entry (the missing-entries refusal fires, loudly).
+     *
+     * **No default on [artifact].** Every call site is forced to answer the family question,
+     * which is the entire hazard: the old one-argument form silently verified a v79 zip against
+     * 8gen3 digests — a TRUE refusal ("corrupted download") for the WRONG reason, on every
+     * non-reference device. The same no-default rule as `NpuDecodePolicy`'s family and the
+     * backend's, for the same reason.
+     *
+     * The primary rides `artifact.encoder` — for the reference family those bytes ARE the
+     * catalog's `primaryBytes`, NOT `approxBytes`, which for a paired tier is the SUM of both
+     * files (the Q7a R14 trap, still pinned from the census side).
      */
-    fun requiredEntriesFor(model: WhisperModel?): Map<String, RequiredEntry> {
+    fun requiredEntriesFor(
+        model: WhisperModel?,
+        artifact: PackArtifact?,
+    ): Map<String, RequiredEntry> {
         if (model == null) return emptyMap()
         val paired = model.pairedArtifact ?: return emptyMap()
-        // primaryBytes, NOT approxBytes: for a paired tier approxBytes is the SUM of both files,
-        // and the encoder is 63 % under it. The same trap Q7a's R14 measured surviving a full
-        // battery in `isInstalled`.
+        if (artifact == null) return emptyMap()
         return mapOf(
-            model.fileName to RequiredEntry(model.primaryBytes, model.sha256),
-            paired.fileName to RequiredEntry(paired.approxBytes, paired.sha256),
+            model.fileName to RequiredEntry(artifact.encoder.bytes, artifact.encoder.sha256),
+            paired.fileName to RequiredEntry(artifact.decoder.bytes, artifact.decoder.sha256),
         )
+    }
+
+    /**
+     * The tier's file NAMES alone (4.2 F3) — the launch debris sweep's view. Sweeping parked
+     * `.prev`/`.part` files settles PATHS and needs no digests, so it deliberately does NOT
+     * take the family answer the verifying map requires: debris must be swept even on a device
+     * whose family cannot resolve, or 358 MB of orphaned `.part` outlives the import that died.
+     */
+    fun pairedFileNames(model: WhisperModel?): Set<String> {
+        val paired = model?.pairedArtifact ?: return emptySet()
+        return setOf(model.fileName, paired.fileName)
     }
 
     /** Uncompressed bytes of the whole pair — the import's progress denominator. */

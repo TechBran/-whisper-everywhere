@@ -30,7 +30,13 @@ import java.io.File
 class NpuAssetImportTest {
 
     private val npu = WhisperCatalog.byId("npu")!!
-    private val required = NpuAssetImport.requiredEntriesFor(npu)
+
+    // The REFERENCE family's artifact row (4.2 F3): these tests exercise the decision
+    // machinery through the 8gen3 row, the one family whose measured values are ALSO the
+    // catalog's record — pinned equal by NpuFleetCensusTest, which is what keeps every
+    // catalog-facing assertion below a true statement about this map.
+    private val npuArtifact = NpuFleetCensus.artifactFor("8gen3", "npu")!!
+    private val required = NpuAssetImport.requiredEntriesFor(npu, npuArtifact)
 
     private val encoder = "encoder_qairt_context.bin"
     private val decoder = "decoder_qairt_context.bin"
@@ -159,12 +165,13 @@ class NpuAssetImportTest {
             "a catalog with no npu tier yields an EMPTY allow-list, which refuses every entry — " +
                 "not a permissive one",
             emptyMap<String, NpuAssetImport.RequiredEntry>(),
-            NpuAssetImport.requiredEntriesFor(null),
+            NpuAssetImport.requiredEntriesFor(null, npuArtifact),
         )
         assertEquals(
-            "a single-file tier has nothing to import: no paired artefact, no allow-list",
+            "a single-file tier has nothing to import: no paired artefact, no allow-list — " +
+                "and no artifact row can conjure one",
             emptyMap<String, NpuAssetImport.RequiredEntry>(),
-            NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId("pro")),
+            NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId("pro"), npuArtifact),
         )
     }
 
@@ -177,7 +184,8 @@ class NpuAssetImportTest {
         NpuAssetImport.PAIRED_TIER_IDS.forEach { id ->
             val model = WhisperCatalog.byId(id)
             assertNotNull("PAIRED_TIER_IDS must resolve in the catalog: $id", model)
-            val entries = NpuAssetImport.requiredEntriesFor(model)
+            val entries =
+                NpuAssetImport.requiredEntriesFor(model, NpuFleetCensus.artifactFor("8gen3", id))
             val paired = model!!.pairedArtifact!!
             assertEquals("a pair is exactly two entries ($id)", 2, entries.size)
             assertEquals(
@@ -308,7 +316,8 @@ class NpuAssetImportTest {
         //      equals()-equal to a bare allow-list name, so the vendor zip AS DOWNLOADED imports
         //      nothing — every entry Ignored, then the missing-entries refusal. Loud, not silent.
         val turbo = WhisperCatalog.byId("npu-turbo")!!
-        val turboRequired = NpuAssetImport.requiredEntriesFor(turbo)
+        val turboRequired =
+            NpuAssetImport.requiredEntriesFor(turbo, NpuFleetCensus.artifactFor("8gen3", "npu-turbo"))
         val vendorPrefix =
             "whisper_large_v3_turbo_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3"
         listOf("encoder_qairt_context.bin", "decoder_qairt_context.bin").forEach { bare ->
@@ -339,7 +348,9 @@ class NpuAssetImportTest {
         // And the delivery names really are distinct across the two tiers — all four, the
         // no-overwrite invariant stated as a set cardinality.
         val allFour = NpuAssetImport.PAIRED_TIER_IDS.flatMap { id ->
-            NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId(id)).keys
+            NpuAssetImport.requiredEntriesFor(
+                WhisperCatalog.byId(id), NpuFleetCensus.artifactFor("8gen3", id)
+            ).keys
         }
         assertEquals(
             "four delivery filenames across the two tiers, pairwise distinct — a collision is " +
@@ -772,7 +783,8 @@ class NpuAssetImportTest {
         // renames then fill mid-import — the exact too-late failure the precheck exists to move
         // before the first byte.
         val turbo = WhisperCatalog.byId("npu-turbo")!!
-        val entries = NpuAssetImport.requiredEntriesFor(turbo)
+        val entries =
+            NpuAssetImport.requiredEntriesFor(turbo, NpuFleetCensus.artifactFor("8gen3", "npu-turbo"))
         val pair = NpuAssetImport.pairBytes(entries)
         assertEquals(
             "turbo's pair is the sum of its two published lengths",
@@ -989,6 +1001,226 @@ class NpuAssetImportTest {
                     required.containsKey(name + NpuAssetImport.PREVIOUS_SUFFIX),
             )
         }
+    }
+
+    // ------------------------------------------------------------------ the family's artifact row (4.2 F3)
+
+    @Test
+    fun requiredEntriesComeFromTheDeviceFamilysArtifactRow() {
+        // THE RED (4.2 F3): an SM8750-AC device's turbo import must verify against the
+        // 8elite_galaxy artifact row's MEASURED values (build_asset_packs.py measure,
+        // 2026-08-30) -- never the catalog's 8gen3 record. The one-argument form had no family
+        // to differ by: it answered the reference family's digests to every caller, which
+        // refused a correct v79 zip as "not the published file" -- a TRUE refusal for the
+        // WRONG stated reason, on every non-reference device. The v79 values stay HARD
+        // literals here, the same both-ways census every pin in this class applies: derived
+        // needles alone would follow a census edit anywhere it went.
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        val v79 = NpuAssetImport.requiredEntriesFor(
+            turbo, NpuFleetCensus.artifactFor("8elite_galaxy", "npu-turbo")
+        )
+        assertEquals(
+            "the v79 family's import map carries the v79 pair's measured bytes and digests",
+            mapOf(
+                "turbo_encoder_qairt_context.bin" to NpuAssetImport.RequiredEntry(
+                    775_544_832L,
+                    "4776799f89514e2e96bd2ccb9a2fb9bdca246bdbeba8c7df84d671e2a6ca024c",
+                ),
+                "turbo_decoder_qairt_context.bin" to NpuAssetImport.RequiredEntry(
+                    295_821_312L,
+                    "04f5fe2b77b3bc12f20944401106ba4f878b5275113cba5fbea3ec60d481efaa",
+                ),
+            ),
+            v79,
+        )
+        assertTrue(
+            "and it genuinely DIFFERS from the reference family's map for the same tier -- " +
+                "the whole point of the parameter",
+            v79 != NpuAssetImport.requiredEntriesFor(
+                turbo, NpuFleetCensus.artifactFor("8gen3", "npu-turbo")
+            ),
+        )
+        // Every family x tier: the map is exactly the artifact row's values under the
+        // catalog's names -- one derivation, executed across the whole fleet.
+        NpuFleetCensus.families.forEach { family ->
+            NpuAssetImport.PAIRED_TIER_IDS.forEach { id ->
+                val model = WhisperCatalog.byId(id)!!
+                val artifact = NpuFleetCensus.artifactFor(family.id, id)!!
+                assertEquals(
+                    "family ${family.id}, tier $id: names from the catalog, bytes and " +
+                        "digests from the family's measured row",
+                    mapOf(
+                        model.fileName to NpuAssetImport.RequiredEntry(
+                            artifact.encoder.bytes, artifact.encoder.sha256
+                        ),
+                        model.pairedArtifact!!.fileName to NpuAssetImport.RequiredEntry(
+                            artifact.decoder.bytes, artifact.decoder.sha256
+                        ),
+                    ),
+                    NpuAssetImport.requiredEntriesFor(model, artifact),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun aNullArtifactRefusesEveryEntry() {
+        // artifact == null is "this device's family is unknown, or its family has no measured
+        // row for the tier" -- and a device that cannot VERIFY NPU bytes must not import them.
+        // The empty map refuses every entry, so the existing missing-entries refusal fires;
+        // a permissive fallback to the reference row would be the silent-wrong-choice mutant
+        // F2's selector already refused once.
+        NpuAssetImport.PAIRED_TIER_IDS.forEach { id ->
+            assertEquals(
+                "no artifact row, no allow-list ($id)",
+                emptyMap<String, NpuAssetImport.RequiredEntry>(),
+                NpuAssetImport.requiredEntriesFor(WhisperCatalog.byId(id), null),
+            )
+        }
+        assertEquals(
+            "and both arguments null is just as empty",
+            emptyMap<String, NpuAssetImport.RequiredEntry>(),
+            NpuAssetImport.requiredEntriesFor(null, null),
+        )
+    }
+
+    @Test
+    fun classifyEntryStillIgnoresTheMetadataEntryItself() {
+        // The metadata entry is peeked at (identity), never installed (it is not a model
+        // file): after the peek falls through, the ordinary classification Ignores it, so it
+        // is never written, never counted, never part of the ok-line's byte total.
+        NpuAssetImport.PAIRED_TIER_IDS.forEach { id ->
+            val entries = NpuAssetImport.requiredEntriesFor(
+                WhisperCatalog.byId(id), NpuFleetCensus.artifactFor("8gen3", id)
+            )
+            assertFalse(
+                "metadata.json is never an allow-listed name ($id)",
+                entries.containsKey(NpuPackMetadata.ENTRY_NAME),
+            )
+            assertTrue(
+                "and classifyEntry Ignores it ($id) -- skipped and named, not fatal, exactly " +
+                    "like any other rider",
+                NpuAssetImport.classifyEntry(
+                    entries, NpuPackMetadata.ENTRY_NAME, 512L, alreadyAccepted = emptySet()
+                ) is NpuAssetImport.EntryVerdict.Ignore,
+            )
+        }
+    }
+
+    @Test
+    fun theArtifactParameterHasNoDefault() {
+        // The L2 doctrine's next application (spec at L2, melAsset at L3, the backend family
+        // at F2): a defaulted artifact would let every call site keep compiling while verifying
+        // every family against the default's digests -- the exact hazard the parameter removes.
+        assertEquals(
+            "requiredEntriesFor declares a REQUIRED artifact parameter",
+            1,
+            liveLineCount(importObject, "        artifact: PackArtifact?,"),
+        )
+        assertEquals(
+            "and it carries no default -- every call site answers the family question",
+            0,
+            liveLineCount(importObject, "artifact: PackArtifact? ="),
+        )
+    }
+
+    @Test
+    fun theManagerResolvesTheFamilyThenTheArtifactThenTheMap() {
+        // ORDER, source-pinned because it is a property of the Context-bound body: the device's
+        // family answers first, the family's artifact row second, and the verifying map is built
+        // from BOTH -- so the digests a copy streams against are the device's own family's.
+        val familyAt = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair",
+            "(context.applicationContext as? WhisperEverywhereApp)?.npuSocFamily",
+        )
+        val artifactAt = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair",
+            "NpuFleetCensus.artifactFor(family.id, tierId)",
+        )
+        val mapAt = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair",
+            "NpuAssetImport.requiredEntriesFor(model, artifact)",
+        )
+        assertTrue(
+            "family ($familyAt) -> artifact ($artifactAt) -> map ($mapAt)",
+            familyAt < artifactAt && artifactAt < mapAt,
+        )
+        assertEquals(
+            "the one-argument spelling is GONE from the manager -- a surviving call would " +
+                "verify some path against the reference family's digests",
+            0,
+            liveLineCount(manager, "requiredEntriesFor(model)"),
+        )
+        assertEquals(
+            "the launch debris sweep derives NAMES, not digests -- sweeping parked files must " +
+                "not depend on the family resolution the verifying map now requires",
+            1,
+            liveLineCount(manager, "NpuAssetImport.pairedFileNames(WhisperCatalog.byId(tierId))"),
+        )
+    }
+
+    @Test
+    fun theManagerRefusesANullFamilyByName() {
+        // The import affordance is capability-gated (no NPU cards without a resolved family),
+        // so this is a belt for a suspenders failure -- and it is a REFUSAL with a named
+        // reason, never a fallback to the reference family's digests, which is the
+        // silent-wrong-choice mutant F2's selector already refused once.
+        assertEquals(
+            "the family read is the app memo, once",
+            1,
+            liveLineCount(
+                importBody,
+                "(context.applicationContext as? WhisperEverywhereApp)?.npuSocFamily",
+            ),
+        )
+        assertEquals(
+            "and the null arm refuses with the family named as the missing fact",
+            1,
+            liveLineCount(importBody, "silicon family could not be resolved"),
+        )
+        assertEquals(
+            "no fallback row: the census's family table appears in the body ONLY as the " +
+                "artifactFor lookup",
+            1,
+            liveLineCount(importBody, "NpuFleetCensus."),
+        )
+    }
+
+    @Test
+    fun theMetadataPeekRunsBeforeAnyBinaryInflates() {
+        // A v79 user who grabbed the 8gen3 zip learns "wrong family variant" in ONE SECOND,
+        // from the pack's own metadata.json, instead of "sha256 mismatch" after 776 MB has
+        // inflated and hashed to learn the same thing. The peek sits BEFORE the classify/write
+        // path in the entry loop, bounded to a metadata-sized entry.
+        val peekAt = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair",
+            "entry.name == NpuPackMetadata.ENTRY_NAME",
+        )
+        val crossAt = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair",
+            "NpuPackMetadata.crossCheckRefusal(meta, family, artifact, tierId)",
+        )
+        val classifyAt = liveIndexOfOrFail(
+            importBody, "importNpuAssetPair",
+            "NpuAssetImport.classifyEntry(required, entry.name, entry.size, accepted)",
+        )
+        assertTrue(
+            "the peek ($peekAt) and its cross-check ($crossAt) sit before the classify/write " +
+                "path ($classifyAt) in the entry loop",
+            peekAt < classifyAt && crossAt < classifyAt,
+        )
+        assertEquals(
+            "the peek is bounded to a metadata-sized entry -- a GB entry wearing the metadata " +
+                "name is never buffered into memory",
+            1,
+            liveLineCount(importBody, "entry.size in 0L..NpuPackMetadata.MAX_BYTES.toLong()"),
+        )
+        assertEquals(
+            "a metadata parse failure is REFUSED through the bounded unreadable builder, " +
+                "never thrown past the finally",
+            1,
+            liveLineCount(importBody, "catch (badMeta: IllegalStateException)"),
+        )
     }
 
     @Test
