@@ -15,6 +15,7 @@ import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModelManager
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuGate
+import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.transcription.NpuWhisperBackend
 
 class WhisperEverywhereApp : Application() {
@@ -76,6 +77,25 @@ class WhisperEverywhereApp : Application() {
             socManufacturer = npuSocManufacturer,
             libDir = applicationInfo.nativeLibraryDir,
         )
+    }
+
+    /**
+     * The census row this device's silicon resolves to, or null off the census (4.2 F2).
+     *
+     * Memoised for IDENTITY, not for cost — `NpuGate.familyFor` is a pure table lookup and
+     * cannot dlopen, so unlike [npuCapableDevice] this is Main-safe. Everything per-family
+     * downstream reads THIS one resolution: `NpuBackendSelector` hands it to the backend, which
+     * stages the row's own `skelAsset`/`skelBytes`/`skelSha256` — so the skel a session stages
+     * and the gate that offered the session can never come from two readings of the census.
+     *
+     * It reads the two guarded getters above and adds NO new SOC read site — the API-31 guard
+     * keeps exactly one site per field, and `ChooserSteerWiringPinTest` proves it by the same
+     * count it already runs. And it can never disagree with [npuCapableDevice]'s SoC half:
+     * `isSocSupported` IS `familyFor != null` (F1's derivation), so a capable device always
+     * resolves a row.
+     */
+    val npuSocFamily: NpuSocFamily? by lazy {
+        NpuGate.familyFor(npuSocModel, npuSocManufacturer)
     }
 
     /**

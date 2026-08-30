@@ -10,6 +10,7 @@ import com.whispereverywhere.npu.NpuQuantize
 import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.npu.QnnAsrNative
 import com.whispereverywhere.npu.NpuModelSpec
+import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.npu.WhisperBpeDecoder
 import com.whispereverywhere.whisper.GgmlBackends
 import com.whispereverywhere.whisper.WhisperNative
@@ -21,7 +22,7 @@ import java.util.Locale
  * on the Hexagon, and one CPU-tier fallback that is never silent.
  *
  * ```
- * load(encoder, decoder)   companion? -> mel (64 KB) -> vocab -> skel (17.9 MB once)
+ * load(encoder, decoder)   companion? -> mel (64 KB) -> vocab -> skel (the family's own, once)
  *                          -> nativeInit (376 MiB) -> nativeEpoch
  * transcribe(samples)      nativeEpoch (is this still my session?) -> pcmToMel -> nativeInputQuant
  *                          -> melToU16 -> nativeEncode -> nativeDetectLanguage
@@ -92,6 +93,19 @@ import java.util.Locale
  * matching epoch. The epoch closes the cross-instance teardown and encode hazards; the required
  * spec is the only thing that closes this one.
  *
+ * ### The family is required too, and it has no default either (4.2 F2)
+ *
+ * `family` is the census row this device resolved to ([com.whispereverywhere.npu.NpuGate.familyFor],
+ * memoised once on the app), and it is what makes the skel stage a per-device decision: the row
+ * names WHICH DSP-side skel this silicon's FastRPC loader can open (`skelAsset`) and the exact
+ * bytes it must be (`skelBytes`/`skelSha256`). **No default value, the same doctrine as `spec`
+ * and for the same shape of reason:** a defaulted family would stage the default's skel under
+ * another family's silicon, and the failure is not a compile error and not a named refusal — it
+ * is a FastRPC mystery on a device, inside a loader whose search path this code only ever sets
+ * up. `NpuBackendSelector` resolves the row from the app's one memo and answers
+ * `WhisperNativeBackend` when there is none, so a device off the census cannot reach this
+ * constructor at all.
+ *
  * ### Handles
  *
  * [load] returns [HANDLE] on success and `0L` on failure, matching [WhisperNativeBackend]'s
@@ -111,6 +125,7 @@ class NpuWhisperBackend(
     private val paths: ModelPathProvider,
     private val appContext: Context,
     private val spec: NpuModelSpec,
+    private val family: NpuSocFamily,
 ) : WhisperBackend {
 
     // ---------------------------------------------------------------- session state
@@ -252,6 +267,13 @@ class NpuWhisperBackend(
      * @return [HANDLE], or 0L when neither the NPU nor the CPU fallback could be brought up.
      */
     override fun load(modelPath: String, companionPath: String?): Long =
+        // ONE serialized hold spans this whole body, and that single hold is LOAD-BEARING for
+        // the epoch handshake (4.1 L1; stated here per its m8 rider): stages (6) and (7) are two
+        // JNI crossings — nativeInit, then nativeEpoch — and it is this one gate hold that makes
+        // the pair atomic against every other arm. Split the hold, or move either crossing out
+        // of it, and another instance's nativeInit can land BETWEEN them, handing this instance
+        // the successor's epoch: a stale backend armed with a live identity, the exact shape the
+        // epoch exists to refuse. The hold, not source order, carries the invariant.
         NativeComputeGate.serialized {
             // FIRST STATEMENT, and it is an ORDER invariant (4.0, Q9b). The build is
             // GGML_BACKEND_DL, so the ggml backend registry starts EMPTY and only
@@ -358,31 +380,37 @@ class NpuWhisperBackend(
                 )
             }
 
-            // (5) THE DSP-SIDE SKEL, staged from the APK's assets into filesDir (4.1 L6 — the I5
-            // answer). packaging.jniLibs EXCLUDES libQnnHtpV75Skel.so: under extractNativeLibs=
-            // "false" a lib/ copy is provably unopenable by the FastRPC loader, which needs a
-            // real file on disk and searches only ADSP_LIBRARY_PATH. The extractQnnSkel Gradle
-            // task re-materialises the same bytes from the resolved AAR into assets — asserting
-            // the SAME two values below at build time — and this stage copies them to filesDir,
-            // the FIRST ADSP_LIBRARY_PATH entry, where nativeInit's dlopen of libQnnHtp.so will
-            // have FastRPC find them. The RETURN PATH IS DELIBERATELY UNUSED: FastRPC searches
-            // the environment, never Kotlin, so the call's value is its refusal gate.
+            // (5) THE DSP-SIDE SKEL — THIS FAMILY'S ROW, staged from the APK's assets into
+            // filesDir (4.1 L6 — the I5 answer; fleet-wide at 4.2 F2). packaging.jniLibs
+            // EXCLUDES every census family's skel: under extractNativeLibs="false" a lib/ copy
+            // is provably unopenable by the FastRPC loader, which needs a real file on disk and
+            // searches only ADSP_LIBRARY_PATH. The extractQnnSkel Gradle task re-materialises
+            // all four families' skels from the resolved AAR into assets — asserting the same
+            // census-pinned (bytes, sha256) pairs at build time — and this stage copies exactly
+            // ONE of them, the row this device resolved to, into filesDir, the FIRST
+            // ADSP_LIBRARY_PATH entry, where nativeInit's dlopen of libQnnHtp.so will have
+            // FastRPC find it. The three values are the family row's — the census is their one
+            // home, and a skel staged under another family's values is precisely the FastRPC
+            // mystery the required `family` parameter exists to prevent. The RETURN PATH IS
+            // DELIBERATELY UNUSED: FastRPC searches the environment, never Kotlin, so the
+            // call's value is its refusal gate.
             //
             // stagedPathWithMarker, NOT stagedPath — the L3 handoff's explicit warning to this
-            // task: the plain arm full-hashes the destination on EVERY arm, free at the melbank's
-            // 103 KB and a per-session 17.9 MiB flash read here. The first arm pays one ~17.9 MB
-            // verified write (once per install); every later arm is a handful of stats against
-            // the stored marker. A null is a stage refusal like any other stage's: without it the
-            // HTP backend would come up and then fail somewhere far less legible, inside FastRPC.
+            // stage: the plain arm full-hashes the destination on EVERY arm, free at the
+            // melbank's 103 KB and a per-session ~17.9-18.8 MiB flash read here. The first arm
+            // pays one verified write (once per install); every later arm is a handful of stats
+            // against the stored marker. A null is a stage refusal like any other stage's:
+            // without it the HTP backend would come up and then fail somewhere far less
+            // legible, inside FastRPC.
             NpuAssetStage.stagedPathWithMarker(
                 appContext,
-                "libQnnHtpV75Skel.so",
-                SKEL_BYTES,
-                SKEL_SHA256,
+                family.skelAsset,
+                family.skelBytes,
+                family.skelSha256,
             ) ?: return@serialized fallBackToCpuTier(
                 "skel",
-                "libQnnHtpV75Skel.so could not be staged from the APK into filesDir — the " +
-                    "FastRPC loader would find no DSP-side skel to open"
+                "${family.skelAsset} (family ${family.id}) could not be staged from the APK " +
+                    "into filesDir — the FastRPC loader would find no DSP-side skel to open"
             )
 
             // (6) 342 MiB and ~525 ms. runCatching, not try/catch on a named type: libqnnasr.so is
@@ -755,12 +783,16 @@ class NpuWhisperBackend(
         // release with an argument added to it. Native ignores an epoch that is not the live one,
         // so a stale instance's teardown becomes a WE-DIAG line instead of a destroyed session.
         //
-        // And the guard, which closes Q6 M1: `mel-donor` is the cheapest refusal in load() — no
-        // installed 80-bin whisper model — and it is reached BEFORE anything native is touched, on
-        // every session of every device with no ggml model installed. Unguarded, the way out of
-        // that refusal ran through `QnnAsrNative`, whose `init` block dlopens ~25 MiB of Qualcomm
-        // runtime, to release a session that was never created. The two conditions together are
-        // the whole test for "did this instance ever touch the native side".
+        // And the guard, which closes Q6 M1 — its claim stated NARROWLY (4.2 F2, the L1 m2
+        // correction): `armedEpoch != 0L` is the QNN-side fact; `melCtx != 0L` is a WHISPER-side
+        // fact and proves nothing about QnnAsrNative. What the disjunction guarantees is only
+        // that the refusals reached before ANY native touch — companion and mel-donor, the
+        // every-session path of every device with no ggml model installed — never dlopen
+        // ~25 MiB of Qualcomm runtime on their way out to release a session that was never
+        // created. A decline BETWEEN the mel arm and nativeInit (vocab, skel) still takes the
+        // release call holding only whisper-side state: that pays the dlopen for a release
+        // native refuses (epoch 0 is never live), which is bounded and deliberately preferred
+        // over a cleverer test that could learn to skip a real release.
         if (armedEpoch != 0L || melCtx != 0L) {
             runCatching { QnnAsrNative.nativeRelease(armedEpoch) }
         }
@@ -867,19 +899,10 @@ class NpuWhisperBackend(
         /** Passed as `detected` when the user chose a language, so no detect pass ran. */
         private const val DETECT_NOT_RUN: Int = -1
 
-        /**
-         * The DSP-side HTP skel's published length and digest — BOTH MEASURED from
-         * `qnn-runtime-2.49.0.aar`'s `jni/arm64-v8a/libQnnHtpV75Skel.so` in the Gradle cache
-         * (4.1 L6), and both asserted a SECOND time by the `extractQnnSkel` build task over the
-         * bytes it writes into assets. Two readers, one pair of values, pinned equal by
-         * `NpuSkelPackagingTest`: a runtime version bump therefore produces a named build
-         * failure and a named `stage=skel` refusal, never a mystery on a device.
-         */
-        const val SKEL_BYTES: Long = 17_913_608L
-
-        /** See [SKEL_BYTES]. */
-        const val SKEL_SHA256: String =
-            "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c"
+        // The 4.1 single-family skel companions lived here. DELETED at 4.2 F2: the census row
+        // (`family`) is the one home of every family's (bytes, sha256) pair, and
+        // NpuSkelPackagingTest holds this file empty of all their spellings so they cannot
+        // quietly come back.
 
         /**
          * Whether the npu tier may be OFFERED on this device: the right silicon, and a QNN stack

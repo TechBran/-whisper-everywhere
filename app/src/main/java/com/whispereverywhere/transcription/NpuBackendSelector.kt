@@ -1,6 +1,7 @@
 package com.whispereverywhere.transcription
 
 import android.content.Context
+import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.npu.NpuModelSpec
 
 /**
@@ -118,8 +119,19 @@ object NpuBackendSelector {
      * `paths` is not optional and never was (Q9 brief, NEW-I1): `NpuWhisperBackend` resolves its
      * own companion artefact, its mel donor and its CPU fallback through a [ModelPathProvider], so
      * a selector that did not take one could not construct what it returns. `appContext` joins it
-     * for the same structural reason — the tier reads its vocabulary asset out of the APK and its
-     * `nativeLibraryDir` is the QNN backend search path.
+     * for the same structural reason — the tier reads its vocabulary asset out of the APK, its
+     * `nativeLibraryDir` is the QNN backend search path, and since 4.2 F2 its
+     * `applicationContext` is where the DEVICE FAMILY comes from: the app's one memoised
+     * `NpuGate.familyFor` resolution, never a second derivation.
+     *
+     * **A null family answers [WhisperNativeBackend], in the same clause shape as the null-spec
+     * answer** — and the state is NEAR-unreachable rather than unreachable, which is exactly why
+     * the clause is here. Routing to the npu arm requires the offered set; the offered set
+     * requires `npuCapableDevice`; and that gate's SoC half IS `familyFor != null` (F1's
+     * derivation) — the same resolution this memo reads. So a routed tier on a family-less
+     * device requires three other objects to have answered inconsistently, and it is refused
+     * anyway: that chain is a property of DIFFERENT objects, and "safe by a property of a
+     * different object" is the shape this stack has paid for twice.
      */
     fun backendFor(
         tierId: String?,
@@ -127,8 +139,11 @@ object NpuBackendSelector {
         declinedTiers: Set<String>,
         paths: ModelPathProvider,
         appContext: Context,
-    ): WhisperBackend =
-        backendFor(tierId, offeredNpuTierIds, declinedTiers, paths) { p, spec ->
-            NpuWhisperBackend(p, appContext, spec)
+    ): WhisperBackend {
+        val family = (appContext.applicationContext as? WhisperEverywhereApp)?.npuSocFamily
+            ?: return WhisperNativeBackend
+        return backendFor(tierId, offeredNpuTierIds, declinedTiers, paths) { p, spec ->
+            NpuWhisperBackend(p, appContext, spec, family)
         }
+    }
 }

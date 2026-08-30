@@ -13,24 +13,27 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * THE SKEL'S PACKAGING ANSWER (4.1 L6, spec decision 7 / I5): `libQnnHtpV75Skel.so` leaves
- * `jniLibs` — where `extractNativeLibs="false"` made it provably unopenable by the FastRPC
- * loader — and is re-materialised from the RESOLVED `qnn-runtime` AAR into generated assets at
- * build time, then staged into `filesDir` on first arm, which is already first on
- * `ADSP_LIBRARY_PATH`.
+ * THE SKELS' PACKAGING ANSWER (4.1 L6, spec decision 7 / I5; fleet-wide at 4.2 F2): every census
+ * family's DSP-side skel leaves `jniLibs` — where `extractNativeLibs="false"` made a `lib/` copy
+ * provably unopenable by the FastRPC loader — and is re-materialised from the RESOLVED
+ * `qnn-runtime` AAR into generated assets at build time. At arm, `NpuWhisperBackend` stages
+ * exactly ONE of them — the row `NpuGate.familyFor` resolved this device to — into `filesDir`,
+ * which is already first on `ADSP_LIBRARY_PATH`.
  *
  * Two halves, two instruments:
  *
  *  - **The build and runtime contract is SOURCE-pinned** over `app/build.gradle.kts` and
- *    `NpuWhisperBackend.kt`. No JVM test can run a Gradle task or dlopen a QNN stack, but the
- *    whole mechanism is four spellings that must agree — the exclude, the extract task's two
- *    asserted values, the srcDir registration, and the staging constants — and any one drifting
- *    silently is a tier that dies on a device a month later with nothing naming why.
- *  - **The marker fast path is EXECUTED** against a temp dir, because it is the one piece of new
- *    `NpuAssetStage` behaviour: L3's `stagedPath` full-hashes the destination on EVERY arm, which
- *    is free at the melbank's 103 KB and a per-session flash read at the skel's 17.9 MiB — the
- *    L3 handoff's explicit warning to this task, with "a stored marker, not a weaker check" as
- *    its prescribed answer.
+ *    `NpuWhisperBackend.kt`, and EXECUTED against `NpuFleetCensus` where the census object can
+ *    carry the claim. No JVM test can run a Gradle task or dlopen a QNN stack, but the whole
+ *    mechanism is a handful of spellings that must agree — the per-family excludes, the extract
+ *    task's per-row (bytes, sha256) asserts, the srcDir registration, and the family-row staging
+ *    call — and any one drifting silently is a tier that dies on a device a month later with
+ *    nothing naming why.
+ *  - **The marker fast path is EXECUTED** against a temp dir, because it is the one piece of
+ *    `NpuAssetStage` behaviour L6 added: L3's `stagedPath` full-hashes the destination on EVERY
+ *    arm, which is free at the melbank's 103 KB and a per-session flash read at a skel's
+ *    ~17-19 MiB — the L3 handoff's explicit warning, with "a stored marker, not a weaker check"
+ *    as its prescribed answer.
  *
  * `app/build.gradle.kts` joins the test task's `sourcePinnedInputs` with this class: an edit
  * confined to the build script would otherwise leave `:app:testDebugUnitTest` UP-TO-DATE and
@@ -124,61 +127,221 @@ class NpuSkelPackagingTest {
         )
     }
 
-    // The two values this whole mechanism agrees on — MEASURED from qnn-runtime-2.49.0.aar's
-    // jni/arm64-v8a entry (the plan's asset block; re-measured from the Gradle cache at L6).
-    private val skelBytesLiteral = "17_913_608L"
-    private val skelSha = "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c"
+    private val jniLibs: String by lazy {
+        gradle.substringAfter("jniLibs {").substringBefore("\n        }")
+    }
+
+    private val extractTask: String by lazy {
+        gradleBlock("val extractQnnSkel = tasks.register(\"extractQnnSkel\")")
+    }
+
+    /** `17913608` -> `"17_913_608L"` — the Kotlin literal spelling the gradle table uses. */
+    private fun kotlinLongLiteral(value: Long): String =
+        value.toString().reversed().chunked(3).joinToString("_").reversed() + "L"
+
+    /** One family's gradle table row, spelled exactly as the build script must spell it. */
+    private fun tripleRowFor(family: NpuSocFamily): String =
+        "Triple(\"${family.skelAsset}\", ${kotlinLongLiteral(family.skelBytes)}, \"${family.skelSha256}\")"
 
     // ------------------------------------------------------------------ the gradle contract
 
+    /**
+     * THE FLEET'S BUILD HALF (4.2 F2). Needles are built FROM the census object, so a family
+     * added to `NpuFleetCensus.families` makes this test demand its gradle row in the same
+     * breath — the build's copy and the runtime's check cannot be updated apart.
+     */
     @Test
-    fun theSkelIsExcludedFromJniLibsExactlyOnceAndTheStubStays() {
-        val jniLibs = gradle.substringAfter("jniLibs {").substringBefore("\n        }")
-        assertTrue("the jniLibs block was found", jniLibs.length < gradle.length)
+    fun everyCensusFamilysSkelIsExtractedAndPinned() {
+        NpuFleetCensus.families.forEach { family ->
+            assertEquals(
+                "family `${family.id}`'s skel row — asset, exact bytes, exact sha256 — must " +
+                    "appear exactly once in extractQnnSkel's qnnSkels table. A family whose row " +
+                    "is missing ships an APK whose assets lack its skel: the gate offers the " +
+                    "tier, the stage declines at arm, and every device of that family runs CPU " +
+                    "under a card that promised the AI chip.",
+                1,
+                liveLineCount(extractTask, tripleRowFor(family)),
+            )
+        }
         assertEquals(
-            "libQnnHtpV75Skel.so is excluded from jniLibs exactly once. Under this app's " +
-                "extractNativeLibs=\"false\" packaging the FastRPC loader — which needs a real " +
-                "file and searches only ADSP_LIBRARY_PATH — could never open a lib/ copy, so " +
-                "keeping one is 17.9 MB of provably dead APK; the same bytes ship under assets/ " +
-                "instead (extractQnnSkel) and are staged into filesDir on first arm",
+            "and the table carries exactly one row per census family — an extra Triple is a " +
+                "skel no census row will ever stage (dead assets) or a family the census does " +
+                "not gate (a stage no gate offers); either way the census and the build have " +
+                "parted company",
+            NpuFleetCensus.families.size,
+            liveLineCount(extractTask, "Triple(\""),
+        )
+    }
+
+    /**
+     * The executed set-equality, BOTH directions: every gradle row parses back to a census row
+     * and every census row has a gradle row. [everyCensusFamilysSkelIsExtractedAndPinned] builds
+     * needles census->gradle; this one parses gradle->census, which is what catches a rogue row
+     * whose values are census-shaped but census-false.
+     */
+    @Test
+    fun theGradleSkelTableEqualsTheCensusRowForRow() {
+        val rows = Regex("Triple\\(\"([^\"]+)\", ([0-9_]+)L, \"([a-f0-9]{64})\"\\)")
+            .findAll(extractTask)
+            .map {
+                Triple(
+                    it.groupValues[1],
+                    it.groupValues[2].replace("_", "").toLong(),
+                    it.groupValues[3],
+                )
+            }
+            .toSet()
+        val census = NpuFleetCensus.families
+            .map { Triple(it.skelAsset, it.skelBytes, it.skelSha256) }
+            .toSet()
+        assertEquals(
+            "the build script's qnnSkels table and NpuFleetCensus.families must carry EXACTLY " +
+                "the same (asset, bytes, sha256) rows — executed equality, so the build-time " +
+                "extraction assert and the arm-time staging check are two readings of one " +
+                "census. The gradle copy exists only because a build script cannot read the " +
+                "app's classes; this equality is what keeps it a copy rather than a fork.",
+            census,
+            rows,
+        )
+    }
+
+    /**
+     * The continuity pin's GRADLE half — hard literals on purpose, NOT derived from the census
+     * object (`NpuFleetCensusTest` holds the census half with the same two literals). A
+     * co-mutation that drifts the census and the build script together still dies here.
+     */
+    @Test
+    fun theV75GradleRowIsTheShippedFourOnePinExactly() {
+        assertEquals(
+            "the V75 row carries the 4.1-shipped pair VERBATIM — 17_913_608 bytes, a56519d6…. " +
+                "This is the value pair the Fold6 has device-executed; a build whose V75 row " +
+                "moved without a measured runtime bump is extracting a different blob than the " +
+                "one 4.1 shipped.",
             1,
-            count(jniLibs, "excludes += \"**/libQnnHtpV75Skel.so\""),
+            liveLineCount(
+                extractTask,
+                "Triple(\"libQnnHtpV75Skel.so\", 17_913_608L, " +
+                    "\"a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c\")",
+            ),
         )
-        assertEquals(
-            "the V75 STUB is NOT excluded: it is the CPU-side half, dlopen()ed by libQnnHtp.so " +
-                "straight out of the APK, which works page-aligned without extraction — " +
-                "excluding it kills the tier outright",
-            0,
-            count(jniLibs, "excludes += \"**/libQnnHtpV75Stub.so\""),
-        )
-        assertEquals(
-            "and no WILDCARD sweeps the V75 pair — `**/libQnnHtpV75*` would take the stub with " +
-                "the skel and read identically in review",
-            0,
-            count(jniLibs, "V75*"),
-        )
+    }
+
+    /** The three new rows, as hard literals — the plan's measured table, second reading. */
+    @Test
+    fun theOtherThreeGradleRowsCarryTheMeasuredAarValues() {
+        listOf(
+            "Triple(\"libQnnHtpV73Skel.so\", 17_909_588L, " +
+                "\"7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1\")",
+            "Triple(\"libQnnHtpV79Skel.so\", 17_721_548L, " +
+                "\"9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6\")",
+            "Triple(\"libQnnHtpV81Skel.so\", 18_844_384L, " +
+                "\"b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1\")",
+        ).forEach { row ->
+            assertEquals(
+                "the row must carry the values measured out of qnn-runtime-2.49.0.aar on " +
+                    "2026-08-29, verbatim: $row",
+                1,
+                liveLineCount(extractTask, row),
+            )
+        }
+    }
+
+    @Test
+    fun everyCensusFamilysSkelIsExcludedAndItsStubStaysInLib() {
+        assertTrue("the jniLibs block was found", jniLibs.length < gradle.length)
+        NpuFleetCensus.families.forEach { family ->
+            val arch = "V${family.htpVersion}"
+            assertEquals(
+                "family `${family.id}`'s skel (${family.skelAsset}) is excluded from jniLibs " +
+                    "exactly once. Under this app's extractNativeLibs=\"false\" packaging the " +
+                    "FastRPC loader — which needs a real file on disk and searches only " +
+                    "ADSP_LIBRARY_PATH — could never open a lib/ copy, so a skel left in lib/ " +
+                    "is ~18 MB of provably dead APK; the same bytes ship under assets/ " +
+                    "(extractQnnSkel) and are staged into filesDir at first arm",
+                1,
+                count(jniLibs, "excludes += \"**/${family.skelAsset}\""),
+            )
+            assertEquals(
+                "family `${family.id}`'s STUB (libQnnHtp${arch}Stub.so) is NOT excluded: it is " +
+                    "the CPU-side half, dlopen()ed by libQnnHtp.so straight out of the APK, " +
+                    "which works page-aligned without extraction — a family whose stub is " +
+                    "excluded arms all the way to nativeInit and dies inside the QNN loader " +
+                    "with nothing naming why (the V68/V69 stub excludes keep this zero honest " +
+                    "— see noUncoveredArchitectureLosesItsExcludes)",
+                0,
+                count(jniLibs, "excludes += \"**/libQnnHtp${arch}Stub.so\""),
+            )
+            assertEquals(
+                "and no WILDCARD sweeps the $arch pair — `**/libQnnHtp$arch*` would take the " +
+                    "stub with the skel and read identically in review",
+                0,
+                count(jniLibs, "$arch*"),
+            )
+        }
+    }
+
+    /**
+     * The honesty half of the stub live-zeros above: a zero is satisfied by deleting the whole
+     * exclude mechanism, so the architectures with NO covered family must still be PRESENT as
+     * excludes — skel and stub both — along with the never-used backends.
+     */
+    @Test
+    fun noUncoveredArchitectureLosesItsExcludes() {
+        listOf("V68", "V69").forEach { arch ->
+            listOf("Skel", "Stub").forEach { half ->
+                assertEquals(
+                    "libQnnHtp$arch$half.so stays excluded — no census family runs $arch, so " +
+                        "both halves are dead weight, and this presence is what keeps the " +
+                        "census families' stub live-zeros an assertion rather than a vacuity",
+                    1,
+                    count(jniLibs, "excludes += \"**/libQnnHtp$arch$half.so\""),
+                )
+            }
+        }
+        listOf(
+            "**/libQnnHtpPrepare.so", "**/libQnnDsp.so", "**/libQnnDspV66Skel.so",
+            "**/libQnnDspV66Stub.so", "**/libQnnGpu.so",
+        ).forEach { dead ->
+            assertEquals(
+                "$dead stays excluded — unused whatever the census says",
+                1,
+                count(jniLibs, "excludes += \"$dead\""),
+            )
+        }
     }
 
     @Test
     fun theExtractTaskReadsTheExactAarEntryAndAssertsBothPinnedValues() {
-        val task = gradleBlock("val extractQnnSkel = tasks.register(\"extractQnnSkel\")")
         assertEquals(
-            "the task reads the AAR's own arm64 entry, by its exact path — a layout change in a " +
-                "future runtime AAR must fail HERE by name, not surface as an empty asset",
+            "the loop reads each family's AAR entry by its exact interpolated path — a layout " +
+                "change in a future runtime AAR must fail HERE by name, not surface as an " +
+                "empty asset",
             1,
-            liveLineCount(task, "zip.getEntry(\"jni/arm64-v8a/libQnnHtpV75Skel.so\")"),
+            liveLineCount(extractTask, "zip.getEntry(\"jni/arm64-v8a/\$name\")"),
         )
         assertEquals(
-            "the task asserts the exact byte length, as a check( that names the remedy — the " +
+            "the rows live in ONE local `qnnSkels` table the loop iterates, so a family's " +
+                "entry name, size and digest cannot be updated apart",
+            1,
+            liveLineCount(extractTask, "val qnnSkels = listOf("),
+        )
+        assertEquals(
+            "each entry's byte length is asserted, as a check( that names the remedy — the " +
                 "same size-assert discipline fetchSherpaAar already applies",
             1,
-            liveLineCount(task, "check(skel.length() == $skelBytesLiteral)"),
+            liveLineCount(extractTask, "check(skel.length() == bytes)"),
         )
         assertEquals(
-            "and the exact sha256, computed over what it just wrote — the second of the two " +
-                "values the runtime staging checks again at arm time",
+            "and each entry's sha256, computed over what it just wrote",
             1,
-            liveLineCount(task, "check(digest == \"$skelSha\")"),
+            liveLineCount(extractTask, "check(digest == sha256)"),
+        )
+        assertEquals(
+            "every failure message names NpuFleetCensus as the co-updated reader — the " +
+                "missing-entry throw and both check messages — so a runtime bump cannot update " +
+                "the build half and forget the half the runtime staging checks at arm time",
+            3,
+            liveLineCount(extractTask, "NpuFleetCensus"),
         )
     }
 
@@ -227,47 +390,93 @@ class NpuSkelPackagingTest {
 
     @Test
     fun theBuildTaskAndTheRuntimeStageCannotDriftApart() {
-        // ONE fact, four spellings: the AAR coordinate twice in the build script (the F2
-        // dependency and the extract task's own resolution config), and the two measured values
-        // once in the build script and once in the backend's staging constants. This test is the
-        // third reading that ties them; change any one alone and it goes red asking for the rest.
+        // ONE fact per family, spelled in the two places that structurally cannot read each
+        // other: the build script's qnnSkels table (asserted at extraction) and the census the
+        // runtime stages from (checked at arm). Plus the AAR coordinate twice in the build
+        // script. This test is the reading that ties them.
         assertEquals(
-            "the qnn-runtime coordinate appears exactly twice — the F2 dependency (unchanged) " +
-                "and extractQnnSkel's resolution config — and the two must stay the same version, " +
-                "or the build extracts one runtime's skel while the app dlopens another's stack",
+            "the qnn-runtime coordinate appears exactly twice — the dependency (unchanged) and " +
+                "extractQnnSkel's resolution config — and the two must stay the same version, " +
+                "or the build extracts one runtime's skels while the app dlopens another's stack",
             2,
             liveLineCount(gradle, "com.qualcomm.qti:qnn-runtime:2.49.0"),
         )
-        assertTrue(
-            "the byte length appears in the build script (the extract assert)…",
-            liveLineCount(gradle, skelBytesLiteral) >= 1,
-        )
-        assertEquals(
-            "…and exactly once in the backend, as the staging constant",
-            1,
-            liveLineCount(backend, "const val SKEL_BYTES: Long = $skelBytesLiteral"),
-        )
-        assertTrue(
-            "the digest appears in the build script (the extract assert)…",
-            liveLineCount(gradle, skelSha) >= 1,
-        )
-        assertEquals(
-            "…and exactly once in the backend, as the staging constant — a runtime version bump " +
-                "therefore produces a NAMED build failure and a NAMED stage refusal, never a " +
-                "mystery on a device",
-            1,
-            liveLineCount(backend, "\"$skelSha\""),
-        )
+        NpuFleetCensus.families.forEach { family ->
+            assertEquals(
+                "family `${family.id}`'s byte length (${kotlinLongLiteral(family.skelBytes)}) " +
+                    "appears exactly once in the build script — the qnnSkels row",
+                1,
+                liveLineCount(gradle, kotlinLongLiteral(family.skelBytes)),
+            )
+            assertEquals(
+                "and its sha256 exactly once",
+                1,
+                liveLineCount(gradle, family.skelSha256),
+            )
+            // The BACKEND carries NONE of these spellings: the census row travels as an object
+            // and the stage call reads its fields. Whole-file and comment-inclusive, the same
+            // instrument as the WhisperNative.init( residency pin — a KDoc that re-teaches a
+            // literal is how a fifth spelling comes back.
+            assertEquals(
+                "the backend must not spell family `${family.id}`'s sha256 anywhere — not in " +
+                    "code, not in a comment",
+                0,
+                count(backend, family.skelSha256),
+            )
+        }
     }
 
     // ------------------------------------------------------------------ the backend stage
+
+    /**
+     * The L2 doctrine's third application (spec at L2, melAsset at L3, family here): the absence
+     * of a default is a property of the DECLARATION — no call can observe it and no executed
+     * test can cover it, because a call that omitted the argument would not compile. A
+     * one-character `=` on this line is the whole hazard: a defaulted family stages the
+     * default's DSP-side skel under another family's silicon, and the failure is a FastRPC
+     * mystery on a device, not a compile error. The backend file is a declared test input, so
+     * this line cannot change without re-running this pin.
+     */
+    @Test
+    fun theBackendsFamilyParameterIsRequiredWithNoDefault() {
+        assertEquals(
+            "the constructor takes `private val family: NpuSocFamily,` — exactly once, no " +
+                "default value",
+            1,
+            liveLineCount(backend, "private val family: NpuSocFamily,"),
+        )
+        assertEquals(
+            "no spelling of a defaulted family parameter exists on any live line",
+            0,
+            liveLineCount(backend, "family: NpuSocFamily ="),
+        )
+    }
+
+    /**
+     * 4.1's `SKEL_BYTES`/`SKEL_SHA256` companions were the single-family home of the pair; the
+     * census row is the one home now. Whole-file and comment-inclusive, the same instrument as
+     * the `WhisperNative.init(` residency pin and for the same reason: a KDoc that re-teaches
+     * the deleted constants is exactly how they come back — and with four families, a constant
+     * named SKEL_BYTES no longer even has a referent.
+     */
+    @Test
+    fun theDeletedSkelCompanionsDoNotComeBack() {
+        listOf("SKEL_BYTES", "SKEL_SHA256", "17_913_608").forEach { ghost ->
+            assertEquals(
+                "`$ghost` must appear NOWHERE in NpuWhisperBackend.kt — the family row is the " +
+                    "only spelling of a skel's identity the backend may hold",
+                0,
+                count(backend, ghost),
+            )
+        }
+    }
 
     @Test
     fun theSkelIsStagedBeforeNativeInitAndAfterTheCompanionRefusal() {
         // ORDER, not presence — the statements all survive any permutation. Before nativeInit
         // because that is the dlopen that makes FastRPC go looking for the skel; after the
         // companion refusal (and every cheaper stage) because load's whole shape is
-        // cheapest-refusal-first and the first arm of this stage writes 17.9 MB.
+        // cheapest-refusal-first and the first arm of this stage writes ~18 MB.
         val companion = liveOffsets(loadBody, "if (companionPath.isNullOrBlank())")
         val mel = liveOffsets(loadBody, "melCtx = WhisperNative.initMelOnly(")
         val vocab = liveOffsets(loadBody, "WhisperBpeDecoder.fromJson(")
@@ -279,7 +488,7 @@ class NpuSkelPackagingTest {
             "ORDER: companion (${companion.first()}) -> mel (${mel.first()}) -> vocab " +
                 "(${vocab.first()}) -> skel (${skel.first()}) -> nativeInit (${init.first()}). " +
                 "The skel BELOW nativeInit is a session that dlopens the HTP with no skel to " +
-                "find; the skel ABOVE the companion refusal pays a 17.9 MB first-arm write on a " +
+                "find; the skel ABOVE the companion refusal pays an ~18 MB first-arm write on a " +
                 "tier that was never installed.",
             companion.first() < mel.first() && mel.first() < vocab.first() &&
                 vocab.first() < skel.first() && skel.first() < init.first(),
@@ -310,11 +519,26 @@ class NpuSkelPackagingTest {
         )
     }
 
+    /**
+     * Four families can decline at this stage now, and a refusal that names neither the asset
+     * nor the row reads identically on all four. The one WE-DIAG line a fleet field report
+     * will hinge on must say WHICH skel and WHICH family declined.
+     */
+    @Test
+    fun theSkelRefusalNamesTheFamilysAssetAndId() {
+        assertEquals(
+            "the skel refusal detail interpolates the family's own asset name and its census id",
+            1,
+            liveLineCount(loadBody, "\${family.skelAsset} (family \${family.id})"),
+        )
+    }
+
     @Test
     fun theSkelArmUsesTheMarkerFastPathNotAFullHashPerSession() {
-        // The L3 handoff's explicit warning to this task: stagedPath full-hashes the destination
-        // on EVERY arm — free at the melbank's 103 KB, a per-session 17.9 MiB flash read here.
-        // The skel therefore takes the marker entry point; the mel arm keeps the original.
+        // The L3 handoff's explicit warning to this stage: stagedPath full-hashes the
+        // destination on EVERY arm — free at the melbank's 103 KB, a per-session ~18 MiB flash
+        // read here. The skel therefore takes the marker entry point; the mel arm keeps the
+        // original.
         assertEquals(
             "the skel stages through stagedPathWithMarker",
             1,
@@ -326,16 +550,18 @@ class NpuSkelPackagingTest {
             1,
             liveLineCount(loadBody, "NpuAssetStage.stagedPath("),
         )
-        assertEquals(
-            "the asset is named by its real file name at the call",
-            1,
-            liveLineCount(loadBody, "\"libQnnHtpV75Skel.so\","),
-        )
-        assertTrue(
-            "and the call is driven by the two named constants — the same two values the " +
-                "extract task asserts at build time",
-            liveLineCount(loadBody, "SKEL_BYTES,") == 1 && liveLineCount(loadBody, "SKEL_SHA256,") == 1,
-        )
+        // THE FAMILY ROW DRIVES THE CALL (4.2 F2): asset name, bytes and digest are all read
+        // off the census row this device resolved to — the same three values extractQnnSkel
+        // asserted into assets at build time. A literal here is a fifth spelling, and a
+        // DIFFERENT family's fields here is the wrong-skel stage the required parameter exists
+        // to prevent.
+        listOf("family.skelAsset,", "family.skelBytes,", "family.skelSha256,").forEach { field ->
+            assertEquals(
+                "the stage call reads `$field` from the family row — exactly once",
+                1,
+                liveLineCount(loadBody, field),
+            )
+        }
     }
 
     // ------------------------------------------------------------------ the marker, executed

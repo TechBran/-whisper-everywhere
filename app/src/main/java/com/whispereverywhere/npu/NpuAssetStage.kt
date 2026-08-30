@@ -120,7 +120,7 @@ object NpuAssetStage {
         // The marker did not vouch, so it must not survive a failed re-stage to vouch later:
         // delete FIRST, re-create only after a full verification has passed again.
         val marker = markerFile(dest)
-        marker.delete()
+        deleteMarker(marker, "it did not vouch and must not survive the re-stage")
         val outcome = stage(dest, assetName, expectedBytes, expectedSha256, open)
         if (outcome is StageResult.Staged) {
             try {
@@ -130,10 +130,32 @@ object NpuAssetStage {
             } catch (cause: IOException) {
                 // The stage itself verified; a missing marker only costs the next arm one full
                 // hash. A half-written marker must not vouch, so it is removed.
-                marker.delete()
+                deleteMarker(marker, "half-written after ${cause.javaClass.simpleName}")
             }
         }
         return outcome
+    }
+
+    /**
+     * Deletes [marker], and NAMES a delete that failed instead of dropping the return (4.1 L6
+     * final triage, folded at 4.2 F2).
+     *
+     * The marker is the one artefact here whose staleness can VOUCH: a `.staged` file that
+     * survives a failed delete re-validates whatever later content matches its recorded stat
+     * line — by the fast arm, with no hash. The failure is bounded ([markerVouches] still
+     * compares the digest EXPECTATION, and the next verified stage rewrites the marker), but a
+     * filesystem that refuses a delete is a fact worth one line, because the fast arm's whole
+     * trust rests on markers being removable. Delete-then-exists, because `delete()` answers
+     * false for an absent file too and an absent marker is not a failure.
+     */
+    internal fun deleteMarker(marker: File, why: String) {
+        if (!marker.delete() && marker.exists()) {
+            android.util.Log.w(
+                NpuDiag.TAG,
+                "npu: asset stage could not delete marker ${marker.name} ($why) — a stale " +
+                    "marker must not vouch, and this one survived"
+            )
+        }
     }
 
     /** What one staging attempt did. */

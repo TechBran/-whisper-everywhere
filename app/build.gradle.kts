@@ -20,10 +20,11 @@ val keystoreProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
-// The HTP skel's generated-assets home (4.1 L6 — the I5 answer). extractQnnSkel (below the
-// android block) writes the resolved AAR's own libQnnHtpV75Skel.so here, size- and
-// digest-asserted; the dir is registered as an assets srcDir inside android{} and lives in the
-// BUILD directory — outside the repo, so the proprietary blob structurally cannot be committed.
+// The HTP skels' generated-assets home (4.1 L6 — the I5 answer; fleet-wide at 4.2 F2).
+// extractQnnSkel (below the android block) writes every census family's skel here out of the
+// resolved AAR, each size- and digest-asserted; the dir is registered as an assets srcDir inside
+// android{} and lives in the BUILD directory — outside the repo, so the proprietary blobs
+// structurally cannot be committed.
 val qnnSkelAssetDir = layout.buildDirectory.dir("generated/qnnSkel/assets")
 
 android {
@@ -167,10 +168,23 @@ android {
             excludes += "**/libsherpa-onnx-cxx-api.so"
             excludes += "**/libparakeet.so"
 
-            // QNN/QAIRT runtime (4.0 NPU tier). The AAR ships every backend for every Hexagon
-            // architecture; this app deserialises ONE precompiled context binary built for
-            // SM8650 / HTP v75, and AI Hub context binaries are not portable across HTP arch
-            // anyway. Everything below is dead weight in the APK.
+            // QNN/QAIRT runtime (4.0 NPU tier; the fleet census since 4.2 F2). The AAR ships
+            // every backend for every Hexagon architecture; this app deserialises precompiled
+            // context binaries only for the census families (NpuFleetCensus). THE RULE — stated
+            // as a rule so the next family's edit has one to follow, not an example to copy:
+            //
+            //   ONE STUB PER CENSUS FAMILY IN lib/, ONE SKEL PER CENSUS FAMILY IN assets/.
+            //
+            // The stub is the CPU-side half, dlopen()ed by libQnnHtp.so straight out of the APK
+            // — page-aligned, works without extraction — and a family whose stub is excluded
+            // arms all the way to nativeInit and then dies inside the QNN loader with nothing
+            // naming why. The skel is the DSP-side half: under this app's
+            // extractNativeLibs="false" packaging the FastRPC loader (which needs a real file on
+            // disk and searches only ADSP_LIBRARY_PATH) could never open a lib/ copy, so every
+            // census family's skel is excluded here, re-materialised into generated assets by
+            // extractQnnSkel below, and NpuWhisperBackend stages exactly the device family's own
+            // into filesDir — the first ADSP_LIBRARY_PATH entry — at first arm. Everything else
+            // the AAR carries is dead weight in the APK:
             //
             // libQnnHtpPrepare.so alone is 79 MB and exists only to COMPILE a graph on device —
             // we never compile one.
@@ -180,28 +194,19 @@ android {
             excludes += "**/libQnnDspV66Skel.so"
             excludes += "**/libQnnDspV66Stub.so"
             excludes += "**/libQnnGpu.so"
-            // 4.1 L6 (the I5 answer): the V75 DSP-side skel leaves jniLibs too — not as dead
-            // weight but as a RELOCATION. Under this app's extractNativeLibs="false" packaging
-            // the FastRPC loader (which needs a real file on disk and searches only
-            // ADSP_LIBRARY_PATH) could never open a lib/ copy, so the APK carried a provably
-            // dead 17.9 MB and the 4.0 tier armed only off an adb-pushed skel. The same bytes
-            // now ship under assets/ (extractQnnSkel, below) and NpuWhisperBackend stages them
-            // into filesDir — the first ADSP_LIBRARY_PATH entry — on first arm. The V75 STUB
-            // stays: it is the CPU-side half, dlopen()ed by libQnnHtp.so straight out of the
-            // APK, which works page-aligned without extraction.
+            // The census families' DSP-side skels — relocated to assets per the rule above.
+            // Their stubs are deliberately NOT excluded.
+            excludes += "**/libQnnHtpV73Skel.so"
             excludes += "**/libQnnHtpV75Skel.so"
-            // Other HTP architectures. V75 is the only one kept — its stub in lib/, its skel in
-            // assets/ (see above).
+            excludes += "**/libQnnHtpV79Skel.so"
+            excludes += "**/libQnnHtpV81Skel.so"
+            // HTP architectures with no covered family: skel AND stub stay excluded — and these
+            // presences are what keep the census families' stub live-zeros honest in
+            // NpuSkelPackagingTest.
             excludes += "**/libQnnHtpV68Skel.so"
             excludes += "**/libQnnHtpV68Stub.so"
             excludes += "**/libQnnHtpV69Skel.so"
             excludes += "**/libQnnHtpV69Stub.so"
-            excludes += "**/libQnnHtpV73Skel.so"
-            excludes += "**/libQnnHtpV73Stub.so"
-            excludes += "**/libQnnHtpV79Skel.so"
-            excludes += "**/libQnnHtpV79Stub.so"
-            excludes += "**/libQnnHtpV81Skel.so"
-            excludes += "**/libQnnHtpV81Stub.so"
         }
     }
 
@@ -508,13 +513,13 @@ val fetchSherpaAar = tasks.register("fetchSherpaAar") {
 }
 tasks.named("preBuild") { dependsOn(fetchSherpaAar) }
 
-// The HTP skel, re-materialised from the RESOLVED qnn-runtime AAR into generated assets
-// (4.1 L6 — the I5 answer, which also retires the OWNER-PENDING zip-packaging question: 17.9 MB
-// into EACH of two ~GB delivery zips, plus a non-model entry in a both-or-neither model
-// transaction, was the losing option). PROPRIETARY: the blob lands in the build directory,
-// outside the repo, and the root .gitignore is hardened with the blob shapes besides.
+// Every census family's HTP skel, re-materialised from the RESOLVED qnn-runtime AAR into
+// generated assets (4.1 L6 — the I5 answer; the fleet at 4.2 F2: one APK covers four families,
+// and the device stages exactly its own row's skel at arm time). PROPRIETARY: the blobs land in
+// the build directory, outside the repo, and the root .gitignore is hardened with the blob
+// shapes besides.
 //
-// The configuration restates the F2 dependency's exact coordinate ON PURPOSE — the dependency
+// The configuration restates the dependency's exact coordinate ON PURPOSE — the dependency
 // line itself stays byte-unchanged, and NpuSkelPackagingTest pins the two spellings equal so
 // they cannot drift apart.
 val qnnSkelSource: Configuration by configurations.creating {
@@ -524,42 +529,56 @@ val qnnSkelSource: Configuration by configurations.creating {
 
 val extractQnnSkel = tasks.register("extractQnnSkel") {
     description =
-        "Re-materialises libQnnHtpV75Skel.so from the resolved qnn-runtime AAR into generated assets."
+        "Re-materialises every census family's HTP skel from the resolved qnn-runtime AAR into generated assets."
     inputs.files(qnnSkelSource)
     outputs.dir(qnnSkelAssetDir)
     doLast {
+        // THE FLEET TABLE (4.2 F2): one row per census family, full literals. These are the same
+        // four (bytes, sha256) pairs NpuFleetCensus.families carries — restated here because a
+        // build script cannot read the app's classes, and pinned EQUAL to the census by
+        // NpuSkelPackagingTest (executed set-equality, both directions), the same two-spellings
+        // discipline as the qnn-runtime coordinate below. A row joins when a family joins the
+        // census, never alone.
+        val qnnSkels = listOf(
+            Triple("libQnnHtpV73Skel.so", 17_909_588L, "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1"),
+            Triple("libQnnHtpV75Skel.so", 17_913_608L, "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c"),
+            Triple("libQnnHtpV79Skel.so", 17_721_548L, "9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6"),
+            Triple("libQnnHtpV81Skel.so", 18_844_384L, "b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1"),
+        )
         val aar = qnnSkelSource.singleFile
         val outDir = qnnSkelAssetDir.get().asFile
         outDir.mkdirs()
-        val skel = File(outDir, "libQnnHtpV75Skel.so")
         ZipFile(aar).use { zip ->
-            val entry = zip.getEntry("jni/arm64-v8a/libQnnHtpV75Skel.so")
-                ?: throw GradleException(
-                    "extractQnnSkel: jni/arm64-v8a/libQnnHtpV75Skel.so is missing from " +
-                        "${aar.name} — a runtime version bump changed the AAR layout. Re-measure " +
-                        "the skel and update the two pinned values here AND NpuWhisperBackend's " +
-                        "SKEL_BYTES/SKEL_SHA256, which check the same bytes at stage time."
-                )
-            zip.getInputStream(entry).use { input ->
-                skel.outputStream().use { output -> input.copyTo(output) }
+            for ((name, bytes, sha256) in qnnSkels) {
+                val skel = File(outDir, name)
+                val entry = zip.getEntry("jni/arm64-v8a/$name")
+                    ?: throw GradleException(
+                        "extractQnnSkel: jni/arm64-v8a/$name is missing from ${aar.name} — a " +
+                            "runtime version bump changed the AAR layout. Re-measure every " +
+                            "skel and update this table AND NpuFleetCensus's rows, which the " +
+                            "runtime staging checks against at arm time."
+                    )
+                zip.getInputStream(entry).use { input ->
+                    skel.outputStream().use { output -> input.copyTo(output) }
+                }
+                // The same assert-the-pinned-value discipline fetchSherpaAar applies to its
+                // hardcoded digest, per entry, over the same values NpuWhisperBackend checks
+                // again at arm time through the family row: a runtime bump produces a NAMED
+                // build failure here and a NAMED stage refusal there — never a mystery on a
+                // device.
+                check(skel.length() == bytes) {
+                    "extractQnnSkel: $name is ${skel.length()} bytes, expected $bytes " +
+                        "(measured from qnn-runtime-2.49.0.aar). A runtime bump must " +
+                        "re-measure and update this table AND NpuFleetCensus's row for $name together."
+                }
+                val digest = MessageDigest.getInstance("SHA-256")
+                    .digest(skel.readBytes())
+                    .joinToString("") { b -> "%02x".format(b) }
+                check(digest == sha256) {
+                    "extractQnnSkel: $name sha256 mismatch ($digest). A runtime bump must " +
+                        "re-measure and update this table AND NpuFleetCensus's row for $name together."
+                }
             }
-        }
-        // The same assert-the-pinned-value discipline fetchSherpaAar applies to its hardcoded
-        // digest, over the same two values the runtime staging checks again at arm time
-        // (NpuWhisperBackend.SKEL_BYTES / SKEL_SHA256, both MEASURED from this AAR): a runtime
-        // bump produces a NAMED build failure here and a NAMED stage refusal there — never a
-        // mystery on a device.
-        check(skel.length() == 17_913_608L) {
-            "extractQnnSkel: libQnnHtpV75Skel.so is ${skel.length()} bytes, expected 17_913_608 " +
-                "(measured from qnn-runtime-2.49.0.aar). A runtime bump must re-measure and " +
-                "update this assert AND NpuWhisperBackend.SKEL_BYTES together."
-        }
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(skel.readBytes())
-            .joinToString("") { b -> "%02x".format(b) }
-        check(digest == "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c") {
-            "extractQnnSkel: libQnnHtpV75Skel.so sha256 mismatch ($digest). A runtime bump must " +
-                "re-measure and update this assert AND NpuWhisperBackend.SKEL_SHA256 together."
         }
     }
 }
@@ -600,15 +619,16 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // QNN/QAIRT runtime (4.0 NPU tier): libQnnHtp.so, libQnnSystem.so, libQnnHtpV75Skel/Stub.so.
-    // These are dlopen()ed by our own libqnnasr.so — never linked at build time — so no import
-    // library is needed, only the headers (fetched by fetchQnnHeaders above, never committed).
-    // The version MUST stay in step with the pinned literal in tools/fetch_qnn_headers.py.
-    // Most of the AAR's payload is excluded in packaging.jniLibs above; see the note there.
+    // QNN/QAIRT runtime (4.0 NPU tier; the fleet since 4.2 F2): libQnnHtp.so, libQnnSystem.so,
+    // and the census families' HTP stubs and skels. These are dlopen()ed by our own libqnnasr.so
+    // — never linked at build time — so no import library is needed, only the headers (fetched
+    // by fetchQnnHeaders above, never committed). The version MUST stay in step with the pinned
+    // literal in tools/fetch_qnn_headers.py. Most of the AAR's payload is excluded in
+    // packaging.jniLibs above; see the rule there.
     implementation("com.qualcomm.qti:qnn-runtime:2.49.0")
     // 4.1 L6: extractQnnSkel resolves the SAME artifact through its own configuration to pull
-    // the V75 skel out of the AAR (see the task above the dependencies block). The restated
-    // coordinate is pinned equal to the line above by NpuSkelPackagingTest.
+    // the census families' skels out of the AAR (see the task above the dependencies block).
+    // The restated coordinate is pinned equal to the line above by NpuSkelPackagingTest.
     qnnSkelSource("com.qualcomm.qti:qnn-runtime:2.49.0")
 
     // DataStore for preferences

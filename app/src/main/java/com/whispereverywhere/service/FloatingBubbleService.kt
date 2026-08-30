@@ -2348,12 +2348,17 @@ class FloatingBubbleService : Service(),
         }
         val built = LocalWhisperEngine(
             app.whisperModelManager,
+            // The selector resolves the DEVICE FAMILY through this context's applicationContext
+            // (4.2 F2) — so this site hands it the app object itself, and the resolution is
+            // structural rather than an accident of which Context a Service happens to wrap. A
+            // Service's applicationContext IS the app today; "safe by a property of a different
+            // object" is not a lean this call site gets to take.
             backend = NpuBackendSelector.backendFor(
                 tierId = tierId,
                 offeredNpuTierIds = npuTierIds,
                 declinedTiers = declined,
                 paths = app.whisperModelManager,
-                appContext = applicationContext,
+                appContext = app,
             ),
         )
         localEngine = built

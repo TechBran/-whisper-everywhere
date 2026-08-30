@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription
 
 import com.whispereverywhere.npu.NpuDiag
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,6 +43,10 @@ import java.io.File
  *    chooser screens, arriving at the third surface.
  *  - *The gate re-derived.* `npuCapableDevice && manager.isInstalled(…)` written out here is a
  *    second composition of a predicate that already exists, free to drift from it.
+ *  - *The family defaulted or re-derived (4.2 F2).* `?: NpuFleetCensus.families.first()` on the
+ *    resolver's null-family clause compiles, routes, and stages SOME family's DSP-side skel on
+ *    every device the census never resolved — a FastRPC mystery instead of a CPU answer; a
+ *    service-side `app.npuSocFamily` read is the offer-gate re-derivation one shelf over.
  *  - *The fallback line moved into the segment path.* Once per session is the contract; once per
  *    segment buries the `npu: encode=` / `segment-timing:` pair it is supposed to sit beside.
  */
@@ -77,6 +82,11 @@ class NpuBackendWiringTest {
         read("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
     }
 
+    /** Joined at 4.2 F2 for the family memo pin; already a declared test input (Q7b). */
+    private val app: String by lazy {
+        read("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
+    }
+
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
 
     /** A multi-line needle written as its own source lines, so indentation is part of the match. */
@@ -102,10 +112,19 @@ class NpuBackendWiringTest {
     }
 
     /**
-     * One Kotlin member function's body. Members of `FloatingBubbleService` close at a four-space
-     * indent. Both failure modes are loud rather than silent, for the two reasons the house helper
-     * spells out: a missing anchor would rebase the scope to the top of the file, and a missing
-     * terminator would widen it into the following member.
+     * One Kotlin member's body, bounded by the CLOSING BRACE AT THE ANCHOR'S OWN INDENT (4.2 F2,
+     * folding the 4.1 L1 m6 rider — the same defect L1 fixed in
+     * `NpuNativeContractTest.kotlinMemberBody`).
+     *
+     * The old cut was a fixed `"\n    }\n"`: right for every four-space member of the service and
+     * silently wrong for anything else — a companion or nested-object member closes at eight
+     * spaces, and the first FOUR-space brace after it belongs to the enclosing block, so every
+     * count taken on the scope would have been answered by a neighbour's code. The recorded
+     * indent must also demand an actual closing BRACE, not merely any line at that indent (the
+     * kotlinMemberBody shape): a wrapped parameter list puts `): ReturnType {` at the anchor's
+     * own indent, and a cut there scopes two lines of a member. Both failure modes stay loud,
+     * for the two reasons the originals name; the fix itself is executed in
+     * [theMemberBodyHelperCutsAtTheRecordedIndentNotAFixedFourSpaces].
      */
     private fun memberBody(kt: String, anchor: String): String {
         val start = kt.indexOf(anchor)
@@ -115,14 +134,18 @@ class NpuBackendWiringTest {
                 "claim below would be answered by unrelated code instead of failing.",
             start >= 0,
         )
-        val body = kt.substring(start)
+        val lineStart = kt.lastIndexOf('\n', start - 1) + 1
+        val indent = kt.substring(lineStart).substringBefore("\n").takeWhile { it == ' ' }
+        val close = "\n$indent}\n"
+        val body = kt.substring(lineStart)
         assertTrue(
-            "no four-space-indented \"\\n    }\\n\" follows \"$anchor\". substringBefore() returns " +
-                "its RECEIVER when the delimiter is absent, so a re-indented closing brace would " +
-                "silently widen the scope into the FOLLOWING member.",
-            body.contains("\n    }\n"),
+            "no closing brace at the anchor's own indent (${indent.length} spaces) follows " +
+                "\"$anchor\". substringBefore() returns its RECEIVER when the delimiter is " +
+                "absent, so a re-indented closing brace would silently widen the scope into the " +
+                "FOLLOWING member.",
+            body.contains(close),
         )
-        return body.substringBefore("\n    }\n")
+        return body.substringBefore(close)
     }
 
     // ------------------------------------------------------------------ the truth table
@@ -433,7 +456,10 @@ class NpuBackendWiringTest {
                 "`declinedTiers` adjacently, both Set<String>; a positional call that transposed " +
                 "them would compile and would route a DECLINED tier on a device that never " +
                 "offered it — the same hazard the 4.0 needle was written for, now with two sets " +
-                "instead of two Booleans.",
+                "instead of two Booleans. And `appContext` is the APP OBJECT itself (4.2 F2, a " +
+                "conscious re-spell of this pin): the selector resolves the device FAMILY " +
+                "through applicationContext, and handing it the app makes that resolution " +
+                "structural rather than an accident of which Context a Service wraps.",
             1,
             count(
                 warm,
@@ -443,7 +469,7 @@ class NpuBackendWiringTest {
                     "                offeredNpuTierIds = npuTierIds,",
                     "                declinedTiers = declined,",
                     "                paths = app.whisperModelManager,",
-                    "                appContext = applicationContext,",
+                    "                appContext = app,",
                     "            ),",
                 ),
             ),
@@ -784,22 +810,10 @@ class NpuBackendWiringTest {
             1,
             count(diag, "\"npu: fallback rebuild stage="),
         )
-        // The production overload's single construction call — the fact the executable half of this
-        // class deliberately cannot assert, because it may not name the type.
-        assertEquals(
-            "the selector's production overload constructs the tier exactly once, from the paths, " +
-                "the context and the SPEC it resolved (4.1 L2). The spec has no default on the " +
-                "constructor, so this is also the assertion that a tier id with no row in " +
-                "NpuModelSpec cannot reach the NPU backend at all.",
-            1,
-            count(selector, "NpuWhisperBackend(p, appContext, spec)"),
-        )
-        assertEquals(
-            "and it takes the spec from NpuModelSpec.forTier, on the npu arm only — a second " +
-                "resolution site would be a second answer to \"which model is this tier\"",
-            1,
-            count(selector, "val spec = NpuModelSpec.forTier(tierId) ?: return WhisperNativeBackend"),
-        )
+        // The production overload's construction pins lived at this test's tail from 4.1 L2 to
+        // 4.2 F2; F2's family parameter re-spelled the needle and moved them whole into
+        // [theResolverConstructsTheTierWithTheResolvedFamilyExactlyOnce], where the claim has
+        // its own name.
     }
 
     /**
@@ -881,5 +895,188 @@ class NpuBackendWiringTest {
             1,
             count(diag, "\"npu: tier rebuild from="),
         )
+    }
+
+    // ------------------------------------------------------------------ the family (4.2 F2)
+
+    /**
+     * THE INSTRUMENT'S OWN EDGE, executed (4.2 F2, folding the 4.1 L1 m6 rider) — because a
+     * helper that only source pins lean on is itself a thing a quiet revert can bend, and no
+     * production mutation would name it. [memberBody] used to cut on a fixed `"\n    }\n"`:
+     * right for every four-space member of the service, silently wrong for anything else. Both
+     * wrong cuts are exercised against a synthetic source, so reverting the helper — to the
+     * fixed four-space delimiter, or to a "first line at the anchor's indent" cut — fails HERE
+     * by name rather than as a mysteriously wide scope inside some other test's counts.
+     */
+    @Test
+    fun theMemberBodyHelperCutsAtTheRecordedIndentNotAFixedFourSpaces() {
+        val synthetic = listOf(
+            "object Outer {",
+            "    object Nested {",
+            "        fun deep(",
+            "            arg: Int,",
+            "        ): Int {",
+            "            return arg",
+            "        }",
+            "        fun after() = 0",
+            "    }",
+            "    fun shallow() = 1",
+            "}",
+            "",
+        ).joinToString("\n")
+        val body = memberBody(synthetic, "        fun deep(")
+        assertTrue("the member's own lines are in scope", body.contains("return arg"))
+        assertFalse(
+            "the scope must CLOSE at the eight-space closing brace: the fixed four-space cut " +
+                "would have run through `after()` to the NESTED object's own brace, and every " +
+                "count taken on the scope would have included a neighbour's code",
+            body.contains("fun after()"),
+        )
+        assertTrue(
+            "and a wrapped signature's `): Int {` line at the anchor's own indent is NOT the " +
+                "end — the cut demands an actual closing brace, so the body still reaches the " +
+                "member's real content",
+            body.trimEnd().endsWith("return arg"),
+        )
+    }
+
+    /**
+     * THE FAMILY, RESOLVED WHERE THE SPEC IS (4.2 F2). `NpuWhisperBackend` stages its DSP-side
+     * skel off the census row it is handed — `family` is required with no default, the same L2
+     * doctrine as `spec` — so WHERE the row comes from is a wiring fact of exactly this class's
+     * kind: the production overload reads the app's one `npuSocFamily` memo through the context
+     * it already takes, and a null answers the CPU backend in the same clause shape as the
+     * null-spec answer. The state is NEAR-unreachable (routing needs the offered set, which
+     * needs `npuCapableDevice`, which needs the gate — and `isSocSupported` IS
+     * `familyFor != null` since F1) and it is refused anyway: "safe by a property of a
+     * different object" is the shape this stack has paid for twice.
+     *
+     * Source-pinned, not executed, for the production overload's standing reason: its happy
+     * path constructs `NpuWhisperBackend`, which no JVM test may name. Scoping a member with a
+     * WRAPPED signature is exactly what [memberBody]'s recorded-indent-closing-brace cut buys.
+     */
+    @Test
+    fun theProductionResolverRefusesANullFamilyBesideTheSpec() {
+        val production = memberBody(selector, "    fun backendFor(")
+        assertEquals(
+            "the family is read from the app's ONE memo, through the applicationContext of the " +
+                "context the overload already takes — never re-derived",
+            1,
+            liveOffsets(
+                production,
+                "val family = (appContext.applicationContext as? WhisperEverywhereApp)?.npuSocFamily",
+            ).size,
+        )
+        assertEquals(
+            "and null answers WhisperNativeBackend in the same clause shape as the null-spec " +
+                "answer — an elvis straight to the CPU backend, before anything is constructed. " +
+                "The one-line mutation this needle exists for is `?: NpuFleetCensus.families." +
+                "first()`: a default-on-null that stages SOME family's skel on EVERY unresolved " +
+                "device, which is the silent-wrong-choice hazard the required parameter removed.",
+            1,
+            count(
+                production,
+                block(
+                    "        val family = (appContext.applicationContext as? WhisperEverywhereApp)?.npuSocFamily",
+                    "            ?: return WhisperNativeBackend",
+                ),
+            ),
+        )
+        // The memo is the selector's WHOLE family knowledge: no gate call, no census lookup.
+        assertEquals(
+            "one live npuSocFamily read in the selector — the memo, nothing else",
+            1,
+            liveOffsets(selector, "npuSocFamily").size,
+        )
+        assertEquals(
+            "no NpuGate call in the selector — the gate already answered through the memo",
+            0,
+            liveOffsets(selector, "NpuGate").size,
+        )
+        assertEquals(
+            "no census iteration in the selector — a row picked here would be a second " +
+                "resolution free to disagree with the one the offer gate implies",
+            0,
+            liveOffsets(selector, "NpuFleetCensus").size,
+        )
+    }
+
+    /**
+     * The construction, re-specced for the fourth argument (4.2 F2 — the 4.1 L2 pin carried
+     * three). These assertions lived at the tail of the rebuild-order test since L2 and moved
+     * here whole when F2's family parameter re-spelled the needle: the claim deserves its own
+     * name, and the compile-red at this call site was the no-default parameter WORKING.
+     */
+    @Test
+    fun theResolverConstructsTheTierWithTheResolvedFamilyExactlyOnce() {
+        assertEquals(
+            "the selector's production overload constructs the tier exactly once, from the " +
+                "paths, the context, the SPEC it resolved (4.1 L2) and the FAMILY it resolved " +
+                "(4.2 F2). Neither has a default on the constructor, so this is also the " +
+                "assertion that a tier id with no spec row and a device with no census row can " +
+                "never reach the NPU backend at all.",
+            1,
+            count(selector, "NpuWhisperBackend(p, appContext, spec, family)"),
+        )
+        assertEquals(
+            "exactly one NpuWhisperBackend( construction on a live line of the selector — a " +
+                "second site would be a second answer to which model on which silicon",
+            1,
+            liveOffsets(selector, "NpuWhisperBackend(").size,
+        )
+        assertEquals(
+            "and it takes the spec from NpuModelSpec.forTier, on the npu arm only — a second " +
+                "resolution site would be a second answer to \"which model is this tier\"",
+            1,
+            count(selector, "val spec = NpuModelSpec.forTier(tierId) ?: return WhisperNativeBackend"),
+        )
+    }
+
+    /**
+     * The app memo the resolver reads (4.2 F2) — pinned with the helper this task fixed, on the
+     * member this task added. One lazy `NpuGate.familyFor` read over the two existing guarded
+     * getters: no new SOC read site (`ChooserSteerWiringPinTest` proves that by the same count
+     * it already runs), no probe, no dlopen — the family half of the gate is a pure table, and
+     * the memo exists for IDENTITY, so every consumer holds the same census row by reference.
+     */
+    @Test
+    fun theAppFamilyMemoIsOneGateReadOverTheTwoGuardedGetters() {
+        val memo = memberBody(app, "    val npuSocFamily: NpuSocFamily? by lazy {")
+        assertEquals(
+            "the memo derives through NpuGate.familyFor over the two guarded getters — exactly " +
+                "once, so the row every downstream consumer holds is one resolution of one gate",
+            1,
+            liveOffsets(memo, "NpuGate.familyFor(npuSocModel, npuSocManufacturer)").size,
+        )
+        assertEquals(
+            "and reads no SOC field of its own — comment-inclusive, because the guarded " +
+                "getters exist precisely so no other member ever spells a Build read",
+            0,
+            count(memo, "Build."),
+        )
+        assertEquals(
+            "one npuSocFamily declaration in the whole file",
+            1,
+            liveOffsets(app, "val npuSocFamily: NpuSocFamily? by lazy {").size,
+        )
+    }
+
+    /**
+     * The service ROUTES; the selector RESOLVES (4.2 F2). A service-side family read would be a
+     * second composition of a decision that already has one home — the same doctrine the
+     * npuCapableDevice/isInstalled zeros above enforce for the offer gate, applied to the
+     * census row the offer gate implies.
+     */
+    @Test
+    fun theServiceNeverResolvesTheFamilyItself() {
+        listOf("npuSocFamily", "NpuFleetCensus", "familyFor").forEach { needle ->
+            assertEquals(
+                "`$needle` must appear NOWHERE in FloatingBubbleService.kt: the family reaches " +
+                    "the backend through the selector's one resolution, and a service that " +
+                    "re-derives it is a third opinion free to drift",
+                0,
+                count(service, needle),
+            )
+        }
     }
 }

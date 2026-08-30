@@ -287,6 +287,59 @@ class NpuAssetStageTest {
     }
 
     /**
+     * The marker-delete returns are CHECKED, and a failure is NAMED (4.1 L6 final triage, folded
+     * at 4.2 F2).
+     *
+     * The marker is the one artefact in this object whose staleness can VOUCH: a `.staged` file
+     * that survives a failed delete re-validates whatever later content matches its recorded
+     * stat line — by the fast arm, with no hash. The failure is bounded
+     * ([NpuAssetStage.markerVouches] still compares the digest EXPECTATION, and the next
+     * verified stage rewrites the marker), but a filesystem that refuses a delete is a fact
+     * worth one `WE-DIAG` line, because the fast arm's whole trust rests on markers being
+     * removable.
+     *
+     * The failure path itself cannot be forced portably from a JVM test (`File.delete` has no
+     * injectable seam here, and `android.util.Log` is a documented no-op on this classpath
+     * anyway), so the two halves split the way this file already splits: the deletion goes
+     * through ONE checked helper — executed on its ordinary paths below — and the checked
+     * return plus its named line are pinned as source.
+     */
+    @Test
+    fun aFailedMarkerDeleteIsCheckedAndNamedNeverSilent() {
+        // Executed (added once the helper existed — the red was carried by the source pins
+        // below): the ordinary paths really behave — an existing marker is removed, an absent
+        // one is quiet, and neither throws.
+        val marker = File(temp.root, "melbank-128.bin" + NpuAssetStage.MARKER_SUFFIX)
+        marker.writeText("stale")
+        NpuAssetStage.deleteMarker(marker, "test: present")
+        assertFalse("deleteMarker removes an existing marker", marker.exists())
+        NpuAssetStage.deleteMarker(marker, "test: already absent")
+        assertFalse("and an absent marker stays a quiet no-op", marker.exists())
+
+        val kt = source("src/main/java/com/whispereverywhere/npu/NpuAssetStage.kt")
+        assertEquals(
+            "stageWithMarker deletes markers ONLY through the checked helper — two call sites, " +
+                "the pre-restage delete and the half-written-marker delete, so neither return " +
+                "can be quietly dropped again",
+            2,
+            liveLines(kt, "deleteMarker(marker,").size,
+        )
+        assertEquals(
+            "exactly ONE live line in the file touches `marker.delete()` — the checked " +
+                "helper's own guard — so no bare, unchecked delete remains anywhere else. The " +
+                "guard is delete-then-exists because delete() answers false for an absent " +
+                "marker too, and an absent marker is not a failure.",
+            listOf("if (!marker.delete() && marker.exists()) {"),
+            liveLines(kt, "marker.delete()"),
+        )
+        assertEquals(
+            "and the failure line is one contiguous literal, so the fleet grep finds it",
+            1,
+            liveLines(kt, "\"npu: asset stage could not delete marker ").size,
+        )
+    }
+
+    /**
      * The `Context`-bound half, pinned as source: it reads the asset through `AssetManager`, writes
      * under `filesDir`, and answers **null** on every refusal.
      *
