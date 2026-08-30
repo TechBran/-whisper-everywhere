@@ -263,6 +263,21 @@ $p = @{}; Get-Content keystore.properties | ForEach-Object {
 The two `group_other` slices at ~8.5 KB (manifest and nothing else) are the empty-default rule
 visible as a number: that is what an unmatched device downloads.
 
+**And the one assumption the F8 layout fix made load-bearing has been checked against a real
+generated slice rather than trusted.** Inside `npu_turbo-group_soc_8gen3.apk`:
+
+```
+assets/npu_turbo/metadata.json                        484 B
+assets/npu_turbo/turbo_decoder_qairt_context.bin  295,854,080 B
+assets/npu_turbo/turbo_encoder_qairt_context.bin  775,831,552 B
+```
+
+The `#group_soc_8gen3` suffix **is stripped at delivery**, so the pack materialises under
+`assets/npu_turbo/` — which is exactly the directory `installFromPack` opens (it asks the same map
+that named the pack to fetch). The two binaries sum to **1,071,685,632 B**, the landmark figure.
+If the suffix were *not* stripped, every fetch would end in the empty-delivery refusal; it is
+stripped, and this is the evidence.
+
 **Expected:** the app installs; onboarding runs; the model step offers turbo with the steer badge;
 the turbo pack is already on the device (local testing side-loads it), so the "fetch" completes
 essentially instantly and goes straight to **Verifying** — a streamed sha256 over 1,071,685,632 B,
