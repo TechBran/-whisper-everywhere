@@ -42,7 +42,7 @@ disagree with, not as a promise):
 |---|---|
 | `verifyNpuPacks` | `all 8 pack variants match the census byte counts and both default variants are empty` |
 | signed AAB | `C:\Users\bastr\.androidbuild\WhisperEverywhere\app\outputs\bundle\release\app-release.aab` |
-| AAB size | **4,677,577,288 B** (the unsigned intermediary is 5,993,677,661 B) |
+| AAB size | **~4.68 GB** — 4,677,577,479 B at the commit this sheet ships with (the exact count moves by a few bytes per build; the unsigned intermediary is ~5.99 GB) |
 | release APK (the `assembleRelease` rung) | 120,305,933 B |
 | `bundletool validate` | clean; both asset packs listed with five variants each |
 
