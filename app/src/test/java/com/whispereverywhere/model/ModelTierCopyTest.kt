@@ -284,67 +284,115 @@ class ModelTierCopyTest {
 
     // ------------------------------------------------------------ 4.1: the second gated tier
     //
-    // Turbo's whole steering contract is a negative: it NEVER steers and NEVER auto-selects.
-    // The positive claims — where it sits, what its card says — follow.
+    // Turbo's steering contract FLIPPED at L9, by measurement. Decision 8 refused it a promotion
+    // while its accuracy claim was unproved; the owner's on-device A/B (2026-08-29) proved it —
+    // "V3 Turbo is clearly the winner — much more accurate, at only about half a second slower"
+    // — so turbo now HEADS the steered lineup exactly where it is offered, npu rides second, and
+    // everything else (the default, auto-selection, the turbo-absent order) is byte-unchanged.
 
-    @Test fun the_npu_turbo_tier_never_steers_for_any_locale_or_any_offer_set() {
-        // Decision 8: the steer is a promotion, and turbo's claim is unproved in the one way that
-        // would justify one — no WER has been measured for any w8a16 Whisper variant, and its own
-        // card says "slower". Every reachable offer set, every locale shape: the steer is never
-        // the turbo tier. (Never auto-SELECTS is pinned where selection lives: the chooser's
-        // pickedTierId starts null — ChooserSteerWiringPinTest — and DEFAULT_MODEL_ID is `pro`.)
+    @Test fun the_npu_turbo_tier_steers_exactly_when_offered_for_every_locale() {
+        // RE-SPECCED at L9 (was: the_npu_turbo_tier_never_steers_for_any_locale_or_any_offer_set
+        // — decision 8's negative, which named its own condition: "turbo's claim is unproved".
+        // The owner's measured verdict met the condition, so the pin now asserts the pick).
+        // Offered means installed AND gate-passing — the only state the promotion exists in;
+        // any offer set without turbo steers exactly as before. (Never auto-SELECTS is
+        // unchanged and pinned where selection lives: the chooser's pickedTierId starts null —
+        // ChooserSteerWiringPinTest — and DEFAULT_MODEL_ID is `pro`.)
         listOf("en", "en-US", "bn", "bn-BD", "zh-Hans-CN", "fr-CA", "").forEach { tag ->
-            listOf(
-                emptySet(),
-                setOf("npu"),
-                setOf("npu-turbo"),
-                setOf("npu", "npu-turbo"),
-            ).forEach { offered ->
+            listOf(setOf("npu-turbo"), setOf("npu", "npu-turbo")).forEach { offered ->
+                assertEquals(
+                    "'$tag'/$offered: the pick must steer to npu-turbo — for EVERY locale, " +
+                        "English included: the accuracy win was measured on the owner's own " +
+                        "speech and large-v3-turbo is multilingual, so this is not the " +
+                        "Bengali-review shape (a worse model for the user's language)",
+                    "npu-turbo",
+                    ModelTierCopy.steerIdForLanguageTagFor(tag, offered),
+                )
+            }
+            listOf(emptySet(), setOf("npu")).forEach { offered ->
                 assertFalse(
-                    "'$tag'/$offered: the steer landed on npu-turbo",
+                    "'$tag'/$offered: turbo absent from the offer set must mean turbo absent " +
+                        "from the steer — the pick promotes an INSTALLED tier, never a card " +
+                        "whose 1.07 GB pair is not on the device",
                     ModelTierCopy.steerIdForLanguageTagFor(tag, offered) == "npu-turbo",
                 )
             }
         }
     }
 
-    @Test fun the_npu_steer_survives_turbos_arrival() {
-        // The brief's exact claim: setOf("npu", "npu-turbo") still steers to `npu` — adding the
-        // second gated tier to the offer set changes NOTHING about who is steered where.
-        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", setOf("npu", "npu-turbo")))
-        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("zh-Hans-CN", setOf("npu", "npu-turbo")))
-        assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("", setOf("npu", "npu-turbo")))
-        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en-US", setOf("npu", "npu-turbo")))
+    @Test fun the_pick_promotes_turbo_above_the_npu_steer() {
+        // RE-SPECCED at L9 (was: the_npu_steer_survives_turbos_arrival, asserting these same
+        // four calls answered "npu"/"pro" — the pre-pick truth). With both pairs installed the
+        // A/B's winner heads; npu's own steer rule is intact underneath (the setOf("npu") rows
+        // in the_gated_tier_is_the_steer_only_where... still bind, unchanged).
+        assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", setOf("npu", "npu-turbo")))
+        assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("zh-Hans-CN", setOf("npu", "npu-turbo")))
+        assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("", setOf("npu", "npu-turbo")))
+        assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("en-US", setOf("npu", "npu-turbo")))
     }
 
-    @Test fun a_turbo_only_device_keeps_the_cpu_steer() {
-        // The case the old Boolean could not even express: turbo installed, npu not. The steer
-        // body names "npu" and nothing else, so a turbo-only offer set reproduces the ungated
-        // steer exactly — turbo is reachable, below, and never pushed.
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", setOf("npu-turbo")))
-        assertEquals("pro", ModelTierCopy.steerIdForLanguageTagFor("en", setOf("npu-turbo")))
+    @Test fun a_turbo_only_device_steers_to_turbo_and_keeps_the_cpu_order_below_it() {
+        // RE-SPECCED at L9 (was: a_turbo_only_device_keeps_the_cpu_steer — the pre-pick truth
+        // for the state the old Boolean could not express). Turbo installed without npu is
+        // still a full gate pass for turbo, so the pick applies; below it the CPU tiers keep
+        // the exact 3.7 language order.
+        assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", setOf("npu-turbo")))
+        assertEquals("npu-turbo", ModelTierCopy.steerIdForLanguageTagFor("en", setOf("npu-turbo")))
         assertEquals(
-            listOf("multi", "pro", "npu-turbo"),
+            listOf("npu-turbo", "multi", "pro"),
             ModelTierCopy.orderedForLanguageTagFor("bn-BD", setOf("npu-turbo")),
         )
         assertEquals(
-            listOf("pro", "multi", "npu-turbo"),
+            listOf("npu-turbo", "pro", "multi"),
             ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu-turbo")),
         )
     }
 
-    @Test fun turbo_joins_the_lineup_below_the_steer() {
-        // The full two-tier lineups, exact: the steered card leads, the 3.7 second key keeps
-        // `multi` ahead of `pro` for a non-English user, and turbo — which never steers — sits
-        // last in catalog order on both.
+    @Test fun turbo_heads_the_lineup_and_the_npu_steer_rides_second() {
+        // RE-SPECCED at L9 (was: turbo_joins_the_lineup_below_the_steer, pinning
+        // [npu, multi, pro, npu-turbo] / [pro, multi, npu, npu-turbo]). The full both-tier
+        // lineups, exact: the pick leads, its A/B runner-up sits directly below it, and the
+        // 3.7 second key still keeps `multi` ahead of `pro` for a non-English user.
         assertEquals(
-            listOf("npu", "multi", "pro", "npu-turbo"),
+            listOf("npu-turbo", "npu", "multi", "pro"),
             ModelTierCopy.orderedForLanguageTagFor("bn-BD", setOf("npu", "npu-turbo")),
         )
         assertEquals(
-            listOf("pro", "multi", "npu", "npu-turbo"),
+            listOf("npu-turbo", "npu", "pro", "multi"),
             ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu", "npu-turbo")),
         )
+    }
+
+    @Test fun the_picks_truth_table_the_head_is_turbo_only_when_offered_else_the_pre_pick_order() {
+        // L9's whole contract in one table: turbo-installed vs turbo-absent x English vs
+        // non-English x gate-pass vs gate-fail. The head is turbo ONLY when installed+offered;
+        // every turbo-absent arm is the PRE-PICK order to the element — npu does not jump
+        // multi/pro on the strength of a verdict that was about turbo.
+        val table = listOf(
+            // offered set              tag      expected lineup
+            Triple(setOf("npu", "npu-turbo"), "bn-BD", listOf("npu-turbo", "npu", "multi", "pro")),
+            Triple(setOf("npu", "npu-turbo"), "en-US", listOf("npu-turbo", "npu", "pro", "multi")),
+            Triple(setOf("npu-turbo"), "bn-BD", listOf("npu-turbo", "multi", "pro")),
+            Triple(setOf("npu-turbo"), "en-US", listOf("npu-turbo", "pro", "multi")),
+            Triple(setOf("npu"), "bn-BD", listOf("npu", "multi", "pro")),
+            Triple(setOf("npu"), "en-US", listOf("pro", "multi", "npu")),
+            Triple(emptySet(), "bn-BD", listOf("multi", "pro")),
+            Triple(emptySet(), "en-US", listOf("pro", "multi")),
+        )
+        table.forEach { (offered, tag, expected) ->
+            assertEquals(
+                "'$tag'/$offered: the pick's truth table row",
+                expected,
+                ModelTierCopy.orderedForLanguageTagFor(tag, offered),
+            )
+            assertEquals(
+                "'$tag'/$offered: the steer chip follows the head",
+                expected.first(),
+                ModelTierCopy.steerIdForLanguageTagFor(tag, offered),
+            )
+        }
+        // And the pick changes STEERING only: the app-wide default fallback story is untouched.
+        assertEquals("pro", WhisperCatalog.DEFAULT_MODEL_ID)
     }
 
     @Test fun the_lineup_with_both_npu_tiers_is_a_permutation_of_pickableFor_with_the_steer_leading() {

@@ -405,11 +405,13 @@ private fun EnginesStep(
         //
         // 4.0/4.1: on a device that passes the NPU gate AND already holds a gated tier's own
         // context binaries, that tier joins the lineup — the answer is a SET of tier ids because
-        // two gated tiers can be independently installed. The non-English steer becomes `npu`
-        // where it is offered; `npu-turbo` never steers and joins below. The probe dlopens two
-        // QNN libraries and QnnAsrNative forbids Main for every entry point, so the answer is
-        // produced OFF Main. Empty until it arrives. `pickedTierId` still starts null: the steer
-        // moves a card to the top and badges it, and the user still has to tap it.
+        // two gated tiers can be independently installed. Since L9 (the owner's measured pick)
+        // `npu-turbo` heads the steer wherever it is offered, `npu` rides second; with turbo
+        // absent, the non-English steer becomes `npu` where offered — exactly the pre-pick
+        // order. The probe dlopens two QNN libraries and QnnAsrNative forbids Main for every
+        // entry point, so the answer is produced OFF Main. Empty until it arrives.
+        // `pickedTierId` still starts null: the steer moves a card to the top and badges it,
+        // and the user still has to tap it.
         //
         // KEYED on the install generation, for the reason spelled out at the Settings picker's
         // copy of this block: an unkeyed produceState samples once per composition entry, so an
