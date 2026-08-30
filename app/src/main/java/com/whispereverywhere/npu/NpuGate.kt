@@ -24,21 +24,27 @@ package com.whispereverywhere.npu
  * `isSocSupported(...) && QnnAsrNative.nativeProbe(libDir).isEmpty()`. This half is deliberately
  * first: it is free, and it means a Tensor / Exynos / MediaTek device never dlopens a Qualcomm
  * backend to be told no.
+ *
+ * WHAT GREW IN 4.2: the gate stopped being an owner-device allowlist and became the reader of the
+ * fleet census. [familyFor] resolves a device to its [NpuSocFamily] row — the row everything
+ * per-family downstream consumes — and [isSocSupported] is DERIVED from it, so the offer gate and
+ * the family resolution can never disagree about a device. The strings themselves have one home,
+ * [NpuFleetCensus]; nothing in this file spells one out.
  */
 object NpuGate {
 
     /**
-     * The Snapdragon 8 Gen 3 part numbers, and nothing else.
+     * Every `Build.SOC_MODEL` string in the census — DERIVED from [NpuFleetCensus.families], never
+     * a second hand-typed list. Two lists agreeing by discipline is the exact
+     * pass-one-gate-fail-the-other hazard a single census exists to kill: a fifth family joins by
+     * editing the census, and this set follows mechanically. (The derivation is source-pinned by
+     * `NpuGateTest`, because a hand-typed copy would pass every equality test right up until the
+     * first drift.)
      *
-     * `SM8650` is the 8 Gen 3; `SM8650-AC` is the "for Galaxy" bin, a different string for the same
-     * silicon. Both were measured. **Nothing else is on this list on purpose**: the tier ships a
-     * precompiled QAIRT context binary built for one HTP architecture, and a context binary handed
-     * to the wrong HTP does not degrade — it fails to deserialise, or worse, it does not.
-     *
-     * Widening this set is a measurement, never a guess. `SM8750` (8 Elite) is the obvious next
-     * entry and it is not here because nobody has run the asset on one.
+     * Widening the census is a measurement, never a guess — maintenance rule 2 in
+     * [NpuFleetCensus]'s KDoc, where the rows live.
      */
-    val SUPPORTED_SOCS: Set<String> = setOf("SM8650", "SM8650-AC")
+    val SUPPORTED_SOCS: Set<String> = NpuFleetCensus.families.flatMap { it.socModels }.toSet()
 
     /**
      * `Build.SOC_MANUFACTURER` spells Qualcomm two ways depending on the OEM's build: `QTI`
@@ -48,26 +54,41 @@ object NpuGate {
     val SUPPORTED_SOC_MANUFACTURERS: Set<String> = setOf("QTI", "Qualcomm")
 
     /**
-     * True only for a measured Snapdragon 8 Gen 3 from a Qualcomm-spelled manufacturer.
+     * The census row whose [NpuSocFamily.socModels] carries this exact string, from a
+     * Qualcomm-spelled manufacturer — or null, which is the deny.
      *
      * **Matching is EXACT, and every "helpful" relaxation of that is a way to ship the wrong
-     * binary to the wrong silicon.** Not `startsWith("SM8650")` — that also accepts a future
-     * `SM8650X` nobody has run. Not `equals(ignoreCase = true)` — `Build.SOC_MODEL` is a vendor
-     * field, and a device whose OEM writes `sm8650` is a device we have not seen, which is the
-     * whole population this function exists to keep out.
+     * binary to the wrong silicon.** This is now a FLEET rule, not an owner-device rule — four
+     * families wide, and wider only by census edit. Not a prefix match — that also accepts every
+     * future superstring part nobody has run. Not `equals(ignoreCase = true)` — `Build.SOC_MODEL`
+     * is a vendor field, and a device whose OEM spells a part differently is a device we have not
+     * seen, which is the whole population this function exists to keep out. The Samsung suffix
+     * bins are the sharpest case: the census writes every variant out as its own string, because a
+     * covered `-AC` bin and an uncovered plain bin differ by exactly the characters a prefix match
+     * would ignore.
      *
-     * **`null` denies, and so does `"unknown"`/`"UNKNOWN"`** — by falling out of the set rather
-     * than by a special case. `null` is the below-API-31 device (see the class KDoc);
-     * `Build.UNKNOWN` is what the platform substitutes when the OEM left the field unset. Neither
-     * is evidence FOR the silicon, and "we cannot tell, let the probe decide" is not available
-     * here: `nativeProbe` answers whether the HTP *stack* is present, which a Snapdragon 7-series
-     * or 6-series also answers yes to. The probe cannot tell one Hexagon apart from another, so a
-     * gate that defers to it on an unknown part ships a context binary compiled for v75 to
-     * whatever is there.
+     * **`null` denies, and so does `unknown`/`UNKNOWN`** — by falling out of every row rather than
+     * by a special case. `null` is the below-API-31 device (see the class KDoc); `Build.UNKNOWN`
+     * is what the platform substitutes when the OEM left the field unset. Neither is evidence FOR
+     * the silicon, and "we cannot tell, let the probe decide" is not available here: `nativeProbe`
+     * answers whether the HTP *stack* is present, which a Snapdragon the census never measured
+     * also answers yes to. The probe cannot tell one Hexagon apart from another, so a gate that
+     * defers to it on an unknown part ships a context binary compiled for one architecture to
+     * whatever is actually there.
      */
-    fun isSocSupported(socModel: String?, socManufacturer: String?): Boolean {
-        val model = socModel ?: return false
-        val manufacturer = socManufacturer ?: return false
-        return model in SUPPORTED_SOCS && manufacturer in SUPPORTED_SOC_MANUFACTURERS
+    fun familyFor(socModel: String?, socManufacturer: String?): NpuSocFamily? {
+        val model = socModel ?: return null
+        val manufacturer = socManufacturer ?: return null
+        if (manufacturer !in SUPPORTED_SOC_MANUFACTURERS) return null
+        return NpuFleetCensus.families.firstOrNull { model in it.socModels }
     }
+
+    /**
+     * True exactly when [familyFor] resolves a census row — DERIVED, one live expression, so the
+     * boolean the offer gate consults and the row the backend stages from can never part company
+     * about a device. Everything the 4.0 KDoc promised of this function (exact match, null/unknown
+     * deny, manufacturer checked independently) now holds because [familyFor] holds it.
+     */
+    fun isSocSupported(socModel: String?, socManufacturer: String?): Boolean =
+        familyFor(socModel, socManufacturer) != null
 }

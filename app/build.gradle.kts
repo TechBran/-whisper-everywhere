@@ -364,6 +364,14 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt",
         "src/main/java/com/whispereverywhere/npu/QnnAsrNative.kt",
         "src/main/java/com/whispereverywhere/npu/NpuDecodePolicy.kt",
+        // (4.2 F1) NpuGate.kt joins by this list's stated rule — membership follows what the
+        // tests READ. NpuGateTest now source-pins the gate's derivation (SUPPORTED_SOCS spelled
+        // as the census flatMap, isSocSupported spelled as familyFor != null, zero hand-typed
+        // soc literals on live lines): the doctrine that keeps the offer gate and the family
+        // resolution one reading of one census. Today every needle there is live-line-scoped,
+        // so a comment-only edit could not fool them — the entry is here because the next
+        // assertion added is not required to remember the distinction.
+        "src/main/java/com/whispereverywhere/npu/NpuGate.kt",
         "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",

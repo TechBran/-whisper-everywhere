@@ -1,0 +1,245 @@
+package com.whispereverywhere.npu
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * The census AS DATA: every value pinned to the measured table the 2026-08-29 plan bound
+ * (research-verified soc strings and HTP versions; skel rows measured out of
+ * `qnn-runtime-2.49.0.aar`; the 8gen3 row equal to the 4.1-shipped pins). A mismatch here is a
+ * census edit nobody measured — exactly the drift these pins exist to make loud.
+ *
+ * WHY EVERY ROW IS RESTATED: the census is the ONE home downstream tasks read (the gate's derived
+ * set, F2's skel stage, F3's artifact verify, F4's device-group XML). A wrong value would flow to
+ * all of them consistently — consistent, and consistently wrong on real silicon, where a skel or
+ * context binary on the wrong HTP fails at FastRPC depth. The JVM cannot execute that failure, so
+ * the values are held here, against the measurement record, the way the 4.1 catalog pins are.
+ */
+class NpuFleetCensusTest {
+
+    private val families = NpuFleetCensus.families
+
+    private fun byId(id: String): NpuSocFamily =
+        requireNotNull(NpuFleetCensus.familyById(id)) { "census must carry family $id" }
+
+    @Test
+    fun theCensusHasExactlyTheFourPublishedFamiliesInTableOrder() {
+        assertEquals(
+            "four families have published w8a16 packages (release manifests re-fetched " +
+                "2026-08-29) — a fifth row is a vendor event with evidence, a dropped row is " +
+                "lost coverage nothing reports",
+            listOf("8gen3", "8elite_galaxy", "8elite5_galaxy", "7gen4"),
+            families.map { it.id }
+        )
+        assertEquals(
+            "and each family's Play device group carries the census id under the soc_ prefix — " +
+                "F4 regenerates the device-group XML from THESE strings, so a drift here is a " +
+                "store/gate disagreement",
+            listOf("soc_8gen3", "soc_8elite_galaxy", "soc_8elite5_galaxy", "soc_7gen4"),
+            families.map { it.packGroup }
+        )
+    }
+
+    @Test
+    fun familyIdsPackGroupsAndSkelAssetsAreAllDistinct() {
+        assertEquals(
+            "duplicate family ids would make familyById ambiguous",
+            families.size, families.map { it.id }.toSet().size
+        )
+        assertEquals(
+            "duplicate pack groups would collapse two pack variants into one bundle directory",
+            families.size, families.map { it.packGroup }.toSet().size
+        )
+        assertEquals(
+            "duplicate skel assets would stage one family's skel under another family's silicon",
+            families.size, families.map { it.skelAsset }.toSet().size
+        )
+    }
+
+    @Test
+    fun theHtpVersionsAreTheFourMeasuredArchitecturesOnTheRightRows() {
+        assertEquals(
+            "the four published architectures, nothing else",
+            setOf(73, 75, 79, 81),
+            families.map { it.htpVersion }.toSet()
+        )
+        // Per-row as well, because two rows SWAPPING versions keeps the set equal while every
+        // context binary lands on the wrong Hexagon:
+        assertEquals("the 8 Gen 3 is HTP v75", 75, byId("8gen3").htpVersion)
+        assertEquals("the 8 Elite for Galaxy is HTP v79", 79, byId("8elite_galaxy").htpVersion)
+        assertEquals("the 8 Elite Gen 5 for Galaxy is HTP v81", 81, byId("8elite5_galaxy").htpVersion)
+        assertEquals(
+            "the 7 Gen 4 is HTP v73 — the oldest arch on the newest part, which is why nothing " +
+                "orders these",
+            73, byId("7gen4").htpVersion
+        )
+    }
+
+    @Test
+    fun theSocModelSetsAreExactAndPairwiseDisjoint() {
+        assertEquals(
+            "the 8 Gen 3's two measured strings — the 4.0 allowlist, absorbed as a census row",
+            setOf("SM8650", "SM8650-AC"), byId("8gen3").socModels
+        )
+        assertEquals(
+            "the 8 Elite row is the Galaxy bin ONLY — plain SM8750 belongs to CPU_BY_CENSUS, " +
+                "and the suffix is the entire difference",
+            setOf("SM8750-AC"), byId("8elite_galaxy").socModels
+        )
+        assertEquals(
+            "the 8 Elite Gen 5 row is the Galaxy bin ONLY, same shape one generation on",
+            setOf("SM8850-AD"), byId("8elite5_galaxy").socModels
+        )
+        assertEquals(
+            "the 7 Gen 4 ships suffix-free — one string until a device proves another",
+            setOf("SM7750"), byId("7gen4").socModels
+        )
+        for (a in families) {
+            for (b in families) {
+                if (a !== b) {
+                    assertTrue(
+                        "families ${a.id} and ${b.id} must not share a soc string — familyFor's " +
+                            "first match would silently shadow the later row and stage the wrong " +
+                            "family's skel",
+                        (a.socModels intersect b.socModels).isEmpty()
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun everySkelSha256IsSixtyFourLowercaseHexAndAllFourDistinct() {
+        val hex = Regex("^[0-9a-f]{64}$")
+        for (f in families) {
+            assertTrue(
+                "family ${f.id}'s skelSha256 must be 64 lowercase hex characters — got " +
+                    "\"${f.skelSha256}\"; anything else is a placeholder that would refuse " +
+                    "every stage",
+                hex.matches(f.skelSha256)
+            )
+        }
+        assertEquals(
+            "four architectures, four DISTINCT digests — a duplicate is a copy-paste, " +
+                "not a measurement",
+            4, families.map { it.skelSha256 }.toSet().size
+        )
+    }
+
+    @Test
+    fun theEightGenThreeSkelRowIsTheShippedFourOnePinExactly() {
+        // The continuity pin: 4.1 L6 shipped exactly these two values (build task assert + arm
+        // stage assert + drift pin). If the census's copy moved, the fleet table is not a second
+        // reading of the shipped mechanism — it is a new source, unmeasured.
+        val row = byId("8gen3")
+        assertEquals("libQnnHtpV75Skel.so", row.skelAsset)
+        assertEquals(17_913_608L, row.skelBytes)
+        assertEquals(
+            "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c",
+            row.skelSha256
+        )
+    }
+
+    @Test
+    fun theOtherThreeSkelRowsCarryTheMeasuredAarValues() {
+        // Measured out of qnn-runtime-2.49.0.aar (jni/arm64-v8a/) on 2026-08-29 — the plan's
+        // table. F2's extract task asserts the same pairs at build time; these are the census's
+        // copies, and the two spellings meeting IS the check.
+        val v73 = byId("7gen4")
+        assertEquals("libQnnHtpV73Skel.so", v73.skelAsset)
+        assertEquals(17_909_588L, v73.skelBytes)
+        assertEquals(
+            "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
+            v73.skelSha256
+        )
+        val v79 = byId("8elite_galaxy")
+        assertEquals("libQnnHtpV79Skel.so", v79.skelAsset)
+        assertEquals(17_721_548L, v79.skelBytes)
+        assertEquals(
+            "9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6",
+            v79.skelSha256
+        )
+        val v81 = byId("8elite5_galaxy")
+        assertEquals("libQnnHtpV81Skel.so", v81.skelAsset)
+        assertEquals(18_844_384L, v81.skelBytes)
+        assertEquals(
+            "b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1",
+            v81.skelSha256
+        )
+    }
+
+    @Test
+    fun everyEvidenceLineCarriesARecordedDate() {
+        for (f in families) {
+            assertTrue(
+                "family ${f.id}'s evidence must carry a recorded 2026-08-2x date — a date was " +
+                    "recorded, not a vibe. Got: \"${f.evidence}\"",
+                f.evidence.contains("2026-08-2")
+            )
+        }
+        for ((soc, line) in NpuFleetCensus.CPU_BY_CENSUS) {
+            assertTrue(
+                "the CPU ledger's $soc line must carry the re-fetch date — an absence claim " +
+                    "without a date is an absence nobody checked. Got: \"$line\"",
+                line.contains("2026-08-29")
+            )
+        }
+    }
+
+    @Test
+    fun theCpuLedgerNamesTheSixAbsentPartsAndStaysDisjointFromTheCensus() {
+        assertEquals(
+            "seven checked-absent strings for six absent parts (the 8 Gen 2 has two bins) — " +
+                "8 Gen 2, 8+ Gen 1, 8 Gen 1, 888, and the two non-Galaxy Elite plains",
+            setOf("SM8550", "SM8550-AC", "SM8475", "SM8450", "SM8350", "SM8750", "SM8850"),
+            NpuFleetCensus.CPU_BY_CENSUS.keys
+        )
+        assertEquals(
+            "the named example line, verbatim — the ledger's format contract: part, the absence, " +
+                "the date, the method",
+            "8 Gen 2 — no published w8a16 package as of 2026-08-29 " +
+                "(both release manifests re-fetched)",
+            NpuFleetCensus.CPU_BY_CENSUS["SM8550"]
+        )
+        val censusStrings = families.flatMap { it.socModels }.toSet()
+        for (key in NpuFleetCensus.CPU_BY_CENSUS.keys) {
+            assertTrue(
+                "$key sits in the CPU ledger AND in a family's socModels — the census's two " +
+                    "halves contradict each other about a device",
+                key !in censusStrings
+            )
+        }
+    }
+
+    @Test
+    fun familyByIdResolvesEveryRowAndAnswersNullOffTheCensus() {
+        for (f in families) {
+            assertSame(
+                "familyById(${f.id}) must answer the row object itself — downstream holds " +
+                    "row identity, not row copies",
+                f, NpuFleetCensus.familyById(f.id)
+            )
+        }
+        assertNull("8gen2 is not a census family", NpuFleetCensus.familyById("8gen2"))
+        assertNull("soc strings are not family ids", NpuFleetCensus.familyById("SM8650"))
+        assertNull("the empty string is not a family id", NpuFleetCensus.familyById(""))
+        assertNull("exact matching here too — no case folding", NpuFleetCensus.familyById("8GEN3"))
+    }
+
+    @Test
+    fun everySkelAssetNamesItsOwnFamilysHtpArchitecture() {
+        for (f in families) {
+            assertEquals(
+                "family ${f.id} (HTP v${f.htpVersion}) must stage the skel of its OWN " +
+                    "architecture — a mismatch stages a skel FastRPC cannot pair with the " +
+                    "family's context binaries, and that failure is a device mystery, not a " +
+                    "compile error",
+                "libQnnHtpV${f.htpVersion}Skel.so",
+                f.skelAsset
+            )
+        }
+    }
+}
