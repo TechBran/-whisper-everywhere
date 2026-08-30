@@ -305,6 +305,7 @@ class NpuImportWiringPinTest {
                 block(
                     "                    unavailableNote = NpuTierStatus.cardNote(",
                     "                        npuTierReasons[model.id], cpuFallbackInstalled,",
+                    "                        stillSelected = model.id == selectedTierId,",
                     "                    ),",
                 ),
             ),

@@ -623,7 +623,7 @@ class NpuDiagTest {
         // WITH a CPU model, which is what "says what is running instead" below is about. The
         // no-fallback arm 4.3 adds is the subject of NpuTierStatusTest, where the assertion is
         // that this paragraph's claim is exactly the one it must NOT make.
-        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), true)!!
+        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), true, stillSelected = true)!!
         assertTrue("the note names the stage: $note", note.contains(stage))
         assertTrue(
             "AND it says what is running instead. A card that only says \"unavailable\" leaves " +
@@ -665,10 +665,10 @@ class NpuDiagTest {
         assertEquals("no decline, no stage", null, NpuTierStatus.stageOf(null))
         // 4.3: no decline means no note on EITHER arm — the absence of a CPU model is not itself
         // a decline, and a device that never armed the tier has no measurement to report.
-        assertEquals("no decline, no note", null, NpuTierStatus.cardNote(null, true))
-        assertEquals("nor with nothing to fall back to", null, NpuTierStatus.cardNote(null, false))
-        assertEquals("nor for an empty reason", null, NpuTierStatus.cardNote("   ", true))
-        assertEquals("on either arm", null, NpuTierStatus.cardNote("   ", false))
+        assertEquals("no decline, no note", null, NpuTierStatus.cardNote(null, true, true))
+        assertEquals("nor with nothing to fall back to", null, NpuTierStatus.cardNote(null, false, false))
+        assertEquals("nor for an empty reason", null, NpuTierStatus.cardNote("   ", true, true))
+        assertEquals("on either arm", null, NpuTierStatus.cardNote("   ", false, false))
         // A malformed reason degrades to the whole string rather than to an empty label: a card
         // reading "unavailable (stage: )" is worse than one repeating something odd.
         assertEquals("truncated", NpuTierStatus.stageOf("truncated"))

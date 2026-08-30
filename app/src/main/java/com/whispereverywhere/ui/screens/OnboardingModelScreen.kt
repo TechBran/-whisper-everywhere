@@ -178,6 +178,22 @@ fun OnboardingModelScreen(
 
     val state by viewModel.state.collectAsState()
 
+    // 4.3 micro-round — WHERE THE SELECTION POINTS, which is the second premise under the decline
+    // note's "restart to try the AI chip again". A restart re-tries this tier only because the
+    // decline record dies with the process — but routesToNpu reads the SELECTION, and the recovery
+    // moves it to `multi`. Read off Main (a SharedPreferences hit) and keyed on BOTH the install
+    // generation and the download state, because the recovery's own write lands between them:
+    // manager.download() bumps the generation, THEN the ViewModel writes selectedModelId, THEN the
+    // state becomes Done. Keyed on the generation alone this would re-read one write too early and
+    // keep displaying the false promise the micro-round exists to remove.
+    val selectedTierId by produceState<String?>(
+        initialValue = null,
+        key1 = installGeneration,
+        key2 = state,
+    ) {
+        value = withContext(Dispatchers.IO) { app.preferencesManager.selectedModelId }
+    }
+
     // The tier the user tapped (drives which card shows progress / error).
     var activeModelId by remember { mutableStateOf<String?>(null) }
 
@@ -321,8 +337,14 @@ fun OnboardingModelScreen(
                     // "speech is running on the multilingual CPU model" on the one device shape
                     // this branch creates — turbo alone, nothing to fall back to — which is the
                     // load-bearing clause and would be false.
+                    // 4.3 micro-round: the third input is WHERE THE SELECTION POINTS. Without it
+                    // the fallback-installed arm keeps promising "restart to try the AI chip
+                    // again" after the recovery has moved the selection to `multi` — a restart
+                    // that routesToNpu sends straight to the CPU, printed inches below the green
+                    // note carrying the correct way back.
                     unavailableNote = NpuTierStatus.cardNote(
                         npuTierReasons[model.id], cpuFallbackInstalled,
+                        stillSelected = model.id == selectedTierId,
                     ),
                     // 4.3 — the decline's one-tap recovery, on the card that declined. Non-null
                     // from the SAME rule the note's arm split uses, so the button and the sentence

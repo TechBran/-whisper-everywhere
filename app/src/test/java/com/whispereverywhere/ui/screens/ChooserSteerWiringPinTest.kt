@@ -1241,18 +1241,45 @@ class ChooserSteerWiringPinTest {
                 block(
                     "                    unavailableNote = NpuTierStatus.cardNote(",
                     "                        npuTierReasons[model.id], cpuFallbackInstalled,",
+                    "                        stillSelected = model.id == selectedTierId,",
                     "                    ),",
                 ),
             ),
         )
-        listOf("cardNote(npuTierReasons[model.id])", "cpuFallbackInstalled = true").forEach {
+        listOf(
+            "cardNote(npuTierReasons[model.id])",
+            "cpuFallbackInstalled = true",
+            // 4.3 micro-round: the third input's own assumed-true spelling, which would reinstate
+            // the false restart promise on every card the selection has moved away from.
+            "stillSelected = true",
+        ).forEach {
             assertEquals(
-                "the picker must not spell <<$it>> — the single-argument note is gone and the " +
-                    "answer is never assumed",
+                "the picker must not spell <<$it>> — the note's inputs are never assumed",
                 0,
                 liveLineCount(picker, it),
             )
         }
+        // 4.3 micro-round — WHERE THE SELECTION POINTS, read off Main and keyed on BOTH the
+        // install generation and the download state. The recovery's own write lands BETWEEN them
+        // (manager.download bumps the generation, then the ViewModel writes selectedModelId, then
+        // the state becomes Done), so a producer keyed on the generation alone re-reads one write
+        // too early and keeps displaying the promise this round exists to remove.
+        assertEquals(
+            "the selection is a live off-Main read, keyed on the generation AND the state",
+            1,
+            count(
+                picker,
+                block(
+                    "    val selectedTierId by produceState<String?>(",
+                    "        initialValue = null,",
+                    "        key1 = installGeneration,",
+                    "        key2 = state,",
+                    "    ) {",
+                    "        value = withContext(Dispatchers.IO) { app.preferencesManager.selectedModelId }",
+                    "    }",
+                ),
+            ),
+        )
         assertEquals(
             "whether the button exists is the SAME rule the note's arms split on, so the " +
                 "sentence and the control can never disagree",

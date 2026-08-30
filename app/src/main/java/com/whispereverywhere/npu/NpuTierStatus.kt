@@ -173,12 +173,32 @@ object NpuTierStatus {
      * [RECOVERY_ACTION] beside this note. [needsCpuRecovery] answers the same question the arm
      * split answers, so the button and the sentence cannot disagree.
      *
+     * ### 4.3 micro-round — the remedy depends on WHERE THE SELECTION POINTS
+     *
+     * "Restart the app to try the AI chip again" is true for exactly one reason: the decline
+     * record dies with the process, so the next launch re-routes to this tier. That reasoning has
+     * a second premise nobody had written down — **the selection must still name this tier** —
+     * and the recovery is precisely what breaks it. After the user taps "Download the standard
+     * model", `selectedModelId` is `multi`; `hasCpuFallback` flips true, so this note silently
+     * swaps to the fallback-installed arm, and that arm kept promising a restart that
+     * `NpuBackendSelector.routesToNpu` would send straight to the CPU. Worse, it sat inches below
+     * the green [RECOVERY_SWITCH_NOTE] carrying the CORRECT way back — two sentences on one
+     * screen disagreeing about how to reach the same tier.
+     *
+     * So [stillSelected] chooses the remedy, on BOTH arms, from one place ([retryRemedy]): a
+     * selected tier is re-tried by a restart, an unselected one is re-tried by picking it — which
+     * is the same route [RECOVERY_SWITCH_NOTE] names, deliberately, so the two can never point
+     * anywhere different. `NpuTierStatusTest` executes that agreement rather than trusting it.
+     *
      * @param cpuFallbackInstalled `WhisperCatalog.hasCpuFallback(installedIds)` — the pure mirror
      *        of the `cpuTierModelPath() != null` the backend itself reads. NO DEFAULT, deliberately:
      *        a default would let a caller silently claim the CPU model is running, which is the one
      *        thing this parameter exists to stop being assumed.
+     * @param stillSelected does `prefs.selectedModelId` still name THIS tier? Also no default, and
+     *        for the same reason: assumed true, it reinstates the false restart promise the
+     *        micro-round removed.
      */
-    fun cardNote(reason: String?, cpuFallbackInstalled: Boolean): String? {
+    fun cardNote(reason: String?, cpuFallbackInstalled: Boolean, stillSelected: Boolean): String? {
         val stage = stageOf(reason) ?: return null
         if (!cpuFallbackInstalled) {
             // 4.3 fix round, I-1(b): the two remedies are stated as ALTERNATIVES, in that order,
@@ -188,18 +208,35 @@ object NpuTierStatus {
             // so the restart clause went FALSE the instant the user acted on the button printed
             // directly beneath it. Naming the switch here (and again at
             // [RECOVERY_SWITCH_NOTE] when it happens) is what makes the two sentences true
-            // together: restart FIRST, as the remedy that costs nothing and keeps the AI chip;
+            // together: the re-try FIRST, as the remedy that costs nothing and keeps the AI chip;
             // the download SECOND, with its consequence and its way back attached.
             return "The AI chip is unavailable on this device right now (stage: $stage), and no " +
                 "CPU speech model is installed to fall back to — so dictation cannot run until " +
-                "one is. Restart the app to try the AI chip again, or download the standard " +
+                "one is. ${retryRemedy(stillSelected)} Or download the standard " +
                 "multilingual model below — that switches you to it, and leaves your AI chip " +
                 "model installed and one tap away on this screen."
         }
         return "The AI chip is unavailable on this device right now (stage: $stage), so speech is " +
             "running on the multilingual CPU model. Accuracy is unchanged; it is slower. " +
-            "Restart the app to try the AI chip again."
+            retryRemedy(stillSelected)
     }
+
+    /**
+     * How to make this device try the AI chip again — the ONE place either arm of [cardNote] gets
+     * that sentence, so the two cannot drift into disagreeing (4.3 micro-round).
+     *
+     * A restart works only while the selection still names this tier: the decline record is
+     * process state and dies with the process, but `routesToNpu` reads the SELECTION, so a restart
+     * on a device whose selection has moved to `multi` re-routes to the CPU and tries nothing.
+     * The honest remedy there is the one the recovery's own confirmation already names — pick the
+     * tier again, on this screen.
+     */
+    private fun retryRemedy(stillSelected: Boolean): String =
+        if (stillSelected) {
+            "Restart the app to try the AI chip again."
+        } else {
+            "Pick it again on this screen to try the AI chip."
+        }
 
     /**
      * Whether this tier's card must offer [RECOVERY_ACTION] (4.3): there is a decline on record

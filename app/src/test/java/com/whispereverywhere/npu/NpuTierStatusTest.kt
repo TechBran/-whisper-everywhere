@@ -135,32 +135,98 @@ class NpuTierStatusTest {
         // proved. 4.3 added the fallback argument; the CPU-model-present arm below is the note
         // this test has always asserted, verbatim.
         NpuTierStatus.publish("npu-turbo", "init: could not deserialise the 740 MB encoder")
-        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu-turbo"), true)!!
+        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu-turbo"), true, stillSelected = true)!!
         assertTrue("the note names the stage of THIS tier's decline: $note", note.contains("init"))
         assertTrue("and the way back: $note", note.contains("Restart the app"))
         assertNull(
             "while the sibling tier — never declined — composes NO note from its own null " +
                 "record, which is what keeps the warning off the card it is not about",
-            NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), true),
+            NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), true, stillSelected = true),
         )
         // ...and a never-declined tier composes nothing in the no-fallback state either: the
         // absence of a CPU model is not itself a decline, and a device that has never armed the
         // tier has no measurement to report (the class KDoc's oldest rule).
-        assertNull(NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), false))
+        assertNull(NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), false, false))
     }
 
     // ------------------------------------------------------------- 4.3: the decline's recovery
 
     @Test
     fun theCpuModelPresentArmIsTheOldNoteVERBATIM() {
-        // The 4.0/F3 sentence, byte for byte. 4.3 added an arm; it may not have edited this one —
-        // a device WITH a CPU model still falls back exactly as it always has, and the copy that
-        // says so is not this branch's to reword.
+        // The 4.0/F3 sentence, byte for byte, in the state it was written for: a CPU model
+        // installed AND the selection still on this tier. 4.3 added an arm and the micro-round
+        // added a remedy split; neither may edit THIS string — a device that falls back exactly
+        // as it always has reads exactly what it always did.
         assertEquals(
             "The AI chip is unavailable on this device right now (stage: init), so speech is " +
                 "running on the multilingual CPU model. Accuracy is unchanged; it is slower. " +
                 "Restart the app to try the AI chip again.",
-            NpuTierStatus.cardNote("init: nativeInit failed at 0", true),
+            NpuTierStatus.cardNote("init: nativeInit failed at 0", true, stillSelected = true),
+        )
+    }
+
+    @Test
+    fun theRestartPromiseIsMadeONLYWhereARestartWouldActuallyRetryThisTier() {
+        // THE MICRO-ROUND. "Restart the app to try the AI chip again" is true for exactly one
+        // reason — the decline record dies with the process — and that reasoning has a second
+        // premise nobody had written down: routesToNpu reads the SELECTION, so a restart only
+        // re-tries this tier while the selection still names it.
+        //
+        // The recovery is what breaks it. After the user taps "Download the standard model",
+        // selectedModelId is `multi` and hasCpuFallback flips true, so the note silently swaps to
+        // the fallback-installed arm — which kept promising a restart that routes straight to the
+        // CPU, printed inches below the green switch note carrying the CORRECT way back. Two
+        // sentences on one screen, disagreeing about how to reach the same tier.
+        listOf(true, false).forEach { installed ->
+            val selected = NpuTierStatus.cardNote("init: x", installed, stillSelected = true)!!
+            assertTrue(
+                "selected/$installed: a restart DOES re-try this tier and must be offered: $selected",
+                selected.contains("Restart the app to try the AI chip again."),
+            )
+            val moved = NpuTierStatus.cardNote("init: x", installed, stillSelected = false)!!
+            assertFalse(
+                "MOVED/$installed: the selection is elsewhere, so a restart re-tries NOTHING — " +
+                    "this promise must not be printed: $moved",
+                moved.contains("Restart the app"),
+            )
+            assertTrue(
+                "MOVED/$installed: and the remedy that IS true must be printed instead: $moved",
+                moved.contains("Pick it again on this screen to try the AI chip."),
+            )
+        }
+        // The stage and the arm's own load-bearing clause survive the split untouched.
+        val moved = NpuTierStatus.cardNote("encode: boom", true, stillSelected = false)!!
+        assertTrue(moved.contains("stage: encode"))
+        assertTrue(moved.contains("running on the multilingual CPU model"))
+    }
+
+    @Test
+    fun theCardNoteAndTheSwitchNoteNAMETHESAMEWAYBACK() {
+        // The consistency the micro-round exists to guarantee, executed rather than trusted: the
+        // two sentences a user sees TOGETHER after a recovery must point at the same place. The
+        // green note says "pick it again from this screen"; the card note, now that the selection
+        // has moved, must say the same thing and must not contradict it with a restart.
+        val afterRecovery = NpuTierStatus.cardNote(
+            "init: nativeInit failed at 0", cpuFallbackInstalled = true, stillSelected = false,
+        )!!
+        val green = NpuTierStatus.RECOVERY_SWITCH_NOTE
+        assertTrue("the green note names the screen: $green", green.contains("this screen"))
+        assertTrue("and so does the card note: $afterRecovery", afterRecovery.contains("this screen"))
+        assertTrue("both say to pick it again", green.contains("pick it again"))
+        assertTrue(afterRecovery.contains("Pick it again"))
+        assertFalse(
+            "and NEITHER may send the user to a restart that would not re-try the tier",
+            afterRecovery.contains("Restart the app") || green.contains("Restart the app"),
+        )
+        // The pre-recovery pair is consistent too, in the other direction: nothing has switched
+        // yet, so the restart is the true remedy and the green note is not on screen at all.
+        val beforeRecovery = NpuTierStatus.cardNote(
+            "init: nativeInit failed at 0", cpuFallbackInstalled = false, stillSelected = true,
+        )!!
+        assertTrue(beforeRecovery.contains("Restart the app to try the AI chip again."))
+        assertFalse(
+            "the pre-recovery note must not tell the user to pick a tier they are already on",
+            beforeRecovery.contains("Pick it again"),
         )
     }
 
@@ -171,7 +237,7 @@ class NpuTierStatusTest {
         // returns 0L at `paths.cpuTierModelPath() ?: return 0L`, leaving the session with no
         // backend. The old note's load-bearing clause ("speech is running on the multilingual CPU
         // model") would be FALSE there, which is the whole reason the arm exists.
-        val note = NpuTierStatus.cardNote("init: nativeInit failed at 0", false)!!
+        val note = NpuTierStatus.cardNote("init: nativeInit failed at 0", false, stillSelected = true)!!
         assertTrue("it still names the stage: $note", note.contains("stage: init"))
         assertFalse(
             "it must NOT claim speech is running on the CPU model — nothing is installed: $note",
@@ -203,7 +269,7 @@ class NpuTierStatusTest {
         // the CPU tier, so "restart the app to try the AI chip again" went FALSE the instant the
         // user acted on the button printed directly beneath it — a remedy that expires when you
         // use the remedy next to it, on a note whose whole job is to be honest about a decline.
-        val note = NpuTierStatus.cardNote("init: nativeInit failed at 0", false)!!
+        val note = NpuTierStatus.cardNote("init: nativeInit failed at 0", false, stillSelected = true)!!
         assertTrue(
             "the restart must be offered as the remedy that keeps the AI chip, and FIRST — it " +
                 "costs nothing and a process-scoped decline is exactly what it fixes: $note",
@@ -234,7 +300,7 @@ class NpuTierStatusTest {
         assertTrue("it states what was NOT lost", switched.contains("stays installed"))
         assertTrue("and it states the way back", switched.contains("pick it again"))
         // The CPU-model-present arm makes no switch claim at all: nothing switches there.
-        val other = NpuTierStatus.cardNote("init: nativeInit failed at 0", true)!!
+        val other = NpuTierStatus.cardNote("init: nativeInit failed at 0", true, stillSelected = true)!!
         assertFalse("the fallback arm must not talk about switching", other.contains("switches you"))
     }
 
@@ -277,7 +343,7 @@ class NpuTierStatusTest {
         )
         listOf(true, false).forEach { installed ->
             reasons.forEach { reason ->
-                val note = NpuTierStatus.cardNote(reason, installed)
+                val note = NpuTierStatus.cardNote(reason, installed, stillSelected = true)
                 val needs = NpuTierStatus.needsCpuRecovery(reason, installed)
                 if (needs) {
                     assertNotNull("<<$reason>>/$installed: a button with no note", note)
