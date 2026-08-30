@@ -150,8 +150,13 @@ object NpuDiag {
      * fallback is not allowed to be quiet: the stage is named, the native detail is carried
      * verbatim from `nativeLastError()`, and Q8's card reads the same fact.
      *
-     * @param stage which step declined — `mel-donor`, `mel-init`, `mel`, `assets`, `init`,
-     *        `quant`, `encode`, `decode`. One word, greppable, never a sentence.
+     * @param stage which step declined. One word, greppable, never a sentence. The full
+     *        enumeration, in decline-site order, RE-DERIVED from the backend's own
+     *        `fallBackToCpuTier`/`fallBackAndRun` call sites (4.2 F5, folding 4.1 L1 m5 — the
+     *        previous list here was stale by six stages and still named a retired one, and
+     *        `NpuDiagTest` now derives this list from the source so it cannot rot again):
+     *        `companion`, `mel-donor`, `mel-asset`, `mel-init`, `vocab`, `skel`, `init`,
+     *        `epoch`, `session`, `mel`, `quant`, `encode`, `lang`, `decode`.
      * @param detail `QnnAsrNative.nativeLastError()` or an equivalent one-line reason. Never
      *        transcript content: every producer of this string is a stage name and a native error.
      */
@@ -265,4 +270,46 @@ object NpuDiag {
         val offered = if (capable == true) installed else "none"
         return "npu: offer soc=$soc probe=$probe installed=$installed offered=$offered"
     }
+
+    // ------------------------------------------------------------------ the pack lifecycle (4.2 F5)
+
+    /**
+     * `pack: fetch tier=npu-turbo pack=npu_turbo status=downloading soFar=105906176
+     * total=901775360` — the Play fetch flow's narration, emitted by `NpuPackController` once
+     * per STATUS TRANSITION plus at most one per 10% of progress (the throttle is
+     * `NpuPackFetch.shouldLogProgress`, a pure decision with its own tests).
+     *
+     * The `pack: fetch ` prefix is a **single contiguous literal** here, same F-rule as every
+     * line in this file: format asserted on the builder, emission pinned at the shell's source,
+     * because either alone is decoration. **The `npu: offer` line is untouched by this family**
+     * — fetch state is PACK lifecycle, not offer state, and the two must stay separately
+     * greppable.
+     *
+     * Never transcript content: a tier id, a pack name, one status word, two byte counts.
+     * The integers render through Kotlin string interpolation, which is locale-free — no
+     * grouping separators on any device.
+     *
+     * @param status one of `NpuPackFetch.statusWord`'s tokens, never free text.
+     */
+    fun packLine(tierId: String, packName: String, status: String, soFar: Long, total: Long): String =
+        "pack: fetch tier=$tierId pack=$packName status=$status soFar=$soFar total=$total"
+
+    /**
+     * `pack: ok tier=npu-turbo entries=2 bytes=1071685632` — the fetch flow's success landmark,
+     * deliberately shaped like the import's `npu: import ok` line so the run-book's reader
+     * greps two spellings of one fact: a verified pair landed, this many files, this many
+     * bytes. Emitted exactly once per successful pack install, AFTER the shared parking
+     * transaction has committed and never before.
+     */
+    fun packOk(tierId: String, entries: Int, bytes: Long): String =
+        "pack: ok tier=$tierId entries=$entries bytes=$bytes"
+
+    /**
+     * `pack: refused tier=npu-turbo reason=…` — the fetch flow's refusal line, one per refused
+     * install. [reason] is the same user-facing sentence the card renders through
+     * `FetchState.Failed` (already bounded by its builders — the cross-check and refusal
+     * vocabulary never carries paths or content), so the log and the screen state one fact.
+     */
+    fun packRefused(tierId: String, reason: String): String =
+        "pack: refused tier=$tierId reason=$reason"
 }

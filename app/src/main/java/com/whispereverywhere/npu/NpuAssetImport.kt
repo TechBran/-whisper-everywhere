@@ -45,7 +45,11 @@ import java.io.File
  * digest, and so demands both exactly. Strictness in that direction is the safe one: everything
  * the import accepts, `isInstalled` accepts, so an import that reports success can never leave the
  * tier reading as not installed. Pinned by
- * `theImportGateIsStrictlyStricterThanTheInstalledPredicate`. The one route that stays
+ * `theImportGateIsStrictlyStricterThanTheInstalledPredicate` — and TRUE FLEET-WIDE only since
+ * 4.2 F5, when [installedGateBytes] made the tolerant gate's reference the family's own census
+ * bytes: around the catalog's reference record the nesting was BROKEN for both 7gen4 encoders
+ * (+11.0%/+9.1%), so a correct 7gen4 import verified exactly and then rolled itself back at the
+ * finalise's isInstalled check. The one route that stays
  * hash-exempt is the owner's `adb push` (a dev route that never enters this code at all) — the
  * run-book says so where it prescribes it.
  *
@@ -144,6 +148,53 @@ object NpuAssetImport {
 
     /** Uncompressed bytes of the whole pair — the import's progress denominator. */
     fun pairBytes(required: Map<String, RequiredEntry>): Long = required.values.sumOf { it.bytes }
+
+    /** One tier's installed-size references: what each on-disk file is tolerance-gated AROUND
+     *  by `WhisperModelManager.isInstalled`. See [installedGateBytes]. */
+    data class InstalledGate(val primaryBytes: Long, val paired: PairedFileGate?)
+
+    /** The paired file's half of [InstalledGate]: its catalog delivery name, its reference bytes. */
+    data class PairedFileGate(val fileName: String, val bytes: Long)
+
+    /**
+     * The installed-size gate's reference bytes — THE DEVICE FAMILY'S census row when it can
+     * answer, the catalog's reference record when it cannot (4.2 F5, the F3 carry BY NAME).
+     *
+     * **The measured discovery this exists for:** both 7gen4 ENCODERS sit outside the ±5%
+     * tolerance around the catalog's reference record (147,595,264 B = +11.0% over 132,927,488
+     * for small; 846,360,576 B = +9.1% over 775,831,552 for turbo — HTP v73 packs weights less
+     * densely), so a gate that only knew the catalog rolled back a CORRECT 7gen4 install at the
+     * finalise's own `isInstalled` verification. The reference must be the family's measured
+     * bytes — which also restores the strict-inside-tolerant nesting fleet-wide: everything the
+     * import accepts (the exact family bytes), this gate accepts.
+     *
+     * **Null falls BACK rather than refusing, and deliberately** — the opposite arm from
+     * [requiredEntriesFor], stated so nobody "fixes" the asymmetry: an IMPORT on an unresolved
+     * family must refuse (it cannot verify new bytes), but this predicate only judges what is
+     * ALREADY on disk, and answering false for every file would un-install working tiers at a
+     * glance. On the reference family the census row's bytes ARE the catalog's record (pinned
+     * equal by the census tests), so 8gen3 devices — and every single-file tier, which never
+     * has an artifact row — keep the predicate they have always had.
+     *
+     * A cross-tier row is refused loudly: it would silently size-gate one tier's files against
+     * another tier's pair, which is the F3 disease wearing a new coat.
+     */
+    fun installedGateBytes(model: WhisperModel, artifact: PackArtifact?): InstalledGate {
+        require(artifact == null || artifact.tierId == model.id) {
+            "installedGateBytes was handed the '${artifact?.tierId}' tier's artifact row for " +
+                "model '${model.id}' — a cross-tier gate would judge the wrong pair"
+        }
+        val paired = model.pairedArtifact
+            ?: return InstalledGate(model.primaryBytes, null)
+        if (artifact == null) {
+            return InstalledGate(model.primaryBytes, PairedFileGate(paired.fileName, paired.approxBytes))
+        }
+        // NAMES from the catalog, BYTES from the family — the same doctrine as requiredEntriesFor.
+        return InstalledGate(
+            artifact.encoder.bytes,
+            PairedFileGate(paired.fileName, artifact.decoder.bytes),
+        )
+    }
 
     /** What one zip entry may do. */
     sealed interface EntryVerdict {

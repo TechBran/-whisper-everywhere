@@ -694,4 +694,211 @@ class NpuDiagTest {
             liveLineCount(backend, "unavailableReason = \"\$stage: \$detail\""),
         )
     }
+
+    // ------------------------------------------------------------------ the pack lifecycle (4.2 F5)
+
+    @Test
+    fun thePackFetchLineIsExactAndItsPrefixContiguous() {
+        // The Play fetch flow's narration. Format asserted here, emission pinned over the
+        // controller's source below — the F-rule, applied to its fourth line family.
+        assertEquals(
+            "pack: fetch tier=npu-turbo pack=npu_turbo status=downloading " +
+                "soFar=105906176 total=901775360",
+            NpuDiag.packLine("npu-turbo", "npu_turbo", "downloading", 105_906_176L, 901_775_360L),
+        )
+        assertEquals(
+            "states without progress carry honest zeros rather than omitting the fields — one " +
+                "shape, one parser",
+            "pack: fetch tier=npu pack=npu_small status=pending soFar=0 total=0",
+            NpuDiag.packLine("npu", "npu_small", "pending", 0L, 0L),
+        )
+        // Locale-free integer rendering, asked as a behaviour (the mel line's own lesson): a
+        // comma-grouping device must not turn the byte counts into 105.906.176.
+        val previous = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMANY)
+            assertEquals(
+                "pack: fetch tier=npu-turbo pack=npu_turbo status=downloading " +
+                    "soFar=105906176 total=901775360",
+                NpuDiag.packLine("npu-turbo", "npu_turbo", "downloading", 105_906_176L, 901_775_360L),
+            )
+        } finally {
+            java.util.Locale.setDefault(previous)
+        }
+        val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
+        assertEquals(
+            "the `pack: fetch tier=` prefix is ONE contiguous literal on one live line",
+            1,
+            liveLineCount(diag, "\"pack: fetch tier="),
+        )
+        assertTrue(
+            "and the whole field sequence lives in that one literal, in order",
+            diag.contains(
+                "\"pack: fetch tier=\$tierId pack=\$packName status=\$status " +
+                    "soFar=\$soFar total=\$total\""
+            ),
+        )
+    }
+
+    @Test
+    fun thePackOkLineMirrorsTheImportsSuccessLandmark() {
+        val line = NpuDiag.packOk("npu-turbo", 2, 1_071_685_632L)
+        assertEquals("pack: ok tier=npu-turbo entries=2 bytes=1071685632", line)
+        // Deliberately SHAPED like the import's landmark, so the run-book reader greps two
+        // spellings of one fact — asserted against the import's own builder rather than
+        // restated, because a drift between the two shapes is exactly what this claim forbids.
+        val importLandmark = NpuAssetImport.okLine(2, 1_071_685_632L)
+        assertTrue(
+            "one suffix shape across both landmarks: '$line' vs '$importLandmark'",
+            line.endsWith("entries=2 bytes=1071685632") &&
+                importLandmark.endsWith("entries=2 bytes=1071685632"),
+        )
+        val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
+        assertEquals(
+            "the `pack: ok tier=` prefix is ONE contiguous literal on one live line",
+            1,
+            liveLineCount(diag, "\"pack: ok tier="),
+        )
+    }
+
+    @Test
+    fun thePackRefusedLineIsExact() {
+        assertEquals(
+            "pack: refused tier=npu-turbo reason=Wrong family variant: this pack is the " +
+                "8gen3 variant and this device is 7gen4.",
+            NpuDiag.packRefused(
+                "npu-turbo",
+                "Wrong family variant: this pack is the 8gen3 variant and this device is 7gen4.",
+            ),
+        )
+        val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
+        assertEquals(
+            "the `pack: refused tier=` prefix is ONE contiguous literal on one live line",
+            1,
+            liveLineCount(diag, "\"pack: refused tier="),
+        )
+    }
+
+    /**
+     * FOLDED 4.1 ITEM (L1 m5), closed the way the finding demanded: [NpuDiag.unavailable]'s
+     * KDoc stage enumeration had rotted — eight stages listed, six missing, one RETIRED stage
+     * (`assets`) still named — so the list is now RE-DERIVED from the backend's own decline
+     * sites and this test holds the KDoc equal to the derivation. A new stage, a renamed
+     * stage or a retired one now fails here by name instead of rotting silently. (The
+     * re-derivation itself caught the rot's true size: the stale list was off by SEVEN — the
+     * brief's six plus the unlisted `session` — which is exactly why the rule is "derive from
+     * source, never retype from memory".)
+     */
+    @Test
+    fun theUnavailableStageEnumerationIsReDerivedFromTheBackendsOwnDeclineSites() {
+        val backend =
+            source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+        // Every decline funnels through fallBackToCpuTier/fallBackAndRun with a literal stage
+        // as its first argument (the one-funnel pin above proves the funnel); collect them in
+        // source order, first occurrence wins.
+        val declineSite = Regex("fallBack(?:ToCpuTier|AndRun)\\(\\s*\"([a-z-]+)\"")
+        val derived = declineSite.findAll(backend).map { it.groupValues[1] }.distinct().toList()
+        assertTrue(
+            "the derivation found a real population (got $derived)",
+            derived.size >= 10 && "encode" in derived && "decode" in derived,
+        )
+        // The KDoc's own enumeration: the backticked lowercase tokens between @param stage and
+        // @param detail. (CamelCase references in the same block don't match [a-z-]+.)
+        val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
+        val stageBlock = diag.substringAfter("@param stage").substringBefore("@param detail")
+        val documented = Regex("`([a-z-]+)`").findAll(stageBlock)
+            .map { it.groupValues[1] }.toList()
+        assertEquals(
+            "the KDoc enumerates exactly the stages the backend can produce, in decline-site " +
+                "order — re-derived, never retyped",
+            derived,
+            documented,
+        )
+    }
+
+    /**
+     * EMISSION for the `pack:` family — the controller is `AssetPackManager`-bound, so the
+     * call sites are pinned as source, the same instrument as every emission pin in this
+     * class. Each builder has exactly its one site; the progress throttle is consulted at
+     * exactly one place (transition lines bypass it, tick lines cannot); and the `npu: offer`
+     * line is UNTOUCHED — fetch state is pack lifecycle, not offer state.
+     */
+    @Test
+    fun thePackFamilyIsEmittedByTheControllerUnderTheHouseTag() {
+        val controller = source("src/main/java/com/whispereverywhere/npu/NpuPackController.kt")
+        assertEquals(
+            "the fetch line has exactly one emitter — the publish funnel — under the house tag",
+            1,
+            liveLineCount(controller, "Log.i(NpuDiag.TAG, NpuDiag.packLine("),
+        )
+        assertEquals(
+            "and no second packLine call anywhere in the shell",
+            1,
+            liveLineCount(controller, "NpuDiag.packLine("),
+        )
+        assertEquals(
+            "the success landmark is emitted exactly once, under the house tag",
+            1,
+            liveLineCount(controller, "Log.i(NpuDiag.TAG, NpuDiag.packOk("),
+        )
+        assertEquals(
+            "the refusal line likewise — at Log.w, the same level the import's refusal takes",
+            1,
+            liveLineCount(controller, "Log.w(NpuDiag.TAG, NpuDiag.packRefused("),
+        )
+        assertEquals(
+            "the throttle decision has exactly ONE call site — the tick path; a second one " +
+                "would be a second opinion about when a line may print",
+            1,
+            liveLineCount(controller, "NpuPackFetch.shouldLogProgress("),
+        )
+        assertEquals(
+            "every AssetPackState goes through the ONE pure mapping — the shell interprets " +
+                "no status on its own",
+            1,
+            liveLineCount(controller, "NpuPackFetch.advance("),
+        )
+        assertEquals(
+            "and the offer line is untouched by the pack family: zero offer emissions here",
+            0,
+            liveLineCount(controller, "NpuDiag.offer("),
+        )
+    }
+
+    /**
+     * THE ORDER INVARIANT the fetch flow owns (4.2 F5 — the remove-after-land rule's newest
+     * instance, following the finalise's restore-after-remove, the announce-after-verify and
+     * the rest of the family): `removePack` runs STRICTLY AFTER `installFromPack` has
+     * verified and renamed the staged pair into place. The delivered pack is the ONLY copy of
+     * those bytes until the finalise commits — a remove that runs early deletes the source
+     * mid-verify, and no ordering of two async completions carries that invariant; the state
+     * machine does, and this pin holds its source shape.
+     */
+    @Test
+    fun removePackRunsStrictlyAfterTheStagedPairIsRenamedIntoPlace() {
+        val controller = source("src/main/java/com/whispereverywhere/npu/NpuPackController.kt")
+        assertEquals(
+            "exactly one remove site in the shell",
+            1,
+            liveLineCount(controller, ".removePack("),
+        )
+        val install = offsetOfLive(controller, ".installFromPack(")
+        val installedPublish =
+            offsetOfLive(controller, "publish(tierId, packName, NpuPackFetch.FetchState.Installed)")
+        val remove = offsetOfLive(controller, ".removePack(")
+        assertTrue(
+            "install ($install) -> Installed published ($installedPublish) -> removePack " +
+                "($remove): the remove sits below the success branch's own publication",
+            install in 0 until installedPublish && installedPublish < remove,
+        )
+        // And the refusal arm keeps the pack: a failed verify must leave the delivered bytes
+        // in place for a costless retry, so its branch contains NO remove.
+        val refusedArm = controller.substringAfter("is NpuAssetImport.ImportState.Refused ->")
+        assertTrue("the refusal arm was found", refusedArm.length < controller.length)
+        assertEquals(
+            "no removePack on the refusal path — the pack stays for the retry",
+            0,
+            liveLineCount(refusedArm, ".removePack("),
+        )
+    }
 }

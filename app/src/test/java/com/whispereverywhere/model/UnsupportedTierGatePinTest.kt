@@ -196,15 +196,36 @@ class UnsupportedTierGatePinTest {
         //
         // The catalog half is pinned in WhisperCatalogHelpersTest, which can execute. This half
         // cannot: the manager needs a Context (see this class's KDoc), so the CALL is pinned instead.
+        // RE-SPECIFIED AT 4.2 F5, which is where the old needles went red BY CONSTRUCTION —
+        // the intended loudness the F3 tripwire promised. The F3 measurement proved the fixed
+        // reference is not one number per tier: both 7gen4 encoders sit outside ±5% of the
+        // catalog record, so a CORRECT 7gen4 install verified exactly and then failed THIS
+        // predicate inside the finalise and rolled itself back. The reference now comes from
+        // NpuAssetImport.installedGateBytes — the family's census bytes when the family can
+        // answer, the catalog record when it cannot — and the CLAIM below is unchanged: each
+        // file is gated against ITS OWN reference, never against the pair's sum.
         val predicate = body(
             manager,
             "WhisperModelManager.kt",
             "    fun isInstalled(model: WhisperModel): Boolean {",
         )
         assertEquals(
-            "the primary file is size-gated against primaryBytes, which is the file it names",
+            "the reference selection is the PURE gate — the executed walk lives in " +
+                "NpuAssetImportTest, and this predicate only wires it",
             1,
-            count(predicate, "WhisperCatalog.sizeWithinTolerance(f.length(), model.primaryBytes)"),
+            count(predicate, "NpuAssetImport.installedGateBytes(model, artifact)"),
+        )
+        assertEquals(
+            "the artifact row is the DEVICE FAMILY's, resolved through the F2 memo — the one " +
+                "family resolution, never a re-derivation",
+            1,
+            count(predicate, "NpuFleetCensus.artifactFor(family.id, model.id)"),
+        )
+        assertEquals(
+            "the primary file is size-gated against the gate's primary reference, which is the " +
+                "file it names",
+            1,
+            count(predicate, "WhisperCatalog.sizeWithinTolerance(f.length(), gate.primaryBytes)"),
         )
         assertEquals(
             "isInstalled never gates a file against approxBytes: for a paired tier that is the SUM " +
@@ -213,16 +234,16 @@ class UnsupportedTierGatePinTest {
             count(predicate, "f.length(), model.approxBytes"),
         )
         assertEquals(
-            "the paired artefact is required too, at ITS own size — half an npu install is not an " +
-                "install, and arming the tier on a missing decoder is a native-side failure",
+            "the paired artefact is required too, at ITS own reference — half an npu install is " +
+                "not an install, and arming the tier on a missing decoder is a native-side failure",
             1,
-            count(predicate, "WhisperCatalog.sizeWithinTolerance(pf.length(), paired.approxBytes)"),
+            count(predicate, "WhisperCatalog.sizeWithinTolerance(pf.length(), paired.bytes)"),
         )
         assertEquals(
-            "a tier with no paired artefact still answers on its primary alone, so the six ggml " +
+            "a tier with no paired gate still answers on its primary alone, so the six ggml " +
                 "tiers keep the predicate they have always had",
             1,
-            count(predicate, "model.pairedArtifact ?: return true"),
+            count(predicate, "val paired = gate.paired ?: return true"),
         )
         // ORDER, not merely presence — the same rule this branch has now hit four times. Hoisting
         // the early return above the primary gate satisfies every count above and is a different
@@ -230,13 +251,13 @@ class UnsupportedTierGatePinTest {
         // because the only file check left runs after a return that always fires for them. The
         // early return is a shortcut past work already done, so it must come second.
         assertTrue(
-            "the primary file's size gate runs BEFORE the no-paired-artefact early return: hoisting " +
+            "the primary file's size gate runs BEFORE the no-paired-gate early return: hoisting " +
                 "that return makes isInstalled() true for every single-file tier with no file on disk",
             indexOfOrFail(
                 predicate,
                 "isInstalled",
-                "WhisperCatalog.sizeWithinTolerance(f.length(), model.primaryBytes)",
-            ) < indexOfOrFail(predicate, "isInstalled", "model.pairedArtifact ?: return true"),
+                "WhisperCatalog.sizeWithinTolerance(f.length(), gate.primaryBytes)",
+            ) < indexOfOrFail(predicate, "isInstalled", "val paired = gate.paired ?: return true"),
         )
     }
 
@@ -411,23 +432,38 @@ class UnsupportedTierGatePinTest {
         // the opposite defect appears: the signal fires for files still sitting in `.part`, so the
         // chooser re-stats, finds nothing, and caches a "not installed" answer for an import that
         // then succeeds.
+        // RE-SCOPED AT 4.2 F5: the finalise — park, rename, verify, roll back, announce — is
+        // now the SHARED private transaction both arrival routes (the SAF import and the Play
+        // pack install) land through, so the announcement pins moved WITH it. The claims are
+        // unchanged; the scope is the one function that now owns them.
         val import = body(
             manager,
             "WhisperModelManager.kt",
             "    suspend fun importNpuAssetPair(",
         )
+        val finalise = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    private fun finalizeVerifiedPair(",
+        )
         assertEquals(
-            "the import announces the install exactly once — the SAME funnel the download path " +
-                "uses, so a future consumer cannot be wired to one route and not the other",
+            "the shared finalise announces the install exactly once — ONE funnel for both " +
+                "arrival routes, so a future route cannot be wired to announce and another not",
             1,
+            count(finalise, "prefs.notifyModelInstalled()"),
+        )
+        assertEquals(
+            "and the import route does not announce on its own — announcing outside the " +
+                "transaction could announce a pair the rollback then removes",
+            0,
             count(import, "prefs.notifyModelInstalled()"),
         )
-        val announce = liveIndexOfOrFail(import, "importNpuAssetPair", "prefs.notifyModelInstalled()")
+        val announce = liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "prefs.notifyModelInstalled()")
         assertTrue(
             "THE ANNOUNCEMENT MUST FOLLOW THE RENAMES. Bumping the generation while the files are " +
                 "still `.part` makes the chooser re-read the gate against a directory the pair has " +
                 "not landed in yet.",
-            liveIndexOfOrFail(import, "importNpuAssetPair", "if (part.renameTo(dest)) {") < announce,
+            liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "if (part.renameTo(dest)) {") < announce,
         )
         assertTrue(
             "AND THE VERIFICATION. `isInstalled` is the predicate the card itself keys on, so " +
@@ -435,12 +471,12 @@ class UnsupportedTierGatePinTest {
                 "folded the verification into the finalise transaction, so it now sets the " +
                 "failure rather than returning on its own — the ordering claim is unchanged.)",
             liveIndexOfOrFail(
-                import, "importNpuAssetPair", "finaliseFailure == null && !isInstalled(model)"
+                finalise, "finalizeVerifiedPair", "finaliseFailure == null && !isInstalled(model)"
             ) < announce,
         )
         assertTrue(
             "and the whole finalise — park, rename, verify, roll back — precedes it too",
-            liveIndexOfOrFail(import, "importNpuAssetPair", "if (finaliseFailure != null) {") < announce,
+            liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "if (finaliseFailure != null) {") < announce,
         )
         // Both-or-neither. Every entry is staged under `.part` and the destinations are only
         // touched once both files exist at their exact published lengths; a half-renamed pair is
@@ -451,10 +487,10 @@ class UnsupportedTierGatePinTest {
             count(import, "File(dir, accept.fileName + NpuAssetImport.PART_SUFFIX)"),
         )
         assertTrue(
-            "the missing-half check runs BEFORE anything is renamed into place: an encoder " +
-                "without its decoder is a tier that arms halfway",
+            "the missing-half check runs BEFORE the finalise that renames anything into place: " +
+                "an encoder without its decoder is a tier that arms halfway",
             liveIndexOfOrFail(import, "importNpuAssetPair", "NpuAssetImport.missingEntriesRefusal(") <
-                liveIndexOfOrFail(import, "importNpuAssetPair", "if (part.renameTo(dest)) {"),
+                liveIndexOfOrFail(import, "importNpuAssetPair", "finalizeVerifiedPair(model, parts)"),
         )
         // Fix round 1, I2 REPLACED what this assertion used to check. It read
         // `count(import, "renamed.forEach { it.delete() }") == 1` — "a failed second rename purges
@@ -463,12 +499,13 @@ class UnsupportedTierGatePinTest {
         // is kept and strengthened rather than dropped: every finalise failure now leaves through
         // one roll-back that restores the previous pair, and
         // `aFailedFinaliseRollsBackAndTellsTheTruthAboutWhatIsOnTheDevice` pins its internals.
+        // (4.2 F5 moved the call INTO the shared finalise: the staged map's keys ARE this
+        // tier's names on both routes, so the tier scoping claim rides the parameter now.)
         assertEquals(
-            "a failed finalise leaves through the roll-back, which purges what this import moved " +
-                "in AND puts back what it parked — handed THIS tier's names (4.1 L6), so a turbo " +
-                "import's failure report never describes npu's files",
+            "a failed finalise leaves through the roll-back, which purges what this install moved " +
+                "in AND puts back what it parked — handed the STAGED names, i.e. this tier's own",
             1,
-            count(import, "rollBackFinalise(finaliseFailure, required.keys, renamed, parked)"),
+            count(finalise, "rollBackFinalise(finaliseFailure, staged.keys, renamed, parked)"),
         )
         assertEquals(
             "and every .part is cleared on failure, refusal OR cancellation, so a retry starts " +
@@ -658,52 +695,60 @@ class UnsupportedTierGatePinTest {
         // "Nothing was installed". A destroyed working tier is not nothing, and a rename cannot be
         // undone onto a file that has already been unlinked — which is why the fix is to PARK the
         // previous file rather than to write a smarter undo.
+        // RE-SCOPED AT 4.2 F5, same move as the announcement test above: the transaction these
+        // pins are about now lives in the SHARED finalizeVerifiedPair, so the pins live over
+        // its body. The claims are byte-for-byte the ones fix round 1, I2 established.
         val import = body(
             manager,
             "WhisperModelManager.kt",
             "    suspend fun importNpuAssetPair(",
         )
+        val finalise = body(
+            manager,
+            "WhisperModelManager.kt",
+            "    private fun finalizeVerifiedPair(",
+        )
         assertEquals(
             "the previously installed file is moved aside, not deleted",
             1,
-            count(import, "if (dest.renameTo(previous)) {"),
+            count(finalise, "if (dest.renameTo(previous)) {"),
         )
         assertEquals(
             "nothing in the finalise deletes a destination outright any more — that single " +
                 "statement WAS the defect",
             0,
-            count(import, "if (dest.exists()) dest.delete()"),
+            count(finalise, "if (dest.exists()) dest.delete()"),
         )
         assertEquals(
             "the verification failure joins the same transaction rather than returning on its own: " +
                 "a pair that does not read as installed must be rolled back, not left on disk for " +
-                "the next import's already-installed logic to reason about",
+                "the next install's already-installed logic to reason about",
             1,
-            count(import, "finaliseFailure = \"The imported files did not verify on disk\""),
+            count(finalise, "finaliseFailure = \"The imported files did not verify on disk\""),
         )
         assertEquals(
-            "and every finalise failure leaves through the one roll-back, scoped to this tier's " +
-                "own names (4.1 L6)",
+            "and every finalise failure leaves through the one roll-back, handed the staged " +
+                "names — this tier's own, whichever route staged them",
             1,
             count(
-                import,
+                finalise,
                 lines(
-                    "                return@withContext refuseImport(",
-                    "                    rollBackFinalise(finaliseFailure, required.keys, renamed, parked)",
-                    "                )",
+                    "            return NpuAssetImport.ImportState.Refused(",
+                    "                rollBackFinalise(finaliseFailure, staged.keys, renamed, parked)",
+                    "            )",
                 ),
             ),
         )
         assertEquals(
             "the parked copies are dropped only after the whole transaction has succeeded",
             1,
-            count(import, "parked.values.forEach { if (it.exists()) it.delete() }"),
+            count(finalise, "parked.values.forEach { if (it.exists()) it.delete() }"),
         )
         assertTrue(
             "and that drop comes AFTER the verification, or a failed verify would have nothing " +
                 "left to restore",
-            liveIndexOfOrFail(import, "importNpuAssetPair", "if (finaliseFailure != null) {") <
-                liveIndexOfOrFail(import, "importNpuAssetPair", "parked.values.forEach { if (it.exists()) it.delete() }"),
+            liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "if (finaliseFailure != null) {") <
+                liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "parked.values.forEach { if (it.exists()) it.delete() }"),
         )
 
         val rollback = body(

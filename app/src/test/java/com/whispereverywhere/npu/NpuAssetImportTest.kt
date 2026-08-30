@@ -658,14 +658,11 @@ class NpuAssetImportTest {
             liveLineCount(importBody, "reconcileStagingDebris(dir, required.keys)"),
         )
         assertEquals(
-            "and the rollback reports THIS tier's files — it used to read the npu constant's " +
-                "names, which for a turbo import would report the wrong tier's files as the " +
-                "device's state",
+            "and the finalise is handed THIS tier's staged files (4.2 F5: the transaction is " +
+                "shared, and the rollback inside it reports the STAGED names — so a turbo " +
+                "import's failure report still never describes npu's files)",
             1,
-            liveLineCount(
-                importBody,
-                "rollBackFinalise(finaliseFailure, required.keys, renamed, parked)",
-            ),
+            liveLineCount(importBody, "finalizeVerifiedPair(model, parts)"),
         )
     }
 
@@ -1220,6 +1217,294 @@ class NpuAssetImportTest {
                 "never thrown past the finally",
             1,
             liveLineCount(importBody, "catch (badMeta: IllegalStateException)"),
+        )
+    }
+
+    // ------------------------------------------------------------------ the installed-size gate (4.2 F5)
+
+    @Test
+    fun theInstalledGateReadsTheDeviceFamilysCensusBytesSoEveryFamilysPairPassesIt() {
+        // THE F3 CARRY, BY NAME — the measured discovery this fix exists for: both 7gen4
+        // ENCODERS sit outside the ±5% tolerance around the CATALOG's reference record
+        // (+11.0% small, +9.1% turbo — HTP v73 packs weights less densely), so under the old
+        // gate a CORRECT 7gen4 import verified its copy exactly and then FAILED the finalise's
+        // isInstalled check and rolled itself back. The fix: the gate's reference bytes come
+        // from THE DEVICE FAMILY'S census row, and the catalog record is only the fallback for
+        // a device whose family cannot answer. Walked here for ALL FOUR families x both tiers.
+        NpuFleetCensus.artifacts.forEach { a ->
+            val model = WhisperCatalog.byId(a.tierId)!!
+            val gate = NpuAssetImport.installedGateBytes(model, a)
+            assertEquals(
+                "${a.familyId}/${a.tierId}: the primary gate is the family's own measured " +
+                    "encoder bytes",
+                a.encoder.bytes,
+                gate.primaryBytes,
+            )
+            val paired = gate.paired!!
+            assertEquals(
+                "${a.familyId}/${a.tierId}: the paired gate is the family's own measured " +
+                    "decoder bytes",
+                a.decoder.bytes,
+                paired.bytes,
+            )
+            assertEquals(
+                "${a.familyId}/${a.tierId}: the paired gate keeps the CATALOG's delivery name " +
+                    "— names are the catalog's, bytes are the family's, the F3 doctrine",
+                model.pairedArtifact!!.fileName,
+                paired.fileName,
+            )
+            // The nesting doctrine, now true fleet-wide: everything the import accepts (the
+            // exact family bytes), the installed gate accepts.
+            assertTrue(
+                "${a.familyId}/${a.tierId}: a correct import's encoder passes the fixed gate",
+                WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, gate.primaryBytes),
+            )
+            assertTrue(
+                "${a.familyId}/${a.tierId}: and its decoder does too",
+                WhisperCatalog.sizeWithinTolerance(a.decoder.bytes, paired.bytes),
+            )
+        }
+        // The 7gen4 flip, stated as the before/after in one place: the same encoder bytes that
+        // FAIL the catalog-reference tolerance PASS the family-aware gate. This is the row that
+        // used to verify-then-roll-back.
+        val sevenGenFourSmall = NpuFleetCensus.artifactFor("7gen4", "npu")!!
+        val npuModel = WhisperCatalog.byId("npu")!!
+        assertFalse(
+            "BEFORE (the defect): 147,595,264 B is outside ±5% of the catalog's 132,927,488 B",
+            WhisperCatalog.sizeWithinTolerance(sevenGenFourSmall.encoder.bytes, npuModel.primaryBytes),
+        )
+        assertTrue(
+            "AFTER (the fix): the family-aware gate accepts the same file",
+            WhisperCatalog.sizeWithinTolerance(
+                sevenGenFourSmall.encoder.bytes,
+                NpuAssetImport.installedGateBytes(npuModel, sevenGenFourSmall).primaryBytes,
+            ),
+        )
+    }
+
+    @Test
+    fun theInstalledGateFallsBackToTheCatalogReferenceOnlyWhenTheFamilyCannotAnswer() {
+        // A null artifact is "this device's family is unknown, or has no measured row": the
+        // gate keeps the 4.0 behaviour — the catalog reference — because a size gate that
+        // refused every file on an unresolved family would un-install working tiers at a
+        // glance. (The IMPORT still refuses such a device outright; this predicate only judges
+        // what is already on disk.)
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        val fallback = NpuAssetImport.installedGateBytes(turbo, null)
+        assertEquals("the primary falls back to the catalog record", turbo.primaryBytes, fallback.primaryBytes)
+        assertEquals(
+            "and the paired file to ITS catalog record",
+            turbo.pairedArtifact!!.approxBytes,
+            fallback.paired!!.bytes,
+        )
+        // A single-file tier never had a paired gate and still does not.
+        val pro = WhisperCatalog.byId("pro")!!
+        val single = NpuAssetImport.installedGateBytes(pro, null)
+        assertEquals(pro.primaryBytes, single.primaryBytes)
+        assertEquals("no pair, no paired gate", null, single.paired)
+        // A cross-tier row is a programmer error that would silently size-gate against the
+        // WRONG pair — refused loudly, the same tripwire shape as melProbe's cell count.
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            NpuAssetImport.installedGateBytes(
+                WhisperCatalog.byId("npu")!!,
+                NpuFleetCensus.artifactFor("8gen3", "npu-turbo"),
+            )
+        }
+    }
+
+    // ------------------------------------------------------------------ the shared finalise (4.2 F5)
+
+    @Test
+    fun bothArrivalRoutesFinaliseThroughTheOneParkingTransaction() {
+        // ONE transaction, TWO arrival routes. The SAF import and the Play pack install both
+        // land through the same private finalise — park, rename, verify, roll back, announce —
+        // so there is no second install path to drift: a fix to the transaction fixes both
+        // doors, and a route that skipped it would show up as a live-count of one.
+        assertEquals(
+            "the finalise is declared exactly once",
+            1,
+            liveLineCount(manager, "private fun finalizeVerifiedPair("),
+        )
+        assertEquals(
+            "and called from exactly TWO live sites — the import route and the pack route",
+            2,
+            liveLineCount(manager, "finalizeVerifiedPair(model, parts)"),
+        )
+        assertEquals(
+            "the park is spelled once in the whole manager — a second `renameTo(previous)` " +
+                "would be a second transaction",
+            1,
+            liveLineCount(manager, "if (dest.renameTo(previous)) {"),
+        )
+        assertEquals(
+            "and the move-into-place once too",
+            1,
+            liveLineCount(manager, "if (part.renameTo(dest)) {"),
+        )
+    }
+
+    @Test
+    fun theInstallFromPackFlowVerifiesInTheImportsOrder() {
+        // The pack route's verification ORDER is the import's: identity (metadata parse +
+        // cross-check) before the expensive part, the free-space budget before a byte is
+        // copied, the streamed hash during the copy, the shared finalise last. Source-pinned
+        // because installFromPack is Context-bound (File/StatFs), the same split as the import.
+        val pack = body(manager, "WhisperModelManager.kt", "    suspend fun installFromPack(")
+        assertEquals(
+            "the family arrives as an ARGUMENT — the controller resolved it from the app memo, " +
+                "and this function never re-derives it",
+            1,
+            count(pack, "        family: NpuSocFamily,"),
+        )
+        assertEquals(
+            "the artifact row is the family's own",
+            1,
+            liveLineCount(pack, "NpuFleetCensus.artifactFor(family.id, tierId)"),
+        )
+        assertEquals(
+            "and the verifying map is built from BOTH — the same two-argument derivation the " +
+                "import uses",
+            1,
+            liveLineCount(pack, "NpuAssetImport.requiredEntriesFor(model, artifact)"),
+        )
+        val empty = liveIndexOfOrFail(pack, "installFromPack", "NpuPackFetch.emptyDeliveryRefusal()")
+        val parse = liveIndexOfOrFail(pack, "installFromPack", "NpuPackMetadata.parse(")
+        val cross = liveIndexOfOrFail(
+            pack, "installFromPack", "NpuPackMetadata.crossCheckRefusal(meta, family, artifact, tierId)"
+        )
+        val space = liveIndexOfOrFail(pack, "installFromPack", "NpuAssetImport.freeSpaceRefusal(usable, needed)")
+        val hash = liveIndexOfOrFail(pack, "installFromPack", "MessageDigest.getInstance(\"SHA-256\")")
+        val missing = liveIndexOfOrFail(pack, "installFromPack", "NpuAssetImport.missingEntriesRefusal(required.keys, accepted)")
+        val finalise = liveIndexOfOrFail(pack, "installFromPack", "finalizeVerifiedPair(model, parts)")
+        assertTrue(
+            "empty-default ($empty) -> parse ($parse) -> cross-check ($cross) -> free-space " +
+                "($space) -> streamed hash ($hash) -> both-present ($missing) -> the shared " +
+                "finalise ($finalise): the import's order, on the pack route",
+            empty < parse && parse < cross && cross < space && space < hash &&
+                hash < missing && missing < finalise,
+        )
+        assertEquals(
+            "the debris of a dead import is settled first, exactly as the import settles it",
+            1,
+            liveLineCount(pack, "reconcileStagingDebris(dir, required.keys)"),
+        )
+    }
+
+    @Test
+    fun theMissingPackMetadataRefusesAsTheEmptyDefaultBeforeAByteIsCopied() {
+        // A device in no census group receives the EMPTY default variant: no metadata, no
+        // model. That is a NAMED state — "Google Play delivered no model for this device",
+        // with the import fallback named — not a crash on a missing file and not a mystery
+        // "missing entries" after a copy loop that had nothing to copy.
+        val pack = body(manager, "WhisperModelManager.kt", "    suspend fun installFromPack(")
+        assertEquals(
+            "the empty-delivery refusal has exactly one site",
+            1,
+            liveLineCount(pack, "NpuPackFetch.emptyDeliveryRefusal()"),
+        )
+        assertTrue(
+            "and it fires BEFORE the copy machinery — the refusal is about what Play delivered, " +
+                "not about what a copy failed to find",
+            liveIndexOfOrFail(pack, "installFromPack", "NpuPackFetch.emptyDeliveryRefusal()") <
+                liveIndexOfOrFail(pack, "installFromPack", "MessageDigest.getInstance(\"SHA-256\")"),
+        )
+        assertEquals(
+            "a metadata parse failure is refused through the bounded unreadable builder, " +
+                "exactly as the import peek refuses it",
+            1,
+            liveLineCount(pack, "\"metadata.json: \${badMeta.message}\""),
+        )
+        assertEquals(
+            "and the oversized-metadata guard holds the peek's own bound",
+            1,
+            liveLineCount(pack, "metaFile.length() > NpuPackMetadata.MAX_BYTES.toLong()"),
+        )
+    }
+
+    @Test
+    fun thePackInstallStreamsTheDigestDuringTheCopyAndStagesThroughPart() {
+        // The same three invariants the import's copy loop carries, on the pack route: the
+        // digest rides the copy (never a second read), every entry stages as `.part` through
+        // the same suffix, and the failure paths leave through the same refusal vocabulary
+        // with the same finally-sweep.
+        val pack = body(manager, "WhisperModelManager.kt", "    suspend fun installFromPack(")
+        assertEquals(
+            "one MessageDigest per entry, in the copy loop",
+            1,
+            liveLineCount(pack, "MessageDigest.getInstance(\"SHA-256\")"),
+        )
+        val write = liveIndexOfOrFail(pack, "installFromPack", "out.write(buffer, 0, n)")
+        val update = liveIndexOfOrFail(pack, "installFromPack", "digest.update(buffer, 0, n)")
+        val counted = liveIndexOfOrFail(pack, "installFromPack", "got += n")
+        assertTrue(
+            "the digest update is fed the exact buffer slice the write took " +
+                "(write=$write, update=$update, got+=$counted)",
+            write < update && update < counted,
+        )
+        assertEquals(
+            "and the pack route NEVER re-reads a staged file to hash it",
+            0,
+            liveLineCount(pack, "sha256HexFile"),
+        )
+        assertEquals(
+            "entries stage under the one `.part` suffix the sweeps know",
+            1,
+            liveLineCount(pack, "File(dir, name + NpuAssetImport.PART_SUFFIX)"),
+        )
+        assertEquals(
+            "the copy is cancellable between buffers",
+            1,
+            liveLineCount(pack, "callerContext.ensureActive()"),
+        )
+        val size = liveIndexOfOrFail(pack, "installFromPack", "NpuAssetImport.wrongSizeRefusal(name, got, entry.bytes)")
+        val digestAt = liveIndexOfOrFail(pack, "installFromPack", "NpuAssetImport.wrongDigestRefusal(name, entry.sha256, hexOf(digest.digest()))")
+        assertTrue(
+            "size verdict ($size) before digest verdict ($digestAt) — the import's own order",
+            size < digestAt,
+        )
+        assertEquals(
+            "every .part is cleared on failure, refusal or cancellation, in a finally",
+            1,
+            liveLineCount(pack, "parts.values.forEach { if (it.exists()) it.delete() }"),
+        )
+    }
+
+    @Test
+    fun theOneInstallAnnouncementLivesInTheSharedFinaliseAndNeitherRouteAnnouncesItself() {
+        // `notifyModelInstalled()` bumps the generation both chooser producers re-read on, and
+        // it may only fire for a pair that is verified ON DISK. With two arrival routes the one
+        // safe home is the shared finalise itself — after its isInstalled verification, before
+        // nothing: a route that announced on its own could announce a pair the transaction then
+        // rolled back.
+        val finalise = body(manager, "WhisperModelManager.kt", "    private fun finalizeVerifiedPair(")
+        assertEquals(
+            "the finalise announces exactly once",
+            1,
+            liveLineCount(finalise, "prefs.notifyModelInstalled()"),
+        )
+        assertTrue(
+            "AFTER its own verification — announcing before it is announcing something not yet true",
+            liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "finaliseFailure == null && !isInstalled(model)") <
+                liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "prefs.notifyModelInstalled()"),
+        )
+        assertEquals(
+            "the import route does not announce on its own",
+            0,
+            liveLineCount(importBody, "prefs.notifyModelInstalled()"),
+        )
+        assertEquals(
+            "and neither does the pack route",
+            0,
+            liveLineCount(
+                body(manager, "WhisperModelManager.kt", "    suspend fun installFromPack("),
+                "prefs.notifyModelInstalled()",
+            ),
+        )
+        assertEquals(
+            "the rollback reports the STAGED names — this tier's own files, whichever route " +
+                "staged them",
+            1,
+            liveLineCount(finalise, "rollBackFinalise(finaliseFailure, staged.keys, renamed, parked)"),
         )
     }
 

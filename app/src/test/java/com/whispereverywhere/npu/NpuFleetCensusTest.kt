@@ -381,32 +381,35 @@ class NpuFleetCensusTest {
     }
 
     @Test
-    fun theSevenGenFourEncodersSitOutsideTheInstalledToleranceAndTheCensusSaysSo() {
+    fun theSevenGenFourEncodersSitOutsideTheReferenceToleranceAndTheFamilyAwareGateAcceptsThem() {
         // MEASURED 2026-08-30, and stated rather than blurred: HTP v73 packs weights less
-        // densely, so BOTH 7gen4 encoders exceed the ±5% tolerance isInstalled applies around
-        // the catalog's reference record (+11.0% small, +9.1% turbo). Until the installed-size
-        // gate reads the family's census bytes — F5's install-flow work, carried BY NAME —
-        // a correct 7gen4 import verifies its copy and then fails the finalise's isInstalled
-        // check. This test is the fact's tripwire in BOTH directions: if a vendor re-release
-        // brings the encoders inside tolerance, or pushes any other row outside, the census
-        // was re-measured and this statement must be re-made, not inherited.
+        // densely, so BOTH 7gen4 encoders exceed the ±5% band around the CATALOG's reference
+        // record (+11.0% small, +9.1% turbo). Under the 4.0 gate that meant a CORRECT 7gen4
+        // install verified its copy exactly and then failed the finalise's isInstalled check
+        // and rolled itself back. THE FIX LANDED IN 4.2 F5 — this statement re-made with it,
+        // as its own message demanded: NpuAssetImport.installedGateBytes reads THIS census's
+        // per-family bytes, and the gate walk below holds every family GREEN through the fixed
+        // gate. The reference-band half stays the fact's tripwire in BOTH directions: if a
+        // vendor re-release brings the encoders inside the reference band, or pushes any other
+        // row outside it, the census was re-measured and this statement must be re-made again,
+        // not inherited.
         for (a in artifacts) {
             val model = requireNotNull(WhisperCatalog.byId(a.tierId))
-            val encoderInside =
+            val encoderInsideReference =
                 WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, model.primaryBytes)
             if (a.familyId == "7gen4") {
                 assertFalse(
                     "${a.familyId}/${a.tierId}: the v73 encoder (${a.encoder.bytes} B) is " +
-                        "OUTSIDE the ±5% gate around the reference ${model.primaryBytes} B — " +
-                        "the F5 carry this test exists to keep loud",
-                    encoderInside
+                        "OUTSIDE the ±5% band around the reference ${model.primaryBytes} B — " +
+                        "the measured fact the F5 gate fix exists for",
+                    encoderInsideReference
                 )
             } else {
                 assertTrue(
                     "${a.familyId}/${a.tierId}: encoder ${a.encoder.bytes} B within ±5% of " +
-                        "the reference ${model.primaryBytes} B — the strict-inside-tolerant " +
-                        "nesting holds for this family today",
-                    encoderInside
+                        "the reference ${model.primaryBytes} B — every other family sits " +
+                        "inside the reference band today",
+                    encoderInsideReference
                 )
             }
             assertTrue(
@@ -414,6 +417,20 @@ class NpuFleetCensusTest {
                     "reference record",
                 WhisperCatalog.sizeWithinTolerance(
                     a.decoder.bytes, requireNotNull(model.pairedArtifact).approxBytes
+                )
+            )
+            // GREEN-BY-FIX: the family-aware gate accepts every family's own pair — 7gen4
+            // included, the row that used to verify-then-roll-back.
+            val gate = NpuAssetImport.installedGateBytes(model, a)
+            assertTrue(
+                "${a.familyId}/${a.tierId}: the F5 gate reads this row's own encoder bytes, " +
+                    "so a correct install of this family's pair now reads as installed",
+                WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, gate.primaryBytes)
+            )
+            assertTrue(
+                "${a.familyId}/${a.tierId}: and this row's own decoder bytes",
+                WhisperCatalog.sizeWithinTolerance(
+                    a.decoder.bytes, requireNotNull(gate.paired).bytes
                 )
             )
         }

@@ -411,6 +411,18 @@ tasks.withType<Test>().configureEach {
         // below), and the next assertion that reads this file as text is not required to
         // remember the distinction.
         "src/main/java/com/whispereverywhere/npu/NpuFleetCensus.kt",
+        // (4.2 F5) NpuPackController.kt — the Play fetch flow's Android shell. It is
+        // AssetPackManager-bound (no JVM test can construct it), so NpuDiagTest pins its
+        // emission sites and the remove-after-install ORDER as source text; without this
+        // entry an edit confined to the shell leaves the task UP-TO-DATE and those pins pass
+        // against the file as it used to be.
+        "src/main/java/com/whispereverywhere/npu/NpuPackController.kt",
+        // (4.2 F5) NpuDiag.kt joins by the list's stated rule — membership follows what the
+        // tests READ. NpuDiagTest has read it as text since 4.0 (the contiguous-literal pins)
+        // and now also re-derives the unavailable() stage enumeration from it; a comment-only
+        // edit to this file changes no .class file, so without this entry the one mutation
+        // those pins exist to catch is the one that never re-runs them.
+        "src/main/java/com/whispereverywhere/npu/NpuDiag.kt",
         "src/main/java/com/whispereverywhere/model/WhisperModelManager.kt",
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
@@ -795,6 +807,13 @@ dependencies {
     // the census families' skels out of the AAR (see the task above the dependencies block).
     // The restated coordinate is pinned equal to the line above by NpuSkelPackagingTest.
     qnnSkelSource("com.qualcomm.qti:qnn-runtime:2.49.0")
+
+    // Play Asset Delivery (4.2 F5): the on-demand fetch of the two NPU pack modules the F4
+    // bundle declares. The pure state machine (NpuPackFetch) mirrors AssetPackStatus /
+    // AssetPackErrorCode as documented constants, and NpuPackFetchTest asserts the mirror
+    // against THIS library's own classes — so a version bump that renumbers either enum fails
+    // a JVM test rather than shipping a silent remap.
+    implementation("com.google.android.play:asset-delivery-ktx:2.3.0")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.1.1")

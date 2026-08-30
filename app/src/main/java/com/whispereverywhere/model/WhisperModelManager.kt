@@ -14,7 +14,9 @@ import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuModelSpec
+import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.npu.NpuPackMetadata
+import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.transcription.ModelPathProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -47,20 +49,33 @@ class WhisperModelManager(
     private fun fileFor(model: WhisperModel): File = File(modelsDir(), model.fileName)
 
     /**
-     * Installed = every file this tier needs is present at its own size, within ±5%.
+     * Installed = every file this tier needs is present at its own size, within ±5% of the
+     * DEVICE FAMILY'S census bytes (4.2 F5 — the F3 carry, by name), or of the catalog's
+     * reference record when the family cannot answer.
      *
-     * The primary is gated against [WhisperModel.primaryBytes], NOT `approxBytes`: for a paired
-     * tier (npu) `approxBytes` is the sum of both files, and comparing the encoder alone against
-     * the pair's total is 63% out — the tier would read as "not installed" forever no matter what
-     * the owner imported. For every single-file tier the two are the same number, so this is the
-     * predicate it has always been.
+     * The reference selection is [NpuAssetImport.installedGateBytes], a pure decision with its
+     * own tests, because the F3 measurement proved the catalog reference is not one number per
+     * tier: both 7gen4 encoders sit outside ±5% of it (+11.0%/+9.1%), so around the catalog a
+     * CORRECT 7gen4 import verified exactly and then failed THIS predicate inside the
+     * finalise's own verification and rolled itself back. The family memo is the F2 chain
+     * (`WhisperEverywhereApp.npuSocFamily` — the one resolution, never re-derived), and a
+     * single-file tier never resolves an artifact row at all, so the six ggml tiers keep the
+     * predicate they have always had.
+     *
+     * The primary is gated against the gate's `primaryBytes`, NOT `approxBytes`: for a paired
+     * tier `approxBytes` is the sum of both files, and comparing the encoder alone against the
+     * pair's total is 63% out — the tier would read as "not installed" forever no matter what
+     * the owner imported.
      */
     fun isInstalled(model: WhisperModel): Boolean {
+        val artifact = (context.applicationContext as? WhisperEverywhereApp)?.npuSocFamily
+            ?.let { family -> NpuFleetCensus.artifactFor(family.id, model.id) }
+        val gate = NpuAssetImport.installedGateBytes(model, artifact)
         val f = fileFor(model)
-        if (!f.exists() || !WhisperCatalog.sizeWithinTolerance(f.length(), model.primaryBytes)) return false
-        val paired = model.pairedArtifact ?: return true
+        if (!f.exists() || !WhisperCatalog.sizeWithinTolerance(f.length(), gate.primaryBytes)) return false
+        val paired = gate.paired ?: return true
         val pf = File(modelsDir(), paired.fileName)
-        return pf.exists() && WhisperCatalog.sizeWithinTolerance(pf.length(), paired.approxBytes)
+        return pf.exists() && WhisperCatalog.sizeWithinTolerance(pf.length(), paired.bytes)
     }
 
     /** The selected model, if it is actually installed on disk. */
@@ -550,12 +565,14 @@ class WhisperModelManager(
      * If the roll-back itself fails, the message names exactly which of the two files are on the
      * device and which are gone; see [rollBackFinalise].
      *
-     * **`prefs.notifyModelInstalled()` is the last thing it does, and the order is the contract**
-     * (Q7b fix round, I1). It bumps `ModelInstallSignal.generation`, the key both chooser producers
-     * re-read the offer gate on; without it the tier card stays hidden in the very composition that
-     * just imported its assets. After the verification and never before, for the same reason
-     * `verifyDest` announces last: a signal sent for files that get deleted a line later is worse
-     * than no signal.
+     * **`prefs.notifyModelInstalled()` fires inside the shared finalise, after its verification
+     * and never before — the order is the contract** (Q7b fix round, I1; the announce moved into
+     * [finalizeVerifiedPair] at 4.2 F5 so both arrival routes announce through one funnel). It
+     * bumps `ModelInstallSignal.generation`, the key both chooser producers re-read the offer
+     * gate on; without it the tier card stays hidden in the very composition that just imported
+     * its assets. After the verification and never before, for the same reason `verifyDest`
+     * announces last: a signal sent for files that get deleted a line later is worse than no
+     * signal.
      *
      * Main-safe by construction (`Dispatchers.IO`): 358 MB of inflate on the main thread is an ANR,
      * not a jank. Cancellation is honoured between buffers and leaves no `.part` behind, so a retry
@@ -777,61 +794,17 @@ class WhisperModelManager(
             NpuAssetImport.missingEntriesRefusal(required.keys, accepted)
                 ?.let { return@withContext refuseImport(it) }
 
-            // Both files exist at their exact published lengths. Finalising is TWO PHASES and a
-            // roll-back, not two renames (fix round 1, I2).
-            //
-            // PHASE 1 parks every currently-installed file of this tier under `.prev`. PHASE 2
-            // renames each `.part` into place. The old code deleted the destination first, so a
-            // failed SECOND rename left the device with neither the new pair nor the old one —
-            // while telling the user "Nothing was installed". A destroyed working tier is not
-            // nothing. Parking rather than deleting is what makes the previous pair genuinely
-            // survivable; a rename cannot be "rolled back" onto a file that was already unlinked.
-            val parked = LinkedHashMap<File, File>()   // destination -> the parked previous file
-            val renamed = mutableListOf<File>()
-            var finaliseFailure: String? = null
-
-            for (name in parts.keys) {
-                val dest = File(dir, name)
-                if (!dest.exists()) continue
-                val previous = File(dir, name + NpuAssetImport.PREVIOUS_SUFFIX)
-                if (previous.exists()) previous.delete()
-                if (dest.renameTo(previous)) {
-                    parked[dest] = previous
-                } else {
-                    finaliseFailure = "The previously installed files could not be set aside"
-                    break
-                }
+            // Both files exist at their exact published lengths and digests. The finalise is
+            // THE ONE PARKING TRANSACTION both arrival routes share (4.2 F5) — park, rename,
+            // verify, roll back, announce — extracted so the Play pack route lands through the
+            // same machinery rather than a second install path free to drift.
+            val outcome = finalizeVerifiedPair(model, parts)
+            if (outcome is NpuAssetImport.ImportState.Refused) {
+                return@withContext refuseImport(outcome.reason)
             }
-            if (finaliseFailure == null) {
-                for ((name, part) in parts) {
-                    val dest = File(dir, name)
-                    if (part.renameTo(dest)) {
-                        renamed += dest
-                    } else {
-                        finaliseFailure = "The imported files could not be moved into place"
-                        break
-                    }
-                }
-            }
-            // The verification is part of the SAME transaction: a pair that does not read as
-            // installed is not a successful import that happens to look odd, it is a failed one,
-            // and leaving it on disk would make the next import's "is a pair already installed"
-            // reasoning — and its free-space budget — answer about garbage.
-            if (finaliseFailure == null && !isInstalled(model)) {
-                finaliseFailure = "The imported files did not verify on disk"
-            }
-            if (finaliseFailure != null) {
-                return@withContext refuseImport(
-                    rollBackFinalise(finaliseFailure, required.keys, renamed, parked)
-                )
-            }
-            // Committed. The parked copies are now genuinely superseded.
-            parked.values.forEach { if (it.exists()) it.delete() }
             onProgress(total, total)
             android.util.Log.i(NpuDiag.TAG, NpuAssetImport.okLine(accepted.size, written))
-            // LAST, and only now. See the KDoc: the chooser's producers key on this.
-            prefs.notifyModelInstalled()
-            NpuAssetImport.ImportState.Installed
+            outcome
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled // the finally below still clears the .part files
         } catch (t: Throwable) {
@@ -841,6 +814,254 @@ class WhisperModelManager(
         } finally {
             // Failure, refusal or cancellation — a retry starts clean. On success there is nothing
             // here, because every .part was renamed away.
+            parts.values.forEach { if (it.exists()) it.delete() }
+        }
+    }
+
+    /**
+     * THE ONE PARKING TRANSACTION — the finalise both arrival routes share (4.2 F5; the
+     * transaction itself is fix round 1, I2 / micro-round 2 unchanged, extracted verbatim from
+     * the import so the Play pack route cannot grow a second, drifting copy of it).
+     *
+     * Precondition: every file in [staged] has ALREADY verified — exact bytes, streamed digest
+     * — under its `.part` path. This function is only the landing: PHASE 1 parks each installed
+     * destination under `.prev`, PHASE 2 renames each `.part` into place, the [isInstalled]
+     * verification joins the same transaction, any failure leaves through [rollBackFinalise]
+     * with the message that is true of the device afterwards, and only a committed transaction
+     * drops the parked copies and announces.
+     *
+     * **`prefs.notifyModelInstalled()` lives HERE, after the verification and never before —
+     * the order is the contract** (Q7b fix round, I1): it bumps the generation both chooser
+     * producers re-read the offer gate on, and a signal sent for files a rollback then removes
+     * is worse than no signal. With two arrival routes the one safe home is the transaction
+     * itself; neither route announces on its own.
+     *
+     * The caller keeps its own route-shaped skin: the import route logs `npu: import refused`/
+     * `npu: import ok`, the pack route's controller logs `pack: refused`/`pack: ok` — one
+     * transaction, one refusal vocabulary, two narrations.
+     *
+     * @param staged verified `.part` files by their catalog delivery name — the tier's own
+     *        names, whichever route staged them.
+     */
+    private fun finalizeVerifiedPair(
+        model: WhisperModel,
+        staged: LinkedHashMap<String, File>,
+    ): NpuAssetImport.ImportState {
+        val dir = modelsDir()
+        val parked = LinkedHashMap<File, File>()   // destination -> the parked previous file
+        val renamed = mutableListOf<File>()
+        var finaliseFailure: String? = null
+
+        for (name in staged.keys) {
+            val dest = File(dir, name)
+            if (!dest.exists()) continue
+            val previous = File(dir, name + NpuAssetImport.PREVIOUS_SUFFIX)
+            if (previous.exists()) previous.delete()
+            if (dest.renameTo(previous)) {
+                parked[dest] = previous
+            } else {
+                finaliseFailure = "The previously installed files could not be set aside"
+                break
+            }
+        }
+        if (finaliseFailure == null) {
+            for ((name, part) in staged) {
+                val dest = File(dir, name)
+                if (part.renameTo(dest)) {
+                    renamed += dest
+                } else {
+                    finaliseFailure = "The imported files could not be moved into place"
+                    break
+                }
+            }
+        }
+        // The verification is part of the SAME transaction: a pair that does not read as
+        // installed is not a successful install that happens to look odd, it is a failed one,
+        // and leaving it on disk would make the next install's "is a pair already installed"
+        // reasoning — and its free-space budget — answer about garbage. Since 4.2 F5 the gate
+        // reads the family's census bytes, which is what lets a correct 7gen4 pair pass here.
+        if (finaliseFailure == null && !isInstalled(model)) {
+            finaliseFailure = "The imported files did not verify on disk"
+        }
+        if (finaliseFailure != null) {
+            return NpuAssetImport.ImportState.Refused(
+                rollBackFinalise(finaliseFailure, staged.keys, renamed, parked)
+            )
+        }
+        // Committed. The parked copies are now genuinely superseded.
+        parked.values.forEach { if (it.exists()) it.delete() }
+        // LAST, and only now. See the KDoc: the chooser's producers key on this.
+        prefs.notifyModelInstalled()
+        return NpuAssetImport.ImportState.Installed
+    }
+
+    /**
+     * Install a paired tier from a DELIVERED Play asset pack (4.2 F5) — the third arrival
+     * route, verifying in the import's exact order and landing through the import's exact
+     * transaction. `NpuPackController` calls this when Play reports COMPLETED, which means
+     * DELIVERED and nothing more: everything below is what makes it installed.
+     *
+     * ```
+     * model/metadata.json exists?   (absent = the EMPTY default variant, refused by name)
+     *   ->  strict parse  ->  crossCheckRefusal   (IDENTITY: the wrong pack dies here by name)
+     *   ->  reconcile .prev debris  ->  free-space precheck
+     *   ->  stream-copy each bin to <name>.part, sha256 riding the copy   (INTEGRITY)
+     *   ->  size-verify  ->  digest-verify  ->  both present?
+     *   ->  finalizeVerifiedPair   (the SHARED parking transaction; announces on success)
+     * ```
+     *
+     * The free-space arithmetic is [NpuAssetImport.requiredFreeBytes] unchanged: the pack copy
+     * is already on disk (Play's storage) and staging adds one more pair — plus the parked pair
+     * when one is installed — which is exactly the `copies` model the import already budgets.
+     *
+     * No zip-slip guards here, and honestly so: the entry NAMES come from
+     * [NpuAssetImport.requiredEntriesFor] — the catalog's own literals — never from anything
+     * the network delivered, so a hostile name is unrepresentable on this route.
+     *
+     * A refusal leaves the delivered pack IN PLACE (the controller emits `pack: refused` and
+     * keeps the pack for a costless retry); only a successful install lets the controller call
+     * `removePack`, strictly after this returns Installed — a remove that runs early deletes
+     * the only copy mid-verify.
+     *
+     * @param family the device's resolved census family — the controller read it from the app
+     *        memo (the F2 chain) and refuses a null itself, so this parameter is non-null by
+     *        construction.
+     * @param packAssetsPath `AssetPackLocation.assetsPath()` — the delivered pack's assets
+     *        root, containing `model/` with exactly three files (F4's layout).
+     */
+    suspend fun installFromPack(
+        tierId: String,
+        family: NpuSocFamily,
+        packAssetsPath: String,
+        onProgress: (soFar: Long, total: Long) -> Unit = { _, _ -> },
+    ): NpuAssetImport.ImportState = withContext(Dispatchers.IO) {
+        val model = WhisperCatalog.byId(tierId)
+        val artifact = NpuFleetCensus.artifactFor(family.id, tierId)
+        val required = NpuAssetImport.requiredEntriesFor(model, artifact)
+        if (model == null || artifact == null || required.isEmpty()) {
+            return@withContext NpuAssetImport.ImportState.Refused(
+                "this build's catalog has no installable model pair for that tier, so there " +
+                    "is nothing to install into."
+            )
+        }
+
+        // THE EMPTY-DEFAULT SIGNATURE. Every real variant carries metadata.json (F4 writes it
+        // and self-verifies it); a delivered pack WITHOUT one is the empty default variant —
+        // Play's answer for a device in no census group — refused by name, with the import
+        // fallback named as the path forward.
+        val packModelDir = File(packAssetsPath, "model")
+        val metaFile = File(packModelDir, NpuPackMetadata.ENTRY_NAME)
+        if (!metaFile.isFile) {
+            return@withContext NpuAssetImport.ImportState.Refused(
+                NpuPackFetch.emptyDeliveryRefusal()
+            )
+        }
+        // The peek's own bound, kept on this route too: a huge file wearing the metadata name
+        // is never read into memory on the way to refusing it.
+        if (metaFile.length() > NpuPackMetadata.MAX_BYTES.toLong()) {
+            return@withContext NpuAssetImport.ImportState.Refused(
+                NpuAssetImport.unreadableRefusal(
+                    "metadata.json is ${metaFile.length()} B, larger than the " +
+                        "${NpuPackMetadata.MAX_BYTES} B bound"
+                )
+            )
+        }
+        // IDENTITY before a byte of binary is touched — the import peek's exact order: a
+        // wrong-group delivery (Play's one plausible wrongness) dies here by name, in
+        // milliseconds, not as a sha256 mismatch after ~GB of hashing.
+        val meta = try {
+            NpuPackMetadata.parse(metaFile.readText(Charsets.UTF_8))
+        } catch (badMeta: IllegalStateException) {
+            return@withContext NpuAssetImport.ImportState.Refused(
+                NpuAssetImport.unreadableRefusal(
+                    "metadata.json: ${badMeta.message}"
+                )
+            )
+        }
+        NpuPackMetadata.crossCheckRefusal(meta, family, artifact, tierId)
+            ?.let { return@withContext NpuAssetImport.ImportState.Refused(it) }
+
+        val dir = modelsDir()
+        // A previous install that died mid-finalise is settled FIRST, exactly as the import
+        // settles it, so the budget and the already-installed answer below are about reality.
+        reconcileStagingDebris(dir, required.keys)
+
+        val total = NpuAssetImport.pairBytes(required)
+        val usable = runCatching { StatFs(dir.absolutePath).availableBytes }
+            .getOrDefault(Long.MAX_VALUE)
+        val needed = NpuAssetImport.requiredFreeBytes(total, isInstalled(model))
+        NpuAssetImport.freeSpaceRefusal(usable, needed)
+            ?.let { return@withContext NpuAssetImport.ImportState.Refused(it) }
+
+        val callerContext = currentCoroutineContext()
+        val parts = LinkedHashMap<String, File>()
+        try {
+            val accepted = mutableSetOf<String>()
+            var written = 0L
+            var lastTick = 0L
+            val buffer = ByteArray(COPY_BUFFER_BYTES)
+            for ((name, entry) in required) {
+                val src = File(packModelDir, name)
+                if (!src.isFile) continue   // missingEntriesRefusal names it below
+                // The file's own length is its declared size; wrong dies before the copy.
+                val srcLen = src.length()
+                if (srcLen != entry.bytes) {
+                    return@withContext NpuAssetImport.ImportState.Refused(
+                        NpuAssetImport.wrongSizeRefusal(name, srcLen, entry.bytes)
+                    )
+                }
+                val part = File(dir, name + NpuAssetImport.PART_SUFFIX)
+                parts[name] = part
+                // THE DIGEST RIDES THE COPY, same as the import: one MessageDigest per entry,
+                // fed the exact buffer slice the write takes — never a second read of ~GB.
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                var got = 0L
+                java.io.FileInputStream(src).use { input ->
+                    java.io.FileOutputStream(part).use { out ->
+                        while (true) {
+                            callerContext.ensureActive()
+                            val n = input.read(buffer)
+                            if (n <= 0) break
+                            out.write(buffer, 0, n)
+                            digest.update(buffer, 0, n)
+                            got += n
+                            written += n
+                            if (written - lastTick >= PROGRESS_TICK_BYTES) {
+                                lastTick = written
+                                onProgress(if (written > total) total else written, total)
+                            }
+                        }
+                    }
+                }
+                if (got != entry.bytes) {
+                    return@withContext NpuAssetImport.ImportState.Refused(
+                        NpuAssetImport.wrongSizeRefusal(name, got, entry.bytes)
+                    )
+                }
+                // Size verdict, then digest verdict, before the entry counts as arrived — the
+                // import's order, the import's vocabulary.
+                NpuAssetImport.wrongDigestRefusal(name, entry.sha256, hexOf(digest.digest()))
+                    ?.let { return@withContext NpuAssetImport.ImportState.Refused(it) }
+                accepted += name
+            }
+            NpuAssetImport.missingEntriesRefusal(required.keys, accepted)
+                ?.let { return@withContext NpuAssetImport.ImportState.Refused(it) }
+
+            // THE SHARED PARKING TRANSACTION — the same function the SAF import lands through,
+            // which is the whole point: one transaction, two arrival routes.
+            val outcome = finalizeVerifiedPair(model, parts)
+            if (outcome is NpuAssetImport.ImportState.Installed) onProgress(total, total)
+            outcome
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled // the finally below still clears the .part files
+        } catch (t: Throwable) {
+            NpuAssetImport.ImportState.Refused(
+                NpuAssetImport.unreadableRefusal("${t.javaClass.simpleName}: ${t.message}")
+            )
+        } finally {
+            // Failure, refusal or cancellation — a retry starts clean. On success there is
+            // nothing here, because every .part was renamed away. The DELIVERED pack is never
+            // touched on this path: it stays for the costless retry.
             parts.values.forEach { if (it.exists()) it.delete() }
         }
     }
