@@ -192,6 +192,16 @@ object OnboardingLogic {
             "then tap Retry."
 
     /**
+     * The CHOOSER's sentence for that same refusal (F7 fix round 1, I-1). Every clause is true on
+     * THIS surface: the other card really is downloading, its Cancel really is on it, and this
+     * card's own button really is named Get. No position word — the sibling card can sit above or
+     * below this one depending on the steer.
+     */
+    const val CHOOSER_FETCH_BUSY =
+        "Another model is already downloading from Google Play. Cancel that download, or wait " +
+            "for it to finish, then tap Get again."
+
+    /**
      * Whether the gated route may attach its collector to the controller's state — null — or
      * must refuse instead (the returned copy). The ONE shape that refuses: `start()` was
      * denied AND the controller's active fetch names a DIFFERENT tier — attaching there would
@@ -209,6 +219,25 @@ object OnboardingLogic {
         } else {
             null
         }
+
+    /**
+     * The CHOOSER's words for the same refusal (F7 fix round 1, I-1). The chooser is the surface
+     * where the collision is most reachable — on a capable fresh Play install BOTH gated cards
+     * render "Get on Google Play" at once, so tapping the second one while the first fetches is
+     * one tap away — and before this fix that tap was a silent no-op: `start()` returned false,
+     * the controller published nothing, and the card kept its enabled button. The house rule the
+     * import panel states thirty lines below that button ("a silent 'nothing happened' is the one
+     * outcome an import is never allowed to have") applies to a fetch exactly as it does to an
+     * import.
+     *
+     * Per-surface COPY over one shared RULE — the F6 fix-round doctrine: [fetchAttachRefusal]
+     * remains the single decision (this function cannot disagree with it about WHEN a tap is
+     * refused, because it asks it), and only the sentence differs, because the onboarding card's
+     * "tap Retry" names a control the chooser card does not have. [CHOOSER_FETCH_BUSY] names what
+     * the chooser DOES have: the other card's Cancel, and this card's own button.
+     */
+    fun chooserFetchRefusal(started: Boolean, activeTierId: String?, tierId: String): String? =
+        if (fetchAttachRefusal(started, activeTierId, tierId) == null) null else CHOOSER_FETCH_BUSY
 
     /**
      * One [NpuPackFetch.FetchState] to exactly one [EngineState] — the whole translation between

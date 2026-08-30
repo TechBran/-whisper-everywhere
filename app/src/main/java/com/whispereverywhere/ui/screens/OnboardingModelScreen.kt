@@ -36,6 +36,7 @@ import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel.DownloadState
+import com.whispereverywhere.ui.onboarding.OnboardingLogic
 import com.whispereverywhere.ui.theme.Primary
 import com.whispereverywhere.ui.theme.Success
 import com.whispereverywhere.ui.theme.Warning
@@ -167,6 +168,12 @@ fun OnboardingModelScreen(
     // The tier the user tapped (drives which card shows progress / error).
     var activeModelId by remember { mutableStateOf<String?>(null) }
 
+    // F7 fix round 1 (I-1): the refusal a Get tap EARNED, remembered as (tier id, sentence) so it
+    // renders on the card that was tapped — never on the tier that is actually fetching, which is
+    // already saying its own piece. Screen-level because the tap recomposes the card that would
+    // otherwise own it. Cleared by any tap that succeeds (the rule answers null).
+    var fetchRefusal by remember { mutableStateOf<Pair<String, String>?>(null) }
+
     // Fire the ready callback exactly once when the download completes.
     LaunchedEffect(state) {
         val s = state
@@ -222,7 +229,19 @@ fun OnboardingModelScreen(
                 // ONE start site, handed this card's own tier id. The Get button, Retry and
                 // the card-body tap all share it; the controller is single-flight and safe to
                 // call again after any terminal state, so sharing costs nothing.
-                val startFetch: () -> Unit = { NpuPackController.start(app, model.id) }
+                //
+                // F7 fix round 1 (I-1): start()'s answer is CONSUMED. It is false whenever a
+                // fetch is already running, and the controller publishes nothing in that case —
+                // so a discarded Boolean is a dead tap on the most reachable path this feature
+                // has (both gated cards render Get at once on a fresh capable Play install).
+                // The SHARED rule decides (OnboardingLogic.fetchAttachRefusal, via the chooser's
+                // own wording); a successful tap answers null and clears any stale refusal.
+                val startFetch: () -> Unit = {
+                    val started = NpuPackController.start(app, model.id)
+                    fetchRefusal = OnboardingLogic.chooserFetchRefusal(
+                        started, NpuPackController.activeTier.value, model.id,
+                    )?.let { model.id to it }
+                }
 
                 ModelTierCard(
                     model = model,
@@ -237,6 +256,8 @@ fun OnboardingModelScreen(
                     // The fetch renders ONLY on the card whose tier the controller itself
                     // names — a sibling card can never wear another tier's progress.
                     fetch = if (fetchable && fetchTierId == model.id) fetchState else null,
+                    // The refused tap's words, on the card that earned them (I-1).
+                    refusal = fetchRefusal?.takeIf { it.first == model.id }?.second,
                     // The honest size where the family's census answers; catalog otherwise.
                     pairBytes = censusPairBytes[model.id],
                     // 4.2 F7: a fetchable card's body tap FETCHES — the same one start site as
@@ -336,15 +357,29 @@ private fun NpuImportPanel(
                 Spacer(modifier = Modifier.height(6.dp))
             }
             Text(
-                text = if (offered)
-                    "The multilingual NPU model is installed. Import the pair again only if you " +
-                        "are replacing it — your existing files stay in place until the new ones " +
-                        "have been checked."
-                else
-                    "The multilingual model can run on this device's AI chip, which is much " +
-                        "faster than the CPU. Its files are not downloaded in the app: get the " +
-                        "model pair zip from the release page, then import it here. It needs " +
-                        "about 358 MB once installed, and roughly twice that free while importing.",
+                // F7 fix round 1 (I-3): the middle arm exists because the flat claim below it
+                // ("its files are not downloaded in the app") is FALSE the moment a fetch card
+                // renders above — they download from that card, which is exactly what the
+                // leading sentence says. The import is the fallback FOR a Play failure there,
+                // and the sentence now says so. The flat arm survives unchanged for the state
+                // where it is still true: no fetch card, so the zip really is the only route.
+                text = when {
+                    offered ->
+                        "The multilingual NPU model is installed. Import the pair again only if " +
+                            "you are replacing it — your existing files stay in place until the " +
+                            "new ones have been checked."
+                    fetchAbove ->
+                        "The multilingual model can run on this device's AI chip, which is " +
+                            "much faster than the CPU. If Google Play can't deliver the files, " +
+                            "get the model pair zip from the release page and import it here. " +
+                            "It needs about 358 MB once installed, and roughly twice that free " +
+                            "while importing."
+                    else ->
+                        "The multilingual model can run on this device's AI chip, which is much " +
+                            "faster than the CPU. Its files are not downloaded in the app: get the " +
+                            "model pair zip from the release page, then import it here. It needs " +
+                            "about 358 MB once installed, and roughly twice that free while importing."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -448,6 +483,8 @@ private fun NpuImportPanel(
  * @param fetch the Play fetch's state, non-null ONLY while the controller's running fetch is
  *        THIS tier's (4.2 F7). Null renders the resting affordance for a fetchable card and
  *        nothing extra for every other card.
+ * @param refusal what a Get tap on THIS card earned when the controller refused it (F7 fix
+ *        round 1, I-1), or null. A tap that changes nothing must still say so.
  * @param pairBytes the device family's measured pair size from the census, or null where the
  *        family cannot answer — the badge then falls back to the catalog's approximation.
  * @param onFetch starts (or retries) the Play fetch of this tier's pack (4.2 F7).
@@ -461,6 +498,7 @@ private fun ModelTierCard(
     unavailableNote: String?,
     state: DownloadState,
     fetch: NpuPackFetch.FetchState?,
+    refusal: String?,
     pairBytes: Long?,
     onSelect: () -> Unit,
     onRetry: () -> Unit,
@@ -751,7 +789,7 @@ private fun ModelTierCard(
                 // failed branch names it in one sentence.
                 !downloadable -> {
                     Spacer(modifier = Modifier.height(12.dp))
-                    FetchActionArea(fetch = fetch, onFetch = onFetch)
+                    FetchActionArea(fetch = fetch, refusal = refusal, onFetch = onFetch, onImport = onImport)
                 }
 
                 else -> {
@@ -790,7 +828,46 @@ private fun ModelTierCard(
 @Composable
 private fun FetchActionArea(
     fetch: NpuPackFetch.FetchState?,
+    refusal: String?,
     onFetch: () -> Unit,
+    onImport: () -> Unit,
+) {
+    when {
+        // F7 fix round 1 (I-1). A tap that changed nothing still says what happened and what to
+        // do. It sits FIRST because it is only ever set for a card that is NOT the fetching one
+        // (the rule refuses exactly when another tier holds the controller), so it cannot
+        // shadow this card's own progress — and the button stays below it, live, because the
+        // answer to "wait or cancel the other one" is to tap it again.
+        refusal != null -> {
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    Icons.Filled.ErrorOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = refusal,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            FetchGetButton(onFetch)
+            FetchImportRoute(onImport)
+        }
+
+        else -> FetchStateArea(fetch = fetch, onFetch = onFetch, onImport = onImport)
+    }
+}
+
+@Composable
+private fun FetchStateArea(
+    fetch: NpuPackFetch.FetchState?,
+    onFetch: () -> Unit,
+    onImport: () -> Unit,
 ) {
     when (fetch) {
         is NpuPackFetch.FetchState.Pending,
@@ -850,28 +927,62 @@ private fun FetchActionArea(
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))
-            // The honest bridge to the panel that has always existed — one plain sentence.
+            // The honest bridge — and since F7 fix round 1 (I-2) the control it promises is
+            // directly below it, carrying THIS card's tier id. Before that fix this sentence
+            // and the ruled adjacency copy above it both pointed at the panel below, which
+            // hardcodes npu: for turbo — the tier the steer puts at the HEAD of the lineup —
+            // every failure named a route that could not install it.
             Text(
                 text = "You can also import the model pair from a zip below.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            FetchImportRoute(onImport)
         }
 
-        // Idle, Cancelled, Installed (transiently, until the generation-keyed producers
-        // re-render this card as the installed card), or another card's fetch (null): the
-        // resting offer.
+        // F7 fix round 1 (m-2): Installed is its own INERT arm. It falls in the window between
+        // the pair landing and the generation-keyed producers re-rendering this card as the
+        // installed card, and the `else` arm below is a LIVE control — a tap in that window
+        // starts a redundant re-fetch of a pack that just installed. Nothing is the right
+        // rendering: the card is about to become the installed card on its own.
+        is NpuPackFetch.FetchState.Installed -> Unit
+
+        // Idle, Cancelled, or another card's fetch (null): the resting offer, plus the manual
+        // route for this card's own tier (I-2 — "import from Settings later" has to be true
+        // for turbo too, and Settings' picker IS this screen).
         else -> {
-            Button(onClick = onFetch, modifier = Modifier.fillMaxWidth()) {
-                Icon(
-                    Icons.Filled.CloudDownload,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Get on Google Play")
-            }
+            FetchGetButton(onFetch)
+            FetchImportRoute(onImport)
         }
+    }
+}
+
+/** The resting affordance, spelled once — the two arms that offer it must not drift. */
+@Composable
+private fun FetchGetButton(onFetch: () -> Unit) {
+    Button(onClick = onFetch, modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            Icons.Filled.CloudDownload,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Get on Google Play")
+    }
+}
+
+/**
+ * THIS TIER's manual import route (F7 fix round 1, I-2) — the control the failure copy names,
+ * on the card whose tier it installs. The importer has been per-tier since 4.1 L6
+ * (`importNpuAssetPair(tierId, …)` over `NpuAssetImport.PAIRED_TIER_IDS`), so the machinery
+ * always accepted turbo; what F7 removed was the button, leaving turbo's copy pointing at the
+ * npu-hardcoded panel below. Restored here, secondary to Get: Play is the primary route and
+ * this is the manual one, exactly as the panel's own leading sentence says.
+ */
+@Composable
+private fun FetchImportRoute(onImport: () -> Unit) {
+    TextButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+        Text("Import model pair…")
     }
 }
 

@@ -114,6 +114,13 @@ object NpuPackController {
      */
     fun start(context: Context, tierId: String): Boolean = synchronized(this) {
         if (isBusy()) return false
+        // The requested tier is named BEFORE any refusal below can return (F7 fix round 1, m-1).
+        // The no-pack branch publishes a Failed the CARD must render, and both surfaces decide
+        // whose fetch a denied start belongs to by comparing this value: written after that
+        // branch, a second denial would inherit the PREVIOUS tier's name and be rewritten as
+        // "another model is downloading", burying the controller's own words. Still exactly one
+        // write site (pinned == 1) — it simply moved above the early return.
+        _activeTier.value = tierId
         val packName = NpuPackFetch.PACK_BY_TIER[tierId]
         if (packName == null) {
             // A tier without a pack is a caller bug, refused loudly rather than crashed on.
@@ -124,7 +131,6 @@ object NpuPackController {
         }
         val appCtx = context.applicationContext
         appContext = appCtx
-        _activeTier.value = tierId
         activePackName = packName
         lastLoggedPct = -1
         val mgr = manager ?: AssetPackManagerFactory.getInstance(appCtx).also {

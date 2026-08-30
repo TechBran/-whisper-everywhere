@@ -353,9 +353,12 @@ class NpuImportWiringPinTest {
             count(picker, "NpuPackController.start("),
         )
         assertEquals(
-            "and that one site passes the card's own model.id — never a literal",
+            "and that one site passes the card's own model.id — never a literal. RE-SPELLED at " +
+                "fix round 1 (in-commit — the old one-line form tripped this test by name " +
+                "first): the site became a block because it now CONSUMES start()'s answer, " +
+                "which is what turned the refused tap from silent into spoken (I-1)",
             1,
-            count(picker, "val startFetch: () -> Unit = { NpuPackController.start(app, model.id) }"),
+            count(picker, "                    val started = NpuPackController.start(app, model.id)"),
         )
         assertEquals(
             "a real cancel, at one site, through the same owner",
@@ -447,11 +450,191 @@ class NpuImportWiringPinTest {
             1,
             count(picker, "val fetchTierId by NpuPackController.activeTier.collectAsState()"),
         )
+        // RE-SPELLED at fix round 1, m-2 (in-commit — the old live-zero tripped by name first).
+        // The claim was "Installed needs no rendering", and the arm's ABSENCE delivered it by
+        // falling into `else` — which renders a LIVE Get button. In the window between the pair
+        // landing and the generation-keyed producers re-rendering this card as installed, a tap
+        // there re-fetches a pack that just installed. The claim is unchanged and now enforced
+        // by an arm that renders NOTHING, which is what "needs no rendering" always meant.
         assertEquals(
-            "Installed needs no rendering here: the install signal bumps the generation and " +
-                "the producers re-render the card as installed — no bespoke arm",
+            "Installed renders nothing at all: no control exists in the window before the " +
+                "install signal turns this into the installed card",
+            1,
+            count(picker, "        is NpuPackFetch.FetchState.Installed -> Unit"),
+        )
+        assertEquals(
+            "and it can never reach the resting arm's live button by falling through",
             0,
-            count(picker, "is NpuPackFetch.FetchState.Installed ->"),
+            count(picker, "is NpuPackFetch.FetchState.Installed -> {"),
+        )
+    }
+
+    /**
+     * F7 fix round 1, I-1 — **no tap on this screen is a silent no-op.** `start()` is
+     * single-flight, so tapping Get on the npu card while turbo fetches returns false and
+     * publishes NOTHING; before this fix the tapped card kept rendering its enabled Get button
+     * and the user learned nothing. The Boolean is now consumed at the one start site and the
+     * refusal — decided by the SHARED rule, worded for this surface — is remembered against the
+     * tier that earned it and rendered on that card alone.
+     */
+    @Test
+    fun noTapOnAFetchableCardIsASilentNoOp() {
+        assertEquals(
+            "the one start site CONSUMES start()'s answer and turns it into words through the " +
+                "shared rule — a discarded Boolean is the silent no-op itself",
+            1,
+            count(
+                picker,
+                block(
+                    "                val startFetch: () -> Unit = {",
+                    "                    val started = NpuPackController.start(app, model.id)",
+                    "                    fetchRefusal = OnboardingLogic.chooserFetchRefusal(",
+                    "                        started, NpuPackController.activeTier.value, model.id,",
+                    "                    )?.let { model.id to it }",
+                    "                }",
+                ),
+            ),
+        )
+        assertEquals(
+            "the refusal is remembered at screen level, so it survives the recomposition the " +
+                "tap itself causes",
+            1,
+            count(picker, "var fetchRefusal by remember { mutableStateOf<Pair<String, String>?>(null) }"),
+        )
+        assertEquals(
+            "and it renders on the card that EARNED it — never on the tier that is actually " +
+                "fetching, which is already saying its own piece",
+            1,
+            count(picker, "refusal = fetchRefusal?.takeIf { it.first == model.id }?.second,"),
+        )
+        assertEquals(
+            "the card renders the refusal in the action area, in the error voice",
+            1,
+            count(picker, "refusal != null -> {"),
+        )
+        assertEquals(
+            "the chooser never borrows onboarding's sentence, which names a Retry button this " +
+                "surface does not have",
+            0,
+            count(picker, "FETCH_BUSY_WITH_ANOTHER_MODEL"),
+        )
+    }
+
+    /**
+     * F7 fix round 1, I-2 — **the failure copy's import route must exist for the tier the card
+     * is about.** F7 made the uninstalled gated card reachable here for the first time and, in
+     * the same stroke, replaced that arm's per-tier Import button with the fetch affordance —
+     * leaving turbo's failure copy ("import the model pair from a zip below", and the ruled
+     * "Use 'Import model pair…' below instead") pointing at a panel that hardcodes npu and would
+     * refuse a turbo zip on entry-name validation. The import machinery itself has been per-tier
+     * since 4.1 L6 (`importNpuAssetPair(tierId, …)`, `PAIRED_TIER_IDS`), so the honest fix is to
+     * give the affordance back to the card, which already passes its own `model.id`.
+     */
+    @Test
+    fun everyFetchableCardCarriesItsOwnTiersImportRouteSoTheFailureCopyIsTrue() {
+        assertEquals(
+            "the fetchable card offers ITS OWN tier's import — the control the ruled adjacency " +
+                "copy names, on the card whose tier it would install",
+            1,
+            count(
+                picker,
+                block(
+                    "private fun FetchImportRoute(onImport: () -> Unit) {",
+                    "    TextButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {",
+                    "        Text(\"Import model pair…\")",
+                    "    }",
+                    "}",
+                ),
+            ),
+        )
+        assertEquals(
+            "it is rendered from ONE declaration, reached by each of the three arms in which " +
+                "no fetch of this tier's is running — refused, failed, resting — so the route " +
+                "the copy names is present in every state that names it, and the three cannot " +
+                "drift apart. The in-flight arms deliberately do NOT offer it: nothing there " +
+                "promises it, and a second route mid-fetch would be a competing button",
+            3,
+            count(picker, "            FetchImportRoute(onImport)"),
+        )
+        assertEquals(
+            "the resting arm carries it, under the Get button",
+            1,
+            count(
+                picker,
+                block(
+                    "        else -> {",
+                    "            FetchGetButton(onFetch)",
+                    "            FetchImportRoute(onImport)",
+                    "        }",
+                ),
+            ),
+        )
+        assertEquals(
+            "and the failed arm carries it directly under the sentence that promises it",
+            1,
+            count(
+                picker,
+                block(
+                    "                text = \"You can also import the model pair from a zip below.\",",
+                    "                style = MaterialTheme.typography.bodySmall,",
+                    "                color = MaterialTheme.colorScheme.onSurfaceVariant,",
+                    "            )",
+                    "            FetchImportRoute(onImport)",
+                ),
+            ),
+        )
+        assertEquals(
+            "the card's import still passes its OWN tier id — the whole point of L6, and what " +
+                "makes the copy true for turbo rather than only for npu",
+            1,
+            count(picker, "onImport = { onImportNpuAssets(model.id) },"),
+        )
+        assertEquals(
+            "the fetch area is handed that per-tier import",
+            1,
+            count(picker, "FetchActionArea(fetch = fetch, refusal = refusal, onFetch = onFetch, onImport = onImport)"),
+        )
+    }
+
+    /**
+     * F7 fix round 1, I-3 — **the panel may not contradict its own leading sentence.** With a
+     * fetch card above, "Its files are not downloaded in the app" is false: they download from
+     * the card, which is what the leading sentence says. The clause becomes the conditional it
+     * always meant — the import is what you reach for when Play cannot deliver — and the
+     * no-fetch-card state keeps today's copy verbatim, because there it is still true.
+     */
+    @Test
+    fun theImportPanelDoesNotContradictItsOwnLeadingSentence() {
+        assertEquals(
+            "with a fetch card above, the body says import is the fallback FOR a Play failure",
+            1,
+            count(
+                picker,
+                block(
+                    "                    fetchAbove ->",
+                    "                        \"The multilingual model can run on this device's AI chip, which is \" +",
+                    "                            \"much faster than the CPU. If Google Play can't deliver the files, \" +",
+                    "                            \"get the model pair zip from the release page and import it here. \" +",
+                    "                            \"It needs about 358 MB once installed, and roughly twice that free \" +",
+                    "                            \"while importing.\"",
+                ),
+            ),
+        )
+        assertEquals(
+            "the flat claim never renders beside the sentence that falsifies it: it survives " +
+                "ONLY in the arm where no fetch card exists, where it is still true",
+            1,
+            count(picker, "\"faster than the CPU. Its files are not downloaded in the app: get the \" +"),
+        )
+        // ORDER: the `offered` arm must stay first (an installed pair is the narrowest state),
+        // and `fetchAbove` must precede the flat `else`, or the contradiction returns with every
+        // presence count above still satisfied.
+        val offeredArm = indexOfOrFail(picker, "the panel", "                    offered ->")
+        val fetchArm = indexOfOrFail(picker, "the panel", "                    fetchAbove ->")
+        val flatArm = indexOfOrFail(picker, "the panel", "\"faster than the CPU. Its files are not downloaded in the app: get the \" +")
+        assertTrue(
+            "the panel's body arms are ordered installed -> fetchable -> neither",
+            offeredArm < fetchArm && fetchArm < flatArm,
         )
     }
 

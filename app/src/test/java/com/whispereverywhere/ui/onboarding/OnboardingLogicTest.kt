@@ -345,6 +345,89 @@ class OnboardingLogicTest {
         )
     }
 
+    @Test fun the_two_card_contention_is_refused_by_name_on_both_surfaces_from_the_one_rule() {
+        // F7 fix round 1, I-1 — THE most reachable concurrency path in the feature: on a capable
+        // fresh Play install BOTH gated cards render "Get on Google Play" at once, so tapping
+        // the second while the first fetches is one tap away. Before this fix that tap was a
+        // SILENT no-op (start() false, the controller publishes nothing, the card keeps its
+        // enabled button). Walked here as the two surfaces actually call it.
+        assertEquals(
+            "Another model is already downloading from Google Play. Cancel that download, " +
+                "or wait for it to finish, then tap Get again.",
+            OnboardingLogic.CHOOSER_FETCH_BUSY,
+        )
+        // 1. Tap Get on turbo: start() true, the controller names turbo. Nothing is refused.
+        assertNull(
+            OnboardingLogic.chooserFetchRefusal(
+                started = true, activeTierId = "npu-turbo", tierId = "npu-turbo",
+            ),
+        )
+        // 2. Tap Get on the npu card while turbo fetches: start() false, the controller's active
+        //    tier is turbo's. The tap is refused BY NAME on the chooser...
+        assertEquals(
+            OnboardingLogic.CHOOSER_FETCH_BUSY,
+            OnboardingLogic.chooserFetchRefusal(
+                started = false, activeTierId = "npu-turbo", tierId = "npu",
+            ),
+        )
+        // ...and on onboarding, in that surface's own words — one RULE, two sentences, each
+        // naming only controls its own surface has (the F6 per-surface-copy doctrine).
+        assertEquals(
+            OnboardingLogic.FETCH_BUSY_WITH_ANOTHER_MODEL,
+            OnboardingLogic.fetchAttachRefusal(
+                started = false, activeTierId = "npu-turbo", tierId = "npu",
+            ),
+        )
+        assertTrue(
+            "the chooser's sentence names this card's own button, never onboarding's Retry",
+            OnboardingLogic.CHOOSER_FETCH_BUSY.contains("tap Get again") &&
+                !OnboardingLogic.CHOOSER_FETCH_BUSY.contains("Retry"),
+        )
+        // 3. The two surfaces can never disagree about WHEN a tap is refused: the chooser's copy
+        //    is non-null exactly where the shared rule is. Walked over every shape either
+        //    surface can hand them.
+        val shapes = listOf(
+            Triple(true, null as String?, "npu"),
+            Triple(true, "npu", "npu"),
+            Triple(true, "npu-turbo", "npu"),
+            Triple(false, null as String?, "npu"),
+            Triple(false, "npu", "npu"),
+            Triple(false, "npu-turbo", "npu"),
+        )
+        for ((started, active, tier) in shapes) {
+            val onboarding = OnboardingLogic.fetchAttachRefusal(started, active, tier)
+            val chooser = OnboardingLogic.chooserFetchRefusal(started, active, tier)
+            assertEquals(
+                "the two surfaces refuse on exactly the same condition ($started, $active, $tier)",
+                onboarding == null,
+                chooser == null,
+            )
+        }
+        // 4. A denied start whose active tier IS this card's own is the re-attach path (a double
+        //    tap on the SAME card, or a relaunch onto Play's surviving download) — never a
+        //    refusal, because nothing went wrong.
+        assertNull(
+            OnboardingLogic.chooserFetchRefusal(
+                started = false, activeTierId = "npu", tierId = "npu",
+            ),
+        )
+        // 5. m-1 (taken because this fix makes it reachable from a second surface): the
+        //    controller now names the requested tier BEFORE the no-pack branch returns false, so
+        //    a no-pack denial reads activeTierId == tierId here and is NOT rewritten as a busy
+        //    story — the controller's own published "no Google Play pack for the '<id>' tier"
+        //    keeps its words on the card.
+        assertNull(
+            OnboardingLogic.chooserFetchRefusal(
+                started = false, activeTierId = "npu-max", tierId = "npu-max",
+            ),
+        )
+        assertNull(
+            OnboardingLogic.fetchAttachRefusal(
+                started = false, activeTierId = "npu-max", tierId = "npu-max",
+            ),
+        )
+    }
+
     // ---------------------------------------------------------------- engines gating
 
     @Test fun continue_unlocks_only_once_the_speech_model_is_ready() {
