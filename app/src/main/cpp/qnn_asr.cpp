@@ -46,6 +46,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -533,6 +534,27 @@ constexpr uint16_t kMaskBlocked = 0;
 /// values - exactly, not approximately. Writing 0 into a suppressed slot therefore cannot make it
 /// win unless every other slot is also 0, which is a dead graph output and is reported as one.
 constexpr uint16_t kLogitFloor = 0;
+
+// ---------------------------------------------------------------- 4.3.1 A: the decode guards
+//
+// The six OUT slots nativeDecodeSegment fills and the four terminator codes, as literals that
+// MIRROR NpuDecodeStats.kt. NpuNativeContractTest holds the two copies equal by source text; a
+// slot that moves here and not there is not a crash, it is the no-speech gate reading a rung index.
+constexpr int kStatNoSpeechProb = 0;
+constexpr int kStatAvgLogprob = 1;
+constexpr int kStatEntropy = 2;
+constexpr int kStatRung = 3;
+constexpr int kStatTerminator = 4;
+constexpr int kStatSteps = 5;
+constexpr int kStatSize = 6;
+constexpr float kTermEot = 0.0f;
+constexpr float kTermBudget = 1.0f;
+constexpr float kTermCap = 2.0f;
+constexpr float kTermCut = 3.0f;
+/// whisper_sequence_score's n: the repetition entropy is over the last 32 emitted ids.
+constexpr int32_t kEntropyWindow = 32;
+/// The stats value for "no scale was readable, so no probability was computed".
+constexpr float kStatUnreadable = -1.0f;
 
 // ---- token ids native has to know for itself ------------------------------------------------
 //
@@ -1938,6 +1960,117 @@ int32_t argmaxInRange(const uint16_t *logits, uint32_t lo, uint32_t hi) {
     return best;
 }
 
+// ---------------------------------------------------------------- 4.3.1 A: probabilities and sampling
+
+/// The logits tensor's per-tensor scale, or 0 when it cannot be read. Under a per-tensor affine
+/// `v = scale * (q + offset)` the offset cancels in every softmax, so the scale alone turns raw
+/// ufixed16 codes into log-odds. 0 means "no probability gate this session" — the entropy guard
+/// needs no scale and runs regardless; the probability-based gates report kStatUnreadable.
+float logitsScaleLocked() {
+    const Qnn_Tensor_t &t = g.dec.outputs[g.decLogitsIdx];
+    if (tensorDataType(t) != QNN_DATATYPE_UFIXED_POINT_16) return 0.0f;
+    const Qnn_QuantizeParams_t *q = tensorQuantParams(t);
+    if (!q || q->encodingDefinition != QNN_DEFINITION_DEFINED ||
+        q->quantizationEncoding != QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) return 0.0f;
+    const float s = q->scaleOffsetEncoding.scale;
+    return (s > 0.0f && std::isfinite(s)) ? s : 0.0f;
+}
+
+/// log(sum(exp(v_i - max))) + max over the vocabulary, in `v = scale * q` units. `excludeFloor`
+/// drops entries at kLogitFloor - the mask's -infinity, exactly whisper.cpp's filtered distribution
+/// - and is false for the RAW read at the SOT step, which whisper.cpp takes "before any logit
+/// filtering" (whisper.cpp:7432). Returns false when nothing is live.
+bool logSumExpLocked(const uint16_t *logits, uint32_t vocab, float scale, bool excludeFloor,
+                     double *outLogZ) {
+    float mx = 0.0f;
+    bool any = false;
+    for (uint32_t i = 0; i < vocab; ++i) {
+        if (excludeFloor && logits[i] == kLogitFloor) continue;
+        const float v = scale * static_cast<float>(logits[i]);
+        if (!any || v > mx) { mx = v; any = true; }
+    }
+    if (!any) return false;
+    double sum = 0.0;
+    for (uint32_t i = 0; i < vocab; ++i) {
+        if (excludeFloor && logits[i] == kLogitFloor) continue;
+        sum += std::exp(static_cast<double>(scale * static_cast<float>(logits[i]) - mx));
+    }
+    *outLogZ = static_cast<double>(mx) + std::log(sum);
+    return true;
+}
+
+/// p(<|nospeech|>) from the RAW logits of the step that predicts the token after SOT.
+float noSpeechProbabilityLocked(const uint16_t *logits, uint32_t vocab, float scale,
+                                int32_t noSpeechToken) {
+    double logZ = 0.0;
+    if (!logSumExpLocked(logits, vocab, scale, /*excludeFloor=*/false, &logZ)) return kStatUnreadable;
+    const double v = static_cast<double>(scale * static_cast<float>(logits[noSpeechToken]));
+    return static_cast<float>(std::exp(v - logZ));
+}
+
+/// log p(id) under the MASKED distribution (floor entries excluded), for avg_logprob.
+double maskedLogprobLocked(const uint16_t *logits, uint32_t vocab, float scale, int32_t id) {
+    double logZ = 0.0;
+    if (!logSumExpLocked(logits, vocab, scale, /*excludeFloor=*/true, &logZ)) return 0.0;
+    return static_cast<double>(scale * static_cast<float>(logits[id])) - logZ;
+}
+
+/// MASK, THEN DRAW - the sampling twin of suppressThenArgmax, for the ladder's T > 0 rungs. The
+/// mask writes are repeated here rather than factored out so that both selectors keep the
+/// "mask first, in one function" shape the C2 comment above insists on. Floor entries carry no
+/// mass, so a suppressed id can never be drawn. Returns -1 when nothing is live.
+int32_t suppressThenSample(uint16_t *logits, uint32_t vocab,
+                           const std::vector<int32_t> &suppress,
+                           const std::vector<int32_t> &beginSuppress,
+                           bool applyBegin, float scale, float temperature, std::mt19937 &rng) {
+    for (int32_t id : suppress) {
+        logits[id] = kLogitFloor;
+    }
+    if (applyBegin) {
+        for (int32_t id : beginSuppress) {
+            logits[id] = kLogitFloor;
+        }
+    }
+    float mx = 0.0f;
+    bool any = false;
+    for (uint32_t i = 0; i < vocab; ++i) {
+        if (logits[i] == kLogitFloor) continue;
+        const float v = scale * static_cast<float>(logits[i]);
+        if (!any || v > mx) { mx = v; any = true; }
+    }
+    if (!any) return -1;
+    double sum = 0.0;
+    for (uint32_t i = 0; i < vocab; ++i) {
+        if (logits[i] == kLogitFloor) continue;
+        sum += std::exp(static_cast<double>((scale * static_cast<float>(logits[i]) - mx) / temperature));
+    }
+    std::uniform_real_distribution<double> uni(0.0, 1.0);
+    double target = uni(rng) * sum;
+    int32_t last = -1;
+    for (uint32_t i = 0; i < vocab; ++i) {
+        if (logits[i] == kLogitFloor) continue;
+        target -= std::exp(static_cast<double>((scale * static_cast<float>(logits[i]) - mx) / temperature));
+        last = static_cast<int32_t>(i);
+        if (target <= 0.0) return last;
+    }
+    return last;  // rounding fell off the end: the last live id
+}
+
+/// whisper_sequence_score's entropy (whisper.cpp:6885-6905): the histogram of the last
+/// kEntropyWindow ids, -sum(p ln p). Id-based - no probabilities involved.
+double trailingEntropy(const std::vector<int32_t> &ids, int32_t count) {
+    const int32_t n = count < kEntropyWindow ? count : kEntropyWindow;
+    if (n <= 0) return 0.0;
+    std::map<int32_t, int> hist;
+    for (int32_t i = count - n; i < count; ++i) hist[ids[static_cast<size_t>(i)]]++;
+    double h = 0.0;
+    for (const auto &kv : hist) {
+        const double p = kv.second / static_cast<double>(n);
+        h -= p * std::log(p);
+    }
+    return h;
+}
+
 // ------------------------------------------------- Q10a-D1: instrumentation, content-safe by
 // ------------------------------------------------- construction
 
@@ -2871,10 +3004,20 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
 /// the prompt through the same execute path, and the argmax produced at `position == promptLen - 1`
 /// is the FIRST GENERATED TOKEN. Positions 0..maskLen-2 execute (0..198 for this asset - an exact
 /// fit for the 199-deep self-KV); maskLen-1 is the termination threshold and never runs.
+///
+/// 4.3.1 A: the loop above is wrapped in whisper.cpp's temperature ladder and carries its three
+/// gates. [jTemperatures] is the ladder (rung 0 must be 0: the greedy loop this function has
+/// always been, byte-for-byte in what it emits when no gate trips); [entropyThold] judges the last
+/// kEntropyWindow ids at every step past the window; [logprobThold] and [noSpeechThold] decide
+/// whether a finished rung stands or the next temperature re-decodes against the same encode;
+/// [noSpeechToken] is the id whose RAW probability is read at the SOT step and never emitted;
+/// [jStats] receives kStatSize values by the kStat* slots on every >= 0 return.
 extern "C" JNIEXPORT jint JNICALL
 Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         JNIEnv *env, jobject /* this */, jintArray jPrompt, jintArray jSuppress,
-        jintArray jBeginSuppress, jint maxTokens, jintArray jOut) {
+        jintArray jBeginSuppress, jint maxTokens, jintArray jOut,
+        jfloatArray jTemperatures, jfloat entropyThold, jfloat logprobThold,
+        jfloat noSpeechThold, jint noSpeechToken, jfloatArray jStats) {
     std::lock_guard<std::mutex> lock(g.mu);
     if (!g.initialised || !g.decBound) {
         failure("decode: session not initialised");
@@ -2956,15 +3099,44 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         return -1;
     }
 
-    // Both sets, on entry. Cross-KV is NOT touched: it belongs to the current segment's encode and
-    // survives across as many decodes as the caller runs against it.
-    zeroSelfKvLocked();
+    // 4.3.1 A: THE GUARD ARGUMENTS, validated once, like the id lists above them.
+    std::vector<float> temperatures;
+    if (jTemperatures) {
+        const jsize n = env->GetArrayLength(jTemperatures);
+        if (n > 0) {
+            temperatures.resize(static_cast<size_t>(n));
+            env->GetFloatArrayRegion(jTemperatures, 0, n, temperatures.data());
+        }
+    }
+    if (temperatures.empty() || temperatures[0] != 0.0f) {
+        failure("decode: temperatures must start with 0 (the greedy rung); got " +
+                std::to_string(temperatures.size()) + " entries");
+        return -1;
+    }
+    for (size_t i = 1; i < temperatures.size(); ++i) {
+        if (!(temperatures[i] > temperatures[i - 1]) || !std::isfinite(temperatures[i])) {
+            failure("decode: temperatures must be finite and ascending at index " + std::to_string(i));
+            return -1;
+        }
+    }
+    if (!std::isfinite(entropyThold) || !std::isfinite(logprobThold) || !std::isfinite(noSpeechThold)) {
+        failure("decode: a guard threshold is not finite");
+        return -1;
+    }
+    if (noSpeechToken < 0 || noSpeechToken >= static_cast<int32_t>(g.vocab)) {
+        failure("decode: noSpeechToken " + std::to_string(noSpeechToken) + " is outside the vocabulary");
+        return -1;
+    }
+    if (!jStats || env->GetArrayLength(jStats) < kStatSize) {
+        failure("decode: stats must have room for " + std::to_string(kStatSize) + " values");
+        return -1;
+    }
+    const float scale = logitsScaleLocked();   // 0 => no probability gates this segment
 
     uint16_t *logits = static_cast<uint16_t *>(g.dec.outBufs[g.decLogitsIdx].p);
     const uint32_t promptLen = static_cast<uint32_t>(prompt.size());
     std::vector<int32_t> out(static_cast<size_t>(maxTokens), 0);
     int32_t count = 0;
-    int32_t next = prompt[0];
     bool hitEot = false;
     const auto t0 = Clock::now();
 
@@ -2978,138 +3150,216 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
 
     int32_t firstGenerated = -1;
     uint32_t lastPositionRun = 0;
-    uint32_t stepsRun = 0;
+    uint32_t stepsRun = 0;           // across every rung: the segment's real decode cost
 
-    for (uint32_t position = 0; position <= lastPosition; ++position) {
-        const int32_t tokenIn = (position < promptLen) ? prompt[position] : next;
-        // The set bound as the decoder's self-KV INPUT for the execute about to run. Captured
-        // before the step, because the swap after it is what this is meant to prove alternates.
-        const int inSetForStep = g.selfInSet;
-        err = decodeStepLocked(tokenIn, position);
-        if (!err.empty()) {
-            failure("decode: " + err);
-            return -2;
-        }
-        lastPositionRun = position;
-        ++stepsRun;
+    // 4.3.1 A: THE LADDER. Each rung is a full re-decode against the SAME encode - self-KV zeroed,
+    // prompt re-fed, cross-KV untouched - at temperatures[rung]. Rung 0 is the greedy loop this
+    // function has always been; it is byte-identical in what it emits when no gate trips.
+    float noSpeechProb = kStatUnreadable;
+    double avgLogprob = 0.0;
+    double entropyLast = 0.0;
+    size_t rungUsed = 0;
+    float terminator = kTermEot;
+    for (size_t rung = 0; rung < temperatures.size(); ++rung) {
+        const float temperature = temperatures[rung];
+        std::mt19937 rng(0x5EEDu ^ static_cast<uint32_t>(rung));   // deterministic per rung
+        zeroSelfKvLocked();
+        count = 0;
+        hitEot = false;
+        double sumLogprob = 0.0;
+        bool failedEntropy = false;
+        int32_t failedAt = 0;
+        int32_t next = prompt[0];
+        entropyLast = 0.0;
+        rungUsed = rung;
 
-        // ITEM 5 (Q10a-D2) - DID THE DECODER GRAPH WRITE ITS NEW SELF-KV SLOT? One line, at
-        // position 0 only, and it settles D1's H2 for the price of one buffer scan per segment.
-        //
-        // The step that just ran had set `inSetForStep` bound as its INPUT side, so its OUTPUT side
-        // is the other set - that is `bindSelfKvLocked`'s whole contract, and reading the wrong one
-        // here would report the ZEROED set and manufacture the failure it is looking for. The swap
-        // that follows only re-points descriptors; it moves no bytes, so the set identified here
-        // stays the one the graph wrote.
-        //
-        // At position 0 with a zeroed cache, `nonzero=0.000` means the graph produced no cache at
-        // all and every later position attends nothing - which would be a decoder fault. Anything
-        // else means the self-KV path works and the defect is upstream, in the encoder's input.
-        //
-        // Q10a-D3 EXTENSION: steps 0, 1 and 2, and the SLOT INDEX the graph wrote. Three lines
-        // decide the cache's alignment outright, because the two candidate layouts diverge from the
-        // very first step:
-        //   left-aligned, written at `position`   -> slot=[0..0], [0..1], [0..2]
-        //   right-aligned shift register          -> slot=[198..198], [197..198], [196..198]
-        // and the mask fill that is correct for one attends only padding under the other.
-        if (g.diag && position <= 2 && !g.selfOutIdx.empty()) {
-            const int outSetForStep = 1 - inSetForStep;
-            const AlignedBuf &b = g.selfKv[outSetForStep][0];
-            const U8Stats ss = b.p ? scanU8Stats(static_cast<const uint8_t *>(b.p), b.n) : U8Stats{};
-
-            // The slot axis, from this tensor's own dims. depth is the cache depth (199).
-            const Qnn_Tensor_t &st = g.dec.outputs[g.selfOutIdx[0]];
-            const uint32_t srank = tensorRank(st);
-            const uint32_t *sdm = tensorDims(st);
-            const uint32_t depth = g.maskLen - 1;
-            uint32_t stride = 0;
-            if (sdm && srank >= 2) {
-                if (sdm[srank - 1] == depth) stride = 1;
-                else if (sdm[srank - 2] == depth) stride = sdm[srank - 1];
+        for (uint32_t position = 0; position <= lastPosition; ++position) {
+            const int32_t tokenIn = (position < promptLen) ? prompt[position] : next;
+            // The set bound as the decoder's self-KV INPUT for the execute about to run. Captured
+            // before the step, because the swap after it is what this is meant to prove alternates.
+            const int inSetForStep = g.selfInSet;
+            err = decodeStepLocked(tokenIn, position);
+            if (!err.empty()) {
+                failure("decode: " + err);
+                return -2;
             }
-            const SlotSpan sp = b.p ? scanNonzeroSlots(static_cast<const uint8_t *>(b.p), b.n,
-                                                       stride, depth)
-                                    : SlotSpan{};
-            LOGDIAG("npu-debug: selfkv pos=%u inSet=%d outSet=%d tensor=%s bytes=%u min=%u max=%u "
-                    "mean=%.1f nonzero=%.3f depth=%u stride=%u firstOff=%lld lastOff=%lld "
-                    "slot=[%d..%d]",
-                    position, inSetForStep, outSetForStep,
-                    tensorName(g.dec.outputs[g.selfOutIdx[0]]), g.selfKvBytes,
-                    ss.lo, ss.hi, ss.mean, ss.nonzero, depth, stride,
-                    sp.firstOff, sp.lastOff, sp.slotMin, sp.slotMax);
-        }
+            lastPositionRun = position;
+            ++stepsRun;
 
-        // The prompt walk plus one step past it. Bounded: for the shipped 4-token prompt that is
-        // five lines per segment and then silence, whatever the segment's length.
-        //
-        // A HEALTHY WALK IS READABLE AT A GLANCE, which is why the raw argmax is here rather than
-        // just the final token: after bare SOT the model must want a LANGUAGE token; after the
-        // language token it must want <|transcribe|> (50359 in the whisper-small family, 50360
-        // under large-v3/turbo — the shifted-specials block, 4.1 L4); after that <|notimestamps|>
-        // (50363 small / 50364 large-v3); and only at position promptLen-1 should the answer
-        // become a text token. Any step where that chain breaks is the step where the prompt
-        // stopped taking. The ids are the FAMILY's, never universal: 50358 in particular is
-        // small's <|translate|> and large-v3's <|yue|>, which is why no per-id note here can be
-        // read without the family in hand.
-        const bool trace = g.diag && position <= promptLen;
-        LogitsHealth h;
-        if (trace) h = scanLogitsRaw(logits, g.vocab);
-        char inName[24], rawName[24], maskedName[24];
+            // ITEM 5 (Q10a-D2) - DID THE DECODER GRAPH WRITE ITS NEW SELF-KV SLOT? One line, at
+            // position 0 only, and it settles D1's H2 for the price of one buffer scan per segment.
+            //
+            // The step that just ran had set `inSetForStep` bound as its INPUT side, so its OUTPUT side
+            // is the other set - that is `bindSelfKvLocked`'s whole contract, and reading the wrong one
+            // here would report the ZEROED set and manufacture the failure it is looking for. The swap
+            // that follows only re-points descriptors; it moves no bytes, so the set identified here
+            // stays the one the graph wrote.
+            //
+            // At position 0 with a zeroed cache, `nonzero=0.000` means the graph produced no cache at
+            // all and every later position attends nothing - which would be a decoder fault. Anything
+            // else means the self-KV path works and the defect is upstream, in the encoder's input.
+            //
+            // Q10a-D3 EXTENSION: steps 0, 1 and 2, and the SLOT INDEX the graph wrote. Three lines
+            // decide the cache's alignment outright, because the two candidate layouts diverge from the
+            // very first step:
+            //   left-aligned, written at `position`   -> slot=[0..0], [0..1], [0..2]
+            //   right-aligned shift register          -> slot=[198..198], [197..198], [196..198]
+            // and the mask fill that is correct for one attends only padding under the other.
+            if (g.diag && position <= 2 && !g.selfOutIdx.empty()) {
+                const int outSetForStep = 1 - inSetForStep;
+                const AlignedBuf &b = g.selfKv[outSetForStep][0];
+                const U8Stats ss = b.p ? scanU8Stats(static_cast<const uint8_t *>(b.p), b.n) : U8Stats{};
 
-        if (position + 1 < promptLen) {
-            // Still feeding the prompt. This step's argmax is discarded - the self-KV slot it just
-            // wrote is the whole reason the step ran. BEGIN_SUPPRESS deliberately does NOT apply
-            // here: it belongs to the first GENERATED step, which is position promptLen - 1, not
-            // position 0.
+                // The slot axis, from this tensor's own dims. depth is the cache depth (199).
+                const Qnn_Tensor_t &st = g.dec.outputs[g.selfOutIdx[0]];
+                const uint32_t srank = tensorRank(st);
+                const uint32_t *sdm = tensorDims(st);
+                const uint32_t depth = g.maskLen - 1;
+                uint32_t stride = 0;
+                if (sdm && srank >= 2) {
+                    if (sdm[srank - 1] == depth) stride = 1;
+                    else if (sdm[srank - 2] == depth) stride = sdm[srank - 1];
+                }
+                const SlotSpan sp = b.p ? scanNonzeroSlots(static_cast<const uint8_t *>(b.p), b.n,
+                                                           stride, depth)
+                                        : SlotSpan{};
+                LOGDIAG("npu-debug: selfkv pos=%u inSet=%d outSet=%d tensor=%s bytes=%u min=%u max=%u "
+                        "mean=%.1f nonzero=%.3f depth=%u stride=%u firstOff=%lld lastOff=%lld "
+                        "slot=[%d..%d]",
+                        position, inSetForStep, outSetForStep,
+                        tensorName(g.dec.outputs[g.selfOutIdx[0]]), g.selfKvBytes,
+                        ss.lo, ss.hi, ss.mean, ss.nonzero, depth, stride,
+                        sp.firstOff, sp.lastOff, sp.slotMin, sp.slotMax);
+            }
+
+            // 4.3.1 A: p(<|nospeech|>) is read ONCE, at the SOT step of the first rung, from the RAW
+            // logits - before this step's argmax is discarded with the rest of the prompt walk.
+            if (rung == 0 && position == 0 && scale > 0.0f) {
+                noSpeechProb = noSpeechProbabilityLocked(logits, g.vocab, scale, noSpeechToken);
+            }
+
+            // The prompt walk plus one step past it. Bounded: for the shipped 4-token prompt that is
+            // five lines per segment and then silence, whatever the segment's length.
+            //
+            // A HEALTHY WALK IS READABLE AT A GLANCE, which is why the raw argmax is here rather than
+            // just the final token: after bare SOT the model must want a LANGUAGE token; after the
+            // language token it must want <|transcribe|> (50359 in the whisper-small family, 50360
+            // under large-v3/turbo — the shifted-specials block, 4.1 L4); after that <|notimestamps|>
+            // (50363 small / 50364 large-v3); and only at position promptLen-1 should the answer
+            // become a text token. Any step where that chain breaks is the step where the prompt
+            // stopped taking. The ids are the FAMILY's, never universal: 50358 in particular is
+            // small's <|translate|> and large-v3's <|yue|>, which is why no per-id note here can be
+            // read without the family in hand.
+            const bool trace = g.diag && position <= promptLen;
+            LogitsHealth h;
+            if (trace) h = scanLogitsRaw(logits, g.vocab);
+            char inName[24], rawName[24], maskedName[24];
+
+            if (position + 1 < promptLen) {
+                // Still feeding the prompt. This step's argmax is discarded - the self-KV slot it just
+                // wrote is the whole reason the step ran. BEGIN_SUPPRESS deliberately does NOT apply
+                // here: it belongs to the first GENERATED step, which is position promptLen - 1, not
+                // position 0.
+                if (trace) {
+                    LOGDIAG("npu-debug: step pos=%u in=%s inSet=%d raw[min=%u max=%u argmax=%s] "
+                            "masked=prefill-skipped",
+                            position, diagToken(tokenIn, inName, sizeof(inName)), inSetForStep,
+                            h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)));
+                }
+                bindSelfKvLocked(1 - g.selfInSet);
+                continue;
+            }
+
+            const bool applyBegin = (position == promptLen - 1);
+            const int32_t tok = (temperature == 0.0f)
+                    ? suppressThenArgmax(logits, g.vocab, suppress, beginSuppress, applyBegin)
+                    : suppressThenSample(logits, g.vocab, suppress, beginSuppress, applyBegin,
+                                         scale, temperature, rng);
             if (trace) {
-                LOGDIAG("npu-debug: step pos=%u in=%s inSet=%d raw[min=%u max=%u argmax=%s] "
-                        "masked=prefill-skipped",
+                LOGDIAG("npu-debug: step pos=%u in=%s inSet=%d raw[min=%u max=%u argmax=%s] masked=%s "
+                        "beginSuppress=%d",
                         position, diagToken(tokenIn, inName, sizeof(inName)), inSetForStep,
-                        h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)));
+                        h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)),
+                        diagToken(tok, maskedName, sizeof(maskedName)),
+                        position == promptLen - 1 ? 1 : 0);
             }
+            if (tok < 0) {
+                failure("decode: every logit is at the bottom rail at position " +
+                        std::to_string(position) + "; the graph produced no token");
+                return -3;
+            }
+            if (scale > 0.0f) sumLogprob += maskedLogprobLocked(logits, g.vocab, scale, tok);
+            if (firstGenerated < 0) firstGenerated = tok;
+            if (tok == kEotToken) {
+                hitEot = true;
+                break;
+            }
+            out[static_cast<size_t>(count)] = tok;
+            ++count;
+            // 4.3.1 A: THE REPETITION GUARD, IN-LOOP. whisper.cpp scores the finished sequence
+            // (:7807) because its decoders run batched; this loop is step-wise, so the same
+            // 32-id histogram entropy is checked at every step past the window and a runaway dies
+            // at ~33-40 tokens instead of at the 196-token budget.
+            if (count > kEntropyWindow) {
+                entropyLast = trailingEntropy(out, count);
+                if (entropyLast < entropyThold) {
+                    failedEntropy = true;
+                    failedAt = count;
+                    break;
+                }
+            }
+            if (count >= maxTokens) break;
+            next = tok;
             bindSelfKvLocked(1 - g.selfInSet);
-            continue;
         }
 
-        const int32_t tok = suppressThenArgmax(logits, g.vocab, suppress, beginSuppress,
-                                               position == promptLen - 1);
-        if (trace) {
-            LOGDIAG("npu-debug: step pos=%u in=%s inSet=%d raw[min=%u max=%u argmax=%s] masked=%s "
-                    "beginSuppress=%d",
-                    position, diagToken(tokenIn, inName, sizeof(inName)), inSetForStep,
-                    h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)),
-                    diagToken(tok, maskedName, sizeof(maskedName)),
-                    position == promptLen - 1 ? 1 : 0);
+        avgLogprob = (scale > 0.0f && count > 0) ? sumLogprob / count : 0.0;
+        // whisper.cpp:7835 - a low-confidence rung falls back only when the model does NOT think
+        // the segment is silent; a silent segment is judged by Kotlin, not re-decoded hotter.
+        const bool lowConfidence = scale > 0.0f && count > 0 &&
+                                   avgLogprob < static_cast<double>(logprobThold) &&
+                                   noSpeechProb < noSpeechThold;
+        const bool lastRung = (rung + 1 == temperatures.size());
+        if (!failedEntropy && !lowConfidence) break;          // this rung's output stands
+        if (lastRung) {
+            if (failedEntropy) {
+                // THE ONE DEVIATION FROM THE REFERENCE (spec A, step 3): the reference emits the
+                // last rung whatever it is, and that is exactly report 1. Keep the prefix before
+                // the window that tripped; drop the loop.
+                count = failedAt > kEntropyWindow ? failedAt - kEntropyWindow : 0;
+                terminator = kTermCut;
+            }
+            break;                                            // a low-confidence last rung stands
         }
-        if (tok < 0) {
-            failure("decode: every logit is at the bottom rail at position " +
-                    std::to_string(position) + "; the graph produced no token");
-            return -3;
-        }
-        if (firstGenerated < 0) firstGenerated = tok;
-        if (tok == kEotToken) {
-            hitEot = true;
-            break;
-        }
-        out[static_cast<size_t>(count)] = tok;
-        ++count;
-        if (count >= maxTokens) break;
-        next = tok;
-        bindSelfKvLocked(1 - g.selfInSet);
+        // otherwise: next rung
     }
 
+    if (terminator != kTermCut) {
+        terminator = hitEot ? kTermEot : (count >= maxTokens ? kTermBudget : kTermCap);
+    }
     if (count > 0) env->SetIntArrayRegion(jOut, 0, count, reinterpret_cast<const jint *>(out.data()));
+
+    float stats[kStatSize];
+    stats[kStatNoSpeechProb] = noSpeechProb;
+    stats[kStatAvgLogprob] = (scale > 0.0f && count > 0) ? static_cast<float>(avgLogprob) : NAN;
+    stats[kStatEntropy] = (count > kEntropyWindow) ? static_cast<float>(entropyLast) : NAN;
+    stats[kStatRung] = static_cast<float>(rungUsed);
+    stats[kStatTerminator] = terminator;
+    stats[kStatSteps] = static_cast<float>(stepsRun);
+    env->SetFloatArrayRegion(jStats, 0, kStatSize, stats);
+
     const double ms = msSince(t0);
-    const char *terminator =
-            hitEot ? "eot" : (count >= maxTokens ? "count" : "cap");
-    LOGI("decode: %d tokens in %.1f ms (%.2f ms/token), terminated by %s (vote: %s)",
+    const char *termName = terminator == kTermCut ? "cut" : (hitEot ? "eot" : (count >= maxTokens ? "count" : "cap"));
+    LOGI("decode: %d tokens in %.1f ms (%.2f ms/token), terminated by %s (vote: %s) nsp=%.2f lp=%.2f ent=%.2f rung=%zu steps=%u",
          count, ms, count > 0 ? ms / count : 0.0,
-         hitEot ? "EOT" : (count >= maxTokens ? "the token budget" : "the position cap"),
-         g.voteNote.c_str());
+         terminator == kTermCut ? "the repetition cut" :
+         (hitEot ? "EOT" : (count >= maxTokens ? "the token budget" : "the position cap")),
+         g.voteNote.c_str(), stats[kStatNoSpeechProb], stats[kStatAvgLogprob], stats[kStatEntropy],
+         rungUsed, stepsRun);
     if (g.diag) {
         char firstName[24];
         LOGDIAG("npu-debug: result count=%d first=%s terminator=%s steps=%u posFirst=0 posLast=%u",
-                count, diagToken(firstGenerated, firstName, sizeof(firstName)), terminator,
+                count, diagToken(firstGenerated, firstName, sizeof(firstName)), termName,
                 stepsRun, lastPositionRun);
     }
     g.lastError.clear();

@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import com.whispereverywhere.npu.NpuAssetStage
 import com.whispereverywhere.npu.NpuDecodePolicy
+import com.whispereverywhere.npu.NpuDecodeStats
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.npu.NpuQuantize
@@ -629,6 +630,12 @@ class NpuWhisperBackend(
                 NpuDecodePolicy.beginSuppressList(spec.tokens),
                 out.size,
                 out,
+                NpuDecodePolicy.TEMPERATURES,
+                NpuDecodePolicy.ENTROPY_THOLD,
+                NpuDecodePolicy.LOGPROB_THOLD,
+                NpuDecodePolicy.NO_SPEECH_THOLD,
+                spec.tokens.noSpeech,
+                NpuDecodeStats.newArray(),
             )
             if (written < 0) {
                 return@serialized fallBackAndRun("decode", QnnAsrNative.nativeLastError(), samples, lang, useVad)

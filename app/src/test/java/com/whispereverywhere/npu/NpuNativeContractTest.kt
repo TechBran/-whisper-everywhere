@@ -2946,4 +2946,101 @@ class NpuNativeContractTest {
             ).isNotEmpty()
         )
     }
+
+    // ---------------------------------------------------------------- 4.3.1 A: the decode guards
+
+    /**
+     * The six stats slots and four terminator codes are literals on BOTH sides of the seam.
+     * Kotlin's are pinned in NpuDecodePolicyTest; this holds native's copy equal to them, by text,
+     * because a slot that moves on one side only is not a crash — the no-speech gate would read a
+     * rung index and blank segments by their temperature.
+     */
+    @Test
+    fun theStatsSlotsAndTerminatorCodesMirrorNpuDecodeStatsExactly() {
+        val expect = listOf(
+            "constexpr int kStatNoSpeechProb = ${NpuDecodeStats.NO_SPEECH_PROB};",
+            "constexpr int kStatAvgLogprob = ${NpuDecodeStats.AVG_LOGPROB};",
+            "constexpr int kStatEntropy = ${NpuDecodeStats.ENTROPY};",
+            "constexpr int kStatRung = ${NpuDecodeStats.RUNG};",
+            "constexpr int kStatTerminator = ${NpuDecodeStats.TERMINATOR};",
+            "constexpr int kStatSteps = ${NpuDecodeStats.STEPS};",
+            "constexpr int kStatSize = ${NpuDecodeStats.SIZE};",
+            "constexpr float kTermEot = ${NpuDecodeStats.TERM_EOT.toInt()}.0f;",
+            "constexpr float kTermBudget = ${NpuDecodeStats.TERM_BUDGET.toInt()}.0f;",
+            "constexpr float kTermCap = ${NpuDecodeStats.TERM_CAP.toInt()}.0f;",
+            "constexpr float kTermCut = ${NpuDecodeStats.TERM_CUT.toInt()}.0f;",
+            "constexpr int32_t kEntropyWindow = ${NpuDecodePolicy.ENTROPY_WINDOW};",
+            // The "no scale was readable" sentinel. NpuDecodeStats documents slot 0's `-1` in
+            // prose and NpuDecodePolicy.isNoSpeech answers false to it; this holds native's
+            // literal to that value, because a sentinel that drifted positive would read as a
+            // probability and blank every segment whose scale could not be read.
+            "constexpr float kStatUnreadable = -1.0f;",
+        )
+        for (line in expect) {
+            assertTrue("qnn_asr.cpp must declare exactly: $line", liveLines(cpp, line).size == 1)
+        }
+    }
+
+    /**
+     * The guards live INSIDE the loop, in this order, and the ladder wraps it. Presence is not
+     * enough (the lesson every branch here has paid for): an entropy check that sits after the
+     * loop instead of inside it is whisper.cpp's shape, which lets a runaway reach the budget
+     * before it is judged.
+     */
+    @Test
+    fun theDecodeLoopReadsNoSpeechAtSotThenGuardsEntropyPerStepInsideTheLadder() {
+        val body = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
+        val ladder = liveOffsets(body, "for (size_t rung = 0; rung < temperatures.size(); ++rung) {")
+        val positions = liveOffsets(body, "for (uint32_t position = 0; position <= lastPosition; ++position) {")
+        val nsp = liveOffsets(body, "noSpeechProb = noSpeechProbabilityLocked(")
+        val entropy = liveOffsets(body, "if (count > kEntropyWindow) {")
+        val cut = liveOffsets(body, "count = failedAt > kEntropyWindow ? failedAt - kEntropyWindow : 0;")
+        assertTrue("one ladder loop; found ${ladder.size}", ladder.size == 1)
+        assertTrue("one position loop; found ${positions.size}", positions.size == 1)
+        assertTrue("one no-speech read; found ${nsp.size}", nsp.size == 1)
+        assertTrue("one in-loop entropy check; found ${entropy.size}", entropy.size == 1)
+        assertTrue("one last-rung cut; found ${cut.size}", cut.size == 1)
+        assertTrue("the position loop is inside the ladder", ladder.first() < positions.first())
+        assertTrue("no-speech is read inside the position loop (SOT step)", positions.first() < nsp.first())
+        assertTrue("the entropy check is inside the position loop", positions.first() < entropy.first())
+        assertTrue("the cut comes after the ladder has run", entropy.first() < cut.first())
+        // THE DIRECTION of the two comparisons, which no Kotlin predicate encodes (Task 2's
+        // review): entropy BELOW the threshold is a repetition loop, mean log-prob BELOW the
+        // threshold is a low-confidence rung. Either one flipped compiles, abandons every healthy
+        // rung and keeps the runaway — and the pins above, which only count anchors, stay green.
+        assertTrue(
+            "the entropy guard must compare `entropyLast < entropyThold` on exactly one live line",
+            liveLines(body, "if (entropyLast < entropyThold) {").size == 1
+        )
+        assertTrue(
+            "the low-confidence test must compare `avgLogprob < logprobThold` on exactly one live line",
+            liveLines(body, "avgLogprob < static_cast<double>(logprobThold) &&").size == 1
+        )
+    }
+
+    /** Sampling never selects a suppressed id: mask first, then draw — the same shape as the argmax. */
+    @Test
+    fun temperatureSamplingMasksBeforeItDraws() {
+        val body = functionBody(cpp, "int32_t suppressThenSample(")
+        val mask = liveOffsets(body, "logits[id] = kLogitFloor;")
+        val draw = liveOffsets(body, "std::uniform_real_distribution<double>")
+        assertTrue("the mask writes come first; mask=$mask draw=$draw", mask.isNotEmpty() && draw.size == 1 && mask.last() < draw.first())
+        assertTrue("floor entries carry no mass", liveLines(body, "if (logits[i] == kLogitFloor) continue;").size >= 1)
+    }
+
+    /** The Kotlin declaration names every new argument, in native's order. */
+    @Test
+    fun theDecodeDeclarationCarriesTheGuardArgumentsInOrder() {
+        val decl = seam.substring(seam.indexOf("external fun nativeDecodeSegment("))
+            .substringBefore("): Int")
+        val order = listOf("prompt: IntArray", "suppress: IntArray", "beginSuppress: IntArray",
+            "maxTokens: Int", "out: IntArray", "temperatures: FloatArray", "entropyThold: Float",
+            "logprobThold: Float", "noSpeechThold: Float", "noSpeechToken: Int", "stats: FloatArray")
+        var last = -1
+        for (p in order) {
+            val at = decl.indexOf(p)
+            assertTrue("missing or out of order: $p", at > last)
+            last = at
+        }
+    }
 }

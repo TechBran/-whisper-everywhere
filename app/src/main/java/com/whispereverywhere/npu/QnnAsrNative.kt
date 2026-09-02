@@ -202,6 +202,17 @@ object QnnAsrNative {
      * @param maxTokens `NpuDecodePolicy.maxTokensFor(spec.tokens, prompt.size)`.
      * @param out receives the generated ids; must have `size >= maxTokens`. Bounds-checked native
      *        side rather than trusted, and untouched beyond the returned count.
+     * @param temperatures `NpuDecodePolicy.TEMPERATURES` — the fallback ladder; `[0]` must be 0.
+     * @param entropyThold `NpuDecodePolicy.ENTROPY_THOLD`: a rung whose last 32 ids have less
+     *        histogram entropy than this is a repetition loop and is abandoned at that step.
+     * @param logprobThold `NpuDecodePolicy.LOGPROB_THOLD`: a rung whose mean log-prob is below
+     *        this (and whose no-speech probability is below [noSpeechThold]) is re-run hotter.
+     * @param noSpeechThold `NpuDecodePolicy.NO_SPEECH_THOLD`.
+     * @param noSpeechToken `spec.tokens.noSpeech` — this family's `<|nospeech|>` id; native reads
+     *        its raw probability at the SOT step and never emits it.
+     * @param stats OUT, `NpuDecodeStats.newArray()`; fully written on every `>= 0` return, by the
+     *        [NpuDecodeStats] slots. `-1` in `NO_SPEECH_PROB` means the logits' scale was unreadable
+     *        and no probability gate ran (the entropy guard still did).
      * @return the number of ids written (`>= 0`), or `< 0` on failure with the text in
      *         [nativeLastError]. `0` is a legitimate answer: it means EOT came first, i.e. silence.
      *
@@ -212,7 +223,13 @@ object QnnAsrNative {
         suppress: IntArray,
         beginSuppress: IntArray,
         maxTokens: Int,
-        out: IntArray
+        out: IntArray,
+        temperatures: FloatArray,
+        entropyThold: Float,
+        logprobThold: Float,
+        noSpeechThold: Float,
+        noSpeechToken: Int,
+        stats: FloatArray,
     ): Int
 
     /**
