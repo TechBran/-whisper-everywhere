@@ -22,11 +22,14 @@ class TtsScrubberView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
 
-    /** Fraction (0..1) of synthesized audio to jump to. Set by the owner. */
+    /** Fraction (0..1) of SYNTHESIZED audio to jump to — already re-based from the bar by [ScrubberMath]. */
     var onSeek: ((Float) -> Unit)? = null
 
-    @Volatile private var playedFrac = 0f      // of synthesized audio
+    @Volatile private var playedFrac = 0f      // of the bar
+    @Volatile private var readyFrac = 1f       // of the bar: synthesized so far
     @Volatile private var synthesisDone = true
+    @Volatile private var lastAvailable = 0L
+    @Volatile private var lastSpan = 0L
     private var dragging = false
     private var dragFrac = 0f
 
@@ -56,9 +59,18 @@ class TtsScrubberView @JvmOverloads constructor(
         color = 0xFFFFFFFF.toInt()
     }
 
-    fun setProgress(played: Long, available: Long, done: Boolean) {
-        playedFrac = if (available > 0) (played.toDouble() / available).toFloat() else 0f
+    /**
+     * [played]/[available] in samples as before; [estimatedTotal] is the projected end of the read
+     * (== [available] once [done]). The bar spans the read; gray is what is ready ahead of you,
+     * white is what is still being generated (4.3.1 C — the wait is visible, not silent).
+     */
+    fun setProgress(played: Long, available: Long, estimatedTotal: Long, done: Boolean) {
+        val span = ScrubberMath.span(available, estimatedTotal)
+        playedFrac = ScrubberMath.frac(played, span)
+        readyFrac = ScrubberMath.frac(available, span)
         synthesisDone = done
+        lastAvailable = available
+        lastSpan = span
         if (!dragging) postInvalidate()
     }
 
@@ -70,10 +82,14 @@ class TtsScrubberView @JvmOverloads constructor(
         if (right <= left) return
         val frac = if (dragging) dragFrac else playedFrac
         val x = left + (right - left) * frac.coerceIn(0f, 1f)
-        // Ahead of you: gray where audio is ready; a white tail while synthesis still grows it.
-        canvas.drawLine(x, y, right, y, readyPaint)
+        // Ahead of you: gray where audio is ready; white from the synthesized frontier to the
+        // estimated end while generation continues (falls back to the old 10 dp tail when the
+        // estimate has no room left).
+        val readyX = left + (right - left) * readyFrac.coerceIn(0f, 1f)
+        if (readyX > x) canvas.drawLine(x, y, readyX, y, readyPaint)
         if (!synthesisDone) {
-            canvas.drawLine(right - dp(10f), y, right, y, growPaint)
+            val tailStart = if (readyX < right - dp(10f)) readyX else right - dp(10f)
+            canvas.drawLine(tailStart, y, right, y, growPaint)
         }
         // Behind you: red.
         if (x > left) canvas.drawLine(left, y, x, y, playedPaint)
@@ -104,7 +120,7 @@ class TtsScrubberView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 dragging = false
-                onSeek?.invoke(frac)
+                onSeek?.invoke(ScrubberMath.seekFracOfSynthesized(frac, lastAvailable, lastSpan))
                 invalidate()
                 return true
             }

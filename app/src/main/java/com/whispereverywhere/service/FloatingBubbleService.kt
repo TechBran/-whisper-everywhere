@@ -929,7 +929,7 @@ class FloatingBubbleService : Service(),
         blobView.fillColor = android.graphics.Color.parseColor("#000000")
         blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.RECORDING)
         speechStopIcon.visibility = View.VISIBLE
-        ttsScrubber.setProgress(0, 0, false)
+        ttsScrubber.setProgress(0, 0, 0, false)
         ttsScrubber.visibility = View.VISIBLE
     }
 
@@ -969,10 +969,10 @@ class FloatingBubbleService : Service(),
                 }
             }
         }
-        // Scrubber feed: played/available/total/done at ~10 Hz from the playback thread.
-        // 4.3.1 C: total reaches the scrubber in Task 9.
+        // Scrubber feed: played/available/total/done at ~10 Hz from the playback thread
+        // (4.3.1 C: the bar spans the estimated read; ScrubberMath does the geometry).
         engine.onProgress = { played, available, total, done ->
-            ttsScrubber.setProgress(played, available, done)
+            ttsScrubber.setProgress(played, available, total, done)
         }
         enterSpeakingVisuals()
         val started = com.whispereverywhere.tts.TtsController.speakFromTrigger(this, text) {
