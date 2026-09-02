@@ -1,28 +1,55 @@
 # 4.3.1 — device acceptance (owner session)
 
-Build under test: **4.3.1 / versionCode 83** (`feat/4.3.1-guards-and-tts`). Everything below is the
-OWNER's device session; the implementer prepared this sheet and claims none of it as done.
+Build under test: **4.3.1 / versionCode 83**, now on `main` (the owner chose a local merge). It
+carries MORE than the branch this sheet was written for: three fixes found during the owner's own
+device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
+is the OWNER's device session; the implementer prepared this sheet and claims none of it as done.
 
-Install — two options:
+Install — **the internal track, and only the internal track.** The sideload option this sheet
+opened with was WRONG, and it was disproved on this device on 2026-09-02:
 
-1. **Diagnostic build (recommended):**
-   `C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r C:\Users\bastr\.androidbuild\WhisperEverywhere\app\outputs\apk\debug\app-debug.apk`
-   (the APK `.\gradlew.bat :app:assembleDebug --no-daemon` writes from this branch; its timestamp
-   must postdate the branch's last code commit). The debug build is signed with the release key on
-   this machine, so it installs OVER the Play build without uninstalling (models and settings in
-   app storage persist); every `npu:`, `bubble hide:` and `TTSDIAG` line exists on it; the next
-   track build (versionCode 84) replaces it. If the AI-chip model shows as not installed
-   afterwards (Play-delivered packs are Play's), fetch it again from the model chooser.
-   **NEVER `gradlew installDebug`** (it uninstalls, and the models with it).
-2. **The internal-track build:** R8 strips the app's own `Log.i` lines in release, so only §A is
-   observable there, via the NATIVE line
-   `decode: N tokens in X ms (Y ms/token), terminated by <EOT|the token budget|the position cap|the repetition cut> … nsp= lp= ent= rung= steps=`;
-   §B by eye only; §C not at all — mark those rows N/A on the track build.
+`adb install -r` of a locally-built APK over the Play copy is REFUSED with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`. The phone's app came from Play
+(`installerPackageName=com.android.vending`), so it carries GOOGLE's app-signing key, while
+anything built on this machine carries the UPLOAD key. They are different keys and Android will
+not update across them. **The only way to force it is to uninstall first — DO NOT.** That erases
+app storage and with it ~1 GB of downloaded model packs, and re-fetching the turbo pack is the
+most expensive mistake available in this session. (`gradlew installDebug` does exactly this
+uninstall silently: never run it.)
 
-Capture: on the PC, in **PowerShell** (the `*>>` redirect is PowerShell-only — cmd.exe rejects
-it),
+So: upload the AAB to the **internal track**, install it from Play on the Fold6 (Play-signed,
+versionCode 83 > the live 82, asset packs preserved), and run the session on that.
+
+**What the track build can and cannot show.** `proguard-rules.pro:81-92` strips every
+`android.util.Log` call from release, so NO Kotlin `WE-DIAG` / `WE-TTS` line exists on it — no
+`npu:`, `endpoint:`, `queue:`, `bubble hide:`, `TTSDIAG`, `projection consent:` or `switchSource:`.
+This was confirmed empirically: the 4.3.0 baseline capture contains zero of them and only native
+lines. Native `__android_log_print` is untouched by R8 and survives.
+
+That leaves the sheet executable, because the PASS criterion of nearly every row is a BEHAVIOUR
+you can see, and the greps were only ever corroboration:
+
+| section | on the track build |
+|---|---|
+| §A | fully readable, via the NATIVE line `decode: N tokens in X ms (Y ms/token), terminated by <EOT\|the token budget\|the position cap\|the repetition cut> … nsp= lp= ent= rung= steps=` |
+| §B | by eye — "the pill stays for the whole read" needs no log |
+| §C | by eye — the ring and the gray/white scrubber are the row; only C1's `underN=0` corroboration is lost |
+| §D | by eye — "no third dialog, one toast" is the whole row |
+| §E | E1 by eye (a 15-second silent stretch that then dumps a paragraph at once is unmistakable — that IS the VAD-MISS); E3-E6 by eye. **E2 is the one row the track build cannot judge**: watch instead for latency growing run-on-run between finishing a sentence and seeing it, and mark E2 N/A otherwise |
+| §F | fully by eye — F2's real criterion is "nothing you said while the video was paused is in the transcript" |
+
+Ignore any `Select-String` command below on the track build; they are written for the day a
+diagnostic build is installable. If you want the full grep evidence on the phone instead, say so:
+preserving `WE-DIAG` in release is one line in `proguard-rules.pro`, and the cost is that those
+lines then exist in the production build you promote (they carry no transcript content — that is
+removed at the call sites — so the cost is posture, not privacy).
+
+Capture anyway, for §A and for crashes: on the PC, in **PowerShell** (the `*>>` redirect is
+PowerShell-only — cmd.exe rejects it),
 `C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe logcat -s WE-DIAG WE-TTS *>> C:\Users\bastr\.androidbuild\capture-431.txt`
-(append, never clear; leave it running for the whole session).
+(append, never clear; leave it running for the whole session). §E and §F read the same
+capture -- no second command, and no `-c` between sections, because §E's evidence is a COUNT
+over the whole session and clearing the buffer destroys it.
 
 ## A — decode guards (NPU turbo tier)
 BEFORE A1: transcript text is never logged, so A1's "unchanged from 4.3.0" can only be judged by
@@ -154,7 +181,107 @@ D3. After D1, stop the session (tap the bubble) and tap again with the video sti
     Expect the dialog to return (a new session, a fresh budget).
     `[ ] PASS  [ ] FAIL`
 
+## E — the VAD hangover retune (4.4, on top of 4.3.1)
+
+WHAT CHANGED, so the rows below are readable: `HANGOVER_MS` 500 -> **350** (`EndpointerTuning.kt:87`),
+npu-turbo gained its own measured commit floor (3,200 ms), and a burst discarded under
+`MIN_SPEECH_MS` no longer erases the wall cap's cut point. This is the owner's own report:
+*"the VAD just doesn't close when we need to … we want the VAD to actually open and close on
+utterances, but the utterances in between can be really fast."*
+
+**THE 4.3.0 MEASUREMENT THIS IS TUNED AGAINST** (owner's Fold6, Play build 4.3.0/82, turbo on the
+NPU; `C:\Users\bastr\.androidbuild\capture-vad-headroom.txt`, 3 runs / 57 segments):
+
+| | 4.3.0 shipped |
+|---|---|
+| decode duty | **25 % / 28 % / 39 %** — the pipeline sat idle 61-75 % of the time |
+| work per commit | ~**2,050 ms** (encode 1,752 ms of it, and that part is FIXED — the QNN mel window is 30 s whatever the utterance length) |
+| the symptom | a ~**15 s stretch with no cut in EVERY run** — the wall cap firing because the 500 ms hangover never elapsed |
+
+E1. **The headline.** Read a paragraph aloud at your ordinary pace, 60-90 s, with the faint
+    between-sentence pauses that used to be missed. PASS = cuts land on sentence ends AND
+    `Select-String "VAD-MISS" C:\Users\bastr\.androidbuild\capture-431.txt` returns **zero hits**
+    across that stretch. Spot-check any `endpoint: seq=… cut=vad … trailMs=` line: `trailMs`
+    should now sit near **352-384**, not near 500-530. FAIL if a 15-second stretch of continuous
+    speech passes with no cut — that is exactly one `VAD-MISS` line, and it is the bug.
+    RECORD: VAD-MISS count ______ ; a typical `trailMs` ______ ms.
+    `[ ] PASS  [ ] FAIL`
+E2. **The cost.** Same run, no extra dictation.
+    `Select-String "queue: depth=" C:\Users\bastr\.androidbuild\capture-431.txt`
+    -> depth should stay in **0-2**, the owner's own observed bound on 4.3.0 (*"I've never seen
+    more than two queued"*). FAIL if depth reaches 4+ or climbs run-on-run without coming back
+    down — that is the queue outrunning the decoder, and the fix is the cadence floor
+    (`CommitCadencePolicy` npu-turbo = 3,200 ms), NOT the hangover.
+    RECORD: max depth ______.
+    `[ ] PASS  [ ] FAIL`
+E3. **No mid-word cuts — this is what 350 spends.** Read at speed, with hard stop consonants and
+    no real pauses: "Pick up the packet, Pat, and put it back." PASS = no word arrives in halves
+    and nothing typed is a fragment. If this fails, the answer is to raise toward 420-450, not to
+    revert: the acoustic floor is NAMED (`HANGOVER_MIN_MS = 300`) and 350 already sits above it.
+    `[ ] PASS  [ ] FAIL`
+E4. **THE REGRESSION ROW — the behaviour that must NOT change.** Start a session over music or a
+    video with a percussive bed and NO speech; let it run ~20 s. PASS = it rides the wall cap as
+    before — at most one commit in 15 s, and the one that arrives is a `VAD-MISS` cap line, not
+    `cut=vad`. FAIL if commits start landing every few seconds. The owner's rule: *"that means
+    there's more background noise and the app just doesn't want to miss the audio. That's
+    perfect."* An early draft of this retune failed here, committing 3 times in 11.3 s where the
+    shipped build commits 0 in 15.9 s; the draft was rejected, and this row is how you know the
+    shipped one did not inherit it.
+    RECORD: commits in 20 s ______.
+    `[ ] PASS  [ ] FAIL`
+E5. **A KNOWN LIMIT — this row cannot fail, it only reports.** Dictate word-by-word with emphatic
+    gaps: "It. Is. Not. That. Simple." Expected: nothing types until the 15 s wall cap, then all
+    of it at once. Each word is shorter than `MIN_SPEECH_MS` (300 ms) and is discarded, and there
+    is no merge across the gaps. This is SHIPPED 3.7 behaviour, unchanged by the retune — it is
+    the one thing a smaller hangover does not fix. A fix exists but needs a ruling only the owner
+    can give, because two 288 ms drum hits and two 288 ms words are indistinguishable by duration.
+    RECORD: does this bother you in real use? ______
+    `[ ] NOTED`
+E6. **The wall cap keeps its evidence.** Right after E5, keep talking normally for another 30 s.
+    PASS = when the VAD does miss, segments still run to the full 15 s cap. Before this fix a
+    single discarded short burst left `hasPendingSpeech` false, which collapsed the cap from 15 s
+    to the 4 s first-segment window for the REST OF THE SESSION — so a cough at the start made
+    every later segment four seconds long.
+    `[ ] PASS  [ ] FAIL`
+
+## F — the three fixes from the owner's own device testing
+
+F1. **The ribbon.** Start a session and watch the aurora ribbon from its first moment. PASS = one
+    speed throughout, tracking your voice immediately. FAIL if it starts fast and mellows out over
+    the first second — the owner's report, and the cause was that the ribbon advanced per FRAME,
+    so the Fold6's 120 Hz panel ran it at twice the intended rate until the panel dropped to 60 Hz.
+    `[ ] PASS  [ ] FAIL`
+F2. **The microphone never enters a device-audio session.** Device-audio preference ON, a YouTube
+    video playing, GRANT the share dialog. Mid-session, PAUSE the video for ~10 s and talk, then
+    resume it. PASS = nothing you said while it was paused is in the transcript, and
+    `Select-String "switchSource:" C:\Users\bastr\.androidbuild\capture-431.txt` shows **no
+    `-> MIC` line** for the whole session. The owner's rule, verbatim: *"No microphone should enter
+    that conversation at all until after you end that transcription and then start a new one."*
+    FAIL if any word you speak during the pause lands in the transcript.
+    `[ ] PASS  [ ] FAIL`
+F3. **The one allowed handover discloses itself.** An app that genuinely refuses capture (a DRM
+    video app). PASS = the toast reads "This app blocks audio capture — using the microphone, so
+    your voice is included too", i.e. it names the consequence instead of switching silently. This
+    is the ONLY route from device audio to the microphone inside a granted session, and it is kept
+    on purpose — it is what makes Teams and DRM-protected audio transcribable at all. A merely
+    PAUSED video is not a blocked app; that case is F2's, and it must not produce this toast.
+    `[ ] PASS  [ ] FAIL`
+
 ---
 
-Merge gate: fast-forward `feat/4.3.1-guards-and-tts` onto `main` only after **A2, A3, B1, B4, C1 and D1**
-are marked PASS.
+PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
+longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
+promote that build into production."* Promote the internal-track build to production only after
+**A2, A3, B1, B4, C1, D1, E1 and E4** are marked PASS.
+
+Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one
+behaviour a hangover change can silently invert. E4 is not a formality -- the first draft of this
+retune failed exactly there in review, committing 3 times in 11.3 s on a percussive bed where the
+shipped build commits 0 in 15.9 s. E5 CANNOT fail; it records a known limit so the owner can rule
+on it with the phone in their hand.
+
+If a gate row FAILS, the rollback is proportionate and per-row: E1/E2 -> `HANGOVER_MS` back to
+`500L` in `EndpointerTuning.kt:87` (one line; nothing else in the retune is coupled to it);
+E3 -> raise toward 420-450 rather than reverting, since the named acoustic floor is 300;
+E4 -> report it before changing anything, because nothing in this retune should be able to cause
+it and the cause matters more than the number.
