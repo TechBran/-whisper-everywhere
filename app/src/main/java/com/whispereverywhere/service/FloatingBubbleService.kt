@@ -1226,12 +1226,23 @@ class FloatingBubbleService : Service(),
                 }
             }
 
-            // Media ended while capturing the stream: hand back to the microphone seamlessly.
-            if (currentState == BubbleState.RECORDING &&
-                activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK
-            ) {
-                switchSource(to = com.whispereverywhere.audio.ActiveSource.MIC)
-            }
+            // THE DEVICE-AUDIO LATCH (owner rule, 2026-09-02). A session capturing device audio
+            // NEVER hands back to the microphone — not on a pause, not on a scrub, not when the
+            // video ends. It used to: this branch called switchSource(MIC) whenever the media
+            // session stopped reporting playback, which a scrub does routinely. The projection
+            // was still live, so the app recorded THE ROOM into the video's transcript until
+            // playback resumed, and the resume cut a second segment — two spurious cuts and the
+            // user's own speech in a transcript that was supposed to contain only the video's.
+            // The owner's rule: "we're trying to keep the microphone out of it so someone could
+            // transcribe a YouTube video without their actual spoken words being dictated."
+            //
+            // The mic returns the only way that cannot bleed: the user ends this transcription
+            // and starts another. stopRecording releases the projection there (the 2026-08-01
+            // decision — a live projection interferes with mic capture, and the sharing indicator
+            // must not outlive the transcript), so the next session begins clean.
+            //
+            // A silent stretch costs nothing: the capturer yields silence, the VAD emits no
+            // segments, and DeviceAudioLatchPinTest pins the absence of any switch here.
         }
     }
 
