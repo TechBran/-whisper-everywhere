@@ -39,8 +39,10 @@ was built without any of them.
   is ordinary text and is typed. The input class is real: the 3.7 endpointer opens on one frame
   ≥ 0.50 and dead-band frames (0.35–0.50: breath, "um", thinking sounds) hold the gate open without
   counting as speech (`SileroEndpointer.kt:555`), so a segment of thinking-noise > 300 ms reaches the
-  model. The CPU tier gets the same segments and whisper.cpp's gate drops them — which is why the
-  owner noticed only after moving to turbo.
+  model. The CPU tier is protected by its own VAD filter (`whisper_jni.cpp:815`, `we_vad_filter`)
+  rather than by whisper.cpp's no-speech gate — the fork's read of `no_speech_prob` is inert (the
+  SOT block's logits are not extracted; a follow-up) — which is why the owner noticed only after
+  moving to turbo.
 
 ### Reference (the working example, read completely)
 
@@ -71,6 +73,7 @@ object NpuDecodePolicy {
     const val LOGPROB_THOLD = -1.0f       // whisper.cpp default
     const val NO_SPEECH_THOLD = 0.6f      // whisper.cpp default
     const val ENTROPY_WINDOW = 32         // whisper_sequence_score's n
+    const val CYCLE_MAX_DISTINCT = 8      // ours: the entropy trip needs a cycle signature (final review)
     val TEMPERATURES = floatArrayOf(0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f)
     fun isNoSpeech(noSpeechProb: Float, avgLogprob: Float): Boolean =
         noSpeechProb > NO_SPEECH_THOLD && avgLogprob < LOGPROB_THOLD
@@ -102,7 +105,9 @@ against the native source text, the way it pins `kEotToken` today.
    if `avgLogprob < logprobThold && noSpeechProb < noSpeechThold`. A rung that did not fail ends the
    ladder. On the **last** rung a log-prob failure keeps the output (the reference's behaviour —
    `:7834` gates the fallback on "not at the last temperature"); Kotlin's no-speech decision may
-   still blank it.
+   still blank it. A rung fails on entropy only when the tripping window is a cycle signature
+   (≤ `CYCLE_MAX_DISTINCT` = 8 distinct ids); a legitimate low-entropy list never enters the
+   ladder (final review, 2026-09-02).
 3. **If the last rung still failed by entropy:** keep the first `k - ENTROPY_WINDOW` tokens (the
    prefix before the window that tripped), terminator `cut`. This is the one deliberate deviation
    from the reference, whose last-rung behaviour — emit whatever came out — *is* report 1.

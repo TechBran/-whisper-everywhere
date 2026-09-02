@@ -33,7 +33,10 @@ object TtsDiag {
     fun play(gen: Long, seq: Int, leadMs: Long): String =
         "TTSDIAG play gen=$gen seq=$seq leadMs=$leadMs"
 
-    /** Playback START decision (4.3.1 C): the numbers the gate saw and the rule that let it go. */
+    /**
+     * Playback START decision (4.3.1 C): the numbers at FIRST PLAY (the bank, the remainder and
+     * the total as playback begins) and the rule that let it go.
+     */
     fun start(gen: Long, bankedMs: Long, remainingMs: Long, totalMs: Long, rtf: Double, rule: String): String =
         "TTSDIAG start gen=$gen bankedMs=$bankedMs remainingMs=$remainingMs totalMs=$totalMs rtf=${d2(rtf)} rule=$rule"
 

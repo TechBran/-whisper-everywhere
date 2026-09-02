@@ -32,7 +32,7 @@ object AudioSourcePolicy {
     ): SourceDecision = when {
         !mediaPlaying || !preferDeviceAudio || sdkInt < 29 -> SourceDecision.UseMic
         hasProjection -> SourceDecision.UsePlayback
-        //  - media, no token, budget spent -> mic (4.3.1 D: at most two dialogs per session)
+        // 4.3.1 D: budget spent -> mic
         !consentAvailable -> SourceDecision.UseMic
         else -> SourceDecision.RequestConsent
     }

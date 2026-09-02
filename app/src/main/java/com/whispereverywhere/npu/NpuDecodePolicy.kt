@@ -138,19 +138,19 @@ object NpuDecodePolicy {
     }
 
     // ---------------------------------------------------------------- the decode guards (4.3.1 A)
+    //
+    // whisper.cpp's three quality gates, as DATA handed to `nativeDecodeSegment` beside the
+    // suppress lists — the same shape, for the same reason: native applies them because only the
+    // loop can act on them (a rung must be re-run; a runaway must be stopped mid-loop), and Kotlin
+    // owns the numbers so they are pinned where a JVM test can read them and there is exactly one
+    // copy. Values are `whisper_full_default_params`' (whisper.cpp:6235-6238) — the CPU tier's —
+    // except CYCLE_MAX_DISTINCT, which is ours (whisper.cpp has no cycle test; see its KDoc).
+    //
+    // Why the NPU tier needs them at all: its loop was a bare greedy argmax with two terminators,
+    // EOT or the 196-token budget. A greedy decode that enters a cycle cannot leave it — the argmax
+    // is deterministic — so it ran to the budget ("one word × 70-80", owner 2026-09-01), and
+    // `<|nospeech|>` was masked but never READ, so dead-time segments typed "Thank you."
 
-    /**
-     * whisper.cpp's three quality gates, as DATA handed to `nativeDecodeSegment` beside the
-     * suppress lists — the same shape, for the same reason: native applies them because only the
-     * loop can act on them (a rung must be re-run; a runaway must be stopped mid-loop), and Kotlin
-     * owns the numbers so they are pinned where a JVM test can read them and there is exactly one
-     * copy. Values are `whisper_full_default_params`' (whisper.cpp:6235-6238) — the CPU tier's.
-     *
-     * Why the NPU tier needs them at all: its loop was a bare greedy argmax with two terminators,
-     * EOT or the 196-token budget. A greedy decode that enters a cycle cannot leave it — the argmax
-     * is deterministic — so it ran to the budget ("one word × 70-80", owner 2026-09-01), and
-     * `<|nospeech|>` was masked but never READ, so dead-time segments typed "Thank you."
-     */
     /** Entropy of the last [ENTROPY_WINDOW] token ids below this is a repetition loop. */
     const val ENTROPY_THOLD = 2.4f
     /** Mean per-token log-probability below this is a low-confidence rung. */

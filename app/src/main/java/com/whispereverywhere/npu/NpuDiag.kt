@@ -26,12 +26,14 @@ object NpuDiag {
     const val TAG = "WE-DIAG"
 
     /**
-     * `npu: encode=405 decode=168 tokens=37 lang=auto->fr(detected)` — one line per segment.
+     * `npu: encode=405 decode=168 tokens=37 lang=auto->fr(detected) nsp=0.02 lp=-0.31 ent=3.10
+     * rung=0 term=eot` — one line per segment.
      *
      * The `npu: encode=` prefix is a **single contiguous literal** in this file, and there is a
      * test that says so. Building it from parts (`"npu: " + "encode="`, a `TAG` constant spliced
      * into the middle, a `buildString`) is invisible to the compiler and invisible in review, and
-     * it breaks every grep and every parser written against the shipped format.
+     * it breaks every grep and every parser written against the shipped format. The `npu: encode=`
+     * prefix stays one contiguous literal; the five gate fields (4.3.1 A) concatenate after it.
      *
      * @param encodeMs wall time of `nativeEncode`, including the mel and the quantisation — what
      *        the user waits for, not what the graph bills.

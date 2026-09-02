@@ -51,7 +51,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 83
-        versionName = "4.3.1"  // One tier per device: a capable phone is offered turbo and nothing else; the CPU model is hidden until a decline makes it the answer. (4.2.0/81 was Fleet Onboarding: the four-family census + gate, the NPU packs on Play Asset Delivery, language-first onboarding, the chooser's fetch affordance.)
+        versionName = "4.3.1"  // One tier per device: a capable phone is offered turbo and nothing else; the CPU model is hidden until a decline makes it the answer. (4.2.0/81 was Fleet Onboarding: the four-family census + gate, the NPU packs on Play Asset Delivery, language-first onboarding, the chooser's fetch affordance.) (unchanged in 4.3.1, a patch)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

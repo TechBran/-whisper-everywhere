@@ -1,5 +1,8 @@
 package com.whispereverywhere.tts
 
+/** Which rule let playback start (4.3.1 C) — logged on the `TTSDIAG start` line. */
+enum class StartRule { DONE, CAP, PROJECTED }
+
 /**
  * The spec §6A.3 prebuffer gate, finally implemented (designed 2026-07-27, deferred by D21, built
  * 2026-08-01 on the owner's "hold the audio until we have enough for a smooth stream" directive).
@@ -30,10 +33,6 @@ package com.whispereverywhere.tts
  * read as slow synthesis) — both are the CALLER's obligations, already true of the diag
  * measurement this rides on.
  */
-
-/** Which rule let playback start (4.3.1 C) — logged on the `TTSDIAG start` line. */
-enum class StartRule { DONE, CAP, PROJECTED }
-
 class TtsBufferPolicy(private val dMaxMs: Int) {
 
     @Volatile private var rtfEwma: Double = DEFAULT_RTF
