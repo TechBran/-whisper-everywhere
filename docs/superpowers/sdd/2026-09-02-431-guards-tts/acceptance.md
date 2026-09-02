@@ -132,5 +132,5 @@ D3. After D1, stop the session (tap the bubble) and tap again with the video sti
 
 ---
 
-Merge gate: fast-forward `feat/4.3.1-guards-and-tts` onto `main` only after **A2, A3, B4, C1 and D1**
+Merge gate: fast-forward `feat/4.3.1-guards-and-tts` onto `main` only after **A2, A3, B1, B4, C1 and D1**
 are marked PASS.
