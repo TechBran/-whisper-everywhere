@@ -4,6 +4,7 @@ import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.transcription.LanguagePin
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
@@ -1229,6 +1230,77 @@ class NpuDecodePolicyTest {
             "auto->yue(detected)",
             NpuDecodePolicy.resolveLangToken(WhisperTokens.LARGE_V3, null, 50358, null).note
         )
+    }
+
+    // ---------------------------------------------------------------- the decode guards (4.3.1 A)
+
+    /**
+     * whisper.cpp's defaults, verbatim: `whisper_full_default_params` in the fork at
+     * app/src/main/cpp/whisper.cpp/src/whisper.cpp:6235-6238 — `temperature_inc 0.2f`,
+     * `entropy_thold 2.4f`, `logprob_thold -1.0f`, `no_speech_thold 0.6f`. The CPU tier runs with
+     * exactly these (whisper_jni.cpp:854 sets only temperature_inc, leaving the rest at default),
+     * so the two tiers judge a segment by the same numbers. Written as literals here, not derived,
+     * so a drift in either direction is a red test and not a quiet re-tune.
+     */
+    @Test
+    fun guardThresholdsAreWhisperCppsDefaults() {
+        assertEquals(2.4f, NpuDecodePolicy.ENTROPY_THOLD, 0f)
+        assertEquals(-1.0f, NpuDecodePolicy.LOGPROB_THOLD, 0f)
+        assertEquals(0.6f, NpuDecodePolicy.NO_SPEECH_THOLD, 0f)
+        assertEquals(32, NpuDecodePolicy.ENTROPY_WINDOW)
+    }
+
+    /** `[t0, t0+0.2, ..., 1.0]` from `temperature = 0`, as whisper.cpp:7134-7141 builds it. */
+    @Test
+    fun theTemperatureLadderStartsGreedyAndClimbsByPointTwoToOne() {
+        val t = NpuDecodePolicy.TEMPERATURES
+        assertEquals(6, t.size)
+        assertEquals(0.0f, t[0], 0f)
+        for (i in 1 until t.size) {
+            assertEquals("rung $i", 0.2f * i, t[i], 1e-6f)
+        }
+        assertEquals(1.0f, t.last(), 1e-6f)
+    }
+
+    /**
+     * whisper.cpp:7865 — `is_no_speech = no_speech_prob > no_speech_thold && avg_logprobs <
+     * logprob_thold`. BOTH strict. A confident transcript of a segment the model also thinks is
+     * silent is kept (the model contradicted itself; the words win), and an unconfident transcript
+     * of a segment the model thinks has speech is kept too (that is a hard segment, not silence).
+     */
+    @Test
+    fun noSpeechNeedsBothAHighNoSpeechProbabilityAndALowAverageLogprob() {
+        assertTrue(NpuDecodePolicy.isNoSpeech(noSpeechProb = 0.61f, avgLogprob = -1.01f))
+        assertFalse("at the threshold is not over it", NpuDecodePolicy.isNoSpeech(0.6f, -1.01f))
+        assertFalse("at the threshold is not under it", NpuDecodePolicy.isNoSpeech(0.61f, -1.0f))
+        assertFalse("confident words beat a silence vote", NpuDecodePolicy.isNoSpeech(0.99f, -0.2f))
+        assertFalse("unconfident words in a speech segment are kept", NpuDecodePolicy.isNoSpeech(0.1f, -3f))
+        assertFalse("NaN (no scale readable) never blanks a segment", NpuDecodePolicy.isNoSpeech(Float.NaN, Float.NaN))
+        assertFalse("the native 'unreadable' sentinel never blanks a segment", NpuDecodePolicy.isNoSpeech(-1f, -5f))
+    }
+
+    /**
+     * The stats array's slot names and terminator codes. Native mirrors them as `kStat*` /
+     * `kTerm*` literals and NpuNativeContractTest holds the two copies equal by source text; this
+     * test pins the Kotlin side's own values so that comparison has a fixed point.
+     */
+    @Test
+    fun decodeStatsSlotsAndTerminatorCodesAreFixed() {
+        assertEquals(0, NpuDecodeStats.NO_SPEECH_PROB)
+        assertEquals(1, NpuDecodeStats.AVG_LOGPROB)
+        assertEquals(2, NpuDecodeStats.ENTROPY)
+        assertEquals(3, NpuDecodeStats.RUNG)
+        assertEquals(4, NpuDecodeStats.TERMINATOR)
+        assertEquals(5, NpuDecodeStats.STEPS)
+        assertEquals(6, NpuDecodeStats.SIZE)
+        assertEquals(6, NpuDecodeStats.newArray().size)
+        assertTrue("a fresh array reads as 'nothing measured'", NpuDecodeStats.newArray().all { it.isNaN() })
+        assertEquals("eot", NpuDecodeStats.terminatorName(NpuDecodeStats.TERM_EOT))
+        assertEquals("budget", NpuDecodeStats.terminatorName(NpuDecodeStats.TERM_BUDGET))
+        assertEquals("cap", NpuDecodeStats.terminatorName(NpuDecodeStats.TERM_CAP))
+        assertEquals("cut", NpuDecodeStats.terminatorName(NpuDecodeStats.TERM_CUT))
+        assertEquals("unknown", NpuDecodeStats.terminatorName(9f))
+        assertEquals("unknown", NpuDecodeStats.terminatorName(Float.NaN))
     }
 
     // ---------------------------------------------------------------- source-reading helpers

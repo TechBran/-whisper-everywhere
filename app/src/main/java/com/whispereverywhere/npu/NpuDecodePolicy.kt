@@ -137,6 +137,39 @@ object NpuDecodePolicy {
         return family.maxPositions - promptLen
     }
 
+    // ---------------------------------------------------------------- the decode guards (4.3.1 A)
+
+    /**
+     * whisper.cpp's three quality gates, as DATA handed to `nativeDecodeSegment` beside the
+     * suppress lists — the same shape, for the same reason: native applies them because only the
+     * loop can act on them (a rung must be re-run; a runaway must be stopped mid-loop), and Kotlin
+     * owns the numbers so they are pinned where a JVM test can read them and there is exactly one
+     * copy. Values are `whisper_full_default_params`' (whisper.cpp:6235-6238) — the CPU tier's.
+     *
+     * Why the NPU tier needs them at all: its loop was a bare greedy argmax with two terminators,
+     * EOT or the 196-token budget. A greedy decode that enters a cycle cannot leave it — the argmax
+     * is deterministic — so it ran to the budget ("one word × 70-80", owner 2026-09-01), and
+     * `<|nospeech|>` was masked but never READ, so dead-time segments typed "Thank you."
+     */
+    /** Entropy of the last [ENTROPY_WINDOW] token ids below this is a repetition loop. */
+    const val ENTROPY_THOLD = 2.4f
+    /** Mean per-token log-probability below this is a low-confidence rung. */
+    const val LOGPROB_THOLD = -1.0f
+    /** `p(<|nospeech|>)` at the SOT step above this says the segment is silence. */
+    const val NO_SPEECH_THOLD = 0.6f
+    /** `whisper_sequence_score`'s n: the entropy is over the last 32 ids (whisper.cpp:6885). */
+    const val ENTROPY_WINDOW = 32
+    /** The fallback ladder, `temperature = 0` then `+= temperature_inc` (whisper.cpp:7134). */
+    val TEMPERATURES: FloatArray = floatArrayOf(0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f)
+
+    /**
+     * whisper.cpp:7865, both comparisons strict. NaN or a negative sentinel (native could not read
+     * the logits' scale, so no probability was computed) answers false: a guard that cannot
+     * measure must not blank a segment.
+     */
+    fun isNoSpeech(noSpeechProb: Float, avgLogprob: Float): Boolean =
+        noSpeechProb > NO_SPEECH_THOLD && avgLogprob < LOGPROB_THOLD
+
     // ---------------------------------------------------------------- the language policy (NEW-C2)
 
     /**
