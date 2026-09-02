@@ -15,6 +15,12 @@ import org.junit.Test
  * NAME moves with it — the trunk now carries the one-tier-per-device lineup, and a build named for
  * the release before the one it contains is the exact silent mismatch this test exists to catch.
  *
+ * **versionCode 83 — the plain successor to 82.** 82 went to PRODUCTION on 2026-08-30 as 4.3.0,
+ * so it is spent twice over: Play refuses a second upload at the same code, and every installed
+ * phone already carries it. 4.3.1 is a patch (three field reports, no new surface), so the NAME
+ * moves by one in the last place and the code by one integer; 83 > 82 is what lets the track
+ * install replace the production build on the owner's own phone.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -35,15 +41,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_3_0_at_version_code_82() {
+    fun release_identity_is_4_3_1_at_version_code_83() {
         assertEquals(
-            "versionName must be 4.3.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.3.0",
+            "versionName must be 4.3.1 for this release (app/build.gradle.kts defaultConfig)",
+            "4.3.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 82 for this release (app/build.gradle.kts defaultConfig)",
-            82,
+            "versionCode must be 83 for this release (app/build.gradle.kts defaultConfig)",
+            83,
             BuildConfig.VERSION_CODE,
         )
     }
