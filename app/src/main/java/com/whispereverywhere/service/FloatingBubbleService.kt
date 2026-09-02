@@ -2154,7 +2154,16 @@ class FloatingBubbleService : Service(),
                 if (activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK &&
                     currentState == BubbleState.RECORDING
                 ) {
-                    showToast("This app blocks audio capture — using microphone")
+                    // THE ONE MIC HANDOVER THE LATCH ALLOWS, and it is announced rather than
+                    // silent. This app blocks capture (Netflix, Hulu, Sling — DRM licensing), or
+                    // its audio is voice-communication, which playback capture never carries at
+                    // all (Teams, Meet). Either way the stream is digital silence and the ONLY
+                    // route to that audio is the speakers into the microphone — so refusing here
+                    // would mean those apps simply cannot be transcribed. The toast names the
+                    // consequence the owner's rule cares about: the user's own voice is now in
+                    // the transcript. SilentStreamPolicy guarantees this fires only for a stream
+                    // that NEVER carried audio, so a paused or quiet video can never reach it.
+                    showToast("This app blocks audio capture — using the microphone, so your voice is included too")
                     switchSource(to = com.whispereverywhere.audio.ActiveSource.MIC)
                 }
             }

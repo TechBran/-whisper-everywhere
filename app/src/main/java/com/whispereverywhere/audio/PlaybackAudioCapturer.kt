@@ -20,7 +20,8 @@ import com.whispereverywhere.util.AudioMath
  * devices); if that AudioRecord refuses to initialize, we capture 48 kHz mono and decimate.
  *
  * Silent-stream watchdog: DRM-protected apps (Netflix etc.) opt out of capture — the stream
- * then arrives as digital silence. After [SILENT_TIMEOUT_MS] with no energy, [onSilentStream]
+ * then arrives as digital silence. A stream that carries NO audio for its first
+ * [SilentStreamPolicy.SILENT_TIMEOUT_MS] is judged blocked and [onSilentStream]
  * fires exactly once so the service can fall back to the microphone.
  */
 @RequiresApi(Build.VERSION_CODES.Q)
@@ -66,7 +67,11 @@ class PlaybackAudioCapturer(
             // stops-then-joins and is the precedent that policy is named after; it stays as is.
             com.whispereverywhere.util.CaptureThreadPolicy.enterCaptureThread()
             val buffer = ByteArray(readSize)
-            var lastLoudMs = System.currentTimeMillis()
+            val startedMs = System.currentTimeMillis()
+            // Has ANY buffer on this stream carried audio? The one bit that separates a blocked
+            // app from a paused video — see SilentStreamPolicy. Without it, pausing a video for
+            // three seconds read as "Netflix blocked us" and handed the session to the microphone.
+            var everCarriedAudio = false
             var silentFired = false
             while (recording) {
                 val read = record?.read(buffer, 0, buffer.size) ?: break
@@ -75,10 +80,16 @@ class PlaybackAudioCapturer(
                     if (out.isEmpty()) continue
                     val amp = AudioMath.amplitude(out, out.size)
                     val now = System.currentTimeMillis()
-                    if (amp > 200) lastLoudMs = now
-                    if (!silentFired && now - lastLoudMs > SILENT_TIMEOUT_MS) {
+                    if (amp > 200) everCarriedAudio = true
+                    // Measured from the stream's START, not from the last loud buffer: a blocked
+                    // stream has no loud buffer to measure from, and a stream that HAS one is not
+                    // blocked at all, whatever it is doing now.
+                    if (!silentFired &&
+                        SilentStreamPolicy.isBlockedByApp(everCarriedAudio, now - startedMs)
+                    ) {
                         silentFired = true
-                        Log.w("WE-DIAG", "PlaybackAudioCapturer: stream silent ${SILENT_TIMEOUT_MS}ms (DRM opt-out?)")
+                        Log.w("WE-DIAG", "PlaybackAudioCapturer: no audio in the first " +
+                            "${SilentStreamPolicy.SILENT_TIMEOUT_MS}ms — the app blocks capture")
                         onSilentStream()
                     }
                     onChunk(out, amp)
@@ -126,7 +137,4 @@ class PlaybackAudioCapturer(
         }
     }
 
-    private companion object {
-        const val SILENT_TIMEOUT_MS = 3000L
-    }
 }
