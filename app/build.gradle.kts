@@ -51,7 +51,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 83
-        versionName = "4.3.1"  // One tier per device: a capable phone is offered turbo and nothing else; the CPU model is hidden until a decline makes it the answer. (4.2.0/81 was Fleet Onboarding: the four-family census + gate, the NPU packs on Play Asset Delivery, language-first onboarding, the chooser's fetch affordance.) (unchanged in 4.3.1, a patch)
+        versionName = "4.3.1"  // Field-report release. Five workstreams, all from the owner using 4.3.0: whisper.cpp decode guards on the NPU (no-speech at SOT, per-token log-prob, in-loop entropy with a cycle signature, the temperature ladder) so turbo stops repeating a word 70-80x and stops typing "Thank you" from dead time; the bubble survives a read (one hide sink, a deferred replay); projected-complete TTS playback so there is no buffering; the screen-capture consent asks at most twice per session; and three fixes found on the phone after the merge - the ribbon animates per SECOND not per frame, the microphone never enters a device-audio session, and a paused video is no longer read as a DRM block. Carries the 4.4 VAD hangover retune too (HANGOVER_MS 500 -> 350, npu-turbo cadence floor 3,200 ms): measured, not guessed, and the reason the number is 350 and not 250 is in EndpointerTuning. (4.3.0/82 was one-tier-per-device; 4.2.0/81 Fleet Onboarding.)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
