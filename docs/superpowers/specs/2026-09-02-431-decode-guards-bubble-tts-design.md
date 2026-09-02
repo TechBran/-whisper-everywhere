@@ -296,6 +296,78 @@ seam, `PERFORMANCE_MODE_LOW_LATENCY`, instant stop.
 
 ---
 
+## Workstream D — The screen-capture consent asks at most twice per session (report 4, added 2026-09-02)
+
+### Report
+
+Transcribing a YouTube video: the system "share your screen / share one app" dialog appears; if
+the user cancels, the app immediately raises the dialog again, and the user is trapped unless
+they tap the bubble fast enough to stop the session, or grant. Owner: *"we should only ask for
+permission once ... I would even dare to say twice just in case someone makes a mistake and
+cancels ... it would just default back to the open microphone."*
+
+### Root cause (verified in source)
+
+Two sites launch the consent trampoline and neither remembers that it already asked:
+
+- `startAudioInput()` (`FloatingBubbleService.kt:2077-2101`) — `AudioSourcePolicy.decide` returns
+  `RequestConsent` whenever media is playing, no projection is stored, API ≥ 29 and the device-audio
+  preference is on (`AudioSourcePolicy.kt:22-31`); the session starts by asking.
+- The handover in `onMediaPlaybackStarted` (`:1178-1196`) — a RECORDING session on the MIC with the
+  preference on and no projection stops the mic and asks again.
+
+`onConsentDenied` (`:2242-2249`) falls back to the mic, correctly — but the video is still playing,
+and the consent activity's own appearance and disappearance drive the media detector: YouTube pauses
+while the dialog covers it and resumes when it is dismissed, so the detector emits
+`onMediaPlaybackStopped` then `onMediaPlaybackStarted` (`MediaSessionDetector.kt:255-261`, the
+`!isMediaPlaying` edge). The handover site sees RECORDING + MIC + preference + no projection and asks
+again. Every cancel resumes the video, every resume asks — the loop. Nothing in the session bounds
+it.
+
+### Design
+
+A **per-session consent budget**, consulted at BOTH request sites, reset when a session starts:
+
+```kotlin
+class ProjectionConsentBudget(private val maxAsks: Int = MAX_ASKS_PER_SESSION) {
+    var asked: Int = 0; private set
+    fun mayAsk(): Boolean = asked < maxAsks
+    fun noteAsked() { asked++ }
+    fun reset() { asked = 0 }
+    companion object { const val MAX_ASKS_PER_SESSION = 2 }
+}
+```
+
+- **Two asks per session, not one.** The loop's own re-fire means the second dialog follows the
+  first cancel almost immediately, which is exactly the owner's "in case someone makes a mistake"
+  recovery: a second cancel pins the session to the microphone; a grant on the second ask captures
+  device audio. After the budget is spent the session never asks again; a new session (the next
+  bubble tap) starts a fresh budget.
+- `AudioSourcePolicy.decide` gains `consentAvailable: Boolean`; `RequestConsent` is returned only when
+  the budget allows, else `UseMic` — the decision table stays pure and tested.
+- The handover site asks only if `mayAsk()`; when the budget is spent it stays on the microphone and
+  shows ONE toast for the session ("Using the microphone for this session — screen capture was
+  declined"), never one per media event.
+- Every ask logs `WE-DIAG` `projection consent: asked=<n>/<max>`; the first blocked ask logs
+  `projection consent: budget spent -> microphone for this session`.
+- `onConsentDenied` is unchanged (mic + its toast). A grant makes the budget moot (`hasProjection()`).
+
+### Error handling
+- The budget is service state reset in `startRecording`; a service restart starts at 0.
+- The counter counts ASKS launched, not answers — a dialog dismissed by the system (rotation,
+  process death of the trampoline) still consumed an ask, which errs toward not re-prompting.
+
+### Testing
+- `ProjectionConsentBudgetTest`: 0→1→2 then `mayAsk()` false; `reset()`; `maxAsks` honoured.
+- `AudioSourcePolicyTest`: `consentAvailable = false` turns `RequestConsent` into `UseMic`; every
+  other row unchanged.
+- `ConsentBudgetWiringPinTest` (source pins on the service): exactly two `requestConsent(` call sites;
+  each is preceded, on a live line inside the same block, by `consentBudget.noteAsked()`; each sits
+  under a `consentBudget.mayAsk()` guard; `consentBudget.reset()` is a live line inside
+  `startRecording`.
+- Owner device sheet §D: D1 cancel twice → microphone, no third dialog, the two diag lines; D2 cancel
+  once then grant → device audio; D3 stop and start a new session → the dialog returns.
+
 ## Release
 
 - `app/build.gradle.kts`: `versionCode = 83`, `versionName = "4.3.1"`; `ReleaseIdentityTest`

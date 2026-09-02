@@ -2005,6 +2005,222 @@ owner's device session: A2, A3, B1, C1.
 
 ---
 
+### Task 11: The screen-capture consent asks at most twice per session (Workstream D, added 2026-09-02)
+
+**Files:**
+- Create: `app/src/main/java/com/whispereverywhere/audio/ProjectionConsentBudget.kt`
+- Modify: `app/src/main/java/com/whispereverywhere/audio/AudioSourcePolicy.kt` (`decide` gains `consentAvailable`)
+- Modify: `app/src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt` — the handover site in `onMediaPlaybackStarted` (grep `Allow screen capture to transcribe device audio`, first hit), `startAudioInput()` (grep `SourceDecision.RequestConsent ->`), `startRecording()` (grep `sessionProducedText = false`), a new field beside `activeSource`
+- Test: create `app/src/test/java/com/whispereverywhere/audio/ProjectionConsentBudgetTest.kt`; modify `app/src/test/java/com/whispereverywhere/audio/AudioSourcePolicyTest.kt`; create `app/src/test/java/com/whispereverywhere/service/ConsentBudgetWiringPinTest.kt`
+- Docs: append §D to `docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md`
+
+**Interfaces:**
+- Produces: `ProjectionConsentBudget(maxAsks: Int = MAX_ASKS_PER_SESSION)` with `asked: Int`, `mayAsk(): Boolean`, `noteAsked()`, `reset()`, `MAX_ASKS_PER_SESSION = 2`; `AudioSourcePolicy.decide(mediaPlaying, hasProjection, sdkInt, preferDeviceAudio, consentAvailable: Boolean): SourceDecision`.
+
+- [ ] **Step 1: Write the failing tests.** Create `ProjectionConsentBudgetTest.kt`:
+
+```kotlin
+package com.whispereverywhere.audio
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * The per-session cap on the screen-capture consent dialog (4.3.1 D). The owner's report: cancel
+ * the dialog and the app raised it again at once — every cancel resumed the video, every resume
+ * asked — with no bound. Two asks per session: the second is the "I cancelled by mistake"
+ * recovery; after that the session is the microphone's.
+ */
+class ProjectionConsentBudgetTest {
+
+    @Test fun two_asks_then_the_session_is_the_microphones() {
+        val b = ProjectionConsentBudget()
+        assertTrue(b.mayAsk()); b.noteAsked()
+        assertEquals(1, b.asked)
+        assertTrue(b.mayAsk()); b.noteAsked()
+        assertEquals(2, b.asked)
+        assertFalse("the third ask is the trap", b.mayAsk())
+        b.noteAsked() // a caller that ignores mayAsk() still cannot make it true
+        assertFalse(b.mayAsk())
+    }
+
+    @Test fun a_new_session_starts_a_fresh_budget() {
+        val b = ProjectionConsentBudget()
+        b.noteAsked(); b.noteAsked()
+        assertFalse(b.mayAsk())
+        b.reset()
+        assertEquals(0, b.asked)
+        assertTrue(b.mayAsk())
+    }
+
+    @Test fun the_cap_is_two_and_honoured_when_overridden() {
+        assertEquals(2, ProjectionConsentBudget.MAX_ASKS_PER_SESSION)
+        val once = ProjectionConsentBudget(maxAsks = 1)
+        assertTrue(once.mayAsk()); once.noteAsked()
+        assertFalse(once.mayAsk())
+    }
+}
+```
+Append to `AudioSourcePolicyTest.kt` (and add `consentAvailable = true` to every existing call so they keep their meaning):
+
+```kotlin
+    @Test fun `media playing without projection but the consent budget is spent - mic`() =
+        assertEquals(SourceDecision.UseMic,
+            AudioSourcePolicy.decide(mediaPlaying = true, hasProjection = false, sdkInt = 34, preferDeviceAudio = true, consentAvailable = false))
+
+    @Test fun `a stored projection is used whatever the budget says`() =
+        assertEquals(SourceDecision.UsePlayback,
+            AudioSourcePolicy.decide(mediaPlaying = true, hasProjection = true, sdkInt = 34, preferDeviceAudio = true, consentAvailable = false))
+```
+Create `ConsentBudgetWiringPinTest.kt` — copy the `source` / `liveLines` / `liveOffsets` / `memberBody` helpers from `BubbleHideWiringPinTest.kt` verbatim (the corrected `memberBody`, whose indent is the anchor line's own leading spaces), then:
+
+```kotlin
+    private val service: String by lazy { source("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt") }
+
+    @Test
+    fun both_consent_requests_are_budgeted_and_counted_and_the_budget_resets_per_session() {
+        val asks = liveLines(service, "MediaProjectionGate.requestConsent(")
+        assertEquals("exactly two ask sites, found: $asks", 2, asks.size)
+        val notes = liveOffsets(service, "consentBudget.noteAsked()")
+        val askOffsets = liveOffsets(service, "MediaProjectionGate.requestConsent(")
+        assertEquals("every ask is counted once", 2, notes.size)
+        for (i in 0..1) assertTrue("noteAsked precedes ask $i", notes[i] < askOffsets[i])
+        val handover = memberBody(service, "    override fun onMediaPlaybackStarted(packageName: String, title: String?) {")
+        assertEquals("the handover asks under the budget", 1, liveLines(handover, "consentBudget.mayAsk()").size)
+        val input = memberBody(service, "    private fun startAudioInput(): Result<Unit> {")
+        assertEquals("startAudioInput hands the budget to the policy", 1,
+            liveLines(input, "consentAvailable = consentBudget.mayAsk(),").size)
+        val start = memberBody(service, "    private fun startRecording() {")
+        assertEquals("a session starts with a fresh budget", 1, liveLines(start, "consentBudget.reset()").size)
+        assertEquals("one field", 1, liveLines(service, "private val consentBudget = com.whispereverywhere.audio.ProjectionConsentBudget()").size)
+    }
+
+    @Test
+    fun a_spent_budget_toasts_once_per_session_not_once_per_media_event() {
+        val handover = memberBody(service, "    override fun onMediaPlaybackStarted(packageName: String, title: String?) {")
+        assertEquals(1, liveLines(handover, "if (!consentExhaustedToastShown) {").size)
+        assertEquals(1, liveLines(handover, "consentExhaustedToastShown = true").size)
+        val start = memberBody(service, "    private fun startRecording() {")
+        assertEquals(1, liveLines(start, "consentExhaustedToastShown = false").size)
+    }
+```
+Check the anchors by grep before relying on them: `override fun onMediaPlaybackStarted(packageName: String, title: String?) {` (4-space indent), `private fun startAudioInput(): Result<Unit> {`, `private fun startRecording() {`. If a signature differs, use the file's exact line as the anchor and say so in the report.
+
+- [ ] **Step 2: Run to see them fail** — `--tests "com.whispereverywhere.audio.ProjectionConsentBudgetTest" --tests "com.whispereverywhere.audio.AudioSourcePolicyTest" --tests "com.whispereverywhere.service.ConsentBudgetWiringPinTest"`. Expected: compile failure (`ProjectionConsentBudget`, the new parameter).
+
+- [ ] **Step 3: Implement.** Create `ProjectionConsentBudget.kt`:
+
+```kotlin
+package com.whispereverywhere.audio
+
+/**
+ * How many times ONE recording session may raise the screen-capture consent dialog (4.3.1 D).
+ *
+ * Why it exists: the dialog's own appearance pauses the video and its dismissal resumes it, so a
+ * cancel makes the media detector fire "playback started" again, and the handover asked again —
+ * every cancel, forever, unless the user stopped the session first (owner report 2026-09-02).
+ * Two asks: the second is the "cancelled by mistake" recovery; the third would be the trap.
+ * Counts ASKS launched, not answers, so a dialog the system dismissed still spent one.
+ */
+class ProjectionConsentBudget(private val maxAsks: Int = MAX_ASKS_PER_SESSION) {
+    var asked: Int = 0
+        private set
+
+    fun mayAsk(): Boolean = asked < maxAsks
+    fun noteAsked() { asked++ }
+    fun reset() { asked = 0 }
+
+    companion object {
+        const val MAX_ASKS_PER_SESSION = 2
+    }
+}
+```
+`AudioSourcePolicy.decide` gains the parameter and one row (keep the KDoc table and add the row):
+```kotlin
+    fun decide(
+        mediaPlaying: Boolean,
+        hasProjection: Boolean,
+        sdkInt: Int,
+        preferDeviceAudio: Boolean,
+        consentAvailable: Boolean,
+    ): SourceDecision = when {
+        !mediaPlaying || !preferDeviceAudio || sdkInt < 29 -> SourceDecision.UseMic
+        hasProjection -> SourceDecision.UsePlayback
+        //  - media, no token, budget spent -> mic (4.3.1 D: at most two dialogs per session)
+        !consentAvailable -> SourceDecision.UseMic
+        else -> SourceDecision.RequestConsent
+    }
+```
+Service — fields beside `activeSource`:
+```kotlin
+    /** 4.3.1 D: the screen-capture dialog may be raised at most twice per session. */
+    private val consentBudget = com.whispereverywhere.audio.ProjectionConsentBudget()
+    /** One "microphone for this session" toast per session, not one per media event. */
+    private var consentExhaustedToastShown = false
+```
+`startRecording()` — beside `sessionProducedText = false`: `consentBudget.reset()` and `consentExhaustedToastShown = false`.
+`startAudioInput()` — pass `consentAvailable = consentBudget.mayAsk(),` to `decide`; in the `RequestConsent ->` arm, immediately before `MediaProjectionGate.requestConsent(this)`: `consentBudget.noteAsked()` and `android.util.Log.i("WE-DIAG", "projection consent: asked=${consentBudget.asked}/${com.whispereverywhere.audio.ProjectionConsentBudget.MAX_ASKS_PER_SESSION}")`.
+Handover in `onMediaPlaybackStarted` — replace the `else {` arm that asks with:
+```kotlin
+                } else if (consentBudget.mayAsk()) {
+                    // Flush + stop the mic NOW (never mix room audio into a media session),
+                    // then ask; capture starts when consent lands.
+                    transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
+                    audioRecorder.stop()
+                    consentBudget.noteAsked()
+                    android.util.Log.i("WE-DIAG", "projection consent: asked=${consentBudget.asked}/${com.whispereverywhere.audio.ProjectionConsentBudget.MAX_ASKS_PER_SESSION}")
+                    com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
+                    com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this@FloatingBubbleService)
+                    showToast("Allow screen capture to transcribe device audio")
+                } else {
+                    // 4.3.1 D: the budget is spent — the session is the microphone's. Say so ONCE;
+                    // the video resuming after every cancel would otherwise toast on every resume.
+                    if (!consentExhaustedToastShown) {
+                        consentExhaustedToastShown = true
+                        android.util.Log.i("WE-DIAG", "projection consent: budget spent -> microphone for this session")
+                        showToast("Using the microphone for this session — screen capture was declined")
+                    }
+                }
+```
+(The mic keeps running in that arm: nothing is stopped.)
+
+- [ ] **Step 4: Run to see them pass**; `assembleDebug` → BUILD SUCCESSFUL.
+
+- [ ] **Step 5: Acceptance sheet §D** — append to `docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md`, in the sheet's own row style with the `[ ] PASS  [ ] FAIL` checkbox on each row:
+
+```markdown
+## D — the screen-capture dialog asks at most twice
+D1. Device-audio preference ON. Play a YouTube video, tap the bubble to transcribe. The share
+    dialog appears: CANCEL. It appears once more (the video resumed): CANCEL again. Expect: no
+    third dialog; the toast "Using the microphone for this session — screen capture was
+    declined"; transcription continues from the microphone. Grep:
+    `Select-String "projection consent:" C:\Users\bastr\.androidbuild\capture-431.txt`
+    → `asked=1/2`, `asked=2/2`, `budget spent -> microphone for this session`. FAIL if a third
+    dialog appears or the toast repeats.
+D2. Same start; CANCEL the first dialog, GRANT the second. Expect device audio captured
+    ("Capturing device audio" toast) and the video's words transcribed.
+D3. After D1, stop the session (tap the bubble) and tap again with the video still playing.
+    Expect the dialog to return (a new session, a fresh budget).
+```
+Add D1 to the merge-gate footer's row list.
+
+- [ ] **Step 6: Whole suite, then commit** — expected **156 suites / 1,877 tests / 0 failures** from the 154 / 1,870 baseline: +2 suites (`ProjectionConsentBudgetTest`, `ConsentBudgetWiringPinTest`) and +7 tests (3 budget + 2 wiring + 2 policy). Record the exact numbers.
+
+```
+fix(capture): the screen-capture consent asks at most twice per session, then the microphone
+
+Every cancel resumed the video and every resume asked again (the handover site had no memory).
+ProjectionConsentBudget is reset per session and consulted at both ask sites; AudioSourcePolicy
+turns RequestConsent into UseMic when the budget is spent; one toast per session; two WE-DIAG
+lines; sheet §D.
+```
+
+**Battery:** (1) remove `consentBudget.noteAsked()` from the handover → the wiring pin RED; revert. (2) change `MAX_ASKS_PER_SESSION` to `3` → `the_cap_is_two…` RED; revert. (3) delete the `!consentAvailable -> UseMic` row → `…budget is spent - mic` RED; revert.
+
+---
+
 ## Self-review
 
 **Spec coverage.** A: thresholds/ladder as data (T2), stats contract (T2/T3), no-speech at SOT from raw logits (T3), masked per-token log-prob (T3), in-loop entropy (T3), ladder with last-rung cut (T3), scale-unreadable degradation (T3, T2's NaN rule), Kotlin decision + blank → EmptyExpected (T4), grown diag lines (T3 LOGI, T4 `npu:`), pins in the four named test classes (T2–T4), device evidence (T10 §A). B: `hideBubble(reason)` sink + WE-DIAG line + defer (T6), replay rule (T5/T6), `speakFromTrigger` Boolean + reset (T6), pure policy test (T5), a11y classification out of scope (unchanged), device check (T10 §B). C: `shouldStart`/`startDecision` with the three constants (T7), planned/remaining chars (T8), cloud RTF (T8), start-gate-only change with resume untouched (T7 test, T8), `onProgress` total + ticks during the gate (T8), scrubber generating region + seek re-basing (T9), `TTSDIAG start` (T8), device evidence (T10 §C). Release: identity (T1), ledger (T1/T10), bundle build (T10).
