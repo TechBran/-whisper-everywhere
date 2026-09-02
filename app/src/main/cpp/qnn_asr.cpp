@@ -3158,6 +3158,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     float noSpeechProb = kStatUnreadable;
     double avgLogprob = 0.0;
     double entropyLast = 0.0;
+    bool entropyMeasured = false;    // the window check RAN on the returned rung
     size_t rungUsed = 0;
     float terminator = kTermEot;
     for (size_t rung = 0; rung < temperatures.size(); ++rung) {
@@ -3165,12 +3166,14 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         std::mt19937 rng(0x5EEDu ^ static_cast<uint32_t>(rung));   // deterministic per rung
         zeroSelfKvLocked();
         count = 0;
+        firstGenerated = -1;             // the result line names THIS rung's first token
         hitEot = false;
         double sumLogprob = 0.0;
         bool failedEntropy = false;
         int32_t failedAt = 0;
         int32_t next = prompt[0];
         entropyLast = 0.0;
+        entropyMeasured = false;
         rungUsed = rung;
 
         for (uint32_t position = 0; position <= lastPosition; ++position) {
@@ -3302,6 +3305,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
             // at ~33-40 tokens instead of at the 196-token budget.
             if (count > kEntropyWindow) {
                 entropyLast = trailingEntropy(out, count);
+                entropyMeasured = true;
                 if (entropyLast < entropyThold) {
                     failedEntropy = true;
                     failedAt = count;
@@ -3342,7 +3346,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     float stats[kStatSize];
     stats[kStatNoSpeechProb] = noSpeechProb;
     stats[kStatAvgLogprob] = (scale > 0.0f && count > 0) ? static_cast<float>(avgLogprob) : NAN;
-    stats[kStatEntropy] = (count > kEntropyWindow) ? static_cast<float>(entropyLast) : NAN;
+    // Whenever the window check ran on the returned rung - a `cut` line must carry the
+    // sub-threshold entropy that caused it, and the cut itself shrinks `count` below the window.
+    stats[kStatEntropy] = entropyMeasured ? static_cast<float>(entropyLast) : NAN;
     stats[kStatRung] = static_cast<float>(rungUsed);
     stats[kStatTerminator] = terminator;
     stats[kStatSteps] = static_cast<float>(stepsRun);
