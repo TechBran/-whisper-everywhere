@@ -317,6 +317,9 @@ class TtsEngine(
                     var cursor = 0L
                     var started = false
                     var stalled = false
+                    // 4.3.1 C: the rule the gate released the FIRST start on; null at first play
+                    // means the gate never released it — the doneFlag bypass, i.e. DONE.
+                    var startRule: StartRule? = null
                     // The gate clock: reset whenever gating begins (thread start; each stall), so
                     // CAP_MS bounds each individual hold, not the whole read.
                     var gateSinceMs = System.currentTimeMillis()
@@ -410,12 +413,7 @@ class TtsEngine(
                                     try { Thread.sleep(20) } catch (_: InterruptedException) {}
                                     continue@loop
                                 }
-                                if (!started) {
-                                    android.util.Log.i(
-                                        TtsDiag.TAG,
-                                        TtsDiag.start(myGen, bufferedMs, remainingMs.toLong(), totalMs.toLong(), bufferPolicy.rtf(), rule.name.lowercase()),
-                                    )
-                                }
+                                if (!started) startRule = rule
                                 if (gateRingShown) {
                                     gateRingShown = false
                                     onBuffering?.invoke(false)
@@ -480,6 +478,27 @@ class TtsEngine(
                                 localTrack.play()
                                 started = true
                                 diagTtfwMs.set(System.currentTimeMillis() - diagT0)
+                                // 4.3.1 C: the ring settle and the start log live HERE, not in the
+                                // gate — its `!doneFlag.get()` guard skips the gate when the producer
+                                // finishes during the hold (every short read), and only this site
+                                // sees every first start. startRule == null is that bypass: DONE.
+                                if (gateRingShown) {
+                                    gateRingShown = false
+                                    onBuffering?.invoke(false)
+                                }
+                                val bufferedMs = TtsDiagMath.audioMs(
+                                    (availableSamples - cursor).toInt().coerceAtLeast(0),
+                                    localTrack.sampleRate,
+                                )
+                                val remainingMs = TtsRemainingEstimate.ms(remainingChars)
+                                val totalMs = TtsRemainingEstimate.ms(plannedChars)
+                                android.util.Log.i(
+                                    TtsDiag.TAG,
+                                    TtsDiag.start(
+                                        myGen, bufferedMs, remainingMs, totalMs, bufferPolicy.rtf(),
+                                        (startRule ?: StartRule.DONE).name.lowercase(),
+                                    ),
+                                )
                             }
                             onPcmChunk?.let { tap ->
                                 var sum = 0.0
