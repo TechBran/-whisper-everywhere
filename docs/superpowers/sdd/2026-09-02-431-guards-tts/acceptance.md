@@ -29,6 +29,28 @@ BEFORE A1: transcript text is never logged, so A1's "unchanged from 4.3.0" can o
 eye — on the 4.3.0 build (or from a phrase set you know by heart), dictate the same five sentences
 first and write down exactly what each one typed; A1 compares against that written record.
 
+**4.3.0 BASELINE — CAPTURED 2026-09-02** (owner's Fold6, Play build 4.3.0/82, turbo on the NPU;
+`C:\Users\bastr\.androidbuild\capture-430-baseline.txt`, 29 segments / 239 tokens). The owner
+holds the five sentences' TEXT in their own notes — one sentence per bubble session, the fifth
+with a few extra technical terms — and A1 compares against that. The numbers are:
+
+| | 4.3.0 baseline |
+|---|---|
+| decode | **15.69 ms/token** weighted (median 16.34, min 11.13, max 60.0 — the max is a one-token segment, i.e. fixed overhead over one token) |
+| encode | **1,752 ms** mean (1,694–1,825) |
+| terminators | 29/29 `EOT`; **zero** `terminated by the token budget` |
+
+The five sentences were: (1) "The quick brown fox jumps over the lazy dog near the river."
+(2) "Please schedule the meeting for Thursday afternoon at three fifteen." (3) "One, two, three,
+four, five, six, seven, eight, nine, ten." — the comma-list case A5 re-tests. (4) "Send him the
+invoice, the contract, and the revised estimate by Friday." (5) a sentence of the owner's with
+technical terms. Dictate the same five on 4.3.1 for A1 and A6.
+
+The same capture **empirically confirms the install rule above**: it contains ZERO `npu:` and
+ZERO `TTSDIAG` lines and only native ones, because R8 strips the app's own `Log.i` in release.
+On the track build, §A is readable only through the native `decode:` line, and §B/§C/§D are
+judged by eye.
+
 A1. Dictate five ordinary sentences. Expect text unchanged from 4.3.0 and, per segment, a line
     `npu: encode=… decode=… tokens=N lang=… nsp=0.0x lp=-0.x ent=… rung=0 term=eot` — the field
     set is `encode= decode= tokens= lang= nsp= lp= ent= rung= term=`, and clean speech ends
@@ -63,7 +85,9 @@ A5. The list row. Dictate "one, two, three, … twenty-five" WITH the commas. Ex
     list never has. FAIL if the list is truncated, or `term=cut` / `rung>0` appears on it.
     `[ ] PASS  [ ] FAIL`
 A6. Cost. From A1's five clean sentences take the native `decode:` line's `(Y ms/token)`; compare
-    with a 4.3.0 capture if one exists; RECORD THE NUMBER: 4.3.1 ______ ms/token, 4.3.0 ______.
+    with the measured baseline above; RECORD THE NUMBER: 4.3.1 ______ ms/token, **4.3.0 = 15.69**
+    (weighted; encode 1,752 ms mean). A weighted figure over several segments is the comparable
+    one — a single short segment reads high because the fixed overhead is divided by few tokens.
     The per-token log-softmax costs ~5–12 % by estimate and `t0` now includes a per-rung self-KV
     memset, so a small rise is expected — report it; this row cannot FAIL on the number alone.
     `[ ] PASS  [ ] FAIL`
