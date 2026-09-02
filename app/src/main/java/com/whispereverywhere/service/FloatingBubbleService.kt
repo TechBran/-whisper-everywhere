@@ -969,8 +969,9 @@ class FloatingBubbleService : Service(),
                 }
             }
         }
-        // Scrubber feed: played/available/done at ~10 Hz from the playback thread.
-        engine.onProgress = { played, available, done ->
+        // Scrubber feed: played/available/total/done at ~10 Hz from the playback thread.
+        // 4.3.1 C: total reaches the scrubber in Task 9.
+        engine.onProgress = { played, available, total, done ->
             ttsScrubber.setProgress(played, available, done)
         }
         enterSpeakingVisuals()

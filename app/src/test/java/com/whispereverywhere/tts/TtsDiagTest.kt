@@ -116,4 +116,16 @@ class TtsDiagTest {
     @Test fun tag_is_the_existing_engine_tag() {
         assertEquals("WE-TTS", TtsDiag.TAG)
     }
+
+    @Test fun start_line_names_the_rule_and_the_numbers_it_was_decided_on() {
+        val line = TtsDiag.start(gen = 7, bankedMs = 57_000, remainingMs = 63_000, totalMs = 120_000, rtf = 0.58, rule = "projected")
+        assertTrue(line, line.startsWith("TTSDIAG start "))
+        assertTrue(line, line.contains("gen=7"))
+        assertTrue(line, line.contains("bankedMs=57000"))
+        assertTrue(line, line.contains("remainingMs=63000"))
+        assertTrue(line, line.contains("totalMs=120000"))
+        assertTrue(line, line.contains("rtf=0.58"))
+        assertTrue(line, line.contains("rule=projected"))
+        assertTrue("no comma", !line.contains(","))
+    }
 }

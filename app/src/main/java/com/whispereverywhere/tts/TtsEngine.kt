@@ -47,6 +47,10 @@ class TtsEngine(
     @Volatile private var tts: OfflineTts? = null
     @Volatile private var speaking = false
 
+    // 4.3.1 C: what the start gate projects from. Written by the producer, read by playback.
+    @Volatile private var plannedChars = 0
+    @Volatile private var remainingChars = 0
+
     // Cancellation model (final-review fix C1): a monotonically increasing generation. Each
     // speak() task captures its generation; stop() and any NEWER speak() bump the counter,
     // which cancels every older task the moment it next checks — nothing can ever "un-cancel"
@@ -113,10 +117,11 @@ class TtsEngine(
     @Volatile var onBuffering: ((Boolean) -> Unit)? = null
 
     /**
-     * Scrubber feed (~10 Hz from the playback thread): samples played, samples synthesized so
-     * far, and whether synthesis has finished (= the bar's right edge is final).
+     * Scrubber feed (~10 Hz from the playback thread, and during the start gate): samples played,
+     * samples synthesized so far, the ESTIMATED total (chars × 45 ms until synthesis finishes,
+     * then == available), and whether synthesis has finished (= the bar's right edge is final).
      */
-    @Volatile var onProgress: ((played: Long, available: Long, done: Boolean) -> Unit)? = null
+    @Volatile var onProgress: ((played: Long, available: Long, estimatedTotal: Long, done: Boolean) -> Unit)? = null
 
     // Seek request in absolute samples; -1 = none. The playback thread consumes it between
     // slices (it is the AudioTrack's sole owner, so the flush happens there too).
@@ -130,6 +135,11 @@ class TtsEngine(
         seekRequest.set(target)
         paused = false // dragging the line while paused implies "play from here"
     }
+
+    /** The bar's estimated end: the chars→samples projection until done, then the bank itself. */
+    private fun estimatedTotalSamples(sampleRate: Int, done: Boolean): Long =
+        if (done) availableSamples
+        else maxOf(availableSamples, TtsRemainingEstimate.samples(plannedChars, sampleRate))
 
     /** True while playback is paused mid-utterance (synthesis holds between slices). */
     @Volatile var paused: Boolean = false
@@ -232,6 +242,8 @@ class TtsEngine(
                 var storeTotal = 0L                 // written under the same lock
                 playedSamples = 0L
                 availableSamples = 0L
+                plannedChars = 0
+                remainingChars = 0
                 seekRequest.set(-1)
                 val doneFlag = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -370,7 +382,17 @@ class TtsEngine(
                                     gateSinceMs = System.currentTimeMillis()
                                 }
                                 val waitedMs = System.currentTimeMillis() - gateSinceMs
-                                if (!bufferPolicy.shouldProceed(bufferedMs.toInt(), waitedMs, done = false)) {
+                                val rate = localTrack.sampleRate
+                                val remainingMs = TtsRemainingEstimate.ms(remainingChars).toInt()
+                                val totalMs = TtsRemainingEstimate.ms(plannedChars).toInt()
+                                // 4.3.1 C: the FIRST start is projected-complete; a RESUME after a
+                                // stall keeps the watermark rule (shouldProceed) untouched.
+                                val rule: StartRule? = if (!started) {
+                                    bufferPolicy.startDecision(bufferedMs.toInt(), remainingMs, totalMs, waitedMs, done = false)
+                                } else if (bufferPolicy.shouldProceed(bufferedMs.toInt(), waitedMs, done = false)) {
+                                    StartRule.PROJECTED
+                                } else null
+                                if (rule == null) {
                                     // The start hold is BUFFERING and must say so — without this
                                     // the speaking pill sits silent with a motionless aurora and
                                     // reads as the bubble vanishing (owner report 2026-08-01).
@@ -378,10 +400,21 @@ class TtsEngine(
                                         gateRingShown = true
                                         onBuffering?.invoke(true)
                                     }
-                                    // 20 ms tick (spec WAIT_TICK_MS): fine-grained enough for
-                                    // cloud packet cadences, cheap enough to poll.
+                                    // The scrubber must move while we wait: the gray region grows
+                                    // toward the estimated total (4.3.1 C).
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastProgressMs >= 100) {
+                                        lastProgressMs = now
+                                        onProgress?.invoke(cursor, availableSamples, estimatedTotalSamples(rate, false), false)
+                                    }
                                     try { Thread.sleep(20) } catch (_: InterruptedException) {}
                                     continue@loop
+                                }
+                                if (!started) {
+                                    android.util.Log.i(
+                                        TtsDiag.TAG,
+                                        TtsDiag.start(myGen, bufferedMs, remainingMs.toLong(), totalMs.toLong(), bufferPolicy.rtf(), rule.name.lowercase()),
+                                    )
                                 }
                                 if (gateRingShown) {
                                     gateRingShown = false
@@ -472,7 +505,7 @@ class TtsEngine(
                             val now = System.currentTimeMillis()
                             if (now - lastProgressMs >= 100) {
                                 lastProgressMs = now
-                                onProgress?.invoke(cursor, availableSamples, doneFlag.get())
+                                onProgress?.invoke(cursor, availableSamples, estimatedTotalSamples(localTrack.sampleRate, doneFlag.get()), doneFlag.get())
                                 val leadMs = TtsDiagMath.audioMs(
                                     (availableSamples - cursor).toInt().coerceAtLeast(0),
                                     localTrack.sampleRate,
@@ -486,7 +519,7 @@ class TtsEngine(
                         if (!cancelled() && !stalled) {
                             try { Thread.sleep(150) } catch (_: InterruptedException) {}
                             if (started) runCatching { localTrack.stop() }
-                            onProgress?.invoke(playedSamples, availableSamples, true)
+                            onProgress?.invoke(playedSamples, availableSamples, availableSamples, true)
                         }
                     } finally {
                         if (stalled) onBuffering?.invoke(false)
@@ -566,6 +599,7 @@ class TtsEngine(
                 // bleed is never invisible. A delivered unit resets the streak.
                 var consecutiveSoft = 0
                 var softLatched = false
+                var cloudUnitSeq = 0 // 4.3.1 C: cloud fetches attempted; the RTF feed skips the first.
                 try {
                     // Bound each synthesis unit so no unit outruns the banked audio (underrun law,
                     // 6A.1) and — for the LOCAL path — sherpa's whole-utterance float[] stays small
@@ -600,7 +634,10 @@ class TtsEngine(
                     }
                     val unitCap =
                         if (hasCloud) ClauseSplitter.CLOUD_SPLIT_MAX_CHARS else ClauseSplitter.SPLIT_MAX_CHARS
-                    for (unit in ClauseSplitter.plan(clean, unitCap)) {
+                    val units = ClauseSplitter.plan(clean, unitCap)
+                    plannedChars = units.sumOf { it.length }
+                    remainingChars = plannedChars
+                    for (unit in units) {
                         if (cancelled()) break
                         val latched = latchedFatal != null || softLatched
                         when (planUnitOutcome(hasCloud, latched, synthResult = null)) {
@@ -614,6 +651,9 @@ class TtsEngine(
                                 // in ~one round of coroutine dispatch, instead of blocking this single
                                 // synthesis thread for up to DEFAULT_TTS_TIMEOUT_MS (45 s) while a
                                 // queued next read waits behind it. cloudSnap/voiceSnap are non-null.
+                                val unitStartMs = System.currentTimeMillis()
+                                val bankBefore = availableSamples
+                                val unitSeq = cloudUnitSeq++
                                 val res = runCatching {
                                     runBlocking {
                                         val deferred = async {
@@ -660,13 +700,25 @@ class TtsEngine(
                                         // cap before it reaches sherpa.
                                         localResplit(unit)
                                     }
-                                    else -> consecutiveSoft = 0 // Cloud delivered: reset the streak.
+                                    else -> {
+                                        consecutiveSoft = 0 // Cloud delivered: reset the streak.
+                                        // 4.3.1 C: the projection needs THIS provider's speed, not
+                                        // DEFAULT_RTF. Wall time of the fetch vs audio it banked,
+                                        // skipping the first unit (connection setup) as the local
+                                        // callback skips seq 0.
+                                        val audMs = TtsDiagMath.audioMs((availableSamples - bankBefore).toInt().coerceAtLeast(0), engine.sampleRate())
+                                        if (unitSeq > 0) bufferPolicy.recordRtf(System.currentTimeMillis() - unitStartMs, audMs.toInt())
+                                    }
                                 }
                             }
                             // UnitAction.Local: on-device voice. A latched cloud read left this unit
                             // at the cloud cap, so re-split; a pure-local read is already <= cap.
                             else -> if (hasCloud) localResplit(unit) else local(unit)
                         }
+                        // This unit's audio — cloud or local fallback — is in the bank: shrink the
+                        // projected remainder. Once per top-level unit; localResplit's sub-units
+                        // are part of it.
+                        remainingChars -= unit.length
                     }
                 } finally {
                     // MUST be in a finally. If generateWithCallback throws (OOM on sherpa's
