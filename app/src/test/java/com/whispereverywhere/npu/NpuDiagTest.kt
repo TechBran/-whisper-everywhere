@@ -191,10 +191,10 @@ class NpuDiagTest {
             "the segment line must carry nativeDecodeSegment's RETURNED count, never the decoded " +
                 "string's length. `written` is that count; reading it off the text would be one " +
                 "step from logging the text, which this tier never does. (4.3.1 A: the call grew " +
-                "five stats arguments and wraps onto multiple lines, so the needle is now the " +
-                "leading argument line rather than the whole call.)",
+                "five stats arguments, wraps onto multiple lines and names every argument, so the " +
+                "needle is the `tokens =` binding itself — `tokens = text.length` would not match.)",
             1,
-            liveLineCount(backend, "encodeMs, decodeMs, written, resolution.note,"),
+            liveLineCount(backend, "tokens = written,"),
         )
     }
 

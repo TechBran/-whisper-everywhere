@@ -1248,6 +1248,8 @@ class NpuDecodePolicyTest {
         assertEquals(-1.0f, NpuDecodePolicy.LOGPROB_THOLD, 0f)
         assertEquals(0.6f, NpuDecodePolicy.NO_SPEECH_THOLD, 0f)
         assertEquals(32, NpuDecodePolicy.ENTROPY_WINDOW)
+        // OURS, not whisper.cpp's: the cycle-signature bound the entropy trip requires (final review).
+        assertEquals(8, NpuDecodePolicy.CYCLE_MAX_DISTINCT)
     }
 
     /** `[t0, t0+0.2, ..., 1.0]` from `temperature = 0`, as whisper.cpp:7134-7141 builds it. */

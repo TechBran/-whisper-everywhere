@@ -1112,7 +1112,7 @@ class NpuBackendWiringTest {
         assertTrue("the ladder arguments are the policy's, not literals",
             body.contains("NpuDecodePolicy.TEMPERATURES,") && body.contains("NpuDecodePolicy.ENTROPY_THOLD,") &&
                 body.contains("NpuDecodePolicy.LOGPROB_THOLD,") && body.contains("NpuDecodePolicy.NO_SPEECH_THOLD,") &&
-                body.contains("spec.tokens.noSpeech,"))
+                body.contains("spec.tokens.noSpeech,") && body.contains("NpuDecodePolicy.CYCLE_MAX_DISTINCT,"))
         assertTrue("the diag line carries the five stats fields",
             body.contains("NpuDecodeStats.terminatorName(stats[NpuDecodeStats.TERMINATOR])"))
     }

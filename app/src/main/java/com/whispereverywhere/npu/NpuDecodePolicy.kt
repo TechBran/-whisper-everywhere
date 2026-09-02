@@ -159,6 +159,12 @@ object NpuDecodePolicy {
     const val NO_SPEECH_THOLD = 0.6f
     /** `whisper_sequence_score`'s n: the entropy is over the last 32 ids (whisper.cpp:6885). */
     const val ENTROPY_WINDOW = 32
+    /**
+     * A 32-id window with this many distinct ids or fewer is a CYCLE; the entropy trip applies
+     * only then. A comma list ("1, 2, 3, …") sits below the entropy threshold with ~17 distinct
+     * ids and is legitimate dictation; the report-1 runaway has 1–3.
+     */
+    const val CYCLE_MAX_DISTINCT = 8
     /** The fallback ladder, `temperature = 0` then `+= temperature_inc` (whisper.cpp:7134). */
     val TEMPERATURES: FloatArray = floatArrayOf(0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f)
 

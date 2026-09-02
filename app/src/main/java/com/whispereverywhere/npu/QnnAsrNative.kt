@@ -204,12 +204,15 @@ object QnnAsrNative {
      *        side rather than trusted, and untouched beyond the returned count.
      * @param temperatures `NpuDecodePolicy.TEMPERATURES` — the fallback ladder; `[0]` must be 0.
      * @param entropyThold `NpuDecodePolicy.ENTROPY_THOLD`: a rung whose last 32 ids have less
-     *        histogram entropy than this is a repetition loop and is abandoned at that step.
+     *        histogram entropy than this — and at most [cycleMaxDistinct] distinct ids — is a
+     *        repetition loop and is abandoned at that step.
      * @param logprobThold `NpuDecodePolicy.LOGPROB_THOLD`: a rung whose mean log-prob is below
      *        this (and whose no-speech probability is below [noSpeechThold]) is re-run hotter.
      * @param noSpeechThold `NpuDecodePolicy.NO_SPEECH_THOLD`.
      * @param noSpeechToken `spec.tokens.noSpeech` — this family's `<|nospeech|>` id; native reads
      *        its raw probability at the SOT step and never emits it.
+     * @param cycleMaxDistinct `NpuDecodePolicy.CYCLE_MAX_DISTINCT`: the entropy trip applies only
+     *        when the tripping window has at most this many distinct ids — a list is not a loop.
      * @param stats OUT, `NpuDecodeStats.newArray()`; fully written on every `>= 0` return, by the
      *        [NpuDecodeStats] slots. `-1` in `NO_SPEECH_PROB` means the logits' scale was unreadable
      *        and no probability gate ran (the entropy guard still did). `AVG_LOGPROB` is NaN when
@@ -233,6 +236,7 @@ object QnnAsrNative {
         logprobThold: Float,
         noSpeechThold: Float,
         noSpeechToken: Int,
+        cycleMaxDistinct: Int,
         stats: FloatArray,
     ): Int
 

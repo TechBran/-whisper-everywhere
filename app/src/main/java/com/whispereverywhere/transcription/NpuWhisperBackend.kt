@@ -638,6 +638,7 @@ class NpuWhisperBackend(
                 NpuDecodePolicy.LOGPROB_THOLD,
                 NpuDecodePolicy.NO_SPEECH_THOLD,
                 spec.tokens.noSpeech,
+                NpuDecodePolicy.CYCLE_MAX_DISTINCT,
                 stats,
             )
             if (written < 0) {
@@ -676,10 +677,15 @@ class NpuWhisperBackend(
             android.util.Log.i(
                 NpuDiag.TAG,
                 NpuDiag.line(
-                    encodeMs, decodeMs, written, resolution.note,
-                    stats[NpuDecodeStats.NO_SPEECH_PROB], stats[NpuDecodeStats.AVG_LOGPROB],
-                    stats[NpuDecodeStats.ENTROPY], stats[NpuDecodeStats.RUNG].toInt(),
-                    NpuDecodeStats.terminatorName(stats[NpuDecodeStats.TERMINATOR]),
+                    encodeMs = encodeMs,
+                    decodeMs = decodeMs,
+                    tokens = written,
+                    langNote = resolution.note,
+                    noSpeechProb = stats[NpuDecodeStats.NO_SPEECH_PROB],
+                    avgLogprob = stats[NpuDecodeStats.AVG_LOGPROB],
+                    entropy = stats[NpuDecodeStats.ENTROPY],
+                    rung = stats[NpuDecodeStats.RUNG].toInt(),
+                    terminator = NpuDecodeStats.terminatorName(stats[NpuDecodeStats.TERMINATOR]),
                 ),
             )
             text

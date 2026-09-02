@@ -3010,12 +3010,23 @@ class NpuNativeContractTest {
         // threshold is a low-confidence rung. Either one flipped compiles, abandons every healthy
         // rung and keeps the runaway — and the pins above, which only count anchors, stay green.
         assertTrue(
-            "the entropy guard must compare `entropyLast < entropyThold` on exactly one live line",
-            liveLines(body, "if (entropyLast < entropyThold) {").size == 1
+            "the entropy guard must compare `entropyLast < entropyThold` AND require a cycle " +
+                "signature (`distinctLast <= cycleMaxDistinct`) on exactly one live line. Low " +
+                "entropy alone is not a loop: a comma list (\"1, 2, 3, …\") sits below the " +
+                "threshold with ~17 distinct ids in the window and is legitimate dictation; the " +
+                "report-1 runaway has 1–3 (final review, 2026-09-02).",
+            liveLines(body, "if (entropyLast < entropyThold && distinctLast <= cycleMaxDistinct) {").size == 1
         )
         assertTrue(
             "the low-confidence test must compare `avgLogprob < logprobThold` on exactly one live line",
             liveLines(body, "avgLogprob < static_cast<double>(logprobThold) &&").size == 1
+        )
+        // The cycle bound is validated on entry like every other guard argument. `0` (or a
+        // negative) would make the trip unreachable — no window has fewer than one distinct id —
+        // and silently re-open report 1 with every other pin above still green.
+        assertTrue(
+            "cycleMaxDistinct must be refused below 1, with the failure text on exactly one live line",
+            liveLines(body, "failure(\"decode: cycleMaxDistinct must be >= 1\")").size == 1
         )
     }
 
@@ -3036,7 +3047,8 @@ class NpuNativeContractTest {
             .substringBefore("): Int")
         val order = listOf("prompt: IntArray", "suppress: IntArray", "beginSuppress: IntArray",
             "maxTokens: Int", "out: IntArray", "temperatures: FloatArray", "entropyThold: Float",
-            "logprobThold: Float", "noSpeechThold: Float", "noSpeechToken: Int", "stats: FloatArray")
+            "logprobThold: Float", "noSpeechThold: Float", "noSpeechToken: Int", "cycleMaxDistinct: Int",
+            "stats: FloatArray")
         var last = -1
         for (p in order) {
             val at = decl.indexOf(p)

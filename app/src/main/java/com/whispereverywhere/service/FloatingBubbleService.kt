@@ -3537,7 +3537,9 @@ class FloatingBubbleService : Service(),
                     deferredHideReason?.let { parked ->
                         if (!isSpeakingNow) {
                             deferredHideReason = null
-                            if (BubbleHidePolicy.replay(
+                            // MEDIA_PLAYBACK parks a hide too; a bubble that media summoned
+                            // mid-read is media's, not the read's.
+                            if (currentContext == BubbleContext.NONE && BubbleHidePolicy.replay(
                                     contextIsTextField = currentContext == BubbleContext.TEXT_FIELD,
                                     alwaysOn = alwaysOnMode(),
                                 )

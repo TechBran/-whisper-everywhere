@@ -2064,12 +2064,18 @@ int32_t suppressThenSample(uint16_t *logits, uint32_t vocab,
 }
 
 /// whisper_sequence_score's entropy (whisper.cpp:6885-6905): the histogram of the last
-/// kEntropyWindow ids, -sum(p ln p). Id-based - no probabilities involved.
-double trailingEntropy(const std::vector<int32_t> &ids, int32_t count) {
+/// kEntropyWindow ids, -sum(p ln p). Id-based - no probabilities involved. [outDistinct] receives
+/// the histogram's size - how many distinct ids the window holds (0 when there is no window) -
+/// which is what tells a cycle from a merely low-entropy list.
+double trailingEntropy(const std::vector<int32_t> &ids, int32_t count, int32_t *outDistinct) {
     const int32_t n = count < kEntropyWindow ? count : kEntropyWindow;
-    if (n <= 0) return 0.0;
+    if (n <= 0) {
+        *outDistinct = 0;
+        return 0.0;
+    }
     std::map<int32_t, int> hist;
     for (int32_t i = count - n; i < count; ++i) hist[ids[static_cast<size_t>(i)]]++;
+    *outDistinct = static_cast<int32_t>(hist.size());
     double h = 0.0;
     for (const auto &kv : hist) {
         const double p = kv.second / static_cast<double>(n);
@@ -3018,13 +3024,15 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
 /// kEntropyWindow ids at every step past the window; [logprobThold] and [noSpeechThold] decide
 /// whether a finished rung stands or the next temperature re-decodes against the same encode;
 /// [noSpeechToken] is the id whose RAW probability is read at the SOT step and never emitted;
+/// [cycleMaxDistinct] is the most distinct ids a sub-threshold window may hold and still count as
+/// a CYCLE (a comma list is low-entropy and legitimate; the report-1 runaway has 1-3 distinct ids);
 /// [jStats] receives kStatSize values by the kStat* slots on every >= 0 return.
 extern "C" JNIEXPORT jint JNICALL
 Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         JNIEnv *env, jobject /* this */, jintArray jPrompt, jintArray jSuppress,
         jintArray jBeginSuppress, jint maxTokens, jintArray jOut,
         jfloatArray jTemperatures, jfloat entropyThold, jfloat logprobThold,
-        jfloat noSpeechThold, jint noSpeechToken, jfloatArray jStats) {
+        jfloat noSpeechThold, jint noSpeechToken, jint cycleMaxDistinct, jfloatArray jStats) {
     std::lock_guard<std::mutex> lock(g.mu);
     if (!g.initialised || !g.decBound) {
         failure("decode: session not initialised");
@@ -3134,6 +3142,10 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         failure("decode: noSpeechToken " + std::to_string(noSpeechToken) + " is outside the vocabulary");
         return -1;
     }
+    if (cycleMaxDistinct < 1) {
+        failure("decode: cycleMaxDistinct must be >= 1");
+        return -1;
+    }
     if (!jStats || env->GetArrayLength(jStats) < kStatSize) {
         failure("decode: stats must have room for " + std::to_string(kStatSize) + " values");
         return -1;
@@ -3166,6 +3178,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     double avgLogprob = 0.0;
     int32_t scored = 0;              // ids in avgLogprob's denominator: count + the EOT, if it came
     double entropyLast = 0.0;
+    int32_t distinctLast = 0;        // distinct ids in the window entropyLast was measured over
     bool entropyMeasured = false;    // the window check RAN on the returned rung
     size_t rungUsed = 0;
     float terminator = kTermEot;
@@ -3181,6 +3194,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         int32_t failedAt = 0;
         int32_t next = prompt[0];
         entropyLast = 0.0;
+        distinctLast = 0;
         entropyMeasured = false;
         rungUsed = rung;
 
@@ -3312,9 +3326,10 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
             // 32-id histogram entropy is checked at every step past the window and a runaway dies
             // at ~33-40 tokens instead of at the 196-token budget.
             if (count > kEntropyWindow) {
-                entropyLast = trailingEntropy(out, count);
+                entropyLast = trailingEntropy(out, count, &distinctLast);
                 entropyMeasured = true;
-                if (entropyLast < entropyThold) {
+                // A cycle signature, not merely low entropy: a comma list is legitimate.
+                if (entropyLast < entropyThold && distinctLast <= cycleMaxDistinct) {
                     failedEntropy = true;
                     failedAt = count;
                     break;
@@ -3335,7 +3350,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         const bool lowConfidence = scale > 0.0f && scored > 0 &&
                                    avgLogprob < static_cast<double>(logprobThold) &&
                                    noSpeechProb < noSpeechThold;
-        const bool lastRung = (rung + 1 == temperatures.size());
+        // no scale => no sampling: the greedy rung is the only rung (a sampler with no readable
+        // logits scale would draw uniformly from the vocabulary).
+        const bool lastRung = (rung + 1 == temperatures.size()) || scale <= 0.0f;
         if (!failedEntropy && !lowConfidence) break;          // this rung's output stands
         if (lastRung) {
             if (failedEntropy) {
