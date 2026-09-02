@@ -438,6 +438,8 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt",
         "src/main/java/com/whispereverywhere/MainActivity.kt",
         "src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt",
+        // (4.3.1 B) BubbleHideWiringPinTest reads the controller for speakFromTrigger's Boolean.
+        "src/main/java/com/whispereverywhere/tts/TtsController.kt",
         // (4.0 Q9 fix round, I1) BatchTranscriber.kt joins for the NARROW reason, the same one
         // NpuWhisperBackend.kt is here for: BatchLocalModelTest's wiring pin includes NEGATIVE
         // assertions over the whole file INCLUDING comments (`installedModelPath()` must not be read

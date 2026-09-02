@@ -356,6 +356,8 @@ class FloatingBubbleService : Service(),
     // copy, or PROCESS_TEXT toolbar). The idle bubble is ALWAYS a mic (owner rule 2026-08-08);
     // speaker behavior never arrives via text selection.
     @Volatile private var isSpeakingNow = false
+    /** 4.3.1 B: a hide refused because a read was in progress; replayed by the IDLE branch. */
+    @Volatile private var deferredHideReason: String? = null
     private lateinit var speechStopIcon: ImageView
     private lateinit var speakClipIcon: ImageView
     private lateinit var lockLobe: View
@@ -842,7 +844,7 @@ class FloatingBubbleService : Service(),
                         !alwaysOnMode()
                     ) {
                         stopClipPulse()
-                        hideBubble()
+                        hideBubble("clipboard-autohide")
                     }
                 }
             }
@@ -972,8 +974,17 @@ class FloatingBubbleService : Service(),
             ttsScrubber.setProgress(played, available, done)
         }
         enterSpeakingVisuals()
-        com.whispereverywhere.tts.TtsController.speakFromTrigger(this, text) {
+        val started = com.whispereverywhere.tts.TtsController.speakFromTrigger(this, text) {
             // onDone (main thread): tear down the pill; selection may still be live.
+            isSpeakingNow = false
+            engine.onPcmChunk = null
+            engine.onBuffering = null
+            engine.onProgress = null
+            exitSpeakingVisuals()
+        }
+        if (!started) {
+            // The trigger bailed (voice not installed, arbiter busy): onDone will never fire, so
+            // undo the speaking state set above or the pill stays "speaking" with nothing playing.
             isSpeakingNow = false
             engine.onPcmChunk = null
             engine.onBuffering = null
@@ -1141,7 +1152,7 @@ class FloatingBubbleService : Service(),
                             if (!alwaysOnMode()) showBubbleForMedia()
                         } else {
                             currentContext = BubbleContext.NONE
-                            hideBubble()
+                            hideBubble("field-unfocused")
                         }
                     }
                 } else {
@@ -1193,7 +1204,7 @@ class FloatingBubbleService : Service(),
             if (currentContext == BubbleContext.MEDIA_PLAYBACK) {
                 if (currentState == BubbleState.IDLE) {
                     currentContext = BubbleContext.NONE
-                    hideBubble()
+                    hideBubble("media-stopped")
                 } else {
                     // Recording in progress - will hide when done
                     shouldHideOnIdle = true
@@ -1410,10 +1421,26 @@ class FloatingBubbleService : Service(),
         }
     }
 
-    private fun hideBubble() {
-        // Always-on mode: the bubble never auto-hides. (Service stop removes the window itself.)
-        if (alwaysOnMode()) return
-        if (!isBubbleVisible) return
+    /**
+     * THE ONE SINK every hide goes through (4.3.1 B). The decision is [BubbleHidePolicy]'s: always-on
+     * and an already-hidden bubble are ignored; a read in progress PARKS the reason instead of
+     * taking the pill away mid-playback (the owner's bug — a foreign window event during a read hid
+     * the bubble while the audio played on); otherwise the hide animates. One WE-DIAG line per call
+     * names the caller, so the next field report is one grep.
+     */
+    private fun hideBubble(reason: String) {
+        val decision = BubbleHidePolicy.decide(
+            speaking = isSpeakingNow, alwaysOn = alwaysOnMode(), visible = isBubbleVisible,
+        )
+        android.util.Log.i(
+            "WE-DIAG",
+            "bubble hide: reason=$reason decision=$decision state=$currentState context=$currentContext speaking=$isSpeakingNow",
+        )
+        when (decision) {
+            BubbleHidePolicy.Decision.IGNORE -> return
+            BubbleHidePolicy.Decision.DEFER -> { deferredHideReason = reason; return }
+            BubbleHidePolicy.Decision.HIDE -> Unit
+        }
 
         showAnimator?.cancel()
 
@@ -3480,7 +3507,22 @@ class FloatingBubbleService : Service(),
                         if (mediaDetector.isCurrentlyPlaying()) {
                             currentContext = BubbleContext.MEDIA_PLAYBACK; showBubbleForMedia()
                         } else {
-                            currentContext = BubbleContext.NONE; hideBubble()
+                            currentContext = BubbleContext.NONE; hideBubble("idle-after-session")
+                        }
+                    }
+                    // 4.3.1 B: a hide that arrived mid-read replays now — only where the bubble
+                    // would have hidden anyway (never off a focused field, never in always-on).
+                    deferredHideReason?.let { parked ->
+                        if (!isSpeakingNow) {
+                            deferredHideReason = null
+                            if (BubbleHidePolicy.replay(
+                                    contextIsTextField = currentContext == BubbleContext.TEXT_FIELD,
+                                    alwaysOn = alwaysOnMode(),
+                                )
+                            ) {
+                                currentContext = BubbleContext.NONE
+                                hideBubble("deferred:$parked")
+                            }
                         }
                     }
                 }

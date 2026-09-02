@@ -70,8 +70,11 @@ object TtsController {
     /**
      * Speak [text] from any trigger. Handles the not-installed and capture-in-progress cases
      * with user-visible feedback instead of silence.
+     *
+     * Returns true iff the engine's `speak` ran and accepted the text; false on every bail, so
+     * the caller can undo any speaking state it set optimistically.
      */
-    fun speakFromTrigger(context: Context, text: String, onDone: () -> Unit = {}) {
+    fun speakFromTrigger(context: Context, text: String, onDone: () -> Unit = {}): Boolean {
         val app = context.applicationContext
         if (!isVoiceInstalled(app)) {
             Toast.makeText(
@@ -79,7 +82,7 @@ object TtsController {
                 "Download the read-aloud voice in Whisper Everywhere settings first.",
                 Toast.LENGTH_LONG,
             ).show()
-            return
+            return false
         }
         if (!AudioArbiter.requestSpeak()) {
             Toast.makeText(
@@ -87,7 +90,7 @@ object TtsController {
                 "Finishing your transcription — tap again in a moment.",
                 Toast.LENGTH_SHORT,
             ).show()
-            return
+            return false
         }
         val e = engine(app)
         runCatching {
@@ -96,7 +99,7 @@ object TtsController {
             e.speakerId = prefs.ttsVoiceId
             applyCloudVoice(app, e, prefs)
         }
-        e.speak(text, onDone)
+        return e.speak(text, onDone)
     }
 
     /**
