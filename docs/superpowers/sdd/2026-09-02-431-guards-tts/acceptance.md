@@ -77,7 +77,23 @@ C5. A read longer than about 10.7 minutes on the local voice: `rule=cap` after a
     the projection can never be satisfied past that length. Not a failure.
     `[ ] PASS  [ ] FAIL`
 
+## D — the screen-capture dialog asks at most twice
+D1. Device-audio preference ON. Play a YouTube video, tap the bubble to transcribe. The share
+    dialog appears: CANCEL. It appears once more (the video resumed): CANCEL again. Expect: no
+    third dialog; the toast "Using the microphone for this session — screen capture was
+    declined"; transcription continues from the microphone. Grep:
+    `Select-String "projection consent:" C:\Users\bastr\.androidbuild\capture-431.txt`
+    → `asked=1/2`, `asked=2/2`, `budget spent -> microphone for this session`. FAIL if a third
+    dialog appears or the toast repeats.
+    `[ ] PASS  [ ] FAIL`
+D2. Same start; CANCEL the first dialog, GRANT the second. Expect device audio captured
+    ("Capturing device audio" toast) and the video's words transcribed.
+    `[ ] PASS  [ ] FAIL`
+D3. After D1, stop the session (tap the bubble) and tap again with the video still playing.
+    Expect the dialog to return (a new session, a fresh budget).
+    `[ ] PASS  [ ] FAIL`
+
 ---
 
-Merge gate: fast-forward `feat/4.3.1-guards-and-tts` onto `main` only after **A2, A3, B1 and C1**
+Merge gate: fast-forward `feat/4.3.1-guards-and-tts` onto `main` only after **A2, A3, B1, C1 and D1**
 are marked PASS.

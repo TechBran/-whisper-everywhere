@@ -384,6 +384,10 @@ class FloatingBubbleService : Service(),
     // Device-audio (playback) capture source — active INSTEAD of the mic during media sessions.
     private var playbackCapturer: com.whispereverywhere.audio.PlaybackAudioCapturer? = null
     @Volatile private var activeSource = com.whispereverywhere.audio.ActiveSource.MIC
+    /** 4.3.1 D: the screen-capture dialog may be raised at most twice per session. */
+    private val consentBudget = com.whispereverywhere.audio.ProjectionConsentBudget()
+    /** One "microphone for this session" toast per session, not one per media event. */
+    private var consentExhaustedToastShown = false
     private var transcriptionEngine: TranscriptionEngine? = null
 
     // The on-device engine, ALWAYS reachable independently of whatever composite engine the user's
@@ -1184,14 +1188,24 @@ class FloatingBubbleService : Service(),
             ) {
                 if (com.whispereverywhere.audio.MediaProjectionGate.hasProjection()) {
                     switchSource(to = com.whispereverywhere.audio.ActiveSource.PLAYBACK)
-                } else {
+                } else if (consentBudget.mayAsk()) {
                     // Flush + stop the mic NOW (never mix room audio into a media session),
                     // then ask; capture starts when consent lands.
                     transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
                     audioRecorder.stop()
+                    consentBudget.noteAsked()
+                    android.util.Log.i("WE-DIAG", "projection consent: asked=${consentBudget.asked}/${com.whispereverywhere.audio.ProjectionConsentBudget.MAX_ASKS_PER_SESSION}")
                     com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
                     com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this@FloatingBubbleService)
                     showToast("Allow screen capture to transcribe device audio")
+                } else {
+                    // 4.3.1 D: the budget is spent — the session is the microphone's. Say so ONCE;
+                    // the video resuming after every cancel would otherwise toast on every resume.
+                    if (!consentExhaustedToastShown) {
+                        consentExhaustedToastShown = true
+                        android.util.Log.i("WE-DIAG", "projection consent: budget spent -> microphone for this session")
+                        showToast("Using the microphone for this session — screen capture was declined")
+                    }
                 }
             }
         }
@@ -2080,6 +2094,7 @@ class FloatingBubbleService : Service(),
             hasProjection = com.whispereverywhere.audio.MediaProjectionGate.hasProjection(),
             sdkInt = Build.VERSION.SDK_INT,
             preferDeviceAudio = app.preferencesManager.isPreferDeviceAudio(),
+            consentAvailable = consentBudget.mayAsk(),
         )
         android.util.Log.i("WE-DIAG", "startAudioInput: decision=$decision")
         return when (decision) {
@@ -2094,6 +2109,8 @@ class FloatingBubbleService : Service(),
                 // back to mic. NOTE: MediaProjectionGate.listener is a single process-global
                 // slot — safe because only one FloatingBubbleService instance is ever live.
                 com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
+                consentBudget.noteAsked()
+                android.util.Log.i("WE-DIAG", "projection consent: asked=${consentBudget.asked}/${com.whispereverywhere.audio.ProjectionConsentBudget.MAX_ASKS_PER_SESSION}")
                 com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this)
                 showToast("Allow screen capture to transcribe device audio")
                 Result.success(Unit)
@@ -2663,6 +2680,10 @@ class FloatingBubbleService : Service(),
         com.whispereverywhere.audio.AudioArbiter.requestCapture()
         isSpeakingNow = false
         sessionProducedText = false
+        // 4.3.1 D: a new session starts with a fresh screen-capture consent budget, and may say
+        // "microphone for this session" once more.
+        consentBudget.reset()
+        consentExhaustedToastShown = false
         sessionTranscript.setLength(0)
         // Per-session ordering state. MUST be recreated: the orderer drops any seq below its head,
         // and the engine restarts seq numbering at 0 in connect() — a reused orderer sitting at

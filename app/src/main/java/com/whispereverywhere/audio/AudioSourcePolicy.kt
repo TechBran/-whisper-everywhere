@@ -17,16 +17,23 @@ object AudioSourcePolicy {
      * playback capture requires API 29+ and the user preference):
      *  - no media / pref off / pre-Q  -> mic (classic behavior)
      *  - media + projection token     -> playback capture
+     *  - media, no token, budget spent -> mic (4.3.1 D: at most two dialogs per session)
      *  - media, no token yet          -> ask for consent (caller launches the trampoline)
+     *
+     * [consentAvailable] is the caller's per-session [ProjectionConsentBudget.mayAsk]. It only
+     * ever turns an ask into the microphone: a stored projection is used whatever it says.
      */
     fun decide(
         mediaPlaying: Boolean,
         hasProjection: Boolean,
         sdkInt: Int,
         preferDeviceAudio: Boolean,
+        consentAvailable: Boolean,
     ): SourceDecision = when {
         !mediaPlaying || !preferDeviceAudio || sdkInt < 29 -> SourceDecision.UseMic
         hasProjection -> SourceDecision.UsePlayback
+        //  - media, no token, budget spent -> mic (4.3.1 D: at most two dialogs per session)
+        !consentAvailable -> SourceDecision.UseMic
         else -> SourceDecision.RequestConsent
     }
 }
