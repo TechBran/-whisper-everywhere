@@ -93,6 +93,7 @@ class CapSeamPinTest {
         val bookkeeping = indexOfOrFail(
             "                if (capCutConsumesWindow(\n" +
                 "                        hasPendingSpeech = endpointer.hasPendingSpeech() ||\n" +
+                "                            endpointer.pendingCutPointMs() > Endpointer.NO_CUT_POINT ||\n" +
                 "                            (endpointer as? SileroEndpointer)?.isProbeCutout() == true,\n" +
                 "                        isCloudSession = cloudWrapper != null,\n" +
                 "                    )\n" +

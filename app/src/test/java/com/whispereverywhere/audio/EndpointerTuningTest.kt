@@ -22,7 +22,10 @@ class EndpointerTuningTest {
     @Test fun the_shipped_tuning_table_is_pinned_verbatim() {
         assertEquals(0.50f, EndpointerTuning.ONSET_THRESHOLD, 0.0f)
         assertEquals(0.35f, EndpointerTuning.RELEASE_THRESHOLD, 0.0f)
-        assertEquals(500L, EndpointerTuning.HANGOVER_MS)
+        assertEquals(350L, EndpointerTuning.HANGOVER_MS)
+        // The ACOUSTIC floor under it. ABSOLUTE, because it is not a knob: it is where the
+        // hangover stops ending utterances and starts cutting inside words.
+        assertEquals(300L, EndpointerTuning.HANGOVER_MIN_MS)
         assertEquals(300L, EndpointerTuning.MIN_SPEECH_MS)
         assertEquals(98L, EndpointerTuning.MICRO_PAUSE_MS)
         assertEquals(8L, EndpointerTuning.PROBE_BUDGET_MS)
@@ -46,6 +49,7 @@ class EndpointerTuningTest {
         assertEquals(EndpointerTuning.FRAME_SAMPLES * 2, EndpointerTuning.FRAME_BYTES)
         assertEquals(1_000L * EndpointerTuning.FRAME_SAMPLES / 16_000L, EndpointerTuning.FRAME_MS)
     }
+
 
     @Test fun the_release_threshold_is_the_native_schmitt_hysteresis() {
         // whisper.cpp:5258 -> neg_threshold = threshold - 0.15f
@@ -140,11 +144,23 @@ class EndpointerTuningTest {
                 "Widen to 0.30 if mid-word splits appear in A/B."
             ),
             Pin(
-                "the hangover's cost asymmetry — why 500 and not the native 100",
+                "the retune's premise: an extra encoder pass is a DUTY cost, not a per-cut one",
                 kdocFor("HANGOVER_MS"),
-                "Inter-clause pauses run 200-500 ms; the cost of cutting too early is one extra " +
-                    "full encoder pass PLUS a mid-clause boundary that `no_context = true` makes " +
-                    "unrepairable."
+                "the npu/npu-turbo encoder input is a fixed `[1,melBins,3000]` 30-second window " +
+                    "(`whisper_jni.cpp:661-673`), so a pass costs the same ~1.78 s whether it " +
+                    "carries one second of speech or fifteen"
+            ),
+            Pin(
+                "and therefore which object owns the cost, now that this one does not",
+                kdocFor("HANGOVER_MS"),
+                "An extra encoder pass is a DUTY-CYCLE cost, and duty cycle is " +
+                    "`CommitCadencePolicy.minCommitIntervalMs`'s job — not this constant's."
+            ),
+            Pin(
+                "the cost this constant DOES still own, on every tier",
+                kdocFor("HANGOVER_MS"),
+                "inter-clause pauses run 200-500 ms, and a mid-clause boundary is one " +
+                    "`no_context = true` makes unrepairable"
             ),
             Pin(
                 "the hangover also feeds the batch filter's padding",
@@ -156,6 +172,17 @@ class EndpointerTuningTest {
                 "the hangover is an owner A/B knob",
                 kdocFor("HANGOVER_MS"),
                 "Owner A/B range 350-800."
+            ),
+            Pin(
+                "the acoustic floor is a DIFFERENT floor from the two the suite already enforced",
+                kdocFor("HANGOVER_MIN_MS"),
+                "The suite already enforces two other floors and NEITHER of them is this one"
+            ),
+            Pin(
+                "and what going below it actually breaks",
+                kdocFor("HANGOVER_MIN_MS"),
+                "reaches into inter-word junctures in fast connected speech (100-200 ms) and stop " +
+                    "closures (50-150 ms)"
             ),
             Pin(
                 "300 ms is agreement with the native filter, not a guess",
@@ -319,6 +346,40 @@ class EndpointerTuningTest {
      * declaration. (Spelling that marker out here is not possible: Kotlin NESTS block comments, so
      * it would open one that never closes.)
      */
+    /**
+     * THE MERGE-REJECTION BLOCK IS PINNED, because it is the most load-bearing prose in this file
+     * and nothing else guards it.
+     *
+     * It records why a merge memory was designed, implemented, and then removed in review: it made
+     * [EndpointerTuning.MIN_SPEECH_MS] unenforceable (the merged run's span is measured across the
+     * GAP, which is longer than the hangover by construction) and committed three times on a
+     * percussive music bed where the shipped machine commits nothing — inverting the one behaviour
+     * the owner protects. Every other pin in this class guards a KDoc attached to a constant;
+     * this block guards the ABSENCE of a constant, so `kdocFor` cannot reach it and a deletion
+     * would be silent. Three sentences, each carrying one leg of the argument.
+     */
+    @Test fun the_merge_pass_rejection_keeps_its_reasoning() {
+        for (sentence in listOf(
+            "IT MADE MIN_SPEECH_MS UNENFORCEABLE",
+            "IT INVERTED THE ONE BEHAVIOUR THE OWNER PROTECTS",
+            "THE PORT CLAIM WAS FALSE",
+        )) {
+            assertTrue(
+                "EndpointerTuning.kt no longer explains why the merge pass was rejected " +
+                    "(missing: \"$sentence\"). That block is the only thing standing between the " +
+                    "next hangover A/B and a re-derivation of the change that commits on " +
+                    "background music — if it is being deleted, the deletion needs its own " +
+                    "argument, not a green suite.",
+                src.contains(sentence),
+            )
+        }
+        assertTrue(
+            "and the cost of NOT having the merge must stay recorded beside it, or the gap " +
+                "becomes folklore and the next reader treats it as an oversight",
+            src.contains("THE COST OF NOT HAVING IT, recorded honestly"),
+        )
+    }
+
     private fun kdocFor(constant: String): String {
         val decl = "const val $constant"
         val at = src.indexOf(decl)

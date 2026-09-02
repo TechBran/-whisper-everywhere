@@ -1,6 +1,7 @@
 package com.whispereverywhere.service
 
 import com.whispereverywhere.audio.Endpointer
+import com.whispereverywhere.audio.EndpointerGrid
 import com.whispereverywhere.audio.EndpointerTuning
 import com.whispereverywhere.audio.SileroEndpointer
 import com.whispereverywhere.model.WhisperCatalog
@@ -15,6 +16,13 @@ import org.junit.Test
  */
 private const val CROSS_CHECK_BASE = 1_000_000L
 
+/**
+ * Where this fixture's FIRST commit lands: 20 speech frames open the gate at [CROSS_CHECK_BASE]
+ * and end 640 ms in, and the dip that follows cuts one hangover later. Derived, not transcribed:
+ * the hangover is an owner A/B knob and this file is a CADENCE cross-check, not a hangover test.
+ */
+private val FIRST_COMMIT_MS = CROSS_CHECK_BASE + 640L + EndpointerGrid.HANGOVER_TRAIL_MS
+
 /** Comfortably above [EndpointerTuning.ONSET_THRESHOLD] — a frame that opens/holds the gate. */
 private const val SPEECH = 0.9f
 
@@ -27,7 +35,7 @@ private const val SILENCE = 0.1f
  * (`exactly_the_interval_commits_and_one_millisecond_more_merges`) is built on. Every longer
  * interval is this plus whole 32 ms frames of padding silence.
  */
-private const val FIXTURE_FLOOR_MS = 896L
+private val FIXTURE_FLOOR_MS = EndpointerGrid.FIXTURE_INTERVAL_MS
 
 /**
  * A scripted stand-in for the native Silero probe: every frame gets [next], whatever it contains.
@@ -78,6 +86,7 @@ class CommitCadencePolicyTest {
     @Test
     fun theShippedIntervalsAreTheMeasuredOnes() {
         assertEquals(1_200L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_FAST_MS)
+        assertEquals(3_200L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS)
         assertEquals(6_000L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS)
         assertEquals(8_000L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS)
         assertEquals(3_000L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_CLOUD_MS)
@@ -85,14 +94,42 @@ class CommitCadencePolicyTest {
     }
 
     @Test
-    fun proRunsTrueUtteranceCadence() {
-        // F = 0.77-1.0 s measured on GPU: below ~1.1 s a commit is zero-padded to the same
-        // encoder cost anyway, so merging beats committing.
-        assertEquals(1_200L, CommitCadencePolicy.minCommitIntervalMs("pro", isCloudBatch = false))
+    fun proIsPacedAsTheSmallClassTierItIsWheneverTheGpuIsNotThere() {
+        // 3.7 gave pro the FAST row on "F = 0.77-1.0 s measured on GPU". 4.4 moved it, on evidence
+        // this repo already held: pro is ggml-small.en-q5_1 and multi is ggml-small-q5_1 — the
+        // same whisper-small encoder 13 KB apart — and the MEASURED cost of those weights without
+        // the GPU is multi's 2.3 s. GpuPolicy.ALLOWED_RENDERERS is `Adreno (TM) (7dd|8dd|Xd)`, so
+        // every Mali/PowerVR/Xclipse/pre-7xx device runs pro on 4 CPU threads, and the chooser is
+        // GPU-blind (pro's eligibility is RAM-only), so that is most of the fleet — including
+        // exactly the devices the NPU gate declines.
+        //
+        // At HANGOVER_MS = 500 the wrong row was unreachable (cuts 6-11/min against a 26/min
+        // service rate); the 4.4 retune is what makes it reachable.
+        //
+        // AND THERE IS NO TRADE, which an earlier draft of this comment got wrong: pro is
+        // CPU-ONLY BY DESIGN (owner ruling 2026-09-02 — "that model does not run on GPU. It's
+        // supposed to only run on CPU because GPU was much slower. So the GPU path is essentially
+        // dead."), so no Adreno-7xx/8xx user loses cadence here; there is no GPU pro path for one
+        // to run on. Do not split this row on the load-time GPU verdict — that would build a
+        // second row and a test matrix for a case the product does not have.
+        assertEquals(6_000L, CommitCadencePolicy.minCommitIntervalMs("pro", isCloudBatch = false))
+        assertEquals(
+            "pro takes multi's row because it IS multi without the GPU — not its own new number",
+            CommitCadencePolicy.minCommitIntervalMs("multi", isCloudBatch = false),
+            CommitCadencePolicy.minCommitIntervalMs("pro", isCloudBatch = false),
+        )
     }
 
     @Test
-    fun theSixtyMbTiersRideTheSameFastCadenceAsPro() {
+    fun theSixtyMbTiersKeepTheFastCadence() {
+        // eco/base stay at 1200, and the object KDoc records what that rests on — which is LESS
+        // than the earlier draft of this comment claimed. The repo's only slice bench predates the
+        // 768 -> 512 audio_ctx move so it overstates today's cost, but THE CHECK FAILS EVEN
+        // OVERSTATED: base fits F = 1.15 s and eco F = 0.74 s, i.e. F/floor + m of ~1.0 and ~0.83
+        // against the table's own 0.70 rule. Granting the full discount lands base at ~0.69, zero
+        // margin. So this row is EXEMPTED, not cleared, and "overstating is the safe direction" is
+        // only true when the overstated check passes. The re-bench is the named residual, and if a
+        // legacy-tier user reports lag after the 4.4 retune this row is the first place to look.
         assertEquals(1_200L, CommitCadencePolicy.minCommitIntervalMs("eco", isCloudBatch = false))
         assertEquals(1_200L, CommitCadencePolicy.minCommitIntervalMs("base", isCloudBatch = false))
     }
@@ -127,9 +164,9 @@ class CommitCadencePolicyTest {
         // 4.1: npu-turbo joined and the pin fired again. The decision: 1_200L, the FAST row —
         // see npuTurboRidesTheFastRowOnItsPublishedFigures for the reasoning and its trigger.
         val expected = mapOf(
-            "eco" to 1_200L, "base" to 1_200L, "pro" to 1_200L,
+            "eco" to 1_200L, "base" to 1_200L, "pro" to 6_000L,
             "multi" to 6_000L, "extreme" to 8_000L, "ultra" to 8_000L,
-            "npu" to 1_200L, "npu-turbo" to 1_200L,
+            "npu" to 1_200L, "npu-turbo" to 3_200L,
         )
         assertEquals(
             "a catalog tier gained or lost an entry — decide its cadence",
@@ -142,15 +179,46 @@ class CommitCadencePolicyTest {
     }
 
     @Test
-    fun npuTurboRidesTheFastRowOnItsPublishedFigures() {
-        // 4.1: published 8 Gen 3 raw-QNN figures put turbo at ~1.37-1.57 s per segment against
-        // npu's ~1.0 s measured — both well under the 2.3 s fixed cost that multi's 6 s floor
-        // exists for, and the floor is a minimum interval rather than a metronome: the VAD still
-        // cuts at real pauses. PROVISIONAL on L8's device measurement, exactly as npu's spike
-        // figure was: if the owner's `npu:` lines show per-segment cost above this cadence,
-        // commits will visibly lag, and that is the signal to give turbo its own constant rather
-        // than to widen the FAST row.
-        assertEquals(1_200L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = false))
+    fun npuTurboHasItsOwnFloorBecauseTheDeviceMeasurementCameIn() {
+        // 4.1 put turbo on the FAST row on PUBLISHED 8 Gen 3 figures (~1.37-1.57 s/segment) and
+        // wrote down the trigger for revisiting it: "if the owner's `npu:` lines show per-segment
+        // cost above this cadence, commits will visibly lag, and that is the signal to give turbo
+        // its own constant rather than to widen the FAST row." 4.4: the measurement came in at
+        // 2.06 s/segment on the Fold6 (57 segments), above the whole published range. F = 1.89 s
+        // fixed + 10.08 ms/token, tokens conserved at ~3.2/s of audio, so the object's own rule
+        // `F*N + m*S <= 0.70*60` gives N <= 21.2 commits/min -> a 2.83 s mean interval.
+        //
+        // The floor is 3 200, ABOVE that answer, and the margin is the point: see the constant.
+        assertEquals(3_200L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = false))
+        assertEquals(
+            "turbo left the FAST row rather than widening it: npu measures ~0.4 s on the same " +
+                "silicon and 1200 is right for it",
+            1_200L,
+            CommitCadencePolicy.minCommitIntervalMs("npu", isCloudBatch = false),
+        )
+        // The duty arithmetic this floor IS, restated where a change to the constant must face it.
+        val fixedCostMs = 1_890L
+        val marginalPerMinuteMs = 1_900L
+        val commitsPerMinute = 60_000L / CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS
+        assertTrue(
+            "a saturated npu-turbo session must stay inside the 0.70 duty ceiling this object is " +
+                "derived from: $commitsPerMinute commits/min x $fixedCostMs ms + " +
+                "$marginalPerMinuteMs ms of decode must not exceed 42 000 ms of every minute",
+            commitsPerMinute * fixedCostMs + marginalPerMinuteMs <= 42_000L,
+        )
+        // AND the margin, which the strict answer does not have. This is the assertion that fails
+        // if anyone lowers the floor back onto the formula: at 2 800 the saturated duty is 70.8%,
+        // i.e. already over the ceiling, and there is nothing left for a thermally throttled
+        // encode or for a concurrent batch job holding NativeComputeGate's fair lock. 2 140 ms is
+        // F + 13%, past the capture's own worst observed encode (1 863 ms) plus a decode tail.
+        val throttledFixedCostMs = 2_140L
+        assertTrue(
+            "the floor must still hold the 0.70 ceiling if the fixed cost rises to " +
+                "$throttledFixedCostMs ms. It is derived from the WORST sustained F, not the " +
+                "median one: one device in one thermal state, and the app has no thermal guard " +
+                "anywhere, so this margin is the thermal policy.",
+            commitsPerMinute * throttledFixedCostMs + marginalPerMinuteMs <= 42_000L,
+        )
         // And cloud batch still wins outright on the npu-class tiers, exactly as it does on every
         // other row — the flat floor is about the HTTP request, not the local silicon.
         assertEquals(3_000L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = true))
@@ -264,7 +332,7 @@ class CommitCadencePolicyTest {
             onTheBoundary.commits,
         )
         assertEquals(
-            CROSS_CHECK_BASE + 1_152L + CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS,
+            FIRST_COMMIT_MS + CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS,
             onTheBoundary.lastCommitMs,
         )
         val oneFrameInside = secondCutAttemptAfter(
@@ -282,13 +350,17 @@ class CommitCadencePolicyTest {
      * which is the entire point — through two endpoints [intervalMs] apart, and returns the pump so
      * the caller can count what actually committed.
      *
-     * The arithmetic, all of it on the 32 ms frame grid: 20 speech frames open the gate at
-     * [CROSS_CHECK_BASE], 17 silence frames end that utterance (the 17th is the first at or past
-     * [EndpointerTuning.HANGOVER_MS]) and commit 1 lands at `BASE + 1152` — the session's first cut
-     * is free on every floor. From the next frame the gate is shut, so `padFrames` of silence pass
-     * through `onProb`'s `!speaking` return doing nothing but moving the clock; then 11 speech
-     * frames (352 ms, over [EndpointerTuning.MIN_SPEECH_MS]) and 17 more silence frames put the
-     * SECOND endpoint at `commit1 + 896 + 32 * padFrames`. [FIXTURE_FLOOR_MS] is that 896.
+     * The arithmetic, all of it on the 32 ms frame grid and all of it DERIVED from the tuning
+     * table: 20 speech frames open the gate at [CROSS_CHECK_BASE],
+     * [EndpointerGrid.HANGOVER_FRAMES] silence frames end that utterance (the last of them is the
+     * first at or past [EndpointerTuning.HANGOVER_MS]) and commit 1 lands at [FIRST_COMMIT_MS] —
+     * the session's first cut is free on every floor. From the next frame the gate is shut, so
+     * `padFrames` of silence pass through `onProb`'s `!speaking` return doing nothing but moving
+     * the clock; then [EndpointerGrid.SPEECH_FRAMES_OVER_MIN] speech frames (352 ms, over
+     * [EndpointerTuning.MIN_SPEECH_MS]) and one more full dip put the SECOND endpoint at
+     * `commit1 + FIXTURE_FLOOR_MS + 32 * padFrames`. [FIXTURE_FLOOR_MS] is
+     * [EndpointerGrid.FIXTURE_INTERVAL_MS], a multiple of the frame at every hangover — which is
+     * what keeps the grid guard below satisfiable without re-choosing the floors it pads out to.
      */
     private fun secondCutAttemptAfter(intervalMs: Long): CadencePump {
         assertEquals(
@@ -299,12 +371,15 @@ class CommitCadencePolicyTest {
         val probe = CadenceProbe()
         val pump = CadencePump(SileroEndpointer(probe = probe), probe)
         pump.run(SPEECH, 20)
-        assertTrue("the session's first cut is free on every floor", pump.run(SILENCE, 17))
-        assertEquals(CROSS_CHECK_BASE + 1_152L, pump.lastCommitMs)
+        assertTrue(
+            "the session's first cut is free on every floor",
+            pump.run(SILENCE, EndpointerGrid.HANGOVER_FRAMES),
+        )
+        assertEquals(FIRST_COMMIT_MS, pump.lastCommitMs)
         val padFrames = ((intervalMs - FIXTURE_FLOOR_MS) / EndpointerTuning.FRAME_MS).toInt()
         pump.run(SILENCE, padFrames)
-        pump.run(SPEECH, 11)
-        pump.run(SILENCE, 17)
+        pump.run(SPEECH, EndpointerGrid.SPEECH_FRAMES_OVER_MIN)
+        pump.run(SILENCE, EndpointerGrid.HANGOVER_FRAMES)
         return pump
     }
 }

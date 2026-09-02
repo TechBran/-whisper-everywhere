@@ -56,10 +56,15 @@ class SileroEndpointerConcurrencyTest {
      * mutable field appeared" into a build failure that hands the author the question.
      */
     @Test fun every_cross_thread_field_stays_volatile() {
+        // 4.4 briefly added a `reopenFromMs` merge-memory field here and this census correctly
+        // forced the author to enrol it. The field was then REMOVED — it made MIN_SPEECH_MS
+        // unenforceable and committed on percussive music (see the block above HANGOVER_MS in
+        // EndpointerTuning) — so the set is back to thirteen. The census did its job in both
+        // directions, which is the argument for keeping it a set-EQUALITY rather than a subset.
         val required = listOf(
-            "fill", "lastFrameMs", "speaking", "speechStartMs", "pendingSpeech", "tempEndMs",
-            "prevEndMs", "lastCommitMs", "hasCommitted", "minCommitIntervalMs", "slowRun",
-            "probeCutout", "lastCutRecord",
+            "fill", "lastFrameMs", "speaking", "speechStartMs", "pendingSpeech",
+            "tempEndMs", "prevEndMs", "lastCommitMs", "hasCommitted", "minCommitIntervalMs",
+            "slowRun", "probeCutout", "lastCutRecord",
         )
         val declared = SileroEndpointer::class.java.declaredFields.associateBy { it.name }
 
@@ -259,7 +264,10 @@ class SileroEndpointerConcurrencyTest {
         scripted.set(0.1f)
         var silent = 0
         var cutOn = -1
-        while (cutOn < 0 && silent < 40) {
+        // Bounded ABOVE the cut at any hangover in the owner range, so a machine that stopped
+        // cutting fails on the assertion below rather than by running out of frames.
+        val searchBound = maxOf(40, EndpointerGrid.HANGOVER_FRAMES + 1)
+        while (cutOn < 0 && silent < searchBound) {
             silent++
             if (ep.onFrame(ByteArray(EndpointerTuning.FRAME_BYTES) { MARK }, 0, t)) cutOn = silent
             t += EndpointerTuning.FRAME_MS
@@ -272,14 +280,20 @@ class SileroEndpointerConcurrencyTest {
         )
 
         // The canonical sequence C8 pins (`a_vad_cut_records_what_it_cut`): the gate opens on the
-        // first 0.9 frame, the dip's first frame stamps the pending end 640 ms later, and the 17th
-        // silent frame is the first past the 500 ms hangover — 512 ms of trail. Every one of those
-        // three numbers comes out of a different field the storm was hammering.
-        assertEquals("the hangover must still fire on the 17th silent frame", 17, cutOn)
+        // first 0.9 frame, the dip's first frame stamps the pending end 640 ms later, and the
+        // HANGOVER_FRAMES-th silent frame is the first past the hangover — HANGOVER_TRAIL_MS of
+        // trail. Every one of those three numbers comes out of a different field the storm was
+        // hammering, and all three are derived from EndpointerTuning rather than transcribed from
+        // it: this test is about the STORM, and must not be collateral damage in an owner A/B.
+        assertEquals(
+            "the hangover must still fire on the ${EndpointerGrid.HANGOVER_FRAMES}th silent frame",
+            EndpointerGrid.HANGOVER_FRAMES,
+            cutOn,
+        )
         assertEquals(
             "5 000 concurrent resets left the state machine cutting differently — the accumulator, " +
                 "the Schmitt gate or the cadence governor did not survive the storm",
-            EndpointCut(speechMs = 640L, trailMs = 512L, prob = 0.1f),
+            EndpointCut(speechMs = 640L, trailMs = EndpointerGrid.HANGOVER_TRAIL_MS, prob = 0.1f),
             ep.lastCut(),
         )
     }

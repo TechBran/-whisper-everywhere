@@ -11,6 +11,24 @@ import java.io.File
 
 private const val B = EndpointerTuning.FRAME_BYTES
 
+// THE GRID, aliased for readability. Every frame count and every absolute commit stamp below is
+// derived from these; the hangover's VALUE is pinned in exactly one place in the whole suite
+// (EndpointerTuningTest.the_shipped_tuning_table_is_pinned_verbatim) and nowhere else.
+private val HANGOVER_FRAMES = EndpointerGrid.HANGOVER_FRAMES
+private val HOLD_FRAMES = EndpointerGrid.HOLD_FRAMES
+private val HOLD_TRAIL_MS = EndpointerGrid.HOLD_TRAIL_MS
+private val HANGOVER_TRAIL_MS = EndpointerGrid.HANGOVER_TRAIL_MS
+private val SPEECH_FRAMES = EndpointerGrid.SPEECH_FRAMES_OVER_MIN
+private val MICRO_PAUSE_FRAMES = EndpointerGrid.MICRO_PAUSE_FRAMES
+
+/**
+ * The two brackets `before_any_session_start_the_floor_is_the_conservative_8000` puts around
+ * `CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS`. They live in [EndpointerGrid] because
+ * `EndpointerGridTest` asserts that one whole endpoint still fits between them.
+ */
+private const val BELOW_LARGE_MS = EndpointerGrid.BELOW_LARGE_MS
+private const val ABOVE_LARGE_MS = EndpointerGrid.ABOVE_LARGE_MS
+
 /** Non-zero: 0L is the endpointer's "no micro-pause remembered" sentinel. */
 private const val BASE = 1_000_000L
 
@@ -345,10 +363,13 @@ class SileroEndpointerTest {
      * heard and not yet committed stays pending THROUGH silence, because that audio really is
      * still sitting in the caller's buffer waiting to be sent.
      *
-     * The silent stretch is deliberately SHORTER than [EndpointerTuning.HANGOVER_MS] (320 ms of
-     * the 500), so this test states exactly one property today and the SAME one property after
-     * C4 gives a long silence the power to commit. A 6 s stretch here would start failing the
-     * moment the hangover exists, and would then be "fixed" by weakening the assertion.
+     * The silent stretch is deliberately the LONGEST that cannot commit
+     * ([EndpointerGrid.HOLD_FRAMES], one frame short of the hangover at whatever
+     * [EndpointerTuning.HANGOVER_MS] is set to), so this test states exactly one property today
+     * and the SAME one property after C4 gave a long silence the power to commit. A 6 s stretch
+     * here would start failing the moment the hangover exists, and would then be "fixed" by
+     * weakening the assertion — and a LITERAL count would do the same thing one owner A/B
+     * later, which is why it is derived.
      */
     @Test fun silence_below_RELEASE_does_not_clear_the_uncommitted_buffer() {
         val probe = FakeProbe()
@@ -356,7 +377,7 @@ class SileroEndpointerTest {
         val pump = Pump(ep, probe)
         pump.run(0.9f, 11)
         assertTrue(ep.hasPendingSpeech())
-        assertFalse(pump.run(0.0f, 10))
+        assertFalse(pump.run(0.0f, HOLD_FRAMES))
         assertTrue(
             "a silent frame is not a commit — the speech already heard is still uncommitted",
             ep.hasPendingSpeech(),
@@ -393,20 +414,24 @@ class SileroEndpointerTest {
     // about.
     // ---------------------------------------------------------------------------------------
 
-    @Test fun the_hangover_cuts_at_exactly_500ms_of_trailing_silence() {
+    @Test fun the_hangover_cuts_at_exactly_HANGOVER_MS_of_trailing_silence() {
         val probe = FakeProbe()
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)                       // speech BASE..BASE+608, gate open at BASE
-        assertFalse("16 silent frames is 480 ms — under the hangover", pump.run(0.1f, 16))
-        assertTrue("the 17th silent frame is 512 ms in", pump.run(0.1f, 1))
+        assertFalse(
+            "$HOLD_FRAMES silent frames reach only $HOLD_TRAIL_MS ms — under the hangover",
+            pump.run(0.1f, HOLD_FRAMES),
+        )
+        assertTrue("the next silent frame is $HANGOVER_TRAIL_MS ms in", pump.run(0.1f, 1))
         assertEquals(1, pump.commits)
-        assertEquals(BASE + 640 + 512, pump.lastCommitMs)
+        assertEquals(BASE + 640 + HANGOVER_TRAIL_MS, pump.lastCommitMs)
     }
 
     /**
      * The same off-grid problem as [the_latch_fires_at_exactly_MIN_SPEECH_MS], one threshold later.
-     * [Pump] steps the elapsed silence 480 -> 512 ms, so it can never land ON
+     * [Pump] steps the elapsed silence [EndpointerGrid.HOLD_TRAIL_MS] ->
+     * [EndpointerGrid.HANGOVER_TRAIL_MS], so it can never land ON
      * [EndpointerTuning.HANGOVER_MS] and `<` versus `<=` is invisible to every pump-driven test in
      * this class — a mutation battery proved it, by surviving one. The boundary is REACHABLE in
      * production for the reason the class KDoc gives: `nowMs` is stamped on the CHUNK, and bursts
@@ -445,12 +470,16 @@ class SileroEndpointerTest {
         val probe = FakeProbe()
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
+        val mumble = EndpointerGrid.DEAD_BAND_FRAMES
+        val silence = HOLD_FRAMES - 1 - mumble
         pump.run(0.9f, 20)                       // gate opens at BASE, speech ends at BASE+640
         assertFalse(pump.run(0.1f, 1))           // pending end stamped at BASE+640
-        assertFalse("dead-band frames never commit themselves", pump.run(0.42f, 10))
-        assertFalse(pump.run(0.1f, 5))           // BASE+992..1120 -> 352..480 ms elapsed
+        assertFalse("dead-band frames never commit themselves", pump.run(0.42f, mumble))
+        // The dip is now HOLD_FRAMES long — one frame short of the cut — and half of it was
+        // mumble. If the dead band stalled the clock, this run would end well under the hangover.
+        assertFalse(pump.run(0.1f, silence))
         assertTrue("the timer counted the dead band", pump.run(0.1f, 1))
-        assertEquals(BASE + 640 + 512, pump.lastCommitMs)
+        assertEquals(BASE + 640 + HANGOVER_TRAIL_MS, pump.lastCommitMs)
     }
 
     @Test fun a_frame_back_above_ONSET_resets_the_hangover_clock() {
@@ -458,11 +487,15 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)                       // gate opens at BASE
-        assertFalse(pump.run(0.1f, 10))          // pending end at BASE+640, 288 ms elapsed
-        assertFalse(pump.run(0.9f, 1))           // BASE+960: back to speech, clock cleared
-        assertFalse("the clock restarts from BASE+992, not BASE+640", pump.run(0.1f, 16))
+        assertFalse(pump.run(0.1f, HOLD_FRAMES)) // pending end at BASE+640, one frame short
+        assertFalse(pump.run(0.9f, 1))           // back to speech: the clock is CLEARED, not paused
+        val restartMs = pump.t                   // the dip that follows is stamped here
+        assertFalse(
+            "the clock restarts from $restartMs, not ${BASE + 640}",
+            pump.run(0.1f, HOLD_FRAMES),
+        )
         assertTrue(pump.run(0.1f, 1))
-        assertEquals(BASE + 992 + 512, pump.lastCommitMs)
+        assertEquals(restartMs + HANGOVER_TRAIL_MS, pump.lastCommitMs)
     }
 
     @Test fun no_verdict_frames_do_not_short_circuit_the_hangover() {
@@ -471,9 +504,12 @@ class SileroEndpointerTest {
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
         assertFalse(pump.run(EndpointerTuning.NO_VERDICT, 30))   // 960 ms of nothing at all
-        assertFalse("the pending end is stamped by the first REAL silence", pump.run(0.1f, 16))
+        assertFalse(
+            "the pending end is stamped by the first REAL silence",
+            pump.run(0.1f, HOLD_FRAMES),
+        )
         assertTrue(pump.run(0.1f, 1))
-        assertEquals(BASE + 1600 + 512, pump.lastCommitMs)
+        assertEquals(BASE + 1600 + HANGOVER_TRAIL_MS, pump.lastCommitMs)
     }
 
     @Test fun a_burst_under_MIN_SPEECH_MS_is_discarded_without_a_commit() {
@@ -486,6 +522,142 @@ class SileroEndpointerTest {
         assertFalse("256 ms is under MIN_SPEECH_MS", pump.run(0.1f, 40))
         assertEquals(0, pump.commits)
         assertFalse(ep.hasPendingSpeech())
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // THE MERGE PASS — ABSENT, AND CORRECTLY SO (4.4). Native drops a sub-min_speech burst at
+    // whisper.cpp:5590, BEFORE the merge loop at :5607-5626 can see it; that loop only glues
+    // segments already past the floor, across a hardcoded 200 ms gap against a 250 ms min_speech,
+    // and the post-merge re-check at :5628-5637 removes, never restores. The 3.7 port matches that
+    // ordering. At HANGOVER_MS = 500 the question was invisible — a gap had to reach 512 ms before
+    // the machine ever ASKED. At 350 it asks about individual words, and the answer is still
+    // "discard": five endpoints, nothing committed. See THE MERGE PASS IS NOT HERE in
+    // EndpointerTuning.
+    // ---------------------------------------------------------------------------------------
+
+    /** A burst strictly UNDER [EndpointerTuning.MIN_SPEECH_MS], on the frame grid: 288 ms at 300. */
+    private val BURST_FRAMES = (EndpointerTuning.MIN_SPEECH_MS / EndpointerTuning.FRAME_MS).toInt()
+
+    /**
+     * THE KNOWN GAP, pinned as a fact rather than left as folklore (4.4 review, 2026-09-02).
+     *
+     * Emphatic word-by-word delivery — "It. Is. Not. That. Simple." — puts every burst under
+     * [EndpointerTuning.MIN_SPEECH_MS], so each endpoint is FOUND and DISCARDED, `closeGate()`
+     * re-anchors the clock, and nothing commits until the 15 s wall cap. Shortening the hangover
+     * does not fix it; it makes the machine ASK more often and throw away more answers.
+     *
+     * A draft of the retune "fixed" this with a merge memory that re-opened a discarded burst.
+     * It was removed because the merged run's span is measured across the GAP, which made
+     * MIN_SPEECH_MS unenforceable and committed three times on a percussive music bed where the
+     * shipped machine commits nothing — inverting the one behaviour the owner protects. THE MERGE PASS IS NOT HERE in
+     * [EndpointerTuning] carries the full argument.
+     *
+     * So this test asserts the LIMITATION, deliberately. It is not a regression of the retune —
+     * it is 3.7's behaviour, unchanged — and it exists so that the next person to shorten the
+     * hangover finds the gap already measured instead of rediscovering it as a bug report. If a
+     * future change makes short bursts commit, this test SHOULD go red, and its replacement must
+     * carry a percussive-bed fixture with a commit-count bound.
+     */
+    @Test fun word_by_word_bursts_under_MIN_SPEECH_MS_still_commit_nothing() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        val gapFrames = HANGOVER_FRAMES + 1
+        repeat(5) {
+            pump.run(0.9f, BURST_FRAMES)
+            assertFalse(
+                "each burst is under MIN_SPEECH_MS: the endpoint is found and DISCARDED",
+                pump.run(0.1f, gapFrames),
+            )
+        }
+        assertEquals(
+            "five good boundaries, five discards, nothing committed — the wall cap is the only " +
+                "exit, and that is the cost of having no merge pass",
+            0,
+            pump.commits,
+        )
+        assertFalse(
+            "and nothing is left latched as pending: each discard closed the gate",
+            ep.hasPendingSpeech(),
+        )
+    }
+
+
+    /**
+     * THE OWNER'S ONE NON-NEGOTIABLE, made executable: background music must keep the 15 s wall cap
+     * as the only exit, and the hangover's value must have nothing to do with it.
+     *
+     * Both music regimes are here. Held ABOVE onset, every frame zeroes the pending end
+     * (`SileroEndpointer.onProb`'s first branch) so the dip clock never starts; parked in the DEAD
+     * BAND, the frame returns having written no field at all. Neither can stamp `tempEndMs`, so
+     * neither can reach the hangover check at ANY hangover value — which is the claim this retune
+     * makes to the owner, and until now it was four paragraphs of branch-tracing with no test
+     * under it.
+     *
+     * `pendingCutPointMs()` is asserted as well as the verdict, because a cap cut that fires here
+     * takes whatever the endpointer offers: no offer means "commit everything", which is
+     * byte-identical to 3.6.0 and is exactly what the owner called perfect.
+     */
+    @Test fun music_that_never_dips_below_RELEASE_leaves_the_wall_cap_as_the_only_exit() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        // Past the 15 s wall in both regimes, so "the cap is the only exit" is demonstrated rather
+        // than merely not contradicted.
+        val pastTheWall = (16_000L / EndpointerTuning.FRAME_MS).toInt()
+        pump.run(0.9f, 20)
+        assertTrue("real speech opened the gate", ep.hasPendingSpeech())
+        assertFalse("a dead-band bed is not silence: no dip clock ever starts", pump.run(0.42f, pastTheWall))
+        assertFalse("and neither is a bed above ONSET", pump.run(0.9f, pastTheWall))
+        assertEquals(0, pump.commits)
+        assertEquals(
+            "nothing below RELEASE_THRESHOLD ever arrived, so there is no micro-pause to offer " +
+                "and the cap commits the whole window — 3.6.0's behaviour, preserved exactly",
+            Endpointer.NO_CUT_POINT,
+            ep.pendingCutPointMs(),
+        )
+    }
+
+    /**
+     * The audio that CAN pin `hasPendingSpeech()` false while real speech sits in the buffer — and
+     * the evidence the wall-cap branch uses instead.
+     *
+     * `pendingSpeech` latches only in the ONSET branch, only once [EndpointerTuning.MIN_SPEECH_MS]
+     * of wall time has passed since the CURRENT gate-open, and the min-speech discard closes the
+     * gate — so a stretch of sub-300 ms bursts separated by gaps too long to merge never latches
+     * it. Downstream that is not cosmetic: `FloatingBubbleService`'s cap branch reads it, a
+     * (false, false) cap cut takes `segmentCapPolicy.onSessionStart(now)` instead of `onCommit`,
+     * and the cap collapses from 15 s to the 4 s FIRST-segment window for the rest of the session
+     * — the owner's protected behaviour inverted, at ~3.75x the encoder passes, on audio that
+     * decodes to nothing.
+     *
+     * `pendingCutPointMs()` is the fact that survives, and this test is the JVM half of the fix:
+     * `prevEndMs` is written past `onProb`'s `if (!speaking) return false`, so a non-sentinel offer
+     * proves the gate really opened and a dip really outlived MICRO_PAUSE_MS inside this window.
+     * The call-site half is pinned by `CapSeamPinTest`.
+     */
+    @Test fun a_run_of_short_discarded_bursts_still_leaves_the_wall_cap_a_cut_point() {
+        val probe = FakeProbe()
+        val ep = SileroEndpointer(probe = probe)
+        val pump = Pump(ep, probe)
+        // Any dip past the cut discards its burst — there is no merge window to sit inside or
+        // outside of (see THE MERGE PASS IS NOT HERE in EndpointerTuning), so one frame past the
+        // hangover is the whole story.
+        val longGapFrames = HANGOVER_FRAMES + 1
+        repeat(8) {
+            pump.run(0.9f, BURST_FRAMES)
+            assertFalse(pump.run(0.1f, longGapFrames))
+        }
+        assertEquals(0, pump.commits)
+        assertFalse(
+            "no single burst ever reaches MIN_SPEECH_MS on its own clock, so the latch stays shut",
+            ep.hasPendingSpeech(),
+        )
+        assertTrue(
+            "but a dip that outlived MICRO_PAUSE_MS was recorded, and only an OPEN gate can " +
+                "record one — that is the evidence the cap cut consumes its window on",
+            ep.pendingCutPointMs() > Endpointer.NO_CUT_POINT,
+        )
     }
 
     @Test fun exactly_MIN_SPEECH_MS_does_not_cut_but_does_count_as_pending_speech() {
@@ -531,12 +703,14 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
-        assertFalse(pump.run(0.1f, 16))
+        assertFalse(pump.run(0.1f, HOLD_FRAMES))
         assertTrue("the first utterance commits", pump.run(0.1f, 1))
         pump.run(0.9f, 8)                        // 256 ms on the new clock, 1440 on the old one
         assertFalse(
             "a stale speech start would measure this burst from the FIRST utterance and cut",
-            pump.run(0.1f, 40),
+            // Long enough to reach the hangover at ANY value in the owner range: a run that did
+            // not would pass this test by never asking the question.
+            pump.run(0.1f, maxOf(40, HANGOVER_FRAMES)),
         )
         assertEquals("the short second burst is discarded, not committed", 1, pump.commits)
     }
@@ -550,7 +724,7 @@ class SileroEndpointerTest {
         )
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
-        assertFalse(pump.run(0.1f, 16))
+        assertFalse(pump.run(0.1f, HOLD_FRAMES))
         // 452 bytes of the NEXT frame are already in the accumulator when the cut fires.
         probe.next = 0.1f
         assertFalse(ep.onFrame(ByteArray(452) { 7 }, 0, pump.t))
@@ -656,7 +830,7 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
-        pump.run(0.1f, 5)                    // dip at BASE+640 remembered
+        pump.run(0.1f, MICRO_PAUSE_FRAMES)   // dip at BASE+640 remembered
         assertEquals(BASE + 640, ep.pendingCutPointMs())
         pump.run(0.9f, 10)                   // speech resumes: pending end clears, memory does not
         assertEquals(BASE + 640, ep.pendingCutPointMs())
@@ -684,9 +858,10 @@ class SileroEndpointerTest {
         // test asserts an absence that a never-offering implementation satisfies for free — it
         // passed vacuously against the interface default at RED, which is exactly the shape of
         // test that reports success while the feature is missing.
-        pump.run(0.1f, 5)
+        pump.run(0.1f, MICRO_PAUSE_FRAMES)
         assertEquals(BASE + 640, ep.pendingCutPointMs())
-        assertTrue(pump.run(0.1f, 12))       // the 17th silent frame overall: the hangover cuts
+        // The rest of the same dip: its last frame is the hangover's, and the cut consumes it.
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES - MICRO_PAUSE_FRAMES))
         assertEquals(
             "the remembered pause was consumed by the cut",
             Endpointer.NO_CUT_POINT,
@@ -699,7 +874,7 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
-        pump.run(0.1f, 5)
+        pump.run(0.1f, MICRO_PAUSE_FRAMES)
         assertEquals(BASE + 640, ep.pendingCutPointMs())
         ep.reset()
         assertEquals(Endpointer.NO_CUT_POINT, ep.pendingCutPointMs())
@@ -713,20 +888,21 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))       // commit at BASE+1152; t is now BASE+1184
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))
         pump.run(0.9f, 5)                    // 160 ms burst — under MIN_SPEECH_MS
-        assertFalse(pump.run(0.1f, 17))      // discarded, no commit
+        val coughDip = pump.t                // where the dip that follows the cough is stamped
+        assertFalse(pump.run(0.1f, HANGOVER_FRAMES))   // discarded, no commit
         assertEquals(1, pump.commits)
-        assertEquals(BASE + 1344, ep.pendingCutPointMs())
+        assertEquals(coughDip, ep.pendingCutPointMs())
         // And it must survive the silence AFTER the discard, which is the half that actually
         // happens in production: the cough ends, the gate shuts, and the speaker stays quiet until
         // the 15 s cap fires. Every frame in that stretch takes the `!speaking` early return, so
         // an implementation that cleared the offer there would pass the assertion above and still
         // hand the cap nothing at the only moment the cap ever asks.
-        pump.run(0.1f, 20)
+        pump.run(0.1f, maxOf(20, HANGOVER_FRAMES))
         assertEquals(
             "silence with the gate SHUT must not erase the offer either",
-            BASE + 1344,
+            coughDip,
             ep.pendingCutPointMs(),
         )
     }
@@ -754,7 +930,7 @@ class SileroEndpointerTest {
         // Workstream C compiles without the service package (Task D3 owns that object).
         ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 8_000L)
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))
         assertEquals(1, pump.commits)
     }
 
@@ -763,22 +939,31 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         // 1200L is CommitCadencePolicy.MIN_COMMIT_INTERVAL_FAST_MS (pro), quoted not imported.
+        val iv = EndpointerGrid.FIXTURE_INTERVAL_MS
         ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))                 // commit 1 at BASE+1152
-        pump.run(0.9f, 11)                             // utterance 2: BASE+1184..1504
-        assertFalse("endpoint at +896 ms is inside the 1200 ms interval", pump.run(0.1f, 17))
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))    // commit 1: the first cut is free
+        val commit1 = pump.lastCommitMs
+        pump.run(0.9f, SPEECH_FRAMES)                  // utterance 2
+        val cutPoint2 = pump.t                         // its dip is stamped here
+        assertFalse(
+            "an endpoint at +$iv ms is inside the 1200 ms interval",
+            pump.run(0.1f, HANGOVER_FRAMES),
+        )
         assertEquals(1, pump.commits)
         assertTrue("the merged audio is still uncommitted", ep.hasPendingSpeech())
         assertEquals(
             "the merged endpoint becomes the best known cut point",
-            BASE + 1536,
+            cutPoint2,
             ep.pendingCutPointMs(),
         )
-        pump.run(0.9f, 11)                             // utterance 3: BASE+2080..2400
-        assertTrue("endpoint at +1792 ms clears the interval", pump.run(0.1f, 17))
+        pump.run(0.9f, SPEECH_FRAMES)                  // utterance 3
+        assertTrue(
+            "the endpoint at +${2 * iv} ms clears the interval",
+            pump.run(0.1f, HANGOVER_FRAMES),
+        )
         assertEquals(2, pump.commits)
-        assertEquals(BASE + 2944, pump.lastCommitMs)
+        assertEquals(commit1 + 2 * iv, pump.lastCommitMs)
     }
 
     @Test fun multi_paces_three_utterances_into_one_commit() {
@@ -788,9 +973,9 @@ class SileroEndpointerTest {
         // 6000L is CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS, quoted not imported.
         ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 6_000L)
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))                 // commit 1 at BASE+1152
-        pump.run(0.9f, 11); assertFalse(pump.run(0.1f, 17))
-        pump.run(0.9f, 11); assertFalse(pump.run(0.1f, 17))
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))    // commit 1: the first cut is free
+        pump.run(0.9f, SPEECH_FRAMES); assertFalse(pump.run(0.1f, HANGOVER_FRAMES))
+        pump.run(0.9f, SPEECH_FRAMES); assertFalse(pump.run(0.1f, HANGOVER_FRAMES))
         assertEquals(
             "6 s has not elapsed: the endpointer still cuts, it just merges",
             1,
@@ -812,11 +997,13 @@ class SileroEndpointerTest {
      *
      * The difference is structural rather than a change of heart. [EndpointerTuning.MIN_SPEECH_MS],
      * [EndpointerTuning.HANGOVER_MS] and [EndpointerTuning.MICRO_PAUSE_MS] are CONSTANTS, and none
-     * of 300 / 500 / 98 is a multiple of the 32 ms frame, so no pump-driven test can land on them;
-     * each has its own direct-`onFrame` test and those four stay exactly where they are. The
-     * cadence floor is a PARAMETER the caller chooses per session, so a test may simply choose one
-     * the grid hits. 896 ms is where this fixture's second endpoint falls: commit 1 at BASE+1152,
-     * endpoint 2 at BASE+2048.
+     * of them is a multiple of the 32 ms frame, so no pump-driven test can land on them (the
+     * hangover's off-gridness is asserted, not assumed:
+     * `EndpointerGridTest.the_fixture_grid_is_valid_for_this_hangover` fails loudly on an on-grid
+     * value and names this sentence); each has its own direct-`onFrame` test and those four stay
+     * exactly where they are. The cadence floor is a PARAMETER the caller chooses per session, so
+     * a test may simply choose one the grid hits: [EndpointerGrid.FIXTURE_INTERVAL_MS] is where
+     * this fixture's second endpoint falls.
      *
      * The guard is `nowMs - lastCommitMs < minCommitIntervalMs`, so exactly the interval has
      * ELAPSED and commits, and one millisecond more of floor merges the same endpoint. Both sides
@@ -829,19 +1016,20 @@ class SileroEndpointerTest {
             val pump = Pump(ep, probe)
             ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = intervalMs)
             pump.run(0.9f, 20)
-            assertTrue("commit 1 lands at BASE+1152", pump.run(0.1f, 17))
-            pump.run(0.9f, 11)
-            pump.run(0.1f, 17)                         // endpoint 2 at BASE+2048: exactly +896 ms
+            assertTrue("commit 1 is the session's free first cut", pump.run(0.1f, HANGOVER_FRAMES))
+            pump.run(0.9f, SPEECH_FRAMES)
+            pump.run(0.1f, HANGOVER_FRAMES)            // endpoint 2: exactly FIXTURE_INTERVAL_MS on
             return pump
         }
-        val elapsed = secondEndpointUnder(896L)
+        val iv = EndpointerGrid.FIXTURE_INTERVAL_MS
+        val elapsed = secondEndpointUnder(iv)
         assertEquals(
             "exactly the interval has ELAPSED — the endpoint is not INSIDE the window",
             2,
             elapsed.commits,
         )
-        assertEquals(BASE + 2048, elapsed.lastCommitMs)
-        val inside = secondEndpointUnder(897L)
+        assertEquals(BASE + 640 + HANGOVER_TRAIL_MS + iv, elapsed.lastCommitMs)
+        val inside = secondEndpointUnder(iv + 1)
         assertEquals(
             "one millisecond more of floor and the same endpoint merges",
             1,
@@ -857,19 +1045,25 @@ class SileroEndpointerTest {
         val probe = FakeProbe()
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
-        // PRO's 1200 ms floor, deliberately, and not multi's 6000: the endpoint below lands 896 ms
-        // after the cap cut but 1504 ms after the session opened, so only a floor BETWEEN those
-        // two can tell the two anchors apart. Under 6000 both anchors merge and the test would
-        // pass against an implementation that re-anchored on nothing at all.
+        // A 1200 ms floor, deliberately, and not multi's 6000: the endpoint below lands
+        // FIXTURE_INTERVAL_MS after the cap cut but (20 + SPEECH_FRAMES) frames + one hangover
+        // trail after the session opened, so only a floor BETWEEN those two can tell the two
+        // anchors apart. Above the larger one both anchors merge and the test would pass against
+        // an implementation that re-anchored on nothing at all. That the shipped hangover keeps
+        // 1200 strictly between them is asserted by
+        // EndpointerGridTest.the_fixture_grid_is_valid_for_this_hangover, which names this test —
+        // it is NOT implied by the pro_merges clause beside it, which happens to reduce to the
+        // same integer boundary today by coincidence rather than by derivation.
         ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)
         pump.run(0.9f, 20)                             // last frame at BASE+608
         ep.reset()                                     // the wall-cap cut in onAudioChunk (FBS)
         assertFalse(ep.hasPendingSpeech())
-        pump.run(0.9f, 11)
+        pump.run(0.9f, SPEECH_FRAMES)
         assertFalse(
-            "896 ms after the cap cut is inside pro's 1200 — measured from the SESSION it would " +
-                "be 1504 and would cut",
-            pump.run(0.1f, 17),
+            "${EndpointerGrid.FIXTURE_INTERVAL_MS} ms after the cap cut is inside pro's 1200 — " +
+                "measured from the SESSION it would be ${pump.t + HANGOVER_TRAIL_MS - BASE} and " +
+                "would cut",
+            pump.run(0.1f, HANGOVER_FRAMES),
         )
         assertEquals(0, pump.commits)
         // And a reset arriving BEFORE this session's first frame anchors on the SESSION, not on
@@ -880,10 +1074,10 @@ class SileroEndpointerTest {
         pump.t = BASE + 60_000
         ep.onSessionStart(nowMs = BASE + 60_000, minCommitIntervalMs = 1_200L)
         ep.reset()                                     // switchSource, before a single frame
-        pump.run(0.9f, 11)
+        pump.run(0.9f, SPEECH_FRAMES)
         assertFalse(
             "the anchor is this session's open, not the minute-old frame the last one left",
-            pump.run(0.1f, 17),
+            pump.run(0.1f, HANGOVER_FRAMES),
         )
         assertEquals(0, pump.commits)
     }
@@ -894,17 +1088,19 @@ class SileroEndpointerTest {
         val pump = Pump(ep, probe)
         ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 6_000L)   // multi's paced floor
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))                 // commit 1 at BASE+1152
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))    // commit 1: the free first cut
         // The governor is shown ENGAGED before the re-arm is asked to lift it. Without this the
         // test asserts a commit that a never-merging endpointer delivers for free — it passed
         // vacuously at RED against the interface's defaulted no-op, which is the exact shape of
         // test that reports success while the feature is missing.
-        pump.run(0.9f, 11)
-        assertFalse("still inside multi's 6 s", pump.run(0.1f, 17))
+        pump.run(0.9f, SPEECH_FRAMES)
+        val mergedCutPoint = pump.t                    // where the merged endpoint's dip started
+        assertFalse("still inside multi's 6 s", pump.run(0.1f, HANGOVER_FRAMES))
         assertTrue(ep.hasPendingSpeech())
-        assertEquals(BASE + 1536, ep.pendingCutPointMs())
-        pump.t = BASE + 3_000
-        ep.onSessionStart(nowMs = BASE + 3_000, minCommitIntervalMs = 6_000L)
+        assertEquals(mergedCutPoint, ep.pendingCutPointMs())
+        val nextSessionMs = pump.t + 1_000             // still far inside multi's 6 s floor
+        pump.t = nextSessionMs
+        ep.onSessionStart(nowMs = nextSessionMs, minCommitIntervalMs = 6_000L)
         // The session boundary is also the last place the previous session's audio is spoken for.
         // onSessionStart clears the buffer bookkeeping through the same clearForNextSegment a
         // commit uses, so the merged audio the last session left does not read as pending here,
@@ -916,8 +1112,8 @@ class SileroEndpointerTest {
             Endpointer.NO_CUT_POINT,
             ep.pendingCutPointMs(),
         )
-        pump.run(0.9f, 11)
-        assertTrue("a new session's first cut is free again", pump.run(0.1f, 17))
+        pump.run(0.9f, SPEECH_FRAMES)
+        assertTrue("a new session's first cut is free again", pump.run(0.1f, HANGOVER_FRAMES))
         assertEquals(2, pump.commits)
     }
 
@@ -928,25 +1124,40 @@ class SileroEndpointerTest {
      * their row in `CommitCadencePolicy`. The only way to reach this state is a frame arriving
      * before `onOpen` has run, and the cost of guessing low there is a commit rate the installed
      * tier cannot pay for; the cost of guessing high is one late cut on audio nobody has asked for
-     * yet. The two assertions BRACKET the value rather than reading the field: 6976 ms still
-     * merges (so the default is above multi's 6000, above the cloud batch's 3000 and far above
-     * pro's 1200) and 8128 ms commits (so it is not something merely enormous).
+     * yet. The two assertions BRACKET the value rather than reading the field: [BELOW_LARGE_MS]
+     * still merges (so the default is above multi's 6000, above the cloud batch's 3000 and far
+     * above pro's 1200) and [ABOVE_LARGE_MS] commits (so it is not something merely enormous).
+     *
+     * The brackets are the fixed quantities and the SILENCE PADDING is solved for, not the other
+     * way round: an inter-endpoint interval here is `(padFrames + speechFrames + dipFrames) * 32`
+     * whatever the hangover is (the pump advances its clock over the whole dip, and the commit and
+     * the endpoint both shift by the same trail, which cancels), so a fixture that fixed the
+     * PADDING instead would drift its own brackets across the hangover's owner range and stop
+     * bracketing 8000 at the top of it.
      */
     @Test fun before_any_session_start_the_floor_is_the_conservative_8000() {
         val probe = FakeProbe()
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
+        // Solve for the quiet padding that puts each endpoint on its bracket. `coerceAtLeast(0)`
+        // is the only concession to a very long hangover: past ~1150 ms one full dip already
+        // overshoots the second bracket on its own, and overshooting it is what that assertion
+        // wants anyway.
+        val pad1 = (BELOW_LARGE_MS / EndpointerTuning.FRAME_MS).toInt() -
+            HANGOVER_FRAMES - SPEECH_FRAMES
+        val pad2 = ((ABOVE_LARGE_MS - BELOW_LARGE_MS) / EndpointerTuning.FRAME_MS).toInt() -
+            HANGOVER_FRAMES - SPEECH_FRAMES
         pump.run(0.9f, 20)
-        assertTrue("the first cut is free here too", pump.run(0.1f, 17))   // commit 1, BASE+1152
-        pump.run(0.1f, 190)                            // quiet: the gate is shut, nothing happens
-        pump.run(0.9f, 11)
+        assertTrue("the first cut is free here too", pump.run(0.1f, HANGOVER_FRAMES))
+        pump.run(0.1f, pad1)                           // quiet: the gate is shut, nothing happens
+        pump.run(0.9f, SPEECH_FRAMES)
         assertFalse(
-            "6976 ms after the commit is still inside the LARGE floor",
-            pump.run(0.1f, 17),
+            "$BELOW_LARGE_MS ms after the commit is still inside the LARGE floor",
+            pump.run(0.1f, HANGOVER_FRAMES),
         )
-        pump.run(0.1f, 8)
-        pump.run(0.9f, 11)
-        assertTrue("8128 ms clears it", pump.run(0.1f, 17))
+        pump.run(0.1f, pad2.coerceAtLeast(0))
+        pump.run(0.9f, SPEECH_FRAMES)
+        assertTrue("$ABOVE_LARGE_MS ms clears it", pump.run(0.1f, HANGOVER_FRAMES))
         assertEquals(2, pump.commits)
     }
 
@@ -1099,41 +1310,87 @@ class SileroEndpointerTest {
      * a cut is the one verdict the caller cannot take back — `no_context = true` makes a mid-word
      * cut unrepairable.
      *
-     * The fixture lines two constants up on purpose. At the 32 ms cadence the hangover cuts on the
-     * dip's 17TH frame and [EndpointerTuning.PROBE_CUTOUT_FRAMES] is 16, so making every frame from
-     * the dip's second onward slow puts the 16th consecutive overrun exactly on the committing
-     * frame. A retune of either constant breaks this arithmetic LOUDLY — the assertions below stop
-     * describing the frame they name — rather than quietly leaving the property untested.
+     * ## Why this one is driven OFF the pump
+     * Until the hangover retune this fixture lined two constants up on purpose: at the 32 ms
+     * cadence the cut landed on the dip's 17th frame and [EndpointerTuning.PROBE_CUTOUT_FRAMES] is
+     * 16, so making the dip's frames 2..17 slow put the 16th consecutive overrun exactly on the
+     * committing frame. The KDoc claimed a retune of either constant would break the arithmetic
+     * LOUDLY rather than leave the property untested. It kept that promise — and the lesson taken
+     * from the break is that a scenario reachable only by a coincidence of two independently
+     * tunable constants is a scenario one owner A/B away from being unstatable.
+     *
+     * So the collision is now BUILT instead of found. The dip's frames are placed ONE MILLISECOND
+     * apart, where no hangover value in the owner range can reach them, and the boundary frame is
+     * placed at exactly [EndpointerTuning.HANGOVER_MS] past the pending end. The overrun run and
+     * the hangover are then independent: the run is [EndpointerTuning.PROBE_CUTOUT_FRAMES] long
+     * because the fixture says so, and the boundary frame cuts because the constant says so.
+     *
+     * ## The twin is the half that makes it non-vacuous
+     * `assertFalse` on the boundary frame is satisfied just as well by "no cut was due anyway",
+     * which is exactly how a future retune could hollow this out in silence. [latchBoundary] is
+     * therefore run TWICE on identical audio, differing only in what the probe COSTS, and the fast
+     * run is asserted to CUT on the very frame the slow run is asserted to swallow. That is the
+     * file's own idiom — "the offer is shown to EXIST before the commit is asked to consume it".
      */
     @Test fun the_frame_that_trips_the_latch_has_its_verdict_discarded() {
+        val fast = latchBoundary(slowProbe = false)
+        assertTrue(
+            "the twin: with a healthy probe this very frame is exactly HANGOVER_MS of trailing " +
+                "silence and it CUTS — without this half, the assertion below would be satisfied " +
+                "by a frame that was never going to commit",
+            fast.fired,
+        )
+        assertFalse("a healthy probe never latches", fast.ep.isProbeCutout())
+
+        val slow = latchBoundary(slowProbe = true)
+        assertFalse(
+            "the same frame, the same audio, one PROBE_CUTOUT_FRAMES-th consecutive overrun: the " +
+                "latch discards the verdict it just paid for",
+            slow.fired,
+        )
+        assertTrue(slow.ep.isProbeCutout())
+        assertTrue(
+            "onProb never ran on that frame, so nothing cleared the buffer either",
+            slow.ep.hasPendingSpeech(),
+        )
+    }
+
+    private class LatchRun(val ep: SileroEndpointer, val fired: Boolean)
+
+    /**
+     * Speech, then a dip whose frames are 1 ms apart, then ONE frame at exactly
+     * [EndpointerTuning.HANGOVER_MS] past the pending end.
+     *
+     * [slowProbe] charges every frame of the dip AFTER its first over [EndpointerTuning.
+     * PROBE_BUDGET_US], so the boundary frame is the [EndpointerTuning.PROBE_CUTOUT_FRAMES]-th
+     * consecutive overrun. The dip's FIRST frame is always fast: it is the frame that stamps the
+     * pending end, and charging it would put the run one frame early.
+     *
+     * Valid at any hangover longer than PROBE_CUTOUT_FRAMES milliseconds — a bound
+     * `EndpointerGridTest.the_fixture_grid_is_valid_for_this_hangover` asserts rather than assumes.
+     */
+    private fun latchBoundary(slowProbe: Boolean): LatchRun {
         val clock = FakeClock()
         val probe = FakeProbe()
         probe.clock = clock
-        val ep = SileroEndpointer(
-            probe = probe,
-            nanoClock = clock,
-        )
-        val pump = Pump(ep, probe)
-        pump.run(0.9f, 20)                  // fast: gate opens at BASE, speech runs to BASE+608
-        assertTrue("640 ms of speech is comfortably committable", ep.hasPendingSpeech())
-        pump.run(0.1f, 1)                   // the dip's first frame stamps the end at BASE+640
-        probe.costMs = OVERRUN_MS
-        assertFalse(
-            "the dip's frames 2..16 are slow, but 480 ms is under the hangover",
-            pump.run(0.1f, EndpointerTuning.PROBE_CUTOUT_FRAMES - 1),
-        )
-        assertFalse("15 consecutive overruns is not the latch either", ep.isProbeCutout())
-        assertFalse(
-            "the dip's 17th frame is 512 ms in and WOULD cut — but it is also the 16th " +
-                "consecutive overrun, and the latch discards the verdict it just paid for",
-            pump.run(0.1f, 1),
-        )
-        assertTrue(ep.isProbeCutout())
-        assertEquals(0, pump.commits)
-        assertTrue(
-            "onProb never ran on that frame, so nothing cleared the buffer either",
-            ep.hasPendingSpeech(),
-        )
+        val ep = SileroEndpointer(probe = probe, nanoClock = clock)
+        val speech = EndpointerTuning.MIN_SPEECH_MS + 100
+        probe.next = 0.9f
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE))
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + speech))
+        assertTrue("$speech ms of speech is comfortably committable", ep.hasPendingSpeech())
+        probe.next = 0.1f
+        assertFalse(ep.onFrame(ByteArray(B), 0, BASE + speech))   // pending end == BASE + speech
+        if (slowProbe) probe.costUs = EndpointerTuning.PROBE_BUDGET_US + 1
+        repeat(EndpointerTuning.PROBE_CUTOUT_FRAMES - 1) { i ->
+            assertFalse(
+                "one millisecond of trail cannot reach any hangover in the owner range",
+                ep.onFrame(ByteArray(B), 0, BASE + speech + 1 + i),
+            )
+        }
+        assertFalse("one short of the run is not the latch", ep.isProbeCutout())
+        val fired = ep.onFrame(ByteArray(B), 0, BASE + speech + EndpointerTuning.HANGOVER_MS)
+        return LatchRun(ep, fired)
     }
 
     @Test fun the_latch_survives_reset_and_is_re_armed_only_by_a_new_session() {
@@ -1195,8 +1452,11 @@ class SileroEndpointerTest {
         val pump = Pump(ep, probe)
         assertNull("nothing has been cut yet", ep.lastCut())
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))
-        assertEquals(EndpointCut(speechMs = 640L, trailMs = 512L, prob = 0.1f), ep.lastCut())
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))
+        assertEquals(
+            EndpointCut(speechMs = 640L, trailMs = HANGOVER_TRAIL_MS, prob = 0.1f),
+            ep.lastCut(),
+        )
     }
 
     @Test fun a_merged_endpoint_is_not_a_cut() {
@@ -1205,12 +1465,12 @@ class SileroEndpointerTest {
         val pump = Pump(ep, probe)
         ep.onSessionStart(nowMs = BASE, minCommitIntervalMs = 1_200L)   // pro's utterance cadence
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))
-        pump.run(0.9f, 11)
-        assertFalse(pump.run(0.1f, 17))
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))
+        pump.run(0.9f, SPEECH_FRAMES)
+        assertFalse(pump.run(0.1f, HANGOVER_FRAMES))
         assertEquals(
             "the merge changed nothing about the last CUT",
-            EndpointCut(speechMs = 640L, trailMs = 512L, prob = 0.1f),
+            EndpointCut(speechMs = 640L, trailMs = HANGOVER_TRAIL_MS, prob = 0.1f),
             ep.lastCut(),
         )
     }
@@ -1237,11 +1497,11 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))
         ep.reset()
         assertEquals(
             "an external commit is not a VAD cut, and must not erase one",
-            EndpointCut(speechMs = 640L, trailMs = 512L, prob = 0.1f),
+            EndpointCut(speechMs = 640L, trailMs = HANGOVER_TRAIL_MS, prob = 0.1f),
             ep.lastCut(),
         )
     }
@@ -1251,7 +1511,7 @@ class SileroEndpointerTest {
         val ep = SileroEndpointer(probe = probe)
         val pump = Pump(ep, probe)
         pump.run(0.9f, 20)
-        assertTrue(pump.run(0.1f, 17))
+        assertTrue(pump.run(0.1f, HANGOVER_FRAMES))
         ep.onSessionStart(nowMs = pump.t, minCommitIntervalMs = 1_200L)
         assertNull(ep.lastCut())
     }

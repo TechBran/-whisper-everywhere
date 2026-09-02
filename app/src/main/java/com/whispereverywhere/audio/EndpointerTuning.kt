@@ -66,17 +66,88 @@ object EndpointerTuning {
     /**
      * Trailing silence that ends an utterance. NOT the native 100 ms (`whisper.cpp:4456`), which is
      * a file-segmentation value with a 200 ms merge pass behind it (`whisper.cpp:5359`).
-     * Inter-clause pauses run 200-500 ms; the cost of cutting too early is one extra full encoder
-     * pass PLUS a mid-clause boundary that `no_context = true` makes unrepairable. Also feeds the
-     * batch filter's `speech_pad_ms = 150`, which needs trailing audio to expand into. Owner A/B
-     * range 350-800.
+     *
+     * RETUNED 500 —> 350 on a device measurement, and the derivation changed with the number.
+     * 3.7 argued from a SYMMETRIC cost: cutting early bought one extra full encoder pass, so 500
+     * bought margin cheaply. 57 shipped-build segments on the Fold6 falsified the premise on the
+     * tier the app now ships: the npu/npu-turbo encoder input is a fixed `[1,melBins,3000]`
+     * 30-second window (`whisper_jni.cpp:661-673`), so a pass costs the same ~1.78 s whether it
+     * carries one second of speech or fifteen, and the pipeline measured IDLE 61-75% of the time
+     * with a 15 s wall cap firing in every run because this hangover never elapsed. An extra
+     * encoder pass is a DUTY-CYCLE cost, and duty cycle is
+     * `CommitCadencePolicy.minCommitIntervalMs`'s job — not this constant's.
+     *
+     * What this constant still decides, on every tier, is the cost no governor can pay back:
+     * inter-clause pauses run 200-500 ms, and a mid-clause boundary is one `no_context = true`
+     * makes unrepairable. 350 clears word junctures and stop closures (50-200 ms) with margin and
+     * intrudes only on the bottom of the inter-clause band; below ~200 ms it would reach inside
+     * words. Also feeds the batch filter's `speech_pad_ms = 150`, which needs trailing audio to
+     * expand into. At 350 a commit still carries 352 ms of it. Owner A/B range 350-800.
      */
-    const val HANGOVER_MS = 500L
+    const val HANGOVER_MS = 350L
+
+    /**
+     * The ACOUSTIC floor under [HANGOVER_MS] — the value below which the hangover stops ending
+     * utterances and starts cutting inside them.
+     *
+     * The suite already enforces two other floors and NEITHER of them is this one: the machine
+     * floor ([MICRO_PAUSE_MS] = 98, below which the cost governor's merge branch silently stops
+     * offering the wall cap a cut point) and the batch-pad floor (a commit's trailing silence must
+     * outlast `speech_pad_ms = 150`). Both are satisfied at 250 ms, and 250 ms reaches into
+     * inter-word junctures in fast connected speech (100-200 ms) and stop closures (50-150 ms).
+     * `no_context = true` (`whisper_jni.cpp:846`) plus `commit()`'s buffer reset makes a split
+     * there unrepairable in both directions, so the failure is a permanently mangled word rather
+     * than a latency regression.
+     *
+     * Enforced by `EndpointerGridTest.the_fixture_grid_is_valid_for_this_hangover` and nowhere
+     * else. Without a NAMED floor an A/B downward fails as four unrelated-looking micro-pause
+     * fixtures instead of with the reason attached.
+     */
+    const val HANGOVER_MIN_MS = 300L
+
+    // THE MERGE PASS IS NOT HERE, AND THAT IS A DECISION (4.4 review, 2026-09-02).
+    //
+    // A draft of this retune added REOPEN_GAP_MS = HANGOVER_MS * 2 plus a field in
+    // SileroEndpointer so a burst discarded under MIN_SPEECH_MS was remembered and the next onset
+    // re-opened the utterance from it — sold as a port of whisper.cpp's merge pass
+    // (`:5607-5640`). Adversarial review killed it, and the reason is worth keeping so nobody
+    // re-derives it:
+    //
+    //  1. IT MADE MIN_SPEECH_MS UNENFORCEABLE. A re-open is reachable only after a discard, and a
+    //     discard only past HANGOVER_MS of dip, so the merged run's `speechMs` spans the GAP and
+    //     is > HANGOVER_MS >= MIN_SPEECH_MS by construction. The discard branch became
+    //     unreachable after a merge. Measured on the draft: two single 32 ms frames 416 ms apart
+    //     committed one segment out of 64 ms of actual speech.
+    //  2. IT INVERTED THE ONE BEHAVIOUR THE OWNER PROTECTS. A percussive bed (16 x a 288 ms hit
+    //     over a 416 ms gap) committed 3 times in 11.3 s where the shipped machine commits 0 in
+    //     15.9 s. The owner's rule is that background music should ride the 15 s wall cap —
+    //     "that means there's more background noise and the app just doesn't want to miss the
+    //     audio. That's perfect."
+    //  3. THE PORT CLAIM WAS FALSE. Native drops a sub-min_speech burst BEFORE it can enter
+    //     `speeches` (`whisper.cpp:5590`), so its merge can only glue segments that already
+    //     passed the floor; it never resurrects a discarded one. Native's merge gap is a
+    //     hardcoded 200 ms against a 250 ms min_speech, preserving `gap < min_speech` — the
+    //     invariant that stops a silence gap clearing the floor by itself. `HANGOVER_MS * 2`
+    //     against MIN_SPEECH_MS inverts it, and while HANGOVER_MS > MIN_SPEECH_MS no value of
+    //     the gap can restore it.
+    //
+    // THE COST OF NOT HAVING IT, recorded honestly: emphatic word-by-word delivery ("It. Is. Not.
+    // That. Simple.") still commits nothing until the wall cap, because each word is discarded and
+    // `closeGate()` re-anchors. That is the SHIPPED 3.7 behaviour, not a regression this retune
+    // introduces — but it is the one thing a smaller hangover does not fix, and it is the question
+    // to take to a device session. A correct fix would make MIN_SPEECH_MS a floor on ACCUMULATED
+    // speech rather than on wall-clock span, which needs its own decision about whether two
+    // 288 ms drum hits should merge when two 288 ms words should.
+
 
     /**
      * Shortest run of speech that may be committed. The native filter already drops <250 ms before
      * `whisper_full`; 300 keeps client and native agreeing instead of fighting.
      * (`min_speech_duration_ms = 250`, `whisper.cpp:4455`.)
+     *
+     * It is a floor on EACH RUN of speech, measured from the onset that opened the gate — there is
+     * no merge across a dip (see the block above [HANGOVER_MS]), so a burst shorter than this is
+     * discarded outright and its audio waits for the wall cap.
      */
     const val MIN_SPEECH_MS = 300L
 

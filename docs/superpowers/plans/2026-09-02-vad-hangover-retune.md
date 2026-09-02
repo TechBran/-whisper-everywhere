@@ -589,3 +589,45 @@ The other five changes are **independently correct at any hangover** and should 
 - The grid and its guards are the reason the rollback is one line.
 
 If the device session shows a **duty/queue** problem rather than a **boundary-quality** problem, do not roll back the hangover: raise `MIN_COMMIT_INTERVAL_TURBO_MS`. That is what the constant's KDoc says, and it is the difference between putting fewer boundaries in and putting boundaries in worse places.
+---
+
+## 8. Addendum — change 3 was rejected in review (2026-09-02, after §1-§7 were written)
+
+**FIVE changes shipped, not six.** §1's table, §3(c), the §4 rows that convert the merge fixtures
+and §5's mutation row M1 are WITHDRAWN. `REOPEN_GAP_MS` and `SileroEndpointer.reopenFromMs` do not
+exist in the shipped tree, and this document is the only place they survive as prescriptive text —
+which is why this section exists rather than a quiet edit.
+
+**Why it was rejected.** The merged run's `speechMs` is measured across the GAP, and a re-open is
+reachable only after a discard, which is reachable only past `HANGOVER_MS` of dip. So
+`speechMs > HANGOVER_MS >= MIN_SPEECH_MS` by construction: the discard branch became unreachable
+after a merge and `MIN_SPEECH_MS` was a floor on nothing. Measured on the draft — two single 32 ms
+frames 416 ms apart committed one segment out of **64 ms of speech**, and a percussive bed
+(16 x a 288 ms hit over a 416 ms gap) committed **3 times in 11.3 s** where the shipped machine
+commits **0 in 15.9 s**. That is the owner's protected behaviour — *"background music … the app
+just doesn't want to miss the audio. That's perfect."* — inverted.
+
+**§1's port claim was also false, and that matters more than the bug.** Native drops a
+sub-`min_speech` burst at `whisper.cpp:5590`, BEFORE the merge loop at `:5607-5626` can see it; the
+loop only glues segments already past the floor, across a hardcoded 200 ms gap against a 250 ms
+`min_speech`, and the post-merge re-check at `:5628-5637` removes and never restores. Native never
+resurrects a discarded burst. Its `gap < min_speech` invariant is what stops a silence gap clearing
+the floor by itself, and `HANGOVER_MS * 2` against `MIN_SPEECH_MS` inverts it — while
+`HANGOVER_MS > MIN_SPEECH_MS`, no value of the gap restores it. The 3.7 port matched native's
+ordering; it did not "leave the merge behind".
+
+**§1's safety argument is amended.** It read: *"Change 3 makes most such runs mergeable; change 6
+closes the residue."* Change 6 now carries the whole wall-cap-collapse defence alone. Reviewers
+confirmed it is sufficient for the full gap range, not merely the residue.
+
+**The cost, recorded rather than hidden.** Emphatic word-by-word delivery — "It. Is. Not. That.
+Simple." — still commits nothing until the 15 s wall cap. That is the SHIPPED 3.7 behaviour, not a
+regression this retune introduces, and it is now pinned by
+`SileroEndpointerTest.word_by_word_bursts_under_MIN_SPEECH_MS_still_commit_nothing` so it cannot
+decay into folklore. A correct fix makes `MIN_SPEECH_MS` a floor on ACCUMULATED speech rather than
+on wall-clock span, and it needs an owner decision this document cannot make: two 288 ms drum hits
+and two 288 ms words are indistinguishable by duration.
+
+**Where the reasoning now lives in the code:** the `THE MERGE PASS IS NOT HERE` block above
+`EndpointerTuning.MIN_SPEECH_MS`, pinned by
+`EndpointerTuningTest.the_merge_pass_rejection_keeps_its_reasoning`.

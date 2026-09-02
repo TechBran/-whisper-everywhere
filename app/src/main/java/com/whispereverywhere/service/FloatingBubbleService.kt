@@ -2042,8 +2042,32 @@ class FloatingBubbleService : Service(),
                 // session pays a few near-free empty commits at 15 s instead of at 4 s. The OR
                 // lives HERE, at the call site, so capCutConsumesWindow itself stays SYMMETRIC and
                 // its 4-row truth table keeps holding unchanged.
+                // 4.4 — the SECOND way hasPendingSpeech() can be pinned false while real speech is
+                // sitting in the buffer, and the reason a third disjunct joined the two above. The
+                // latch above covers a dead probe; this covers a live one. `pendingSpeech` is set
+                // only in the ONSET branch and only once MIN_SPEECH_MS of WALL TIME has elapsed
+                // since the current gate-open, and the MIN_SPEECH discard calls closeGate(), which
+                // re-anchors that clock. So audio made of sub-300 ms bursts separated by dips long
+                // enough to reach the hangover — a percussive music bed, a sung syllable, an
+                // effect sting — latches it FALSE forever: every cap cut then arrives as
+                // (false, false), re-arms the 4 s first-cap window and the app cuts every four
+                // seconds through the music for the rest of the session. That is the owner's one
+                // named must-keep behaviour (the 15 s wall under background noise) inverted, at
+                // ~3.75x the encoder passes, on audio that decodes to nothing.
+                //
+                // `pendingCutPointMs()` supplies the evidence `pendingSpeech` can no longer carry,
+                // out of a field that already exists: `prevEndMs` is written at exactly one place,
+                // past `onProb`'s `if (!speaking) return false`, so a non-sentinel offer means "the
+                // gate really opened and a dip really outlived MICRO_PAUSE_MS inside this window".
+                // It is cleared on every commit and every reset, so it cannot leak across windows,
+                // and it is already read three lines below for the retain. The 3.5.0 LOCAL-silence
+                // guarantee is untouched: a user who opens the session and says nothing never
+                // reaches that write at all, so the 4 s window still re-arms for their first real
+                // speech — the guarantee is scoped to SILENCE, and silence is exactly what still
+                // satisfies it.
                 if (capCutConsumesWindow(
                         hasPendingSpeech = endpointer.hasPendingSpeech() ||
+                            endpointer.pendingCutPointMs() > Endpointer.NO_CUT_POINT ||
                             (endpointer as? SileroEndpointer)?.isProbeCutout() == true,
                         isCloudSession = cloudWrapper != null,
                     )

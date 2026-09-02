@@ -293,7 +293,7 @@ class NativeVadSourceContractTest {
         )
         assertTrue(
             "we_vad_filter must keep vp.speech_pad_ms = 150. It is the other half of the same " +
-                "binding untouchable, and EndpointerTuning.HANGOVER_MS's 500 ms is chosen partly " +
+                "binding untouchable, and EndpointerTuning.HANGOVER_MS is chosen partly " +
                 "to leave trailing audio for this padding to expand into — shrink one without " +
                 "the other and the commit boundary eats the word it was protecting.",
             Regex("""vp\.speech_pad_ms\s*=\s*150""").containsMatchIn(body)

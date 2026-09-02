@@ -561,7 +561,7 @@ class SileroEndpointer(
         // The pending end is stamped ONCE, at the FIRST frame of the dip (`:5323-5324`), and the
         // hangover then elapses on wall time from it (`:5333`). Nothing in this branch re-stamps
         // it: that is the difference between a hard timer and a decaying one, and it is what lets
-        // a 500 ms hangover survive a talker whose pauses are full of breath and paper noise.
+        // the hangover survive a talker whose pauses are full of breath and paper noise.
         if (tempEndMs == 0L) tempEndMs = nowMs
 
         // THE MICRO-PAUSE MEMORY (`whisper.cpp:5328-5330`). Once THIS dip has outlived the native
@@ -578,8 +578,8 @@ class SileroEndpointer(
 
         if (nowMs - tempEndMs < EndpointerTuning.HANGOVER_MS) return false
 
-        // The utterance is measured to the PENDING END, not to now: the hangover's own 500 ms is
-        // silence, not speech (native `temp_end - curr_speech_start`, `:5337`).
+        // The utterance is measured to the PENDING END, not to now: the hangover's own trailing
+        // window is silence, not speech (native `temp_end - curr_speech_start`, `:5337`).
         val speechMs = tempEndMs - speechStartMs
         if (speechMs <= EndpointerTuning.MIN_SPEECH_MS) {
             // whisper.cpp:5337 — too short to be an utterance. Drop it and re-arm; the native VAD
@@ -604,7 +604,9 @@ class SileroEndpointer(
             // `prevEndMs = tempEndMs` was DROPPED rather than kept. It is dead: this branch is
             // reachable only past `nowMs - tempEndMs >= HANGOVER_MS`, and the micro-pause
             // promotion above fires at `> MICRO_PAUSE_MS`, so it has ALREADY written exactly this
-            // value in this same call — for every value in HANGOVER_MS's 350-800 owner range. And
+            // value in this same call — for every value in HANGOVER_MS's 350-800 owner range,
+            // whose floor `EndpointerGridTest.the_fixture_grid_is_valid_for_this_hangover` now
+            // asserts against MICRO_PAUSE_MS rather than leaving as prose. And
             // it is worse than redundant: one tidy-up reorder past `closeGate()` and it would
             // store 0 instead, because closeGate() zeroes `tempEndMs` — with the promotion above
             // silently covering for it on every reachable path, so neither the suite nor a
