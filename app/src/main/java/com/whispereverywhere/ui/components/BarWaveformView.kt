@@ -67,6 +67,9 @@ class BarWaveformView @JvmOverloads constructor(
     private var ticker: ValueAnimator? = null
     private var phase = 0f
 
+    /** Previous frame's timestamp; 0 means "no previous frame" (see [RibbonFlow.frameDt]). */
+    private var lastFrameNs = 0L
+
     // Scratch buffers for the per-frame ribbon silhouette published to RibbonProfile (the
     // blob's rim follows it — mountains inside become mountains outside).
     private val profileTop = FloatArray(RibbonProfile.N)
@@ -91,12 +94,25 @@ class BarWaveformView @JvmOverloads constructor(
         val cy = height / 2f
         val w = width.toFloat()
 
+        // Frame timing (durations only). Every rate below is per SECOND, so the panel's refresh
+        // rate decides how OFTEN the ribbon is drawn and nothing else — see RibbonFlow for the
+        // report this closes (120 Hz ran the whole animation at double speed until the panel
+        // settled to 60 Hz, which the owner saw as "super fast, then it mellows out").
+        val now = System.nanoTime()
+        val dt = RibbonFlow.frameDt(lastFrameNs, now)
+        lastFrameNs = now
+        phase += RibbonFlow.PHASE_PER_SEC * dt
+
         // Asymmetric envelopes: jump up fast, drift down slow — waves visibly hit on syllables.
-        val k = if (targetLevel > currentLevel) ATTACK else RELEASE
+        val k = RibbonFlow.lerpFactor(
+            if (targetLevel > currentLevel) RibbonFlow.ATTACK_PER_SEC else RibbonFlow.RELEASE_PER_SEC,
+            dt,
+        )
         currentLevel += (targetLevel - currentLevel) * k
         for (j in 0 until SHEETS) {
-            val kb = if (bandTargets[j] > bandLevels[j]) ATTACK else BAND_RELEASES[j]
-            bandLevels[j] += (bandTargets[j] - bandLevels[j]) * kb
+            val rate = if (bandTargets[j] > bandLevels[j]) RibbonFlow.ATTACK_PER_SEC
+            else RibbonFlow.BAND_RELEASES_PER_SEC[j]
+            bandLevels[j] += (bandTargets[j] - bandLevels[j]) * RibbonFlow.lerpFactor(rate, dt)
         }
 
         // Stadium-interior envelope (same as the pill body): allowed excursion at each x is the
@@ -212,16 +228,18 @@ class BarWaveformView @JvmOverloads constructor(
     fun start() {
         running = true
         ticker?.cancel()
+        // A fresh session starts cold: the first frame takes RibbonFlow's default step rather
+        // than the gap since whenever this view last drew.
+        lastFrameNs = 0L
 
-        // 60fps continuous animation
+        // The ticker only asks for frames — how far the ribbon moves between them is decided in
+        // onDraw from elapsed time, so the panel's refresh rate cannot change the motion.
         ticker = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 1000
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener {
                 if (!running) return@addUpdateListener
-                // Advance the phase for the flowing-wave effect
-                phase += 0.13f
                 invalidate()
             }
             start()
@@ -234,6 +252,9 @@ class BarWaveformView @JvmOverloads constructor(
         ticker = null
         targetLevel = BASELINE
         currentLevel = BASELINE
+        // The final invalidate() below draws one more frame; without this reset it would be
+        // charged the whole gap until the NEXT session's first draw.
+        lastFrameNs = 0L
         invalidate()
     }
 
@@ -252,11 +273,9 @@ class BarWaveformView @JvmOverloads constructor(
         private const val NOISE_FLOOR = 350
         private const val GAIN = 4f
 
-        /** Asymmetric response: syllables hit instantly, decay drifts down. */
-        private const val ATTACK = 0.65f
-        private const val RELEASE = 0.10f
-
-        /** Per-band release (per frame): bass lingers, sibilance vanishes fast. */
-        private val BAND_RELEASES = floatArrayOf(0.055f, 0.085f, 0.115f, 0.16f)
+        // The asymmetric response (fast attack, slow release, per-band decay) now lives in
+        // RibbonFlow as rates PER SECOND. The per-frame constants that used to sit here —
+        // ATTACK 0.65, RELEASE 0.10, BAND_RELEASES 0.055/0.085/0.115/0.16 — are the oracle those
+        // rates were derived from and are pinned in RibbonFlowTest, so 60 Hz is unchanged.
     }
 }
