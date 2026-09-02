@@ -14,9 +14,16 @@ package com.whispereverywhere.npu
 object NpuDecodeStats {
     /** `p(<|nospeech|>)` from the raw logits at the SOT step; `-1` when the scale was unreadable. */
     const val NO_SPEECH_PROB = 0
-    /** Mean log-probability of the emitted ids under the masked distribution; NaN if unreadable. */
+    /**
+     * Mean log-probability of the returned rung's ids under the masked distribution, the EOT
+     * counted when it came (as `whisper_sequence_score` counts it); NaN when the scale was
+     * unreadable or nothing was scored. After a `cut` it is the failing rung's pre-cut average.
+     */
     const val AVG_LOGPROB = 1
-    /** Histogram entropy of the last [NpuDecodePolicy.ENTROPY_WINDOW] ids; NaN if fewer were emitted. */
+    /**
+     * Histogram entropy of the last [NpuDecodePolicy.ENTROPY_WINDOW] ids; NaN whenever that window
+     * was never reached on the returned rung.
+     */
     const val ENTROPY = 2
     /** Index into [NpuDecodePolicy.TEMPERATURES] of the rung whose output was returned. */
     const val RUNG = 3

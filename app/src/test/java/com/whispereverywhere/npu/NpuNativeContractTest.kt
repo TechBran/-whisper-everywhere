@@ -3002,8 +3002,9 @@ class NpuNativeContractTest {
         assertTrue("one last-rung cut; found ${cut.size}", cut.size == 1)
         assertTrue("the position loop is inside the ladder", ladder.first() < positions.first())
         assertTrue("no-speech is read inside the position loop (SOT step)", positions.first() < nsp.first())
+        assertTrue("no-speech is read from the RAW buffer, before any mask is applied", nsp.first() < liveOffsets(body, "suppressThenArgmax(").first())
         assertTrue("the entropy check is inside the position loop", positions.first() < entropy.first())
-        assertTrue("the cut comes after the ladder has run", entropy.first() < cut.first())
+        assertTrue("the cut sits after the entropy check, inside the ladder body", entropy.first() < cut.first())
         // THE DIRECTION of the two comparisons, which no Kotlin predicate encodes (Task 2's
         // review): entropy BELOW the threshold is a repetition loop, mean log-prob BELOW the
         // threshold is a low-confidence rung. Either one flipped compiles, abandons every healthy

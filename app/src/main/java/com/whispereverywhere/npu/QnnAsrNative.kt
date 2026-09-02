@@ -212,7 +212,11 @@ object QnnAsrNative {
      *        its raw probability at the SOT step and never emits it.
      * @param stats OUT, `NpuDecodeStats.newArray()`; fully written on every `>= 0` return, by the
      *        [NpuDecodeStats] slots. `-1` in `NO_SPEECH_PROB` means the logits' scale was unreadable
-     *        and no probability gate ran (the entropy guard still did).
+     *        and no probability gate ran (the entropy guard still did). `AVG_LOGPROB` is NaN when
+     *        the scale was unreadable or nothing was scored (EOT counts as scored, as
+     *        `whisper_sequence_score` counts it); after a `cut` it is the failing rung's PRE-cut
+     *        average, over every id that rung emitted before the prefix was kept. `ENTROPY` is NaN
+     *        whenever the 32-id window was never reached on the returned rung.
      * @return the number of ids written (`>= 0`), or `< 0` on failure with the text in
      *         [nativeLastError]. `0` is a legitimate answer: it means EOT came first, i.e. silence.
      *

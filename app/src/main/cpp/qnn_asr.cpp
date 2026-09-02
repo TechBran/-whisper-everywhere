@@ -2008,11 +2008,18 @@ float noSpeechProbabilityLocked(const uint16_t *logits, uint32_t vocab, float sc
     return static_cast<float>(std::exp(v - logZ));
 }
 
-/// log p(id) under the MASKED distribution (floor entries excluded), for avg_logprob.
-double maskedLogprobLocked(const uint16_t *logits, uint32_t vocab, float scale, int32_t id) {
+/// log p(id) under the MASKED distribution (floor entries excluded), for avg_logprob. On the
+/// ladder's T > 0 rungs that is the TEMPERATURE-SCALED distribution the token was drawn from:
+/// whisper_process_logits divides the logits by T before the log-softmax that yields plog
+/// (whisper.cpp:6460-6462), so a rung is judged on the distribution it sampled - at T = 0.2 the
+/// sharpened one - and the ladder settles where the reference settles instead of climbing to 1.0.
+/// T = 0 (rung 0) is the plain masked log-softmax, unchanged.
+double maskedLogprobLocked(const uint16_t *logits, uint32_t vocab, float scale, float temperature,
+                           int32_t id) {
+    const float s = temperature > 0.0f ? scale / temperature : scale;
     double logZ = 0.0;
-    if (!logSumExpLocked(logits, vocab, scale, /*excludeFloor=*/true, &logZ)) return 0.0;
-    return static_cast<double>(scale * static_cast<float>(logits[id])) - logZ;
+    if (!logSumExpLocked(logits, vocab, s, /*excludeFloor=*/true, &logZ)) return 0.0;
+    return static_cast<double>(s * static_cast<float>(logits[id])) - logZ;
 }
 
 /// MASK, THEN DRAW - the sampling twin of suppressThenArgmax, for the ladder's T > 0 rungs. The
@@ -3157,6 +3164,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     // function has always been; it is byte-identical in what it emits when no gate trips.
     float noSpeechProb = kStatUnreadable;
     double avgLogprob = 0.0;
+    int32_t scored = 0;              // ids in avgLogprob's denominator: count + the EOT, if it came
     double entropyLast = 0.0;
     bool entropyMeasured = false;    // the window check RAN on the returned rung
     size_t rungUsed = 0;
@@ -3291,7 +3299,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
                         std::to_string(position) + "; the graph produced no token");
                 return -3;
             }
-            if (scale > 0.0f) sumLogprob += maskedLogprobLocked(logits, g.vocab, scale, tok);
+            if (scale > 0.0f) sumLogprob += maskedLogprobLocked(logits, g.vocab, scale, temperature, tok);
             if (firstGenerated < 0) firstGenerated = tok;
             if (tok == kEotToken) {
                 hitEot = true;
@@ -3317,10 +3325,14 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
             bindSelfKvLocked(1 - g.selfInSet);
         }
 
-        avgLogprob = (scale > 0.0f && count > 0) ? sumLogprob / count : 0.0;
+        // whisper_sequence_score divides by result_len, which COUNTS the EOT whose log-prob the
+        // sum above already holds (whisper.cpp:6870-6876, :7662). Captured BEFORE the cut below
+        // shrinks `count`, so a cut line still reports the failing rung's pre-cut average.
+        scored = count + (hitEot ? 1 : 0);
+        avgLogprob = (scale > 0.0f && scored > 0) ? sumLogprob / scored : 0.0;
         // whisper.cpp:7835 - a low-confidence rung falls back only when the model does NOT think
         // the segment is silent; a silent segment is judged by Kotlin, not re-decoded hotter.
-        const bool lowConfidence = scale > 0.0f && count > 0 &&
+        const bool lowConfidence = scale > 0.0f && scored > 0 &&
                                    avgLogprob < static_cast<double>(logprobThold) &&
                                    noSpeechProb < noSpeechThold;
         const bool lastRung = (rung + 1 == temperatures.size());
@@ -3345,7 +3357,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
 
     float stats[kStatSize];
     stats[kStatNoSpeechProb] = noSpeechProb;
-    stats[kStatAvgLogprob] = (scale > 0.0f && count > 0) ? static_cast<float>(avgLogprob) : NAN;
+    stats[kStatAvgLogprob] = (scale > 0.0f && scored > 0) ? static_cast<float>(avgLogprob) : NAN;
     // Whenever the window check ran on the returned rung - a `cut` line must carry the
     // sub-threshold entropy that caused it, and the cut itself shrinks `count` below the window.
     stats[kStatEntropy] = entropyMeasured ? static_cast<float>(entropyLast) : NAN;
