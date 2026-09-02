@@ -73,13 +73,15 @@ four, five, six, seven, eight, nine, ten." — the comma-list case A5 re-tests. 
 invoice, the contract, and the revised estimate by Friday." (5) a sentence of the owner's with
 technical terms. Dictate the same five on 4.3.1 for A1 and A6.
 
-The same capture **empirically confirms the install rule above**: it contains ZERO `npu:` and
+That same capture is the EVIDENCE for the install section above: it contains ZERO `npu:` and
 ZERO `TTSDIAG` lines and only native ones, because R8 strips the app's own `Log.i` in release.
-On the track build, §A is readable only through the native `decode:` line, and §B/§C/§D are
-judged by eye.
+So on the track build §A is readable only through the native `decode:` line; every other section
+is judged by the behaviour table above.
 
 A1. Dictate five ordinary sentences. Expect text unchanged from 4.3.0 and, per segment, a line
-    `npu: encode=… decode=… tokens=N lang=… nsp=0.0x lp=-0.x ent=… rung=0 term=eot` — the field
+    `npu: encode=… decode=… tokens=N lang=… nsp=0.0x lp=-0.x ent=… rung=0 term=eot`
+    (**this Kotlin line does not exist on the track build** — there, read the same five fields off
+    the native `decode:` line, which carries `nsp= lp= ent= rung= steps=` and the terminator) — the field
     set is `encode= decode= tokens= lang= nsp= lp= ent= rung= term=`, and clean speech ends
     `rung=0 term=eot`. FAIL if any `rung>0` on clean speech, or any transcript differs from what
     4.3.0 typed for the same sentence.
