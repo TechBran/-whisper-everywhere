@@ -40,9 +40,33 @@ object NpuDiag {
      *        i.e. silence. A failure never reaches this line — it goes to [unavailable].
      * @param langNote [NpuDecodePolicy.LangResolution.note]: `es`, `auto->fr(detected)`,
      *        `auto->de(locale)` or `auto->en(fallback)`, and never anything else.
+     * @param noSpeechProb raw `p(<|nospeech|>)` at the SOT step, or `-1` when the logits' scale
+     *        was unreadable and the probability could not be computed.
+     * @param avgLogprob the returned rung's masked mean log-probability, or `NaN` when the scale
+     *        was unreadable or nothing was scored.
+     * @param entropy histogram entropy of the last [NpuDecodePolicy.ENTROPY_WINDOW] ids, or `NaN`
+     *        when that window was never reached on the returned rung.
+     * @param rung index into [NpuDecodePolicy.TEMPERATURES] of the fallback-ladder rung actually
+     *        returned.
+     * @param terminator [NpuDecodeStats.terminatorName]'s answer: `eot`, `budget`, `cap` or `cut`.
      */
-    fun line(encodeMs: Long, decodeMs: Long, tokens: Int, langNote: String): String =
-        "npu: encode=$encodeMs decode=$decodeMs tokens=$tokens lang=$langNote"
+    fun line(
+        encodeMs: Long,
+        decodeMs: Long,
+        tokens: Int,
+        langNote: String,
+        noSpeechProb: Float,
+        avgLogprob: Float,
+        entropy: Float,
+        rung: Int,
+        terminator: String,
+    ): String =
+        "npu: encode=$encodeMs decode=$decodeMs tokens=$tokens lang=$langNote " +
+            "nsp=${f2(noSpeechProb)} lp=${f2(avgLogprob)} ent=${f2(entropy)} rung=$rung term=$terminator"
+
+    /** Two decimals, US locale, `NaN` printed as the literal `NaN` — never a locale comma. */
+    private fun f2(v: Float): String =
+        if (v.isNaN()) "NaN" else String.format(java.util.Locale.US, "%.2f", v)
 
     /**
      * `mel: bins=80 frames=3000 row0=1234.567 rowMid=890.123 rowLast=456.789` — one line per

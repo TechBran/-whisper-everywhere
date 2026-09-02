@@ -624,6 +624,9 @@ class NpuWhisperBackend(
 
             val prompt = NpuDecodePolicy.promptTokens(spec.tokens, resolution.token)
             val out = IntArray(NpuDecodePolicy.maxTokensFor(spec.tokens, prompt.size))
+            // 4.3.1 A: the guards travel as data, like the suppress lists; the six stats come back
+            // in this OUT array and the no-speech decision is taken HERE, from them.
+            val stats = NpuDecodeStats.newArray()
             val written = QnnAsrNative.nativeDecodeSegment(
                 prompt,
                 NpuDecodePolicy.suppressList(spec.tokens),
@@ -635,12 +638,18 @@ class NpuWhisperBackend(
                 NpuDecodePolicy.LOGPROB_THOLD,
                 NpuDecodePolicy.NO_SPEECH_THOLD,
                 spec.tokens.noSpeech,
-                NpuDecodeStats.newArray(),
+                stats,
             )
             if (written < 0) {
                 return@serialized fallBackAndRun("decode", QnnAsrNative.nativeLastError(), samples, lang, useVad)
             }
             val decodeMs = SystemClock.elapsedRealtime() - decodeStart
+
+            // whisper.cpp:7865 — the model said "silence" AND was unsure of its words: type nothing.
+            // A blank reaches LocalWhisperEngine's existing blank branch and resolves EmptyExpected,
+            // the same outcome the CPU tier's VAD-empty takes. Decided BEFORE detokenising so a
+            // hallucinated "Thank you." never exists as a String at all.
+            val noSpeech = NpuDecodePolicy.isNoSpeech(stats[NpuDecodeStats.NO_SPEECH_PROB], stats[NpuDecodeStats.AVG_LOGPROB])
 
             // The SLICE, never the buffer: everything past `written` is untouched memory from the
             // previous segment. And no filtering before this call — the drop rule for ids at or
@@ -652,7 +661,7 @@ class NpuWhisperBackend(
             // 51,866 for large-v3-turbo — the decoder's bound is per-family, 4.1 L4/L8), which is
             // a contract breach between this file and native — not an asset problem, and not
             // something to bury in the fallback path.
-            val text = bpe.decode(out.copyOf(written))
+            val text = if (noSpeech) "" else bpe.decode(out.copyOf(written))
 
             // `.reportable`, NEVER `.code`. A (locale) or (fallback) resolution is a guess this
             // tier made, and the engine feeds whatever crosses this seam to LanguagePin, which
@@ -662,11 +671,16 @@ class NpuWhisperBackend(
             // the BARE `en` note that means "the user chose this". See LangResolution.reportable.
             lastReportedLanguage = resolution.reportable
 
-            // ONE line per segment, and `tokens` is native's returned count rather than the text's
-            // length: the count exists before the text does, and reading it off the string would be
-            // one step from logging the string.
+            // ONE line per segment. `tokens` is native's count even when the gate blanked the text,
+            // so the line still says what the decoder produced; `nsp`/`lp` say why it was dropped.
             android.util.Log.i(
-                NpuDiag.TAG, NpuDiag.line(encodeMs, decodeMs, written, resolution.note)
+                NpuDiag.TAG,
+                NpuDiag.line(
+                    encodeMs, decodeMs, written, resolution.note,
+                    stats[NpuDecodeStats.NO_SPEECH_PROB], stats[NpuDecodeStats.AVG_LOGPROB],
+                    stats[NpuDecodeStats.ENTROPY], stats[NpuDecodeStats.RUNG].toInt(),
+                    NpuDecodeStats.terminatorName(stats[NpuDecodeStats.TERMINATOR]),
+                ),
             )
             text
         }

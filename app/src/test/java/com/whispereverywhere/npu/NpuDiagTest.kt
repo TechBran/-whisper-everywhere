@@ -37,14 +37,22 @@ class NpuDiagTest {
     @Test
     fun lineMatchesTheGreppableFormatExactly() {
         assertEquals(
-            "npu: encode=405 decode=168 tokens=37 lang=en",
-            NpuDiag.line(encodeMs = 405L, decodeMs = 168L, tokens = 37, langNote = "en"),
+            "npu: encode=405 decode=168 tokens=37 lang=en nsp=0.02 lp=-0.31 ent=3.10 rung=0 term=eot",
+            NpuDiag.line(
+                encodeMs = 405L, decodeMs = 168L, tokens = 37, langNote = "en",
+                noSpeechProb = 0.02f, avgLogprob = -0.31f, entropy = 3.1f, rung = 0, terminator = "eot",
+            ),
         )
         assertEquals(
             "zero tokens is a real reading — EOT first, i.e. silence — and must render as a " +
                 "normal line rather than being suppressed as \"nothing happened\"",
-            "npu: encode=402 decode=5 tokens=0 lang=en",
-            NpuDiag.line(encodeMs = 402L, decodeMs = 5L, tokens = 0, langNote = "en"),
+            "npu: encode=402 decode=5 tokens=0 lang=en nsp=0.81 lp=NaN ent=NaN rung=0 term=eot",
+            NpuDiag.line(402L, 5L, 0, "en", 0.81f, Float.NaN, Float.NaN, 0, "eot"),
+        )
+        assertEquals(
+            "the unreadable-scale sentinel prints as -1.00, never as a probability",
+            "npu: encode=405 decode=168 tokens=37 lang=en nsp=-1.00 lp=NaN ent=3.10 rung=2 term=cut",
+            NpuDiag.line(405L, 168L, 37, "en", -1f, Float.NaN, 3.1f, 2, "cut"),
         )
     }
 
@@ -60,23 +68,23 @@ class NpuDiagTest {
     fun theLineRendersEachOfTheFourLanguageNotes() {
         assertEquals(
             "explicit selection renders as the bare code",
-            "npu: encode=405 decode=168 tokens=37 lang=es",
-            NpuDiag.line(405L, 168L, 37, "es"),
+            "npu: encode=405 decode=168 tokens=37 lang=es nsp=0.02 lp=-0.31 ent=3.10 rung=0 term=eot",
+            NpuDiag.line(405L, 168L, 37, "es", 0.02f, -0.31f, 3.1f, 0, "eot"),
         )
         assertEquals(
             "a successful detection names the language AND says it was detected",
-            "npu: encode=405 decode=168 tokens=37 lang=auto->fr(detected)",
-            NpuDiag.line(405L, 168L, 37, "auto->fr(detected)"),
+            "npu: encode=405 decode=168 tokens=37 lang=auto->fr(detected) nsp=0.02 lp=-0.31 ent=3.10 rung=0 term=eot",
+            NpuDiag.line(405L, 168L, 37, "auto->fr(detected)", 0.02f, -0.31f, 3.1f, 0, "eot"),
         )
         assertEquals(
             "a locale fallback says so, so a user transcribed by their phone's locale can see it",
-            "npu: encode=405 decode=168 tokens=37 lang=auto->de(locale)",
-            NpuDiag.line(405L, 168L, 37, "auto->de(locale)"),
+            "npu: encode=405 decode=168 tokens=37 lang=auto->de(locale) nsp=0.02 lp=-0.31 ent=3.10 rung=0 term=eot",
+            NpuDiag.line(405L, 168L, 37, "auto->de(locale)", 0.02f, -0.31f, 3.1f, 0, "eot"),
         )
         assertEquals(
             "and the English fallback is never silent — this line IS the \"why\"",
-            "npu: encode=405 decode=168 tokens=37 lang=auto->en(fallback)",
-            NpuDiag.line(405L, 168L, 37, "auto->en(fallback)"),
+            "npu: encode=405 decode=168 tokens=37 lang=auto->en(fallback) nsp=0.02 lp=-0.31 ent=3.10 rung=0 term=eot",
+            NpuDiag.line(405L, 168L, 37, "auto->en(fallback)", 0.02f, -0.31f, 3.1f, 0, "eot"),
         )
     }
 
@@ -143,8 +151,10 @@ class NpuDiagTest {
         )
         assertTrue(
             "and the whole field sequence must be in that one literal, in order: a reordering is " +
-                "invisible to every test that only checks the prefix",
-            diag.contains("\"npu: encode=\$encodeMs decode=\$decodeMs tokens=\$tokens lang=\$langNote\""),
+                "invisible to every test that only checks the prefix. (4.3.1 A: the literal now " +
+                "closes on a trailing space, not the closing quote, because the five gate fields " +
+                "concatenate on afterward — still one contiguous literal for these four fields.)",
+            diag.contains("\"npu: encode=\$encodeMs decode=\$decodeMs tokens=\$tokens lang=\$langNote \""),
         )
     }
 
@@ -180,9 +190,11 @@ class NpuDiagTest {
         assertEquals(
             "the segment line must carry nativeDecodeSegment's RETURNED count, never the decoded " +
                 "string's length. `written` is that count; reading it off the text would be one " +
-                "step from logging the text, which this tier never does.",
+                "step from logging the text, which this tier never does. (4.3.1 A: the call grew " +
+                "five stats arguments and wraps onto multiple lines, so the needle is now the " +
+                "leading argument line rather than the whole call.)",
             1,
-            liveLineCount(backend, "NpuDiag.line(encodeMs, decodeMs, written, resolution.note)"),
+            liveLineCount(backend, "encodeMs, decodeMs, written, resolution.note,"),
         )
     }
 

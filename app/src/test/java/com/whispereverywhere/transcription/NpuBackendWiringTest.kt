@@ -87,6 +87,11 @@ class NpuBackendWiringTest {
         read("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
     }
 
+    /** Joined at 4.3.1 A for the decode-guard wiring pin below. */
+    private val backend: String by lazy {
+        read("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+    }
+
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
 
     /** A multi-line needle written as its own source lines, so indentation is part of the match. */
@@ -1078,5 +1083,37 @@ class NpuBackendWiringTest {
                 count(service, needle),
             )
         }
+    }
+
+    // ------------------------------------------------------------------ the decode guards (4.3.1 A)
+
+    /**
+     * 4.3.1 A: the no-speech decision is Kotlin's, taken from the stats native returned, and a
+     * blank is what it produces — which is the engine's existing EmptyExpected path. The order
+     * matters: the decision is read BEFORE the ids are detokenised, and the diag line carries the
+     * numbers whatever the decision was.
+     */
+    @Test
+    fun theNpuTierBlanksANoSpeechSegmentFromTheReturnedStatsBeforeDetokenising() {
+        val body = memberBody(backend, "    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {")
+        val stats = liveOffsets(body, "val stats = NpuDecodeStats.newArray()")
+        val call = liveOffsets(body, "QnnAsrNative.nativeDecodeSegment(")
+        val gate = liveOffsets(body, "NpuDecodePolicy.isNoSpeech(stats[NpuDecodeStats.NO_SPEECH_PROB], stats[NpuDecodeStats.AVG_LOGPROB])")
+        val decode = liveOffsets(body, "bpe.decode(out.copyOf(written))")
+        val line = liveOffsets(body, "NpuDiag.line(")
+        assertEquals("one stats array", 1, stats.size)
+        assertEquals("one decode call", 1, call.size)
+        assertEquals("one no-speech gate", 1, gate.size)
+        assertEquals("one detokenise", 1, decode.size)
+        assertEquals("one diag line", 1, line.size)
+        assertTrue("stats is allocated before the call", stats.first() < call.first())
+        assertTrue("the gate reads the stats after the call", call.first() < gate.first())
+        assertTrue("the gate decides before the ids are detokenised", gate.first() < decode.first())
+        assertTrue("the ladder arguments are the policy's, not literals",
+            body.contains("NpuDecodePolicy.TEMPERATURES,") && body.contains("NpuDecodePolicy.ENTROPY_THOLD,") &&
+                body.contains("NpuDecodePolicy.LOGPROB_THOLD,") && body.contains("NpuDecodePolicy.NO_SPEECH_THOLD,") &&
+                body.contains("spec.tokens.noSpeech,"))
+        assertTrue("the diag line carries the five stats fields",
+            body.contains("NpuDecodeStats.terminatorName(stats[NpuDecodeStats.TERMINATOR])"))
     }
 }
