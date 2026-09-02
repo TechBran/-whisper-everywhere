@@ -30,6 +30,10 @@ package com.whispereverywhere.tts
  * read as slow synthesis) — both are the CALLER's obligations, already true of the diag
  * measurement this rides on.
  */
+
+/** Which rule let playback start (4.3.1 C) — logged on the `TTSDIAG start` line. */
+enum class StartRule { DONE, CAP, PROJECTED }
+
 class TtsBufferPolicy(private val dMaxMs: Int) {
 
     @Volatile private var rtfEwma: Double = DEFAULT_RTF
@@ -59,6 +63,40 @@ class TtsBufferPolicy(private val dMaxMs: Int) {
     fun shouldProceed(bufferedMs: Int, waitedMs: Long, done: Boolean): Boolean =
         bufferedMs > 0 && (done || bufferedMs >= targetMs() || waitedMs >= CAP_MS)
 
+    /** The measured synthesis speed the projection uses (EWMA; DEFAULT_RTF until fed). */
+    fun rtf(): Double = rtfEwma
+
+    /**
+     * THE START GATE (4.3.1 C, owner decision 2026-09-02 "projected-complete"): playback may
+     * begin only when what is banked outlasts the projected remainder of the read.
+     *
+     *     start ⟸ bufferedMs > 0 && (
+     *         done                                                         -> DONE
+     *         || noGrowthMs >= START_CAP_MS                                -> CAP
+     *         || (totalMs > SHORT_READ_MS
+     *             && bufferedMs >= PROJECTED_SAFETY * rtf * remainingMs)   -> PROJECTED )
+     *
+     * Derivation: with lead L and remaining audio R the producer needs rtf·R wall-seconds and
+     * playback consumes the lead in L seconds, so L ≥ 1.5·rtf·R finishes synthesis before playback
+     * reaches the frontier with a 50 % margin, independent of unit granularity. As a fraction of
+     * the read that is 1.5rtf/(1+1.5rtf): 47 % at the local voice's 0.58, 60 % at rtf 1, 75 % at
+     * rtf 2 — "mostly all", never degenerating to everything-first. A short read (≤ SHORT_READ_MS)
+     * completes first: the wait is small and certainty is free. The cap escapes a producer that
+     * has stopped growing the bank with audio already banked (a cloud fetch on its 45 s timeout)
+     * and counts NO-GROWTH time only. [shouldProceed] is the stall-RESUME rule and is untouched.
+     */
+    fun startDecision(bufferedMs: Int, remainingMs: Int, totalMs: Int, noGrowthMs: Long, done: Boolean): StartRule? {
+        if (bufferedMs <= 0) return null
+        if (done) return StartRule.DONE
+        if (noGrowthMs >= START_CAP_MS) return StartRule.CAP
+        if (totalMs <= SHORT_READ_MS) return null
+        val need = PROJECTED_SAFETY * rtfEwma * remainingMs.coerceAtLeast(0)
+        return if (bufferedMs >= need) StartRule.PROJECTED else null
+    }
+
+    fun shouldStart(bufferedMs: Int, remainingMs: Int, totalMs: Int, noGrowthMs: Long, done: Boolean): Boolean =
+        startDecision(bufferedMs, remainingMs, totalMs, noGrowthMs, done) != null
+
     companion object {
         /** Conservative pre-measurement RTF; the Fold 6 baseline measured 0.583 duration-weighted. */
         const val DEFAULT_RTF = 0.75
@@ -72,5 +110,11 @@ class TtsBufferPolicy(private val dMaxMs: Int) {
         const val CAP_MS = 2_500L
         const val STALL_BUMP_MS = 500
         const val MAX_STALL_BUMP_MS = 2_000
+        /** A read this short is generated fully before it starts (the wait is small). */
+        const val SHORT_READ_MS = 20_000
+        /** Margin on the projected remainder: 1.5× the measured synthesis time. */
+        const val PROJECTED_SAFETY = 1.5
+        /** The start gate's stuck-producer escape, on no-growth time only. */
+        const val START_CAP_MS = 12_000L
     }
 }
