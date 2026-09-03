@@ -683,7 +683,38 @@ class SileroEndpointer(
  * written about something else.
  *
  * @param speechMs speech from the gate opening to the frame that began the trailing silence
- * @param trailMs trailing silence at the moment of the cut (always >= HANGOVER_MS)
- * @param prob the Silero probability of the frame that fired the cut
+ * @param trailMs trailing silence at the moment of the cut. For a [EndpointCutKind.VAD] cut it is
+ *        always >= HANGOVER_MS. For a [EndpointCutKind.FLAT] cut it is `nowMs - tempEndMs` on the
+ *        frame that fired, and `tempEndMs` is whatever Silero had stamped: exactly
+ *        `(FLATLINE_CHUNKS - 1) * FRAME_MS` when Silero's stamp coincides with the flat run's first
+ *        frame (the measured case on real digital silence), SHORTER when Silero stamped later
+ *        (dead-band inertia before `p` fell under RELEASE) and LONGER when it stamped earlier (room
+ *        tone, then digital zero) — `machine.py` DECISION 6 and `test_flatline_verify.py`'s first
+ *        section. The speech-end anchor `speechEnd = nowMs - trailMs` holds for both kinds.
+ * @param prob the Silero probability of the frame that fired the cut. A flat cut can fire on a
+ *        [EndpointerTuning.NO_VERDICT] frame (the trigger is purely amplitude-driven), and then
+ *        this is -1.0 honestly: that frame had no verdict.
+ * @param kind which mechanism fired the cut. Defaulted so every existing construction and every
+ *        equality against a hangover cut still reads as it did.
  */
-data class EndpointCut(val speechMs: Long, val trailMs: Long, val prob: Float)
+data class EndpointCut(
+    val speechMs: Long,
+    val trailMs: Long,
+    val prob: Float,
+    val kind: EndpointCutKind = EndpointCutKind.VAD,
+)
+
+/**
+ * Which mechanism inside [SileroEndpointer] fired a cut — the simulator's `EndpointCut.kind`
+ * (`machine.py`, `'vad'` | `'flat'`). Read by `EndpointDiag.endpointLine` to label the `endpoint:`
+ * line `cut=flat` for a flatline close; everything else about a flat cut (the service's
+ * `SegmentCapPolicy.onCommit`, retain-nothing, the perceived-latency stamp) is the VAD path's,
+ * because a flat close IS a hangover close that arrived by the other door.
+ */
+enum class EndpointCutKind {
+    /** Silero's own hangover ended the utterance. */
+    VAD,
+
+    /** The flatline trigger ended it: [EndpointerTuning.FLATLINE_CHUNKS] consecutive flat chunks. */
+    FLAT,
+}

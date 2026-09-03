@@ -68,6 +68,28 @@ interface Endpointer {
     fun onSessionEnd() {}
 
     /**
+     * THE FLATLINE CUT's arming (4.4). ARMED IFF THE ACTIVE SOURCE IS CAPTURED PLAYBACK — that is
+     * the whole rule, and the service applies it at the ONE place its active source changes
+     * (`setActiveSource` in FloatingBubbleService), which is reached at session start once the
+     * source is picked, at every `switchSource`, and at the one DRM handover the device-audio latch
+     * allows. Main-only, like [onSessionStart]: the flag it sets is read on the capture thread.
+     *
+     * Why per SOURCE and not per session. The trigger fires on a run of chunks whose RMS is at or
+     * below [EndpointerTuning.FLATLINE_RMS_MAX] — digital silence, which a microphone in a room never
+     * produces but an edited video's gate produces at every cut. On the mic the trigger could only
+     * ever fire on a muted or disconnected input, so it stays off there and a mic session is
+     * byte-identical to the endpointer without it. A session that starts on the mic and hands over
+     * to device audio arms at the handover; the latch means device audio never hands back to the mic
+     * except through the announced DRM fallback, which disarms. [reset] neither arms nor disarms —
+     * it is an external commit, not a source change — and an implementation's [onSessionStart]
+     * opens every session DISARMED, because every session opens on the microphone by construction
+     * and the source pick that follows re-arms it if it needs to.
+     *
+     * Default: no-op. The amplitude fallback has no gate for a flat run to close and ignores it.
+     */
+    fun armFlatline(armed: Boolean) {}
+
+    /**
      * The endpointer's remembered micro-pause: the wall-clock ms of the most recent silence dip
      * inside the currently open stretch, or [NO_CUT_POINT] when none was observed.
      *

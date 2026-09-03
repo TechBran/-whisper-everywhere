@@ -1,6 +1,7 @@
 package com.whispereverywhere.service
 
 import com.whispereverywhere.audio.EndpointCut
+import com.whispereverywhere.audio.EndpointCutKind
 import java.util.Locale
 
 /**
@@ -8,7 +9,7 @@ import java.util.Locale
  * WE-DIAG tag and all joinable on `seq=` with `segment-timing:`, so a single logcat capture
  * answers "why was this segment cut, how long did the user wait, and was the queue growing".
  *
- *     endpoint:       seq=N cut=vad|cap|stop|switch speechMs=… trailMs=… p=…
+ *     endpoint:       seq=N cut=vad|flat|cap|stop|switch speechMs=… trailMs=… p=…
  *     segment-timing: seq=N audio=… transcribe=… rtf=… vadIn=… vadOut=… ctxFrames=…
  *     queue:          depth=N
  *     perceived:      seq=N speechEndToVisible=…ms
@@ -40,6 +41,15 @@ object EndpointDiag {
     const val SWITCH = "switch"
 
     /**
+     * THE FLATLINE CUT (4.4): the endpointer closed the utterance on a run of digitally silent
+     * chunks — an editor's gate in device audio — rather than on Silero's hangover. A VAD-path
+     * commit as far as the service is concerned (same seam, same `SegmentCapPolicy.onCommit`, same
+     * perceived-latency stamp); only this label differs, so a device session can be compared with
+     * `tools/vadsim`'s `flat` count.
+     */
+    const val FLAT = "flat"
+
+    /**
      * Why this seq was cut, and on what evidence. Locale.US: the point is always a point.
      *
      * [ec] is the endpointer's own record of the cut ([com.whispereverywhere.audio.SileroEndpointer.lastCut]),
@@ -48,10 +58,30 @@ object EndpointDiag {
      * shape, matching the native frame contract where -1 is "no verdict" and never "silence".
      * `p=0.00` is never emitted for an unknown cut, because it would read as "the probe was certain
      * there was no speech" — a different and much stronger claim.
+     *
+     * The `cut=` label is [cutLabel]'s, not [cut] verbatim: a flatline close reaches the funnel
+     * through the VAD site with `cut = `[VAD] and a record whose kind says [EndpointCutKind.FLAT],
+     * and the label must agree with the numbers printed beside it.
      */
     fun endpointLine(seq: Long, cut: String, ec: EndpointCut?): String =
-        "endpoint: seq=$seq cut=$cut speechMs=${ec?.speechMs ?: 0L} trailMs=${ec?.trailMs ?: 0L} p=" +
+        "endpoint: seq=$seq cut=${cutLabel(cut, ec)} speechMs=${ec?.speechMs ?: 0L} " +
+            "trailMs=${ec?.trailMs ?: 0L} p=" +
             String.format(Locale.US, "%.2f", ec?.prob ?: -1.0f)
+
+    /**
+     * The label the `endpoint:` line carries for a commit the seam made as [cut] with the
+     * endpointer's record [ec] beside it.
+     *
+     * A flatline close is committed by the SAME `if (endpointer.onFrame(...))` branch as a hangover
+     * close — `onFrame` returns a bare Boolean, and the service's bookkeeping is identical for both
+     * — so the seam names it [VAD] and the funnel reads the record ONCE (Task C8's read contract,
+     * pinned by CommitFunnelPinTest). The kind therefore has to travel IN the record, and the line
+     * is labelled from it here rather than by a second `lastCut()` read at the seam. Scoped to the
+     * VAD site on purpose: a [CAP]/[STOP]/[SWITCH] commit arrives with `ec = null`, and even if one
+     * did not, the flat label may not leak onto a cut the trigger did not make.
+     */
+    fun cutLabel(cut: String, ec: EndpointCut?): String =
+        if (cut == VAD && ec?.kind == EndpointCutKind.FLAT) FLAT else cut
 
     /** The committed-but-unresolved backlog, from [SegmentQueueDepth]. */
     fun queueLine(depth: Int): String = "queue: depth=$depth"

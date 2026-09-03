@@ -1,6 +1,7 @@
 package com.whispereverywhere.service
 
 import com.whispereverywhere.audio.EndpointCut
+import com.whispereverywhere.audio.EndpointCutKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -24,11 +25,49 @@ class EndpointDiagTest {
     }
 
     @Test
-    fun theCutVocabularyIsExactlyTheFourSpeccedValues() {
+    fun theCutVocabularyIsExactlyTheFiveSpeccedValues() {
         assertEquals("vad", EndpointDiag.VAD)
         assertEquals("cap", EndpointDiag.CAP)
         assertEquals("stop", EndpointDiag.STOP)
         assertEquals("switch", EndpointDiag.SWITCH)
+        // 4.4 THE FLATLINE CUT. The simulator's `Commit.kind == 'flat'` (tools/vadsim machine.py),
+        // so a device session's endpoint lines can be counted against a vadsim run by grep.
+        assertEquals("flat", EndpointDiag.FLAT)
+    }
+
+    @Test
+    fun aFlatCutIsLabelledFromItsRecord_becauseTheSeamCommitsItThroughTheVadSite() {
+        // The service's `if (endpointer.onFrame(...))` branch cannot tell a flatline close from a
+        // hangover close — onFrame returns a Boolean — and the funnel reads the cut record exactly
+        // once (CommitFunnelPinTest). So the kind rides in the record and the label comes from it.
+        assertEquals(
+            "endpoint: seq=7 cut=flat speechMs=384 trailMs=128 p=0.40",
+            EndpointDiag.endpointLine(
+                seq = 7L,
+                cut = EndpointDiag.VAD,
+                ec = EndpointCut(speechMs = 384L, trailMs = 128L, prob = 0.40f, kind = EndpointCutKind.FLAT),
+            ),
+        )
+        // A hangover cut's record defaults to VAD and keeps the label every existing grep expects.
+        assertEquals(
+            EndpointDiag.VAD,
+            EndpointDiag.cutLabel(EndpointDiag.VAD, EndpointCut(speechMs = 640L, trailMs = 352L, prob = 0.1f)),
+        )
+    }
+
+    @Test
+    fun theFlatLabelNeverLeaksOntoACutTheTriggerDidNotMake() {
+        // The funnel hands cap/stop/switch commits a null record, so this branch is unreachable
+        // from the shipped seam — pinned anyway, because the label must be scoped to the VAD site
+        // and not to "whatever record happens to be lying around".
+        val flat = EndpointCut(speechMs = 384L, trailMs = 128L, prob = 0.40f, kind = EndpointCutKind.FLAT)
+        assertEquals(EndpointDiag.CAP, EndpointDiag.cutLabel(EndpointDiag.CAP, flat))
+        assertEquals(EndpointDiag.STOP, EndpointDiag.cutLabel(EndpointDiag.STOP, null))
+        assertEquals(EndpointDiag.SWITCH, EndpointDiag.cutLabel(EndpointDiag.SWITCH, null))
+        assertEquals(
+            "endpoint: seq=3 cut=cap speechMs=0 trailMs=0 p=-1.00",
+            EndpointDiag.endpointLine(seq = 3L, cut = EndpointDiag.CAP, ec = null),
+        )
     }
 
     @Test
