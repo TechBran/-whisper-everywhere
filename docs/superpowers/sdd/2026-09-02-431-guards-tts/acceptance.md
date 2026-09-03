@@ -289,6 +289,10 @@ E8. **THE FLATLINE CUT (new in 84) — edited YouTube, device audio, Language Au
     no runaways. Duty ~40 % (64 x ~2.0 s / 323 s), as predicted. Detect tokens: en 43, zh 20, ko 1, ms 1 -
     whether the 20 zh are real Chinese content or short-chunk misdetection is an OPEN QUESTION for the
     owner (the video), not a number this capture can settle. Split words and own-voice: owner to confirm.**
+    **OWNER CONFIRMED 2026-09-03: the video was Chinese with an American speaker, so the 20 zh chunks are
+    real content - the language boundaries landing on monolingual chunks, which was the point. No split
+    words seen. Own voice: "works pretty well; this transcription here is my own voice." E8 = PASS.**
+    `[x] PASS  [ ] FAIL`  (owner-reported; the ko and ms single-word blips are the hysteresis case, noted)
 
 ## F — the three fixes from the owner's own device testing
 
