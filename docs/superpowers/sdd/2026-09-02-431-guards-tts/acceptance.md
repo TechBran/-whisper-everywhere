@@ -200,12 +200,22 @@ NPU; `C:\Users\bastr\.androidbuild\capture-vad-headroom.txt`, 3 runs / 57 segmen
 | work per commit | ~**2,050 ms** (encode 1,752 ms of it, and that part is FIXED — the QNN mel window is 30 s whatever the utterance length) |
 | the symptom | a ~**15 s stretch with no cut in EVERY run** — the wall cap firing because the 500 ms hangover never elapsed |
 
+TWO PRECONDITIONS for §E, from the pre-upload review (`docs/superpowers/reviews/2026-09-02-realtime-chunks-review.md`).
+(i) Language = **Auto** for E1 and E7: `"auto"` is the only setting on which per-utterance detection
+runs at all (`PreferencesManager.kt:178-181` -> `NpuWhisperBackend.kt:613`); with a picked language
+every sentence is decoded under that one token and nothing can ever switch. (ii) Run E4 on a
+GENUINELY percussive source — drums, clicks, applause; not a pad or a held chord — and keep the
+native `decode:` lines (they carry `nsp= lp= ent= rung=`). That capture is the baseline the
+accumulated-speech floor will be judged against later, and it costs nothing extra now.
+
 E1. **The headline.** Read a paragraph aloud at your ordinary pace, 60-90 s, with the faint
     between-sentence pauses that used to be missed. PASS = cuts land on sentence ends AND
     `Select-String "VAD-MISS" C:\Users\bastr\.androidbuild\capture-431.txt` returns **zero hits**
     across that stretch. Spot-check any `endpoint: seq=… cut=vad … trailMs=` line: `trailMs`
     should now sit near **352-384**, not near 500-530. FAIL if a 15-second stretch of continuous
     speech passes with no cut — that is exactly one `VAD-MISS` line, and it is the bug.
+    NOT an E1 failure: a window update that carries TWO short sentences at once. The VAD cut them;
+    the cost governor merged them. That is E7, and it is judged there.
     RECORD: VAD-MISS count ______ ; a typical `trailMs` ______ ms.
     `[ ] PASS  [ ] FAIL`
 E2. **The cost.** Same run, no extra dictation.
@@ -245,6 +255,18 @@ E6. **The wall cap keeps its evidence.** Right after E5, keep talking normally f
     to the 4 s first-segment window for the REST OF THE SESSION — so a cough at the start made
     every later segment four seconds long.
     `[ ] PASS  [ ] FAIL`
+E7. **The language goal, on the phone — the row the review added.** Language = **Auto**. Dictate
+    four short sentences alternating English and Spanish, ~2 s each, natural pauses. EXPECTED on
+    turbo AS BUILT (cadence floor 3,200 ms): the window updates every ~5 s, each update carrying
+    TWO sentences, one per language, and one sentence of each pair decoded under the other's
+    language token (garbled or drifted). That is the COST GOVERNOR merging every second endpoint
+    — NOT the VAD missing: the VAD found the boundary and the 3,200 ms floor declined to pay for
+    it. Only sentences of ~3 s or more arrive one per chunk. 4.3.0 (500 ms / 1,200 ms) gave one
+    sentence per chunk in this case, at a modelled 60-82 % NPU duty that the field never
+    complained about. This row cannot PASS or FAIL; it needs your ruling.
+    RECORD: sentences per update ______ ; what the second-language half looks like ______ ;
+    keep the bounded duty (pairs), or take 4.3.0's per-sentence cadence at its duty? ______
+    `[ ] RULED`
 
 ## F — the three fixes from the owner's own device testing
 
@@ -274,7 +296,8 @@ F3. **The one allowed handover discloses itself.** An app that genuinely refuses
 PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
 longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
 promote that build into production."* Promote the internal-track build to production only after
-**A2, A3, B1, B4, C1, D1, E1 and E4** are marked PASS.
+**A2, A3, B1, B4, C1, D1, E1 and E4** are marked PASS **and E7 is RULED** — E1 passes on merged
+pairs, so without E7 the sheet cannot see the one behaviour that decides the language goal.
 
 Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one
 behaviour a hangover change can silently invert. E4 is not a formality -- the first draft of this
@@ -282,8 +305,11 @@ retune failed exactly there in review, committing 3 times in 11.3 s on a percuss
 shipped build commits 0 in 15.9 s. E5 CANNOT fail; it records a known limit so the owner can rule
 on it with the phone in their hand.
 
-If a gate row FAILS, the rollback is proportionate and per-row: E1/E2 -> `HANGOVER_MS` back to
-`500L` in `EndpointerTuning.kt:87` (one line; nothing else in the retune is coupled to it);
-E3 -> raise toward 420-450 rather than reverting, since the named acoustic floor is 300;
-E4 -> report it before changing anything, because nothing in this retune should be able to cause
-it and the cause matters more than the number.
+If a gate row FAILS, the rollback is proportionate and per-row. E1/E2/E7 -> a 4.3.0-equivalent
+rollback is TWO lines, not one: `EndpointerTuning.kt:87` HANGOVER_MS 350 -> 500 AND
+`CommitCadencePolicy.kt:176` `"npu-turbo"` back to MIN_COMMIT_INTERVAL_FAST_MS (1,200). A
+hangover-only revert produces a 500 / 3,200 build that still pairs sentences (identical to 4.3.1
+for pauses >= 544 ms, worse for 384-544 ms) — it is not a return to 4.3.0 at all. The `pro` move is
+inert on turbo. E3 -> raise the hangover toward 420-450 rather than reverting, since the named
+acoustic floor is 300; E4 -> report it before changing anything, because nothing in this retune
+should be able to cause it and the cause matters more than the number.
