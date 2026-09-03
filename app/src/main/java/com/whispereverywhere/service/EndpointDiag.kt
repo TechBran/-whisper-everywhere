@@ -59,6 +59,13 @@ object EndpointDiag {
      * `p=0.00` is never emitted for an unknown cut, because it would read as "the probe was certain
      * there was no speech" — a different and much stronger claim.
      *
+     * SINCE 4.4, `p=-1.00` ALONE NO LONGER MEANS "no record". THE FLATLINE CUT is purely
+     * amplitude-driven and counts a [com.whispereverywhere.audio.EndpointerTuning.NO_VERDICT] frame
+     * like any other (`machine.py` DECISION 4), so a `cut=flat` line can carry -1.00 as the honest
+     * probability of the frame that fired it — beside a real, non-zero `speechMs` and `trailMs`.
+     * The grep for an unknown cut is therefore the WHOLE shape, `speechMs=0 trailMs=0 p=-1.00`, or
+     * the `cut=` label read first; `p=-1.00` on its own now matches a real cut too.
+     *
      * The `cut=` label is [cutLabel]'s, not [cut] verbatim: a flatline close reaches the funnel
      * through the VAD site with `cut = `[VAD] and a record whose kind says [EndpointCutKind.FLAT],
      * and the label must agree with the numbers printed beside it.

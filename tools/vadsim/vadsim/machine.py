@@ -93,7 +93,7 @@ class Tuning:
     #:
     #: THE DEFAULT IS THE SHIPPED FLOOR, EXPRESSED IN THIS PREDICATE. The Kotlin's
     #: `EndpointerTuning.FLATLINE_RMS_MAX = 10` (EndpointerTuning.kt:190) is INCLUSIVE —
-    #: `amp <= 10` is flat (`SileroEndpointer.kt:767` resets on `amp > MAX`) — so its exact
+    #: `amp <= 10` is flat (`SileroEndpointer.kt:779` resets on `amp > MAX`) — so its exact
     #: twin under this strict `<` is 11: `rms < 11` and `amp <= 10` accept the same integers.
     #: A bare vadsim run therefore simulates what ships. 40 was the pre-decision sweep
     #: default and is no longer anyone's answer; the sweep axis still measures it
@@ -568,7 +568,7 @@ class SileroEndpointerSim:
 
         # DECISION 4. STRICT `<` (spelled as its negation here), and an unknown RMS counts
         # as at-or-above. The Kotlin writes the same predicate INCLUSIVE —
-        # `if (amp > EndpointerTuning.FLATLINE_RMS_MAX)` at `SileroEndpointer.kt:767` — which
+        # `if (amp > EndpointerTuning.FLATLINE_RMS_MAX)` at `SileroEndpointer.kt:779` — which
         # is why the shipped floor of 10 is `flatline_rms = 11` here: the two accept the same
         # integers, and the default above is set to the twin so a bare run simulates the app.
         if rms is None or rms >= self.t.flatline_rms:

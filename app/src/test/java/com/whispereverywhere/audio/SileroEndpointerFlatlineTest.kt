@@ -214,7 +214,7 @@ class SileroEndpointerFlatlineTest {
      * DECISION 4's floor AT ITS EDGE — the one amplitude band no other fixture in this file visits.
      * Every trace here drives 0 (an editor's gate), 100 (room tone) or 3 000 (a word), so the whole
      * 1..99 band is unvisited and `if (amp > EndpointerTuning.FLATLINE_RMS_MAX)`
-     * (`SileroEndpointer.kt:767`) could be spelled `>=` with the suite still green: the tuning
+     * (`SileroEndpointer.kt:779`) could be spelled `>=` with the suite still green: the tuning
      * pin would catch the constant MOVING, nothing caught the comparison FLIPPING.
      *
      * The floor is INCLUSIVE — "chunk RMS AT OR BELOW this is flat", `EndpointerTuning.kt:190` —

@@ -55,13 +55,25 @@ import com.whispereverywhere.util.ProbeStats
  * with the trigger armed on Main and never armed on the audio thread, which is a silent "the cut
  * never fires" rather than a torn value. [flatRun] is incremented on the capture thread alone and
  * zeroed by [closeGate], which Main reaches through [reset]; a Main-side zero that loses the race
- * with a capture-side increment leaves the count one high for one frame, and a count one high can
- * fire the trigger one chunk early — 32 ms of trail, the same one-chunk slack, never a cut where no
- * flat run existed, because a non-flat chunk still zeroes it. [flatRunStartMs] is stamped once per
- * run on the capture thread and read by that same thread at fire time; it is @Volatile only so that
- * the Main-side [closeGate] clear that resets [flatRun] cannot become visible while a stale start
- * stamp does not, which would pair a fresh count with an old start and mis-measure `speechMs` by
- * whatever that gap was.
+ * with a capture-side increment leaves the count at its PRE-RESET value — anything up to
+ * [EndpointerTuning.FLATLINE_CHUNKS] `- 1` high, not one — for one frame. The bound on what that
+ * can cost comes from the gate, not from the size of the count: the same [closeGate] that lost the
+ * zero also shut the gate, so DECISION 3 clears the stale run on the very next frame unless a new
+ * ONSET re-opened it first, and past such an onset every frame the run survives is by definition
+ * flat. The early fire therefore lands within [EndpointerTuning.FLATLINE_CHUNKS] `- 1` frames of
+ * that onset, where the pending end is either the stale run start (older than the onset: `speechMs`
+ * negative) or Silero's own stamp from those same few frames (at most four frames of speech) —
+ * under `MIN_SPEECH_MS` either way. So the ONLY outcome a lost zero can produce is a DISCARD on a
+ * flat onset frame, at most four frames earlier than the un-torn path would have reached the same
+ * verdict; never a commit, and never a cut where no flat run existed. [flatRunStartMs] is stamped
+ * once per run on the capture thread and read by that same thread at fire time. It is @Volatile so
+ * that Main's clear becomes visible at all (and because the census requires every `var` to be), NOT
+ * to order it against [flatRun]'s clear: seeing one volatile write says nothing about whether a
+ * LATER one is visible yet, so the annotation on its own would still permit a fresh count beside a
+ * stale start. What forbids that pairing is the re-stamp inside [onFlat] itself — `if (flatRun == 0)
+ * flatRunStartMs = nowMs`, on the same thread, one line before the increment — which rewrites the
+ * start on every frame that begins a run, so a count of 1 carries THIS frame's stamp whatever Main
+ * did or did not manage to publish.
  *
  * What @Volatile buys here is VISIBILITY, not atomicity: `fill += n` is a non-atomic
  * read-modify-write, so a Main-thread [reset] racing the capture thread can be LOST, leaving at
