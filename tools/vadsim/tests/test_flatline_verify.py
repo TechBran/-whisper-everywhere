@@ -170,7 +170,8 @@ def _probs_from_rms(rms):
 def test_one_millisecond_of_speech_in_a_chunk_is_never_flat():
     """The reason alignment matters: a chunk that straddles the edge of a gate is not
     flat at ANY swept threshold. 16 samples (1 ms) of 3 000-RMS speech in 512 reads
-    ~530 — over the 160 ceiling of the sweep, let alone the 40 default."""
+    ~530 — over the 160 ceiling of the sweep, let alone the shipped default (11, the
+    strict-`<` twin of `EndpointerTuning.FLATLINE_RMS_MAX = 10`)."""
     chunk = np.concatenate([_speech(16, 3), np.zeros(496, dtype=np.float32)])
     v = probe.rms_amplitude(chunk)
     assert v > max(analyze.FLAT_SWEEP_RMS), f"a 1 ms sliver of speech reads {v}"
