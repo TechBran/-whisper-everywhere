@@ -1,0 +1,9 @@
+# The 5.1.2 pin is LOAD-BEARING: the app ships ggml-silero-v5.1.2.bin, and the 6.x wheels
+# carry a same-sized but different silero_vad.onnx (sha256 1a153a22... vs 2623a295...).
+# An unpinned install silently probes with different weights than the phone.
+silero-vad==5.1.2
+onnxruntime>=1.20
+numpy>=2.0
+pytest>=8.0
+# torch/torchaudio arrive as silero-vad dependencies and are NOT used: the probe runs on
+# onnxruntime. Do not import them from this package.

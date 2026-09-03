@@ -1,0 +1,8 @@
+# The venv is a local build artifact: ~700 MB with onnxruntime + torch. Never committed.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# p-traces and reports are per-clip working files, not source.
+*.trace.csv
+out/

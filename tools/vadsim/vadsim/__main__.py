@@ -1,0 +1,510 @@
+"""`python -m vadsim <wav> [options]` — the endpointer report, as Markdown or JSON."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from dataclasses import replace
+from typing import List, Optional, Sequence
+
+from . import analyze, machine, probe as probe_mod
+from .machine import FRAME_MS, BASE_MS, Tuning
+
+
+def _tier_floor(tier: Optional[str]) -> int:
+    """`CommitCadencePolicy.minCommitIntervalMs` (CommitCadencePolicy.kt:162-209)."""
+    return {
+        "eco": 1_200,
+        "base": 1_200,
+        "npu": 1_200,
+        "npu-turbo": 2_000,
+        "pro": 6_000,
+        "multi": 6_000,
+        "extreme": 8_000,
+        "ultra": 8_000,
+        "cloud": 3_000,
+    }.get(tier or "npu-turbo", 8_000)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="python -m vadsim",
+        description=(
+            "Offline simulator for Whisper Everywhere's streaming endpointer. Feeds a local "
+            "wav through Silero VAD frame by frame and replays the app's own state machine "
+            "and 15 s cap over the resulting probabilities."
+        ),
+    )
+    p.add_argument("wav", help="path to a local wav (any rate; resampled to 16 kHz mono)")
+
+    g = p.add_argument_group("tuning (defaults = the shipped 4.3.1 table)")
+    g.add_argument("--onset", type=float, default=None, help="ONSET_THRESHOLD (0.50)")
+    g.add_argument("--release", type=float, default=None, help="RELEASE_THRESHOLD (0.35)")
+    g.add_argument("--hangover", type=int, default=None, help="HANGOVER_MS (350)")
+    g.add_argument("--min-speech", type=int, default=None, help="MIN_SPEECH_MS (300)")
+    g.add_argument("--micro-pause", type=int, default=None, help="MICRO_PAUSE_MS (98)")
+    g.add_argument("--floor", type=int, default=None,
+                   help="minCommitIntervalMs; overrides --tier (npu-turbo = 2000)")
+    g.add_argument("--tier", default="npu-turbo",
+                   help="tier id for the cadence floor (eco|base|npu|npu-turbo|pro|multi|"
+                        "extreme|ultra|cloud)")
+    g.add_argument("--first-cap", type=int, default=None, help="FIRST_SEGMENT_WALL_MS (4000)")
+    g.add_argument("--cap", type=int, default=None, help="MAX_SEGMENT_WALL_MS (15000)")
+    g.add_argument("--cap-retain", type=int, default=None,
+                   help="CAP_CUT_MAX_RETAIN_MS (3000)")
+    g.add_argument("--cloud", action="store_true",
+                   help="cloud session: the 4 s first-cap window is closed at onOpen AND the "
+                        "cadence floor is the flat 3000 ms request floor for every tier "
+                        "(CommitCadencePolicy.kt:163); --floor overrides")
+
+    f = p.add_argument_group("front end")
+    f.add_argument("--resample", choices=("auto", "sinc", "device48k"), default="auto",
+                   help="auto = the app's own 3-tap decimator for 48 kHz input, sinc otherwise")
+    f.add_argument("--context", choices=probe_mod.CONTEXT_MODES, default="carry",
+                   help="Silero left-context mode; see the model-delta note in the report")
+    f.add_argument("--model", default=None, help="path to a silero_vad.onnx to use instead")
+    f.add_argument("--base-ms", type=int, default=BASE_MS,
+                   help="wall-clock BASE the frames are stamped from (JVM fixtures use 1000000)")
+
+    o = p.add_argument_group("output")
+    o.add_argument("--json", action="store_true", help="machine-readable output")
+    o.add_argument("--no-sweep", action="store_true", help="skip the 36-row sweep")
+    o.add_argument("--coupled", action="store_true",
+                   help="also run the HONEST simulation, resetting the probe LSTM on every "
+                        "commit as the app does, and report the delta")
+    o.add_argument("--max-dips", type=int, default=25,
+                   help="longest N dips to list in the dips table (0 = all)")
+    o.add_argument("--save-trace", default=None, help="write the p-trace to this CSV")
+    o.add_argument("--load-trace", default=None,
+                   help="read the p-trace from a CSV instead of probing the wav")
+    return p
+
+
+#: `CommitCadencePolicy.MIN_COMMIT_INTERVAL_CLOUD_MS` (CommitCadencePolicy.kt:139).
+CLOUD_FLOOR_MS = 3_000
+
+
+def tuning_from_args(a: argparse.Namespace) -> Tuning:
+    # `minCommitIntervalMs(tierId, isCloudBatch)`: "Cloud batch wins outright — a FLAT 3 000
+    # for every tier" (CommitCadencePolicy.kt:151, the `if (isCloudBatch) return` at :163). The
+    # service passes `isCloudBatch = cloudWrapper != null`, the same predicate `--cloud`
+    # models, so a cloud session's floor is 3 000 whatever --tier says. --floor still wins.
+    if a.floor is not None:
+        floor = a.floor
+    elif a.cloud:
+        floor = CLOUD_FLOOR_MS
+    else:
+        floor = _tier_floor(a.tier)
+    return machine.with_overrides(
+        Tuning(),
+        onset=a.onset,
+        release=a.release,
+        hangover_ms=a.hangover,
+        min_speech_ms=a.min_speech,
+        micro_pause_ms=a.micro_pause,
+        min_commit_interval_ms=floor,
+        first_cap_ms=a.first_cap,
+        cap_ms=a.cap,
+        cap_cut_max_retain_ms=a.cap_retain,
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# Markdown
+# ---------------------------------------------------------------------------------------
+
+def _table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
+    out = ["| " + " | ".join(headers) + " |",
+           "|" + "|".join("---" for _ in headers) + "|"]
+    for r in rows:
+        out.append("| " + " | ".join(str(c) for c in r) + " |")
+    return "\n".join(out)
+
+
+def _ms(v: Optional[int]) -> str:
+    return "—" if v is None else f"{v:,}"
+
+
+def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
+                    forensics, sweep_rows, coupled) -> str:
+    L: List[str] = []
+    add = L.append
+
+    add("# vadsim — endpointer report")
+    add("")
+    add(f"`{trace.path}`")
+    add("")
+
+    # 1 -----------------------------------------------------------------------------
+    add("## 1. Input")
+    add("")
+    add(_table(
+        ["field", "value"],
+        [
+            ["source format", trace.source_format],
+            ["source rate", f"{trace.source_rate:,} Hz"],
+            ["resample", f"{trace.resample_mode}"
+                         + (" (the app's own Pcm48kTo16kDecimator, 3-tap boxcar)"
+                            if trace.resample_mode == "device48k" else " -> 16 kHz PCM16")],
+            ["frames (512 samples / 32 ms)", f"{trace.n_frames:,}"],
+            ["wall time", f"{trace.wall_ms / 1000:.2f} s"],
+            ["silero-vad package", trace.package_version],
+            ["onnx model", trace.model_path],
+            ["left-context mode", trace.context_mode],
+        ],
+    ))
+    add("")
+    add("<details><summary>Silero version delta — read before quoting an absolute p</summary>")
+    add("")
+    add("```")
+    add(probe_mod.SILERO_DELTA.rstrip())
+    add("```")
+    add("</details>")
+    add("")
+
+    # 2 -----------------------------------------------------------------------------
+    add("## 2. Tuning in force")
+    add("")
+    add(_table(
+        ["knob", "value", "derived"],
+        [
+            ["ONSET_THRESHOLD", f"{t.onset:.2f}", ""],
+            ["RELEASE_THRESHOLD", f"{t.release:.2f}",
+             f"dead band = [{t.release:.2f}, {t.onset:.2f})"],
+            ["HANGOVER_MS", f"{t.hangover_ms}",
+             f"cuts on dip frame {t.hangover_frames()} "
+             f"({t.hangover_frames() * FRAME_MS} ms of quiet audio), "
+             f"reported trailMs = {t.hangover_trail_ms()}"],
+            ["MIN_SPEECH_MS", f"{t.min_speech_ms}",
+             f"a run must exceed {t.min_speech_ms} ms or it is DISCARDED"],
+            ["MICRO_PAUSE_MS", f"{t.micro_pause_ms}",
+             f"promotes on dip frame {t.micro_pause_frames()}"],
+            ["minCommitIntervalMs", f"{t.min_commit_interval_ms}",
+             ("cloud batch: the flat request floor, every tier (CommitCadencePolicy.kt:163)"
+              if a.cloud and a.floor is None else f"tier {a.tier}")
+             + "; endpoints inside this window MERGE"],
+            ["FIRST_SEGMENT_WALL_MS", f"{t.first_cap_ms}",
+             "closed at onOpen in a cloud session" if a.cloud else "local session"],
+            ["MAX_SEGMENT_WALL_MS", f"{t.cap_ms}", "the dump"],
+            ["CAP_CUT_MAX_RETAIN_MS", f"{t.cap_cut_max_retain_ms}",
+             "an offer older than this is stale -> retain 0"],
+        ],
+    ))
+    add("")
+    add(f"**A pause must hold {t.hangover_frames()} consecutive frames below "
+        f"{t.release:.2f} — {t.hangover_frames() * FRAME_MS} ms of audio — before the "
+        f"hangover can cut.** Anything shorter, and anything that never drops below "
+        f"{t.release:.2f} at all, is invisible to it.")
+    add("")
+    band_lo = (t.hangover_frames() - 2) * FRAME_MS
+    band_hi = (t.hangover_frames() - 1) * FRAME_MS
+    add(f"On this simulator's exact 32 ms grid **every HANGOVER_MS in ({band_lo}, {band_hi}] "
+        f"behaves identically** to {t.hangover_ms}: the guard `nowMs - tempEndMs < HANGOVER_MS` "
+        f"(SileroEndpointer.kt:579) is only ever evaluated at multiples of 32 ms from the "
+        f"pending end. Two values inside one band cannot be told apart here. The phone stamps "
+        f"`nowMs` on the CHUNK (`System.currentTimeMillis()` at `onAudioChunk`), so its frames "
+        f"sit a few ms off the grid and a value near a band edge ({band_hi} here) will sometimes "
+        f"cut one frame later than this report says — never earlier.")
+    add("")
+
+    # 3 -----------------------------------------------------------------------------
+    s = analyze.prob_summary(trace.probs, t)
+    add("## 3. The p-trace")
+    add("")
+    if s:
+        add(_table(
+            ["metric", "value"],
+            [
+                ["frames", f"{int(s['n_frames']):,}"],
+                ["no-verdict frames (p < 0)", f"{int(s['n_no_verdict']):,}"],
+                ["mean p", f"{s['mean']:.3f}"],
+                ["p05 / p50 / p95", f"{s['p05']:.3f} / {s['p50']:.3f} / {s['p95']:.3f}"],
+                ["min / max", f"{s['min']:.3f} / {s['max']:.3f}"],
+                [f"frames at or above ONSET ({t.onset:.2f})",
+                 f"{s['frac_at_or_above_onset'] * 100:.1f} %"],
+                [f"**DEAD BAND** [{t.release:.2f}, {t.onset:.2f})",
+                 f"**{s['frac_dead_band'] * 100:.1f} %**"],
+                [f"frames below RELEASE ({t.release:.2f})",
+                 f"{s['frac_below_release'] * 100:.1f} %"],
+            ],
+        ))
+    add("")
+
+    # 4 -----------------------------------------------------------------------------
+    n_dead = sum(1 for d in dips if d.kind == "dead-band")
+    n_quiet = len(dips) - n_dead
+    n_cuttable = sum(1 for d in dips if d.cut_ms is not None)
+    n_shut = sum(1 for d in dips if not d.gate_open)
+    n_capped = sum(1 for d in dips if d.gate_open and "cap" in d.outcome.split("+")
+                   and d.cut_ms is None)
+    by_outcome = {}
+    for d in dips:
+        by_outcome[d.outcome] = by_outcome.get(d.outcome, 0) + 1
+    add("## 4. Dips — every stretch where the gate is not being held open")
+    add("")
+    add(f"{len(dips)} dips below ONSET: **{n_quiet} true silence**, "
+        f"**{n_dead} dead-band** (never went below {t.release:.2f}, so no pending end is "
+        f"ever stamped — SileroEndpointer.kt:555 returns having written nothing). "
+        f"{n_shut} began with the gate already SHUT and are structurally uncuttable "
+        f"(SileroEndpointer.kt:559). **{n_cuttable} dip(s) actually reach the hangover** "
+        f"(outcomes: " + ", ".join(f"{k or 'none'} {v}" for k, v in sorted(by_outcome.items()))
+        + f"). {n_capped} pause(s) had the CAP fire into them before the hangover elapsed.")
+    add("")
+    listed = sorted(dips, key=lambda d: -d.span_ms)
+    if a.max_dips > 0:
+        listed = listed[: a.max_dips]
+    add(_table(
+        ["start (ms)", "span (ms)", "frames", "kind", "min p", "quiet frames",
+         "max age (ms)", "gate", "outcome"],
+        [
+            [f"{d.start_ms - trace_base(a):,}", d.span_ms, d.n_frames, d.kind,
+             f"{d.min_p:.3f}", d.below_release_frames, d.max_age_ms,
+             "open" if d.gate_open else "SHUT", d.outcome]
+            for d in listed
+        ],
+    ))
+    add("")
+    add("`start (ms)` is relative to the start of the audio. `quiet frames` is how many of "
+        "the dip's frames were below RELEASE — the only ones the hangover counts. "
+        "`max age (ms)` is the largest `nowMs - tempEndMs` the machine measured on this dip "
+        "(the number the guard at SileroEndpointer.kt:579 compares against HANGOVER_MS), "
+        "clipped at the frame the machine stopped measuring it. `gate` is whether an "
+        "utterance was open when the dip began: with it SHUT the frame takes `onProb`'s "
+        "`if (!speaking) return false` and no length of silence can cut. `outcome` is what "
+        "the machine DID: `vad` (committed here), `merge` (reached the hangover, governor "
+        "declined it), `discard` (reached the hangover, burst under MIN_SPEECH_MS), `cap` "
+        "(the wall clock ran out INSIDE this pause, before the hangover — the cap's "
+        "`endpointer.reset()` then kills the pending end), `none` (never reached it) or "
+        "`gate-shut`.")
+    add("")
+
+    # 5 -----------------------------------------------------------------------------
+    add("## 5. Pause-length histogram")
+    add("")
+    add(_table(
+        ["bucket (ms)", "dips by full span", "of those, dead-band", "dips by QUIET span"],
+        [[h.label, h.below_onset, h.dead_band, h.quiet_span] for h in hist],
+    ))
+    add("")
+    add(f"The left column is how long a listener would call the pause. The right column is "
+        f"how much of it the machine can count. The line that decides everything sits "
+        f"between `320-384` and `384-512`: at HANGOVER_MS = {t.hangover_ms} a pause needs "
+        f"{t.hangover_frames() * FRAME_MS} ms of QUIET span to cut. Every dip in the right "
+        f"column above that boundary is a cut the endpointer can make; everything below it "
+        f"rides the cap.")
+    add("")
+
+    # 6 -----------------------------------------------------------------------------
+    summ = analyze.summarise(result, trace.probs)
+    add("## 6. Commits — the default simulation")
+    add("")
+    add(_table(
+        ["metric", "value"],
+        [
+            ["commits", int(summ["commits"])],
+            ["VAD cuts", f"{int(summ['vad'])} ({summ['vad_pct']:.0f} %)"],
+            ["CAP cuts", f"{int(summ['cap'])} ({summ['cap_pct']:.0f} %)"],
+            ["mean chunk", f"{summ['mean_chunk_ms']:.0f} ms"],
+            ["p95 chunk", f"{summ['p95_chunk_ms']:.0f} ms"],
+            ["governor merges", int(summ["merges"])],
+            ["MIN_SPEECH discards", int(summ["discards"])],
+            ["uncommitted tail at end of trace",
+             f"{int(summ['tail_ms'])} ms (the stop flush takes it)"],
+            ["estimated turbo duty", f"{summ['turbo_duty'] * 100:.0f} %"],
+        ],
+    ))
+    add("")
+    if result.commits:
+        add(_table(
+            ["t (ms)", "kind", "chunk (ms)", "speech (ms)", "trail (ms)", "retain (ms)",
+             "merged inside", "discarded inside", "cap"],
+            [
+                [f"{c.t_ms - trace_base(a):,}", c.kind, f"{c.chunk_ms:,}",
+                 _ms(c.speech_ms), _ms(c.trail_ms), c.retain_ms,
+                 c.merged_endpoints_inside, c.discarded_bursts_inside, _ms(c.cap_ms)]
+                for c in result.commits
+            ],
+        ))
+    else:
+        add("_No commit at all in this trace: the stop flush is the only exit._")
+    add("")
+
+    # 7 -----------------------------------------------------------------------------
+    add("## 7. Cap-cut forensics — what would it have taken to cut this chunk?")
+    add("")
+    if not forensics:
+        add("_No cap cut fired._")
+    else:
+        add(_table(
+            ["t (ms)", "cap", "chunk (ms)", "retain", "dips", "gate shut",
+             "longest quiet (ms)", "best age (ms)", "frames short",
+             "longest dead-band (ms)", "merged", "discarded"],
+            [
+                [f"{f.t_ms - trace_base(a):,}", _ms(f.cap_ms), f"{f.chunk_ms:,}",
+                 f.retain_ms, f.n_dips, f.n_gate_shut, f.longest_silence_ms, f.best_age_ms,
+                 _ms(f.frames_short), f.longest_dead_band_ms,
+                 f.merged_inside, f.discarded_inside]
+                for f in forensics
+            ],
+        ))
+        add("")
+        for f in forensics:
+            add(f"* **cap @ {f.t_ms - trace_base(a):,} ms** — {f.verdict}")
+    add("")
+
+    # 8 -----------------------------------------------------------------------------
+    if sweep_rows:
+        add("## 8. Sweep — hangover x release x cap at the turbo floor "
+            f"({t.min_commit_interval_ms} ms)")
+        add("")
+        add(_table(
+            ["hangover", "release", "cap", "commits", "vad %", "cap %", "mean chunk",
+             "p95 chunk", "merges", "discards", "dead band", "turbo duty"],
+            [
+                [r.hangover_ms, f"{r.release:.2f}", r.cap_ms, r.commits,
+                 f"{r.vad_pct:.0f}", f"{r.cap_pct:.0f}", f"{r.mean_chunk_ms:.0f}",
+                 f"{r.p95_chunk_ms:.0f}", r.merges, r.discards,
+                 f"{r.dead_band_frac * 100:.1f} %",
+                 f"{r.turbo_duty * 100:.0f} %"]
+                for r in sweep_rows
+            ],
+        ))
+        add("")
+        add("`turbo duty` is `commits x 2 050 ms / wall time` — the arithmetic "
+            "`CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS`'s KDoc states "
+            "(CommitCadencePolicy.kt:76-91), applied to THIS audio. Over 100 % means the "
+            "segment queue grows on this clip; the shipped 2 000 ms floor is 98 % at "
+            "SATURATION, which this clip need not reach.")
+        add("")
+        add("`dead band` moves with `release` and nothing else: it is the fraction of all "
+            "frames parked between the two thresholds, and lowering RELEASE is the only "
+            "knob here that shrinks it.")
+        add("")
+
+    # 9 -----------------------------------------------------------------------------
+    if coupled is not None:
+        cres, cprobs = coupled
+        csum = analyze.summarise(cres, cprobs)
+        add("## 9. Coupled run — the probe LSTM reset on every commit, as the app does")
+        add("")
+        add(_table(
+            ["metric", "fixed trace", "coupled"],
+            [
+                ["commits", int(summ["commits"]), int(csum["commits"])],
+                ["VAD cuts", int(summ["vad"]), int(csum["vad"])],
+                ["CAP cuts", int(summ["cap"]), int(csum["cap"])],
+                ["mean chunk (ms)", f"{summ['mean_chunk_ms']:.0f}",
+                 f"{csum['mean_chunk_ms']:.0f}"],
+                ["merges", int(summ["merges"]), int(csum["merges"])],
+                ["discards", int(summ["discards"]), int(csum["discards"])],
+            ],
+        ))
+        add("")
+        add("A large delta here means the sweep above is directionally right but not "
+            "quantitatively transferable: the commit pattern feeds back into the "
+            "probabilities through `probeReset` (SileroEndpointer.kt:664).")
+        add("")
+
+    add("---")
+    add("")
+    add("Generated by `tools/vadsim`. The state machine is ported branch-by-branch from "
+        "`SileroEndpointer.kt` and the cap branch from "
+        "`FloatingBubbleService.kt:2008-2111`; every branch in `vadsim/machine.py` carries "
+        "the Kotlin line it came from.")
+    return "\n".join(L)
+
+
+def trace_base(a: argparse.Namespace) -> int:
+    return a.base_ms
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    # The report is full of em-dashes and the Windows console defaults to cp1252, which
+    # replaces them with `?` and makes a redirected report unreadable in a Markdown viewer.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    except Exception:                                    # pragma: no cover - non-tty stdout
+        pass
+
+    a = build_parser().parse_args(argv)
+    t = tuning_from_args(a)
+
+    if a.load_trace:
+        probs = probe_mod.load_trace_csv(a.load_trace)
+        trace = probe_mod.Trace(
+            probs=probs,
+            path=f"{a.wav} (p-trace from {a.load_trace})",
+            source_rate=16_000,
+            source_format="p-trace csv",
+            resample_mode="n/a",
+            context_mode="n/a",
+            model_path="n/a",
+            package_version=probe_mod.silero_package_version(),
+        )
+    else:
+        trace = probe_mod.probe_wav(
+            a.wav, resample=a.resample, context=a.context, model_path=a.model
+        )
+
+    if a.save_trace:
+        probe_mod.write_trace_csv(trace, a.save_trace, a.base_ms)
+
+    result = machine.simulate(
+        trace.probs, t, base_ms=a.base_ms, is_cloud_session=a.cloud
+    )
+    dips = analyze.find_dips(
+        trace.probs, t, base_ms=a.base_ms, is_cloud_session=a.cloud
+    )
+    hist = analyze.pause_histogram(dips)
+    forensics = analyze.cap_forensics(result, dips, t)
+    sweep_rows = None if a.no_sweep else analyze.sweep(
+        trace.probs, t, base_ms=a.base_ms, floor_ms=t.min_commit_interval_ms,
+        is_cloud_session=a.cloud,
+    )
+
+    coupled = None
+    if a.coupled and not a.load_trace:
+        frames, _mode, _wav = probe_mod.frames_from_wav(a.wav, resample=a.resample)
+        p2 = probe_mod.SileroProbe(model_path=a.model, context=a.context)
+        coupled = machine.simulate_coupled(
+            frames, p2, t, base_ms=a.base_ms, is_cloud_session=a.cloud
+        )
+
+    if a.json:
+        out = {
+            "input": trace.to_dict(),
+            "tuning": {
+                **{k: v for k, v in vars(t).items()},
+                "hangover_frames": t.hangover_frames(),
+                "micro_pause_frames": t.micro_pause_frames(),
+                "hangover_trail_ms": t.hangover_trail_ms(),
+            },
+            "prob_summary": analyze.prob_summary(trace.probs, t),
+            "dips": [d.to_dict() for d in dips],
+            "histogram": [h.to_dict() for h in hist],
+            "commits": [vars(c) for c in result.commits],
+            "summary": analyze.summarise(result, trace.probs),
+            "cap_forensics": [f.to_dict() for f in forensics],
+            "sweep": None if sweep_rows is None else [r.to_dict() for r in sweep_rows],
+            "silero_delta": probe_mod.SILERO_DELTA,
+        }
+        if coupled is not None:
+            cres, cprobs = coupled
+            out["coupled"] = {
+                "summary": analyze.summarise(cres, cprobs),
+                "commits": [vars(c) for c in cres.commits],
+                "probs": [round(p, 6) for p in cprobs],
+            }
+        json.dump(out, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+    else:
+        sys.stdout.write(
+            render_markdown(a, t, trace, result, dips, hist, forensics, sweep_rows, coupled)
+            + "\n"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
