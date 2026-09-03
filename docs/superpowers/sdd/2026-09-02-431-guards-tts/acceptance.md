@@ -281,6 +281,14 @@ E8. **THE FLATLINE CUT (new in 84) — edited YouTube, device audio, Language Au
     RECORD: intervals (s) ______ ; 15 s caps ______ of ______ ; any split word? ______ ;
     own-voice unchanged? ______
     `[ ] PASS  [ ] FAIL`
+    **MEASURED 2026-09-03 (owner: "definitely much better on YouTube videos, it is actually chopping the
+    transcription correctly"). Same kind of edited video, versionCode 84, from the native encode: lines
+    (capture-yt-84-flatline-0903-1936.txt), one 5.4-minute run: 64 intervals, mean 5.05 s, median 3.94 s,
+    min 2.04 s (the 2,000 ms governor floor, binding as designed), 4 at the 15 s cap = 6 %. On 83 the same
+    kind of video gave mean 10.8 s, median 12.0 s, 35 % at the cap. Tokens per chunk 12 vs 23; 65/65 EOT,
+    no runaways. Duty ~40 % (64 x ~2.0 s / 323 s), as predicted. Detect tokens: en 43, zh 20, ko 1, ms 1 -
+    whether the 20 zh are real Chinese content or short-chunk misdetection is an OPEN QUESTION for the
+    owner (the video), not a number this capture can settle. Split words and own-voice: owner to confirm.**
 
 ## F — the three fixes from the owner's own device testing
 
