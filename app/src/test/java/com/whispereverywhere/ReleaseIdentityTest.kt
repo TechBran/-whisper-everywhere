@@ -21,6 +21,14 @@ import org.junit.Test
  * moves by one in the last place and the code by one integer; 83 > 82 is what lets the track
  * install replace the production build on the owner's own phone.
  *
+ * **versionCode 84 — the plain successor to 83.** 83 went to the INTERNAL TRACK on 2026-09-03
+ * (the owner installed it and confirmed the 350 ms hangover "is doing a better job") and was never
+ * promoted, so it is spent on the track exactly as 81 was: Play refuses a second upload at the
+ * same code. 84 supersedes it there carrying the flatline cut. The NAME stays 4.3.1: a name is
+ * spent by a RELEASE, and 4.3.1 has not been released — 83 and 84 are two candidates for the same
+ * one. 84 > 83 is what lets the track install replace 83 on the owner's phone. Every bump re-arms
+ * GpuPolicy's canary latches (below); still by design, still inert with the GPU toggle off.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -41,15 +49,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_3_1_at_version_code_83() {
+    fun release_identity_is_4_3_1_at_version_code_84() {
         assertEquals(
             "versionName must be 4.3.1 for this release (app/build.gradle.kts defaultConfig)",
             "4.3.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 83 for this release (app/build.gradle.kts defaultConfig)",
-            83,
+            "versionCode must be 84 for this release (app/build.gradle.kts defaultConfig)",
+            84,
             BuildConfig.VERSION_CODE,
         )
     }

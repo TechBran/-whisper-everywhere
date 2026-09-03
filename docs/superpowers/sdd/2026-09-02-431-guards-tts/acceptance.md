@@ -1,6 +1,6 @@
 # 4.3.1 — device acceptance (owner session)
 
-Build under test: **4.3.1 / versionCode 83**, now on `main` (the owner chose a local merge). It
+Build under test: **4.3.1 / versionCode 84** (83 went to the internal track 2026-09-03 and is superseded there by 84, which adds the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
 device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
 is the OWNER's device session; the implementer prepared this sheet and claims none of it as done.
@@ -268,6 +268,19 @@ E7. **The language goal, on the phone — the row the review added.** Language =
     RECORD: sentences per update ______ ; longest time the queue label stayed up ______ s ;
     would you trade bounded duty (3,200: pairs) for this? ______
     `[ ] PASS  [ ] FAIL`
+E8. **THE FLATLINE CUT (new in 84) — edited YouTube, device audio, Language Auto.** Play the same kind
+    of video as the 2026-09-03 capture (the ones where you watched the waveform flatline and nothing
+    cut). EXPECTED: chunks now land at the visible flatlines — commit intervals well under the 8.4 s
+    mean measured on 83, far fewer 15 s dumps — and NO word arrives split in halves. The trigger is
+    RMS <= 10 held for 5 chunks (160 ms), armed ONLY while the source is captured playback. Then run
+    an OWN-VOICE session: it must behave exactly as 83 did (the trigger is never armed on the mic).
+    FAIL if any word is split, if own-voice behaviour changed, or if a paused video (digital silence
+    for seconds) produces more than the one cut its speech floor allows. On the track build the
+    evidence is the native `encode:` interval sequence in the logcat, as on 83; a silent commit emits
+    no `encode:` line, so the capture undercounts rather than overcounts.
+    RECORD: intervals (s) ______ ; 15 s caps ______ of ______ ; any split word? ______ ;
+    own-voice unchanged? ______
+    `[ ] PASS  [ ] FAIL`
 
 ## F — the three fixes from the owner's own device testing
 
@@ -297,7 +310,7 @@ F3. **The one allowed handover discloses itself.** An app that genuinely refuses
 PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
 longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
 promote that build into production."* Promote the internal-track build to production only after
-**A2, A3, B1, B4, C1, D1, E1, E4 and E7** are marked PASS — E1 passes on merged pairs, so
+**A2, A3, B1, B4, C1, D1, E1, E4, E7 and E8** are marked PASS — E1 passes on merged pairs, so
 without E7 the sheet cannot see the one behaviour that decides the language goal.
 
 Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one
