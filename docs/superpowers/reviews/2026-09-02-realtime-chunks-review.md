@@ -98,6 +98,20 @@ banked floor will be judged against (§2) and it costs nothing extra now.
 
 ---
 
+### 1.1 Owner ruling, 2026-09-03 — the turbo floor is 2,000, not 3,200
+
+The owner read §1 and §3 and ruled for per-sentence chunks over the duty margin, on this reasoning:
+the 25 s finalizer's language boundaries come from the fast chunks' per-chunk labels, and a bilingual
+pair carries ONE label — the boundary is destroyed before any finalizer can use it, and recovering it
+inside a window would cost one fixed encode per probe. Monolingual fast chunks are therefore a
+precondition of the language-boundary design, not a nicety. At 2,000 the saturated duty is 98 % at
+the measured F (110 % at the throttled 2,140), which this review's §1 refused under the 0.70 rule;
+the ruling accepts it with the arithmetic recorded in `CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS`'s
+KDoc, the strip's "(3+ in queue)" label as the only field guard, and a queue-depth BACKPRESSURE
+governor (this floor while depth <= 1, ~3,200-3,900 once it reaches 2) as the next task — a
+precondition for the finalizer's extra ~11 %. E7 was rewritten as a PASS/FAIL row on the ruled value;
+the proportionate rollback is 2,000 -> 3,200 (pairs), not the hangover. Everything else in §1 stands.
+
 ## 2. THE FLOOR
 
 **Ruling: ship 350 alone in versionCode 83. Do not build the accumulated-speech floor before the upload.

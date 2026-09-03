@@ -221,7 +221,8 @@ E1. **The headline.** Read a paragraph aloud at your ordinary pace, 60-90 s, wit
 E2. **The cost.** Same run, no extra dictation.
     `Select-String "queue: depth=" C:\Users\bastr\.androidbuild\capture-431.txt`
     -> depth should stay in **0-2**, the owner's own observed bound on 4.3.0 (*"I've never seen
-    more than two queued"*). FAIL if depth reaches 4+ or climbs run-on-run without coming back
+    more than two queued"*). At the 2,000 ms turbo floor a transient 3 on sustained fast speech is
+    expected and must drain on the next longer pause; monotonic growth is the failure. FAIL if depth reaches 4+ or climbs run-on-run without coming back
     down — that is the queue outrunning the decoder, and the fix is the cadence floor
     (`CommitCadencePolicy` npu-turbo = 3,200 ms), NOT the hangover.
     RECORD: max depth ______.
@@ -257,16 +258,16 @@ E6. **The wall cap keeps its evidence.** Right after E5, keep talking normally f
     `[ ] PASS  [ ] FAIL`
 E7. **The language goal, on the phone — the row the review added.** Language = **Auto**. Dictate
     four short sentences alternating English and Spanish, ~2 s each, natural pauses. EXPECTED on
-    turbo AS BUILT (cadence floor 3,200 ms): the window updates every ~5 s, each update carrying
-    TWO sentences, one per language, and one sentence of each pair decoded under the other's
-    language token (garbled or drifted). That is the COST GOVERNOR merging every second endpoint
-    — NOT the VAD missing: the VAD found the boundary and the 3,200 ms floor declined to pay for
-    it. Only sentences of ~3 s or more arrive one per chunk. 4.3.0 (500 ms / 1,200 ms) gave one
-    sentence per chunk in this case, at a modelled 60-82 % NPU duty that the field never
-    complained about. This row cannot PASS or FAIL; it needs your ruling.
-    RECORD: sentences per update ______ ; what the second-language half looks like ______ ;
-    keep the bounded duty (pairs), or take 4.3.0's per-sentence cadence at its duty? ______
-    `[ ] RULED`
+    turbo AS BUILT (cadence floor **2,000 ms** — owner ruling 2026-09-03, over the review's 3,200):
+    the window updates once per sentence, each sentence in its own language, ~2.4 s after it ends.
+    A PAIR (two sentences in one update, one half garbled) means the sentence period was under
+    2.0 s — rare, since the hangover itself needs a 384 ms pause. The price of this floor is duty:
+    on sustained fast speech the strip may show "(3+ in queue)"; it MUST clear on the next longer
+    pause. FAIL if any sentence arrives decoded in the wrong language when the pause before it was
+    clearly audible, or if the queue label persists past ~30 s of ordinary speech.
+    RECORD: sentences per update ______ ; longest time the queue label stayed up ______ s ;
+    would you trade bounded duty (3,200: pairs) for this? ______
+    `[ ] PASS  [ ] FAIL`
 
 ## F — the three fixes from the owner's own device testing
 
@@ -296,8 +297,8 @@ F3. **The one allowed handover discloses itself.** An app that genuinely refuses
 PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
 longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
 promote that build into production."* Promote the internal-track build to production only after
-**A2, A3, B1, B4, C1, D1, E1 and E4** are marked PASS **and E7 is RULED** — E1 passes on merged
-pairs, so without E7 the sheet cannot see the one behaviour that decides the language goal.
+**A2, A3, B1, B4, C1, D1, E1, E4 and E7** are marked PASS — E1 passes on merged pairs, so
+without E7 the sheet cannot see the one behaviour that decides the language goal.
 
 Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one
 behaviour a hangover change can silently invert. E4 is not a formality -- the first draft of this
@@ -305,8 +306,10 @@ retune failed exactly there in review, committing 3 times in 11.3 s on a percuss
 shipped build commits 0 in 15.9 s. E5 CANNOT fail; it records a known limit so the owner can rule
 on it with the phone in their hand.
 
-If a gate row FAILS, the rollback is proportionate and per-row. E1/E2/E7 -> a 4.3.0-equivalent
-rollback is TWO lines, not one: `EndpointerTuning.kt:87` HANGOVER_MS 350 -> 500 AND
+If a gate row FAILS, the rollback is proportionate and per-row. E2/E7 queue growth that does
+not drain -> the turbo floor 2,000 -> 3,200 in `CommitCadencePolicy.kt` (the bounded-duty value the
+review recommended; it pairs sentences under 3.2 s periods and the KDoc says so). E1/E7 -> a
+4.3.0-equivalent rollback is TWO lines, not one: `EndpointerTuning.kt:87` HANGOVER_MS 350 -> 500 AND
 `CommitCadencePolicy.kt:176` `"npu-turbo"` back to MIN_COMMIT_INTERVAL_FAST_MS (1,200). A
 hangover-only revert produces a 500 / 3,200 build that still pairs sentences (identical to 4.3.1
 for pauses >= 544 ms, worse for 384-544 ms) — it is not a return to 4.3.0 at all. The `pro` move is

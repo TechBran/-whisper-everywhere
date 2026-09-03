@@ -193,8 +193,9 @@ object EndpointerTuning {
     /** Consecutive overruns that latch the probe off for the rest of the session. */
     const val PROBE_CUTOUT_FRAMES = 16
 
-    // NO COMMIT-INTERVAL CONSTANTS LIVE HERE. The measured per-tier cost governor
-    // (1200 pro / 6000 multi / 8000 extreme+ultra / 3000 cloud batch) is owned solely by
+    // NO COMMIT-INTERVAL CONSTANTS LIVE HERE. The per-tier cost governor
+    // (1200 eco+base+npu / 2000 npu-turbo by owner ruling / 6000 pro+multi / 8000 extreme+ultra /
+    // 3000 cloud batch) is owned solely by
     // com.whispereverywhere.service.CommitCadencePolicy, and reaches the endpointer per SESSION via
     // Endpointer.onSessionStart(nowMs, minCommitIntervalMs) — it depends on the installed tier AND
     // on whether every commit becomes a provider request, neither of which is an acoustic knob.

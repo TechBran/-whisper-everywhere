@@ -86,7 +86,7 @@ class CommitCadencePolicyTest {
     @Test
     fun theShippedIntervalsAreTheMeasuredOnes() {
         assertEquals(1_200L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_FAST_MS)
-        assertEquals(3_200L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS)
+        assertEquals(2_000L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS)
         assertEquals(6_000L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS)
         assertEquals(8_000L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS)
         assertEquals(3_000L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_CLOUD_MS)
@@ -166,7 +166,7 @@ class CommitCadencePolicyTest {
         val expected = mapOf(
             "eco" to 1_200L, "base" to 1_200L, "pro" to 6_000L,
             "multi" to 6_000L, "extreme" to 8_000L, "ultra" to 8_000L,
-            "npu" to 1_200L, "npu-turbo" to 3_200L,
+            "npu" to 1_200L, "npu-turbo" to 2_000L,
         )
         assertEquals(
             "a catalog tier gained or lost an entry — decide its cadence",
@@ -179,47 +179,57 @@ class CommitCadencePolicyTest {
     }
 
     @Test
-    fun npuTurboHasItsOwnFloorBecauseTheDeviceMeasurementCameIn() {
-        // 4.1 put turbo on the FAST row on PUBLISHED 8 Gen 3 figures (~1.37-1.57 s/segment) and
-        // wrote down the trigger for revisiting it: "if the owner's `npu:` lines show per-segment
-        // cost above this cadence, commits will visibly lag, and that is the signal to give turbo
-        // its own constant rather than to widen the FAST row." 4.4: the measurement came in at
-        // 2.06 s/segment on the Fold6 (57 segments), above the whole published range. F = 1.89 s
-        // fixed + 10.08 ms/token, tokens conserved at ~3.2/s of audio, so the object's own rule
-        // `F*N + m*S <= 0.70*60` gives N <= 21.2 commits/min -> a 2.83 s mean interval.
-        //
-        // The floor is 3 200, ABOVE that answer, and the margin is the point: see the constant.
-        assertEquals(3_200L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = false))
+    fun npuTurboHasItsOwnFloorAndItIsAnOwnerRulingOverTheDutyRule() {
+        // 4.1 put turbo on the FAST row on PUBLISHED 8 Gen 3 figures and wrote down the trigger
+        // for revisiting it. 4.4: the measurement came in at 2.06 s/segment on the Fold6 (57
+        // segments), F = 1.89 s fixed + 10.08 ms/token, so the object's own rule
+        // `F*N + m*S <= 0.70*60` gives N <= 21.2 commits/min -> a 2.83 s floor, and the retune
+        // shipped 3 200 for margin. The pre-upload review then showed what 3 200 COSTS: the merge
+        // branch makes the commit interval ceil(3200/T)*T, so every sentence period under 3.2 s
+        // arrives as a TWO-sentence chunk — 100 % bilingual for the owner's alternating 2 s
+        // sentences, the boundary the 25 s finalizer needs erased before any language logic sees
+        // it. The owner ruled 2026-09-03: one sentence per chunk outranks the duty margin.
+        assertEquals(2_000L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = false))
         assertEquals(
             "turbo left the FAST row rather than widening it: npu measures ~0.4 s on the same " +
                 "silicon and 1200 is right for it",
             1_200L,
             CommitCadencePolicy.minCommitIntervalMs("npu", isCloudBatch = false),
         )
-        // The duty arithmetic this floor IS, restated where a change to the constant must face it.
+
+        // THE ARITHMETIC THE RULING ACCEPTS, restated where a change to the constant must face it.
         val fixedCostMs = 1_890L
         val marginalPerMinuteMs = 1_900L
         val commitsPerMinute = 60_000L / CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS
+        val saturatedMs = commitsPerMinute * fixedCostMs + marginalPerMinuteMs
         assertTrue(
-            "a saturated npu-turbo session must stay inside the 0.70 duty ceiling this object is " +
-                "derived from: $commitsPerMinute commits/min x $fixedCostMs ms + " +
-                "$marginalPerMinuteMs ms of decode must not exceed 42 000 ms of every minute",
-            commitsPerMinute * fixedCostMs + marginalPerMinuteMs <= 42_000L,
+            "this floor is OVER the 0.70 ceiling BY RULING (58.6 s/min = 98 %); if it ever clears " +
+                "42 000 ms again, the ruling was reverted and this test's name is now a lie",
+            saturatedMs > 42_000L,
         )
-        // AND the margin, which the strict answer does not have. This is the assertion that fails
-        // if anyone lowers the floor back onto the formula: at 2 800 the saturated duty is 70.8%,
-        // i.e. already over the ceiling, and there is nothing left for a thermally throttled
-        // encode or for a concurrent batch job holding NativeComputeGate's fair lock. 2 140 ms is
-        // F + 13%, past the capture's own worst observed encode (1 863 ms) plus a decode tail.
-        val throttledFixedCostMs = 2_140L
         assertTrue(
-            "the floor must still hold the 0.70 ceiling if the fixed cost rises to " +
-                "$throttledFixedCostMs ms. It is derived from the WORST sustained F, not the " +
-                "median one: one device in one thermal state, and the app has no thermal guard " +
-                "anywhere, so this margin is the thermal policy.",
-            commitsPerMinute * throttledFixedCostMs + marginalPerMinuteMs <= 42_000L,
+            "but it must stay under 100 % at the MEASURED F, so the queue is bounded in expectation " +
+                "and drains on any pause longer than the sentence period: got $saturatedMs ms/min",
+            saturatedMs <= 60_000L,
         )
-        // And cloud batch still wins outright on the npu-class tiers, exactly as it does on every
+        // What the ruling does NOT accept: 4.3.0's FAST row. At 350 ms the hangover no longer
+        // protects it, and 50 commits/min x 1.89 s is 170 % into a queue that never sheds.
+        assertTrue(
+            "turbo must not be back on the FAST row",
+            CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS > CommitCadencePolicy.MIN_COMMIT_INTERVAL_FAST_MS,
+        )
+        // And what it buys: one sentence per chunk for every period >= the floor. The alternating
+        // 2 s sentence + 0.5 s pause the owner described is T = 2 500 >= 2 000 -> ceil = 1.
+        val targetPeriodMs = 2_500L
+        val sentencesPerChunk = (CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS + targetPeriodMs - 1) / targetPeriodMs
+        assertEquals("the owner's 2 s sentences must arrive one per chunk", 1L, sentencesPerChunk)
+        // At a throttled F (2 140 ms, the capture's worst encode plus a decode tail) the same
+        // floor is 110 % — the queue GROWS on sustained staccato speech on a hot phone. That is
+        // the known cost, guarded in the field only by the strip's "(3+ in queue)" label, and the
+        // reason the backpressure governor is the next task. Recorded, not asserted: a number
+        // over 100 % is not a property the suite can hold the code to.
+
+        // Cloud batch still wins outright on the npu-class tiers, exactly as it does on every
         // other row — the flat floor is about the HTTP request, not the local silicon.
         assertEquals(3_000L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = true))
         assertEquals(3_000L, CommitCadencePolicy.minCommitIntervalMs("npu", isCloudBatch = true))

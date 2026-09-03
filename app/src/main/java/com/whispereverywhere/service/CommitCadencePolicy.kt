@@ -19,13 +19,17 @@ import com.whispereverywhere.audio.Endpointer
  *   speech-end-to-text at the paced boundary, and no 15 s walls.
  * - npu (4.0): the same small weights as multi, but the encoder runs on the Hexagon — ~0.4 s
  *   sustained in the spike, so it pays for the FAST row. See [minCommitIntervalMs].
- * - npu-turbo (4.1, retuned 4.4): large-v3-turbo on the same Hexagon. The 4.1 row was
- *   provisional on published figures; the Fold6 measurement came in at F = 1.89 s fixed, so turbo
- *   left the FAST row for [MIN_COMMIT_INTERVAL_TURBO_MS] = 3 200 ms. See that constant.
+ * - npu-turbo (4.1, retuned 4.4, RULED 2026-09-03): large-v3-turbo on the same Hexagon. The 4.1
+ *   row was provisional on published figures; the Fold6 measurement came in at F = 1.89 s fixed,
+ *   so turbo left the FAST row. Its own constant, [MIN_COMMIT_INTERVAL_TURBO_MS] = 2 000 ms, is
+ *   the ONE row in this table that the 0.70 rule below does not clear, and it says so: the owner
+ *   ruled that one sentence per chunk outranks the duty margin on turbo. See that constant.
  *
  * THE ELIGIBILITY RULE FOR THIS TABLE, written down in 4.4 because the hangover retune is what
  * made it load-bearing: a tier keeps a floor only while its full-segment F is MEASURED and
- * `F/floor + m <= 0.70` at saturation. Two rows did not meet it. `pro` failed it outright and
+ * `F/floor + m <= 0.70` at saturation. Three rows do not meet it, for three different reasons.
+ * npu-turbo is OVERRIDDEN by an owner ruling with the arithmetic stated (see its constant).
+ * `pro` failed it outright and
  * moved (see [minCommitIntervalMs]); eco/base keep 1 200 ms on evidence that is thin, and the
  * honest reading is worse than "thin": they have not been re-benched since the audio_ctx floor
  * moved 768 -> 512 on 2026-08-20, and the only slice bench in the repo
@@ -59,49 +63,48 @@ object CommitCadencePolicy {
     const val MIN_COMMIT_INTERVAL_FAST_MS = 1_200L
 
     /**
-     * npu-turbo, and turbo alone: derived from the MEASURED F = 1.89 s at the same 0.70 duty
-     * ceiling every other row uses, then set at the WORST sustained F rather than the median one.
+     * npu-turbo, and turbo alone. **2 000 ms is an OWNER RULING (2026-09-03), not a duty
+     * derivation, and this KDoc exists to keep the two from being confused.**
      *
-     * The arithmetic, in the object KDoc's own units. 57 shipped-build segments on the Fold6
-     * (`capture-vad-headroom.txt`, three runs): encoder 1 778.9 ms with a standard deviation of
-     * 19.9 ms — a 1.1% spread, which is what FIXED looks like — plus a decode of
-     * 44 ms + 10.08 ms/token, plus ~48 ms of pcmToMel/quantise/handoff ahead of the graph, plus a
-     * per-SEGMENT token intercept of 1.84 tokens (regressing tokens against the inter-commit
-     * interval gives `tokens = 1.84 + 3.208*D`; that intercept is 18.5 ms of decode every commit
-     * pays whatever it carries). So F = 1.89 s, and the only length-varying term is per TOKEN —
-     * and tokens are conserved when the same speech is cut into more pieces (3.2 tokens per second
-     * of audio, so m*S = 60 * 3.2 * 0.01008 = 1.9 s/min).
+     * THE ARITHMETIC, stated where the number is. Work per commit on turbo is ~2.05 s and 87 % of
+     * it is the encode, which is FIXED (the QNN mel window is 30 s whatever the utterance holds).
+     * The governor's merge branch (`SileroEndpointer.onProb`) declines any endpoint that arrives
+     * within this floor of the last COMMIT, so the visible commit interval is
+     * `ceil(floor / T) * T` for a sentence period T (speech + pause), and every chunk holds
+     * `ceil(floor / T)` sentences. That is the whole trade:
+     *  - at 3 200 (the value the 4.4 retune shipped for one day, and the value the pre-upload
+     *    review recommended on the 0.70 rule): saturated duty 62 %, and every sentence period under
+     *    3.2 s arrives as a TWO-sentence chunk. For the owner's target — one sentence English,
+     *    one sentence Spanish, ~2 s each — that is 100 % bilingual chunks, one sentence of each
+     *    pair decoded under the other's language token, and the per-chunk language label the 25 s
+     *    finalizer needs as its boundary signal is one token for two languages: the boundary is
+     *    LOST before any language logic sees it. A regression against 4.3.0's 500 / 1 200 rows,
+     *    which gave one sentence per chunk in the >= 544 ms pause band at a modelled 60-82 % duty
+     *    the field ran for two days and called perfect.
+     *  - at 2 000: one sentence per chunk for every period >= 2.0 s (and the hangover needs a
+     *    384 ms pause to fire at all, so shorter periods barely exist). Saturated duty at the
+     *    measured F: 30 commits/min x 1 890 + 1 900 = 58.6 s/min = 98 % — OVER the 0.70 rule, by
+     *    ruling, and under 100 %, so the queue is bounded in expectation and drains on any pause
+     *    longer than the period. At a throttled F of 2 140 it is 110 %: sustained staccato speech
+     *    on a hot phone GROWS the queue. On the measured target content (a multi-language video,
+     *    57 segments, mean intervals 5.4-9.6 s) the real duty was 25-39 %; the saturated figure is
+     *    a stress case, not the use case.
+     *  - at 1 200 (4.3.0's FAST row): 170 % at saturation. Refused; the hangover at 500 used to
+     *    protect that row by never producing cuts that fast, and at 350 it no longer does.
      *
-     * `1.89*N + 1.9 <= 0.70*60` gives `N <= 21.2` commits/min, i.e. a mean interval of 2.83 s.
-     * THIS ROW IS 3 200, NOT 2 830, and the difference is the whole point. At the strict answer a
-     * saturated session sits at 70% duty with ZERO margin against the ceiling it was derived
-     * from — on ONE device, in ONE thermal state, with every encode logging `vote: OK sustained`.
-     * At 3 200 the saturated duty is 18.75 * 1.89 + 1.9 = 37.3 s/min = 62%, which tolerates F
-     * rising 13% to 2.14 s before the ceiling is touched: past the capture's own worst observed
-     * encode (1 863 ms) plus a decode tail, and enough to absorb a concurrent batch job holding
-     * `NativeComputeGate`'s fair lock. The app has no thermal guard anywhere — this margin IS the
-     * thermal policy. The cost is ~2.6 commits/min of owner benefit.
+     * THE GUARD, until the real one lands: the in-flight strip's "(3+ in queue)" label is the only
+     * field signal that this floor is losing; the engine queue never sheds. THE REAL GUARD is a
+     * backpressure governor — this floor while the segment queue is <= 1 deep, a slow floor
+     * (~3 200-3 900) once it reaches 2 — which makes the duty margin adaptive instead of a static
+     * constant that either pairs sentences or admits saturation. It is the next task after 4.3.1
+     * ships, and the 25 s finalizer (another ~11 % of duty on turbo) must not land without it.
      *
      * IF F EVER DOES BREACH, THIS FLOOR IS THE NUMBER TO RAISE, not the hangover: the hangover
      * decides whether a boundary exists at a place a listener would agree with, and no duty
-     * problem is solved by putting boundaries in worse places.
-     *
-     * THIS IS THE TRIGGER THE FAST ROW NAMED, FIRED. 4.1 put turbo on
-     * [MIN_COMMIT_INTERVAL_FAST_MS] on PUBLISHED 8 Gen 3 raw-QNN figures of ~1.37-1.57 s/segment,
-     * explicitly provisional, with the remedy written down: "if the owner's `npu:` lines show
-     * per-segment cost above this cadence, commits will visibly lag, and that is the signal to
-     * give turbo its own constant rather than to widen the FAST row." The measurement came in at
-     * 2.06 s/segment — above the whole published range — so turbo gets its own constant
-     * and eco/base/npu keep theirs.
-     *
-     * It had never fired: at `EndpointerTuning.HANGOVER_MS = 500` the endpointer produced cuts
-     * 5.4-9.6 s apart and a 1 200 ms floor is unreachable from there. The 4.4 hangover retune is
-     * exactly the change that makes it bind, which is why the two land together: the hangover
-     * decides where a boundary EXISTS, this decides how often one may be paid for. Ship one
-     * without the other and a 1 200 ms floor admits 50 commits/min against a 1.89 s fixed cost
-     * — 173% duty, into a local executor queue that is unbounded and never sheds.
+     * problem is solved by putting boundaries in worse places. The proportionate raise is 3 200
+     * (bounded duty, sentence pairs), recorded above so nobody re-derives it.
      */
-    const val MIN_COMMIT_INTERVAL_TURBO_MS = 3_200L
+    const val MIN_COMMIT_INTERVAL_TURBO_MS = 2_000L
 
     /** multi: derived from F = 2.3 s at a 0.70 duty ceiling. */
     const val MIN_COMMIT_INTERVAL_MULTI_MS = 6_000L
@@ -167,11 +170,11 @@ object CommitCadencePolicy {
             // on ONE spike-measured encoder pass; Q10a is the first full-tier device measurement.
             //
             // npu-turbo joined this row in 4.1 on published figures and LEFT it in 4.4 on the
-            // device measurement that row's own comment demanded. It has its own constant now:
-            // F = 1.89 s measured puts the STRICT-FORMULA answer at 2 830 ms — which is 70 % duty
-            // with ZERO margin, the condition [MIN_COMMIT_INTERVAL_TURBO_MS] refuses to ship on —
-            // so turbo ships 3 200 ms with real margin. Widening this row to reach either figure
-            // would wrongly slow eco/base/npu. See [MIN_COMMIT_INTERVAL_TURBO_MS].
+            // device measurement that row's own comment demanded. It has its own constant now,
+            // and that constant is an OWNER RULING over the 0.70 rule, with the arithmetic in its
+            // KDoc: 2 000 ms buys one sentence per chunk at ~98 % saturated duty; 3 200 would have
+            // bought 62 % duty at the price of two-sentence (bilingual) chunks. Widening THIS row
+            // to 2 000 would wrongly slow eco/base/npu. See [MIN_COMMIT_INTERVAL_TURBO_MS].
             "eco", "base", "npu" -> MIN_COMMIT_INTERVAL_FAST_MS
             "npu-turbo" -> MIN_COMMIT_INTERVAL_TURBO_MS
             // `pro` LEFT the FAST row in 4.4, on evidence this repo already contained. It is
