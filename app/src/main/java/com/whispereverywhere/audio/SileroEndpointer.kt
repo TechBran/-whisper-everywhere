@@ -48,6 +48,21 @@ import com.whispereverywhere.util.ProbeStats
  * happens-before edge with the capture thread, so the cleared state may never become visible at
  * all. `SileroEndpointerTest` fails the build if a later task adds a `var` without it.
  *
+ * The flatline cut (4.4) added three fields to that census, and each crosses the boundary in its
+ * own way. [flatlineArmed] is the one field of this class whose ONLY writer is Main — `setActiveSource`
+ * in FloatingBubbleService, through [armFlatline] — and whose only reader is the capture thread,
+ * once per completed frame; without the annotation a device-audio session could run to its end
+ * with the trigger armed on Main and never armed on the audio thread, which is a silent "the cut
+ * never fires" rather than a torn value. [flatRun] is incremented on the capture thread alone and
+ * zeroed by [closeGate], which Main reaches through [reset]; a Main-side zero that loses the race
+ * with a capture-side increment leaves the count one high for one frame, and a count one high can
+ * fire the trigger one chunk early — 32 ms of trail, the same one-chunk slack, never a cut where no
+ * flat run existed, because a non-flat chunk still zeroes it. [flatRunStartMs] is stamped once per
+ * run on the capture thread and read by that same thread at fire time; it is @Volatile only so that
+ * the Main-side [closeGate] clear that resets [flatRun] cannot become visible while a stale start
+ * stamp does not, which would pair a fresh count with an old start and mis-measure `speechMs` by
+ * whatever that gap was.
+ *
  * What @Volatile buys here is VISIBILITY, not atomicity: `fill += n` is a non-atomic
  * read-modify-write, so a Main-thread [reset] racing the capture thread can be LOST, leaving at
  * most one frame of pre-reset audio in the accumulator — inside the same one-chunk tolerance. No
@@ -241,9 +256,47 @@ class SileroEndpointer(
     @Volatile private var lastCutRecord: EndpointCut? = null
 
     /**
+     * THE FLATLINE CUT's arming (4.4): true while the active capture source is captured PLAYBACK,
+     * false on the microphone — armed IFF the source is device audio, [Endpointer.armFlatline]'s
+     * rule, applied by the service at the one place its source changes. Written on MAIN, read on the
+     * capture thread once per completed frame. Opened FALSE by [onSessionStart] (every session opens
+     * on the microphone by construction; the source pick that follows re-arms it) and left exactly
+     * as it is by [reset], which is an external commit and not a source change.
+     *
+     * The simulator's `Tuning.flatline_enabled` (`machine.py`), which is OFF by default there for the
+     * same reason this is false by default here: with it off the flat path returns on its first line
+     * and the machine is behaviour-identical to the one without it (DECISION 1).
+     */
+    @Volatile private var flatlineArmed = false
+
+    /**
+     * THE FLAT RUN: how many consecutive completed frames have carried a chunk RMS at or below
+     * [EndpointerTuning.FLATLINE_RMS_MAX] while the gate was open. The simulator's `flat_run_frames`.
+     * A COUNT, not a wall-clock age, because the device stamps one bursty `currentTimeMillis()` per
+     * chunk and a hold on a band edge fires a chunk early or late as often as on time
+     * (`machine.py` DECISION 5, `Tuning.flatline_fire_chunks`). Incremented on the capture thread
+     * only; zeroed by any non-flat frame, by a frame with the gate shut, and by [closeGate] — so a
+     * commit, a merge, a discard, a [reset] and an [onSessionStart] all end it (DECISION 3/7).
+     */
+    @Volatile private var flatRun = 0
+
+    /**
+     * `nowMs` of the run's FIRST flat frame — stamped once when [flatRun] goes 0 -> 1 and never
+     * moved (the simulator's `flat_run_start_ms`). It becomes the pending end at fire time IF, and
+     * only if, Silero has not stamped [tempEndMs] itself (DECISION 6): `speechMs` is measured to it,
+     * `trailMs` from it. Cleared with [flatRun], in [clearFlatRun].
+     */
+    @Volatile private var flatRunStartMs = 0L
+
+    /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
-     * @param amp the chunk's RMS, ignored here — it exists for the amplitude fallback that shares
-     *        this call shape.
+     * @param amp the chunk's RMS (0..32767, `AudioMath.amplitude`), computed once per capture chunk
+     *        by the capture thread — `StreamingAudioRecorder.kt:87` over the bytes read,
+     *        `PlaybackAudioCapturer.kt:81` over the DECIMATED 16 kHz buffer. Ignored by the Silero
+     *        state machine; read by THE FLATLINE CUT ([onFlat]) for every frame this chunk completes,
+     *        so a frame inherits the RMS of the chunk that completed it (the simulator's
+     *        `frame_rms` mapping, `machine.py` `Tuning.chunk_ms`), and a chunk that completes no
+     *        frame contributes nothing to the flat run.
      * @param nowMs the capture wall clock for this chunk.
      * @return true when the caller should commit the buffer NOW.
      *
@@ -284,6 +337,12 @@ class SileroEndpointer(
             // cut unrepairable). From here the amplitude fallback owns the session.
             if (probeCutout) return false
             if (onProb(p, nowMs)) return true
+            // SILERO WINS, ALWAYS. The flat trigger is evaluated only once onProb has declined this
+            // frame, so a hangover close and a flat hold that come due on the same frame produce
+            // exactly ONE commit and it is Silero's; the flat run is then cleared by commitAt ->
+            // clearForNextSegment -> closeGate. The same `if` / `else if` precedence the service
+            // gives the VAD cut over the wall cap (`machine.py` on_frame, DECISION 2).
+            if (onFlat(p, amp, nowMs)) return true
         }
         return false
     }
@@ -409,6 +468,13 @@ class SileroEndpointer(
      * [clearForNextSegment] exists to prevent. Before this task the only throwing statement here
      * was `probeReset()`, the LAST line of that clear, so a throw left every other re-arm applied.
      * Swallow inside the bound lambda; this class does not.
+     *
+     * THE FLATLINE CUT opens every session DISARMED (4.4). A session opens on the microphone by
+     * construction — `stopRecording` puts the service's source back to MIC and `startAudioInput`
+     * picks a capturer only after this has run — and the pick reaches [armFlatline] before the first
+     * frame can arrive, so the flag is re-derived from the real source on every session rather than
+     * inherited from the last one. The flat run itself dies in [clearForNextSegment] below, with the
+     * rest of the gate state.
      */
     override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
@@ -418,9 +484,23 @@ class SileroEndpointer(
         slowRun = 0
         probeCutout = false
         lastCutRecord = null
+        flatlineArmed = false
         probeStats.reset()
         probeArm()
         clearForNextSegment()
+    }
+
+    /**
+     * ARMED IFF THE ACTIVE SOURCE IS CAPTURED PLAYBACK — the service applies that rule at
+     * `setActiveSource`, the one place its source changes, so this is reached at session start once
+     * the source is picked, at every `switchSource`, and at the DRM handover back to the microphone.
+     * Main-only; the capture thread reads the flag. It touches NOTHING else: not the flat run (that
+     * is capture-thread state, and every arming in the service follows a [reset] that has already
+     * cleared it) and not the gate. Disarmed, [onFlat] returns on its first line and the machine is
+     * the one that shipped before this trigger existed (`machine.py` DECISION 1).
+     */
+    override fun armFlatline(armed: Boolean) {
+        flatlineArmed = armed
     }
 
     /**
@@ -624,16 +704,123 @@ class SileroEndpointer(
     }
 
     /**
+     * THE FLATLINE CUT (4.4): "chunk RMS at or below the floor, held for
+     * [EndpointerTuning.FLATLINE_CHUNKS] consecutive frames" closes the utterance the way a hangover
+     * close does. The reference twin is `tools/vadsim/vadsim/machine.py`'s
+     * `SileroEndpointerSim._on_flat`; its eight numbered DESIGN DECISIONS are this method's
+     * semantics, and each is taken here as the simulator took it:
+     *
+     *  1. **OFF UNLESS ARMED.** The first line returns unless [flatlineArmed]; there is no other
+     *     guard, so a mic session is behaviour-identical to the machine without this method.
+     *  2. **AFTER SILERO, NEVER INSTEAD OF IT.** [onFrame] calls this only once [onProb] has returned
+     *     false for the frame — one commit per frame at most, and Silero's when both come due. A
+     *     frame that merged or discarded in [onProb] arrives with the gate already shut and cannot
+     *     also fire here: one verdict per pause.
+     *  3. **ONLY WHILE SPEAKING**, and the run is CLEARED while the gate is shut rather than merely
+     *     blocked: counted through a digitally silent lead-in, the first word's opening frame could
+     *     fire a cut whose `speechMs` is negative, which the MIN_SPEECH test would then "discard" — a
+     *     real word thrown away by bookkeeping. A run therefore always starts at or after the gate
+     *     opened, so `speechMs >= 0` by construction.
+     *  4. **CONSECUTIVE, AND PURELY AMPLITUDE-DRIVEN.** Any frame whose chunk RMS is above the floor
+     *     resets the count; `p` cannot — not an ONSET frame (Silero's `p` failing to see an editor's
+     *     gap is the premise, and a `p` veto would restore exactly that blindness) and not a
+     *     [EndpointerTuning.NO_VERDICT] frame either. This is the decision that makes a mid-word cut
+     *     possible at all; the amplitude floor is the only thing bounding it, which is why
+     *     [EndpointerTuning.FLATLINE_RMS_MAX] sits under all room tone.
+     *  5. **THE HOLD, AS A COUNT.** The simulator measures `nowMs - flatRunStartMs >= hold` on its
+     *     exact 32 ms grid and fires on the fifth flat frame; on the device, whose chunk stamps are
+     *     bursty, the same hold on a band edge fires on the fourth or sixth as often as the fifth, so
+     *     the Kotlin counts frames — `flatline_fire_chunks()`, the simulator's own port note.
+     *     Identical on every grid trace; deterministic on the phone.
+     *  6. **THE FIRING FRAME BEHAVES EXACTLY LIKE A HANGOVER CLOSE.** The pending end is whatever
+     *     [tempEndMs] holds — Silero's own stamp if it has one, EARLIER than the run (room tone,
+     *     then digital zero: a longer trail) or LATER (a dead-band frame of inertia before `p` fell
+     *     under RELEASE: `speechMs` includes the flat frames before it, a shorter trail) — and the
+     *     run's first flat frame only when it is 0. Nothing here moves an existing stamp, which is
+     *     what lets `speechMs`, `trailMs` and the buffer bookkeeping be SHARED with [onProb]'s
+     *     `:583-623` instead of duplicated. Then the same MIN_SPEECH discard ([closeGate], buffer
+     *     untouched), the same governor merge ([closeGate], `pendingSpeech` kept), the same
+     *     [commitAt]. Only [EndpointCut.kind] differs.
+     *  7. **A RUN THAT ENDS EARLY DISTURBS NOTHING.** The two run fields are the only state a
+     *     non-firing flat frame touches; [tempEndMs] is written at FIRE time and only when unset, so
+     *     a run that dies before the hold cannot move a pending end Silero stamped, nor shorten or
+     *     lengthen the hangover.
+     *  8. **NO MICRO-PAUSE PROMOTION OF ITS OWN.** The promotion at [onProb]'s `:577` runs on
+     *     sub-RELEASE frames only, and this frame need not be one, so the flat path does not write
+     *     [prevEndMs]: a flat close that MERGES leaves the wall cap whatever offer Silero's own frames
+     *     had already promoted, nothing more. The simulator records the symmetric alternative as an
+     *     OPEN QUESTION for the owner (`machine.py` DECISION 8, `vadsim-flatline-build.md` UNSURE #3);
+     *     the Kotlin takes the simulator's choice, not the alternative, until that ruling lands.
+     *
+     * Placement: inside [onFrame]'s frame loop, after [onProb] — so the `probeCutout` latch that
+     * silences the probe silences this too. Deliberate: with the probe latched off the gate never
+     * opens, and DECISION 3 leaves this nothing to close.
+     */
+    private fun onFlat(p: Float, amp: Int, nowMs: Long): Boolean {
+        if (!flatlineArmed) return false                                        // DECISION 1
+
+        if (!speaking) {                                                        // DECISION 3
+            clearFlatRun()
+            return false
+        }
+
+        if (amp > EndpointerTuning.FLATLINE_RMS_MAX) {                          // DECISION 4
+            clearFlatRun()
+            return false
+        }
+
+        if (flatRun == 0) flatRunStartMs = nowMs                                // DECISION 5 — stamped ONCE
+        flatRun++
+        if (flatRun < EndpointerTuning.FLATLINE_CHUNKS) return false
+
+        // ---- the flat close, from here identical in shape to onProb's :583-623 ----
+        if (tempEndMs == 0L) tempEndMs = flatRunStartMs                         // DECISION 6/7
+        val speechMs = tempEndMs - speechStartMs
+
+        if (speechMs <= EndpointerTuning.MIN_SPEECH_MS) {                       // :584 — the same discard
+            closeGate()
+            return false
+        }
+
+        if (hasCommitted && nowMs - lastCommitMs < minCommitIntervalMs) {      // :596 — the same merge
+            closeGate()
+            return false
+        }
+
+        // :621 — recorded BEFORE the commit, for the reason onProb gives: commitAt wipes the fields.
+        lastCutRecord = EndpointCut(
+            speechMs = speechMs,
+            trailMs = nowMs - tempEndMs,
+            prob = p,
+            kind = EndpointCutKind.FLAT,
+        )
+        commitAt(nowMs)
+        return true
+    }
+
+    private fun clearFlatRun() {
+        flatRun = 0
+        flatRunStartMs = 0L
+    }
+
+    /**
      * The utterance gate only — the pending buffer's bookkeeping survives.
      *
      * The discarded-burst path comes through here, and a discard is NOT a commit: `pendingSpeech`
      * is left exactly as it was, because that audio really is still sitting in the caller's
      * buffer. Only [clearForNextSegment] speaks for the buffer.
+     *
+     * The flat run is GATE state and dies here with [tempEndMs], for the same reason: a run measured
+     * across a closed gate would fire on the first flat frame after the next onset. Clearing it in
+     * [clearForNextSegment] alone would leave a discard's run standing (a discard reaches only this
+     * method), and clearing it nowhere would let a count survive a commit (`machine.py`
+     * `_close_gate`, DECISION 3/7).
      */
     private fun closeGate() {
         speaking = false
         speechStartMs = 0L
         tempEndMs = 0L
+        clearFlatRun()
     }
 
     /**

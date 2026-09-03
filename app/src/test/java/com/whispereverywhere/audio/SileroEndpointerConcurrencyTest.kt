@@ -21,7 +21,9 @@ import java.util.concurrent.atomic.AtomicReference
  * sites in `FloatingBubbleService` — [SileroEndpointer.reset] at `switchSource` and `stopRecording`,
  * and [SileroEndpointer.onSessionStart] at `onOpen` (the site that used to be a fourth `reset`).
  * (Symbols, not line numbers: Workstream D moves this file's call sites, and a pin that cited
- * `:1819` would start lying the day it did.)
+ * `:1819` would start lying the day it did.) 4.4 added a fourth Main-side writer of a DIFFERENT
+ * kind: [SileroEndpointer.armFlatline] at `setActiveSource`, which writes exactly one field
+ * (`flatlineArmed`) that the capture thread only ever reads.
  *
  * What `@Volatile` buys here is VISIBILITY, not atomicity: the writes are not atomic TOGETHER, so a
  * Main-thread clear racing the capture thread can be lost, and a torn observation costs at most one
@@ -50,8 +52,8 @@ class SileroEndpointerConcurrencyTest {
      * `@Volatile`.
      *
      * SET EQUALITY, not containment — and that is the half of this test that earns its keep. A pin
-     * that merely checked the thirteen listed names were present and volatile would go on passing
-     * the day someone adds a fourteenth `var` and never enrols it, which is precisely the field
+     * that merely checked the sixteen listed names were present and volatile would go on passing
+     * the day someone adds a seventeenth `var` and never enrols it, which is precisely the field
      * whose cross-thread behaviour nobody has thought about yet. Making the set EQUAL turns "a new
      * mutable field appeared" into a build failure that hands the author the question.
      */
@@ -59,12 +61,19 @@ class SileroEndpointerConcurrencyTest {
         // 4.4 briefly added a `reopenFromMs` merge-memory field here and this census correctly
         // forced the author to enrol it. The field was then REMOVED — it made MIN_SPEECH_MS
         // unenforceable and committed on percussive music (see the block above HANGOVER_MS in
-        // EndpointerTuning) — so the set is back to thirteen. The census did its job in both
+        // EndpointerTuning) — so the set was back to thirteen. The census did its job in both
         // directions, which is the argument for keeping it a set-EQUALITY rather than a subset.
+        //
+        // 4.4 THE FLATLINE CUT enrolled three more, to sixteen: `flatlineArmed` (written on Main
+        // by armFlatline at the service's setActiveSource, read on the capture thread — the first
+        // field of this class with a Main-ONLY writer), `flatRun` and `flatRunStartMs` (the flat
+        // run: incremented/stamped on the capture thread, zeroed by closeGate, which Main reaches
+        // through reset). Each states its own hazard in the class KDoc's @Volatile paragraph.
         val required = listOf(
             "fill", "lastFrameMs", "speaking", "speechStartMs", "pendingSpeech",
             "tempEndMs", "prevEndMs", "lastCommitMs", "hasCommitted", "minCommitIntervalMs",
             "slowRun", "probeCutout", "lastCutRecord",
+            "flatlineArmed", "flatRun", "flatRunStartMs",
         )
         val declared = SileroEndpointer::class.java.declaredFields.associateBy { it.name }
 
