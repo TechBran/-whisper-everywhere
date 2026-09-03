@@ -62,6 +62,42 @@ class EndpointerTuningTest {
         assertNotEquals(0.40f, EndpointerTuning.ONSET_THRESHOLD)
     }
 
+    // ---------------------------------------------------------------------------------------
+    // THE FLATLINE CUT (4.4). Two constants, each ABSOLUTE first and then explained by the
+    // arithmetic its KDoc argues from. Reference twin: tools/vadsim/vadsim/machine.py.
+    // ---------------------------------------------------------------------------------------
+
+    @Test fun the_flat_floor_is_10_an_order_of_magnitude_under_room_tone_because_only_digital_zero_transfers_from_desk_to_device() {
+        assertEquals(10, EndpointerTuning.FLATLINE_RMS_MAX)
+        // Room tone in a natural pause measures 50-300 RMS (the brief's premise, and the band the
+        // simulator's sweep straddles on purpose): the floor must sit UNDER all of it, or a quiet
+        // talker in a quiet room fires the trigger on real silence. Non-zero audio's scale does
+        // not transfer between a PC wav and post-mixer device capture, so the floor is digital
+        // zero plus decoder noise and nothing more.
+        assertTrue(EndpointerTuning.FLATLINE_RMS_MAX < 50)
+        assertTrue("strictly above zero: a 1-3 RMS decode floor must still read as flat",
+            EndpointerTuning.FLATLINE_RMS_MAX > 0)
+    }
+
+    @Test fun the_flat_hold_is_5_chunks_because_a_150ms_stop_closure_fills_at_most_4_and_a_192ms_editor_gap_fills_5_at_every_phase() {
+        assertEquals(5, EndpointerTuning.FLATLINE_CHUNKS)
+        val chunkMs = EndpointerTuning.FRAME_MS
+        // A plosive closure is 50-150 ms of near-silence INSIDE a word; 150 / 32 = 4.68, so it
+        // can fill at most four whole 32 ms chunks. Five is therefore one more than any stop
+        // closure can supply.
+        assertTrue(EndpointerTuning.FLATLINE_CHUNKS > 150 / chunkMs)
+        // The simulator's hold: the run's fifth chunk is 128 ms old (ages 0, 32, 64, 96, 128) —
+        // `flatline_hold_ms = 128`, measured as the hangover measures a dip.
+        assertEquals(128L, (EndpointerTuning.FLATLINE_CHUNKS - 1) * chunkMs)
+        // The gap it catches: 160 ms when the gap happens to be chunk-aligned...
+        assertEquals(160L, EndpointerTuning.FLATLINE_CHUNKS * chunkMs)
+        // ...and 192 ms at EVERY alignment, because an unaligned gap's first and last chunks each
+        // carry a sliver of speech (machine.py `flatline_gap_any_ms`).
+        assertEquals(192L, (EndpointerTuning.FLATLINE_CHUNKS + 1) * chunkMs)
+        // And it fires BEFORE the hangover could, or it would buy nothing: 5 < 12 at 350 ms.
+        assertTrue(EndpointerTuning.FLATLINE_CHUNKS < EndpointerGrid.HANGOVER_FRAMES)
+    }
+
     /**
      * The derivations, the owner-facing A/B ranges and the two single-owner rulings are pinned as
      * WHOLE SENTENCES, each scoped to the member it documents.
@@ -208,6 +244,40 @@ class EndpointerTuningTest {
                 kdocFor("MICRO_PAUSE_MS"),
                 "CLOCK DOMAIN: this floor is WALL-CLOCK milliseconds because the endpointer's dip " +
                     "clock is `nowMs`, while native counts SAMPLES"
+            ),
+            // --- THE FLATLINE CUT: the two sentences that keep its constants from being retuned
+            //     as if they were acoustic knobs like the others (4.4) ---
+            Pin(
+                "the flat floor is safe ONLY because it sits under all room tone",
+                kdocFor("FLATLINE_RMS_MAX"),
+                "a natural pause in a natural room measures 50-300 RMS and never reaches zero, so " +
+                    "a run of flat chunks can only come from an editor's gate or a muted stream"
+            ),
+            Pin(
+                "and why it is not simply 'somewhere under room tone' — only zero transfers",
+                kdocFor("FLATLINE_RMS_MAX"),
+                "Only digital zero is scale-invariant between a PC wav and post-mixer device capture"
+            ),
+            Pin(
+                "the flat floor's comparison differs from the simulator's by one unit, on purpose",
+                kdocFor("FLATLINE_RMS_MAX"),
+                "at the single value 10 itself this constant is the simulator's `--flatline-rms 11`."
+            ),
+            Pin(
+                "the hold is a COUNT because the device clock is bursty",
+                kdocFor("FLATLINE_CHUNKS"),
+                "A count is deterministic on the device in a way a wall-clock hold is not"
+            ),
+            Pin(
+                "five is one more than a stop closure can supply",
+                kdocFor("FLATLINE_CHUNKS"),
+                "yields at most FOUR fully-flat 32 ms chunks, so five cannot cut a word at a /p/ " +
+                    "or a /k/"
+            ),
+            Pin(
+                "and what gap five actually buys, at any phase",
+                kdocFor("FLATLINE_CHUNKS"),
+                "every gap of 192 ms and up is caught at EVERY phase"
             ),
             Pin(
                 "the probe budget is the probe's OWN cost, not the frame period",

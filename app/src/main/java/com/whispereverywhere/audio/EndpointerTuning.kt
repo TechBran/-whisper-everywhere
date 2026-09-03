@@ -166,6 +166,54 @@ object EndpointerTuning {
     const val MICRO_PAUSE_MS = 98L
 
     /**
+     * THE FLATLINE CUT's amplitude floor (4.4): a capture chunk whose RMS is AT OR BELOW this is
+     * "flat". In `AudioMath.amplitude`'s own 0..32767 units (`AudioMath.kt:21-36`; the
+     * truncate-and-clamp is `:36`), measured once per 32 ms capture chunk on both paths
+     * (`StreamingAudioRecorder.kt:87`, `PlaybackAudioCapturer.kt:81` — on the DECIMATED 16 kHz
+     * buffer, so the scale is the microphone's).
+     *
+     * Ten is digital zero plus decoder/dither noise, an order of magnitude under room tone: a
+     * natural pause in a natural room measures 50-300 RMS and never reaches zero, so a run of flat
+     * chunks can only come from an editor's gate or a muted stream — the thing this trigger exists
+     * to see. Only digital zero is scale-invariant between a PC wav and post-mixer device capture
+     * (device audio is the platform's loopback mix with the media volume applied and, on YouTube,
+     * per-video loudness normalisation on top), which is why the floor sits just above zero rather
+     * than anywhere inside the room-tone band: a value that depends on the scale of NON-zero audio
+     * does not transfer from the desk to the phone. Reference twin: `tools/vadsim`'s
+     * `Tuning.flatline_rms` (`machine.py`, the `flatline_rms` field and its docstring), swept at
+     * {10, 20, 40, 80, 160} with 10/20/40 the only values under the whole room-tone band.
+     *
+     * COMPARISON: this is a MAX — `amp <= FLATLINE_RMS_MAX` is flat — where the simulator's
+     * predicate is a strict `rms < flatline_rms`. The two agree on every fixture trace (0, 100 and
+     * 3000 RMS); at the single value 10 itself this constant is the simulator's `--flatline-rms 11`.
+     */
+    const val FLATLINE_RMS_MAX = 10
+
+    /**
+     * THE FLATLINE CUT's hold, as a COUNT of consecutive flat chunks (4.4). The trigger fires ON
+     * the fifth flat chunk — the run's ages are 0, 32, 64, 96, 128 ms, so five chunks is the
+     * simulator's `flatline_hold_ms = 128` measured the way the hangover is measured (`machine.py`
+     * DECISION 5), and 160 ms of flat audio has passed through the endpointer when it fires.
+     *
+     * A COUNT and not a wall-clock hold, deliberately: the phone stamps every frame of a chunk
+     * with one `System.currentTimeMillis()` at delivery, which is bursty, so `nowMs - runStart >=
+     * 128` with 128 an exact multiple of 32 sits on a band edge and would fire on the 4th or the
+     * 6th flat chunk as often as on the 5th. A count is deterministic on the device in a way a
+     * wall-clock hold is not (`machine.py`, `Tuning.flatline_fire_chunks` and DECISION 5).
+     *
+     * Why five. A stop closure inside a word — the plosive's 50-150 ms of near-silence, which
+     * Silero keeps calling speech — yields at most FOUR fully-flat 32 ms chunks, so five cannot cut
+     * a word at a /p/ or a /k/. An editor's gap of digital silence supplies five WHOLE flat chunks
+     * only when it is long enough at the phase it happens to land on the chunk grid: 160 ms only
+     * when chunk-aligned (a 16 ms shift leaves four — one millisecond of 3000-RMS speech in a chunk
+     * already reads over 500), while every gap of 192 ms and up is caught at EVERY phase
+     * (`machine.py`, `Tuning.flatline_gap_aligned_ms` / `flatline_gap_any_ms`, and
+     * `tests/test_flatline_verify.py`'s alignment section). Against the "100-300 ms an editor
+     * leaves", five is certain for the upper half of that band and catches the lower half by phase.
+     */
+    const val FLATLINE_CHUNKS = 5
+
+    /**
      * A probe frame slower than this is an overrun: the probe's own cost budget inside the 32 ms
      * frame period, not the frame period itself. Nothing measures against THIS spelling — the
      * comparison is made in microseconds, against [PROBE_BUDGET_US] below.
