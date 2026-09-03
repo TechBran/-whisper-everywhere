@@ -406,3 +406,9 @@ summary, forensics, the 36-row sweep) on `jfk.wav` and `canary_digits.wav`, loca
 
 The trace CSV gains an `rms` column when one is available; a 3-column CSV written before this
 change still loads, and the trigger simply cannot fire on it.
+
+## The Kotlin now carries the trigger (4.4, `feat/flatline-cut`)
+
+`SileroEndpointer.onFlat` ships the flatline cut: `EndpointerTuning.FLATLINE_RMS_MAX = 10` (chunk RMS at or below is flat; the sim's strict `<` at 11) and `FLATLINE_CHUNKS = 5` (a COUNT, fires on the fifth; the sim's `flatline_hold_ms = 128`), armed only while the active source is captured playback (`Endpointer.armFlatline`). Its diag line reads `cut=flat`.
+`machine.py` is the REFERENCE TWIN: the eight numbered decisions in `_on_flat` are the Kotlin's semantics, cited from its KDoc, and `SileroEndpointerFlatlineTest` mirrors `test_flatline.py` / `test_flatline_verify.py` test for test by name on the same `(p, rms)` traces.
+Keep them in step: a change to either `_on_flat` or `onFlat` is a change to both, in one commit, with the twin test on each side.
