@@ -2158,9 +2158,23 @@ class FloatingBubbleService : Service(),
      * drift from the physical source. Routing is switched BEFORE the new capturer is started: a
      * capturer delivers its first chunk from its own thread the moment it starts, and a chunk that
      * arrives while the route still names the previous source is exactly the leak this guards.
+     *
+     * 4.4 THE FLATLINE CUT is armed HERE, and only here, because its rule is a rule about the
+     * source: ARMED IFF THE ACTIVE SOURCE IS CAPTURED PLAYBACK. Device audio is other people's
+     * edited audio — a video editor's gate leaves 100-300 ms of digital silence at every cut, far
+     * too short for the 350 ms hangover, and the bubble visibly flatlines on the very `amp` the
+     * endpointer used to ignore — while a microphone in a room never reaches digital zero, so on the
+     * mic the trigger could only fire on a muted input and stays off. Routing this through the one
+     * source-change site means it follows every path the source takes: the pick at session start
+     * (after `endpointer.onSessionStart`, which opens the session disarmed, and before the capturer
+     * delivers a frame), `switchSource` in both directions, the projection-consent grant, and the
+     * DRM silent-stream handover back to the microphone. Main-only, like the source itself.
      */
     private fun setActiveSource(source: com.whispereverywhere.audio.ActiveSource) {
         activeSource = source
+        val armed = source == com.whispereverywhere.audio.ActiveSource.PLAYBACK
+        endpointer.armFlatline(armed)
+        android.util.Log.i("WE-DIAG", "flatline: ${if (armed) "armed" else "disarmed"} source=$source")
     }
 
     private fun startMicSource(): Result<Unit> {
