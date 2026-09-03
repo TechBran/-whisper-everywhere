@@ -12,11 +12,22 @@ Four questions, in the order the owner asks them:
       the one that decides everything.
   (c) For each CAP-cut chunk: what would it have taken to cut it at a pause instead?
   (d) What does the whole grid of tunings do?
+
+Then, from 2026-09-03, the AMPLITUDE questions the flatline proposal needs answered — the
+`(e)` block at the bottom of this file:
+
+  (e) What does the RMS the endpointer ignores actually look like, split by Silero's own
+      three states; how quiet does each pause really get; what run of near-zero frames
+      would the trigger have had inside every chunk the wall cap had to dump; and what
+      does each `flatline_rms x hold` pair cost, MID-WORD RISK included?
+  (f) And does any of it match the phone? The logcat cross-check.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, asdict
+from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .machine import (
@@ -195,7 +206,9 @@ def find_dips(
             outcome = events[i + event_k]
             event_ms = base_ms + (i + event_k) * FRAME_MS
             parts = set(outcome.split("+"))
-            reached = bool(parts & {"vad", "merge", "discard"})
+            # `flat` joins the three: a flatline commit (the proposal) is a cut TAKEN
+            # inside this dip, so the dip did reach a decision — see `machine._on_flat`.
+            reached = bool(parts & {"vad", "merge", "discard", "flat"})
             cut_ms = event_ms if reached else None
 
         min_p = min(real) if real else -1.0
@@ -573,11 +586,17 @@ def summarise(result: SimResult, probs: Sequence[float]) -> Dict[str, float]:
     wall = max(1, result.wall_ms)
     n_vad = len(result.of_kind("vad"))
     n_cap = len(result.of_kind("cap"))
+    #: the flatline PROPOSAL's own commits — always 0 unless `Tuning.flatline_enabled`
+    n_flat = len(result.of_kind("flat"))
     total = len(result.commits)
     return {
         "commits": total,
         "vad": n_vad,
         "cap": n_cap,
+        "flat": n_flat,
+        "flat_pct": 100.0 * n_flat / total if total else 0.0,
+        "flat_merges": result.flat_merges_total,
+        "flat_discards": result.flat_discards_total,
         "vad_pct": 100.0 * n_vad / total if total else 0.0,
         "cap_pct": 100.0 * n_cap / total if total else 0.0,
         "mean_chunk_ms": sum(chunks) / len(chunks) if chunks else 0.0,
@@ -644,3 +663,727 @@ def sweep(
                     )
                 )
     return rows
+
+
+# =======================================================================================
+# (e) THE RMS SIDE — the amplitude the endpointer ignores, and the flatline PROPOSAL.
+#
+# `SileroEndpointer.kt:245` takes `amp` and documents it as "ignored here". The waveform
+# the owner watches is that same number (`waveformView.updateAmplitude(amp)`,
+# FloatingBubbleService.kt:1998), which is why the bubble can visibly flatline at an edit
+# point while the endpointer sails past it: the hangover needs 12 consecutive
+# below-RELEASE frames (352 ms, EndpointerTuning.kt:87) and an editor leaves 100-300 ms.
+#
+# Everything below is MEASUREMENT, not behaviour: it tells the owner what the two
+# constants of `machine._on_flat` would have to be, and what they would cost.
+# =======================================================================================
+
+#: RMS buckets, in AudioMath's 0..32767 units. `(0, 1)` is the exact-zero bucket — digital
+#: silence, which natural speech never produces (room tone measures 50-300).
+RMS_BUCKETS: Tuple[Tuple[int, Optional[int]], ...] = (
+    (0, 1),
+    (1, 10),
+    (10, 20),
+    (20, 40),
+    (40, 80),
+    (80, 160),
+    (160, 320),
+    (320, 640),
+    (640, 1280),
+    (1280, None),
+)
+
+#: The candidate `flatline_rms` values the cap-chunk table measures runs under, and the
+#: sweep's own axis (which drops 0 — a strict `rms < 0` can never fire).
+FLAT_CANDIDATE_RMS: Tuple[int, ...] = (0, 10, 20, 40, 80, 160)
+FLAT_SWEEP_RMS: Tuple[int, ...] = (10, 20, 40, 80, 160)
+
+#: Holds in ms. 96 is three frames, 320 is ten — the band either side of the 100-300 ms
+#: the owner measured on the edited video.
+FLAT_SWEEP_HOLDS: Tuple[int, ...] = (96, 128, 160, 224, 320)
+
+
+def silero_state(p: float, tuning: Tuning) -> str:
+    """Which of `onProb`'s three bands this frame is in — `speech` (>= ONSET, :539),
+    `dead-band` ([RELEASE, ONSET), :555, inert) or `silence` (< RELEASE, :559 onward).
+    A no-verdict frame (p < 0, :534) is its own state: it writes nothing at all."""
+    if p < 0.0:
+        return "no-verdict"
+    if p >= tuning.onset:
+        return "speech"
+    if p >= tuning.release:
+        return "dead-band"
+    return "silence"
+
+
+@dataclass
+class RmsHistRow:
+    label: str
+    lo: int
+    hi: Optional[int]
+    speech: int          # frames with p >= ONSET
+    dead_band: int       # frames in [RELEASE, ONSET)
+    silence: int         # frames with 0 <= p < RELEASE
+    no_verdict: int      # frames with p < 0
+    total: int
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def rms_histogram(
+    probs: Sequence[float], rms: Sequence[int], tuning: Tuning
+) -> List[RmsHistRow]:
+    """(a) The RMS distribution, SPLIT BY SILERO STATE.
+
+    The split is the whole point. If a threshold is to separate "the editor cut the room
+    tone out" from "someone is talking", the `speech` column must be empty below it and
+    the `silence` column must have mass there. A threshold with speech frames under it is
+    a mid-word cut waiting to happen — which is what the sweep's MID-WORD RISK column
+    then prices.
+    """
+    n = min(len(probs), len(rms))
+    rows: List[RmsHistRow] = []
+    for lo, hi in RMS_BUCKETS:
+        if hi is None:
+            label = f">={lo}"
+        elif hi == lo + 1:
+            label = f"{lo}"
+        else:
+            label = f"{lo}-{hi - 1}"
+        counts = {"speech": 0, "dead-band": 0, "silence": 0, "no-verdict": 0}
+        for i in range(n):
+            v = int(rms[i])
+            if v >= lo and (hi is None or v < hi):
+                counts[silero_state(float(probs[i]), tuning)] += 1
+        rows.append(
+            RmsHistRow(
+                label=label,
+                lo=lo,
+                hi=hi,
+                speech=counts["speech"],
+                dead_band=counts["dead-band"],
+                silence=counts["silence"],
+                no_verdict=counts["no-verdict"],
+                total=sum(counts.values()),
+            )
+        )
+    return rows
+
+
+@dataclass
+class DipRms:
+    """(b) One dip's amplitude story: how quiet the QUIET frames actually got."""
+
+    start_ms: int
+    span_ms: int
+    kind: str
+    gate_open: bool
+    outcome: str
+    quiet_frames: int             # frames below RELEASE in this dip
+    min_rms: Optional[int]        # over the dip's below-RELEASE frames
+    median_rms: Optional[int]     # over the same frames
+    min_rms_all: Optional[int]    # over EVERY frame of the dip, dead band included
+    median_rms_all: Optional[int]
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _median_int(values: Sequence[int]) -> Optional[int]:
+    """Integer median, low side on an even count — these are integer RMS readings and a
+    .5 would be an amplitude no `AudioMath.amplitude` call ever returned."""
+    if not values:
+        return None
+    s = sorted(int(v) for v in values)
+    return s[(len(s) - 1) // 2]
+
+
+def dip_rms(
+    dips: Sequence[Dip],
+    probs: Sequence[float],
+    rms: Sequence[int],
+    tuning: Tuning,
+    base_ms: int = BASE_MS,
+) -> List[DipRms]:
+    """(b) Per dip: the min and median chunk-RMS of its below-RELEASE frames.
+
+    "Below RELEASE" is the population that matters because those are the only frames the
+    hangover counts (`onProb` returns at `:555` for a dead-band frame, above the hangover
+    test). The `*_all` pair carries the same two numbers over the whole dip so a dead-band
+    dip — which has no quiet frames at all — still reports an amplitude.
+    """
+    out: List[DipRms] = []
+    n = min(len(probs), len(rms))
+    for d in dips:
+        lo = d.start_frame
+        hi = min(n, d.start_frame + d.n_frames)
+        quiet = [int(rms[i]) for i in range(lo, hi)
+                 if 0.0 <= float(probs[i]) < tuning.release]
+        every = [int(rms[i]) for i in range(lo, hi)]
+        out.append(
+            DipRms(
+                start_ms=d.start_ms,
+                span_ms=d.span_ms,
+                kind=d.kind,
+                gate_open=d.gate_open,
+                outcome=d.outcome,
+                quiet_frames=len(quiet),
+                min_rms=min(quiet) if quiet else None,
+                median_rms=_median_int(quiet),
+                min_rms_all=min(every) if every else None,
+                median_rms_all=_median_int(every),
+            )
+        )
+    return out
+
+
+def longest_run_under(rms: Sequence[int], threshold: int) -> int:
+    """Longest run of consecutive frames the flat trigger would have counted.
+
+    The predicate is the machine's own — `rms < threshold` (`machine._on_flat`) — with ONE
+    documented exception: at `threshold = 0` a strict `<` can never be true, so the run of
+    EXACT ZEROS is reported instead. That is the number worth seeing (digital silence is
+    the signature of an editor's gate), and it is labelled `==0` everywhere it appears so
+    it cannot be mistaken for a value the trigger would accept.
+    """
+    best = run = 0
+    for v in rms:
+        hit = (int(v) == 0) if threshold <= 0 else (int(v) < threshold)
+        run = run + 1 if hit else 0
+        best = max(best, run)
+    return best
+
+
+def flat_run_lengths(rms: Sequence[int], threshold: int) -> List[int]:
+    """Every maximal run of consecutive frames under `threshold` (same predicate and the
+    same `==0` exception as `longest_run_under`), as a list of lengths in FRAMES."""
+    out: List[int] = []
+    run = 0
+    for v in rms:
+        hit = (int(v) == 0) if threshold <= 0 else (int(v) < threshold)
+        if hit:
+            run += 1
+        elif run:
+            out.append(run)
+            run = 0
+    if run:
+        out.append(run)
+    return out
+
+
+#: Run-length buckets in FRAMES for `flat_run_histogram`. 4 and 5 are the two the sweep's
+#: 96 / 128 holds need; 12 is where Silero's own hangover takes over at 350 ms.
+FLAT_RUN_BUCKETS: Tuple[Tuple[int, Optional[int]], ...] = (
+    (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 12), (12, None),
+)
+
+
+@dataclass
+class FlatRunHistRow:
+    """How many flat runs of each length the clip has under one threshold — the direct
+    instrument for the HOLD: a hold that needs `k` flat chunks catches exactly the runs
+    of length >= k, and the runs of length >= 12 (at HANGOVER_MS 350) are the ones
+    Silero's hangover cuts on its own when `p` also drops. Counted on the whole clip,
+    gate open or shut, so it describes the AUDIO and not one tuning's outcome."""
+
+    threshold: int
+    n_runs: int
+    counts: Dict[str, int]
+    #: runs of length >= k for k = 1..12 — what a hold needing k chunks has to work with
+    at_least: Dict[int, int]
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def flat_run_histogram(
+    rms: Sequence[int], candidates: Sequence[int] = FLAT_CANDIDATE_RMS
+) -> List[FlatRunHistRow]:
+    rows: List[FlatRunHistRow] = []
+    for thr in candidates:
+        lengths = flat_run_lengths(rms, thr)
+        counts: Dict[str, int] = {}
+        for lo, hi in FLAT_RUN_BUCKETS:
+            label = f"{lo}" if hi == lo + 1 else (f"{lo}-{hi - 1}" if hi else f">={lo}")
+            counts[label] = sum(1 for n in lengths if n >= lo and (hi is None or n < hi))
+        rows.append(
+            FlatRunHistRow(
+                threshold=thr,
+                n_runs=len(lengths),
+                counts=counts,
+                at_least={k: sum(1 for n in lengths if n >= k) for k in range(1, 13)},
+            )
+        )
+    return rows
+
+
+@dataclass
+class CapChunkFlatRuns:
+    """(c) For ONE cap-cut chunk: what the flatline trigger would have had to work with."""
+
+    t_ms: int
+    cap_ms: Optional[int]
+    chunk_ms: int
+    first_frame: int
+    n_frames: int
+    #: threshold -> longest consecutive run of frames under it, in FRAMES
+    runs: Dict[int, int]
+    #: the same runs in ms (`frames * FRAME_MS`)
+    runs_ms: Dict[int, int]
+    min_rms: Optional[int]
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def cap_chunk_flat_runs(
+    result: SimResult,
+    rms: Sequence[int],
+    *,
+    candidates: Sequence[int] = FLAT_CANDIDATE_RMS,
+    base_ms: int = BASE_MS,
+) -> List[CapChunkFlatRuns]:
+    """(c) Per CAP-cut chunk, the longest run under each candidate threshold.
+
+    A cap cut is the app dumping the buffer because no pause was cuttable, so this table
+    answers "would the flatline trigger have found a boundary in the audio the cap had to
+    dump, and at which threshold?" A row whose longest run at 40 is 5 frames is a chunk a
+    128 ms hold would have cut; a row whose runs are 0 everywhere is a chunk no flatline
+    value could rescue — that audio never went quiet in AMPLITUDE either.
+
+    The window is the commit's own buffer span, `[buffer_start_ms, t_ms + FRAME_MS)`, the
+    same interval `cap_forensics` uses, converted to frame indices off `base_ms`.
+    """
+    out: List[CapChunkFlatRuns] = []
+    for c in result.of_kind("cap"):
+        first = max(0, (c.buffer_start_ms - base_ms) // FRAME_MS)
+        last = min(len(rms), (c.t_ms - base_ms) // FRAME_MS + 1)
+        window = [int(v) for v in rms[first:last]]
+        runs = {t: longest_run_under(window, t) for t in candidates}
+        out.append(
+            CapChunkFlatRuns(
+                t_ms=c.t_ms,
+                cap_ms=c.cap_ms,
+                chunk_ms=c.chunk_ms,
+                first_frame=int(first),
+                n_frames=len(window),
+                runs=runs,
+                runs_ms={t: v * FRAME_MS for t, v in runs.items()},
+                min_rms=min(window) if window else None,
+            )
+        )
+    return out
+
+
+def mid_word_risk_frames(
+    result: SimResult, probs: Sequence[float], tuning: Tuning, base_ms: int = BASE_MS
+) -> List[int]:
+    """THE NUMBER THE OWNER MUST SEE: flat cuts that land in or beside Silero speech.
+
+    A flat cut is RISKY when either holds:
+      * the cut frame itself, or the frame either side of it, has `p >= ONSET` — Silero
+        still calls that instant speech, so the trigger is cutting through a word the
+        model can hear; or
+      * the cut SPLITS a Silero speech run: both neighbours are speech. (Strictly a subset
+        of the first test — it is kept as its own clause because it is the failure the
+        owner asked to be counted, and a future ONSET change must not silently drop it.)
+
+    `no_context = true` (`whisper_jni.cpp:846`) makes such a cut UNREPAIRABLE in both
+    directions, which is why this is a ship gate and not a statistic.
+
+    IT IS DELIBERATELY CONSERVATIVE, and the report says so: a cut on the LAST flat frame
+    of an editor's gap — the frame immediately before speech resumes — trips the `+1`
+    clause even though that boundary is exactly the one the owner wants. Use it with
+    `mid_word_split_frames` below, which is the strict subset (BOTH neighbours speech)
+    that can only mean a cut THROUGH a word. Two columns, so the owner can tell a
+    well-placed cut from a mangled one instead of reading one number that mixes them.
+
+    AND IT UNDERCOUNTS, in exactly the place the danger lives (verifier, 2026-09-03):
+    it only looks at `p` on three frames, and the trigger can only have fired on a frame
+    whose chunk RMS was under the floor for `flatline_fire_chunks()` chunks running. On
+    true digital silence Silero's `p` is ~0 from the first frame (measured on
+    `jfk-gated.wav`: max `p` on a zero-RMS frame 0.075), so on gated audio RISK and SPLITS
+    read 0 essentially by construction — they are not evidence of safety there. And the
+    mid-word case that matters — a soft, low-RMS stretch INSIDE a word (a long fricative,
+    a breathy closure, a quiet talker) where Silero also sits in the dead band — has
+    `p < ONSET` on all three frames, so neither column sees it
+    (`test_the_risk_metric_is_blind_to_a_dead_band_soft_segment_inside_a_word`). Its
+    value also flips with hold parity: on the same gaps a 96 ms hold reads 0 and a 128 ms
+    hold reads N-1, because one fires a frame before speech resumes and the other on the
+    frame before that. Read `mid_word_bridge_frames` for the structural question the
+    owner is actually asking.
+    """
+    risky: List[int] = []
+    n = len(probs)
+    for c in result.of_kind("flat"):
+        i = (c.t_ms - base_ms) // FRAME_MS
+        if not (0 <= i < n):
+            continue
+        near = [probs[j] for j in (i - 1, i, i + 1) if 0 <= j < n]
+        adjacent_speech = any(float(p) >= tuning.onset for p in near)
+        splits_run = _splits_speech_run(probs, i, tuning)
+        if adjacent_speech or splits_run:
+            risky.append(int(i))
+    return risky
+
+
+def _splits_speech_run(probs: Sequence[float], i: int, tuning: Tuning) -> bool:
+    """Both frames around `i` are speech — the cut lands INSIDE a Silero speech run."""
+    n = len(probs)
+    return (
+        0 <= i - 1 and i + 1 < n
+        and float(probs[i - 1]) >= tuning.onset
+        and float(probs[i + 1]) >= tuning.onset
+    )
+
+
+def mid_word_split_frames(
+    result: SimResult, probs: Sequence[float], tuning: Tuning, base_ms: int = BASE_MS
+) -> List[int]:
+    """The strict subset of `mid_word_risk_frames`: flat cuts with speech on BOTH sides.
+
+    A cut here is not "close to a word", it is INSIDE one. There is no reading of this
+    number other than a mangled word, so a tuning with any splits at all is rejected
+    before its risk column is even discussed.
+    """
+    out: List[int] = []
+    for c in result.of_kind("flat"):
+        i = (c.t_ms - base_ms) // FRAME_MS
+        if 0 <= i < len(probs) and _splits_speech_run(probs, i, tuning):
+            out.append(int(i))
+    return out
+
+
+def mid_word_bridge_frames(
+    result: SimResult, probs: Sequence[float], tuning: Tuning, base_ms: int = BASE_MS
+) -> List[int]:
+    """BRIDGED flat cuts: Silero speech (`p >= ONSET`) resumes within `hangover_frames()`
+    frames AFTER the cut — i.e. the cut landed inside a stretch the shipped machine would
+    have kept as ONE utterance, because the dip was shorter than the hangover.
+
+    This is the structural question the RISK column only approximates with three frames:
+    "did the trigger create a boundary Silero would not have?" It does not look at `p`
+    ON the flat frames (which is ~0 on digital silence and in the dead band on a soft
+    segment alike, and therefore says nothing); it asks whether speech came back before
+    the hangover would have elapsed. A cut with speech before it (the gate was open, by
+    construction) and speech again within 352 ms is a bridge — the only kind of cut the
+    trigger exists to make on EDITED audio, and the only kind that can harm NATURAL
+    audio. So on gated audio this column is expected to equal the flat-cut count, and
+    `bridged_nonzero` (below) is what separates the two cases: a bridge across DIGITAL
+    ZERO is an editor's gate, a bridge across anything else is a word.
+    """
+    out: List[int] = []
+    n = len(probs)
+    win = tuning.hangover_frames()
+    for c in result.of_kind("flat"):
+        i = (c.t_ms - base_ms) // FRAME_MS
+        if not (0 <= i < n):
+            continue
+        if any(float(probs[j]) >= tuning.onset for j in range(i + 1, min(n, i + 1 + win))):
+            out.append(int(i))
+    return out
+
+
+def flat_run_max_rms(
+    result: SimResult, rms: Sequence[int], tuning: Tuning, base_ms: int = BASE_MS
+) -> Dict[int, int]:
+    """For every flat cut, the LARGEST chunk RMS inside the run that fired it, keyed by
+    the cut frame. At the shipped 32 ms chunk the firing run is exactly the
+    `flatline_frames()` frames ending on the cut frame (the run fires the moment its age
+    reaches the hold, and a merge or discard closes the gate, so no run is ever longer
+    at the instant it fires). 0 means the whole run was exact digital silence."""
+    out: Dict[int, int] = {}
+    k = tuning.flatline_frames()
+    for c in result.of_kind("flat"):
+        i = (c.t_ms - base_ms) // FRAME_MS
+        lo = max(0, i - k + 1)
+        window = [int(v) for v in rms[lo:i + 1]]
+        out[int(i)] = max(window) if window else 0
+    return out
+
+
+def mid_word_bridge_nonzero_frames(
+    result: SimResult,
+    probs: Sequence[float],
+    rms: Sequence[int],
+    tuning: Tuning,
+    base_ms: int = BASE_MS,
+    digital_floor: int = 0,
+) -> List[int]:
+    """Bridged cuts whose firing run was NOT digital silence — `max rms in run >
+    digital_floor`. THIS is the ship gate on natural audio: a boundary Silero would not
+    have made, across audio that was not an editor's gate. `digital_floor` is 0 (exact
+    zero) by default; on the phone a decoded "silent" stream may read 1-3 RMS rather than
+    0 (codec floor, format conversion), which is a reason to read this column at a floor
+    of a few units as well as at 0 — never a reason to raise `flatline_rms`."""
+    peaks = flat_run_max_rms(result, rms, tuning, base_ms=base_ms)
+    return [i for i in mid_word_bridge_frames(result, probs, tuning, base_ms=base_ms)
+            if peaks.get(i, 0) > digital_floor]
+
+
+@dataclass
+class FlatSweepRow:
+    """One row of the flatline sweep. `enabled=False` is the BASELINE — the shipped
+    machine, trigger off — and it is the row every other row must be read against."""
+
+    enabled: bool
+    flatline_rms: Optional[int]
+    hold_ms: Optional[int]
+    effective_hold_ms: Optional[int]
+    commits: int
+    flat: int
+    vad: int
+    cap: int
+    flat_pct: float
+    vad_pct: float
+    cap_pct: float
+    mean_chunk_ms: float
+    p95_chunk_ms: float
+    turbo_duty: float
+    #: flat cuts with Silero speech at or beside the cut frame — see `mid_word_risk_frames`
+    mid_word_risk: int
+    #: the strict subset: speech on BOTH sides, i.e. a cut THROUGH a word
+    mid_word_splits: int
+    #: flat cuts after which Silero speech resumes within the hangover — a boundary the
+    #: shipped machine would NOT have made (`mid_word_bridge_frames`); on edited audio this
+    #: is every intended cut, on natural audio it is every harmful one
+    bridged: int = 0
+    #: of those, the ones whose flat run was not exact digital silence — the ship gate
+    bridged_nonzero: int = 0
+    merges: int = 0
+    discards: int = 0
+    flat_merges: int = 0
+    flat_discards: int = 0
+    tail_ms: int = 0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def flat_sweep(
+    probs: Sequence[float],
+    rms: Sequence[int],
+    base: Tuning,
+    *,
+    base_ms: int = BASE_MS,
+    rms_values: Sequence[int] = FLAT_SWEEP_RMS,
+    holds: Sequence[int] = FLAT_SWEEP_HOLDS,
+    floor_ms: int = 2_000,
+    is_cloud_session: bool = False,
+) -> List[FlatSweepRow]:
+    """(d) `flatline_rms x hold` at the DEFAULT hangover/release/cap and the 2 000 floor.
+
+    The hangover, release and cap are deliberately NOT swept here: this table asks one
+    question — "what does adding the trigger to the shipped machine do?" — and the first
+    row answers it with the trigger OFF so every other row has a baseline. Sweeping four
+    knobs at once would make the flat column unreadable.
+
+    `floor_ms` is `CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS` (2 000, the owner
+    ruling) because that is the tier the device under test is on; a flat endpoint arriving
+    inside that window MERGES exactly as a Silero one does.
+    """
+    from dataclasses import replace
+
+    rows: List[FlatSweepRow] = []
+
+    def row(t: Tuning, enabled: bool, r: Optional[int], hold: Optional[int]) -> FlatSweepRow:
+        res = simulate(
+            probs, t, base_ms=base_ms, is_cloud_session=is_cloud_session,
+            rms=rms if enabled else None,
+        )
+        s = summarise(res, probs)
+        return FlatSweepRow(
+            enabled=enabled,
+            flatline_rms=r,
+            hold_ms=hold,
+            effective_hold_ms=t.flatline_effective_hold_ms() if enabled else None,
+            commits=int(s["commits"]),
+            flat=int(s["flat"]),
+            vad=int(s["vad"]),
+            cap=int(s["cap"]),
+            flat_pct=s["flat_pct"],
+            vad_pct=s["vad_pct"],
+            cap_pct=s["cap_pct"],
+            mean_chunk_ms=s["mean_chunk_ms"],
+            p95_chunk_ms=s["p95_chunk_ms"],
+            turbo_duty=s["turbo_duty"],
+            mid_word_risk=len(mid_word_risk_frames(res, probs, t, base_ms=base_ms)),
+            mid_word_splits=len(mid_word_split_frames(res, probs, t, base_ms=base_ms)),
+            bridged=len(mid_word_bridge_frames(res, probs, t, base_ms=base_ms)),
+            bridged_nonzero=len(
+                mid_word_bridge_nonzero_frames(res, probs, rms, t, base_ms=base_ms)
+            ),
+            merges=int(s["merges"]),
+            discards=int(s["discards"]),
+            flat_merges=int(s["flat_merges"]),
+            flat_discards=int(s["flat_discards"]),
+            tail_ms=int(s["tail_ms"]),
+        )
+
+    # (e) THE BASELINE ROW: the trigger OFF, everything else identical.
+    rows.append(
+        row(replace(base, flatline_enabled=False, min_commit_interval_ms=floor_ms),
+            False, None, None)
+    )
+    for r in rms_values:
+        for hold in holds:
+            t = replace(
+                base,
+                flatline_enabled=True,
+                flatline_rms=r,
+                flatline_hold_ms=hold,
+                min_commit_interval_ms=floor_ms,
+            )
+            rows.append(row(t, True, r, hold))
+    return rows
+
+
+# =======================================================================================
+# (f) THE PHONE CROSS-CHECK — logcat `encode:` timestamps beside the simulator's commits.
+# =======================================================================================
+
+#: threadtime logcat: `MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG : message`. adb right-pads
+#: the tag, so the space before the colon is real and must be tolerated.
+_LOGCAT_RE = re.compile(
+    r"^(?P<mon>\d{2})-(?P<day>\d{2})\s+"
+    r"(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})\.(?P<ms>\d{3})\s+"
+    r"(?P<pid>\d+)\s+(?P<tid>\d+)\s+(?P<lvl>[VDIWEFAS])\s+"
+    r"(?P<tag>\S+)\s*:\s*(?P<msg>.*)$"
+)
+
+
+@dataclass
+class PhoneEncode:
+    """One native `encode:` line — the phone's evidence that a segment was committed."""
+
+    t_ms: int             # the line's own timestamp, as an ordinal in ms
+    encode_ms: float      # the duration the line reports ("OK in 1791.9 ms")
+    raw: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _ordinal_ms(t: datetime) -> int:
+    """Naive ms since 2000-01-01 — a stable ordinal, never a real epoch. Only DIFFERENCES
+    between two of these are ever used (threadtime carries no year)."""
+    return int((t - datetime(2000, 1, 1)).total_seconds() * 1000)
+
+
+def parse_phone_capture(text: str) -> List[PhoneEncode]:
+    """Every `encode:` line in a threadtime logcat capture, in order.
+
+    THE LINE: `09-03 12:01:02.366 27133 27925 I WE-DIAG : encode: graphExecute OK in
+    1791.9 ms (vote: ...)`. One such line is emitted per committed segment, from the
+    engine thread, so the SEQUENCE of them is the phone's commit sequence.
+
+    WHAT THE TIMESTAMP IS, honestly: the instant the encode FINISHED, not the instant the
+    endpointer cut. A commit's audio therefore precedes its line by the encode duration
+    (~1.78 s on npu-turbo, and the fixed `[1,melBins,3000]` window makes that near
+    constant — EndpointerTuning.kt:70-78) plus any queue wait. INTERVALS between
+    consecutive lines are what survive that offset while the queue is not backing up,
+    which is why this compares intervals rather than instants — and why it is a
+    CROSS-CHECK, not a fit. A backed-up queue shows as intervals pinned near the encode
+    cost, and a growing backlog invalidates the comparison outright.
+
+    There is no YEAR in threadtime output, so the clock is reconstructed on a fixed year.
+    A capture crossing a year boundary is out of scope.
+
+    AND NOT EVERY COMMIT HAS A LINE. A commit whose audio the batch VAD filter empties
+    returns before any encode runs (`whisper_jni.cpp:815-820`, "skipping whisper entirely
+    makes silence-only commits ... essentially free"), so a silence-only cap cut — a paused
+    video, a music bed the VAD rejects — leaves NO `encode:` line. The owner's own
+    `capture-yt-2000-0903-1207.txt` shows it: two encode gaps of 128 s and 66 s in a
+    session whose wall cap is 15 s. The simulator counts every commit, so the phone's
+    sequence is a SUBSET of the simulator's, and index pairing drifts by one pair per
+    silent commit from that point on. Pair counts and deltas must be read with that in
+    mind; they cannot be made to agree by any tuning.
+    """
+    out: List[PhoneEncode] = []
+    for line in text.splitlines():
+        m = _LOGCAT_RE.match(line.strip())
+        if not m or not m.group("msg").startswith("encode:"):
+            continue
+        t = datetime(
+            2000, int(m.group("mon")), int(m.group("day")),
+            int(m.group("h")), int(m.group("m")), int(m.group("s")),
+            int(m.group("ms")) * 1000,
+        )
+        dur = re.search(r"in\s+([0-9.]+)\s*ms", m.group("msg"))
+        out.append(
+            PhoneEncode(
+                t_ms=_ordinal_ms(t),
+                encode_ms=float(dur.group(1)) if dur else float("nan"),
+                raw=line.strip(),
+            )
+        )
+    return out
+
+
+def parse_phone_capture_file(path: str) -> List[PhoneEncode]:
+    from pathlib import Path
+
+    return parse_phone_capture(Path(path).read_text(encoding="utf-8", errors="replace"))
+
+
+def intervals_ms(values: Sequence[int]) -> List[int]:
+    """Consecutive differences: N timestamps give N-1 intervals."""
+    return [int(values[i] - values[i - 1]) for i in range(1, len(values))]
+
+
+@dataclass
+class PhoneAlignment:
+    """The simulator's commits beside the phone's `encode:` lines, ALIGNED AT THE FIRST of
+    each. Index-paired: pair `k` is the phone's k-th commit and the simulator's k-th.
+
+    `delta_ms[k]` is `(sim_t[k] - sim_t[0]) - (phone_t[k] - phone_t[0])` — positive means
+    the simulator cut LATER than the phone did, relative to their own first cuts.
+    """
+
+    n_phone: int
+    n_sim: int
+    n_pairs: int
+    phone_intervals_ms: List[int]
+    sim_intervals_ms: List[int]
+    delta_ms: List[int]
+    within_1s: int
+    within_3s: int
+    unmatched: int
+    phone_first_ms: int
+    sim_first_ms: int
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def align_phone_and_sim(
+    encodes: Sequence[PhoneEncode], result: SimResult
+) -> Optional[PhoneAlignment]:
+    """Index-pair the two commit sequences from their first commit and score the deltas.
+
+    Pairing by INDEX is the honest choice for a cross-check: it makes a missing or an
+    extra commit show up as a growing delta instead of being absorbed by a
+    nearest-neighbour match. A pair inside 1 s is matched, inside 3 s loosely matched, and
+    UNMATCHED counts both the pairs outside 3 s and the surplus commits one side has and
+    the other does not.
+    """
+    if not encodes or not result.commits:
+        return None
+    phone = [e.t_ms for e in encodes]
+    sim = [c.t_ms for c in result.commits]
+    k = min(len(phone), len(sim))
+    deltas = [int((sim[i] - sim[0]) - (phone[i] - phone[0])) for i in range(k)]
+    return PhoneAlignment(
+        n_phone=len(phone),
+        n_sim=len(sim),
+        n_pairs=k,
+        phone_intervals_ms=intervals_ms(phone),
+        sim_intervals_ms=intervals_ms(sim),
+        delta_ms=deltas,
+        within_1s=sum(1 for d in deltas if abs(d) <= 1_000),
+        within_3s=sum(1 for d in deltas if abs(d) <= 3_000),
+        unmatched=abs(len(phone) - len(sim)) + sum(1 for d in deltas if abs(d) > 3_000),
+        phone_first_ms=phone[0],
+        sim_first_ms=sim[0],
+    )

@@ -270,3 +270,139 @@ paths and the CLI.
 * It does not model the probe's cost-budget cutout latch (a device thermal effect with no
   offline analogue) or the audio accumulator (it drives exact frames by construction).
 * It does not touch the app. Nothing under `app/` is read except as source to port from.
+
+---
+
+## The FLATLINE trigger (a PROPOSAL, default OFF)
+
+Added 2026-09-03, to be **measured, not shipped**. Nothing in the app implements it.
+
+### The problem it addresses
+
+The endpointer decides on Silero's `p` alone. `SileroEndpointer.onFrame(chunk, amp, nowMs)`
+receives the chunk's RMS and its own KDoc says so: *"@param amp the chunk's RMS, ignored
+here"* (`SileroEndpointer.kt:245`). To cut, it needs 12 consecutive below-`RELEASE` frames —
+**352 ms** at the shipped `HANGOVER_MS = 350`. On **edited video** an editor leaves 100-300 ms
+of near-digital silence at a sentence boundary: the waveform visibly flatlines (the bubble is
+driven from that same `amp`, `FloatingBubbleService.kt:1998`) and nothing gets cut.
+
+Natural speech never reaches digital zero — room tone measures 50-300 RMS — so a trigger on
+*"chunk RMS near zero, held briefly"* fires only on gated/edited audio, and there only at the
+edit points. That is the proposal.
+
+### The app's RMS facts (what the simulator models)
+
+| fact | where |
+|---|---|
+| RMS = `sqrt(sum(sample^2)/count)`, **truncated** to int, clamped 0..32767 | `AudioMath.kt:21-37` (`:35`, `:36`) |
+| MIC: 1024-byte read = 512 samples = **32 ms**; one `amp` per read, over `read` bytes | `StreamingAudioRecorder.kt:80`, `:85`, `:87`, `:97` |
+| DEVICE AUDIO: `readSize` 1024 @16k / 3072 @48k; `out` is the **decimated** buffer and `amp` is measured on it → also 512 samples / **32 ms** | `PlaybackAudioCapturer.kt:64`, `:79`, `:81`; `Pcm48kTo16kDecimator.kt:20-36` |
+| ONE amp per CHUNK reaches the endpointer, which splits the chunk into 512-sample FRAMES internally | `FloatingBubbleService.kt:1976`, `:2010`; `SileroEndpointer.kt:259-289` |
+
+So the simulator models **one RMS per chunk, applied to every frame that chunk completes**
+(`probe.frame_rms`), never a per-frame RMS. `--chunk-ms` parameterises it; the default 32 is
+the value **both** capture paths deliver. The consequence to keep in mind: a hold can only
+ever be satisfied in whole chunks, so `flatline_hold_ms` rounds up —
+`Tuning.flatline_effective_hold_ms()`, printed in section 2.
+
+### What a hold actually buys (verifier, 2026-09-03)
+
+The "effective hold" is the run's **age** when it fires, and the run's first flat chunk is
+age 0 — so a hold of 128 fires on the **fifth** consecutive flat chunk
+(`Tuning.flatline_fire_chunks()`), 160 ms of flat audio in. A gap of digital silence
+supplies five *whole* flat chunks only if it is at least 160 ms long **and starts on a chunk
+boundary**; a real editor's gate does not know where the capture grid is, and one
+millisecond of speech at the edge of a chunk already reads over 500 RMS, so in general a gap
+of `G` ms holds only `floor(G/32) - 1` whole flat chunks. The gap a hold **reliably** catches
+is therefore one chunk longer than the aligned figure:
+
+| hold (ms) | flat chunks needed | gap cut when aligned | gap cut at ANY alignment |
+|---|---|---|---|
+| 96 | 4 | 128 | **160** |
+| 128 | 5 | 160 | **192** |
+| 160 | 6 | 192 | **224** |
+| 224 | 8 | 256 | **288** |
+| 320 | 11 | 352 | **384** |
+
+(`Tuning.flatline_gap_aligned_ms()` / `flatline_gap_any_ms()`; section 2 and the sweep print
+them.) Against "an editor leaves 100-300 ms", a 128 ms hold is certain only for the upper
+half of that band. Every synthetic fixture and the chunk-gated `jfk-gated.wav` demo are
+aligned by construction — `tests/test_flatline_verify.py` shows the same 160 ms gap shifted
+by 16 ms yielding four flat chunks and no cut at 128.
+
+Two more things the simulator's exact 32 ms grid cannot show, both of which argue for a port
+that **counts chunks** rather than comparing a wall-clock hold: the phone stamps chunks with
+`System.currentTimeMillis()` at delivery, which is bursty, so a hold that is an exact multiple
+of 32 sits on a band edge and fires a chunk early or late as often as on time; and with a
+chunk larger than 32 ms every frame of a chunk carries one `nowMs`
+(`FloatingBubbleService.kt:2009`), which this tool does not model (`--chunk-ms` grouping is
+modelled, the timestamp collapse is not — a 96 ms hold at a 128 ms chunk fires one chunk
+earlier here than on a device).
+
+### Semantics
+
+Evaluated per frame **after** `onProb` has declined that frame, so Silero always wins a tie
+and one frame produces at most one commit. Fires only while the gate is open. Counts
+consecutive frames whose chunk RMS is **strictly below** `flatline_rms`; any frame at or above
+resets the count, and an unknown RMS counts as at-or-above. When the run's age reaches
+`flatline_hold_ms` it behaves **exactly like a hangover close arriving on that frame**: the
+pending end is whatever `tempEndMs` already holds — Silero's own stamp when it has one,
+whether earlier than the run (room tone, then zero) or later (a dead-band frame of LSTM
+inertia first) — and the run's first flat frame only when `tempEndMs` is 0; then the same
+`MIN_SPEECH` discard, the same governor merge, the same `commitAt` — `kind = 'flat'`. On
+real digital silence the two coincide: Silero's `p` falls under `RELEASE` on the very first
+zero frame (max `p` on any zero-RMS frame of `jfk-gated.wav`: 0.075). All eight design
+decisions are written out in `machine.SileroEndpointerSim._on_flat`'s docstring.
+
+### Running it
+
+```sh
+# the proposal, at a 40 RMS floor held 128 ms
+./.venv/Scripts/python.exe -m vadsim clip.wav --flatline-rms 40 --flatline-hold 128
+
+# either flag alone turns it on; the other takes its default
+./.venv/Scripts/python.exe -m vadsim clip.wav --flatline-hold 224
+
+# the phone's own commit sequence beside the simulator's
+./.venv/Scripts/python.exe -m vadsim clip.wav --phone-capture ~/.androidbuild/capture-*.txt
+```
+
+A bare run leaves the trigger OFF and is behaviour-identical to the tool as committed at
+`50d7466` — verified by diffing the whole JSON report (probs, dips, histogram, commits,
+summary, forensics, the 36-row sweep) on `jfk.wav` and `canary_digits.wav`, local and cloud.
+
+### New report sections
+
+* **10. RMS** — the RMS histogram split by Silero state (speech / dead band / silence), then
+  per dip the min and median chunk-RMS of its below-`RELEASE` frames. **Read the `speech`
+  column first**: a threshold with speech frames under it is a mid-word cut waiting to happen.
+* **11. Flat runs** — first a histogram of EVERY run of consecutive frames under each
+  candidate threshold `{==0, 10, 20, 40, 80, 160}` by length, with `>=k` columns for the
+  chunk counts the swept holds need (`>=5` is a 128 ms hold, `>=4` a 96 ms hold; `>=12` is
+  what Silero's own hangover already cuts). This is the direct instrument for the hold: a
+  hold buys exactly the runs between its column and `>=12`. Then per CAP chunk, the longest
+  run under each threshold — what the trigger would have had inside every chunk the wall cap
+  had to dump. (`0` is reported as the run of exact zeros: a strict `rms < 0` can never fire.)
+* **12. Flatline sweep** — `flatline_rms {10,20,40,80,160} x hold {96,128,160,224,320}` at the
+  default hangover/release/cap and the 2 000 ms turbo floor, with the **trigger-off baseline
+  as the first row**, each row carrying the flat chunks the hold needs and the gap it catches
+  at any alignment. Four risk columns. **BRIDGED** counts flat cuts after which Silero speech
+  resumes within the hangover — boundaries the shipped machine would *not* have made; on
+  edited audio that is every intended cut. **BRIDGED, not digital 0** is the subset whose flat
+  run was not exact silence — a boundary Silero would not have made across audio that was not
+  an editor's gate. **That column is the ship gate: any value above 0 rejects the row.**
+  `RISK (p, 3 frames)` and `SPLITS` (Silero speech at/beside the cut frame; on both sides)
+  are kept for continuity but are weak: `p` is ~0 on flat audio whether it is a gate or a soft
+  stretch inside a word, so they read 0 by construction on gated audio, miss a dead-band soft
+  segment inside a word entirely, and flip with hold parity.
+* **13. Phone cross-check** (`--phone-capture`) — the native `encode:` lines' inter-commit
+  intervals beside the simulator's, index-paired from each side's first commit, with per-pair
+  cumulative deltas and a matched-within-1s / 3s / unmatched summary. The `encode:` timestamp
+  is an encode **end**, so only intervals are comparable and only while the queue is not
+  backing up. And **not every commit has a line**: a VAD-empty commit returns before the
+  encoder (`whisper_jni.cpp:815-820`), so silent cap cuts leave no `encode:` — the owner's
+  own capture shows 128 s and 66 s encode gaps under a 15 s cap. The phone's sequence is a
+  *subset* of the simulator's. **A cross-check, not a fit.**
+
+The trace CSV gains an `rms` column when one is available; a 3-column CSV written before this
+change still loads, and the trigger simply cannot fire on it.

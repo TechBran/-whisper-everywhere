@@ -67,6 +67,137 @@ class Tuning:
     # `ServiceSim` always opens a session first. Kept so the value is not invented twice.
     pre_session_floor_ms: int = 8_000
 
+    # ----------------------------------------------------------------------------------
+    # THE FLATLINE TRIGGER — A PROPOSAL, NOT SHIPPED BEHAVIOUR. Default OFF, and with
+    # `flatline_enabled = False` this whole mechanism is dead code: `_on_flat` returns on
+    # its first line, so the DEFAULT simulation is behaviour-identical to the committed
+    # 50d7466. Nothing in the app implements it; it exists here to be MEASURED.
+    #
+    # WHY: `SileroEndpointer.onFrame(chunk, amp, nowMs)` takes the chunk's RMS and
+    # IGNORES it ("@param amp the chunk's RMS, ignored here", SileroEndpointer.kt:245),
+    # so the endpointer decides on Silero's `p` alone and needs 12 consecutive
+    # below-RELEASE frames (352 ms, EndpointerTuning.kt:87) to cut. On EDITED video the
+    # editor leaves 100-300 ms of near-digital silence at a sentence boundary — the
+    # waveform visibly flatlines — which is far too short for the hangover. Natural
+    # speech never reaches digital zero (room tone 50-300 RMS), so a trigger on
+    # "chunk-RMS near zero, HELD briefly" can only fire on gated/edited audio, and there
+    # only at the edit points.
+    # ----------------------------------------------------------------------------------
+
+    #: OFF unless a caller says otherwise. This is the whole de-risking argument.
+    flatline_enabled: bool = False
+
+    #: The RMS floor, in AudioMath's own 0..32767 units (`AudioMath.amplitude`,
+    #: AudioMath.kt:21-37; the truncate-and-clamp is `:36`). A frame whose CHUNK RMS is
+    #: strictly below this is "flat".
+    flatline_rms: int = 40
+
+    #: How long the flat run must be held before it closes an utterance. Measured
+    #: EXACTLY as the hangover measures a dip: `nowMs - flatRunStartMs >= hold`, where
+    #: the run start is stamped at its FIRST flat frame. So `hold = 128` fires on the
+    #: run's FIFTH frame (ages 0, 32, 64, 96, 128) — 160 ms of audio.
+    flatline_hold_ms: int = 128
+
+    #: The CAPTURE chunk length the RMS is computed over — a property of the audio
+    #: source, not of the endpointer, and 32 ms on BOTH of the app's paths:
+    #: `StreamingAudioRecorder.kt:80` reads into a 1024-byte buffer (512 samples) and
+    #: computes one `amp` over it at `:87`; `PlaybackAudioCapturer.kt:64` reads 1024 bytes
+    #: at 16 kHz or 3072 at 48 kHz (which the 3:1 decimator turns into 1024) and computes
+    #: one `amp` over the DECIMATED buffer at `:81`. It lives here because it is what
+    #: makes `flatline_hold_ms` round: the same RMS applies to every frame of a chunk, so
+    #: the hold can only ever be satisfied in whole chunks.
+    chunk_ms: int = 32
+
+    def __post_init__(self) -> None:
+        if not (0 <= self.flatline_rms <= 32_767):
+            raise ValueError(
+                f"flatline_rms={self.flatline_rms} outside AudioMath's 0..32767 range "
+                "(AudioMath.kt:36 coerces the result into exactly that band)"
+            )
+        if self.flatline_hold_ms < 0:
+            raise ValueError(f"flatline_hold_ms={self.flatline_hold_ms} is negative")
+        if self.chunk_ms < 1:
+            raise ValueError(f"chunk_ms={self.chunk_ms} must be at least 1 ms")
+
+    def flatline_frames(self) -> int:
+        """Flat frames the run needs, at the 32 ms frame grid: `hold // 32 + 1`.
+
+        The k-th flat frame has age `(k - 1) * FRAME_MS`, so the first frame whose age
+        reaches `hold` is number `ceil(hold / 32) + 1`: 4 at 96, 5 at 128, 6 at 160,
+        8 at 224, 11 at 320 — the same arithmetic `hangover_frames()` uses, because the
+        flat close is deliberately the same shape of test as the hangover close.
+        """
+        return (self.flatline_hold_ms + FRAME_MS - 1) // FRAME_MS + 1
+
+    def flatline_hold_chunks(self) -> int:
+        """The hold in whole chunk INTERVALS: `ceil(hold / chunk_ms)`.
+
+        This is the AGE the run must reach, in chunks — NOT the number of flat chunks that
+        fire the trigger, which is one more (`flatline_fire_chunks`). The run's first flat
+        chunk is stamped at age 0, so `k` intervals of `chunk_ms` are only ever measured on
+        the `(k + 1)`-th chunk. One RMS per chunk means the age only ever takes the values
+        `0, chunk_ms, 2 * chunk_ms, ...`, so a hold of 128 ms and a hold of 100 ms are the
+        same rule at the 32 ms chunk the app ships.
+        """
+        return (self.flatline_hold_ms + self.chunk_ms - 1) // self.chunk_ms
+
+    def flatline_effective_hold_ms(self) -> int:
+        """The AGE at which the run fires: `flatline_hold_chunks() * chunk_ms`.
+
+        At `chunk_ms = 32` a hold of 100, 110 or 128 all resolve to 128 ms of age, so two
+        values inside one chunk cannot be told apart. Quote this number, not the knob, when
+        comparing two holds — and quote `flatline_gap_aligned_ms()` /
+        `flatline_gap_any_ms()` when asking what GAP a hold catches, because the age is
+        reached on the FIFTH flat chunk at 128, not the fourth.
+        """
+        return self.flatline_hold_chunks() * self.chunk_ms
+
+    def flatline_fire_chunks(self) -> int:
+        """Consecutive FLAT CHUNKS the trigger needs before it fires: `hold_chunks + 1`.
+
+        The chunk the run starts on is age 0; the chunk that first reaches `hold` is the
+        `(ceil(hold / chunk_ms) + 1)`-th flat chunk in a row. 5 at (128, 32), 4 at (96, 32),
+        6 at (160, 32), 8 at (224, 32), 11 at (320, 32) — and at a hypothetical 128 ms
+        chunk a hold of 96 OR 128 both need TWO flat chunks (256 ms of flat audio), because
+        the app stamps ONE `nowMs` per chunk (`FloatingBubbleService.kt:2009`) and the
+        age therefore jumps straight from 0 to 128.
+
+        Equal to `flatline_frames()` at the shipped `chunk_ms = 32`. This is the number a
+        Kotlin port should COUNT rather than re-deriving a wall-clock hold: the phone's
+        chunk timestamps are `System.currentTimeMillis()` at delivery, which is bursty, so
+        `nowMs - flatRunStartMs >= hold` with `hold` an exact multiple of 32 sits on a band
+        edge and fires on the 4th or the 6th flat chunk as often as on the 5th. A count of
+        chunks is deterministic on the device in a way a wall-clock hold is not.
+        """
+        return self.flatline_hold_chunks() + 1
+
+    def flatline_gap_aligned_ms(self) -> int:
+        """The SHORTEST gap of digital silence this hold can cut — IF the gap happens to
+        start exactly on a chunk boundary: `flatline_fire_chunks() * chunk_ms`.
+
+        160 ms at (128, 32). Every synthetic fixture in `tests/test_flatline.py` and the
+        chunk-gated `jfk-gated.wav` demonstration are aligned by construction, so this is
+        the number those runs exhibit. A real editor's gate is not aligned to the capture
+        chunk grid — see `flatline_gap_any_ms`.
+        """
+        return self.flatline_fire_chunks() * self.chunk_ms
+
+    def flatline_gap_any_ms(self) -> int:
+        """The shortest gap GUARANTEED to be cut at ANY alignment against the chunk grid:
+        `(flatline_fire_chunks() + 1) * chunk_ms`.
+
+        A gap of `G` ms starting at an arbitrary phase within a chunk contains only
+        `floor(G / chunk) - 1` WHOLE chunks in the general case (its first and last chunks
+        each straddle speech, and one millisecond of speech at 3 000 RMS in a 32 ms chunk
+        already reads over 500 — see `test_flatline_verify`). So a hold that needs `k`
+        flat chunks needs a gap of `(k + 1) * chunk_ms` to be certain: **192 ms at
+        (128, 32)**, 160 at (96, 32), 224 at (160, 32), 288 at (224, 32), 384 at
+        (320, 32). Against the brief's "an editor leaves 100-300 ms", a 128 ms hold is
+        certain only for the upper half of that band, and a 96 ms hold for gaps of 160 and
+        up. This number, not the knob, is what a hold buys.
+        """
+        return (self.flatline_fire_chunks() + 1) * self.chunk_ms
+
     def hangover_frames(self) -> int:
         """`EndpointerGrid.HANGOVER_FRAMES` (EndpointerGrid.kt:61-63): the dip frame that CUTS.
 
@@ -163,6 +294,12 @@ class EndpointCut:
     speech_ms: int
     trail_ms: int
     prob: float
+    #: NOT in the Kotlin record. The chunk RMS of the frame that fired the cut, present
+    #: only for a `flat` cut (the proposal below), so the report can show the amplitude
+    #: the trigger acted on beside the `p` Silero would have kept the gate open with.
+    rms: Optional[int] = None
+    #: `'vad'` (Silero's own hangover) or `'flat'` (the flatline proposal).
+    kind: str = "vad"
 
 
 class SileroEndpointerSim:
@@ -190,12 +327,23 @@ class SileroEndpointerSim:
         self.min_commit_interval_ms = tuning.pre_session_floor_ms   # :200
         self.last_cut: Optional[EndpointCut] = None                # :241
 
+        # THE FLATLINE TRIGGER's own bookkeeping (the PROPOSAL — see `Tuning`). Both
+        # fields are dip bookkeeping, exactly like `temp_end_ms`, and die with the gate.
+        # With the trigger disabled they are written by `_close_gate` and read nowhere.
+        self.flat_run_start_ms = 0
+        self.flat_run_frames = 0
+
         # Instrumentation the Kotlin does not have (the release build strips the diag lines,
         # which is the whole reason this simulator exists).
         self.probe_resets = 0
         self.merges = 0
         self.discards = 0
         self.did_probe_reset = False      # set per frame, read by the coupled-probe driver
+        #: which mechanism fired the most recent commit: 'vad' or 'flat'
+        self.last_fire_kind: Optional[str] = None
+        self.flat_commits = 0
+        self.flat_merges = 0
+        self.flat_discards = 0
 
     # -- the three lifecycle entry points ------------------------------------------------
 
@@ -217,15 +365,32 @@ class SileroEndpointerSim:
         self.last_cut = None                                   # :420
         self._clear_for_next_segment()                         # :423
 
-    def on_frame(self, p: float, now_ms: int) -> bool:
+    def on_frame(self, p: float, now_ms: int, rms: Optional[int] = None) -> bool:
         """`SileroEndpointer.onFrame` (:259-289), collapsed to one exact frame per call.
 
         `lastFrameMs = nowMs` is stamped BEFORE the probe runs (:267) — that is what makes a
         cap cut's `reset()` anchor the governor on THIS frame and not the previous one.
+
+        `rms` is the CHUNK's RMS amplitude — the `amp` argument the app already passes and
+        `SileroEndpointer.kt:245` documents as "ignored here". It is ignored here too unless
+        `Tuning.flatline_enabled`, and it is the CHUNK's value, not the frame's: one
+        `AudioMath.amplitude` per capture buffer (`StreamingAudioRecorder.kt:87`,
+        `PlaybackAudioCapturer.kt:81`), applied to every frame that buffer completes
+        (`onFrame` splits the chunk into 512-sample frames internally, `:269-287`).
+        `None` means "no RMS for this frame" and is treated as NOT flat — see `_on_flat`.
         """
         self.did_probe_reset = False
         self.last_frame_ms = now_ms          # :267
-        return self._on_prob(p, now_ms)      # :286
+        if self._on_prob(p, now_ms):         # :286
+            self.last_fire_kind = "vad"
+            return True
+        # SILERO WINS, ALWAYS. The flat trigger is evaluated only after `onProb` has
+        # declined this frame, so a hangover close and a flat hold that come due on the
+        # SAME frame produce exactly ONE commit and it is Silero's — and the flat run is
+        # then cleared by `_commit_at` -> `_clear_for_next_segment` -> `_close_gate`.
+        # Structurally the same precedence as the service's own `if` / `else if` between
+        # the VAD cut and the wall cap (FloatingBubbleService.kt:2010/:2014).
+        return self._on_flat(p, rms, now_ms)
 
     # -- the per-frame verdict -----------------------------------------------------------
 
@@ -310,6 +475,132 @@ class SileroEndpointerSim:
         self._commit_at(now_ms)                                        # :622
         return True                                                    # :623
 
+    # -- THE FLATLINE TRIGGER (proposal, default OFF) -------------------------------------
+
+    def _on_flat(self, p: float, rms: Optional[int], now_ms: int) -> bool:
+        """The PROPOSED trigger: "chunk RMS near zero, held briefly" closes the utterance.
+
+        NOTHING IN THE APP DOES THIS. It is a proposal to be measured, and every semantic
+        below is a DESIGN DECISION rather than a port of an existing branch. Each is
+        numbered here and repeated in the report:
+
+        1. **OFF BY DEFAULT.** The first line returns unless `flatline_enabled`, so the
+           default simulation is behaviour-identical to the committed 50d7466. There is no
+           other guard anywhere: the trigger cannot leak into a default run.
+        2. **AFTER SILERO, NEVER INSTEAD OF IT.** `on_frame` calls this only once `onProb`
+           has returned False for this frame, so Silero's hangover always wins a tie and a
+           frame can produce at most one commit. It also means a frame that MERGED or
+           DISCARDED in `onProb` arrives here with the gate already shut (`closeGate`,
+           :633) and therefore cannot also fire a flat cut — one verdict per pause.
+        3. **ONLY WHILE SPEAKING.** With the gate shut there is no utterance to end — the
+           same reason `onProb` returns at `:559`. The run counter is CLEARED while the
+           gate is shut rather than merely blocked from firing: counting through leading
+           silence would let the first word after a digitally silent lead-in fire a cut
+           whose `speechMs` is negative, which the MIN_SPEECH test would then "discard" —
+           a real word thrown away by bookkeeping. A run therefore always starts at or
+           after the gate opened, so `speechMs >= 0` by construction.
+        4. **CONSECUTIVE, AND PURELY AMPLITUDE-DRIVEN.** Any frame whose chunk RMS is at
+           or above the floor resets the count to zero; `None` (no RMS available for this
+           frame) counts as at-or-above, because an unknown amplitude must not be able to
+           fire a cut. A frame at or above ONSET does NOT reset it: the trigger's whole
+           premise is that Silero's `p` is the thing that fails to see an editor's cut, so
+           letting `p` veto the count would restore exactly the blindness it exists to
+           work around. That is also precisely why the sweep carries a MID-WORD RISK
+           column — this decision is the one that makes such a cut possible, and the
+           column is how the owner sees its cost before shipping any value.
+        5. **THE HOLD IS MEASURED LIKE THE HANGOVER.** `nowMs - flatRunStartMs >= hold`,
+           with the run start stamped at the run's FIRST flat frame — the same hard-timer
+           shape as `nowMs - tempEndMs >= HANGOVER_MS` at `:579`, and inclusive on the
+           firing side for the same reason. Because ONE RMS covers a whole chunk, the run
+           length is only ever a whole number of chunks: the hold ROUNDS UP to
+           `Tuning.flatline_effective_hold_ms()` and two holds inside one chunk cannot be
+           told apart (32 ms chunks on both capture paths). The age is reached on the
+           `Tuning.flatline_fire_chunks()`-th flat chunk — FIVE at 128 — and the gap that
+           reliably supplies five whole flat chunks is `flatline_gap_any_ms()` = 192 ms,
+           not 128 and not 160 (see those docstrings). THIS SIMULATOR'S CLOCK IS AN EXACT
+           32 ms GRID; the phone's is `System.currentTimeMillis()` per chunk, so on the
+           device a wall-clock hold that is an exact multiple of 32 fires one chunk early
+           or late as often as on time. A port should count chunks.
+        6. **THE FIRING FRAME BEHAVES EXACTLY LIKE A HANGOVER CLOSE.** The pending end is
+           whatever `tempEndMs` holds when the hold is reached: **Silero's own stamp if it
+           has one — whether that stamp is EARLIER than the run's first flat frame (room
+           tone, then digital zero) or LATER (a dead-band frame or two of LSTM inertia
+           before `p` dropped below RELEASE)** — and the run's first flat frame only when
+           `tempEndMs` is 0. That is the Kotlin-compatible rule (`tempEndMs` is "stamped
+           ONCE per dip", SileroEndpointer.kt:137-141; nothing here moves an existing
+           stamp), and it is what shares `speechMs`, `trailMs` and the `prevEndMs`
+           promotion with the Silero path instead of inventing a second set of
+           bookkeeping. The consequence, pinned by `test_flatline_verify`: with a later
+           Silero stamp `speechMs` INCLUDES the flat frames before it and `trailMs` is
+           SHORTER than the hold; with an earlier one `trailMs` is LONGER. Measured on
+           chunk-gated real audio (`jfk-gated.wav`) the two coincide — Silero's `p` falls
+           under RELEASE on the very first digitally-silent frame (max `p` on any zero
+           frame 0.075), so `tempEndMs` is already the run's first frame when the hold
+           comes due. Then: the same MIN_SPEECH discard (`closeGate`, buffer untouched),
+           the same governor merge (`closeGate`, `pendingSpeech` kept), the same
+           `commitAt` on success. Only `EndpointCut.kind` differs — `'flat'`.
+        7. **A RUN THAT ENDS EARLY DISTURBS NOTHING.** The counter is the only state a
+           non-firing flat frame touches; `tempEndMs` is written at FIRE time and only when
+           it is unset, so a flat run that dies before the hold cannot move a pending end
+           Silero itself had stamped, and cannot shorten or lengthen Silero's hangover.
+        8. **NO MICRO-PAUSE PROMOTION OF ITS OWN.** The promotion at `:577` runs only on
+           sub-RELEASE frames, and this frame need not be one, so the flat path does not
+           write `prevEndMs`. A flat close that MERGES therefore leaves the wall cap
+           whatever offer Silero's own frames had already promoted — nothing more. (The
+           alternative, promoting on the flat frame for symmetry with `:577`, is listed as
+           an open question in the report: it would change what a cap cut retains, in flat
+           mode only.)
+        """
+        if not self.t.flatline_enabled:                # DECISION 1
+            return False
+
+        if not self.speaking:                          # DECISION 3
+            self._clear_flat_run()
+            return False
+
+        if rms is None or rms >= self.t.flatline_rms:   # DECISION 4
+            self._clear_flat_run()
+            return False
+
+        if self.flat_run_frames == 0:                   # DECISION 5 — stamped ONCE
+            self.flat_run_start_ms = now_ms
+        self.flat_run_frames += 1
+        if now_ms - self.flat_run_start_ms < self.t.flatline_hold_ms:
+            return False
+
+        # ---- the flat close, from here identical in shape to onProb's :583-623 ----
+        if self.temp_end_ms == 0:                       # DECISION 6/7
+            self.temp_end_ms = self.flat_run_start_ms
+        speech_ms = self.temp_end_ms - self.speech_start_ms
+
+        if speech_ms <= self.t.min_speech_ms:            # :584 — the same discard
+            self.discards += 1
+            self.flat_discards += 1
+            self._close_gate()
+            return False
+
+        if self.has_committed and now_ms - self.last_commit_ms < self.min_commit_interval_ms:
+            self.merges += 1                             # :596 — the same governor merge
+            self.flat_merges += 1
+            self._close_gate()
+            return False
+
+        self.last_cut = EndpointCut(                     # :621 — recorded BEFORE the commit
+            speech_ms=speech_ms,
+            trail_ms=now_ms - self.temp_end_ms,
+            prob=p,
+            rms=rms,
+            kind="flat",
+        )
+        self.flat_commits += 1
+        self.last_fire_kind = "flat"
+        self._commit_at(now_ms)
+        return True
+
+    def _clear_flat_run(self) -> None:
+        self.flat_run_start_ms = 0
+        self.flat_run_frames = 0
+
     # -- the three clears ----------------------------------------------------------------
 
     def _close_gate(self) -> None:
@@ -318,6 +609,11 @@ class SileroEndpointerSim:
         self.speaking = False
         self.speech_start_ms = 0
         self.temp_end_ms = 0
+        # The flat run is GATE state, and it dies with the gate for the same reason
+        # `tempEndMs` does: a run measured across a closed gate would fire on the first
+        # flat frame after the next onset (DECISION 3/7). Not in the Kotlin — nothing in
+        # the app has a flat run yet — and inert while the trigger is disabled.
+        self._clear_flat_run()
 
     def _commit_at(self, now_ms: int) -> None:
         """`commitAt` (:648-652). A real endpoint, taken."""
@@ -364,7 +660,7 @@ class Commit:
     """One commit the app would have made."""
 
     t_ms: int
-    kind: str                       # 'vad' | 'cap'
+    kind: str                       # 'vad' | 'cap' | 'flat' (the proposal)
     speech_ms: Optional[int]        # EndpointCut.speechMs — VAD commits only
     trail_ms: Optional[int]         # EndpointCut.trailMs  — VAD commits only
     chunk_ms: int                   # audio actually handed to the engine
@@ -376,7 +672,10 @@ class Commit:
     cap_ms: Optional[int] = None    # the cap that fired (cap commits only)
     cut_point_ms: Optional[int] = None      # the micro-pause offer at cap time
     consumed_window: Optional[bool] = None  # capCutConsumesWindow's verdict
-    prob: Optional[float] = None    # p of the frame that fired a VAD cut
+    prob: Optional[float] = None    # p of the frame that fired a VAD or FLAT cut
+    #: chunk RMS of the frame that fired a FLAT cut (None otherwise) — the amplitude the
+    #: proposal acted on, beside the `prob` Silero would have held the gate open with.
+    rms: Optional[int] = None
 
 
 @dataclass
@@ -387,6 +686,9 @@ class SimResult:
     tuning: Tuning = DEFAULT_TUNING
     merges_total: int = 0
     discards_total: int = 0
+    #: of `merges_total` / `discards_total`, the ones the FLAT close produced
+    flat_merges_total: int = 0
+    flat_discards_total: int = 0
     #: ms of audio still uncommitted when the trace ran out. The app's UNCONDITIONAL stop
     #: flush (FloatingBubbleService.kt:3059-3068) commits it; it is not a commit the tuning
     #: produced, so it is reported separately and excluded from the commit statistics.
@@ -439,20 +741,26 @@ class ServiceSim:
         self._discards_at_last_commit = 0
         self.frame_index = -1
 
-    def step(self, p: float, now_ms: int) -> Optional[Commit]:
+    def step(self, p: float, now_ms: int, rms: Optional[int] = None) -> Optional[Commit]:
         self.frame_index += 1
         ep = self.endpointer
 
-        if ep.on_frame(p, now_ms):                       # :2010
+        if ep.on_frame(p, now_ms, rms):                  # :2010
             self.cap.on_commit(now_ms)                   # :2012
             cut = ep.last_cut
+            # The app's `onFrame` returns a bare Boolean and the service commits the same
+            # way whatever fired it (`commitSegment(engine, EndpointDiag.VAD)`, :2013) —
+            # `kind` is SIMULATOR instrumentation, so a flat cut can be counted separately
+            # in the sweep. A flat cut IS a VAD-path commit as far as the service is
+            # concerned: same `SegmentCapPolicy.onCommit`, same retain-nothing.
             return self._emit(
                 t_ms=now_ms,
-                kind="vad",
+                kind=ep.last_fire_kind or "vad",
                 retain_ms=0,
                 speech_ms=None if cut is None else cut.speech_ms,
                 trail_ms=None if cut is None else cut.trail_ms,
                 prob=None if cut is None else cut.prob,
+                rms=None if cut is None else cut.rms,
             )                                            # :2013 commitSegment(VAD)
 
         if self.cap.cap_exceeded(now_ms):                # :2014  — `else if`
@@ -504,6 +812,7 @@ class ServiceSim:
         cut_point_ms: Optional[int] = None,
         consumed_window: Optional[bool] = None,
         prob: Optional[float] = None,
+        rms: Optional[int] = None,
     ) -> Commit:
         ep = self.endpointer
         # The engine holds every ms since the buffer's start; a retained tail stays behind
@@ -526,11 +835,24 @@ class ServiceSim:
             cut_point_ms=cut_point_ms,
             consumed_window=consumed_window,
             prob=prob,
+            rms=rms,
         )
         self.buffer_start_ms = t_ms + FRAME_MS - retain_ms
         self._merges_at_last_commit = ep.merges
         self._discards_at_last_commit = ep.discards
         return commit
+
+
+def rms_at(rms: Optional[Sequence[Optional[int]]], i: int) -> Optional[int]:
+    """Frame `i`'s chunk RMS, or None when no RMS trace was supplied (or it is short).
+
+    None is NOT zero: `_on_flat` treats an unknown amplitude as not-flat (DECISION 4), so
+    a p-trace with no RMS beside it can never fire a flat cut even with the trigger on.
+    """
+    if rms is None or i >= len(rms):
+        return None
+    v = rms[i]
+    return None if v is None else int(v)
 
 
 def simulate(
@@ -539,6 +861,7 @@ def simulate(
     *,
     base_ms: int = BASE_MS,
     is_cloud_session: bool = False,
+    rms: Optional[Sequence[Optional[int]]] = None,
 ) -> SimResult:
     """Drive one p-trace through the endpointer + the service's cap branch.
 
@@ -546,15 +869,20 @@ def simulate(
     `SileroEndpointerTest.Pump` drives it. The session opens at `base_ms` — i.e. the first
     frame arrives at the same instant the session anchor is stamped, which is the
     conservative direction (the cap clock starts no later than the audio).
+
+    `rms[i]` is frame `i`'s CHUNK RMS (see `on_frame`). Omit it and the flatline proposal
+    can never fire, whatever `Tuning.flatline_enabled` says.
     """
     sim = ServiceSim(tuning, session_open_ms=base_ms, is_cloud_session=is_cloud_session)
     result = SimResult(n_frames=len(probs), base_ms=base_ms, tuning=tuning)
     for i, p in enumerate(probs):
-        commit = sim.step(float(p), base_ms + i * FRAME_MS)
+        commit = sim.step(float(p), base_ms + i * FRAME_MS, rms_at(rms, i))
         if commit is not None:
             result.commits.append(commit)
     result.merges_total = sim.endpointer.merges
     result.discards_total = sim.endpointer.discards
+    result.flat_merges_total = sim.endpointer.flat_merges
+    result.flat_discards_total = sim.endpointer.flat_discards
     end_ms = base_ms + len(probs) * FRAME_MS
     result.tail_ms = max(0, end_ms - sim.buffer_start_ms)
     return result
@@ -570,6 +898,10 @@ EVENT_VAD = "vad"
 EVENT_CAP = "cap"
 EVENT_MERGE = "merge"
 EVENT_DISCARD = "discard"
+#: the flatline PROPOSAL's commit. A `'merge'` or `'discard'` the flat close produced is
+#: reported under those same two words: they are the same two branches, reached from the
+#: other side, and the per-run totals (`SimResult.flat_merges_total`) keep the split.
+EVENT_FLAT = "flat"
 
 
 def event_track(
@@ -578,6 +910,7 @@ def event_track(
     *,
     base_ms: int = BASE_MS,
     is_cloud_session: bool = False,
+    rms: Optional[Sequence[Optional[int]]] = None,
 ) -> Tuple[List[bool], List[str]]:
     """The machine's own account of every frame: `(gate_before, event)` per frame.
 
@@ -604,14 +937,14 @@ def event_track(
     for i, p in enumerate(probs):
         gate.append(ep.speaking)
         merges0, discards0 = ep.merges, ep.discards
-        commit = sim.step(float(p), base_ms + i * FRAME_MS)
+        commit = sim.step(float(p), base_ms + i * FRAME_MS, rms_at(rms, i))
         parts: List[str] = []
         if ep.merges > merges0:
             parts.append(EVENT_MERGE)
         if ep.discards > discards0:
             parts.append(EVENT_DISCARD)
         if commit is not None:
-            parts.append(commit.kind)                  # 'vad' | 'cap', always last
+            parts.append(commit.kind)                  # 'vad' | 'cap' | 'flat', always last
         events.append("+".join(parts))
     return gate, events
 
@@ -622,9 +955,12 @@ def gate_track(
     *,
     base_ms: int = BASE_MS,
     is_cloud_session: bool = False,
+    rms: Optional[Sequence[Optional[int]]] = None,
 ) -> List[bool]:
     """`speaking` as it stands BEFORE each frame is processed — `event_track`'s first half."""
-    return event_track(probs, tuning, base_ms=base_ms, is_cloud_session=is_cloud_session)[0]
+    return event_track(
+        probs, tuning, base_ms=base_ms, is_cloud_session=is_cloud_session, rms=rms
+    )[0]
 
 
 def simulate_coupled(
@@ -634,6 +970,7 @@ def simulate_coupled(
     *,
     base_ms: int = BASE_MS,
     is_cloud_session: bool = False,
+    rms: Optional[Sequence[Optional[int]]] = None,
 ):
     """The HONEST simulation: the probe's LSTM state is reset on every commit, as the app
     does (`probeReset` fires from `clearForNextSegment`, SileroEndpointer.kt:664).
@@ -655,12 +992,14 @@ def simulate_coupled(
     for i, frame in enumerate(frames):
         p = probe(frame)
         probs.append(p)
-        commit = sim.step(p, base_ms + i * FRAME_MS)
+        commit = sim.step(p, base_ms + i * FRAME_MS, rms_at(rms, i))
         if commit is not None:
             result.commits.append(commit)
     result.n_frames = len(probs)
     result.merges_total = sim.endpointer.merges
     result.discards_total = sim.endpointer.discards
+    result.flat_merges_total = sim.endpointer.flat_merges
+    result.flat_discards_total = sim.endpointer.flat_discards
     end_ms = base_ms + len(probs) * FRAME_MS
     result.tail_ms = max(0, end_ms - sim.buffer_start_ms)
     return result, probs

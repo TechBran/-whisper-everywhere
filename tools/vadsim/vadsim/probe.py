@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, List, Optional, Sequence, Tuple
 
@@ -33,6 +33,56 @@ import numpy as np
 from .machine import FRAME_MS, FRAME_SAMPLES
 
 TARGET_RATE = 16_000
+
+# ---------------------------------------------------------------------------------------
+# THE APP'S RMS FACTS. Established from the Kotlin, cited, and reproduced below.
+#
+# `AudioMath.amplitude(buffer, offset, length)` (util/AudioMath.kt:21-37) is the ONLY
+# amplitude the app computes: little-endian PCM16 samples over the byte range (`:29`,
+# `buffer[i + 1].toInt() shl 8` sign-extends the high byte, so the sample is signed), sum
+# of squares / count (`:35`), then `rms.toInt().coerceIn(0, 32767)` — an INT TRUNCATION
+# toward zero (AudioMath.kt:36), not a round, and fewer than 2 bytes returns 0
+# (AudioMath.kt:24).
+#
+# WHERE, and at WHAT GRANULARITY:
+#  * MIC — `StreamingAudioRecorder.kt:80` allocates `ByteArray(1024)` and the loop reads
+#    into it (`:85`), so one read is 1024 bytes = 512 samples = 32 ms at 16 kHz ("Read in
+#    32ms slices (512 samples @16kHz = 1024 bytes)", :75-79). `:87` computes
+#    `AudioMath.amplitude(buffer, read)` over exactly the bytes read, and `:97` forwards
+#    `onChunk(buffer.copyOf(read), amp)`. A SHORT read gives a shorter chunk and an `amp`
+#    over that shorter length — `AudioRecord.read` returns UP TO the buffer size, which
+#    `SileroEndpointer.kt:250-252` names as the reason accumulating to exact frame
+#    boundaries is the contract rather than an optimisation.
+#  * DEVICE AUDIO — `PlaybackAudioCapturer.kt:64` sets `readSize = if (sampleRate == 16000)
+#    1024 else 3072` ("32 ms per read: 1024 bytes @16k, 3072 bytes @48k (decimates to
+#    ~1024)", :63). THE 'out' QUESTION, answered: `:79` computes
+#    `out = decimator?.process(buffer, read) ?: buffer.copyOf(read)` and `:81` computes
+#    `amp = AudioMath.amplitude(out, out.size)` — so `out` is AFTER the 48k->16k
+#    decimation, and the RMS is measured on the 16 kHz samples the endpointer will see,
+#    never on the 48 kHz input. Its size is 1024 bytes on both branches: at 48 kHz,
+#    3072 bytes = 1536 samples = exactly 512 triplets, so `Pcm48kTo16kDecimator.process`
+#    (Pcm48kTo16kDecimator.kt:20-36) emits 512 samples = 1024 bytes with NO carry left
+#    over. Same 32 ms, same 512 samples, same one-RMS-per-chunk as the mic.
+#  * THE SEAM — `FloatingBubbleService.onAudioChunk(chunk, amp)` (:1976) passes that ONE
+#    amp per chunk straight to `endpointer.onFrame(chunk, amp, now)` (:2010), while
+#    `SileroEndpointer.onFrame` (:259-289) splits the chunk into 512-sample frames
+#    internally and probes each one. So the app has one RMS per CHUNK and one `p` per
+#    FRAME, and every frame a chunk completes sees that chunk's RMS. That is the
+#    granularity modelled here — NOT a per-frame RMS, which would make any hold
+#    arithmetic wrong.
+#  * AND IT IS IGNORED — `SileroEndpointer.kt:245`: "@param amp the chunk's RMS, ignored
+#    here — it exists for the amplitude fallback that shares this call shape". The
+#    waveform the owner watches is fed from the same number
+#    (`waveformView.updateAmplitude(amp)`, FloatingBubbleService.kt:1998), which is why a
+#    visible flatline can coexist with no cut.
+# ---------------------------------------------------------------------------------------
+
+#: The MIC path's chunk length — `StreamingAudioRecorder.kt:80` (1024 bytes / 512 samples).
+MIC_CHUNK_MS = 32
+
+#: The DEVICE-AUDIO path's chunk length — `PlaybackAudioCapturer.kt:64` + the decimator.
+#: The same 32 ms on both the native-16 kHz and the 48 kHz-decimated branch.
+DEVICE_CHUNK_MS = 32
 
 #: What the app ships versus what this tool runs. The verifier will read this.
 SILERO_DELTA = """\
@@ -269,6 +319,65 @@ def to_16k_pcm16(wav: Wav, mode: str = "auto") -> Tuple[np.ndarray, str]:
     return q.astype(np.float32) / 32768.0, mode
 
 
+def rms_amplitude(samples: np.ndarray) -> int:
+    """`AudioMath.amplitude` (AudioMath.kt:21-37), exactly.
+
+    `samples` is float32 in [-1, 1) that came out of `to_16k_pcm16`, so it is already on
+    the int16 grid; multiplying by 32768 recovers the integer the Kotlin reads out of the
+    byte array. Then: sum of squares / count, `sqrt` (`:35`), **truncate** to int and
+    clamp to 0..32767 (`rms.toInt().coerceIn(0, 32767)`, AudioMath.kt:36 — toward zero,
+    not rounded). Fewer than one whole sample returns 0, as `:24`'s `end - start < 2` does.
+    """
+    a = np.asarray(samples, dtype=np.float64)
+    if a.size < 1:
+        return 0
+    q = np.rint(a * 32768.0)
+    rms = math.sqrt(float(np.dot(q, q)) / q.size)
+    return int(min(32767, max(0, int(rms))))
+
+
+def chunk_rms(samples: np.ndarray, chunk_ms: int = MIC_CHUNK_MS) -> List[int]:
+    """One RMS per CAPTURE CHUNK, in capture order — the app's `amp` sequence.
+
+    `chunk_ms` is the capture buffer's length: 32 ms on both of the app's paths (see the
+    RMS-facts block at the top of this module). A trailing partial chunk is measured over
+    the bytes it has, which is what a short `AudioRecord.read` produces
+    (`StreamingAudioRecorder.kt:87` passes `read`, not the buffer size).
+    """
+    if chunk_ms < 1:
+        raise ValueError(f"chunk_ms={chunk_ms} must be at least 1 ms")
+    n = chunk_ms * TARGET_RATE // 1000
+    if n < 1:
+        raise ValueError(f"chunk_ms={chunk_ms} is under one sample at 16 kHz")
+    return [rms_amplitude(samples[i:i + n]) for i in range(0, len(samples), n)]
+
+
+def frame_rms(samples: np.ndarray, chunk_ms: int = MIC_CHUNK_MS) -> List[int]:
+    """The chunk RMS as the ENDPOINTER sees it: one value per 512-sample frame.
+
+    A frame is decided inside the `onFrame` call whose chunk supplied its LAST byte
+    (`SileroEndpointer.kt:269-287` accumulates into `frame` and probes the moment it
+    fills), so a frame's RMS is the RMS of the chunk that COMPLETED it. Every frame a
+    chunk completes therefore carries the same value — which is the whole reason a hold
+    can only be satisfied in whole chunks.
+
+    At the app's shipped `chunk_ms = 32` one chunk is exactly one frame and the mapping is
+    the identity; the parameter exists so a different capture buffer can be modelled
+    without re-deriving the arithmetic. It is a LIMITATION at `chunk_ms > 32`: the app
+    stamps ONE `nowMs` on every frame of a chunk (`onFrame`'s `nowMs` is the chunk's,
+    `FloatingBubbleService.kt:2009`), while this simulator's clock always advances 32 ms
+    per frame — so the RMS grouping is modelled and the timestamp collapse is not.
+    """
+    per_chunk = chunk_rms(samples, chunk_ms)
+    n = chunk_ms * TARGET_RATE // 1000
+    out: List[int] = []
+    for f in range(len(samples) // FRAME_SAMPLES):
+        last_sample = (f + 1) * FRAME_SAMPLES - 1
+        idx = min(last_sample // n, len(per_chunk) - 1)
+        out.append(per_chunk[idx])
+    return out
+
+
 def frames_of(samples: np.ndarray) -> Iterator[np.ndarray]:
     """Exactly 512-sample frames. A trailing partial frame is DROPPED, never padded —
     `whisper_jni.cpp:425-427` refuses any frame that is not 1024 bytes, and a zero-padded
@@ -375,10 +484,20 @@ class Trace:
     context_mode: str
     model_path: str
     package_version: str
+    #: per-frame CHUNK RMS (`frame_rms`), 0..32767, or empty when the trace came from a
+    #: CSV that predates the column. Empty means "no amplitude for this trace" and the
+    #: flatline proposal cannot fire on it.
+    rms: List[int] = field(default_factory=list)
+    #: the capture chunk length the RMS was measured over
+    chunk_ms: int = MIC_CHUNK_MS
 
     @property
     def n_frames(self) -> int:
         return len(self.probs)
+
+    @property
+    def has_rms(self) -> bool:
+        return len(self.rms) == len(self.probs) and bool(self.probs)
 
     @property
     def wall_ms(self) -> int:
@@ -394,8 +513,10 @@ class Trace:
             "model_path": self.model_path,
             "package_version": self.package_version,
             "frame_ms": FRAME_MS,
+            "chunk_ms": self.chunk_ms,
             "n_frames": self.n_frames,
             "probs": [round(p, 6) for p in self.probs],
+            "rms": list(self.rms),
         }
 
 
@@ -405,13 +526,20 @@ def probe_wav(
     resample: str = "auto",
     context: str = "carry",
     model_path: str | Path | None = None,
+    chunk_ms: int = MIC_CHUNK_MS,
 ) -> Trace:
-    """The whole front half: wav -> 16 kHz PCM16 -> 512-sample frames -> one p per frame.
+    """The whole front half: wav -> 16 kHz PCM16 -> 512-sample frames -> one p per frame,
+    plus the per-frame CHUNK RMS beside it.
 
     The LSTM state is carried straight through, with NO resets. The app resets it on every
     commit, which couples the trace to the tuning — see `machine.simulate_coupled`. A single
     reset-free trace is what makes the sweep in `analyze.py` comparable across tunings, and
     the coupling is measured separately rather than assumed away.
+
+    `p` IS UNCHANGED by the RMS work: the frames handed to the probe, their order and the
+    carried state are exactly what they were. The RMS is computed from the SAME quantised
+    16 kHz samples, in `chunk_ms` blocks, with `AudioMath`'s own semantics — see
+    `frame_rms` and the RMS-facts block at the top of this module.
     """
     wav = read_wav(path)
     samples, mode = to_16k_pcm16(wav, resample)
@@ -426,6 +554,8 @@ def probe_wav(
         context_mode=context,
         model_path=probe.model_path,
         package_version=silero_package_version(),
+        rms=frame_rms(samples, chunk_ms),
+        chunk_ms=chunk_ms,
     )
 
 
@@ -438,17 +568,49 @@ def frames_from_wav(
     return list(frames_of(samples)), mode, wav
 
 
+def frames_and_rms_from_wav(
+    path: str | Path, *, resample: str = "auto", chunk_ms: int = MIC_CHUNK_MS
+) -> Tuple[List[np.ndarray], List[int], str, Wav]:
+    """`frames_from_wav` plus the per-frame chunk RMS, for a COUPLED run with the flatline
+    proposal on — the frames drive the probe, the RMS drives the trigger, both off the same
+    quantised samples."""
+    wav = read_wav(path)
+    samples, mode = to_16k_pcm16(wav, resample)
+    return list(frames_of(samples)), frame_rms(samples, chunk_ms), mode, wav
+
+
 def write_trace_csv(trace: Trace, out_path: str | Path, base_ms: int) -> None:
-    lines = ["frame,t_ms,p"]
+    """`frame,t_ms,p` — plus an `rms` column when the trace has one.
+
+    The column is APPENDED, so a reader that wants only `p` keeps working on both shapes
+    and a CSV written before the column existed still loads.
+    """
+    with_rms = trace.has_rms
+    lines = ["frame,t_ms,p,rms" if with_rms else "frame,t_ms,p"]
     for i, p in enumerate(trace.probs):
-        lines.append(f"{i},{base_ms + i * FRAME_MS},{p:.6f}")
+        row = f"{i},{base_ms + i * FRAME_MS},{p:.6f}"
+        if with_rms:
+            row += f",{trace.rms[i]}"
+        lines.append(row)
     Path(out_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def load_trace_csv(path: str | Path) -> List[float]:
-    out: List[float] = []
+    """The p column alone — column INDEX 2, not the last field, so a 4-column CSV with an
+    `rms` beside it does not silently load the amplitudes as probabilities."""
+    return load_trace_csv_full(path)[0]
+
+
+def load_trace_csv_full(path: str | Path) -> Tuple[List[float], List[int]]:
+    """`(probs, rms)`. `rms` is empty for a 3-column CSV — no amplitude was recorded, and
+    the flatline proposal cannot fire on a trace that has none."""
+    probs: List[float] = []
+    rms: List[int] = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("frame"):
             continue
-        out.append(float(line.rsplit(",", 1)[1]))
-    return out
+        cols = line.split(",")
+        probs.append(float(cols[2]))
+        if len(cols) > 3 and cols[3] != "":
+            rms.append(int(cols[3]))
+    return probs, (rms if len(rms) == len(probs) else [])

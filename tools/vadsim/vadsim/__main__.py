@@ -58,7 +58,30 @@ def build_parser() -> argparse.ArgumentParser:
                         "cadence floor is the flat 3000 ms request floor for every tier "
                         "(CommitCadencePolicy.kt:163); --floor overrides")
 
+    x = p.add_argument_group(
+        "the FLATLINE trigger — a PROPOSAL, default OFF (machine.SileroEndpointerSim._on_flat)"
+    )
+    x.add_argument("--flatline-rms", type=int, default=None,
+                   help="ENABLES the trigger. Chunk-RMS floor in AudioMath's 0..32767 "
+                        f"units; a frame strictly below it is 'flat' (default when only "
+                        f"--flatline-hold is given: {machine.DEFAULT_TUNING.flatline_rms})")
+    x.add_argument("--flatline-hold", type=int, default=None,
+                   help="ENABLES the trigger. How long the flat run must hold before it "
+                        "closes the utterance, measured exactly as the hangover measures a "
+                        "dip (default when only --flatline-rms is given: "
+                        f"{machine.DEFAULT_TUNING.flatline_hold_ms})")
+    x.add_argument("--no-flat-sweep", action="store_true",
+                   help="skip the 26-row flatline sweep (section 12)")
+    x.add_argument("--phone-capture", default=None,
+                   help="a threadtime logcat txt: print the phone's inter-commit intervals "
+                        "(from the native `encode:` lines) beside the simulator's for the "
+                        "same audio, aligned at the first commit. A CROSS-CHECK, not a fit")
+
     f = p.add_argument_group("front end")
+    f.add_argument("--chunk-ms", type=int, default=probe_mod.MIC_CHUNK_MS,
+                   help="capture chunk the RMS is measured over; 32 on BOTH of the app's "
+                        "paths (mic StreamingAudioRecorder.kt:80, device audio "
+                        "PlaybackAudioCapturer.kt:64 + the 3:1 decimator)")
     f.add_argument("--resample", choices=("auto", "sinc", "device48k"), default="auto",
                    help="auto = the app's own 3-tap decimator for 48 kHz input, sinc otherwise")
     f.add_argument("--context", choices=probe_mod.CONTEXT_MODES, default="carry",
@@ -96,6 +119,11 @@ def tuning_from_args(a: argparse.Namespace) -> Tuning:
         floor = CLOUD_FLOOR_MS
     else:
         floor = _tier_floor(a.tier)
+    # THE FLATLINE TRIGGER IS OPT-IN, AND EITHER FLAG OPTS IN. Naming one constant and
+    # leaving the other at its default is the common case ("what does a hold of 224 do?"),
+    # so requiring both would make every such run a two-flag ritual. Naming NEITHER leaves
+    # `flatline_enabled = False`, which is what makes a bare run byte-identical to 50d7466.
+    flat_on = a.flatline_rms is not None or a.flatline_hold is not None
     return machine.with_overrides(
         Tuning(),
         onset=a.onset,
@@ -107,6 +135,10 @@ def tuning_from_args(a: argparse.Namespace) -> Tuning:
         first_cap_ms=a.first_cap,
         cap_ms=a.cap,
         cap_cut_max_retain_ms=a.cap_retain,
+        flatline_enabled=flat_on or None,
+        flatline_rms=a.flatline_rms,
+        flatline_hold_ms=a.flatline_hold,
+        chunk_ms=a.chunk_ms,
     )
 
 
@@ -127,7 +159,9 @@ def _ms(v: Optional[int]) -> str:
 
 
 def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
-                    forensics, sweep_rows, coupled) -> str:
+                    forensics, sweep_rows, coupled, rms_hist=None, dip_rms_rows=None,
+                    cap_flat_rows=None, flat_rows=None, phone=None,
+                    flat_hist_rows=None) -> str:
     L: List[str] = []
     add = L.append
 
@@ -189,9 +223,53 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
             ["MAX_SEGMENT_WALL_MS", f"{t.cap_ms}", "the dump"],
             ["CAP_CUT_MAX_RETAIN_MS", f"{t.cap_cut_max_retain_ms}",
              "an offer older than this is stale -> retain 0"],
+            ["FLATLINE (proposal)",
+             "ON" if t.flatline_enabled else "**off** (shipped behaviour)",
+             (f"rms < {t.flatline_rms} held {t.flatline_hold_ms} ms -> "
+              f"fires on flat frame {t.flatline_frames()}; the hold rounds to "
+              f"{t.flatline_hold_chunks()} chunk(s) of {t.chunk_ms} ms = "
+              f"{t.flatline_effective_hold_ms()} ms"
+              if t.flatline_enabled
+              else "nothing in the app implements it; --flatline-rms/--flatline-hold "
+                   "turn it on here for measurement only")],
         ],
     ))
     add("")
+    if t.flatline_enabled:
+        add(f"**THE FLATLINE TRIGGER IS ON — this is a PROPOSAL, not the app.** It is "
+            f"evaluated only after Silero's `onProb` has declined a frame, so a hangover "
+            f"close and a flat hold coming due together produce ONE commit and it is "
+            f"Silero's. One RMS covers a whole {t.chunk_ms} ms chunk "
+            f"(`AudioMath.amplitude` per capture buffer — `StreamingAudioRecorder.kt:87`, "
+            f"`PlaybackAudioCapturer.kt:81`), so the hold can only be satisfied in whole "
+            f"chunks: **{t.flatline_hold_ms} ms resolves to "
+            f"{t.flatline_effective_hold_ms()} ms**, and two holds inside one chunk cannot "
+            f"be told apart.")
+        add("")
+        add(f"**What this hold actually needs: {t.flatline_fire_chunks()} consecutive flat "
+            f"chunks** ({t.flatline_fire_chunks() * t.chunk_ms} ms of flat audio — the run's "
+            f"first chunk is age 0). A gap of digital silence supplies that many whole chunks "
+            f"only when it is **>= {t.flatline_gap_aligned_ms()} ms AND starts on a chunk "
+            f"boundary**; at an arbitrary alignment against the capture grid — which is "
+            f"where a real editor's gate falls — it must be **>= {t.flatline_gap_any_ms()} "
+            f"ms** to be certain, because the gap's first and last chunks straddle speech "
+            f"and one millisecond of speech in a chunk already reads hundreds of RMS. "
+            f"Compare that number, not the knob, against the 100-300 ms an editor leaves. "
+            f"A port should count **{t.flatline_fire_chunks()} chunks** rather than "
+            f"re-deriving a wall-clock hold: the phone stamps chunks with "
+            f"`System.currentTimeMillis()` at delivery, which is bursty, and a hold that is "
+            f"an exact multiple of {t.chunk_ms} sits on a band edge there.")
+        add("")
+        if t.chunk_ms != FRAME_MS:
+            add(f"**`--chunk-ms {t.chunk_ms}` LIMITATION.** The RMS grouping is modelled at "
+                f"this chunk size but the clock is not: this simulator stamps every frame "
+                f"32 ms apart, while the app stamps ONE `nowMs` on every frame of a chunk "
+                f"(`FloatingBubbleService.kt:2009`). The hold can therefore fire up to one "
+                f"chunk EARLIER here than on the device (a 96 ms hold at a 128 ms chunk fires "
+                f"inside the first flat chunk here and needs a second on the phone). Both of "
+                f"the app's paths deliver 32 ms chunks; use this flag to reason, not to "
+                f"choose.")
+            add("")
     add(f"**A pause must hold {t.hangover_frames()} consecutive frames below "
         f"{t.release:.2f} — {t.hangover_frames() * FRAME_MS} ms of audio — before the "
         f"hangover can cut.** Anything shorter, and anything that never drops below "
@@ -305,6 +383,9 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
             ["commits", int(summ["commits"])],
             ["VAD cuts", f"{int(summ['vad'])} ({summ['vad_pct']:.0f} %)"],
             ["CAP cuts", f"{int(summ['cap'])} ({summ['cap_pct']:.0f} %)"],
+            ["FLAT cuts (the proposal)",
+             f"{int(summ['flat'])} ({summ['flat_pct']:.0f} %)"
+             + ("" if t.flatline_enabled else " — trigger off")],
             ["mean chunk", f"{summ['mean_chunk_ms']:.0f} ms"],
             ["p95 chunk", f"{summ['p95_chunk_ms']:.0f} ms"],
             ["governor merges", int(summ["merges"])],
@@ -318,11 +399,12 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
     if result.commits:
         add(_table(
             ["t (ms)", "kind", "chunk (ms)", "speech (ms)", "trail (ms)", "retain (ms)",
-             "merged inside", "discarded inside", "cap"],
+             "merged inside", "discarded inside", "cap", "p", "rms"],
             [
                 [f"{c.t_ms - trace_base(a):,}", c.kind, f"{c.chunk_ms:,}",
                  _ms(c.speech_ms), _ms(c.trail_ms), c.retain_ms,
-                 c.merged_endpoints_inside, c.discarded_bursts_inside, _ms(c.cap_ms)]
+                 c.merged_endpoints_inside, c.discarded_bursts_inside, _ms(c.cap_ms),
+                 "—" if c.prob is None else f"{c.prob:.3f}", _ms(c.rms)]
                 for c in result.commits
             ],
         ))
@@ -406,6 +488,205 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
             "probabilities through `probeReset` (SileroEndpointer.kt:664).")
         add("")
 
+    # 10 ----------------------------------------------------------------------------
+    if rms_hist is not None:
+        add("## 10. RMS — the amplitude the endpointer ignores")
+        add("")
+        add(f"One `AudioMath.amplitude` per {trace.chunk_ms} ms capture chunk "
+            f"(`AudioMath.kt:21-36`), applied to every 512-sample frame that chunk "
+            f"completes. The app computes exactly this number and hands it to "
+            f"`endpointer.onFrame(chunk, amp, now)`, which **ignores it** "
+            f"(`SileroEndpointer.kt:245`) — and feeds the same number to the waveform "
+            f"(`FloatingBubbleService.kt:1998`). That is why the bubble can visibly "
+            f"flatline where nothing gets cut.")
+        add("")
+        add(_table(
+            ["rms bucket", "speech (p>=%.2f)" % t.onset, "dead band", "silence", "no verdict",
+             "total"],
+            [[r.label, r.speech, r.dead_band, r.silence, r.no_verdict, r.total]
+             for r in rms_hist],
+        ))
+        add("")
+        add("**Read the `speech` column first.** A candidate `flatline_rms` is only safe "
+            "where that column is empty below it: a speech frame under the threshold is a "
+            "mid-word cut waiting to happen, and `no_context = true` "
+            "(`whisper_jni.cpp:846`) makes such a cut unrepairable. Natural room tone "
+            "measures 50-300 here; an editor's gate measures 0.")
+        add("")
+        if dip_rms_rows:
+            listed = sorted(dip_rms_rows, key=lambda d: -d.span_ms)
+            if a.max_dips > 0:
+                listed = listed[: a.max_dips]
+            add(_table(
+                ["start (ms)", "span (ms)", "kind", "gate", "outcome", "quiet frames",
+                 "min rms (quiet)", "median rms (quiet)", "min rms (all)",
+                 "median rms (all)"],
+                [[f"{d.start_ms - trace_base(a):,}", d.span_ms, d.kind,
+                  "open" if d.gate_open else "SHUT", d.outcome, d.quiet_frames,
+                  _ms(d.min_rms), _ms(d.median_rms), _ms(d.min_rms_all),
+                  _ms(d.median_rms_all)]
+                 for d in listed],
+            ))
+            add("")
+            add("`min rms (quiet)` / `median rms (quiet)` are over the dip's "
+                "below-RELEASE frames only — the ones the hangover counts. The `(all)` "
+                "pair is over the whole dip, so a dead-band dip (no quiet frames at all) "
+                "still reports an amplitude.")
+            add("")
+
+    # 11 ----------------------------------------------------------------------------
+    if cap_flat_rows is not None:
+        add("## 11. Flat runs — what each hold has to work with")
+        add("")
+        if flat_hist_rows:
+            labels = list(flat_hist_rows[0].counts)
+            add(_table(
+                ["threshold", "runs"] + [f"{lb} fr" for lb in labels]
+                + [f">={k} (hold {(k - 1) * FRAME_MS})" for k in (4, 5, 6, 8, 11)],
+                [[("==0" if r.threshold <= 0 else f"<{r.threshold}"), r.n_runs]
+                 + [r.counts[lb] for lb in labels]
+                 + [r.at_least[k] for k in (4, 5, 6, 8, 11)]
+                 for r in flat_hist_rows],
+            ))
+            add("")
+            add("Every maximal run of consecutive frames under the threshold, over the WHOLE "
+                "clip, by length in frames (32 ms each). The right-hand columns are the "
+                "runs a hold needing that many flat chunks can fire on — `>=5` is what a "
+                "128 ms hold sees, `>=4` a 96 ms hold. Runs of `>=12` are the ones Silero's "
+                "own 350 ms hangover already cuts when `p` also drops (it does on digital "
+                "silence). The band a hold BUYS is therefore the runs between its column and "
+                "`>=12`; a threshold whose short runs (1-3) are numerous while the speech "
+                "column of section 10 is non-empty under it is reading soft speech, not gates.")
+            add("")
+        add("### Per CAP chunk")
+        add("")
+        if not cap_flat_rows:
+            add("_No cap cut fired._")
+        else:
+            cands = list(analyze.FLAT_CANDIDATE_RMS)
+            add(_table(
+                ["t (ms)", "cap", "chunk (ms)", "frames", "min rms"]
+                + [("==0" if c <= 0 else f"<{c}") for c in cands],
+                [[f"{r.t_ms - trace_base(a):,}", _ms(r.cap_ms), f"{r.chunk_ms:,}",
+                  r.n_frames, _ms(r.min_rms)]
+                 + [f"{r.runs[c]}f / {r.runs_ms[c]}ms" for c in cands]
+                 for r in cap_flat_rows],
+            ))
+            add("")
+            add(f"Each threshold column is the LONGEST run of consecutive frames under it "
+                f"inside that chunk — what a flat hold would have had to work with. A hold "
+                f"of H ms needs `H/32 + 1` frames, so at 128 ms that is 5 frames "
+                f"(160 ms of audio). The `==0` column is exact digital silence: a strict "
+                f"`rms < 0` can never fire, so 0 is reported as the zero run instead.")
+            add("")
+
+    # 12 ----------------------------------------------------------------------------
+    if flat_rows:
+        add("## 12. Flatline sweep — `flatline_rms` x `hold`, with MID-WORD RISK")
+        add("")
+        add(_table(
+            ["flatline_rms", "hold", "flat chunks", "gap (any align)", "commits", "flat %",
+             "vad %", "cap %", "mean chunk", "p95 chunk", "duty", "RISK (p, 3 frames)",
+             "SPLITS", "**BRIDGED**", "**BRIDGED, not digital 0**", "flat merges",
+             "flat discards"],
+            [
+                [("**OFF (baseline)**" if not r.enabled else r.flatline_rms),
+                 _ms(r.hold_ms),
+                 "—" if not r.enabled else replace(
+                     t, flatline_hold_ms=r.hold_ms).flatline_fire_chunks(),
+                 "—" if not r.enabled else _ms(replace(
+                     t, flatline_hold_ms=r.hold_ms).flatline_gap_any_ms()),
+                 r.commits,
+                 f"{r.flat_pct:.0f}", f"{r.vad_pct:.0f}", f"{r.cap_pct:.0f}",
+                 f"{r.mean_chunk_ms:.0f}", f"{r.p95_chunk_ms:.0f}",
+                 f"{r.turbo_duty * 100:.0f} %",
+                 r.mid_word_risk, r.mid_word_splits,
+                 r.bridged,
+                 f"**{r.bridged_nonzero}**" if r.bridged_nonzero else "0",
+                 r.flat_merges, r.flat_discards]
+                for r in flat_rows
+            ],
+        ))
+        add("")
+        add("The first row is the SHIPPED machine with the trigger off — every other row "
+            "is a delta against it. Hangover, release and cap stay at their defaults "
+            f"throughout, at the {t.min_commit_interval_ms} ms cadence floor. `flat "
+            "chunks` is how many consecutive flat chunks the hold needs; `gap (any align)` "
+            "is the shortest digital-silence gap that reliably supplies them when the gap "
+            "does not start on a chunk boundary (a real editor's gate does not).")
+        add("")
+        add("**BRIDGED, not digital 0 is the column that decides whether any of this "
+            "ships.** `BRIDGED` counts flat cuts after which Silero speech (`p >= %.2f`) "
+            "resumes within the hangover (%d frames) — boundaries the shipped machine would "
+            "NOT have made. On edited audio that is every intended cut, so the count is "
+            "expected to equal the flat cuts; what separates a good bridge from a bad one "
+            "is the audio it bridged. **`BRIDGED, not digital 0`** is the subset whose flat "
+            "run was not exact silence — a boundary Silero would not have made, across "
+            "audio that was not an editor's gate: a soft word, a breath, room tone under a "
+            "threshold set too high. `no_context = true` (`whisper_jni.cpp:846`) makes such "
+            "a cut unrepairable. Any value above 0 here rejects the row; on the phone a "
+            "decoded silent stream may read 1-3 RMS rather than 0, so also read the run "
+            "maxima in the JSON before trusting a 0." % (t.onset, t.hangover_frames()))
+        add("")
+        add("`RISK (p, 3 frames)` and `SPLITS` are kept for continuity but are WEAK "
+            "instruments: they read `p` on the cut frame and its neighbours, and on flat "
+            "audio `p` is ~0 whether the flatness is an editor's gate or a soft stretch "
+            "inside a word — so they read 0 by construction on gated audio, miss a "
+            "dead-band soft segment inside a word entirely, and flip with hold parity "
+            "(a 96 ms hold reads 0 and a 128 ms hold reads N-1 on the same gaps). They "
+            "are not evidence of safety.")
+        add("")
+
+    # 13 ----------------------------------------------------------------------------
+    if phone is not None:
+        encodes, align = phone
+        add("## 13. Phone cross-check — the `encode:` lines beside the simulation")
+        add("")
+        add(f"`{a.phone_capture}` — {len(encodes)} native `encode:` line(s), "
+            f"{max(0, len(encodes) - 1)} interval(s).")
+        add("")
+        add("**A CROSS-CHECK, NOT A FIT.** The timestamp on an `encode:` line is when the "
+            "encode FINISHED, not when the endpointer cut: a commit precedes its line by "
+            "the encode cost (~1.78 s on npu-turbo, near constant because the input is a "
+            "fixed 30 s window) plus any queue wait. Only the INTERVALS survive that "
+            "offset, and only while the queue is not backing up. Nothing here is tuned to "
+            "make the two columns agree.")
+        add("")
+        if align is None:
+            add("_No commit on one of the two sides — nothing to align._")
+        else:
+            add(_table(
+                ["metric", "value"],
+                [
+                    ["phone commits (`encode:` lines)", align.n_phone],
+                    ["simulator commits", align.n_sim],
+                    ["index-paired", align.n_pairs],
+                    ["matched within 1 s", align.within_1s],
+                    ["matched within 3 s", align.within_3s],
+                    ["unmatched (outside 3 s, plus the surplus)", align.unmatched],
+                ],
+            ))
+            add("")
+            rows = []
+            for k in range(align.n_pairs):
+                rows.append([
+                    k,
+                    f"{align.phone_intervals_ms[k - 1]:,}" if k else "—",
+                    f"{align.sim_intervals_ms[k - 1]:,}" if k else "—",
+                    f"{align.delta_ms[k]:+,}",
+                ])
+            add(_table(
+                ["#", "phone interval (ms)", "sim interval (ms)",
+                 "cumulative delta (ms)"],
+                rows,
+            ))
+            add("")
+            add("`cumulative delta` is `(sim - sim[0]) - (phone - phone[0])`: positive "
+                "means the simulator cut LATER than the phone, relative to each side's own "
+                "first commit. A steadily growing delta means one side is producing commits "
+                "the other is not — read the interval columns to see which.")
+            add("")
+
     add("---")
     add("")
     add("Generated by `tools/vadsim`. The state machine is ported branch-by-branch from "
@@ -431,7 +712,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     t = tuning_from_args(a)
 
     if a.load_trace:
-        probs = probe_mod.load_trace_csv(a.load_trace)
+        probs, rms = probe_mod.load_trace_csv_full(a.load_trace)
         trace = probe_mod.Trace(
             probs=probs,
             path=f"{a.wav} (p-trace from {a.load_trace})",
@@ -441,17 +722,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             context_mode="n/a",
             model_path="n/a",
             package_version=probe_mod.silero_package_version(),
+            rms=rms,
+            chunk_ms=a.chunk_ms,
         )
+        if t.flatline_enabled and not trace.has_rms:
+            sys.stderr.write(
+                f"vadsim: {a.load_trace} has no `rms` column, so the flatline trigger "
+                "cannot fire on it — an unknown amplitude is never treated as flat. "
+                "Re-save the trace (--save-trace) to get the column.\n"
+            )
     else:
         trace = probe_mod.probe_wav(
-            a.wav, resample=a.resample, context=a.context, model_path=a.model
+            a.wav, resample=a.resample, context=a.context, model_path=a.model,
+            chunk_ms=a.chunk_ms,
         )
 
     if a.save_trace:
         probe_mod.write_trace_csv(trace, a.save_trace, a.base_ms)
 
+    # The RMS trace is passed to the machine ALWAYS and gated inside it by
+    # `Tuning.flatline_enabled` — a default run therefore behaves exactly as it did
+    # before the RMS existed, and there is one place (`_on_flat`'s first line) where that
+    # is true rather than one per call site.
+    rms_trace = trace.rms if trace.has_rms else None
+
     result = machine.simulate(
-        trace.probs, t, base_ms=a.base_ms, is_cloud_session=a.cloud
+        trace.probs, t, base_ms=a.base_ms, is_cloud_session=a.cloud, rms=rms_trace
     )
     dips = analyze.find_dips(
         trace.probs, t, base_ms=a.base_ms, is_cloud_session=a.cloud
@@ -463,12 +759,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         is_cloud_session=a.cloud,
     )
 
+    rms_hist = dip_rms_rows = cap_flat_rows = flat_rows = flat_hist_rows = None
+    if rms_trace is not None:
+        rms_hist = analyze.rms_histogram(trace.probs, rms_trace, t)
+        dip_rms_rows = analyze.dip_rms(dips, trace.probs, rms_trace, t, base_ms=a.base_ms)
+        cap_flat_rows = analyze.cap_chunk_flat_runs(result, rms_trace, base_ms=a.base_ms)
+        flat_hist_rows = analyze.flat_run_histogram(rms_trace)
+        if not a.no_flat_sweep:
+            flat_rows = analyze.flat_sweep(
+                trace.probs, rms_trace, t, base_ms=a.base_ms,
+                floor_ms=t.min_commit_interval_ms, is_cloud_session=a.cloud,
+            )
+
+    phone = None
+    if a.phone_capture:
+        encodes = analyze.parse_phone_capture_file(a.phone_capture)
+        phone = (encodes, analyze.align_phone_and_sim(encodes, result))
+
     coupled = None
     if a.coupled and not a.load_trace:
-        frames, _mode, _wav = probe_mod.frames_from_wav(a.wav, resample=a.resample)
+        frames, crms, _mode, _wav = probe_mod.frames_and_rms_from_wav(
+            a.wav, resample=a.resample, chunk_ms=a.chunk_ms
+        )
         p2 = probe_mod.SileroProbe(model_path=a.model, context=a.context)
         coupled = machine.simulate_coupled(
-            frames, p2, t, base_ms=a.base_ms, is_cloud_session=a.cloud
+            frames, p2, t, base_ms=a.base_ms, is_cloud_session=a.cloud, rms=crms
         )
 
     if a.json:
@@ -488,7 +803,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "cap_forensics": [f.to_dict() for f in forensics],
             "sweep": None if sweep_rows is None else [r.to_dict() for r in sweep_rows],
             "silero_delta": probe_mod.SILERO_DELTA,
+            "rms_histogram": None if rms_hist is None else [r.to_dict() for r in rms_hist],
+            "dip_rms": None if dip_rms_rows is None else [r.to_dict() for r in dip_rms_rows],
+            "cap_flat_runs": (
+                None if cap_flat_rows is None else [r.to_dict() for r in cap_flat_rows]
+            ),
+            "flat_run_histogram": (
+                None if flat_hist_rows is None else [r.to_dict() for r in flat_hist_rows]
+            ),
+            "flat_sweep": None if flat_rows is None else [r.to_dict() for r in flat_rows],
+            "mid_word_risk_frames": analyze.mid_word_risk_frames(
+                result, trace.probs, t, base_ms=a.base_ms
+            ),
+            "mid_word_split_frames": analyze.mid_word_split_frames(
+                result, trace.probs, t, base_ms=a.base_ms
+            ),
+            "mid_word_bridge_frames": analyze.mid_word_bridge_frames(
+                result, trace.probs, t, base_ms=a.base_ms
+            ),
+            "flat_run_max_rms": (
+                None if rms_trace is None
+                else {str(k): v for k, v in analyze.flat_run_max_rms(
+                    result, rms_trace, t, base_ms=a.base_ms).items()}
+            ),
+            "flatline_fire_chunks": t.flatline_fire_chunks(),
+            "flatline_gap_aligned_ms": t.flatline_gap_aligned_ms(),
+            "flatline_gap_any_ms": t.flatline_gap_any_ms(),
         }
+        if phone is not None:
+            encodes, align = phone
+            out["phone_capture"] = {
+                "path": a.phone_capture,
+                "encodes": [e.to_dict() for e in encodes],
+                "alignment": None if align is None else align.to_dict(),
+            }
         if coupled is not None:
             cres, cprobs = coupled
             out["coupled"] = {
@@ -500,7 +848,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stdout.write("\n")
     else:
         sys.stdout.write(
-            render_markdown(a, t, trace, result, dips, hist, forensics, sweep_rows, coupled)
+            render_markdown(
+                a, t, trace, result, dips, hist, forensics, sweep_rows, coupled,
+                rms_hist=rms_hist, dip_rms_rows=dip_rms_rows,
+                cap_flat_rows=cap_flat_rows, flat_rows=flat_rows, phone=phone,
+                flat_hist_rows=flat_hist_rows,
+            )
             + "\n"
         )
     return 0
