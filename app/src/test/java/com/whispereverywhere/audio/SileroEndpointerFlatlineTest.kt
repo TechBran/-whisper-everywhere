@@ -210,6 +210,54 @@ class SileroEndpointerFlatlineTest {
         )
     }
 
+    /**
+     * DECISION 4's floor AT ITS EDGE — the one amplitude band no other fixture in this file visits.
+     * Every trace here drives 0 (an editor's gate), 100 (room tone) or 3 000 (a word), so the whole
+     * 1..99 band is unvisited and `if (amp > EndpointerTuning.FLATLINE_RMS_MAX)`
+     * (`SileroEndpointer.kt:767`) could be spelled `>=` with the suite still green: the tuning
+     * pin would catch the constant MOVING, nothing caught the comparison FLIPPING.
+     *
+     * The floor is INCLUSIVE — "chunk RMS AT OR BELOW this is flat", `EndpointerTuning.kt:190` —
+     * and this is the single value where that word is load-bearing, because it is also the one
+     * value at which the constant differs from the simulator's strict `rms < flatline_rms`
+     * (whose default is therefore this floor plus one, `machine.py:101`).
+     *
+     * Both amplitudes are DERIVED from the constant. A literal 10 and 11 here would pin the
+     * fixture to today's floor and go green again the moment an owner moved it.
+     */
+    @Test fun a_chunk_exactly_at_the_floor_is_flat_and_one_unit_above_it_resets_the_run() {
+        val atTheFloor = EndpointerTuning.FLATLINE_RMS_MAX
+        val justAbove = EndpointerTuning.FLATLINE_RMS_MAX + 1
+
+        // AT the floor: flat. Five of them close the utterance exactly as digital zero does, with
+        // the same bookkeeping — the pending end is the run's first frame (dead band, so Silero
+        // stamped nothing) and the trail is the hold.
+        val (ep, _, pump) = fresh()
+        pump.run(P_SPEECH, SPEECH_RMS, 12)
+        assertFalse("four at the floor are one short", pump.run(P_GAP_DEADBAND, atTheFloor, FLAT_CHUNKS - 1))
+        assertTrue("the fifth AT the floor fires: the floor is inclusive", pump.run(P_GAP_DEADBAND, atTheFloor, 1))
+        assertEquals(
+            EndpointCut(12 * EndpointerTuning.FRAME_MS, FLAT_TRAIL_MS, P_GAP_DEADBAND, EndpointCutKind.FLAT),
+            ep.lastCut(),
+        )
+
+        // ONE UNIT ABOVE: not flat — and it does not merely fail to count, it RESETS the run
+        // (DECISION 4), so the four before it are forgotten and the next run needs its own five.
+        val (ep2, _, pump2) = fresh()
+        pump2.run(P_SPEECH, SPEECH_RMS, 12)                                      // frames 0..11
+        assertFalse(pump2.run(P_GAP_DEADBAND, atTheFloor, FLAT_CHUNKS - 1))      // frames 12..15
+        assertFalse("one unit above the floor is not flat", pump2.run(P_GAP_DEADBAND, justAbove, 1))   // frame 16
+        assertFalse(
+            "and it zeroed the run, so four more are still one short",
+            pump2.run(P_GAP_DEADBAND, atTheFloor, FLAT_CHUNKS - 1),               // frames 17..20
+        )
+        assertTrue("the fifth of the SECOND run fires", pump2.run(P_GAP_DEADBAND, atTheFloor, 1))      // frame 21
+        assertEquals(1, pump2.commits)
+        // The gate opened at frame 0 and never closed, and the second run starts at frame 17.
+        assertEquals(17 * EndpointerTuning.FRAME_MS, ep2.lastCut()!!.speechMs)
+        assertEquals(FLAT_TRAIL_MS, ep2.lastCut()!!.trailMs)
+    }
+
     // ---------------------------------------------------------------------------------------
     // 4. The governor's MERGE branch, reached from the flat side.
     // ---------------------------------------------------------------------------------------
@@ -573,5 +621,73 @@ class SileroEndpointerFlatlineTest {
         assertFalse("the ninth half-chunk completes no frame", pump.run(P_GAP_DEADBAND, GATED_RMS, 1, bytes = B / 2))
         assertTrue("the tenth completes the fifth flat frame", pump.run(P_GAP_DEADBAND, GATED_RMS, 1, bytes = B / 2))
         assertEquals(EndpointCutKind.FLAT, ep.lastCut()!!.kind)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // 11. DECISION 8 — the flat path writes no micro-pause offer of its own.
+    //     AN OPEN OWNER RULING, pinned in the direction it was taken.
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * DECISION 8 IS AN OPEN OWNER RULING, AND THIS IS THE DIRECTION IT WAS TAKEN. The simulator
+     * records the symmetric alternative — promote `prevEndMs` on the flat frame, as `onProb:657`
+     * does on a sub-RELEASE frame — as an open question for the owner (`machine.py`'s `_on_flat`
+     * docstring, DECISION 8; `vadsim-flatline-build.md` UNSURE #3), and the Kotlin took the
+     * simulator's choice: the flat path writes no `prevEndMs` at all. Until the ruling lands, both
+     * directions are defensible and NEITHER was pinned, so the choice could have flipped in a
+     * tidy-up with the whole suite still green. This test is the alarm, not an argument.
+     *
+     * WHAT FLIPPING IT WOULD CHANGE. [SileroEndpointer.pendingCutPointMs] is the wall cap's retain
+     * offer (`CommitCadencePolicy.capCutRetainMs`), and a MERGE is the one flat outcome that closes
+     * the gate WITHOUT clearing it — a commit runs `clearForNextSegment`, a discard leaves nothing
+     * to offer. So after a flat boundary that merged under the governor, a promoting flat frame
+     * would hand the next CAP CUT that boundary to retain audio from, where today the cap is
+     * offered nothing and dumps the window whole. Device-audio sessions only, and only after a
+     * merge — which is exactly why it is cheap to leave open and cheap to get silently wrong.
+     *
+     * The trace puts the gap in the DEAD BAND, so `onProb` returns at its RELEASE guard having
+     * written nothing at all: every millisecond that could appear in `prevEndMs` here would be the
+     * flat path's own.
+     */
+    @Test fun a_merged_flat_boundary_offers_the_wall_cap_no_cut_point_of_its_own() {
+        val (ep, _, pump) = fresh(minCommitIntervalMs = 2_000L)
+        assertTrue("the session's first cut is free", pump.gatedWord())
+        assertEquals(
+            "the commit cleared the offer with the rest of the segment",
+            Endpointer.NO_CUT_POINT,
+            ep.pendingCutPointMs(),
+        )
+
+        assertFalse("inside the governor's floor: merged, not committed", pump.gatedWord())
+        assertEquals(1, pump.commits)
+        assertTrue("the merged audio is still uncommitted", ep.hasPendingSpeech())
+
+        // DECISION 8. The merge closed the gate and left the offer exactly as Silero left it —
+        // which, across a dead-band gap, is nothing. Promote on the flat frame and this line reads
+        // the run's first flat frame instead.
+        assertEquals(Endpointer.NO_CUT_POINT, ep.pendingCutPointMs())
+    }
+
+    @Test fun a_merged_flat_boundary_leaves_sileros_own_offer_exactly_where_silero_put_it() {
+        // The other half of "whatever Silero left": with a real sub-RELEASE dip in front of the
+        // gate, Silero's micro-pause memory HAS promoted (`onProb:657`) by the time the flat hold
+        // comes due, and the flat close neither clears that offer nor re-points it at the run.
+        val (ep, _, pump) = fresh(minCommitIntervalMs = 2_000L)
+        assertTrue("the session's first cut is free", pump.gatedWord())
+
+        pump.run(P_SPEECH, SPEECH_RMS, 12)                      // a second word: the gate re-opens
+        val sileroStamp = pump.t                                // the dip's first frame: `tempEndMs`
+        pump.run(P_SILENCE, ROOM_TONE_RMS, 3)                   // room tone: no flat run, but a dip
+        val flatRunStart = pump.t                               // the gate closes here, not there
+        assertFalse(pump.run(P_SILENCE, GATED_RMS, FLAT_CHUNKS - 1))
+        assertFalse("inside the governor's floor: merged", pump.run(P_SILENCE, GATED_RMS, 1))
+        assertEquals(1, pump.commits)
+
+        assertTrue("the fixture is not vacuous: the two candidates differ", sileroStamp != flatRunStart)
+        assertEquals(
+            "the offer is Silero's stamp, untouched by the flat close",
+            sileroStamp,
+            ep.pendingCutPointMs(),
+        )
     }
 }
