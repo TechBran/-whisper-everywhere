@@ -589,8 +589,24 @@ def summarise(result: SimResult, probs: Sequence[float]) -> Dict[str, float]:
     #: the flatline PROPOSAL's own commits — always 0 unless `Tuning.flatline_enabled`
     n_flat = len(result.of_kind("flat"))
     total = len(result.commits)
+    # THE SPEECH EVIDENCE (4.3.2, Layer 1): the commits `LocalWhisperEngine` would resolve
+    # EmptyExpected WITHOUT an encode at the floor, and the decoder work that saves — one
+    # `service_ms` job per skipped commit (the ~1.78 s encode is 87 % of it; the decode and the
+    # detect pass are the rest, and a skipped segment pays none of them). `turbo_duty_encoded`
+    # is the duty rule's number over the commits that still run.
+    skipped = result.skipped()
+    n_skipped = len(skipped)
     return {
         "commits": total,
+        "min_evidence_ms": result.tuning.min_evidence_ms,
+        "skipped_at_min_evidence": n_skipped,
+        "skipped_pct": 100.0 * n_skipped / total if total else 0.0,
+        "skip_work_saved_ms": n_skipped * result.tuning.service_ms,
+        "encoded": total - n_skipped,
+        "unknown_evidence": sum(1 for c in result.commits if c.speech_evidence_ms is None),
+        "tail_evidence_ms": -1 if result.tail_evidence_ms is None else result.tail_evidence_ms,
+        "tail_skipped": result.tail_skipped(),
+        "turbo_duty_encoded": (total - n_skipped) * TURBO_WORK_PER_COMMIT_MS / wall,
         "vad": n_vad,
         "cap": n_cap,
         "flat": n_flat,

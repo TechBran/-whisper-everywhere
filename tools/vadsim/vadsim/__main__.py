@@ -51,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--hangover", type=int, default=None, help="HANGOVER_MS (350)")
     g.add_argument("--min-speech", type=int, default=None, help="MIN_SPEECH_MS (300)")
     g.add_argument("--micro-pause", type=int, default=None, help="MICRO_PAUSE_MS (98)")
+    g.add_argument("--min-evidence-ms", type=int, default=None,
+                   help="MIN_SPEECH_EVIDENCE_MS (256): the speech-evidence floor under which "
+                        "LocalWhisperEngine skips the encode (4.3.2, Layer 1). A REPORT knob — "
+                        "it changes no cut; section 6 counts the commits skipped at it")
     g.add_argument("--floor", type=int, default=None,
                    help="minCommitIntervalMs; overrides --tier (npu-turbo = 2000). An explicit "
                         "floor also becomes the SLOW row - the backpressure governor is inert - "
@@ -173,6 +177,7 @@ def tuning_from_args(a: argparse.Namespace) -> Tuning:
         flatline_rms=a.flatline_rms,
         flatline_hold_ms=a.flatline_hold,
         chunk_ms=a.chunk_ms,
+        min_evidence_ms=a.min_evidence_ms,
     )
 
 
@@ -248,6 +253,10 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
              f"a run must exceed {t.min_speech_ms} ms or it is DISCARDED"],
             ["MICRO_PAUSE_MS", f"{t.micro_pause_ms}",
              f"promotes on dip frame {t.micro_pause_frames()}"],
+            ["MIN_SPEECH_EVIDENCE_MS", f"{t.min_evidence_ms}",
+             f"a commit whose buffer holds under {t.min_evidence_ms // FRAME_MS} frames at or "
+             f"above ONSET is SKIPPED by the engine (no encode) — changes no cut; section 6 "
+             f"counts them"],
             ["minCommitIntervalMs", f"{t.min_commit_interval_ms}",
              ("cloud batch: the flat request floor, every tier (CommitCadencePolicy.kt:163)"
               if a.cloud and a.floor is None else f"tier {a.tier}")
@@ -441,6 +450,21 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
              f"{result.time_in_slow_ms} ms "
              f"({100.0 * result.time_in_slow_ms / max(1, result.wall_ms):.0f} % of the trace)"],
             ["max decoder queue depth", f"{result.max_queue_depth}"],
+            [f"**commits SKIPPED at the evidence floor ({t.min_evidence_ms} ms)**",
+             f"**{int(summ['skipped_at_min_evidence'])}** of {int(summ['commits'])} "
+             f"({summ['skipped_pct']:.0f} %)"
+             + (f"; {int(summ['unknown_evidence'])} with UNKNOWN evidence (never skipped)"
+                if summ["unknown_evidence"] else "")],
+            ["decoder work saved by the skips",
+             f"{int(summ['skip_work_saved_ms']):,} ms "
+             f"({int(summ['skipped_at_min_evidence'])} x service_ms {t.service_ms}; the ~1.78 s "
+             f"encode is 87 % of each)"],
+            ["estimated turbo duty over the commits that still ENCODE",
+             f"{summ['turbo_duty_encoded'] * 100:.0f} %"],
+            ["the uncommitted tail's evidence (the stop flush)",
+             ("unknown -> transcribed" if summ["tail_evidence_ms"] < 0
+              else f"{int(summ['tail_evidence_ms'])} ms -> "
+                   + ("SKIPPED" if summ["tail_skipped"] else "encoded"))],
         ],
     ))
     if result.transitions:
@@ -456,15 +480,29 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
     if result.commits:
         add(_table(
             ["t (ms)", "kind", "chunk (ms)", "speech (ms)", "trail (ms)", "retain (ms)",
-             "merged inside", "discarded inside", "cap", "p", "rms"],
+             "merged inside", "discarded inside", "cap", "p", "rms", "evidence (fr)", "engine"],
             [
                 [f"{c.t_ms - trace_base(a):,}", c.kind, f"{c.chunk_ms:,}",
                  _ms(c.speech_ms), _ms(c.trail_ms), c.retain_ms,
                  c.merged_endpoints_inside, c.discarded_bursts_inside, _ms(c.cap_ms),
-                 "—" if c.prob is None else f"{c.prob:.3f}", _ms(c.rms)]
+                 "—" if c.prob is None else f"{c.prob:.3f}", _ms(c.rms),
+                 "?" if c.speech_frames is None else c.speech_frames,
+                 ("nothing cut" if c.chunk_ms <= 0
+                  else "**SKIP**" if c.skipped_at(t.min_evidence_ms) else "encode")]
                 for c in result.commits
             ],
         ))
+        add("")
+        add(f"`evidence (fr)` is the frames of the committed buffer the probe scored at or above "
+            f"ONSET — what the commit funnel hands `LocalWhisperEngine` as its speech evidence "
+            f"(`?` = the endpointer could not say: no frame of the buffer was scored, so the "
+            f"engine transcribes). `engine` is the engine's verdict at MIN_SPEECH_EVIDENCE_MS = "
+            f"{t.min_evidence_ms}: under {t.min_evidence_ms // FRAME_MS} frames is **SKIP** — "
+            f"resolved EmptyExpected with no encode, the `commit: seq=N skipped=no-speech-evidence` "
+            f"line on the phone and no `encode:` line after it. A cap cut's retained tail carries "
+            f"its own frames into the next row (the endpointer counts the frames after the "
+            f"offered cut point), so a speaker whose last words fell in a tail is never skipped "
+            f"at the stop flush.")
     else:
         add("_No commit at all in this trace: the stop flush is the only exit._")
     add("")

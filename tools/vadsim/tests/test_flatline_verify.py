@@ -396,6 +396,8 @@ def _strip(commit_dict: dict) -> dict:
     d = dict(commit_dict)
     d.pop("rms", None)              # the field the flatline trigger added to Commit
     d.pop("queue_depth", None)      # the field the backpressure governor added (build 85)
+    d.pop("speech_frames", None)    # the two fields THE SPEECH EVIDENCE added (4.3.2) — a
+    d.pop("speech_evidence_ms", None)  # count read at the funnel; every cut field stays equal
     return d
 
 

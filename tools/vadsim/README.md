@@ -452,3 +452,59 @@ change still loads, and the trigger simply cannot fire on it.
 `SileroEndpointer.onFlat` ships the flatline cut: `EndpointerTuning.FLATLINE_RMS_MAX = 10` (chunk RMS at or below is flat; the sim's strict `<` at 11) and `FLATLINE_CHUNKS = 5` (a COUNT, fires on the fifth; the sim's `flatline_hold_ms = 128`), armed only while the active source is captured playback (`Endpointer.armFlatline`). Its diag line reads `cut=flat`.
 `machine.py` is the REFERENCE TWIN: the eight numbered decisions in `_on_flat` are the Kotlin's semantics, cited from its KDoc, and `SileroEndpointerFlatlineTest` mirrors `test_flatline.py` / `test_flatline_verify.py` test for test by name on the same `(p, rms)` traces.
 Keep them in step: a change to either `_on_flat` or `onFlat` is a change to both, in one commit, with the twin test on each side.
+
+## The speech-evidence floor (4.3.2, Layer 1)
+
+The owner's report on 85: "the hallucinations do show up on longer silence … maybe a little bit of
+background sound, and then that produces words sometimes." The mechanism: silence with a little
+background nudges Silero over ONSET for a few frames, the gate opens, the 15 s cap commits the
+buffer, and the NPU tier — which has no pre-encode speech filter — spends a full ~1.8 s encode on
+a 30 s window of padding and decodes Whisper's stock sign-offs out of it.
+
+The fix the app carries: `SileroEndpointer` counts, per uncommitted buffer, the frames the probe
+scored at or above ONSET (`evidenceFrames`, `SileroEndpointer.kt:395`), the commit funnel reads
+that count once before the engine's commit (`FloatingBubbleService.kt:3360`) and re-bases it after
+(`:3362`), and `LocalWhisperEngine` resolves a KNOWN count under
+`EndpointerTuning.MIN_SPEECH_EVIDENCE_MS = 256` — eight onset frames — as `EmptyExpected` without
+an encode (`LocalWhisperEngine.kt:375`, the `commit: seq=N skipped=no-speech-evidence …` line).
+**It changes no cut**: the count is EVIDENCE ONLY, read at the funnel and never by a branch of
+the state machine — which is the whole difference from the merge memory the 4.4 review rejected
+(that one fed the cut). UNKNOWN (no frame of the buffer scored; the amplitude fallback; the
+slow-probe cutout) is never skipped.
+
+`machine.py` is the reference twin again: `SileroEndpointerSim.evidence_frames` /
+`evidence_frames_at_offer`, `speech_evidence_ms()` and `on_buffer_committed(tail_retained)`
+(`SileroEndpointer.kt:513/:533`), read and re-based in `ServiceSim._emit` exactly where the
+funnel does it. Two details the port carries because the Kotlin had to:
+
+* **the funnel re-bases the count, not `_clear_for_next_segment`** — on the VAD-cut path the gate
+  is cleared before `on_frame` returns `True`, and the funnel reads the count after that; cleared
+  with the gate, every real utterance would read zero and be skipped;
+* **a retaining cap cut carries the tail's evidence** — the frames after the offered cut point
+  open the next buffer's count, so a speaker whose last words fell inside the tail and then stopped
+  is not skipped at the stop flush. The committed part keeps the whole count (over-count is safe).
+
+Each `Commit` now carries `speech_frames` / `speech_evidence_ms` (`None` = the endpointer could not
+say); `SimResult.skipped()` and `tail_skipped()` apply the engine's rule. Section 2 gains the
+`MIN_SPEECH_EVIDENCE_MS` row; section 6 gains **commits SKIPPED at the evidence floor**, the decoder
+work those skips save (one `service_ms` job each — the ~1.78 s encode is 87 % of it), the turbo duty
+over the commits that still encode, the tail's verdict, and two columns on the commit table
+(`evidence (fr)`, `engine`). `--json` carries the same under `summary` and per commit.
+
+```sh
+# the shipped floor: which of this clip's commits would the engine skip?
+./.venv/Scripts/python.exe -m vadsim clip.wav
+
+# a stricter or looser floor — a report knob, the cuts do not move
+./.venv/Scripts/python.exe -m vadsim clip.wav --min-evidence-ms 320
+./.venv/Scripts/python.exe -m vadsim clip.wav --min-evidence-ms 0      # nothing skipped
+```
+
+`tests/test_evidence.py` mirrors `SileroEndpointerEvidenceTest` by name and adds the seam: the
+six-flicker silent window is skipped at the cap, the retained tail's carry crosses the cap's
+`reset()`, `jfk.wav` has no skippable commit, and the cuts are byte-identical at every floor.
+
+HONEST LIMIT, in both machines: a music bed Silero scores as SPEECH for seconds has evidence and
+is not caught here. The no-speech gate and the stock-phrase blocklist (Layer 2, NPU tier,
+`HallucinationPolicy`) remain the defence there; this floor catches silence, breath, room tone, a
+fan, a paused video — the owner's report.

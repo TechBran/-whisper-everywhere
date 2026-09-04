@@ -45,6 +45,16 @@ BASE_MS = 1_000_000
 #: `Endpointer.kt:92` — Endpointer.NO_CUT_POINT.
 NO_CUT_POINT = 0
 
+#: THE SPEECH EVIDENCE (4.3.2). `Endpointer.UNKNOWN_SPEECH_EVIDENCE_MS` (Endpointer.kt:177): the
+#: answer an endpointer gives when it cannot say how much speech the buffer holds — the amplitude
+#: fallback always, a Silero endpointer before its probe has scored a frame of this buffer.
+#: `LocalWhisperEngine` reads any negative as UNKNOWN and never skips.
+UNKNOWN_SPEECH_EVIDENCE_MS = -1
+
+#: `SileroEndpointer.kt:12` — the counter's own "no frame of this buffer scored yet" sentinel, in
+#: FRAMES; converted to the interface's milliseconds at exactly one place (`speech_evidence_ms`).
+NO_EVIDENCE_YET = -1
+
 #: `BackpressureRule.ENTER_DEPTH` / `LEAVE_DEPTH` (BackpressureRule.kt:39/:47), re-exported by
 #: `CommitCadencePolicy.BACKPRESSURE_ENTER_DEPTH` / `_LEAVE_DEPTH`. THE BACKPRESSURE GOVERNOR
 #: (build 85) enters its slow floor at a segment-queue depth of 2 — one in flight AND one
@@ -165,6 +175,16 @@ class Tuning:
     #: makes `flatline_hold_ms` round: the same RMS applies to every frame of a chunk, so
     #: the hold can only ever be satisfied in whole chunks.
     chunk_ms: int = 32
+
+    # ----------------------------------------------------------------------------------
+    # THE SPEECH EVIDENCE (4.3.2). `EndpointerTuning.MIN_SPEECH_EVIDENCE_MS` (EndpointerTuning.kt:184):
+    # the least Silero evidence — milliseconds of frames scored at or above ONSET, over the whole
+    # uncommitted buffer — a segment must carry for `LocalWhisperEngine` to ENCODE it. A REPORT
+    # knob and nothing else: the machine counts the evidence per commit exactly as the Kotlin
+    # does (`SileroEndpointerSim.evidence_frames`) and NEVER reads it for a cut; the report says
+    # which commits the engine would have skipped at this floor and what that saves.
+    # ----------------------------------------------------------------------------------
+    min_evidence_ms: int = 256
 
     def __post_init__(self) -> None:
         if not (0 <= self.flatline_rms <= 32_767):
@@ -455,6 +475,15 @@ class SileroEndpointerSim:
         self.flat_run_start_ms = 0
         self.flat_run_frames = 0
 
+        # THE SPEECH EVIDENCE (4.3.2) — SileroEndpointer.kt:395 / :405. BUFFER knowledge: the
+        # frames of the uncommitted buffer scored at or above ONSET (NO_EVIDENCE_YET until the
+        # first verdict), and the count as it stood when `prev_end_ms` was last promoted, so a
+        # retaining cap cut can hand the next buffer exactly the tail's onset frames. EVIDENCE
+        # ONLY: no branch of `_on_prob` / `_on_flat` reads either; the service seam reads the
+        # first at the commit funnel (`ServiceSim._emit`) and re-bases it there.
+        self.evidence_frames = NO_EVIDENCE_YET      # :395
+        self.evidence_frames_at_offer = 0            # :405
+
         # Instrumentation the Kotlin does not have (the release build strips the diag lines,
         # which is the whole reason this simulator exists).
         self.probe_resets = 0
@@ -496,6 +525,7 @@ class SileroEndpointerSim:
         self.last_frame_ms = now_ms                            # :547
         self.last_commit_ms = now_ms                           # :416  ANCHORS, does not zero
         self.has_committed = False                             # :417
+        self.evidence_frames = NO_EVIDENCE_YET                 # :654  every session opens UNKNOWN
         # slowRun = 0 / probeCutout = false (:418-419) — not modelled, see the class docstring.
         self.last_cut = None                                   # :420
         self._clear_for_next_segment()                         # :423
@@ -561,10 +591,16 @@ class SileroEndpointerSim:
         if p < 0.0:
             return False
 
+        # :840 — THE SPEECH EVIDENCE: this frame has a verdict, so the buffer's count is KNOWN
+        # from here (a scored buffer of pure silence reports 0, not UNKNOWN). Above every branch.
+        if self.evidence_frames < 0:
+            self.evidence_frames = 0
+
         # :539-546 — ONSET. A frame at or above ONSET clears the pending end (the HARD reset
         # that makes the hangover a TIMER, not a decay) and opens the gate if it is shut.
         # Comparison is `>=` (whisper.cpp:5536/:5544 `curr_prob >= threshold`).
         if p >= self.t.onset:
+            self.evidence_frames += 1                                  # :848 counted, never read
             self.temp_end_ms = 0                                       # :540
             if not self.speaking:                                      # :541
                 self.speaking = True                                   # :542
@@ -597,6 +633,9 @@ class SileroEndpointerSim:
         # which is what leaves a good boundary standing when the decision is a DISCARD.
         if now_ms - self.temp_end_ms > self.t.micro_pause_ms:
             self.prev_end_ms = self.temp_end_ms
+            # :890 — THE SPEECH EVIDENCE: the onset frames BEFORE this offer. A dip holds no
+            # onset frame, so every qualifying frame of this dip writes the same number.
+            self.evidence_frames_at_offer = self.evidence_frames
 
         # :579 — the hangover. STRICT `<` on the continuing side, so exactly HANGOVER_MS of
         # silence CUTS (whisper.cpp:5586 continues while `< min_silence_samples`).
@@ -797,6 +836,12 @@ class SileroEndpointerSim:
         self._close_gate()
         self.pending_speech = False
         self.prev_end_ms = NO_CUT_POINT      # SENTINEL, not arithmetic zero
+        # :1091 — THE SPEECH EVIDENCE: the offer's count dies with the offer. `evidence_frames`
+        # itself is deliberately NOT here: on the VAD-cut path this runs BEFORE the funnel reads
+        # the count (`on_frame` -> `_commit_at` -> here, then `return True`), so a clear here
+        # would report every real utterance as zero evidence. The funnel re-bases it through
+        # `on_buffer_committed` once it has read it.
+        self.evidence_frames_at_offer = 0
         # fill = 0 — no accumulator here.
         self.probe_resets += 1
         self.did_probe_reset = True
@@ -817,6 +862,35 @@ class SileroEndpointerSim:
     def is_probe_cutout(self) -> bool:
         """`isProbeCutout` (:348). Always False offline — see the class docstring."""
         return False
+
+    # -- THE SPEECH EVIDENCE (4.3.2): the funnel's one read and its re-base ---------------
+
+    def speech_evidence_ms(self) -> int:
+        """`speechEvidenceMs` (SileroEndpointer.kt:513): milliseconds of onset frames in the
+        uncommitted buffer, or UNKNOWN_SPEECH_EVIDENCE_MS while no frame of it has been scored
+        (the Kotlin also answers UNKNOWN after the slow-probe cutout, which has no offline
+        analogue — `is_probe_cutout` is always False here)."""
+        if self.evidence_frames < 0:
+            return UNKNOWN_SPEECH_EVIDENCE_MS
+        return self.evidence_frames * FRAME_MS
+
+    def on_buffer_committed(self, tail_retained: bool) -> None:
+        """`onBufferCommitted` (SileroEndpointer.kt:533). The funnel committed the buffer whose
+        evidence it just read; re-base for the next one. With `tail_retained` the wall cap kept
+        the audio after the offered cut point, and the onset frames inside that tail —
+        `evidence_frames - evidence_frames_at_offer`, exact because a dip holds no onset frame —
+        open the next count; the committed segment was credited with the WHOLE count, so the
+        split can only over-count it. Without a tail the next buffer has no scored frame yet:
+        NO_EVIDENCE_YET, not 0. The offer's count is zeroed on both arms (the frames of the next
+        buffer all follow whatever offer survives). `reset()` does NOT touch the count — every
+        service-side reset follows a funnel commit that already re-based it, and on the cap site
+        that re-base carried the tail."""
+        frames = self.evidence_frames
+        if tail_retained and frames >= 0:
+            self.evidence_frames = max(0, frames - self.evidence_frames_at_offer)
+        else:
+            self.evidence_frames = NO_EVIDENCE_YET
+        self.evidence_frames_at_offer = 0
 
 
 # ---------------------------------------------------------------------------------------
@@ -847,6 +921,22 @@ class Commit:
     #: the modelled decoder queue's depth right after this commit joined it (build 85) — the
     #: app's `queue: depth=N` line at the commit funnel; None from a driver without the queue.
     queue_depth: Optional[int] = None
+    #: THE SPEECH EVIDENCE (4.3.2): the frames of this commit's buffer the probe scored at or
+    #: above ONSET, as the funnel read it (`speechEvidenceMs` / 32); None when the endpointer
+    #: could not say (no frame of the buffer scored) — the engine then transcribes.
+    speech_frames: Optional[int] = None
+    #: the same in the interface's unit — what `LocalWhisperEngine.commit` was handed.
+    speech_evidence_ms: Optional[int] = None
+
+    def skipped_at(self, min_evidence_ms: int) -> bool:
+        """`LocalWhisperEngine.dispatch` (LocalWhisperEngine.kt:375): KNOWN and strictly under
+        the floor -> EmptyExpected without an encode. A commit that cut nothing is not a
+        segment and is never counted as skipped."""
+        return (
+            self.chunk_ms > 0
+            and self.speech_evidence_ms is not None
+            and self.speech_evidence_ms < min_evidence_ms
+        )
 
 
 @dataclass
@@ -870,10 +960,28 @@ class SimResult:
     time_in_slow_ms: int = 0
     #: the deepest the modelled decoder queue got.
     max_queue_depth: int = 0
+    #: THE SPEECH EVIDENCE of `tail_ms` — what the stop flush's commit would carry; None when
+    #: no frame of the tail was scored (an empty tail, or a trace that ended on a re-base).
+    tail_evidence_ms: Optional[int] = None
 
     @property
     def wall_ms(self) -> int:
         return self.n_frames * FRAME_MS
+
+    def skipped(self, min_evidence_ms: Optional[int] = None) -> List[Commit]:
+        """The commits `LocalWhisperEngine` would resolve EmptyExpected WITHOUT an encode at
+        `min_evidence_ms` (the tuning's floor by default) — Layer 1 of 4.3.2."""
+        floor = self.tuning.min_evidence_ms if min_evidence_ms is None else min_evidence_ms
+        return [c for c in self.commits if c.skipped_at(floor)]
+
+    def tail_skipped(self, min_evidence_ms: Optional[int] = None) -> bool:
+        """Whether the stop flush of `tail_ms` would be skipped too."""
+        floor = self.tuning.min_evidence_ms if min_evidence_ms is None else min_evidence_ms
+        return (
+            self.tail_ms > 0
+            and self.tail_evidence_ms is not None
+            and self.tail_evidence_ms < floor
+        )
 
     def backpressure(self) -> dict:
         """The governor's account of this run, for the JSON report and section 6."""
@@ -1063,6 +1171,11 @@ class ServiceSim:
         # that fires the cut is itself in the buffer, hence the + FRAME_MS.
         window_ms = t_ms + FRAME_MS - self.buffer_start_ms
         chunk_ms = max(0, window_ms - retain_ms)
+        # THE SPEECH EVIDENCE (4.3.2) — the funnel's one read, BEFORE the engine's commit
+        # (FloatingBubbleService.kt:3360: the buffer it describes is the one about to be cut),
+        # then the re-base AFTER it (:3362), with the cap site's retain as `tail_retained`.
+        evidence_ms = ep.speech_evidence_ms()
+        ep.on_buffer_committed(tail_retained=retain_ms > 0)
         commit = Commit(
             t_ms=t_ms,
             kind=kind,
@@ -1079,6 +1192,8 @@ class ServiceSim:
             consumed_window=consumed_window,
             prob=prob,
             rms=rms,
+            speech_frames=None if evidence_ms < 0 else evidence_ms // FRAME_MS,
+            speech_evidence_ms=None if evidence_ms < 0 else evidence_ms,
         )
         self.buffer_start_ms = t_ms + FRAME_MS - retain_ms
         self._merges_at_last_commit = ep.merges
@@ -1142,6 +1257,10 @@ def _finish_backpressure(result: SimResult, sim: ServiceSim, end_ms: int) -> Non
     result.transitions = list(sim.endpointer.transitions)
     result.time_in_slow_ms = time_in_slow(result.transitions, end_ms)
     result.max_queue_depth = sim.decoder.max_depth
+    # THE SPEECH EVIDENCE the stop flush would carry for the uncommitted tail (4.3.2): the
+    # funnel's read at the end of the trace, before the flush's commit.
+    tail = sim.endpointer.speech_evidence_ms()
+    result.tail_evidence_ms = None if tail < 0 else tail
 
 
 #: Per-frame outcome codes `event_track` emits. A VAD cut and a cap cut are an `if` /
