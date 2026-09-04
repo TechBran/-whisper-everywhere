@@ -156,6 +156,9 @@ class NpuNativeContractTest {
 
     private val cpp: String by lazy { source("src/main/cpp/qnn_asr.cpp") }
 
+    /** The detect pass's band scan, read as source for the Android-free property it must keep. */
+    private val bandScan: String by lazy { source("src/main/cpp/band_scan.h") }
+
     private val backend: String by lazy {
         source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
     }
@@ -904,6 +907,95 @@ class NpuNativeContractTest {
                 "(offset %d` — because the offset is what the L8 sheet reads against g_lang",
             liveOffsets(detect, "language token %s").isNotEmpty()
         )
+    }
+
+    /**
+     * **The always-on `detect:` line carries the runner-up and the margin, and the band scan that
+     * produces them runs above `g.diag`, from `band_scan.h`** (build 85 B1).
+     *
+     * The owner's silence hallucination — a block of Chinese nobody spoke, joining the transcript
+     * on a quiet stretch — is a `<|zh|>` detect on a chunk with no speech in it, and the number
+     * that separates that from a real `<|zh|>` is how far ahead of the runner-up it was. That
+     * number existed only on the `npu-debug: detect` echo, which is `nativeSetDiag(BuildConfig.
+     * DEBUG)` — absent from every capture the shipped app can produce. So `second=` and `margin=`
+     * moved onto the always-on line, with `ties=` when the band was flat at the top (the
+     * `<|en|>`-by-fall-out case the echo's own comment describes).
+     *
+     * Four properties, each of which a tidy-up that compiles could lose:
+     *  - the PREFIX is byte-identical to the 4.1 line, because the captures already grep for it;
+     *  - the scan runs ONCE, above `if (g.diag)` — a runner-up computed only under the gate is
+     *    the defect this build removes, and a second argmax beside it is a second definition;
+     *  - the margin is SCALED through `logitsScaleLocked()` with `kStatUnreadable` as the no-scale
+     *    value — a raw code difference is not comparable across sessions, and a fake 0.000 would
+     *    read as a tie;
+     *  - `band_scan.h` is Android-free, so `tools/band_scan_check.sh` can run it on the host —
+     *    the only test this C++ has.
+     */
+    @Test
+    fun theAlwaysOnDetectLineCarriesTheRunnerUpAndTheMarginFromAnUngatedBandScan() {
+        val detect = functionBody(
+            cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage("
+        )
+        assertTrue(
+            "qnn_asr.cpp must include band_scan.h on a live line",
+            liveOffsets(cpp, "#include \"band_scan.h\"").isNotEmpty()
+        )
+        val scan = liveOffsets(detect, "scanBandTop2(")
+        val gate = liveOffsets(detect, "if (g.diag)")
+        assertTrue("nativeDetectLanguage must call scanBandTop2 on a live line", scan.isNotEmpty())
+        assertTrue("…and its debug echo must still be gated on g.diag", gate.isNotEmpty())
+        assertTrue(
+            "the band scan must run ABOVE the g.diag gate (scan at ${scan.first()}, gate at " +
+                "${gate.first()}) — the runner-up is an always-on reading now, and a scan under " +
+                "the gate is the defect this build removed",
+            scan.first() < gate.first()
+        )
+        assertTrue(
+            "argmaxInRange must not survive as a second definition of the band's argmax. Live " +
+                "lines: " + liveLines(cpp, "argmaxInRange("),
+            liveOffsets(cpp, "argmaxInRange(").isEmpty()
+        )
+        assertTrue(
+            "the always-on line must keep the 4.1 prefix byte-identical and add the fields after " +
+                "it — `LOGI(\"detect: language token %s (offset %d in the language block) " +
+                "second=%s margin=%.3f%s\"`. Live LOGI lines: " + liveLines(detect, "LOGI("),
+            liveOffsets(
+                detect,
+                "LOGI(\"detect: language token %s (offset %d in the language block) second=%s " +
+                    "margin=%.3f%s\""
+            ).isNotEmpty()
+        )
+        assertTrue(
+            "`second` is a token id and renders through diagToken like `best` — no live " +
+                "`second=%d`. Found: " + liveLines(detect, "second=%d"),
+            liveLines(detect, "second=%d").isEmpty()
+        )
+        assertTrue(
+            "the tie count must be on the line, as ` ties=%u` and only when > 1",
+            liveOffsets(detect, "\" ties=%u\"").isNotEmpty() &&
+                liveOffsets(detect, "if (band.ties > 1)").isNotEmpty()
+        )
+        assertTrue(
+            "the margin must be scaled into the model's own units: logitsScaleLocked() and " +
+                "kStatUnreadable on live lines of nativeDetectLanguage",
+            liveOffsets(detect, "logitsScaleLocked()").isNotEmpty() &&
+                liveOffsets(detect, "kStatUnreadable").isNotEmpty()
+        )
+        assertTrue(
+            "band_scan.h must declare the scan with the signature the host test compiles against",
+            liveOffsets(
+                bandScan,
+                "inline BandTop2 scanBandTop2(const uint16_t *logits, uint32_t lo, uint32_t hi, " +
+                    "uint16_t floor)"
+            ).isNotEmpty()
+        )
+        listOf("<android/log.h>", "<jni.h>", "QnnInterface.h", "__android_log_print", "g.").forEach {
+            assertTrue(
+                "band_scan.h must stay Android-free — `$it` on a live line breaks the host build " +
+                    "that is its only test. Found: " + liveLines(bandScan, it),
+                liveOffsets(bandScan, it).isEmpty()
+            )
+        }
     }
 
     /**

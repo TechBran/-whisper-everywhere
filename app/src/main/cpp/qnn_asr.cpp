@@ -50,6 +50,8 @@
 #include <string>
 #include <vector>
 
+#include "band_scan.h"
+
 #if !defined(__has_include)
 #error "compiler must support __has_include"
 #endif
@@ -1943,22 +1945,12 @@ int32_t suppressThenArgmax(uint16_t *logits, uint32_t vocab,
     return best;
 }
 
-/// Argmax restricted to `[lo, hi)`, for the language-detect pass.
-///
-/// A range restriction is strictly simpler than the 1589-entry mask above, and it sits on the SAME
-/// side of the boundary for the same reason: the caller must never be handed an unrestricted argmax
-/// and asked to decide whether it counts.
-int32_t argmaxInRange(const uint16_t *logits, uint32_t lo, uint32_t hi) {
-    int32_t best = -1;
-    uint16_t bestVal = kLogitFloor;
-    for (uint32_t i = lo; i < hi; ++i) {
-        if (logits[i] > bestVal) {
-            bestVal = logits[i];
-            best = static_cast<int32_t>(i);
-        }
-    }
-    return best;
-}
+// The language-detect pass's argmax restricted to `[lo, hi)` is scanBandTop2 in band_scan.h since
+// build 85 B1, which also yields the runner-up and the tie count the always-on `detect:` line
+// prints. It left this file for one reason - a host compiler can run it (tools/band_scan_check.sh)
+// - and it kept the property that mattered here: a range restriction is strictly simpler than the
+// 1589-entry mask above, and it sits on the SAME side of the boundary for the same reason: the
+// caller must never be handed an unrestricted argmax and asked to decide whether it counts.
 
 // ---------------------------------------------------------------- 4.3.1 A: probabilities and sampling
 
@@ -2133,7 +2125,7 @@ struct LogitsHealth {
 /// produced nothing, which puts the defect in the cross-KV / encoder-output wiring and rules the
 /// prompt out entirely.
 ///
-/// Ties resolve to the FIRST index, exactly as `suppressThenArgmax` and `argmaxInRange` do, so the
+/// Ties resolve to the FIRST index, exactly as `suppressThenArgmax` and `scanBandTop2` do, so the
 /// argmax reported here is the one the decoder would actually have picked rather than a second
 /// opinion that could disagree for its own reasons.
 LogitsHealth scanLogitsRaw(const uint16_t *logits, uint32_t vocab) {
@@ -3435,8 +3427,14 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         return -2;
     }
     const uint16_t *logits = static_cast<const uint16_t *>(g.dec.outBufs[g.decLogitsIdx].p);
-    const int32_t best = argmaxInRange(logits, static_cast<uint32_t>(g.langTokenFirst),
-                                       static_cast<uint32_t>(g.langTokenLast) + 1);
+    // ONE scan of the band (band_scan.h): the argmax this pass answers with, the runner-up and the
+    // tie count. Build 85 B1 hoisted the runner-up out of the g.diag block below, because the
+    // ALWAYS-ON line at the bottom needs the same two numbers the debug echo already had, and a
+    // release capture - the only kind the shipped app produces - has no debug echo in it.
+    const BandTop2 band = scanBandTop2(logits, static_cast<uint32_t>(g.langTokenFirst),
+                                       static_cast<uint32_t>(g.langTokenLast) + 1, kLogitFloor);
+    const int32_t best = band.best;
+    const int32_t runnerUp = band.second;
 
     // THE DETECT ECHO, and the field that matters is `margin`.
     //
@@ -3448,25 +3446,12 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
     // same line because a band that is flat inside a vocabulary that is also flat is a different
     // diagnosis from a band that is flat inside one that is not.
     if (g.diag) {
-        int32_t runnerUp = -1;
-        uint16_t runnerVal = 0;
-        bool haveRunner = false;
-        for (uint32_t i = static_cast<uint32_t>(g.langTokenFirst);
-             i <= static_cast<uint32_t>(g.langTokenLast); ++i) {
-            if (static_cast<int32_t>(i) == best) continue;
-            if (!haveRunner || logits[i] > runnerVal) {
-                runnerVal = logits[i];
-                runnerUp = static_cast<int32_t>(i);
-                haveRunner = true;
-            }
-        }
-        const uint16_t bestVal = best >= 0 ? logits[best] : 0;
         const LogitsHealth h = scanLogitsRaw(logits, g.vocab);
         char bestName[24];
         char runnerName[24];
         char rawName[24];
         // best and runnerUp go through diagToken like every other id on this tag (4.1 L4, Q10a-D
-        // M4). They used to print raw %d, which was safe by a CALL-SITE property - argmaxInRange
+        // M4). They used to print raw %d, which was safe by a CALL-SITE property - the band scan
         // is bounded to the language band, and band ids are specials diagToken prints verbatim
         // anyway - i.e. safe because of where the caller happened to scan, which is exactly the
         // shape D1's battery row forbids one function over. The band's top is per-family now, and
@@ -3475,9 +3460,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         LOGDIAG("npu-debug: detect band=[%d..%d] best=%s val=%u runnerUp=%s val=%u margin=%d "
                 "raw[min=%u max=%u argmax=%s]",
                 g.langTokenFirst, g.langTokenLast,
-                diagToken(best, bestName, sizeof(bestName)), bestVal,
-                diagToken(runnerUp, runnerName, sizeof(runnerName)), runnerVal,
-                static_cast<int32_t>(bestVal) - static_cast<int32_t>(runnerVal),
+                diagToken(best, bestName, sizeof(bestName)), band.bestVal,
+                diagToken(runnerUp, runnerName, sizeof(runnerName)), band.secondVal,
+                static_cast<int32_t>(band.bestVal) - static_cast<int32_t>(band.secondVal),
                 h.lo, h.hi, diagToken(h.argmax, rawName, sizeof(rawName)));
     }
 
@@ -3490,11 +3475,43 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDetectLanguage(
         failure("detect: every language logit is at the bottom rail; no language was produced");
         return -3;
     }
-    // Through diagToken too, for the same reason as the echo above: a language id prints
-    // verbatim either way, but WHICH function renders it is the rule, not the outcome.
+
+    // THE ALWAYS-ON LINE (build 85 B1). The prefix is byte-identical to what every capture since
+    // 4.1 carries - `detect: language token %s (offset %d in the language block)` - and the fields
+    // after it are the ones the debug echo had and a release capture did not: the runner-up and
+    // the margin, so a chunk that detected <|zh|> on silence can be told from one that detected
+    // it on Chinese by the number rather than by reading the transcript. This is native
+    // __android_log_print, so it survives R8 (proguard strips the Kotlin tag in release).
+    //
+    // `margin` is in the MODEL'S OWN units: the tensor is per-tensor affine, `v = scale * (q +
+    // offset)`, so the offset cancels in a difference and `scale * (bestVal - secondVal)` is the
+    // top-two gap in log-odds - the units nsp= and lp= on the decode line are derived from, and
+    // comparable across sessions where a raw code difference is not. -1.000 (kStatUnreadable) when
+    // the scale cannot be read, and only then: a real margin is never negative, best >= second by
+    // construction. `ties=` appears only when there IS a tie - `ties=1` would read as one tie when
+    // it means none - and a tie is the case the echo above exists for: <|en|> by fall-out, margin
+    // 0.000.
+    //
+    // No nspAtSot= here, and not for want of the logits. This IS the SOT step, and its raw logits
+    // are the ones nativeDecodeSegment reads p(<|nospeech|>) from at rung 0, position 0 - the same
+    // encode, the same SOT input, the self-KV zeroed before both - so the number would be the
+    // decode line's own nsp= printed 200 ms early. Producing it would also need the <|nospeech|>
+    // id, a family fact Kotlin passes to the decode and this JNI does not carry; a native copy is
+    // the second definition WhisperTokenFamily exists to forbid.
+    const float scale = logitsScaleLocked();
+    const float margin = scale > 0.0f
+        ? scale * static_cast<float>(static_cast<int32_t>(band.bestVal) -
+                                     static_cast<int32_t>(band.secondVal))
+        : kStatUnreadable;
+    char tiesNote[24] = "";
+    if (band.ties > 1) snprintf(tiesNote, sizeof(tiesNote), " ties=%u", band.ties);
+    // Through diagToken, for the same reason as the echo above: a language id prints verbatim
+    // either way, but WHICH function renders it is the rule, not the outcome.
     char bestTokenName[24];
-    LOGI("detect: language token %s (offset %d in the language block)",
-         diagToken(best, bestTokenName, sizeof(bestTokenName)), best - g.langTokenFirst);
+    char secondTokenName[24];
+    LOGI("detect: language token %s (offset %d in the language block) second=%s margin=%.3f%s",
+         diagToken(best, bestTokenName, sizeof(bestTokenName)), best - g.langTokenFirst,
+         diagToken(runnerUp, secondTokenName, sizeof(secondTokenName)), margin, tiesNote);
     g.lastError.clear();
     return best;
 }
