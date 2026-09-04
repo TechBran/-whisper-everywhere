@@ -39,6 +39,34 @@ interface TranscriptionEngine {
      */
     fun commitRetainingTailMs(retainMs: Long): Long = commit()
 
+    /**
+     * [commit], carrying THE SPEECH EVIDENCE the endpointer gathered for this buffer (4.3.2):
+     * how much of it the streaming probe scored as speech, or [SpeechEvidence.UNKNOWN]. The ONE
+     * caller is the service's commit funnel, which reads the endpointer once and hands the number
+     * here; the ONE consumer is `LocalWhisperEngine`, which resolves a KNOWN buffer under
+     * `EndpointerTuning.MIN_SPEECH_EVIDENCE_MS` as [SegmentOutcome.EmptyExpected] WITHOUT running
+     * the backend — still allocating its seq and still resolving it exactly once, so the orderer
+     * and the queue depth see it like any other segment.
+     *
+     * A new member with a default BODY, never a defaulted PARAMETER on [commit] — the
+     * [WhisperBackend.load] two-arg member's KDoc carries the reason: a default parameter helps
+     * callers, not implementors, and every `override fun commit(): Long` in the three cloud
+     * engines would silently stop overriding. Default: drop the evidence and [commit]. A cloud
+     * engine's commit is a provider request and the fallback wrapper mirrors PCM per seq; neither
+     * has an encode to skip, and skipping the POST would desynchronise the mirror.
+     */
+    fun commit(evidence: SpeechEvidence): Long = commit()
+
+    /**
+     * [commitRetainingTailMs], carrying THE SPEECH EVIDENCE (4.3.2) for the buffer it cuts — the
+     * wall-cap site's form. The evidence describes the WHOLE buffer, tail included; the local
+     * engine judges the committed part on it, which can only over-credit that part and never
+     * skip a segment whose evidence sat in the tail. Default: drop it and
+     * [commitRetainingTailMs], for the reasons the evidence-carrying [commit] gives.
+     */
+    fun commitRetainingTailMs(retainMs: Long, evidence: SpeechEvidence): Long =
+        commitRetainingTailMs(retainMs)
+
     /** Release the session (cancel pending work). */
     fun close()
 

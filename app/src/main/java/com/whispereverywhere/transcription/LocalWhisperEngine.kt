@@ -1,6 +1,7 @@
 package com.whispereverywhere.transcription
 
 import android.util.Log
+import com.whispereverywhere.audio.EndpointerTuning
 import com.whispereverywhere.util.AudioMath
 import com.whispereverywhere.util.RetryPolicy
 import kotlinx.coroutines.runBlocking
@@ -230,8 +231,22 @@ class LocalWhisperEngine(
      * [com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine.localRetry] reads it as
      * "the local engine refused this rescue" and gives up, surfacing the cloud's loss. Keeping that
      * reading honest is [sendAudio]'s job — see the accumulation-only condition there.
+     *
+     * THE SPEECH EVIDENCE (4.3.2): this no-argument form carries [SpeechEvidence.UNKNOWN] and is
+     * therefore never skipped. It is what every engine-internal commit runs through — the 30 s
+     * overflow backstop in [sendAudio], the cloud fallback's local rescue — and what any caller
+     * that has no endpointer behind it gets: the pre-4.3.2 behaviour, byte for byte.
      */
-    override fun commit(): Long {
+    override fun commit(): Long = commit(SpeechEvidence.UNKNOWN)
+
+    /**
+     * [commit] with THE SPEECH EVIDENCE the funnel read for this buffer (4.3.2). The seq is
+     * allocated and the buffer cut exactly as before; what the evidence decides is only whether
+     * the cut segment RUNS — see [dispatch]. A KNOWN count under
+     * [EndpointerTuning.MIN_SPEECH_EVIDENCE_MS] resolves [SegmentOutcome.EmptyExpected] without
+     * a backend call; everything else is the path above.
+     */
+    override fun commit(evidence: SpeechEvidence): Long {
         val myListener = this.listener
         if (myListener == null) {
             android.util.Log.i("WE-DIAG", "commit: no listener (session ended), skipped")
@@ -255,7 +270,7 @@ class LocalWhisperEngine(
             (nextSeq++) to snapshot
         }
         android.util.Log.i("WE-DIAG", "commit: seq=$seq pcmBytes=${pcm.size} samples=${pcm.size / 2}")
-        executor.execute { runSegment(seq, pcm, lang, myListener) }
+        dispatch(seq, pcm, lang, evidence, myListener)
         return seq
     }
 
@@ -267,9 +282,23 @@ class LocalWhisperEngine(
      * The split is computed INSIDE bufferLock together with the seq, for the same reason [commit]
      * allocates its seq there: the capture thread is still calling sendAudio, and a snapshot taken
      * outside the lock would let a chunk land between the read and the rewrite.
+     *
+     * THE SPEECH EVIDENCE (4.3.2): the no-argument form is [SpeechEvidence.UNKNOWN], never
+     * skipped, exactly as [commit]'s is.
      */
-    override fun commitRetainingTailMs(retainMs: Long): Long {
-        if (retainMs <= 0L) return commit()
+    override fun commitRetainingTailMs(retainMs: Long): Long =
+        commitRetainingTailMs(retainMs, SpeechEvidence.UNKNOWN)
+
+    /**
+     * [commitRetainingTailMs] with THE SPEECH EVIDENCE for the whole buffer (4.3.2), tail
+     * included. The committed part is judged on that whole-buffer count through [dispatch] —
+     * which can only over-credit it, never skip a part whose evidence sat in the tail — and the
+     * tail stays in the buffer whether or not the part ran: a skipped cap cut retains exactly what
+     * an encoded one would, and the endpointer carries the tail's own evidence forward for it
+     * (`Endpointer.onBufferCommitted`).
+     */
+    override fun commitRetainingTailMs(retainMs: Long, evidence: SpeechEvidence): Long {
+        if (retainMs <= 0L) return commit(evidence)
 
         val myListener = this.listener
         if (myListener == null) {
@@ -313,8 +342,46 @@ class LocalWhisperEngine(
             "WE-DIAG",
             "cap-cut split: seq=$seq retainedTailBytes=$retainedBytes retainedMs=${retainedBytes / BYTES_PER_MS}",
         )
-        executor.execute { runSegment(seq, pcm, lang, myListener) }
+        dispatch(seq, pcm, lang, evidence, myListener)
         return seq
+    }
+
+    /**
+     * THE ONE DISPATCH (4.3.2): a cut segment either RUNS, or — under the speech-evidence floor —
+     * resolves [SegmentOutcome.EmptyExpected] without running. Both paths are entered with a seq
+     * the caller allocated under `bufferLock`; both go through [executor], so a skipped seq
+     * resolves in commit order behind the segments queued ahead of it (the single-thread contract
+     * the class KDoc gives, and what keeps `SegmentOrderer` a pass-through); and both end in
+     * [resolve], the single `onSegmentResolved` site, so the every-seq-resolves-exactly-once
+     * contract has one body to hold.
+     *
+     * The skip is `EmptyExpected` and not a new outcome, deliberately: downstream it means "this
+     * audio held no speech", which is precisely the claim — the endpointer scored every frame of
+     * it and found under [EndpointerTuning.MIN_SPEECH_EVIDENCE_MS] of onset. `SegmentOrderer`
+     * releases nothing for it and moves on; `SegmentQueueDepth` decrements on its resolution like
+     * any other; `FallbackPolicy.reconcile` trusts it as a verdict. An UNKNOWN count, or a KNOWN
+     * one at or over the floor, is today's path.
+     *
+     * The line says a skip happened and why — numbers only, never content: the audio is dropped
+     * here without a String ever existing for it.
+     */
+    private fun dispatch(
+        seq: Long,
+        pcm: ByteArray,
+        lang: String?,
+        evidence: SpeechEvidence,
+        myListener: TranscriptionEngine.Listener,
+    ) {
+        if (evidence.isUnder(EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)) {
+            android.util.Log.i(
+                "WE-DIAG",
+                "commit: seq=$seq skipped=no-speech-evidence speechMs=${evidence.speechMs} " +
+                    "pcmMs=${pcm.size / BYTES_PER_MS}",
+            )
+            executor.execute { resolve(seq, SegmentOutcome.EmptyExpected, clearPreview = false, myListener) }
+            return
+        }
+        executor.execute { runSegment(seq, pcm, lang, myListener) }
     }
 
     /**
@@ -509,12 +576,28 @@ class LocalWhisperEngine(
             if (listener === myListener) myListener.onError(t.message ?: "Transcription failed")
             SegmentOutcome.Lost(TRANSCRIBE_FAILED)
         }
-        // D (3.6.0): the segment reached a terminal outcome, so the in-flight preview is stale —
-        // a blank delta clears the strip (the service's onDelta hides it on blank) before the
-        // resolution lands in the accumulating window; both hop to Main via the same FIFO, so
-        // the clear always renders first. Emitted only when this segment actually streamed, so
-        // non-streaming backends keep the exact 3.5.0 callback sequence.
-        if (streamedPreview && listener === myListener) myListener.onDelta("")
+        resolve(seq, outcome, clearPreview = streamedPreview, myListener)
+    }
+
+    /**
+     * THE RESOLUTION PATH — the one `onSegmentResolved` site in this engine, reached by
+     * [runSegment] for every segment that ran and by [dispatch] for every segment the
+     * speech-evidence floor skipped (4.3.2). On the native executor thread in both cases.
+     *
+     * [clearPreview] — D (3.6.0): the segment reached a terminal outcome, so the in-flight
+     * preview is stale; a blank delta clears the strip (the service's onDelta hides it on blank)
+     * before the resolution lands in the accumulating window; both hop to Main via the same
+     * FIFO, so the clear always renders first. Emitted only when this segment actually streamed,
+     * so non-streaming backends keep the exact 3.5.0 callback sequence — and a skipped segment
+     * never streamed, so it never clears.
+     */
+    private fun resolve(
+        seq: Long,
+        outcome: SegmentOutcome,
+        clearPreview: Boolean,
+        myListener: TranscriptionEngine.Listener,
+    ) {
+        if (clearPreview && listener === myListener) myListener.onDelta("")
         // Guard: only fire if the listener hasn't been replaced/nulled since commit().
         if (listener === myListener) myListener.onSegmentResolved(seq, outcome)
     }
