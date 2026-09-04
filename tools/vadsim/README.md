@@ -465,7 +465,7 @@ The fix the app carries: `SileroEndpointer` counts, per uncommitted buffer, the 
 scored at or above ONSET (`evidenceFrames`, `SileroEndpointer.kt:395`), the commit funnel reads
 that count once before the engine's commit (`FloatingBubbleService.kt:3360`) and re-bases it after
 (`:3362`), and `LocalWhisperEngine` resolves a KNOWN count under
-`EndpointerTuning.MIN_SPEECH_EVIDENCE_MS = 256` — eight onset frames — as `EmptyExpected` without
+`EndpointerTuning.MIN_SPEECH_EVIDENCE_MS = 192` — six onset frames — as `EmptyExpected` without
 an encode (`LocalWhisperEngine.kt:375`, the `commit: seq=N skipped=no-speech-evidence …` line).
 **It changes no cut**: the count is EVIDENCE ONLY, read at the funnel and never by a branch of
 the state machine — which is the whole difference from the merge memory the 4.4 review rejected
@@ -501,8 +501,10 @@ over the commits that still encode, the tail's verdict, and two columns on the c
 ```
 
 `tests/test_evidence.py` mirrors `SileroEndpointerEvidenceTest` by name and adds the seam: the
-six-flicker silent window is skipped at the cap, the retained tail's carry crosses the cap's
-`reset()`, `jfk.wav` has no skippable commit, and the cuts are byte-identical at every floor.
+flickering silent window is skipped at the cap, the retained tail's carry crosses the cap's
+`reset()`, `jfk.wav` has no skippable commit, and the cuts are byte-identical at every floor. Its
+bed fixtures are derived from the floor (`FLOOR_FRAMES`, `FLICKER_PERIOD_FRAMES`) rather than
+spelled, so the retune 256 -> 192 (nit N1, 2026-09-04) moved them instead of quietly passing.
 
 HONEST LIMIT, in both machines: a music bed Silero scores as SPEECH for seconds has evidence and
 is not caught here. The no-speech gate and the stock-phrase blocklist (Layer 2, NPU tier,

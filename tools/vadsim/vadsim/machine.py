@@ -89,7 +89,7 @@ class Tuning:
     release: float = 0.35                  # EndpointerTuning.kt:64
     hangover_ms: int = 350                 # EndpointerTuning.kt:87  (retuned 500 -> 350 in 4.4)
     min_speech_ms: int = 300               # EndpointerTuning.kt:152
-    micro_pause_ms: int = 98               # EndpointerTuning.kt:166
+    micro_pause_ms: int = 98               # EndpointerTuning.kt:211
     # CommitCadencePolicy.kt:107 — npu-turbo, the owner ruling.
     min_commit_interval_ms: int = 2_000
     first_cap_ms: int = 4_000              # SegmentCapPolicy.kt:54
@@ -152,7 +152,7 @@ class Tuning:
     #: strictly below this is "flat".
     #:
     #: THE DEFAULT IS THE SHIPPED FLOOR, EXPRESSED IN THIS PREDICATE. The Kotlin's
-    #: `EndpointerTuning.FLATLINE_RMS_MAX = 10` (EndpointerTuning.kt:190) is INCLUSIVE —
+    #: `EndpointerTuning.FLATLINE_RMS_MAX = 10` (EndpointerTuning.kt:235) is INCLUSIVE —
     #: `amp <= 10` is flat (`SileroEndpointer.kt:779` resets on `amp > MAX`) — so its exact
     #: twin under this strict `<` is 11: `rms < 11` and `amp <= 10` accept the same integers.
     #: A bare vadsim run therefore simulates what ships. 40 was the pre-decision sweep
@@ -177,14 +177,20 @@ class Tuning:
     chunk_ms: int = 32
 
     # ----------------------------------------------------------------------------------
-    # THE SPEECH EVIDENCE (4.3.2). `EndpointerTuning.MIN_SPEECH_EVIDENCE_MS` (EndpointerTuning.kt:184):
+    # THE SPEECH EVIDENCE (4.3.2). `EndpointerTuning.MIN_SPEECH_EVIDENCE_MS` (EndpointerTuning.kt:197):
     # the least Silero evidence — milliseconds of frames scored at or above ONSET, over the whole
     # uncommitted buffer — a segment must carry for `LocalWhisperEngine` to ENCODE it. A REPORT
     # knob and nothing else: the machine counts the evidence per commit exactly as the Kotlin
     # does (`SileroEndpointerSim.evidence_frames`) and NEVER reads it for a cut; the report says
     # which commits the engine would have skipped at this floor and what that saves.
+    #
+    # 192 = SIX 32 ms frames, retuned from 256 (eight) by the controller's ruling of 2026-09-04 on
+    # review nit N1: a soft word scored half in Silero's dead band reaches the funnel with five or
+    # six onset frames, and dropping a real word is worse than one extra encode of flicker — which
+    # the no-speech gate and the stock-phrase blocklist still catch. This default TRACKS the Kotlin
+    # constant; it is the same number or the report is lying about the shipped engine.
     # ----------------------------------------------------------------------------------
-    min_evidence_ms: int = 256
+    min_evidence_ms: int = 192
 
     def __post_init__(self) -> None:
         if not (0 <= self.flatline_rms <= 32_767):

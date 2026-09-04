@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--min-speech", type=int, default=None, help="MIN_SPEECH_MS (300)")
     g.add_argument("--micro-pause", type=int, default=None, help="MICRO_PAUSE_MS (98)")
     g.add_argument("--min-evidence-ms", type=int, default=None,
-                   help="MIN_SPEECH_EVIDENCE_MS (256): the speech-evidence floor under which "
+                   help="MIN_SPEECH_EVIDENCE_MS (192): the speech-evidence floor under which "
                         "LocalWhisperEngine skips the encode (4.3.2, Layer 1). A REPORT knob — "
                         "it changes no cut; section 6 counts the commits skipped at it")
     g.add_argument("--floor", type=int, default=None,

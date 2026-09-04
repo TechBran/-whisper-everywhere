@@ -156,17 +156,32 @@ object EndpointerTuning {
      * the local engine to ENCODE it. `SileroEndpointer` counts the frames the probe scored at or
      * above [ONSET_THRESHOLD] since the buffer was last committed; the commit funnel hands that
      * total to `LocalWhisperEngine.commit`, which resolves a buffer under this floor
-     * `EmptyExpected` without touching the backend. 256 ms is eight 32 ms frames of p >= 0.50.
+     * `EmptyExpected` without touching the backend. 192 ms is six 32 ms frames of p >= 0.50.
      *
-     * Below native's 250 ms batch floor IN SPIRIT, not in kind: `we_vad_filter`'s
-     * `min_speech_duration_ms = 250` (`whisper_jni.cpp` ~:815, `whisper.cpp:4455`) is a floor on
-     * one RUN of speech at threshold 0.40; this is a floor on the TOTAL of onset frames at 0.50
-     * over the whole buffer, dips included. Chosen so a lone quiet "yes" (~300 ms of speech, nine
-     * or ten onset frames) passes and a 15 s bed where Silero flickered over ONSET for six frames
-     * does not. It is at most [MIN_SPEECH_MS] (pinned): a VAD cut that passed the 300 ms span
-     * floor carries the onset frames that opened and held the gate, so in the normal case a real
-     * utterance is never skippable on evidence — the 9-frame-at-0.9 burst that commits is also
-     * encoded (`SileroEndpointerEvidenceTest`).
+     * RETUNED 256 —> 192 (review nit N1, the controller's ruling of 2026-09-04). Eight frames
+     * asked more of a quiet word than Silero reliably gives: a short soft word can be scored half
+     * in the DEAD BAND ([RELEASE_THRESHOLD] <= p < [ONSET_THRESHOLD], which counts as neither
+     * speech nor silence) and reach the funnel carrying five or six onset frames rather than nine.
+     * Six frames of p >= 0.50 (192 ms) is where the floor sits now: a lone soft word of ~300 ms
+     * scored half in the dead band still clears it; a 15 s bed where Silero flickered for five
+     * frames does not. The ruling is an ASYMMETRY rather than a measurement — a dropped real word
+     * is worse than one extra encode of flicker-heavy silence, because that encode costs one pass
+     * on a tier measured IDLE most of the time and whatever it decodes still has to pass the
+     * no-speech gate and the stock-phrase blocklist, while a dropped word is unrecoverable:
+     * nothing ever re-commits that audio.
+     *
+     * BELOW native's 250 ms batch floor outright, where 256 sat one frame above it, and that is
+     * the point rather than a slip. `we_vad_filter`'s `min_speech_duration_ms = 250`
+     * (`whisper_jni.cpp` ~:815, `whisper.cpp:4455`) is a floor on one RUN of speech at threshold
+     * 0.40; this is a floor on the TOTAL of onset frames at the stricter 0.50 over the whole
+     * buffer, dips included. The stricter threshold makes this the SMALLER count for the same
+     * audio, so a floor set to match native's number would gate speech native itself keeps.
+     * It is at most [MIN_SPEECH_MS] (pinned): a VAD cut that passed the 300 ms span floor carries
+     * the onset frames that opened and held the gate, so in the normal case a real utterance is
+     * never skippable on evidence — the shortest burst that span floor commits, ten onset frames,
+     * is encoded (`SileroEndpointerEvidenceTest`). The ABNORMAL case is pinned too and N1 did not
+     * remove it: an utterance Silero parks mostly in the dead band can still be skipped
+     * (`SpeechEvidenceReviewTracesTest` T2), which is the honest cost of counting at 0.50.
      *
      * HONEST LIMIT: this gates the ENCODE on what the endpointer HEARD. A music bed that Silero
      * scores as SPEECH for seconds carries evidence and is not caught here; the no-speech gate and
@@ -179,7 +194,7 @@ object EndpointerTuning {
      * Consumers: `LocalWhisperEngine.commit` (the only decision), `SileroEndpointer` (the count)
      * and the simulator's `Tuning.min_evidence_ms` (`tools/vadsim`, `--min-evidence-ms`).
      */
-    const val MIN_SPEECH_EVIDENCE_MS = 256L
+    const val MIN_SPEECH_EVIDENCE_MS = 192L
 
     /**
      * A dip below [RELEASE_THRESHOLD] lasting longer than this is remembered as a cut point for the

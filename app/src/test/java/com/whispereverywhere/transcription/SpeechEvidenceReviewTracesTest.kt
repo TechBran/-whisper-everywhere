@@ -22,6 +22,12 @@ private val MICRO_PAUSE_FRAMES = EndpointerGrid.MICRO_PAUSE_FRAMES
 private val FLOOR = EndpointerTuning.MIN_SPEECH_EVIDENCE_MS
 
 /**
+ * The floor as a FRAME COUNT — six at 192 ms. T2 and T4 sit exactly one frame under and exactly
+ * on the floor, so both derive from this rather than from a literal (nit N1 moved it 256 -> 192).
+ */
+private val FLOOR_FRAMES = (FLOOR / FRAME_MS).toInt()
+
+/**
  * THE SPEECH EVIDENCE (4.3.2) — the adversarial reviewer's traces (round 1). Each one drives the
  * REAL `SileroEndpointer` and the REAL `LocalWhisperEngine` through the funnel's exact three
  * lines (`speechEvidenceMs()` -> `commit(evidence)` -> `onBufferCommitted(tailRetained)`), so
@@ -105,18 +111,28 @@ class SpeechEvidenceReviewTracesTest {
 
     @Test
     fun T2_a_VAD_cut_whose_utterance_is_mostly_dead_band_passes_the_span_floor_and_is_still_skipped() {
-        // Ten frames S S S D S D S D S S: the span is 320 ms > MIN_SPEECH_MS (the hangover CUTS
-        // it), but only seven frames are at or above ONSET: 224 ms < 256. A real, mumbled word
-        // that the endpointer chose to commit is then not encoded. "In the normal case" is the
-        // KDoc's phrase; this is the abnormal one, pinned.
+        // Ten frames S D S D S D S D S D: the span is 320 ms > MIN_SPEECH_MS (the hangover CUTS
+        // it), but only five are at or above ONSET: 160 ms < 192. A real, mumbled word that the
+        // endpointer chose to commit is then not encoded. "In the normal case" is the KDoc's
+        // phrase; this is the abnormal one, pinned.
+        //
+        // BUILT FROM THE CONSTANTS. N1 moved the floor 256 -> 192 and this fixture had to move
+        // with it — seven onset frames were under 256 and are over 192 — so it is now spelled as
+        // "one frame short of FLOOR_FRAMES, interleaved with the dead band over just enough
+        // frames to clear MIN_SPEECH_MS". The interleaving is what buys the span: a dead-band
+        // frame holds the gate open and the hangover clock still, while counting as no evidence.
         val listener = RecordingListener()
         val r = rig(listener = listener)
-        for (p in listOf(P_SPEECH, P_SPEECH, P_SPEECH, P_DEAD_BAND, P_SPEECH, P_DEAD_BAND, P_SPEECH, P_DEAD_BAND, P_SPEECH, P_SPEECH)) {
-            assertFalse(r.run(p, 1))
+        val onsetFrames = FLOOR_FRAMES - 1
+        val spanFrames = (EndpointerTuning.MIN_SPEECH_MS / FRAME_MS).toInt() + 1
+        assertTrue("the dead band must have room for the span", spanFrames >= 2 * onsetFrames)
+        for (i in 0 until spanFrames) {
+            assertFalse(r.run(if (i % 2 == 0 && i / 2 < onsetFrames) P_SPEECH else P_DEAD_BAND, 1))
         }
-        assertTrue("the hangover cuts: span 320 > 300", r.run(P_SILENCE, HANGOVER_FRAMES))
-        assertEquals(320L, r.ep.lastCut()?.speechMs)
-        assertEquals(7 * FRAME_MS, r.ep.speechEvidenceMs())
+        assertTrue("the hangover cuts: the span clears MIN_SPEECH_MS", r.run(P_SILENCE, HANGOVER_FRAMES))
+        assertEquals(spanFrames * FRAME_MS, r.ep.lastCut()?.speechMs)
+        assertTrue(spanFrames * FRAME_MS > EndpointerTuning.MIN_SPEECH_MS)
+        assertEquals(onsetFrames * FRAME_MS, r.ep.speechEvidenceMs())
         assertTrue(r.ep.speechEvidenceMs() < FLOOR)
 
         assertEquals(0L, r.funnel())
@@ -213,37 +229,45 @@ class SpeechEvidenceReviewTracesTest {
     fun T4_the_last_word_split_across_a_retaining_cap_and_the_stop_flush_is_encoded_only_because_of_the_carry() {
         // 118 speech frames, a 5-frame dip (offered on its fifth frame), THREE more speech
         // frames, then the cap fires and retains the tail from the offer. The committed part is
-        // credited with all 121 (encoded). The endpointer carries the tail's THREE. Then five
-        // more speech frames and six of silence (no cut), then the stop flush: 3 + 5 = 8 frames
-        // = 256 ms, exactly the floor -> ENCODED. Without the carry it would read 5 = 160 -> the
-        // speaker's last word skipped.
+        // credited with all 121 (encoded). The endpointer carries the tail's THREE. Then
+        // FLOOR_FRAMES - 3 more speech frames and six of silence (no cut), then the stop flush:
+        // the carry plus the new frames is exactly FLOOR_FRAMES -> ENCODED at the floor. Without
+        // the carry it would read the new frames alone, under the floor -> the speaker's last
+        // word skipped. The split derives from the constant: at 256 it was 3 + 5, at 192 it is
+        // 3 + 3, and the point of the fixture — the carry is what saves the word — is the same.
         val listener = RecordingListener()
         val r = rig(listener = listener)
+        val carried = 3
+        val newFrames = FLOOR_FRAMES - carried
+        assertTrue("the fixture is only a fixture while the carry is decisive", newFrames in 1 until FLOOR_FRAMES)
         assertFalse(r.run(P_SPEECH, 118))
         assertFalse(r.run(P_SILENCE, MICRO_PAUSE_FRAMES))
         val offer = r.ep.pendingCutPointMs()
         assertTrue(offer > Endpointer.NO_CUT_POINT)
-        assertFalse(r.run(P_SPEECH, 3))
-        assertEquals(121 * FRAME_MS, r.ep.speechEvidenceMs())
+        assertFalse(r.run(P_SPEECH, carried))
+        assertEquals((118 + carried) * FRAME_MS, r.ep.speechEvidenceMs())
 
         // The cap site: retain = now - offer (CommitCadencePolicy.capCutRetainMs, <= 3000 ms).
         val retainMs = r.t - offer
-        assertEquals((MICRO_PAUSE_FRAMES + 3) * FRAME_MS, retainMs)
+        assertEquals((MICRO_PAUSE_FRAMES + carried) * FRAME_MS, retainMs)
         assertEquals(0L, r.funnel(retainMs = retainMs))
         r.ep.reset()                                                   // the cap site's reset
         assertEquals("the part ran", 1, listener.resolved.size)
         assertTrue(listener.resolved[0].second is SegmentOutcome.Text)
-        assertEquals("the carry: the three onset frames after the offer", 3 * FRAME_MS, r.ep.speechEvidenceMs())
+        assertEquals("the carry: the onset frames after the offer", carried * FRAME_MS, r.ep.speechEvidenceMs())
 
-        assertFalse(r.run(P_SPEECH, 5))
+        assertFalse(r.run(P_SPEECH, newFrames))
         assertFalse("six silent frames: under the hangover, no cut", r.run(P_SILENCE, 6))
-        assertEquals(8 * FRAME_MS, r.ep.speechEvidenceMs())
+        assertEquals(FLOOR, r.ep.speechEvidenceMs())
         assertEquals(1L, r.funnel())                                   // the STOP flush
         assertTrue("encoded at exactly the floor", listener.resolved[1].second is SegmentOutcome.Text)
-        // The tail the flush encoded is exactly the retained 8 frames + the 11 new ones.
-        assertEquals(SegmentOutcome.Text("n${(MICRO_PAUSE_FRAMES + 3 + 5 + 6) * (B / 2)}"), listener.resolved[1].second)
+        // The tail the flush encoded is exactly the retained frames + every new one.
+        assertEquals(
+            SegmentOutcome.Text("n${(MICRO_PAUSE_FRAMES + carried + newFrames + 6) * (B / 2)}"),
+            listener.resolved[1].second,
+        )
         // The counter-factual the carry exists for:
-        assertTrue(SpeechEvidence.of(5 * FRAME_MS).isUnder(FLOOR))
+        assertTrue(SpeechEvidence.of(newFrames * FRAME_MS).isUnder(FLOOR))
     }
 
     // ------------------------------------------------------------------ T5
@@ -292,7 +316,7 @@ class SpeechEvidenceReviewTracesTest {
         assertEquals(-1L, r.funnel())
         assertEquals(2, listener.resolved.size)
         assertEquals(Endpointer.UNKNOWN_SPEECH_EVIDENCE_MS, r.ep.speechEvidenceMs())
-        // The owner's bed after all of that: room tone with four flickers -> 128 < 256, skipped.
+        // The owner's bed after all of that: room tone with four flickers -> 128 < 192, skipped.
         assertFalse(r.run(P_SILENCE, 100))
         repeat(4) { r.run(P_SPEECH, 1); r.run(P_SILENCE, 100) }
         assertEquals(4 * FRAME_MS, r.ep.speechEvidenceMs())

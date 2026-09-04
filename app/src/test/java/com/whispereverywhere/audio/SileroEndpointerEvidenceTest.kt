@@ -17,6 +17,13 @@ private val MICRO_PAUSE_FRAMES = EndpointerGrid.MICRO_PAUSE_FRAMES
 private val UNKNOWN = Endpointer.UNKNOWN_SPEECH_EVIDENCE_MS
 private val FLOOR = EndpointerTuning.MIN_SPEECH_EVIDENCE_MS
 
+/**
+ * The floor as a FRAME COUNT — six at the 192 ms floor. Every fixture built to sit just under or
+ * just over the floor derives from this, never from a literal: N1 moved the constant 256 -> 192
+ * and a fixture spelled `8` would have gone on passing while testing nothing.
+ */
+private val FLOOR_FRAMES = (FLOOR / FRAME_MS).toInt()
+
 private const val P_SPEECH = 0.9f
 private const val P_DEAD_BAND = 0.40f
 private const val P_SILENCE = 0.1f
@@ -128,7 +135,7 @@ class SileroEndpointerEvidenceTest {
         assertFalse(pump.run(P_SILENCE, HANGOVER_FRAMES))
         assertFalse("a discarded burst never latches pendingSpeech", ep.hasPendingSpeech())
         assertEquals(9 * FRAME_MS, ep.speechEvidenceMs())
-        assertTrue("288 >= 256: a lone quiet word's cap commit is encoded", ep.speechEvidenceMs() >= FLOOR)
+        assertTrue("288 ms >= the $FLOOR ms floor: a lone quiet word's cap commit is encoded", ep.speechEvidenceMs() >= FLOOR)
     }
 
     @Test fun the_count_survives_a_governor_merge() {
@@ -203,7 +210,7 @@ class SileroEndpointerEvidenceTest {
     @Test fun the_shortest_burst_that_commits_ten_onset_frames_is_also_encoded() {
         // MIN_SPEECH_EVIDENCE_MS <= MIN_SPEECH_MS, made concrete: the shortest burst the span floor
         // lets through — ten onset frames, speechMs = 320 > 300 — carries 320 ms of evidence, over
-        // the 256 ms floor. A VAD cut that passed the span floor is not skippable on evidence in
+        // the 192 ms floor. A VAD cut that passed the span floor is not skippable on evidence in
         // the normal case. (Nine frames span 288 ms and are DISCARDED, not committed — see the
         // discard test above, where the cap later commits them, encoded.)
         val (ep, pump) = fresh()
@@ -213,19 +220,21 @@ class SileroEndpointerEvidenceTest {
         assertTrue(ep.speechEvidenceMs() >= FLOOR)
     }
 
-    @Test fun a_fifteen_second_bed_where_silero_flickered_for_six_frames_reads_192_under_the_floor() {
+    @Test fun a_fifteen_second_bed_where_silero_flickered_for_five_frames_reads_160_under_the_floor() {
         // The owner's report: silence with a little background nudges the probe over ONSET for a
         // frame here and there. Each flicker opens the gate, the dip after it discards the burst,
-        // and nothing commits — until the 15 s cap. Six such frames are 192 ms of evidence, and
-        // the cap's commit is SKIPPED at the engine instead of paying a full encode for room tone.
+        // and nothing commits — until the 15 s cap. The bed the constant is chosen against is the
+        // one ONE FRAME under it, so it is built from FLOOR_FRAMES: five such frames are 160 ms
+        // of evidence against the 192 ms floor (at 256 it was six), and the cap's commit is
+        // SKIPPED at the engine instead of paying a full encode for room tone.
         val (ep, pump) = fresh()
-        repeat(6) {
-            pump.run(P_SILENCE, 80)          // 2.56 s of room tone
+        repeat(FLOOR_FRAMES - 1) {
+            pump.run(P_SILENCE, 100)         // 3.2 s of room tone
             pump.run(P_SPEECH, 1)            // one flicker
         }
         pump.run(P_SILENCE, 12)
         assertTrue("no cut on this bed: every flicker was discarded", pump.commitFrames.isEmpty())
-        assertEquals(6 * FRAME_MS, ep.speechEvidenceMs())
+        assertEquals((FLOOR_FRAMES - 1) * FRAME_MS, ep.speechEvidenceMs())
         assertTrue(ep.speechEvidenceMs() < FLOOR)
         assertTrue("the bed ran past a 15 s wall", pump.t - BASE > 15_000L)
     }
@@ -236,26 +245,28 @@ class SileroEndpointerEvidenceTest {
 
     @Test fun a_retaining_cap_cut_carries_exactly_the_tails_onset_frames_into_the_next_count() {
         // The tail a cap cut keeps is [offered cut point, now]. Twenty onset frames, a dip long
-        // enough to be offered (the fifth dip frame promotes), then eight more onset frames: the
-        // committed segment is credited with all 28 (over-count is safe), and the next buffer opens
-        // with exactly the eight that came after the offer.
+        // enough to be offered (the fifth dip frame promotes), then FLOOR_FRAMES more onset
+        // frames: the committed segment is credited with all 20 + FLOOR_FRAMES (over-count is
+        // safe), and the next buffer opens with exactly the ones that came after the offer —
+        // exactly the floor, the boundary this fixture exists to hold. Derived, not spelled: at
+        // the 256 ms floor the tail was eight frames, at 192 it is six.
         val (ep, pump) = fresh()
         pump.run(P_SPEECH, 20)
         pump.run(P_SILENCE, MICRO_PAUSE_FRAMES)
         val offer = ep.pendingCutPointMs()
         assertTrue("the dip was offered", offer > Endpointer.NO_CUT_POINT)
-        pump.run(P_SPEECH, 8)
+        pump.run(P_SPEECH, FLOOR_FRAMES)
         assertEquals("the offer survives the gate re-opening", offer, ep.pendingCutPointMs())
-        assertEquals(28 * FRAME_MS, ep.speechEvidenceMs())
+        assertEquals((20 + FLOOR_FRAMES) * FRAME_MS, ep.speechEvidenceMs())
 
         ep.onBufferCommitted(tailRetained = true)
-        assertEquals(8 * FRAME_MS, ep.speechEvidenceMs())
+        assertEquals(FLOOR, ep.speechEvidenceMs())
         assertTrue("the tail alone clears the floor: the speaker's last words are safe", ep.speechEvidenceMs() >= FLOOR)
         // The cap site calls reset() next; the carry must survive it.
         ep.reset()
-        assertEquals(8 * FRAME_MS, ep.speechEvidenceMs())
+        assertEquals(FLOOR_FRAMES * FRAME_MS, ep.speechEvidenceMs())
         pump.run(P_SPEECH, 1)
-        assertEquals(9 * FRAME_MS, ep.speechEvidenceMs())
+        assertEquals((FLOOR_FRAMES + 1) * FRAME_MS, ep.speechEvidenceMs())
     }
 
     @Test fun a_flicker_before_the_offered_dip_carries_nothing() {

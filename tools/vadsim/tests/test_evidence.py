@@ -4,14 +4,14 @@ plus the service seam the JVM cannot reach.
 The endpointer counts, per uncommitted buffer, the frames the probe scored at or above ONSET;
 the commit funnel reads that count once before the engine's commit and re-bases it after; the
 engine skips the ENCODE of a KNOWN count under `Tuning.min_evidence_ms` (the Kotlin's
-`MIN_SPEECH_EVIDENCE_MS = 256`). Two properties carry this file, as they carry the Kotlin's:
+`MIN_SPEECH_EVIDENCE_MS = 192`). Two properties carry this file, as they carry the Kotlin's:
 the count is EVIDENCE ONLY (it never moves a cut — shown on the grid fixtures and at every
 floor), and it is BUFFER knowledge (a discard or a merge leaves it standing; only the funnel and
 a session start re-base it; a retaining cap cut hands the next buffer exactly the tail's onset
 frames).
 
 THE GRID at the shipped tuning: HANGOVER_FRAMES = 12, MICRO_PAUSE_FRAMES = 5,
-MIN_SPEECH_EVIDENCE_MS = 256 = 8 frames.
+MIN_SPEECH_EVIDENCE_MS = 192 = 6 frames (retuned from 256 = 8 by nit N1, 2026-09-04).
 """
 
 from __future__ import annotations
@@ -41,6 +41,16 @@ T = Tuning()
 HANGOVER_FRAMES = T.hangover_frames()
 MICRO_PAUSE_FRAMES = T.micro_pause_frames()
 FLOOR = T.min_evidence_ms
+#: The floor as a FRAME COUNT — six at 192 ms. Every fixture built to sit just under or just over
+#: the floor derives from this, never from a literal: N1 moved the constant and a fixture spelled
+#: `8` would have gone on passing while testing nothing.
+FLOOR_FRAMES = FLOOR // FRAME_MS
+#: The period of the owner's flickering bed, DERIVED so that the widest cap window (15 s) can never
+#: accumulate FLOOR_FRAMES flickers — at 192 that is at most five per window, one short of the
+#: floor, which is what makes "the silent bed is SKIPPED" a property of the tuning and not of an
+#: 80-frame literal that happened to work at 256.
+FLICKER_PERIOD_FRAMES = T.cap_ms // ((FLOOR_FRAMES - 1) * FRAME_MS) + 1
+FLICKER_GAP_FRAMES = FLICKER_PERIOD_FRAMES - 1
 UNKNOWN = UNKNOWN_SPEECH_EVIDENCE_MS
 
 P_SPEECH = 0.9
@@ -78,9 +88,13 @@ def fresh(min_commit_interval_ms: int = 0, tuning: Tuning = T):
 
 
 def test_the_grid_matches_the_kotlin_floor():
-    assert FLOOR == 256 == 8 * FRAME_MS
+    assert FLOOR == 192 == 6 * FRAME_MS == FLOOR_FRAMES * FRAME_MS
     assert FLOOR <= T.min_speech_ms, "a VAD cut that passed the span floor is not skippable in the normal case"
-    assert 9 * FRAME_MS >= FLOOR > 6 * FRAME_MS
+    # Six ENCODE, five do not: the N1 boundary, and below native's 250 ms run floor on purpose.
+    assert 6 * FRAME_MS >= FLOOR > 5 * FRAME_MS
+    assert FLOOR < 250, "a TOTAL at 0.50 is the smaller count: it may not match native's run floor"
+    # The bed fixtures are built from the floor, not around it.
+    assert (FLOOR_FRAMES - 1) * FLICKER_PERIOD_FRAMES * FRAME_MS > T.cap_ms
 
 
 # =======================================================================================
@@ -120,7 +134,7 @@ def test_the_count_survives_a_MIN_SPEECH_discard_because_that_audio_is_still_in_
     assert not pump.run(P_SILENCE, HANGOVER_FRAMES)        # DISCARDED, not committed
     assert ep.discards == 1 and not ep.has_pending_speech()
     assert ep.speech_evidence_ms() == 9 * FRAME_MS
-    assert ep.speech_evidence_ms() >= FLOOR, "288 >= 256: the cap's commit of a lone quiet word is encoded"
+    assert ep.speech_evidence_ms() >= FLOOR, "288 >= 192: the cap's commit of a lone quiet word is encoded"
 
 
 def test_the_count_survives_a_governor_merge():
@@ -189,15 +203,15 @@ def test_the_shortest_burst_that_commits_ten_onset_frames_is_also_encoded():
     assert ep.speech_evidence_ms() == 10 * FRAME_MS >= FLOOR
 
 
-def test_a_fifteen_second_bed_where_silero_flickered_for_six_frames_reads_192_under_the_floor():
+def test_a_fifteen_second_bed_where_silero_flickered_for_five_frames_reads_160_under_the_floor():
     ep, pump = fresh()
-    for _ in range(6):
-        pump.run(P_SILENCE, 80)                            # 2.56 s of room tone
+    for _ in range(FLOOR_FRAMES - 1):                      # one frame short of the floor
+        pump.run(P_SILENCE, FLICKER_GAP_FRAMES)            # ~3 s of room tone
         pump.run(P_SPEECH, 1)                              # one flicker
     pump.run(P_SILENCE, 12)
     assert pump.commit_frames == [], "every flicker was discarded"
-    assert ep.discards == 6
-    assert ep.speech_evidence_ms() == 6 * FRAME_MS == 192 < FLOOR
+    assert ep.discards == FLOOR_FRAMES - 1
+    assert ep.speech_evidence_ms() == (FLOOR_FRAMES - 1) * FRAME_MS == 160 < FLOOR
     assert pump.t - BASE_MS > 15_000
 
 
@@ -211,15 +225,15 @@ def test_a_retaining_cap_cut_carries_exactly_the_tails_onset_frames_into_the_nex
     pump.run(P_SILENCE, MICRO_PAUSE_FRAMES)                # the fifth dip frame promotes
     offer = ep.pending_cut_point_ms()
     assert offer > NO_CUT_POINT
-    pump.run(P_SPEECH, 8)
+    pump.run(P_SPEECH, FLOOR_FRAMES)                       # the tail is EXACTLY the floor
     assert ep.pending_cut_point_ms() == offer
-    assert ep.speech_evidence_ms() == 28 * FRAME_MS
+    assert ep.speech_evidence_ms() == (20 + FLOOR_FRAMES) * FRAME_MS
     ep.on_buffer_committed(tail_retained=True)
-    assert ep.speech_evidence_ms() == 8 * FRAME_MS >= FLOOR
+    assert ep.speech_evidence_ms() == FLOOR_FRAMES * FRAME_MS == FLOOR
     ep.reset()                                             # the cap site's reset: the carry survives
-    assert ep.speech_evidence_ms() == 8 * FRAME_MS
+    assert ep.speech_evidence_ms() == FLOOR_FRAMES * FRAME_MS
     pump.run(P_SPEECH, 1)
-    assert ep.speech_evidence_ms() == 9 * FRAME_MS
+    assert ep.speech_evidence_ms() == (FLOOR_FRAMES + 1) * FRAME_MS
 
 
 def test_a_flicker_before_the_offered_dip_carries_nothing():
@@ -283,7 +297,7 @@ def test_the_count_changes_no_cut_on_the_grid_fixtures_whether_or_not_the_funnel
 def test_the_cuts_are_byte_identical_at_every_floor():
     probs = ([P_SILENCE] * 80 + [P_SPEECH]) * 6 + [P_SPEECH] * 40 + [P_SILENCE] * 12
     baseline = [(c.t_ms, c.kind, c.chunk_ms, c.retain_ms) for c in simulate(probs, T).commits]
-    for floor in (0, 32, 256, 10_000):
+    for floor in (0, 32, FLOOR, 10_000):
         r = simulate(probs, replace(T, min_evidence_ms=floor))
         assert [(c.t_ms, c.kind, c.chunk_ms, c.retain_ms) for c in r.commits] == baseline
         assert all(c.speech_frames is not None for c in r.commits), "the count is taken whatever the floor"
@@ -295,13 +309,14 @@ def test_the_cuts_are_byte_identical_at_every_floor():
 # =======================================================================================
 
 def test_the_seam_skips_the_cap_commit_of_a_flickering_silent_window_and_the_next_window_opens_at_zero():
-    """The owner's report end to end: 40 s of room tone with a flicker every 2.56 s. Every commit
-    is a cap cut, every one carries at most a handful of onset frames, every one is SKIPPED —
-    and because each flicker precedes the dip the cap retains, the carry is always zero."""
-    probs = ([P_SILENCE] * 80 + [P_SPEECH]) * 16
+    """The owner's report end to end: room tone with a flicker every FLICKER_PERIOD_FRAMES. Every
+    commit is a cap cut, every one carries fewer onset frames than the floor asks for — that is
+    the derivation of the period, not a coincidence of the fixture — every one is SKIPPED, and
+    because each flicker precedes the dip the cap retains, the carry is always zero."""
+    probs = ([P_SILENCE] * FLICKER_GAP_FRAMES + [P_SPEECH]) * 16
     r = simulate(probs, T)
     assert r.commits and all(c.kind == "cap" for c in r.commits)
-    assert all(c.speech_frames is not None and c.speech_frames <= 6 for c in r.commits)
+    assert all(c.speech_frames is not None and c.speech_frames < FLOOR_FRAMES for c in r.commits)
     assert r.skipped() == r.commits
     assert any(c.retain_ms > 0 for c in r.commits), "the fixture exercises a retaining cap cut"
     s = analyze.summarise(r, probs)
@@ -314,22 +329,24 @@ def test_the_seam_skips_the_cap_commit_of_a_flickering_silent_window_and_the_nex
 
 def test_a_speaker_whose_last_words_fall_in_a_retained_tail_is_not_skipped_at_the_stop_flush():
     """118 frames of speech, a 5-frame dip (offered), then speech through the 4 s first cap, which
-    fires on frame 125 and retains the tail from the offer (224 ms). Five more speech frames,
-    then silence too short to cut. The tail the stop flush commits holds 3 carried + 5 new = 8
-    onset frames — exactly the floor — and is ENCODED; without the carry it would read 5 frames
-    and the speaker's last words would be skipped."""
-    probs = [P_SPEECH] * 118 + [P_SILENCE] * 5 + [P_SPEECH] * 8 + [P_SILENCE] * 6
+    fires on frame 125 and retains the tail from the offer (224 ms). Then FLOOR_FRAMES - 3 more
+    speech frames and silence too short to cut. The tail the stop flush commits holds 3 carried
+    plus those new ones — exactly the floor — and is ENCODED; without the carry it would read the
+    new frames alone, under the floor, and the speaker's last words would be skipped. The split
+    derives from the constant: 3 + 5 at the old 256, 3 + 3 at 192, same property either way."""
+    carried, new = 3, FLOOR_FRAMES - 3
+    probs = [P_SPEECH] * 118 + [P_SILENCE] * 5 + [P_SPEECH] * (carried + new) + [P_SILENCE] * 6
     r = simulate(probs, T)
     assert len(r.commits) == 1
     c = r.commits[0]
     assert c.kind == "cap" and c.retain_ms == 224 and c.cap_ms == T.first_cap_ms
-    assert c.speech_frames == 121, "the committed part is credited with the WHOLE count"
+    assert c.speech_frames == 118 + carried, "the committed part is credited with the WHOLE count"
     assert not c.skipped_at(FLOOR)
     assert r.tail_ms > 0
-    assert r.tail_evidence_ms == 8 * FRAME_MS == FLOOR
+    assert r.tail_evidence_ms == FLOOR_FRAMES * FRAME_MS == FLOOR
     assert not r.tail_skipped()
     # The counter-factual: the same tail judged without the carry would have been skipped.
-    assert 5 * FRAME_MS < FLOOR
+    assert new * FRAME_MS < FLOOR
 
 
 def test_the_stop_flush_of_a_silent_tail_is_skipped():
@@ -365,7 +382,7 @@ def test_jfk_has_no_skippable_commit_and_every_commit_carries_known_evidence():
 
 
 def test_the_cli_reports_the_skips_and_honours_the_flag(tmp_path):
-    probs = ([P_SILENCE] * 80 + [P_SPEECH]) * 8
+    probs = ([P_SILENCE] * FLICKER_GAP_FRAMES + [P_SPEECH]) * 8
     csv = tmp_path / "flicker.csv"
     csv.write_text(
         "frame,t_ms,p\n" + "".join(f"{i},{BASE_MS + i * FRAME_MS},{p:.6f}\n" for i, p in enumerate(probs)),
@@ -382,7 +399,7 @@ def test_the_cli_reports_the_skips_and_honours_the_flag(tmp_path):
         return proc.stdout
 
     doc = json.loads(run("--json"))
-    assert doc["tuning"]["min_evidence_ms"] == 256
+    assert doc["tuning"]["min_evidence_ms"] == FLOOR == 192
     assert doc["summary"]["commits"] > 0
     assert doc["summary"]["skipped_at_min_evidence"] == doc["summary"]["commits"]
     assert all("speech_frames" in c and "speech_evidence_ms" in c for c in doc["commits"])

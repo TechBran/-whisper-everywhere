@@ -29,7 +29,7 @@ class EndpointerTuningTest {
         assertEquals(300L, EndpointerTuning.MIN_SPEECH_MS)
         // THE SPEECH-EVIDENCE FLOOR (4.3.2): the encode gate, not a cut knob. Its own test below
         // carries the derivation; this row is the verbatim value.
-        assertEquals(256L, EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
+        assertEquals(192L, EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
         assertEquals(98L, EndpointerTuning.MICRO_PAUSE_MS)
         assertEquals(8L, EndpointerTuning.PROBE_BUDGET_MS)
         // The unit every consumer of the budget actually compares in (Task C10's retune). Pinned
@@ -59,22 +59,26 @@ class EndpointerTuningTest {
     // argues from. Reference twin: tools/vadsim's `Tuning.min_evidence_ms`.
     // ---------------------------------------------------------------------------------------
 
-    @Test fun the_speech_evidence_floor_is_256_eight_onset_frames_so_a_lone_quiet_yes_passes_and_a_six_frame_flicker_does_not() {
-        assertEquals(256L, EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
-        // Eight whole 32 ms frames of p >= ONSET: the floor is a frame count wearing milliseconds.
-        assertEquals(8 * EndpointerTuning.FRAME_MS, EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
-        // A lone quiet "yes" is ~300 ms of speech — nine or ten onset frames — and must ENCODE.
-        assertTrue(9 * EndpointerTuning.FRAME_MS >= EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
-        // A 15 s bed where Silero flickered over ONSET for six frames must NOT.
-        assertTrue(6 * EndpointerTuning.FRAME_MS < EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
+    @Test fun the_speech_evidence_floor_is_192_six_onset_frames_so_a_soft_word_half_in_the_dead_band_passes_and_a_five_frame_flicker_does_not() {
+        assertEquals(192L, EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
+        // Six whole 32 ms frames of p >= ONSET: the floor is a frame count wearing milliseconds.
+        assertEquals(6 * EndpointerTuning.FRAME_MS, EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
+        // RETUNED 256 -> 192 (nit N1, the controller's ruling of 2026-09-04). A lone soft word of
+        // ~300 ms scored half in the dead band carries five or six onset frames, not nine: at
+        // eight the floor could drop a real word, so SIX frames must ENCODE.
+        assertTrue(6 * EndpointerTuning.FRAME_MS >= EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
+        // And FIVE must not — the 15 s bed where Silero flickered five times is still skipped.
+        assertTrue(5 * EndpointerTuning.FRAME_MS < EndpointerTuning.MIN_SPEECH_EVIDENCE_MS)
         // At most MIN_SPEECH_MS: a VAD cut that passed the 300 ms span floor must not be skippable
-        // on evidence in the normal case — SileroEndpointerEvidenceTest shows the 9-frame burst
+        // on evidence in the normal case — SileroEndpointerEvidenceTest shows the ten-frame burst
         // that commits is also encoded.
         assertTrue(EndpointerTuning.MIN_SPEECH_EVIDENCE_MS <= EndpointerTuning.MIN_SPEECH_MS)
-        // Native's batch floor is 250 ms on a RUN at 0.40; this is a TOTAL at 0.50, so "below in
-        // spirit" is a statement about the frame grid: 256 is the first multiple of 32 above 250.
-        assertTrue(EndpointerTuning.MIN_SPEECH_EVIDENCE_MS > 250L)
-        assertTrue(EndpointerTuning.MIN_SPEECH_EVIDENCE_MS - EndpointerTuning.FRAME_MS <= 250L)
+        // Native's batch floor is 250 ms on a RUN at 0.40; this is a TOTAL at the stricter 0.50,
+        // which is the SMALLER count for the same audio — so after N1 this floor sits below
+        // native's deliberately, where 256 sat one frame above it.
+        assertTrue(EndpointerTuning.MIN_SPEECH_EVIDENCE_MS < 250L)
+        // A whole number of frames, always: a floor between two counts would BE the lower one.
+        assertEquals(0L, EndpointerTuning.MIN_SPEECH_EVIDENCE_MS % EndpointerTuning.FRAME_MS)
     }
 
     @Test fun the_release_threshold_is_the_native_schmitt_hysteresis() {

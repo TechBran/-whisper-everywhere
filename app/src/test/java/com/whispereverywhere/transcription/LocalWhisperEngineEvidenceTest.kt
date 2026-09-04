@@ -76,11 +76,11 @@ class LocalWhisperEngineEvidenceTest {
 
         engine.sendAudio(fifteenSeconds)
         engine.commit(known(floor))
-        assertEquals("256 ms of evidence is encoded", 1, backend.transcribeCalls.size)
+        assertEquals("$floor ms of evidence — exactly the floor — is encoded", 1, backend.transcribeCalls.size)
 
         engine.sendAudio(fifteenSeconds)
         engine.commit(known(floor - 1))
-        assertEquals("255 is not", 1, backend.transcribeCalls.size)
+        assertEquals("${floor - 1} is not", 1, backend.transcribeCalls.size)
 
         assertEquals(
             listOf(0L to SegmentOutcome.Text("yes"), 1L to SegmentOutcome.EmptyExpected),
