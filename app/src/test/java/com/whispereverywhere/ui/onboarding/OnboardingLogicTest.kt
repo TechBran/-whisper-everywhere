@@ -104,11 +104,13 @@ class OnboardingLogicTest {
      * exists so a copy change is a decision; this one was the owner's.
      */
     @Test fun the_language_hint_is_the_owners_2026_09_03_lock_sentence() {
-        // Our-own-app relative — what a pick does in THIS app on every tier (an explicit language
-        // passes through unchanged; nothing detects), no cross-app claim.
+        // Scoped to the multilingual models (review MC-1): there an explicit language passes
+        // through unchanged and nothing detects. On an ENGLISH-scope tier — pro (small.en),
+        // pickable on every non-NPU device — FloatingBubbleService replaces the pick with "en",
+        // so an unscoped "locks every phrase" was false. Our-own-app relative, no cross-app claim.
         assertEquals(
-            "Choosing one language locks every phrase to it — the most accurate choice if you " +
-                "only ever speak one, and the right one for dictation.",
+            "On the multilingual models, choosing one language locks every phrase to it — the " +
+                "most accurate choice if you only ever speak one, and the right one for dictation.",
             OnboardingLogic.LANGUAGE_HINT,
         )
         assertEquals("Your device's language", OnboardingLogic.DEVICE_LANGUAGE_BADGE)

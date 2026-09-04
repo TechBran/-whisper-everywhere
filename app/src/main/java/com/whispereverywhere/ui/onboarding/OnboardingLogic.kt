@@ -39,14 +39,19 @@ object OnboardingLogic {
      * multilingual transcription "faster": on the shipping AI chip tier the saving is a ~9 ms
      * detect step inside a ~2 s commit, and on the CPU tier [com.whispereverywhere.transcription.LanguagePin]
      * already skips the detect from the second segment on — a speed claim nobody can notice. What
-     * a pick actually does is TRUE on every tier: an explicit language passes through to whisper
+     * a pick actually does on a MULTILINGUAL tier: an explicit language passes through to whisper
      * unchanged (LanguagePin never pins it; NpuWhisperBackend runs no detect for it), so every
      * phrase is that language — the accuracy case for a one-language speaker, and for dictation.
-     * OUR-OWN-APP relative, never a cross-app claim. Pinned verbatim by OnboardingLogicTest.
+     * SCOPED to the multilingual models on purpose (review MC-1): on an ENGLISH-scope tier the
+     * service REPLACES the pick with "en" (FloatingBubbleService, `connect lang resolved=`), and
+     * `pro` (small.en) is pickable on every non-NPU device and heads the lineup on an en-US phone
+     * whatever was picked — an unscoped "locks every phrase" was false there. "Multilingual" is
+     * the app's own name for those tiers (WhisperModel displayNames; ModelTierCopy). OUR-OWN-APP
+     * relative, never a cross-app claim. Pinned verbatim by OnboardingLogicTest.
      */
     const val LANGUAGE_HINT =
-        "Choosing one language locks every phrase to it — the most accurate choice if you only " +
-            "ever speak one, and the right one for dictation."
+        "On the multilingual models, choosing one language locks every phrase to it — the most " +
+            "accurate choice if you only ever speak one, and the right one for dictation."
 
     /**
      * The auto row's subtitle — the owner's 2026-09-03 ruling: KEEP the Auto option, and make its
