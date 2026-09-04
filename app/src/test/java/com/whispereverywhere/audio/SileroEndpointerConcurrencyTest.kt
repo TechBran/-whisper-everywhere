@@ -52,8 +52,8 @@ class SileroEndpointerConcurrencyTest {
      * `@Volatile`.
      *
      * SET EQUALITY, not containment — and that is the half of this test that earns its keep. A pin
-     * that merely checked the sixteen listed names were present and volatile would go on passing
-     * the day someone adds a seventeenth `var` and never enrols it, which is precisely the field
+     * that merely checked the nineteen listed names were present and volatile would go on passing
+     * the day someone adds a twentieth `var` and never enrols it, which is precisely the field
      * whose cross-thread behaviour nobody has thought about yet. Making the set EQUAL turns "a new
      * mutable field appeared" into a build failure that hands the author the question.
      */
@@ -69,11 +69,21 @@ class SileroEndpointerConcurrencyTest {
         // field of this class with a Main-ONLY writer), `flatRun` and `flatRunStartMs` (the flat
         // run: incremented/stamped on the capture thread, zeroed by closeGate, which Main reaches
         // through reset). Each states its own hazard in the class KDoc's @Volatile paragraph.
+        //
+        // Build 85 THE BACKPRESSURE GOVERNOR enrolled three more, to nineteen, and they cross the
+        // boundary three different ways: `queueDepth` is written by BOTH threads (the commit
+        // funnel publishes a depth from the capture thread, onSegmentResolved from Main) and read
+        // on the capture thread at each endpoint; `slowFloorActive` is written on the CAPTURE
+        // thread only (the mode steps where the floor is consulted) and cleared from Main by
+        // onSessionStart; `slowCommitIntervalMs` is written by Main at onSessionStart and read on
+        // the capture thread, exactly as `minCommitIntervalMs` beside it. The class KDoc's
+        // @Volatile paragraph carries each one's sentence.
         val required = listOf(
             "fill", "lastFrameMs", "speaking", "speechStartMs", "pendingSpeech",
             "tempEndMs", "prevEndMs", "lastCommitMs", "hasCommitted", "minCommitIntervalMs",
             "slowRun", "probeCutout", "lastCutRecord",
             "flatlineArmed", "flatRun", "flatRunStartMs",
+            "slowCommitIntervalMs", "queueDepth", "slowFloorActive",
         )
         val declared = SileroEndpointer::class.java.declaredFields.associateBy { it.name }
 

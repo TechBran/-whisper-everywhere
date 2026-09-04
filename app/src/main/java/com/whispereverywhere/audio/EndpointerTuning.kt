@@ -247,4 +247,9 @@ object EndpointerTuning {
     // com.whispereverywhere.service.CommitCadencePolicy, and reaches the endpointer per SESSION via
     // Endpointer.onSessionStart(nowMs, minCommitIntervalMs) — it depends on the installed tier AND
     // on whether every commit becomes a provider request, neither of which is an acoustic knob.
+    // Since build 85 the same call carries the SLOW row as its third argument, slowCommitIntervalMs
+    // — THE BACKPRESSURE GOVERNOR's floor once the segment queue reaches two (3200 npu-turbo; equal
+    // to the fast floor on every other tier, so inert there) — and the two depth thresholds it steps
+    // on are that object's BACKPRESSURE_ENTER_DEPTH / BACKPRESSURE_LEAVE_DEPTH, re-exported from
+    // BackpressureRule in this package. None of those is an acoustic knob either.
 }

@@ -15,7 +15,8 @@ package com.whispereverywhere.audio
  * Threading: [onFrame], [hasPendingSpeech], [pendingCutPointMs] and [reset] are all called from
  * the CAPTURE thread (StreamingAudioRecorder / PlaybackAudioCapturer), ~31.25 Hz, with one
  * exception — [reset] is additionally called from Main at switchSource / onOpen / stopRecording.
- * [onSessionStart] and [onSessionEnd] are Main-only. Implementations must be allocation-free and
+ * [onSessionStart] and [onSessionEnd] are Main-only; [onQueueDepth] arrives from EITHER thread
+ * (see its KDoc). Implementations must be allocation-free and
  * lock-light on the [onFrame] path: it runs inline on the audio thread against a 32 ms budget.
  */
 interface Endpointer {
@@ -57,8 +58,37 @@ interface Endpointer {
      *
      * An implementation that owns a native probe ARMS it here and initialises it lazily on the
      * first [onFrame] — i.e. on the capture thread, never on Main.
+     *
+     * [slowCommitIntervalMs] (build 85) is THE BACKPRESSURE GOVERNOR's second floor: the interval
+     * to pace at while the segment queue — published through [onQueueDepth] — is at or over
+     * [BackpressureRule.ENTER_DEPTH], until it falls to [BackpressureRule.LEAVE_DEPTH]. Defaulted
+     * to [minCommitIntervalMs] so every existing caller and test compiles and behaves as before:
+     * slow == fast is the inert governor, and it is also what every tier but npu-turbo hands over
+     * ([com.whispereverywhere.service.CommitCadencePolicy.slowCommitIntervalMs]). An implementation
+     * that does not pace ignores it.
      */
-    fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {}
+    fun onSessionStart(
+        nowMs: Long,
+        minCommitIntervalMs: Long,
+        slowCommitIntervalMs: Long = minCommitIntervalMs,
+    ) {}
+
+    /**
+     * THE BACKPRESSURE GOVERNOR's signal (build 85): the committed-but-unresolved segment backlog,
+     * published on EVERY change — each commit and each resolution — by the service's
+     * `SegmentQueueDepth`, which calls this from inside its own monitor so the values arrive in
+     * the order the set changed. NOT Main-only: the commit funnel runs on the capture thread for
+     * the endpoint and cap cuts and on Main for switchSource / stopRecording / the consent flush,
+     * and resolutions arrive on Main. An implementation must therefore treat the depth as a
+     * plain published integer — a `@Volatile` write, nothing else — and step its own mode from
+     * it on the capture thread, where the floor is consulted. Default: no-op; the amplitude
+     * fallback has no floor to govern.
+     *
+     * A session opens at depth 0 ([onSessionStart] clears the last one's) and the service resets
+     * its counter at the same moment, so a backlog the previous session left in flight is never
+     * inherited. [reset] leaves it alone: a cap cut is a commit, not a change in what is queued.
+     */
+    fun onQueueDepth(depth: Int) {}
 
     /**
      * Session end (Main), called from stopRecording AFTER both capture sources have stopped and

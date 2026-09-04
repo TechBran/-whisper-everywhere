@@ -313,6 +313,15 @@ class EndpointerTuningTest {
                 "reaches the endpointer per SESSION via Endpointer.onSessionStart(nowMs, " +
                     "minCommitIntervalMs)"
             ),
+            // Build 85: the backpressure governor's SLOW row rides the same call. The pin above
+            // still holds verbatim (the fast row's route did not move); this one says the third
+            // argument exists and where it comes from, so a reader of this file learns that the
+            // floor is no longer ONE number per session.
+            Pin(
+                "and so is the SLOW row the backpressure governor steps up to (build 85)",
+                commitCadenceNote(),
+                "the same call carries the SLOW row as its third argument, slowCommitIntervalMs"
+            ),
         )
 
         pins.forEach { (item, scope, sentence) ->

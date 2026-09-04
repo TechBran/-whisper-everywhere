@@ -75,6 +75,21 @@ import com.whispereverywhere.util.ProbeStats
  * start on every frame that begins a run, so a count of 1 carries THIS frame's stamp whatever Main
  * did or did not manage to publish.
  *
+ * THE BACKPRESSURE GOVERNOR (build 85) added three more, and the census names them in its own
+ * words. [queueDepth] is the one field of this class with TWO writers: the service publishes the
+ * segment backlog through [onQueueDepth] from whichever thread committed (the capture thread for
+ * an endpoint or cap cut, Main for switchSource / stopRecording / the consent flush) and from
+ * Main on every resolution; the capture thread reads it at each real endpoint and nowhere else.
+ * A depth published between two endpoints is therefore acted on at the next one — never
+ * retroactively — and a torn pair of publishes can cost at most one endpoint judged under the
+ * other floor, which the next endpoint corrects. [slowFloorActive] is the MODE, and it is written
+ * on the CAPTURE thread only — inside [currentFloorMs], the one place the floor is consulted —
+ * and cleared by [onSessionStart] from Main; that asymmetry is deliberate, so the mode can never
+ * be stepped from a thread that is not also about to use it. [slowCommitIntervalMs] is written by
+ * Main at [onSessionStart] and read on the capture thread, exactly as [minCommitIntervalMs]
+ * beside it, and carries the same hazard: a session floor the capture thread never sees is a
+ * session paced at the previous tier's number.
+ *
  * What @Volatile buys here is VISIBILITY, not atomicity: `fill += n` is a non-atomic
  * read-modify-write, so a Main-thread [reset] racing the capture thread can be LOST, leaving at
  * most one frame of pre-reset audio in the accumulator — inside the same one-chunk tolerance. No
@@ -227,6 +242,33 @@ class SileroEndpointer(
     @Volatile private var minCommitIntervalMs = 8_000L
 
     /**
+     * THE BACKPRESSURE GOVERNOR's second floor (build 85): the interval to pace at while
+     * [slowFloorActive]. Handed over beside [minCommitIntervalMs] at [onSessionStart] and
+     * defaulted to it there, so a two-argument session start — every existing caller — is the
+     * inert governor. Before the first session start it is the same conservative 8000 as the fast
+     * floor, for the same reason: two equal floors are one floor.
+     */
+    @Volatile private var slowCommitIntervalMs = 8_000L
+
+    /**
+     * THE SIGNAL: the committed-but-unresolved segment backlog as the service last published it
+     * through [onQueueDepth] — from EITHER thread (see the class KDoc). Read on the capture thread
+     * inside [currentFloorMs] at each real endpoint; 0 at every [onSessionStart]; untouched by
+     * [reset], which is a commit and not a change in what is queued.
+     */
+    @Volatile private var queueDepth = 0
+
+    /**
+     * THE MODE: true while the governor paces at [slowCommitIntervalMs]. Stepped from
+     * [queueDepth] by [BackpressureRule.slowActive] inside [currentFloorMs] — on the CAPTURE
+     * thread, at the endpoints that consult the floor, and nowhere else — so it enters at
+     * [BackpressureRule.ENTER_DEPTH] and leaves at [BackpressureRule.LEAVE_DEPTH] with the
+     * hysteresis that rule carries. Cleared by [onSessionStart]; kept across [reset], exactly as
+     * the depth is.
+     */
+    @Volatile private var slowFloorActive = false
+
+    /**
      * THE SLOW-PROBE LATCH. [slowRun] counts CONSECUTIVE frames whose probe call overran
      * [EndpointerTuning.PROBE_BUDGET_MS] — one frame inside the budget puts it back to zero — and
      * [probeCutout] is the latch it throws at [EndpointerTuning.PROBE_CUTOUT_FRAMES], after which
@@ -234,7 +276,8 @@ class SileroEndpointer(
      * caps own it. The third and last fallback tier, under "no model at all" and over "the wall
      * caps always".
      *
-     * The pair sits AFTER the governor's three fields rather than inside them, where the plan drew
+     * The pair sits AFTER the governor's fields (three in 3.7, six since build 85) rather than
+     * inside them, where the plan drew
      * it: those three are one mechanism under one joint KDoc and this is a different mechanism. The
      * resulting order is also the one `SileroEndpointerConcurrencyTest` pins (Task C9) and the
      * position Task C8 hangs `lastCutRecord` off.
@@ -447,7 +490,12 @@ class SileroEndpointer(
      * [minCommitIntervalMs] comes from
      * [com.whispereverywhere.service.CommitCadencePolicy.minCommitIntervalMs] at the call site,
      * which is the only place that knows both the installed tier and whether this session posts
-     * every commit to a provider. Two same-typed `Long`s: call it with NAMED arguments.
+     * every commit to a provider, and [slowCommitIntervalMs] from its `slowCommitIntervalMs`
+     * beside it — THE BACKPRESSURE GOVERNOR's floor once the queue reaches two (build 85), equal
+     * to the fast one on every tier but npu-turbo. Three same-typed `Long`s: call it with NAMED
+     * arguments. The governor's depth and mode are cleared HERE and only here; [reset] keeps both,
+     * because a cap cut, a source switch or a stop flush is a commit and not a change in what the
+     * engine still has queued.
      *
      * It also ends the last state that outlived a session boundary. [clearForNextSegment] takes
      * the micro-pause memory with it, so `pendingCutPointMs()` cannot offer a cut point measured
@@ -488,8 +536,14 @@ class SileroEndpointer(
      * inherited from the last one. The flat run itself dies in [clearForNextSegment] below, with the
      * rest of the gate state.
      */
-    override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long) {
+    override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long, slowCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
+        this.slowCommitIntervalMs = slowCommitIntervalMs
+        // THE BACKPRESSURE GOVERNOR opens every session at depth 0 on the fast floor: the service
+        // resets its own counter at the same moment (`segmentQueueDepth.reset()` in onOpen), so a
+        // backlog the last session left in flight is never inherited by this one's first commits.
+        queueDepth = 0
+        slowFloorActive = false
         lastFrameMs = nowMs
         lastCommitMs = nowMs
         hasCommitted = false
@@ -513,6 +567,19 @@ class SileroEndpointer(
      */
     override fun armFlatline(armed: Boolean) {
         flatlineArmed = armed
+    }
+
+    /**
+     * THE BACKPRESSURE GOVERNOR's signal (build 85), from EITHER thread — the class KDoc's
+     * @Volatile paragraph says which and why. One volatile write; the mode is NOT stepped here.
+     * Stepping it where the depth arrives would put the mode's writer on whichever thread
+     * committed or resolved, and the transition line with it; stepping it in [currentFloorMs]
+     * keeps both on the capture thread, at the endpoint that is about to use the floor — which is
+     * also what makes "a depth change mid-interval takes effect at the next endpoint" the exact
+     * rule rather than a tolerance.
+     */
+    override fun onQueueDepth(depth: Int) {
+        queueDepth = depth
     }
 
     /**
@@ -609,6 +676,40 @@ class SileroEndpointer(
     }
 
     /**
+     * THE BACKPRESSURE GOVERNOR's floor for THIS endpoint (build 85) — the ONE helper both
+     * governor tests call, [onProb]'s and [onFlat]'s, so the two paths cannot pace at different
+     * numbers. Steps [BackpressureRule.slowActive] from the depth the service last published,
+     * stores the mode, and selects the floor with [BackpressureRule.floorMs]: allocation-free, no
+     * lock, two volatile reads and at most one volatile write.
+     *
+     * It runs ONLY where the floor is consulted — inside the `hasCommitted &&` guard — so the
+     * session's free first cut never steps it, and a depth published between two endpoints is
+     * acted on at the next one and never retroactively (a merged endpoint is gone; nothing here
+     * can commit it later).
+     *
+     * ONE diag line per mode transition, and only while the governor is ARMED (the two floors
+     * differ): `backpressure: depth=2 -> slow floor 3200` / `backpressure: depth=1 -> fast floor
+     * 2000`. Unarmed, the mode still steps — the state stays honest — but there is no floor change
+     * to announce, and a "slow floor 1200" line on eco would be a lie in a log that exists to be
+     * believed. Depth and floor only, never transcript content; stripped in release like every
+     * Kotlin diag line, which is known.
+     */
+    private fun currentFloorMs(): Long {
+        val depth = queueDepth
+        val slow = BackpressureRule.slowActive(depth, slowFloorActive)
+        if (slow != slowFloorActive) {
+            slowFloorActive = slow
+            if (slowCommitIntervalMs != minCommitIntervalMs) {
+                diag(
+                    if (slow) "backpressure: depth=$depth -> slow floor $slowCommitIntervalMs"
+                    else "backpressure: depth=$depth -> fast floor $minCommitIntervalMs",
+                )
+            }
+        }
+        return BackpressureRule.floorMs(slow, fastMs = minCommitIntervalMs, slowMs = slowCommitIntervalMs)
+    }
+
+    /**
      * One frame's verdict.
      *
      * [EndpointerTuning.NO_VERDICT] (any negative) means "no verdict": the previous state is kept
@@ -685,12 +786,15 @@ class SileroEndpointer(
             return false
         }
 
-        if (hasCommitted && nowMs - lastCommitMs < minCommitIntervalMs) {
+        if (hasCommitted && nowMs - lastCommitMs < currentFloorMs()) {
             // THE COST GOVERNOR. A real endpoint, but committing it now would outrun the tier's
             // measured per-commit cost (F*N + m*S <= 0.70*60 s). MERGE: close the gate so the next
             // pause is judged afresh, and keep `pendingSpeech` — that audio really is still
             // uncommitted. The session's FIRST cut is never merged: first text fast on every tier,
-            // and the governor bounds only the steady state.
+            // and the governor bounds only the steady state. The floor is currentFloorMs(): the
+            // tier's fast row, or THE BACKPRESSURE GOVERNOR's slow row while the segment queue is
+            // two deep (build 85) — the same helper the flat path consults, so both paths pace at
+            // one number.
             //
             // Nothing writes `prevEndMs` here, deliberately, and the plan's merge line
             // `prevEndMs = tempEndMs` was DROPPED rather than kept. It is dead: this branch is
@@ -794,7 +898,7 @@ class SileroEndpointer(
             return false
         }
 
-        if (hasCommitted && nowMs - lastCommitMs < minCommitIntervalMs) {      // :596 — the same merge
+        if (hasCommitted && nowMs - lastCommitMs < currentFloorMs()) {          // :596 — the same merge, the SAME floor
             closeGate()
             return false
         }
