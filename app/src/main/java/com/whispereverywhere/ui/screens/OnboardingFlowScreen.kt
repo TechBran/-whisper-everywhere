@@ -447,8 +447,9 @@ private fun hasMic(context: android.content.Context): Boolean =
 /**
  * The language step (4.2 F6 — the 3.8 owner ruling folds in: language BEFORE model download).
  * The rows come from [OnboardingLogic.languageRows]: the device's language first and badged when
- * the 54-language list carries it, auto one tap away with its cost honestly subtitled — the
- * ruled text, verbatim. No preselection, the model pick's own discipline: the badge suggests,
+ * the 54-language list carries it, auto one tap away with what it does honestly subtitled — the
+ * ruled text, verbatim (the owner's 2026-09-03 re-rule: true for the AI chip model, and scoped to
+ * it). No preselection, the model pick's own discipline: the badge suggests,
  * the user still taps, and the footer's Continue stays locked until they do.
  */
 @Composable

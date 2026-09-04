@@ -95,22 +95,34 @@ class OnboardingLogicTest {
         assertTrue(OnboardingLogic.languageContinueEnabled("auto"))
     }
 
-    @Test fun the_language_hint_is_the_38_specs_own_sentence() {
-        // Our-own-app relative — a fact about this app's multilingual models, no cross-app claim.
+    /**
+     * THE LANGUAGE COPY IS THE OWNER'S 2026-09-03 RULING, PINNED VERBATIM — keep both options,
+     * make Auto TRUE for the chip tier, keep the one-language lock rationale. It re-rules the 3.8
+     * text, whose two clauses ("faster" for a pick; "slower … detects per session" for Auto)
+     * described the CPU path and were false on the shipping AI chip model, where detection is per
+     * utterance at ~9 ms of a ~2 s commit and a picked language never runs it at all. The pin
+     * exists so a copy change is a decision; this one was the owner's.
+     */
+    @Test fun the_language_hint_is_the_owners_2026_09_03_lock_sentence() {
+        // Our-own-app relative — what a pick does in THIS app on every tier (an explicit language
+        // passes through unchanged; nothing detects), no cross-app claim.
         assertEquals(
-            "Choosing a language makes multilingual transcription faster.",
+            "Choosing one language locks every phrase to it — the most accurate choice if you " +
+                "only ever speak one, and the right one for dictation.",
             OnboardingLogic.LANGUAGE_HINT,
         )
         assertEquals("Your device's language", OnboardingLogic.DEVICE_LANGUAGE_BADGE)
     }
 
-    @Test fun the_auto_subtitle_is_the_ruled_text_verbatim() {
-        // THE 3.8 OWNER RULING, CARRIED VERBATIM — the plan certification already restored this
-        // text once after a softer substitute dropped the disclosed cost (cert round 1, revision
-        // 5). It is the honest disclosure of the cost LANGUAGE_HINT beside it asserts; the
-        // ruling stands unless the owner re-rules, and nothing here re-asks.
+    @Test fun the_auto_subtitle_is_the_owners_2026_09_03_ruling_verbatim() {
+        // Scoped to the AI chip model on purpose: the step runs before the model is picked, so
+        // nothing here can tell the tier, and the CPU tiers' per-session pin (LanguagePin) is
+        // neither claimed nor denied. "each phrase" and "no cost you will notice" are both true
+        // there — NpuWhisperBackend runs the detect pass every segment when lang == null.
         assertEquals(
-            "Slower on multilingual models — detects per session.",
+            "On the AI chip model, detects the language of each phrase as you speak — " +
+                "mixed-language audio (a video, a bilingual conversation) comes out in each " +
+                "language, at no cost you will notice.",
             OnboardingLogic.AUTO_LANGUAGE_SUBTITLE,
         )
     }

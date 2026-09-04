@@ -34,18 +34,35 @@ object OnboardingLogic {
     // ------------------------------------------------------------------ language step (4.2 F6)
 
     /**
-     * The language step's hint — the 3.8 spec's own sentence. OUR-OWN-APP relative (a fact about
-     * how this app's multilingual models behave when handed a language), never a cross-app claim.
+     * The language step's hint — what picking ONE language does, in the owner's 2026-09-03 ruling
+     * (the build 85 re-rule of the 3.8 sentence). The 3.8 text said a picked language makes
+     * multilingual transcription "faster": on the shipping AI chip tier the saving is a ~9 ms
+     * detect step inside a ~2 s commit, and on the CPU tier [com.whispereverywhere.transcription.LanguagePin]
+     * already skips the detect from the second segment on — a speed claim nobody can notice. What
+     * a pick actually does is TRUE on every tier: an explicit language passes through to whisper
+     * unchanged (LanguagePin never pins it; NpuWhisperBackend runs no detect for it), so every
+     * phrase is that language — the accuracy case for a one-language speaker, and for dictation.
+     * OUR-OWN-APP relative, never a cross-app claim. Pinned verbatim by OnboardingLogicTest.
      */
-    const val LANGUAGE_HINT = "Choosing a language makes multilingual transcription faster."
+    const val LANGUAGE_HINT =
+        "Choosing one language locks every phrase to it — the most accurate choice if you only " +
+            "ever speak one, and the right one for dictation."
 
     /**
-     * The auto row's subtitle — THE 3.8 OWNER RULING'S TEXT, CARRIED VERBATIM. It is the honest
-     * disclosure of the cost [LANGUAGE_HINT] beside it asserts, and the plan certification
-     * already restored it once after a softer substitute dropped the disclosed cost (cert round
-     * 1, revision 5). The ruling stands unless the owner re-rules; nothing here re-asks.
+     * The auto row's subtitle — the owner's 2026-09-03 ruling: KEEP the Auto option, and make its
+     * explanation true for the shipping tier. The 3.8 text ("Slower on multilingual models —
+     * detects per session.") described the CPU path (LanguagePin: first detection wins for the
+     * session) and was false on both counts for the AI chip model, where the detect pass runs per
+     * utterance (NpuWhisperBackend: `lang == null` -> nativeDetectLanguage on every segment, ~9 ms
+     * of a ~2 s commit) and a mixed-language video therefore comes out in each language. The
+     * sentence is SCOPED to that model on purpose: this step runs before the model is picked, so
+     * nothing here can tell the tier, and the CPU tiers' per-session pin is neither claimed nor
+     * denied. Pinned verbatim by OnboardingLogicTest; a change here is a decision, not a tidy-up.
      */
-    const val AUTO_LANGUAGE_SUBTITLE = "Slower on multilingual models — detects per session."
+    const val AUTO_LANGUAGE_SUBTITLE =
+        "On the AI chip model, detects the language of each phrase as you speak — mixed-language " +
+            "audio (a video, a bilingual conversation) comes out in each language, at no cost " +
+            "you will notice."
 
     /** The chip on the device-locale row. A suggestion with a stated reason, never a pick. */
     const val DEVICE_LANGUAGE_BADGE = "Your device's language"
