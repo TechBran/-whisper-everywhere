@@ -99,17 +99,17 @@ private const val NO_EVIDENCE_YET = -1
  * beside it, and carries the same hazard: a session floor the capture thread never sees is a
  * session paced at the previous tier's number.
  *
- * THE SPEECH EVIDENCE (4.3.2) added two more, and both are BUFFER knowledge that the capture
- * thread writes and the commit funnel reads from whichever thread committed. [evidenceFrames] is
- * incremented on the capture thread at every onset frame and re-based by [onBufferCommitted] —
- * on the capture thread for an endpoint or cap cut, on Main for switchSource / stopRecording /
- * the consent flush — and by [onSessionStart]; a Main-side re-base that loses the race with a
- * capture-side increment costs one frame of evidence, 32 ms, in whichever direction the race
- * fell, which is the same one-chunk slack every other field here tolerates. [evidenceFramesAtOffer]
- * is written on the capture thread beside [prevEndMs] and cleared with it; Main reads it only
- * inside [onBufferCommitted], where a torn pair can misplace at most one onset frame between the
- * committed segment and the retained tail — and the committed segment is always credited with
- * the WHOLE count, so the misplacement can only over-count, never skip.
+ * THE SPEECH EVIDENCE (4.3.2) added two more, both BUFFER knowledge the capture thread writes and the
+ * commit funnel reads. [evidenceFrames] is incremented on the capture thread at every onset frame and
+ * re-based by [onBufferCommitted] — on the capture thread for an endpoint or cap cut, on Main for
+ * switchSource / stopRecording / the consent flush — and by [onSessionStart]. That race is NOT one
+ * frame each way (nit N2). The UNDER-count is bounded by the frames scored DURING the Main-side
+ * commit: the two paths that flush a LIVE source (switchSource, the consent flush) stop it AFTER
+ * committing. The OVER-count is not one frame at all — `evidenceFrames++` is a read-modify-write, so
+ * an increment that read before Main's re-base writes the WHOLE previous count back over it, harmless
+ * only because no over-count can produce a skip. That is [evidenceFramesAtOffer]'s defence too:
+ * written beside [prevEndMs], read by Main in [onBufferCommitted], it can misplace one onset frame
+ * into the retained tail, and the committed segment keeps the WHOLE count anyway.
  *
  * What @Volatile buys here is VISIBILITY, not atomicity: `fill += n` is a non-atomic
  * read-modify-write, so a Main-thread [reset] racing the capture thread can be LOST, leaving at
