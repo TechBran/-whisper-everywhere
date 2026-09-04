@@ -1,5 +1,6 @@
 package com.whispereverywhere.service
 
+import com.whispereverywhere.audio.BackpressureRule
 import com.whispereverywhere.audio.Endpointer
 
 /**
@@ -92,19 +93,42 @@ object CommitCadencePolicy {
      *  - at 1 200 (4.3.0's FAST row): 170 % at saturation. Refused; the hangover at 500 used to
      *    protect that row by never producing cuts that fast, and at 350 it no longer does.
      *
-     * THE GUARD, until the real one lands: the in-flight strip's "(3+ in queue)" label is the only
-     * field signal that this floor is losing; the engine queue never sheds. THE REAL GUARD is a
-     * backpressure governor — this floor while the segment queue is <= 1 deep, a slow floor
-     * (~3 200-3 900) once it reaches 2 — which makes the duty margin adaptive instead of a static
-     * constant that either pairs sentences or admits saturation. It is the next task after 4.3.1
-     * ships, and the 25 s finalizer (another ~11 % of duty on turbo) must not land without it.
+     * THE GUARD — LANDED IN BUILD 85, and this paragraph is the one that named it. The in-flight
+     * strip's "(3+ in queue)" label was the only field signal that this floor was losing, because
+     * the engine queue never sheds. The real guard is THE BACKPRESSURE GOVERNOR: this floor while
+     * the segment queue is <= [BACKPRESSURE_LEAVE_DEPTH] deep, [MIN_COMMIT_INTERVAL_TURBO_SLOW_MS]
+     * once it reaches [BACKPRESSURE_ENTER_DEPTH] — which makes the duty margin ADAPTIVE instead of
+     * a static constant that either pairs sentences or admits saturation. The rule itself is
+     * `BackpressureRule` (audio package, so the endpointer can step it), this object's [floorFor]
+     * is its service-side face, and [slowCommitIntervalMs] is the per-tier slow row. The 25 s
+     * finalizer (another ~11 % of duty on turbo) may now land on top of it.
      *
      * IF F EVER DOES BREACH, THIS FLOOR IS THE NUMBER TO RAISE, not the hangover: the hangover
      * decides whether a boundary exists at a place a listener would agree with, and no duty
      * problem is solved by putting boundaries in worse places. The proportionate raise is 3 200
-     * (bounded duty, sentence pairs), recorded above so nobody re-derives it.
+     * (bounded duty, sentence pairs), recorded above so nobody re-derives it — and since build 85
+     * that number is no longer hypothetical: it is the slow row the governor steps up to.
      */
     const val MIN_COMMIT_INTERVAL_TURBO_MS = 2_000L
+
+    /**
+     * npu-turbo's SLOW row — the floor THE BACKPRESSURE GOVERNOR steps up to once the segment
+     * queue reaches [BACKPRESSURE_ENTER_DEPTH], and back down from at [BACKPRESSURE_LEAVE_DEPTH].
+     *
+     * 3 200 is the review's bounded-duty value, restated on the same measured numbers as the fast
+     * row's KDoc: 60 000 / 3 200 = 18.75 commits/min x 1 890 ms fixed + 1 900 ms/min marginal =
+     * 37 337 ms/min = **62 % saturated duty** — UNDER the 0.70 rule's 42 000, which the fast row is
+     * over by ruling. The trade the owner refused at 3 200 as a STATIC floor (every sentence period
+     * under 3.2 s arriving as a two-sentence, two-language chunk) is the trade this row makes only
+     * while the NPU is demonstrably behind: the queue that grew at 98-110 % drains at 62 %, and the
+     * moment it is back to one segment in flight the fast row — one sentence per chunk — is
+     * restored. Adaptive, not static: that is the whole point.
+     *
+     * Turbo alone has a slow row that differs from its fast one. Every other tier's slow floor
+     * equals its fast floor ([slowCommitIntervalMs]), because those rows are duty-derived already
+     * and the governor has nothing to buy back on them.
+     */
+    const val MIN_COMMIT_INTERVAL_TURBO_SLOW_MS = 3_200L
 
     /** multi: derived from F = 2.3 s at a 0.70 duty ceiling. */
     const val MIN_COMMIT_INTERVAL_MULTI_MS = 6_000L
@@ -209,6 +233,70 @@ object CommitCadencePolicy {
     }
 
     /**
+     * THE BACKPRESSURE GOVERNOR's two depth thresholds (build 85), re-exported from
+     * [BackpressureRule] under the names the brief and the service use. The values are the audio
+     * package's — `const val` from `const val`, so a re-literal here is a compile error, not a
+     * drift — and `CommitCadencePolicyTest.theBackpressureConstantsAreTheRuledOnes` pins the two
+     * surfaces equal from the test side as well. ENTER at a depth of 2 (one in flight, one
+     * waiting), LEAVE at 1; the arithmetic and the owner's evidence are on the rule object.
+     */
+    const val BACKPRESSURE_ENTER_DEPTH = BackpressureRule.ENTER_DEPTH
+
+    const val BACKPRESSURE_LEAVE_DEPTH = BackpressureRule.LEAVE_DEPTH
+
+    /**
+     * The SLOW row per tier: the floor the governor paces at while the segment queue is at or over
+     * [BACKPRESSURE_ENTER_DEPTH]. Handed to the endpointer beside [minCommitIntervalMs] at the same
+     * `onSessionStart` call, as the third argument.
+     *
+     * **Cloud batch wins outright here too** — the same flat 3 000 request floor, for the same
+     * reason it wins on the fast row: it paces billable POSTs, and a backlog on the local mirror
+     * says nothing about the request rate the owner chose.
+     *
+     * **Only npu-turbo has a slow row that differs from its fast row.** Every other tier answers
+     * its OWN fast floor, so on those tiers the governor is INERT BY CONSTRUCTION: the mode still
+     * steps (the state stays honest and the diag line would still fire if it were armed), but the
+     * floor it selects is the same number in both modes. Those rows are duty-derived already —
+     * multi 6 000 and large 8 000 clear the 0.70 rule, eco/base/npu sit on the FAST row by exemption
+     * — and a governor that raised them would slow tiers that were never over budget.
+     *
+     * `npu` is named on its own line rather than folded into `else`, deliberately: it is THE
+     * NAMED HOOK for Q10a. Its fast row is provisional on one spike-measured encoder pass (see
+     * [MIN_COMMIT_INTERVAL_FAST_MS]), and the first full-tier device measurement is the evidence
+     * that would give it a slow row of its own. Until then it returns its fast floor like every
+     * other non-turbo tier, and the test that pins this table names it so the change is a decision.
+     */
+    fun slowCommitIntervalMs(tierId: String?, isCloudBatch: Boolean): Long {
+        if (isCloudBatch) return MIN_COMMIT_INTERVAL_CLOUD_MS
+        return when (tierId) {
+            "npu-turbo" -> MIN_COMMIT_INTERVAL_TURBO_SLOW_MS
+            // THE NAMED HOOK (Q10a): npu's slow row is its fast row until the tier is measured.
+            "npu" -> MIN_COMMIT_INTERVAL_FAST_MS
+            else -> minCommitIntervalMs(tierId, isCloudBatch = false)
+        }
+    }
+
+    /**
+     * THE MODE STEP, as the service and its tests read it: given the segment-queue [depth] just
+     * observed and whether the slow floor is active NOW, the floor to pace at and the mode after.
+     * Enter slow at `depth >= BACKPRESSURE_ENTER_DEPTH`, leave at `depth <= BACKPRESSURE_LEAVE_DEPTH`,
+     * otherwise keep the current mode. Pure; `CommitCadencePolicyTest.theModeStepIsPinnedExhaustively`
+     * holds every row of depth 0..4 x mode on/off.
+     *
+     * Composed from [BackpressureRule] rather than restated, so the endpointer — which steps the
+     * same rule on the capture thread, allocation-free, through the two primitives — and this
+     * object cannot disagree about what a depth means. The [BackpressureStep] it returns is for
+     * readers on Main and on the JVM; the capture path never allocates one.
+     */
+    fun floorFor(depth: Int, slowActive: Boolean, fastMs: Long, slowMs: Long): BackpressureStep {
+        val after = BackpressureRule.slowActive(depth, slowActive)
+        return BackpressureStep(
+            floorMs = BackpressureRule.floorMs(after, fastMs = fastMs, slowMs = slowMs),
+            slowActive = after,
+        )
+    }
+
+    /**
      * How many trailing milliseconds the wall-cap commit should RETAIN, given the endpointer's
      * remembered micro-pause [cutPointMs] (wall clock) at cap time [nowMs].
      *
@@ -223,3 +311,11 @@ object CommitCadencePolicy {
         return if (retain > CAP_CUT_MAX_RETAIN_MS) 0L else retain
     }
 }
+
+/**
+ * One step of THE BACKPRESSURE GOVERNOR as [CommitCadencePolicy.floorFor] reports it: the floor
+ * to pace at now, and whether the slow floor is active after this observation. A value type for
+ * Main-side and JVM readers; the capture thread steps the same rule through [BackpressureRule]'s
+ * two primitives and allocates nothing.
+ */
+data class BackpressureStep(val floorMs: Long, val slowActive: Boolean)

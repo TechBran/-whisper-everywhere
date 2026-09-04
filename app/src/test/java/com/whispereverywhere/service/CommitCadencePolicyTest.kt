@@ -1,5 +1,6 @@
 package com.whispereverywhere.service
 
+import com.whispereverywhere.audio.BackpressureRule
 import com.whispereverywhere.audio.Endpointer
 import com.whispereverywhere.audio.EndpointerGrid
 import com.whispereverywhere.audio.EndpointerTuning
@@ -391,5 +392,138 @@ class CommitCadencePolicyTest {
         pump.run(SPEECH, EndpointerGrid.SPEECH_FRAMES_OVER_MIN)
         pump.run(SILENCE, EndpointerGrid.HANGOVER_FRAMES)
         return pump
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // THE BACKPRESSURE GOVERNOR (build 85): the slow row, the two depth thresholds and the pure
+    // mode step. The rule itself lives in the audio package (`BackpressureRule`, so the endpointer
+    // can step it without importing this one); this object is the surface the SERVICE reads, and
+    // these tests pin that surface exhaustively and pin it EQUAL to the audio object's.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun theBackpressureConstantsAreTheRuledOnes() {
+        assertEquals(3_200L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_SLOW_MS)
+        // Owner on 83: "I have never seen more than two queued"; sheet E2's bound is 0-2.
+        assertEquals(2, CommitCadencePolicy.BACKPRESSURE_ENTER_DEPTH)
+        assertEquals(1, CommitCadencePolicy.BACKPRESSURE_LEAVE_DEPTH)
+        // ONE rule, two names: the service constants ARE the audio package's, not a re-literal.
+        assertEquals(BackpressureRule.ENTER_DEPTH, CommitCadencePolicy.BACKPRESSURE_ENTER_DEPTH)
+        assertEquals(BackpressureRule.LEAVE_DEPTH, CommitCadencePolicy.BACKPRESSURE_LEAVE_DEPTH)
+    }
+
+    @Test
+    fun theModeStepIsPinnedExhaustively() {
+        // (depth, slow before) -> (floor now, slow after), at turbo's two rows. Enter at
+        // depth >= 2, leave at depth <= 1; the keep band between them is empty at these
+        // constants (BackpressureRuleTest states that separately), so every row decides.
+        val fast = CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS
+        val slow = CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_SLOW_MS
+        data class Row(val depth: Int, val before: Boolean, val floor: Long, val after: Boolean)
+        val table = listOf(
+            Row(0, false, fast, false), Row(0, true, fast, false),
+            Row(1, false, fast, false), Row(1, true, fast, false),
+            Row(2, false, slow, true), Row(2, true, slow, true),
+            Row(3, false, slow, true), Row(3, true, slow, true),
+            Row(4, false, slow, true), Row(4, true, slow, true),
+        )
+        for (row in table) {
+            val step = CommitCadencePolicy.floorFor(
+                depth = row.depth, slowActive = row.before, fastMs = fast, slowMs = slow,
+            )
+            assertEquals("depth=${row.depth} slow=${row.before}: floor", row.floor, step.floorMs)
+            assertEquals("depth=${row.depth} slow=${row.before}: mode after", row.after, step.slowActive)
+        }
+    }
+
+    @Test
+    fun theStepIsInertWhenTheTwoFloorsAreEqual() {
+        // The Endpointer.onSessionStart default (slow == fast): the mode still steps — the state
+        // stays honest — but the floor it selects is the same number either way.
+        for (depth in 0..4) for (before in listOf(false, true)) {
+            val step = CommitCadencePolicy.floorFor(depth, before, 6_000L, 6_000L)
+            assertEquals(6_000L, step.floorMs)
+            assertEquals(depth >= 2, step.slowActive)
+        }
+    }
+
+    @Test
+    fun everyTiersSlowFloorIsItsOwnFastFloorExceptTurbo() {
+        // The governor is INERT BY CONSTRUCTION on every row but npu-turbo: those rows are
+        // duty-derived already, so their slow floor equals their fast floor and depth 2 changes
+        // nothing. Named per tier so a new catalog row has to decide its slow floor too.
+        val expected = mapOf(
+            "eco" to 1_200L, "base" to 1_200L, "npu" to 1_200L,
+            "npu-turbo" to 3_200L,
+            "pro" to 6_000L, "multi" to 6_000L,
+            "extreme" to 8_000L, "ultra" to 8_000L,
+        )
+        assertEquals(
+            "a catalog tier gained or lost an entry — decide its SLOW floor as well",
+            expected.keys,
+            WhisperCatalog.entries.map { it.id }.toSet(),
+        )
+        for ((id, slow) in expected) {
+            assertEquals(id, slow, CommitCadencePolicy.slowCommitIntervalMs(id, isCloudBatch = false))
+            if (id != "npu-turbo") {
+                assertEquals(
+                    "$id: the governor must be inert — slow == fast",
+                    CommitCadencePolicy.minCommitIntervalMs(id, isCloudBatch = false),
+                    CommitCadencePolicy.slowCommitIntervalMs(id, isCloudBatch = false),
+                )
+            }
+        }
+        // null / unrecognised assume the expensive end on BOTH rows.
+        assertEquals(8_000L, CommitCadencePolicy.slowCommitIntervalMs(null, isCloudBatch = false))
+        assertEquals(8_000L, CommitCadencePolicy.slowCommitIntervalMs("smallish", isCloudBatch = false))
+    }
+
+    @Test
+    fun cloudBatchIsTheFlatRequestFloorOnTheSlowRowToo() {
+        // The request floor is a rate decision the owner owns, not a duty one; the governor has
+        // nothing to add to it. Every tier, including turbo, and null.
+        for (id in listOf("npu-turbo", "npu", "eco", "multi", "ultra", null)) {
+            assertEquals(id ?: "null", 3_000L, CommitCadencePolicy.slowCommitIntervalMs(id, isCloudBatch = true))
+        }
+    }
+
+    @Test
+    fun theSlowFloorIsNeverBelowTheFastFloor() {
+        // A slow floor under the fast one would make "backpressure" commit FASTER — the rule
+        // selects slowMs whenever the mode is on and clamps nothing, so this table has to.
+        for (id in WhisperCatalog.entries.map { it.id } + listOf(null, "smallish")) {
+            for (cloud in listOf(false, true)) {
+                assertTrue(
+                    "$id cloud=$cloud",
+                    CommitCadencePolicy.slowCommitIntervalMs(id, cloud) >=
+                        CommitCadencePolicy.minCommitIntervalMs(id, cloud),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun turboSlowFloorIsTheBoundedDutyValueAndTheArithmeticIsRestated() {
+        // 3 200 is the value the pre-upload review recommended on the object's own 0.70 rule and
+        // the value the 4.4 retune shipped for one day. At the measured F = 1 890 ms fixed and
+        // 1 900 ms/min marginal: 60 000 / 3 200 = 18.75 commits/min x 1 890 + 1 900 = 37 337 ms
+        // per minute = 62 % — UNDER the 42 000 ms the 0.70 rule allows. That is what the fast
+        // floor buys back when it hands the session to this row: the queue that was growing at
+        // 98-110 % drains at 62 %.
+        val fixedCostMs = 1_890.0
+        val marginalPerMinuteMs = 1_900.0
+        val commitsPerMinute = 60_000.0 / CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_SLOW_MS
+        val saturatedMs = commitsPerMinute * fixedCostMs + marginalPerMinuteMs
+        assertTrue(
+            "the slow row must CLEAR the 0.70 rule — that is its whole reason to exist: " +
+                "got $saturatedMs ms/min",
+            saturatedMs <= 0.70 * 60_000.0,
+        )
+        assertEquals("62 % saturated duty, as the KDoc states", 62L, Math.round(100.0 * saturatedMs / 60_000.0))
+        // And it stays ABOVE the fast row, or entering slow mode would speed the session up.
+        assertTrue(
+            CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_SLOW_MS >
+                CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS,
+        )
     }
 }
