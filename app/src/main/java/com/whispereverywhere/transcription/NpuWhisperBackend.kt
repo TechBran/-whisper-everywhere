@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription
 
 import android.content.Context
 import android.os.SystemClock
+import com.whispereverywhere.npu.HallucinationPolicy
 import com.whispereverywhere.npu.NpuAssetStage
 import com.whispereverywhere.npu.NpuDecodePolicy
 import com.whispereverywhere.npu.NpuDecodeStats
@@ -649,7 +650,7 @@ class NpuWhisperBackend(
             // whisper.cpp:7865 — the model said "silence" AND was unsure of its words: type nothing.
             // A blank reaches LocalWhisperEngine's existing blank branch and resolves EmptyExpected,
             // the same outcome the CPU tier's VAD-empty takes. Decided BEFORE detokenising so a
-            // hallucinated "Thank you." never exists as a String at all.
+            // segment this gate blanks never exists as a String at all.
             val noSpeech = NpuDecodePolicy.isNoSpeech(stats[NpuDecodeStats.NO_SPEECH_PROB], stats[NpuDecodeStats.AVG_LOGPROB])
 
             // The SLICE, never the buffer: everything past `written` is untouched memory from the
@@ -662,7 +663,24 @@ class NpuWhisperBackend(
             // 51,866 for large-v3-turbo — the decoder's bound is per-family, 4.1 L4/L8), which is
             // a contract breach between this file and native — not an asset problem, and not
             // something to bury in the fallback path.
-            val text = if (noSpeech) "" else bpe.decode(out.copyOf(written))
+            val decoded = if (noSpeech) "" else bpe.decode(out.copyOf(written))
+
+            // THE STOCK-PHRASE BLOCKLIST (4.3.2, Layer 2) — the second blank, at the SAME site with
+            // the SAME outcome. The no-speech rule above is whisper.cpp's and has a known hole: the
+            // stock silence hallucinations ("Thank you for watching", the Chinese Amara credit, a
+            // lone "you") decode CONFIDENT, so lp >= -1.0 and the rule keeps them. What they still
+            // carry is an ELEVATED no-speech vote, and HallucinationPolicy blanks an EXACT seed
+            // phrase only while nsp is over STOCK_PHRASE_NSP_MIN — a user who genuinely says
+            // "thank you" has nsp ~0 and is typed. Applied to the decoded String, which is never
+            // logged: the diag line below says `blank=stock`, not what was blanked. NPU tier only;
+            // the CPU tier has no per-segment nsp to gate on and keeps its pre-encode VAD filter.
+            val stock = !noSpeech && HallucinationPolicy.shouldBlank(decoded, stats[NpuDecodeStats.NO_SPEECH_PROB])
+            val text = if (stock) "" else decoded
+            val blankReason = when {
+                noSpeech -> NpuDiag.BLANK_NSP
+                stock -> NpuDiag.BLANK_STOCK
+                else -> ""
+            }
 
             // `.reportable`, NEVER `.code`. A (locale) or (fallback) resolution is a guess this
             // tier made, and the engine feeds whatever crosses this seam to LanguagePin, which
@@ -686,6 +704,7 @@ class NpuWhisperBackend(
                     entropy = stats[NpuDecodeStats.ENTROPY],
                     rung = stats[NpuDecodeStats.RUNG].toInt(),
                     terminator = NpuDecodeStats.terminatorName(stats[NpuDecodeStats.TERMINATOR]),
+                    blank = blankReason,
                 ),
             )
             text

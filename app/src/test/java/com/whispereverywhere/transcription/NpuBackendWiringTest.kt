@@ -1116,4 +1116,39 @@ class NpuBackendWiringTest {
         assertTrue("the diag line carries the five stats fields",
             body.contains("NpuDecodeStats.terminatorName(stats[NpuDecodeStats.TERMINATOR])"))
     }
+
+    // ------------------------------------------------------------------ the stock-phrase blocklist (4.3.2)
+
+    /**
+     * 4.3.2 Layer 2: the SECOND blank, at the same site with the same outcome. Its position is the
+     * contract: AFTER the detokenise (it judges the String), BEFORE the diag line (which names it),
+     * gated on the no-speech vote INSIDE the policy (so the backend cannot apply the list
+     * ungated), and reported as `blank=stock` beside `blank=nsp` for the rule above it. The CPU
+     * tier is deliberately not in this build — `WhisperNativeBackend` has no per-segment nsp to
+     * gate on — and this test says so by scoping to the NPU transcribe body alone.
+     */
+    @Test
+    fun theNpuTierBlanksAStockPhraseOnlyThroughTheGatedPolicyAfterDetokenisingAndBeforeTheDiagLine() {
+        val body = memberBody(backend, "    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {")
+        val decode = liveOffsets(body, "bpe.decode(out.copyOf(written))")
+        val stock = liveOffsets(body, "HallucinationPolicy.shouldBlank(decoded, stats[NpuDecodeStats.NO_SPEECH_PROB])")
+        val line = liveOffsets(body, "NpuDiag.line(")
+        assertEquals("one stock-phrase check, through the gated policy member and never isStockPhrase bare", 1, stock.size)
+        assertEquals(0, liveOffsets(body, "isStockPhrase(").size)
+        assertTrue("the check reads the DECODED string, after the detokenise", decode.first() < stock.first())
+        assertTrue("and decides before the diag line reports it", stock.first() < line.first())
+        assertTrue("the no-speech rule's blank is not re-judged: `!noSpeech &&` guards the check",
+            body.contains("val stock = !noSpeech && HallucinationPolicy.shouldBlank("))
+        assertTrue("the same outcome: a blank String reaching the engine's EmptyExpected branch",
+            body.contains("val text = if (stock) \"\" else decoded"))
+        assertTrue("the diag line names which gate blanked, from one binding",
+            body.contains("noSpeech -> NpuDiag.BLANK_NSP") && body.contains("stock -> NpuDiag.BLANK_STOCK") &&
+                body.contains("blank = blankReason,"))
+        // No transcript content: the decoded String is bound once, compared, and never formatted.
+        assertEquals(0, liveOffsets(body, "\$decoded").size)
+        assertEquals(0, liveOffsets(body, "\$text").size)
+        // CPU tier untouched: whisper.cpp's backend knows nothing of the policy.
+        val cpu = read("src/main/java/com/whispereverywhere/transcription/TranscriptionEngine.kt")
+        assertEquals(0, count(cpu, "HallucinationPolicy"))
+    }
 }

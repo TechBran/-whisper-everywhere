@@ -51,6 +51,12 @@ object NpuDiag {
      * @param rung index into [NpuDecodePolicy.TEMPERATURES] of the fallback-ladder rung actually
      *        returned.
      * @param terminator [NpuDecodeStats.terminatorName]'s answer: `eot`, `budget`, `cap` or `cut`.
+     * @param blank why the segment was blanked (4.3.2), or empty when it was not: [BLANK_NSP] for
+     *        whisper.cpp's no-speech rule ([NpuDecodePolicy.isNoSpeech]), [BLANK_STOCK] for the
+     *        stock-phrase blocklist ([HallucinationPolicy.shouldBlank]). Appended as ` blank=…`
+     *        AFTER the gate fields so every grep and parser written against the 4.3.1 line still
+     *        matches; absent entirely — not `blank=none` — on a segment that was typed, so the
+     *        field's presence is itself the grep for "a blank happened". Never the text.
      */
     fun line(
         encodeMs: Long,
@@ -62,9 +68,17 @@ object NpuDiag {
         entropy: Float,
         rung: Int,
         terminator: String,
+        blank: String = "",
     ): String =
         "npu: encode=$encodeMs decode=$decodeMs tokens=$tokens lang=$langNote " +
-            "nsp=${f2(noSpeechProb)} lp=${f2(avgLogprob)} ent=${f2(entropy)} rung=$rung term=$terminator"
+            "nsp=${f2(noSpeechProb)} lp=${f2(avgLogprob)} ent=${f2(entropy)} rung=$rung term=$terminator" +
+            (if (blank.isEmpty()) "" else " blank=$blank")
+
+    /** [line]'s `blank=` value for whisper.cpp's no-speech rule: nsp over 0.6 AND lp under -1.0. */
+    const val BLANK_NSP = "nsp"
+
+    /** [line]'s `blank=` value for the stock-phrase blocklist: an exact seed with nsp over 0.30. */
+    const val BLANK_STOCK = "stock"
 
     /** Two decimals, US locale, `NaN` printed as the literal `NaN` — never a locale comma. */
     private fun f2(v: Float): String =

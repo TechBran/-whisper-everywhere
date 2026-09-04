@@ -89,6 +89,30 @@ class NpuDiagTest {
     }
 
     /** The stage-failure line: one word for the stage, native's own text for the detail. */
+    /**
+     * THE BLANK FIELD (4.3.2). Appended AFTER `term=` so every 4.3.1 grep still matches; absent —
+     * not `blank=none` — on a segment that was typed, so the field's presence is the grep for
+     * "a blank happened"; two values and only two, one per gate. Never the text that was blanked.
+     */
+    @Test
+    fun theBlankFieldNamesWhichGateBlankedTheSegmentAndIsAbsentWhenNoneDid() {
+        assertEquals(
+            "npu: encode=402 decode=5 tokens=3 lang=en nsp=0.45 lp=-0.20 ent=NaN rung=0 term=eot blank=stock",
+            NpuDiag.line(402L, 5L, 3, "en", 0.45f, -0.2f, Float.NaN, 0, "eot", blank = NpuDiag.BLANK_STOCK),
+        )
+        assertEquals(
+            "npu: encode=402 decode=5 tokens=0 lang=en nsp=0.81 lp=-1.40 ent=NaN rung=0 term=eot blank=nsp",
+            NpuDiag.line(402L, 5L, 0, "en", 0.81f, -1.4f, Float.NaN, 0, "eot", blank = NpuDiag.BLANK_NSP),
+        )
+        assertEquals(
+            "a typed segment carries no blank field at all",
+            "npu: encode=405 decode=168 tokens=37 lang=en nsp=0.02 lp=-0.31 ent=3.10 rung=0 term=eot",
+            NpuDiag.line(405L, 168L, 37, "en", 0.02f, -0.31f, 3.1f, 0, "eot", blank = ""),
+        )
+        assertEquals("nsp", NpuDiag.BLANK_NSP)
+        assertEquals("stock", NpuDiag.BLANK_STOCK)
+    }
+
     @Test
     fun theUnavailableLineNamesTheStageAndCarriesNativesDetailVerbatim() {
         assertEquals(
