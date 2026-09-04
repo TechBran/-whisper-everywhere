@@ -131,7 +131,51 @@ interface Endpointer {
      */
     fun pendingCutPointMs(): Long = NO_CUT_POINT
 
+    /**
+     * THE SPEECH EVIDENCE (4.3.2): how many milliseconds of the UNCOMMITTED buffer the probe
+     * scored at or above [EndpointerTuning.ONSET_THRESHOLD], or [UNKNOWN_SPEECH_EVIDENCE_MS] when
+     * this endpointer cannot say. Read by the commit funnel, once, immediately before it hands the
+     * buffer to the engine — after `onFrame` returned true on the capture thread, or on Main at
+     * the cap-less commit sites — and passed through `TranscriptionEngine.commit`, where the local
+     * engine skips the ENCODE of a buffer under [EndpointerTuning.MIN_SPEECH_EVIDENCE_MS].
+     *
+     * EVIDENCE ONLY. Nothing in any implementation may read it to decide a CUT: it gates the
+     * encoder downstream, never the endpoint. UNKNOWN is the honest default — it means "never
+     * skipped", and it is what the amplitude fallback answers (no probe, no evidence) and what a
+     * Silero endpointer answers before its probe has scored a frame of this buffer or after the
+     * slow-probe latch has silenced it.
+     */
+    fun speechEvidenceMs(): Long = UNKNOWN_SPEECH_EVIDENCE_MS
+
+    /**
+     * The commit funnel has handed the pending buffer to the engine (4.3.2) — the evidence it just
+     * read through [speechEvidenceMs] belonged to that buffer, and the count re-bases for the next
+     * one. Called from the funnel on whichever thread committed, after the engine's commit and
+     * BEFORE the [reset] the cap, switch and stop sites call next.
+     *
+     * [tailRetained] is true for the wall-cap cut that kept the audio after the endpointer's
+     * offered micro-pause ([pendingCutPointMs]): that audio is still in the engine's buffer and
+     * opens the next segment, so its onset frames must open the next count too. Without the
+     * carry, a speaker whose last words fell inside the retained tail and who then stopped would
+     * have that tail skipped at the stop flush as "no evidence". The tail is exactly the frames
+     * after the offered cut point, which a Silero endpointer can count precisely.
+     *
+     * This is the ONE re-base site short of a session start, deliberately, and [reset] is NOT one:
+     * every service-side [reset] follows a funnel commit that has already re-based the count, and
+     * on the cap site the re-base carried the retained tail — a clear inside [reset] would erase
+     * exactly that carry. Default: no-op, for an endpointer that keeps no count.
+     */
+    fun onBufferCommitted(tailRetained: Boolean) {}
+
     companion object {
+        /**
+         * "This endpointer cannot say how much speech the buffer holds" — the amplitude fallback
+         * always, and a Silero endpointer with no verdict yet or a latched-off probe. Negative,
+         * so that a legitimate count (0 included: a fully scored buffer of pure silence) can never
+         * collide with it; `TranscriptionEngine` reads any negative as UNKNOWN and never skips.
+         */
+        const val UNKNOWN_SPEECH_EVIDENCE_MS = -1L
+
         /**
          * "No micro-pause was observed in this stretch."
          *

@@ -78,12 +78,20 @@ class SileroEndpointerConcurrencyTest {
         // onSessionStart; `slowCommitIntervalMs` is written by Main at onSessionStart and read on
         // the capture thread, exactly as `minCommitIntervalMs` beside it. The class KDoc's
         // @Volatile paragraph carries each one's sentence.
+        //
+        // 4.3.2 THE SPEECH EVIDENCE enrolled two more, to twenty-one: `evidenceFrames` (incremented
+        // on the capture thread at every onset frame; re-based by onBufferCommitted from whichever
+        // thread the commit funnel ran on, and by onSessionStart from Main — EVIDENCE ONLY, never
+        // read by a cut branch) and `evidenceFramesAtOffer` (written on the capture thread beside
+        // prevEndMs, read by onBufferCommitted, so a retaining cap cut can hand the next buffer
+        // exactly the tail's onset frames). Same paragraph, two more sentences.
         val required = listOf(
             "fill", "lastFrameMs", "speaking", "speechStartMs", "pendingSpeech",
             "tempEndMs", "prevEndMs", "lastCommitMs", "hasCommitted", "minCommitIntervalMs",
             "slowRun", "probeCutout", "lastCutRecord",
             "flatlineArmed", "flatRun", "flatRunStartMs",
             "slowCommitIntervalMs", "queueDepth", "slowFloorActive",
+            "evidenceFrames", "evidenceFramesAtOffer",
         )
         val declared = SileroEndpointer::class.java.declaredFields.associateBy { it.name }
 

@@ -3,6 +3,15 @@ package com.whispereverywhere.audio
 import com.whispereverywhere.util.ProbeStats
 
 /**
+ * THE SPEECH EVIDENCE's "no frame of this buffer has been scored" sentinel (4.3.2) — the value
+ * `SileroEndpointer.evidenceFrames` holds from a re-base until the probe's next verdict, and the
+ * one it reports as [Endpointer.UNKNOWN_SPEECH_EVIDENCE_MS]. Negative so a real count, 0
+ * included, can never collide with it; a FRAME count, where the interface's sentinel is
+ * milliseconds, so the two are converted at exactly one place (`speechEvidenceMs`).
+ */
+private const val NO_EVIDENCE_YET = -1
+
+/**
  * The 3.7 real-VAD endpointer: streaming Silero probabilities in, "commit now" out.
  *
  * It replaces the amplitude DECISION only. Everything structural around it is unchanged: the wall
@@ -89,6 +98,18 @@ import com.whispereverywhere.util.ProbeStats
  * Main at [onSessionStart] and read on the capture thread, exactly as [minCommitIntervalMs]
  * beside it, and carries the same hazard: a session floor the capture thread never sees is a
  * session paced at the previous tier's number.
+ *
+ * THE SPEECH EVIDENCE (4.3.2) added two more, and both are BUFFER knowledge that the capture
+ * thread writes and the commit funnel reads from whichever thread committed. [evidenceFrames] is
+ * incremented on the capture thread at every onset frame and re-based by [onBufferCommitted] —
+ * on the capture thread for an endpoint or cap cut, on Main for switchSource / stopRecording /
+ * the consent flush — and by [onSessionStart]; a Main-side re-base that loses the race with a
+ * capture-side increment costs one frame of evidence, 32 ms, in whichever direction the race
+ * fell, which is the same one-chunk slack every other field here tolerates. [evidenceFramesAtOffer]
+ * is written on the capture thread beside [prevEndMs] and cleared with it; Main reads it only
+ * inside [onBufferCommitted], where a torn pair can misplace at most one onset frame between the
+ * committed segment and the retained tail — and the committed segment is always credited with
+ * the WHOLE count, so the misplacement can only over-count, never skip.
  *
  * What @Volatile buys here is VISIBILITY, not atomicity: `fill += n` is a non-atomic
  * read-modify-write, so a Main-thread [reset] racing the capture thread can be LOST, leaving at
@@ -344,6 +365,46 @@ class SileroEndpointer(
     @Volatile private var flatRunStartMs = 0L
 
     /**
+     * THE SPEECH EVIDENCE (4.3.2): how many frames of the UNCOMMITTED buffer the probe scored at or
+     * above [EndpointerTuning.ONSET_THRESHOLD], or [NO_EVIDENCE_YET] while no frame of this buffer
+     * has been scored at all. Incremented in [onProb]'s onset branch on the capture thread;
+     * reported through [speechEvidenceMs]; re-based by [onBufferCommitted] and [onSessionStart].
+     *
+     * EVIDENCE ONLY. No branch of [onProb] or [onFlat] reads it, and none may: it gates the
+     * ENCODE at the commit funnel, never the endpoint. That is the whole difference from the merge
+     * memory the 4.4 review rejected (the block above [EndpointerTuning.HANGOVER_MS]) — that bank
+     * fed the CUT decision and made [EndpointerTuning.MIN_SPEECH_MS] unenforceable; this count
+     * changes no cut on any trace, which `SileroEndpointerEvidenceTest` shows by running the
+     * grid fixtures with the count read and never consulted.
+     *
+     * BUFFER knowledge, like [pendingSpeech] and [prevEndMs]: a discarded burst's audio is still in
+     * the buffer, so [closeGate] leaves this alone and its frames still count; a merged endpoint
+     * likewise. Unlike those two it does NOT die in [clearForNextSegment], and the reason is the
+     * ORDER of the VAD-cut path: [onFrame] runs [commitAt] -> [clearForNextSegment] and only THEN
+     * returns true to the service, whose funnel reads this count next. Cleared there, every real
+     * utterance would report zero evidence and be skipped. So the funnel re-bases it itself,
+     * through [onBufferCommitted], once it has read it — on every commit site, not only the VAD
+     * one — and [reset] leaves it standing for the reason [Endpointer.onBufferCommitted] gives.
+     *
+     * The sentinel is what keeps UNKNOWN honest: a probe that never answers (an init that failed,
+     * a stale capture thread refused by the epoch gate) leaves this at [NO_EVIDENCE_YET] for the
+     * whole buffer, and the engine then transcribes exactly as it did before this count existed.
+     * A fully scored buffer of pure silence is 0 — KNOWN, and skippable — which is the case this
+     * count exists for.
+     */
+    @Volatile private var evidenceFrames = NO_EVIDENCE_YET
+
+    /**
+     * [evidenceFrames] as it stood when [prevEndMs] was last promoted — the onset frames BEFORE
+     * the offered cut point, so that `evidenceFrames - evidenceFramesAtOffer` is exactly the onset
+     * frames inside the tail a retaining wall-cap cut keeps (`[prevEndMs, now]`). Written beside
+     * the promotion in [onProb] (a dip contains no onset frame, so re-writing it on every
+     * qualifying dip frame is idempotent), read by [onBufferCommitted], and zeroed wherever the
+     * offer dies or the buffer re-bases: [clearForNextSegment] and [onBufferCommitted].
+     */
+    @Volatile private var evidenceFramesAtOffer = 0
+
+    /**
      * @param chunk PCM16 mono 16 kHz, ANY length (short reads are normal).
      * @param amp the chunk's RMS (0..32767, `AudioMath.amplitude`), computed once per capture chunk
      *        by the capture thread — `StreamingAudioRecorder.kt:87` over the bytes read,
@@ -440,6 +501,43 @@ class SileroEndpointer(
      */
     override fun pendingCutPointMs(): Long = prevEndMs
 
+    /**
+     * THE SPEECH EVIDENCE (4.3.2) of the uncommitted buffer, in milliseconds of onset frames, or
+     * [Endpointer.UNKNOWN_SPEECH_EVIDENCE_MS] on two honest grounds: no frame of this buffer has
+     * been scored ([evidenceFrames] still [NO_EVIDENCE_YET] — a probe that never answers), or the
+     * slow-probe latch has silenced the probe ([probeCutout]: frames after the latch are in the
+     * buffer and were never scored, so a count taken before it describes only part of the audio).
+     * Either way the engine transcribes as it did before this count existed. Two volatile reads,
+     * no lock, no allocation: the funnel calls it on the capture thread.
+     */
+    override fun speechEvidenceMs(): Long =
+        if (probeCutout || evidenceFrames < 0) Endpointer.UNKNOWN_SPEECH_EVIDENCE_MS
+        else evidenceFrames * EndpointerTuning.FRAME_MS
+
+    /**
+     * The funnel has committed the buffer whose evidence it just read; re-base for the next one
+     * (4.3.2). With [tailRetained] the wall cap kept the audio after the offered cut point, and
+     * the onset frames inside that tail — `evidenceFrames - evidenceFramesAtOffer`, exact because
+     * a dip holds no onset frame — open the next count; the committed segment was credited with
+     * the WHOLE count, so the split can only over-count it, never skip it. Without a tail the
+     * next buffer has no scored frame yet: [NO_EVIDENCE_YET], not 0, so a stop flush that lands
+     * before the next verdict is UNKNOWN and transcribed rather than "no evidence" and skipped.
+     *
+     * The offer's count is zeroed on both arms: the frames of the next buffer all follow whatever
+     * offer survives (the consent flush commits without a [reset], so [prevEndMs] can outlive a
+     * re-base), and a later retain against that offer must carry the whole buffer, not a
+     * difference against a count that belonged to the previous one.
+     *
+     * [reset] does NOT touch [evidenceFrames]; see [Endpointer.onBufferCommitted].
+     */
+    override fun onBufferCommitted(tailRetained: Boolean) {
+        val frames = evidenceFrames
+        evidenceFrames =
+            if (tailRetained && frames >= 0) maxOf(0, frames - evidenceFramesAtOffer)
+            else NO_EVIDENCE_YET
+        evidenceFramesAtOffer = 0
+    }
+
     /** The most recent VAD cut of this session, or null. A MERGED endpoint is not a cut. */
     fun lastCut(): EndpointCut? = lastCutRecord
 
@@ -474,6 +572,11 @@ class SileroEndpointer(
      * [com.whispereverywhere.service.SegmentCapPolicy] documents for its own cross-thread writes.
      * [onSessionStart] stamps [lastFrameMs] itself, so a reset arriving before a session's first
      * frame anchors on the session open rather than on the previous session's last frame.
+     *
+     * THE SPEECH EVIDENCE (4.3.2) is left standing here, deliberately: every service-side reset
+     * follows a funnel commit that has already re-based [evidenceFrames] through
+     * [onBufferCommitted], and on the cap site that re-base CARRIED the retained tail's onset
+     * frames — a clear here would erase exactly that carry and skip the tail at the stop flush.
      */
     override fun reset() {
         lastCommitMs = lastFrameMs
@@ -535,6 +638,10 @@ class SileroEndpointer(
      * frame can arrive, so the flag is re-derived from the real source on every session rather than
      * inherited from the last one. The flat run itself dies in [clearForNextSegment] below, with the
      * rest of the gate state.
+     *
+     * THE SPEECH EVIDENCE (4.3.2) opens every session UNKNOWN — [evidenceFrames] back to
+     * [NO_EVIDENCE_YET] here, the one re-base site besides [onBufferCommitted] — so the previous
+     * session's last count can never vouch for, or condemn, this session's first buffer.
      */
     override fun onSessionStart(nowMs: Long, minCommitIntervalMs: Long, slowCommitIntervalMs: Long) {
         this.minCommitIntervalMs = minCommitIntervalMs
@@ -544,6 +651,7 @@ class SileroEndpointer(
         // backlog the last session left in flight is never inherited by this one's first commits.
         queueDepth = 0
         slowFloorActive = false
+        evidenceFrames = NO_EVIDENCE_YET
         lastFrameMs = nowMs
         lastCommitMs = nowMs
         hasCommitted = false
@@ -726,10 +834,18 @@ class SileroEndpointer(
     private fun onProb(p: Float, nowMs: Long): Boolean {
         if (p < 0f) return false
 
+        // THE SPEECH EVIDENCE (4.3.2): this frame has a verdict, so the buffer's count is KNOWN
+        // from here — a scored buffer of pure silence reports 0, not UNKNOWN. Above every branch,
+        // so a dead-band or silent first frame makes it known exactly as an onset frame does.
+        if (evidenceFrames < 0) evidenceFrames = 0
+
         // whisper.cpp:5283-5296 — the two native blocks this one branch merges. A frame at or
         // above ONSET clears the pending end (`:5283`) — the HARD reset that makes the hangover a
         // timer rather than a decay — and opens the gate if it is closed (`:5291`).
         if (p >= EndpointerTuning.ONSET_THRESHOLD) {
+            // THE SPEECH EVIDENCE is counted and NOT consulted: the only write in the state
+            // machine, and no branch below reads it back.
+            evidenceFrames++
             tempEndMs = 0L
             if (!speaking) {
                 speaking = true
@@ -767,7 +883,12 @@ class SileroEndpointer(
         // It sits ABOVE the hangover check, as native does, so the frame that ends an utterance
         // promotes before it decides — which is what leaves a good boundary standing when that
         // decision turns out to be a DISCARD.
-        if (nowMs - tempEndMs > EndpointerTuning.MICRO_PAUSE_MS) prevEndMs = tempEndMs
+        if (nowMs - tempEndMs > EndpointerTuning.MICRO_PAUSE_MS) {
+            prevEndMs = tempEndMs
+            // THE SPEECH EVIDENCE (4.3.2): the onset frames BEFORE this offer. A dip holds no
+            // onset frame, so every qualifying frame of this dip writes the same number.
+            evidenceFramesAtOffer = evidenceFrames
+        }
 
         if (nowMs - tempEndMs < EndpointerTuning.HANGOVER_MS) return false
 
@@ -963,6 +1084,11 @@ class SileroEndpointer(
         // would let a 200 ms cough erase a good boundary — and would silently re-converge on
         // whisper.cpp:5341, which we diverge from on purpose.
         prevEndMs = Endpointer.NO_CUT_POINT
+        // THE SPEECH EVIDENCE (4.3.2): the offer's count dies with the offer. `evidenceFrames`
+        // itself is deliberately NOT here — see its KDoc: on the VAD-cut path this method runs
+        // BEFORE the funnel reads the count, so a clear here would report every real utterance as
+        // zero evidence. The funnel re-bases it through onBufferCommitted once it has read it.
+        evidenceFramesAtOffer = 0
         fill = 0
         probeReset()
     }
