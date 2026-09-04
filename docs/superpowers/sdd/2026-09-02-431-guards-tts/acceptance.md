@@ -1,6 +1,6 @@
 # 4.3.1 — device acceptance (owner session)
 
-Build under test: **4.3.1 / versionCode 85** (84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 adds the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
+Build under test: **4.3.2 / versionCode 86** (the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
 device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
 is the OWNER's device session; the implementer prepared this sheet and claims none of it as done.
@@ -314,6 +314,20 @@ E10. **THE SILENCE-HALLUCINATION MEASUREMENT (85 measures; the fix is the next b
     blocks ("a block of Chinese that wasn't spoken", the stray "you" at the end). RECORD nothing;
     just keep the capture and say when a hallucinated block appeared, roughly.
     `[ ] CAPTURED`
+E11. **THE SILENCE FIX (new in 86 / 4.3.2).** Three parts, all by eye on the track build.
+    (a) Mic session in a quiet room with a fan or some background: stay silent for ~20 s. EXPECTED:
+    nothing is typed, no "Thank you", no "you", no Chinese block — and on the track build there are
+    NO native `encode:` lines for that stretch, because the skip happens BEFORE the encoder (the one
+    part of this fix that is visible in release). (b) Then say one quiet word alone — "yes" — and
+    stop: it is typed (the evidence floor is 192 ms — 6 frames Silero scored as speech — chosen
+    so a soft lone word clears it even with half its frames in the dead band). (c) The
+    Chinese/English video through its silent or music-only stretch: no Chinese credit block, no
+    stray "you". Real speech everywhere: unchanged. KNOWN LIMIT, not a failure: a music bed that
+    Silero scores as speech for seconds still reaches the decoder; the no-speech gate and the
+    stock-phrase blocklist are the defence there, and a bed that beats both will still produce text.
+    FAIL if a lone real word is dropped, or if silence still produces text.
+    RECORD: text on 20 s of silence? ______ ; lone "yes" typed? ______ ; Chinese block on the video? ______
+    `[ ] PASS  [ ] FAIL`
 
 ## G — the onboarding copy (85)
 
@@ -352,7 +366,7 @@ F3. **The one allowed handover discloses itself.** An app that genuinely refuses
 PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
 longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
 promote that build into production."* Promote the internal-track build to production only after
-**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8 and E9** are marked PASS — E1 passes on merged pairs, so
+**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8, E9 and E11** are marked PASS — E1 passes on merged pairs, so
 without E7 the sheet cannot see the one behaviour that decides the language goal.
 
 Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one
