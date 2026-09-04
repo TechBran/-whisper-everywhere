@@ -152,6 +152,36 @@ object EndpointerTuning {
     const val MIN_SPEECH_MS = 300L
 
     /**
+     * THE SPEECH-EVIDENCE FLOOR (4.3.2): the least Silero evidence a pending buffer must carry for
+     * the local engine to ENCODE it. `SileroEndpointer` counts the frames the probe scored at or
+     * above [ONSET_THRESHOLD] since the buffer was last committed; the commit funnel hands that
+     * total to `LocalWhisperEngine.commit`, which resolves a buffer under this floor
+     * `EmptyExpected` without touching the backend. 256 ms is eight 32 ms frames of p >= 0.50.
+     *
+     * Below native's 250 ms batch floor IN SPIRIT, not in kind: `we_vad_filter`'s
+     * `min_speech_duration_ms = 250` (`whisper_jni.cpp` ~:815, `whisper.cpp:4455`) is a floor on
+     * one RUN of speech at threshold 0.40; this is a floor on the TOTAL of onset frames at 0.50
+     * over the whole buffer, dips included. Chosen so a lone quiet "yes" (~300 ms of speech, nine
+     * or ten onset frames) passes and a 15 s bed where Silero flickered over ONSET for six frames
+     * does not. It is at most [MIN_SPEECH_MS] (pinned): a VAD cut that passed the 300 ms span
+     * floor carries the onset frames that opened and held the gate, so in the normal case a real
+     * utterance is never skippable on evidence — the 9-frame-at-0.9 burst that commits is also
+     * encoded (`SileroEndpointerEvidenceTest`).
+     *
+     * HONEST LIMIT: this gates the ENCODE on what the endpointer HEARD. A music bed that Silero
+     * scores as SPEECH for seconds carries evidence and is not caught here; the no-speech gate and
+     * the stock-phrase blocklist (`NpuDecodePolicy`, `HallucinationPolicy`) remain the defence
+     * there. What this catches is silence, breath, room tone, a fan, a paused video — the owner's
+     * report. And it is a floor on the ENCODE alone: no cut decision reads it. The merge memory the
+     * 4.4 review rejected was a bank that fed the CUT (see the block above [HANGOVER_MS]); this
+     * number is read at the commit funnel and nowhere inside the state machine.
+     *
+     * Consumers: `LocalWhisperEngine.commit` (the only decision), `SileroEndpointer` (the count)
+     * and the simulator's `Tuning.min_evidence_ms` (`tools/vadsim`, `--min-evidence-ms`).
+     */
+    const val MIN_SPEECH_EVIDENCE_MS = 256L
+
+    /**
      * A dip below [RELEASE_THRESHOLD] lasting longer than this is remembered as a cut point for the
      * wall-cap path (native `min_silence_samples_at_max_speech`, whisper.cpp:5255, compared
      * strictly at `whisper.cpp:5328`). At the 32 ms frame cadence, with the dip clock started at

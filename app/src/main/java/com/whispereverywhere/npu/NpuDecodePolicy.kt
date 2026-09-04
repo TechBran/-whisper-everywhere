@@ -160,6 +160,17 @@ object NpuDecodePolicy {
     /** `whisper_sequence_score`'s n: the entropy is over the last 32 ids (whisper.cpp:6885). */
     const val ENTROPY_WINDOW = 32
     /**
+     * THE STOCK-PHRASE GATE (4.3.2): [HallucinationPolicy] may blank a decoded segment that is
+     * EXACTLY one of Whisper's documented silence hallucinations ONLY while `p(<|nospeech|>)` is
+     * strictly above this. Deliberately UNDER [NO_SPEECH_THOLD]: the stock phrases come out
+     * CONFIDENT (`avgLogprob >= -1.0`), so [isNoSpeech] — whisper.cpp's own rule — lets them
+     * through; but such a segment still carries an ELEVATED silence vote, well above the ~0.0 a
+     * user who genuinely says "thank you" produces. 0.30 is the line between those two
+     * populations. A NaN or the -1 sentinel never clears it, for the reason [isNoSpeech] gives: a
+     * guard that cannot measure must not blank a segment.
+     */
+    const val STOCK_PHRASE_NSP_MIN = 0.30f
+    /**
      * A 32-id window with this many distinct ids or fewer is a CYCLE; the entropy trip applies
      * only then. A comma list ("1, 2, 3, …") sits below the entropy threshold with ~17 distinct
      * ids and is legitimate dictation; the report-1 runaway has 1–3.

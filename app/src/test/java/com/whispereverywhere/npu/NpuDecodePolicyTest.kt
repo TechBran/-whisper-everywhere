@@ -1252,6 +1252,21 @@ class NpuDecodePolicyTest {
         assertEquals(8, NpuDecodePolicy.CYCLE_MAX_DISTINCT)
     }
 
+    /**
+     * THE STOCK-PHRASE GATE (4.3.2). OURS, not whisper.cpp's — the reference has no blocklist and
+     * its no-speech rule is the known hole the stock phrases walk through: they decode CONFIDENT
+     * (lp >= -1.0), so `isNoSpeech` keeps them while the segment still carries a silence vote a
+     * real "thank you" never does (~0.0). The gate therefore sits strictly UNDER NO_SPEECH_THOLD and
+     * strictly above zero: equal to the threshold it would be redundant with the gate it exists to
+     * back up, and at zero it would blank a user who genuinely said the phrase.
+     */
+    @Test
+    fun theStockPhraseGateIsPointThreeUnderTheNoSpeechThresholdBecauseStockPhrasesDecodeConfidentButStillCarryAnElevatedVote() {
+        assertEquals(0.30f, NpuDecodePolicy.STOCK_PHRASE_NSP_MIN, 0f)
+        assertTrue(NpuDecodePolicy.STOCK_PHRASE_NSP_MIN < NpuDecodePolicy.NO_SPEECH_THOLD)
+        assertTrue(NpuDecodePolicy.STOCK_PHRASE_NSP_MIN > 0f)
+    }
+
     /** `[t0, t0+0.2, ..., 1.0]` from `temperature = 0`, as whisper.cpp:7134-7141 builds it. */
     @Test
     fun theTemperatureLadderStartsGreedyAndClimbsByPointTwoToOne() {
