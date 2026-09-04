@@ -1,6 +1,6 @@
 # 4.3.1 — device acceptance (owner session)
 
-Build under test: **4.3.1 / versionCode 84** (83 went to the internal track 2026-09-03 and is superseded there by 84, which adds the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
+Build under test: **4.3.1 / versionCode 85** (84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 adds the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
 device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
 is the OWNER's device session; the implementer prepared this sheet and claims none of it as done.
@@ -293,6 +293,36 @@ E8. **THE FLATLINE CUT (new in 84) — edited YouTube, device audio, Language Au
     real content - the language boundaries landing on monolingual chunks, which was the point. No split
     words seen. Own voice: "works pretty well; this transcription here is my own voice." E8 = PASS.**
     `[x] PASS  [ ] FAIL`  (owner-reported; the ko and ms single-word blips are the hysteresis case, noted)
+E9. **THE BACKPRESSURE GOVERNOR (new in 85).** Turbo, own voice or device audio. Read a list of short
+    sentences FAST for ~2 minutes with no real pauses between them (a stress case, not a use case).
+    EXPECTED: if the strip ever shows "(3+ in queue)" it clears within a few seconds — the floor rose
+    from 2,000 to 3,200 ms while a second segment was waiting and dropped back once it drained —
+    and ordinary speech right afterwards is per-sentence again. FAIL if the queue label persists, if
+    lag between finishing a sentence and seeing it grows and keeps growing, or if ordinary speech
+    after the stress stays paired (slow mode stuck on — the one failure this design must not have).
+    On the track build the evidence is the native `encode:` intervals: ~2.0 s apart while the NPU
+    keeps up, then longer (up to ~3.2 s) for the first endpoint after a backlog clears, never a
+    growing lag. The 3,200 number itself binds only when a decode outlives the next endpoint.
+    RECORD: longest time the queue label stayed up ______ s ; per-sentence again afterwards? ______
+    `[ ] PASS  [ ] FAIL`
+E10. **THE SILENCE-HALLUCINATION MEASUREMENT (85 measures; the fix is the next build).** Same
+    Chinese/English video as E8, device audio, Language Auto, with the logcat capture running. Let
+    it run through at least one stretch of silence or music with no speech. Nothing to PASS or FAIL
+    here: the native `detect:` line now ends ` second=<id> margin=<log-odds gap>[ ties=N]` on every
+    chunk (the prefix is unchanged), and the analysis
+    pairs them with `nsp=`/`lp=`/tokens to separate real Chinese chunks from the hallucinated
+    blocks ("a block of Chinese that wasn't spoken", the stray "you" at the end). RECORD nothing;
+    just keep the capture and say when a hallucinated block appeared, roughly.
+    `[ ] CAPTURED`
+
+## G — the onboarding copy (85)
+
+G1. Fresh install or re-run onboarding: the language step still offers BOTH Auto and a single
+    language. The Auto line now says detection is per phrase on the AI-chip model and suits mixed-
+    language audio; the single-language line says it locks every phrase and is the most accurate
+    choice if you speak one language. FAIL if either option is missing, or if the copy steers you
+    away from either. Your 2026-09-03 ruling: keep both, explain Auto honestly, keep the lock.
+    `[ ] PASS  [ ] FAIL`
 
 ## F — the three fixes from the owner's own device testing
 
@@ -322,7 +352,7 @@ F3. **The one allowed handover discloses itself.** An app that genuinely refuses
 PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
 longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
 promote that build into production."* Promote the internal-track build to production only after
-**A2, A3, B1, B4, C1, D1, E1, E4, E7 and E8** are marked PASS — E1 passes on merged pairs, so
+**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8 and E9** are marked PASS — E1 passes on merged pairs, so
 without E7 the sheet cannot see the one behaviour that decides the language goal.
 
 Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one

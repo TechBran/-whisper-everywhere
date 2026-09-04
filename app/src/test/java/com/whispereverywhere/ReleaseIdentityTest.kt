@@ -29,6 +29,13 @@ import org.junit.Test
  * one. 84 > 83 is what lets the track install replace 83 on the owner's phone. Every bump re-arms
  * GpuPolicy's canary latches (below); still by design, still inert with the GPU toggle off.
  *
+ * **versionCode 85 — the plain successor to 84.** 84 went to PRODUCTION on 2026-09-03 (the flatline
+ * cut; E8 passed on the owner's phone), so it is spent twice over, as 82 was. 85 carries the
+ * backpressure governor, the detect-margin line and the Auto copy. The NAME stays 4.3.1 for one
+ * more candidate: nothing in 85 changes what a user sees except the onboarding sentence, and the
+ * governor is the guard the 4.3.1 cadence ruling promised — the same release, made safe. If the
+ * silence-hallucination fix that 85's margin line measures for lands next, THAT is 4.3.2.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -49,15 +56,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_3_1_at_version_code_84() {
+    fun release_identity_is_4_3_1_at_version_code_85() {
         assertEquals(
             "versionName must be 4.3.1 for this release (app/build.gradle.kts defaultConfig)",
             "4.3.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 84 for this release (app/build.gradle.kts defaultConfig)",
-            84,
+            "versionCode must be 85 for this release (app/build.gradle.kts defaultConfig)",
+            85,
             BuildConfig.VERSION_CODE,
         )
     }
