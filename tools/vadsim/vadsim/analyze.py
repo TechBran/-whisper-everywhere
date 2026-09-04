@@ -624,6 +624,10 @@ def sweep(
     `floor_ms` defaults to 2 000 — `CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS`, the
     2026-09-03 owner ruling — because that is the row the device under test is on.
 
+    Build 85: every row inherits `base.slow_commit_interval_ms` and `base.service_ms` unchanged,
+    so a CLI run at turbo sweeps WITH the backpressure governor armed (3 200 once the modelled
+    decoder queue reaches 2) and a test that builds its `Tuning()` bare sweeps without it.
+
     `turbo_duty` is `commits * 2050 ms / wall ms`: the saturated-duty arithmetic that
     constant's own KDoc states (CommitCadencePolicy.kt:76-91), applied to THIS audio rather
     than to the worst case. Over 1.0 means the segment queue grows.
@@ -1181,7 +1185,9 @@ def flat_sweep(
 
     `floor_ms` is `CommitCadencePolicy.MIN_COMMIT_INTERVAL_TURBO_MS` (2 000, the owner
     ruling) because that is the tier the device under test is on; a flat endpoint arriving
-    inside that window MERGES exactly as a Silero one does.
+    inside that window MERGES exactly as a Silero one does. Build 85: rows inherit the base's
+    slow floor and decoder service time, as `sweep` does — a flat close consults the same
+    `_current_floor_ms` the Silero close does.
     """
     from dataclasses import replace
 

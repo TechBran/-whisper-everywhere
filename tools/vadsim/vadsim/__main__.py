@@ -9,7 +9,7 @@ from dataclasses import replace
 from typing import List, Optional, Sequence
 
 from . import analyze, machine, probe as probe_mod
-from .machine import FRAME_MS, BASE_MS, Tuning
+from .machine import BACKPRESSURE_ENTER_DEPTH, BACKPRESSURE_LEAVE_DEPTH, FRAME_MS, BASE_MS, Tuning
 
 
 def _tier_floor(tier: Optional[str]) -> int:
@@ -25,6 +25,13 @@ def _tier_floor(tier: Optional[str]) -> int:
         "ultra": 8_000,
         "cloud": 3_000,
     }.get(tier or "npu-turbo", 8_000)
+
+
+def _tier_slow_floor(tier: Optional[str]) -> int:
+    """`CommitCadencePolicy.slowCommitIntervalMs` (CommitCadencePolicy.kt:265-296): THE
+    BACKPRESSURE GOVERNOR's slow row. 3 200 on npu-turbo; every other tier answers its own fast
+    floor, so the governor is inert there by construction (npu is the named Q10a hook)."""
+    return {"npu-turbo": 3_200}.get(tier or "npu-turbo", _tier_floor(tier))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,7 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--min-speech", type=int, default=None, help="MIN_SPEECH_MS (300)")
     g.add_argument("--micro-pause", type=int, default=None, help="MICRO_PAUSE_MS (98)")
     g.add_argument("--floor", type=int, default=None,
-                   help="minCommitIntervalMs; overrides --tier (npu-turbo = 2000)")
+                   help="minCommitIntervalMs; overrides --tier (npu-turbo = 2000). An explicit "
+                        "floor also becomes the SLOW row - the backpressure governor is inert - "
+                        "unless --slow-floor is given beside it")
     g.add_argument("--tier", default="npu-turbo",
                    help="tier id for the cadence floor (eco|base|npu|npu-turbo|pro|multi|"
                         "extreme|ultra|cloud)")
@@ -57,6 +66,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="cloud session: the 4 s first-cap window is closed at onOpen AND the "
                         "cadence floor is the flat 3000 ms request floor for every tier "
                         "(CommitCadencePolicy.kt:163); --floor overrides")
+    g.add_argument("--slow-floor", type=int, default=None,
+                   help="slowCommitIntervalMs - THE BACKPRESSURE GOVERNOR's floor once the "
+                        f"decoder queue reaches {machine.BACKPRESSURE_ENTER_DEPTH} (build 85); "
+                        "overrides --tier (npu-turbo = 3200, every other tier = its fast floor, "
+                        "i.e. inert). Pass the fast floor to switch the governor off")
+    g.add_argument("--service-ms", type=int, default=None,
+                   help="the decoder's service time per commit that the modelled queue is fed "
+                        f"from (default {machine.DEFAULT_TUNING.service_ms} - turbo's measured "
+                        "~2.05 s; 2140 = the throttled F, 2500 = a hot phone)")
 
     x = p.add_argument_group(
         "the FLATLINE trigger — a PROPOSAL, default OFF (machine.SileroEndpointerSim._on_flat)"
@@ -119,6 +137,20 @@ def tuning_from_args(a: argparse.Namespace) -> Tuning:
         floor = CLOUD_FLOOR_MS
     else:
         floor = _tier_floor(a.tier)
+    # THE BACKPRESSURE GOVERNOR's slow row, from the same facts (CommitCadencePolicy.kt:265-296):
+    # --slow-floor wins outright; an explicit --floor overrides BOTH rows (the user is replacing
+    # the cadence table, and the governor is part of it — `--floor 0` means "no governor at all",
+    # which is what every existing CLI test that passes it expects); the flat 3 000 in a cloud
+    # session (== the fast floor there: inert); the tier's slow row otherwise. A value under the
+    # fast floor is refused by Tuning itself.
+    if a.slow_floor is not None:
+        slow = a.slow_floor
+    elif a.floor is not None:
+        slow = a.floor
+    elif a.cloud:
+        slow = CLOUD_FLOOR_MS
+    else:
+        slow = _tier_slow_floor(a.tier)
     # THE FLATLINE TRIGGER IS OPT-IN, AND EITHER FLAG OPTS IN. Naming one constant and
     # leaving the other at its default is the common case ("what does a hold of 224 do?"),
     # so requiring both would make every such run a two-flag ritual. Naming NEITHER leaves
@@ -135,6 +167,8 @@ def tuning_from_args(a: argparse.Namespace) -> Tuning:
         first_cap_ms=a.first_cap,
         cap_ms=a.cap,
         cap_cut_max_retain_ms=a.cap_retain,
+        slow_commit_interval_ms=slow,
+        service_ms=a.service_ms,
         flatline_enabled=flat_on or None,
         flatline_rms=a.flatline_rms,
         flatline_hold_ms=a.flatline_hold,
@@ -218,6 +252,13 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
              ("cloud batch: the flat request floor, every tier (CommitCadencePolicy.kt:163)"
               if a.cloud and a.floor is None else f"tier {a.tier}")
              + "; endpoints inside this window MERGE"],
+            ["slowCommitIntervalMs (backpressure)", f"{t.slow_floor_ms()}",
+             (f"ARMED: the floor while the decoder queue is >= {BACKPRESSURE_ENTER_DEPTH} deep, "
+              f"back to {t.min_commit_interval_ms} at <= {BACKPRESSURE_LEAVE_DEPTH}; the decoder "
+              f"is modelled as one server at service_ms = {t.service_ms}"
+              if t.backpressure_armed()
+              else f"== the fast floor: the governor is INERT on this row "
+                   f"(decoder modelled at service_ms = {t.service_ms})")],
             ["FIRST_SEGMENT_WALL_MS", f"{t.first_cap_ms}",
              "closed at onOpen in a cloud session" if a.cloud else "local session"],
             ["MAX_SEGMENT_WALL_MS", f"{t.cap_ms}", "the dump"],
@@ -393,8 +434,24 @@ def render_markdown(a: argparse.Namespace, t: Tuning, trace, result, dips, hist,
             ["uncommitted tail at end of trace",
              f"{int(summ['tail_ms'])} ms (the stop flush takes it)"],
             ["estimated turbo duty", f"{summ['turbo_duty'] * 100:.0f} %"],
+            ["backpressure transitions",
+             f"{len(result.transitions)}"
+             + ("" if t.backpressure_armed() else " (governor inert on this row)")],
+            ["time on the slow floor",
+             f"{result.time_in_slow_ms} ms "
+             f"({100.0 * result.time_in_slow_ms / max(1, result.wall_ms):.0f} % of the trace)"],
+            ["max decoder queue depth", f"{result.max_queue_depth}"],
         ],
     ))
+    if result.transitions:
+        add("")
+        add("Mode steps (the app's `backpressure:` lines, with the endpoint's clock):")
+        add("")
+        add(_table(
+            ["t (ms)", "depth", "mode", "floor"],
+            [[tr.t_ms, tr.depth, "slow" if tr.slow else "fast", tr.floor_ms]
+             for tr in result.transitions],
+        ))
     add("")
     if result.commits:
         add(_table(
@@ -829,6 +886,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "flatline_fire_chunks": t.flatline_fire_chunks(),
             "flatline_gap_aligned_ms": t.flatline_gap_aligned_ms(),
             "flatline_gap_any_ms": t.flatline_gap_any_ms(),
+            "backpressure": result.backpressure(),
         }
         if phone is not None:
             encodes, align = phone

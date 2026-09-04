@@ -394,7 +394,8 @@ def _load_baseline_machine():
 
 def _strip(commit_dict: dict) -> dict:
     d = dict(commit_dict)
-    d.pop("rms", None)              # the one field added to Commit
+    d.pop("rms", None)              # the field the flatline trigger added to Commit
+    d.pop("queue_depth", None)      # the field the backpressure governor added (build 85)
     return d
 
 

@@ -45,6 +45,31 @@ BASE_MS = 1_000_000
 #: `Endpointer.kt:92` — Endpointer.NO_CUT_POINT.
 NO_CUT_POINT = 0
 
+#: `BackpressureRule.ENTER_DEPTH` / `LEAVE_DEPTH` (BackpressureRule.kt:39/:47), re-exported by
+#: `CommitCadencePolicy.BACKPRESSURE_ENTER_DEPTH` / `_LEAVE_DEPTH`. THE BACKPRESSURE GOVERNOR
+#: (build 85) enters its slow floor at a segment-queue depth of 2 — one in flight AND one
+#: waiting — and leaves it at 1. Two states with hysteresis; the keep band between them is
+#: EMPTY at the shipped pair, which `BackpressureRuleTest` records.
+BACKPRESSURE_ENTER_DEPTH = 2
+BACKPRESSURE_LEAVE_DEPTH = 1
+
+
+def slow_floor_active(depth: int, slow_active: bool) -> bool:
+    """`BackpressureRule.slowActive` (BackpressureRule.kt:52-56): THE MODE STEP. Enter at
+    `depth >= ENTER`, leave at `depth <= LEAVE`, otherwise keep the current mode."""
+    if depth >= BACKPRESSURE_ENTER_DEPTH:
+        return True
+    if depth <= BACKPRESSURE_LEAVE_DEPTH:
+        return False
+    return slow_active
+
+
+def floor_for(depth: int, slow_active: bool, fast_ms: int, slow_ms: int) -> Tuple[int, bool]:
+    """`CommitCadencePolicy.floorFor` (CommitCadencePolicy.kt:310-316): given the depth just
+    observed and the mode as it stands, `(the floor to pace at now, the mode after)`."""
+    after = slow_floor_active(depth, slow_active)
+    return (slow_ms if after else fast_ms), after
+
 
 @dataclass(frozen=True)
 class Tuning:
@@ -66,6 +91,31 @@ class Tuning:
     # frame that arrives before onSessionStart, which this simulator never produces because
     # `ServiceSim` always opens a session first. Kept so the value is not invented twice.
     pre_session_floor_ms: int = 8_000
+
+    # ----------------------------------------------------------------------------------
+    # THE BACKPRESSURE GOVERNOR (build 85). Two floors per session: `min_commit_interval_ms`
+    # while the decoder's segment queue is <= BACKPRESSURE_LEAVE_DEPTH deep, this one once it
+    # reaches BACKPRESSURE_ENTER_DEPTH. `CommitCadencePolicy.slowCommitIntervalMs`
+    # (CommitCadencePolicy.kt:265-296): 3 200 on npu-turbo, equal to the fast floor on every
+    # other tier (inert by construction), the flat 3 000 in a cloud-batch session.
+    # ----------------------------------------------------------------------------------
+
+    #: None = "equal to `min_commit_interval_ms`" — the INERT governor, which is
+    #: `Endpointer.onSessionStart`'s defaulted third parameter (Endpointer.kt:73) and every
+    #: non-turbo tier's row. Kept None at the dataclass level so `Tuning()` — the base of every
+    #: sweep row and every existing test — is behaviour-identical to 4.3.1; the CLI resolves the
+    #: SHIPPED slow row from `--tier` (`__main__._tier_slow_floor`), so a bare run models the
+    #: phone. A value under `min_commit_interval_ms` is refused: the Kotlin table cannot produce
+    #: one (`CommitCadencePolicyTest.theSlowFloorIsNeverBelowTheFastFloor`) and the rule does not
+    #: clamp (`BackpressureRule.floorMs`).
+    slow_commit_interval_ms: Optional[int] = None
+
+    #: The decoder's SERVICE TIME per commit — the single-server queue `ServiceSim` feeds the
+    #: depth from. 2 050 on turbo: 1 779 encode + 48 + 44 + ~10 x 18 tokens, the "~2.05 s" of
+    #: `MIN_COMMIT_INTERVAL_TURBO_MS`'s KDoc (CommitCadencePolicy.kt:69-70) and the same number
+    #: as `analyze.TURBO_WORK_PER_COMMIT_MS`. Raise it to model a hot phone (2 140 is the
+    #: throttled F that KDoc names; 2 500 makes the fast floor's queue grow without bound).
+    service_ms: int = 2_050
 
     # ----------------------------------------------------------------------------------
     # THE FLATLINE TRIGGER — A PROPOSAL, NOT SHIPPED BEHAVIOUR. Default OFF, and with
@@ -126,6 +176,29 @@ class Tuning:
             raise ValueError(f"flatline_hold_ms={self.flatline_hold_ms} is negative")
         if self.chunk_ms < 1:
             raise ValueError(f"chunk_ms={self.chunk_ms} must be at least 1 ms")
+        if self.slow_commit_interval_ms is not None and (
+            self.slow_commit_interval_ms < self.min_commit_interval_ms
+        ):
+            raise ValueError(
+                f"slow_commit_interval_ms={self.slow_commit_interval_ms} is under "
+                f"min_commit_interval_ms={self.min_commit_interval_ms}: a slow floor below the "
+                "fast one would make backpressure commit FASTER, and the Kotlin table cannot "
+                "produce it (CommitCadencePolicyTest.theSlowFloorIsNeverBelowTheFastFloor)"
+            )
+        if self.service_ms < 0:
+            raise ValueError(f"service_ms={self.service_ms} is negative")
+
+    def slow_floor_ms(self) -> int:
+        """The slow row this session hands over: `slow_commit_interval_ms`, or the fast floor
+        when None — `Endpointer.onSessionStart`'s default (Endpointer.kt:73)."""
+        if self.slow_commit_interval_ms is None:
+            return self.min_commit_interval_ms
+        return self.slow_commit_interval_ms
+
+    def backpressure_armed(self) -> bool:
+        """True when the two floors differ — the only case the governor can change a commit
+        (`SileroEndpointer.currentFloorMs` gates its diag line on exactly this)."""
+        return self.slow_floor_ms() != self.min_commit_interval_ms
 
     def flatline_frames(self) -> int:
         """Flat frames the run needs, at the 32 ms frame grid: `hold // 32 + 1`.
@@ -310,6 +383,38 @@ class EndpointCut:
     kind: str = "vad"
 
 
+@dataclass(frozen=True)
+class Transition:
+    """One mode step of THE BACKPRESSURE GOVERNOR — the Kotlin's `backpressure: depth=2 ->
+    slow floor 3200` diag line (SileroEndpointer.kt:697-711), with the endpoint's clock beside
+    it (the app's line carries no time of its own; logcat stamps it)."""
+
+    t_ms: int
+    depth: int
+    slow: bool
+    floor_ms: int
+
+    @property
+    def line(self) -> str:
+        mode = "slow" if self.slow else "fast"
+        return f"backpressure: depth={self.depth} -> {mode} floor {self.floor_ms}"
+
+
+def time_in_slow(transitions: Sequence[Transition], end_ms: int) -> int:
+    """Milliseconds spent on the slow floor: each slow->fast pair closes an interval, and an
+    open one is closed at `end_ms` (the trace's end)."""
+    total, entered = 0, None
+    for tr in transitions:
+        if tr.slow and entered is None:
+            entered = tr.t_ms
+        elif not tr.slow and entered is not None:
+            total += tr.t_ms - entered
+            entered = None
+    if entered is not None:
+        total += max(0, end_ms - entered)
+    return total
+
+
 class SileroEndpointerSim:
     """The state machine, one frame at a time.
 
@@ -334,6 +439,15 @@ class SileroEndpointerSim:
         self.has_committed = False        # :191
         self.min_commit_interval_ms = tuning.pre_session_floor_ms   # :200
         self.last_cut: Optional[EndpointCut] = None                # :241
+
+        # THE BACKPRESSURE GOVERNOR (build 85) — SileroEndpointer.kt:251 / :259 / :269. Before a
+        # session start the slow floor equals the fast one: two equal floors are one floor.
+        self.slow_commit_interval_ms = tuning.pre_session_floor_ms  # :251
+        self.queue_depth = 0                                        # :259
+        self.slow_floor_active = False                              # :269
+        #: every mode step, in order — the app's transition lines (armed sessions only, as the
+        #: app gates them)
+        self.transitions: List[Transition] = []
 
         # THE FLATLINE TRIGGER's own bookkeeping (the PROPOSAL — see `Tuning`). Both
         # fields are dip bookkeeping, exactly like `temp_end_ms`, and die with the gate.
@@ -362,16 +476,53 @@ class SileroEndpointerSim:
         self.has_committed = True                     # :366
         self._clear_for_next_segment()                # :367
 
-    def on_session_start(self, now_ms: int, min_commit_interval_ms: int) -> None:
-        """`SileroEndpointer.onSessionStart` (:413-424). Order is load-bearing: every re-arm
-        ABOVE `clearForNextSegment()`, which stays the last word."""
-        self.min_commit_interval_ms = min_commit_interval_ms   # :414
-        self.last_frame_ms = now_ms                            # :415
+    def on_session_start(
+        self,
+        now_ms: int,
+        min_commit_interval_ms: int,
+        slow_commit_interval_ms: Optional[int] = None,
+    ) -> None:
+        """`SileroEndpointer.onSessionStart` (:539-556). Order is load-bearing: every re-arm
+        ABOVE `clearForNextSegment()`, which stays the last word. `slow_commit_interval_ms`
+        defaults to the fast floor — `Endpointer.onSessionStart`'s own default (Endpointer.kt:73)
+        — and the governor's depth and mode are cleared HERE and only here (`reset()` keeps both:
+        a cap cut is a commit, not a change in what is queued)."""
+        self.min_commit_interval_ms = min_commit_interval_ms   # :540
+        self.slow_commit_interval_ms = (                       # :541
+            min_commit_interval_ms if slow_commit_interval_ms is None else slow_commit_interval_ms
+        )
+        self.queue_depth = 0                                   # :545
+        self.slow_floor_active = False                         # :546
+        self.last_frame_ms = now_ms                            # :547
         self.last_commit_ms = now_ms                           # :416  ANCHORS, does not zero
         self.has_committed = False                             # :417
         # slowRun = 0 / probeCutout = false (:418-419) — not modelled, see the class docstring.
         self.last_cut = None                                   # :420
         self._clear_for_next_segment()                         # :423
+
+    def on_queue_depth(self, depth: int) -> None:
+        """`SileroEndpointer.onQueueDepth` (:581-583): ONE published integer. The mode is NOT
+        stepped here but in `_current_floor_ms`, where the floor is consulted — so a depth
+        published between two endpoints is acted on at the next one, never retroactively."""
+        self.queue_depth = depth
+
+    def _current_floor_ms(self, now_ms: int) -> int:
+        """`SileroEndpointer.currentFloorMs` (:697-711): THE ONE helper both governor tests
+        call. Steps `slow_floor_active` from the published depth, stores the mode, selects the
+        floor. Records a `Transition` once per mode change and — exactly as the Kotlin gates its
+        diag line — only while the two floors differ."""
+        depth = self.queue_depth
+        slow = slow_floor_active(depth, self.slow_floor_active)
+        if slow != self.slow_floor_active:
+            self.slow_floor_active = slow
+            if self.slow_commit_interval_ms != self.min_commit_interval_ms:
+                self.transitions.append(Transition(
+                    t_ms=now_ms,
+                    depth=depth,
+                    slow=slow,
+                    floor_ms=self.slow_commit_interval_ms if slow else self.min_commit_interval_ms,
+                ))
+        return self.slow_commit_interval_ms if slow else self.min_commit_interval_ms
 
     def on_frame(self, p: float, now_ms: int, rms: Optional[int] = None) -> bool:
         """`SileroEndpointer.onFrame` (:259-289), collapsed to one exact frame per call.
@@ -472,7 +623,11 @@ class SileroEndpointerSim:
         # arithmetic test against `lastCommitMs` (:178-188).
         # Nothing writes `prevEndMs` here: the promotion at :577 has ALREADY written exactly
         # this value in this same call (:604-613).
-        if self.has_committed and now_ms - self.last_commit_ms < self.min_commit_interval_ms:
+        # The floor is `_current_floor_ms` (SileroEndpointer.kt:789): the fast row, or THE
+        # BACKPRESSURE GOVERNOR's slow row while the queue is two deep — the same helper the
+        # flat path consults, so both paths pace at one number. Short-circuited behind
+        # `has_committed`, exactly as the Kotlin's `&&` is: the free first cut never steps it.
+        if self.has_committed and now_ms - self.last_commit_ms < self._current_floor_ms(now_ms):
             self.merges += 1
             self._close_gate()                                         # :614
             return False                                               # :615
@@ -592,8 +747,8 @@ class SileroEndpointerSim:
             self._close_gate()
             return False
 
-        if self.has_committed and now_ms - self.last_commit_ms < self.min_commit_interval_ms:
-            self.merges += 1                             # :596 — the same governor merge
+        if self.has_committed and now_ms - self.last_commit_ms < self._current_floor_ms(now_ms):
+            self.merges += 1                             # :596 — the same governor merge, SAME floor
             self.flat_merges += 1
             self._close_gate()
             return False
@@ -689,6 +844,9 @@ class Commit:
     #: chunk RMS of the frame that fired a FLAT cut (None otherwise) — the amplitude the
     #: proposal acted on, beside the `prob` Silero would have held the gate open with.
     rms: Optional[int] = None
+    #: the modelled decoder queue's depth right after this commit joined it (build 85) — the
+    #: app's `queue: depth=N` line at the commit funnel; None from a driver without the queue.
+    queue_depth: Optional[int] = None
 
 
 @dataclass
@@ -706,13 +864,68 @@ class SimResult:
     #: flush (FloatingBubbleService.kt:3059-3068) commits it; it is not a commit the tuning
     #: produced, so it is reported separately and excluded from the commit statistics.
     tail_ms: int = 0
+    #: THE BACKPRESSURE GOVERNOR's mode steps, in order (armed sessions only).
+    transitions: List[Transition] = field(default_factory=list)
+    #: ms of the trace spent on the slow floor (an open interval is closed at the trace end).
+    time_in_slow_ms: int = 0
+    #: the deepest the modelled decoder queue got.
+    max_queue_depth: int = 0
 
     @property
     def wall_ms(self) -> int:
         return self.n_frames * FRAME_MS
 
+    def backpressure(self) -> dict:
+        """The governor's account of this run, for the JSON report and section 6."""
+        return {
+            "armed": self.tuning.backpressure_armed(),
+            "fast_ms": self.tuning.min_commit_interval_ms,
+            "slow_ms": self.tuning.slow_floor_ms(),
+            "service_ms": self.tuning.service_ms,
+            "enter_depth": BACKPRESSURE_ENTER_DEPTH,
+            "leave_depth": BACKPRESSURE_LEAVE_DEPTH,
+            "transitions": [vars(t) for t in self.transitions],
+            "time_in_slow_ms": self.time_in_slow_ms,
+            "max_queue_depth": self.max_queue_depth,
+        }
+
     def of_kind(self, kind: str) -> List[Commit]:
         return [c for c in self.commits if c.kind == kind]
+
+
+class DecoderQueueSim:
+    """THE DECODER QUEUE (build 85): a SINGLE SERVER with a FIFO. Every commit that cut something
+    is one job of `service_ms`; jobs run one at a time in commit order; `depth_at(t)` is the
+    number of jobs not finished by `t` — exactly what `SegmentQueueDepth` counts on the phone
+    (committed and not yet resolved), because `LocalWhisperEngine` runs its executor
+    single-threaded and resolves each seq when its transcribe returns.
+
+    Not a port of any Kotlin — the phone has a real NPU where this has an integer — but the
+    ONLY place the simulator invents a cost, and the number is the one
+    `MIN_COMMIT_INTERVAL_TURBO_MS`'s KDoc measured (`Tuning.service_ms`).
+    """
+
+    def __init__(self, service_ms: int) -> None:
+        self.service_ms = service_ms
+        self._finish_ms: List[int] = []
+        self._busy_until_ms = 0
+        self.max_depth = 0
+
+    def enqueue(self, t_ms: int) -> int:
+        """A commit at `t_ms` joins the queue; returns the depth as the app would publish it
+        from the commit funnel (`SegmentQueueDepth.onCommitted`)."""
+        start = max(t_ms, self._busy_until_ms)
+        self._busy_until_ms = start + self.service_ms
+        self._finish_ms.append(self._busy_until_ms)
+        return self.depth_at(t_ms)
+
+    def depth_at(self, t_ms: int) -> int:
+        """Jobs not finished by `t_ms` — a job finishing AT `t_ms` has resolved."""
+        self._finish_ms = [f for f in self._finish_ms if f > t_ms]
+        depth = len(self._finish_ms)
+        if depth > self.max_depth:
+            self.max_depth = depth
+        return depth
 
 
 class ServiceSim:
@@ -745,7 +958,16 @@ class ServiceSim:
         self.endpointer.on_session_start(
             now_ms=session_open_ms,
             min_commit_interval_ms=tuning.min_commit_interval_ms,
+            slow_commit_interval_ms=tuning.slow_floor_ms(),        # :2894 — the slow row
         )
+
+        # THE DECODER QUEUE (build 85), and the depth the service publishes from it. In the app
+        # `SegmentQueueDepth` publishes every mutation to `Endpointer.onQueueDepth` from inside
+        # its monitor (FloatingBubbleService.kt:547); here the queue is polled at the top of
+        # every frame for resolutions and told about each commit in `_emit`, and the endpointer
+        # hears each CHANGE — the same sequence of values, minus the idempotent repeats.
+        self.decoder = DecoderQueueSim(tuning.service_ms)
+        self._published_depth = 0
 
         #: Where the engine's uncommitted buffer begins. Not a field in the app — the app's
         #: buffer is a byte array — but it is what turns a commit instant into a chunk LENGTH.
@@ -754,9 +976,17 @@ class ServiceSim:
         self._discards_at_last_commit = 0
         self.frame_index = -1
 
+    def _publish_depth(self, depth: int) -> None:
+        if depth != self._published_depth:
+            self._published_depth = depth
+            self.endpointer.on_queue_depth(depth)
+
     def step(self, p: float, now_ms: int, rms: Optional[int] = None) -> Optional[Commit]:
         self.frame_index += 1
         ep = self.endpointer
+        # Resolutions: every job the decoder finished by now has resolved (Main's
+        # onSegmentResolved -> SegmentQueueDepth.onResolved -> the endpointer's depth).
+        self._publish_depth(self.decoder.depth_at(now_ms))
 
         if ep.on_frame(p, now_ms, rms):                  # :2010
             self.cap.on_commit(now_ms)                   # :2012
@@ -853,6 +1083,12 @@ class ServiceSim:
         self.buffer_start_ms = t_ms + FRAME_MS - retain_ms
         self._merges_at_last_commit = ep.merges
         self._discards_at_last_commit = ep.discards
+        # The commit funnel: a seq that cut something joins the decoder queue and the depth is
+        # published at once (SegmentQueueDepth.onCommitted); a commit with nothing buffered is
+        # the engine's -1 and contributes nothing (`commitAdvancesQueueDepth`).
+        if chunk_ms > 0:
+            self._publish_depth(self.decoder.enqueue(t_ms))
+        commit.queue_depth = self._published_depth
         return commit
 
 
@@ -898,7 +1134,14 @@ def simulate(
     result.flat_discards_total = sim.endpointer.flat_discards
     end_ms = base_ms + len(probs) * FRAME_MS
     result.tail_ms = max(0, end_ms - sim.buffer_start_ms)
+    _finish_backpressure(result, sim, end_ms)
     return result
+
+
+def _finish_backpressure(result: SimResult, sim: ServiceSim, end_ms: int) -> None:
+    result.transitions = list(sim.endpointer.transitions)
+    result.time_in_slow_ms = time_in_slow(result.transitions, end_ms)
+    result.max_queue_depth = sim.decoder.max_depth
 
 
 #: Per-frame outcome codes `event_track` emits. A VAD cut and a cap cut are an `if` /
@@ -1015,6 +1258,7 @@ def simulate_coupled(
     result.flat_discards_total = sim.endpointer.flat_discards
     end_ms = base_ms + len(probs) * FRAME_MS
     result.tail_ms = max(0, end_ms - sim.buffer_start_ms)
+    _finish_backpressure(result, sim, end_ms)
     return result, probs
 
 
