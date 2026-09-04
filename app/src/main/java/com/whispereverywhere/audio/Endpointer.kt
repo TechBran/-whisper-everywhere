@@ -16,8 +16,11 @@ package com.whispereverywhere.audio
  * the CAPTURE thread (StreamingAudioRecorder / PlaybackAudioCapturer), ~31.25 Hz, with one
  * exception — [reset] is additionally called from Main at switchSource / onOpen / stopRecording.
  * [onSessionStart] and [onSessionEnd] are Main-only; [onQueueDepth] arrives from EITHER thread
- * (see its KDoc). Implementations must be allocation-free and
- * lock-light on the [onFrame] path: it runs inline on the audio thread against a 32 ms budget.
+ * (see its KDoc), and so do [speechEvidenceMs] and [onBufferCommitted] — the commit funnel calls
+ * the pair on whichever thread committed, the capture thread for an endpoint or cap cut and Main
+ * for switchSource / stopRecording / the consent flush. Implementations must be allocation-free
+ * and lock-light on the [onFrame] path: it runs inline on the audio thread against a 32 ms
+ * budget.
  */
 interface Endpointer {
 
