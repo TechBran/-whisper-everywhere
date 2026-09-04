@@ -327,7 +327,9 @@ E11. **THE SILENCE FIX (new in 86 / 4.3.2).** Three parts, all by eye on the tra
     stock-phrase blocklist are the defence there, and a bed that beats both will still produce text.
     FAIL if a lone real word is dropped, or if silence still produces text.
     RECORD: text on 20 s of silence? ______ ; lone "yes" typed? ______ ; Chinese block on the video? ______
-    `[ ] PASS  [ ] FAIL`
+    **OWNER 2026-09-04, on 86: "I can let it sit completely in silence with the app open and it does not
+    transcribe anything until I start talking. It definitely works a lot better." E11 = PASS.**
+    `[x] PASS  [ ] FAIL`  (owner-reported)
 
 ## G — the onboarding copy (85)
 
