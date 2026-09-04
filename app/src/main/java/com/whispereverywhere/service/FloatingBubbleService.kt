@@ -535,8 +535,16 @@ class FloatingBubbleService : Service(),
     /**
      * 3.7 Workstream F: the committed-but-unresolved backlog. Fed by every commit site and by
      * onSegmentResolved; the only surface that shows a growing multi-tier backlog while it grows.
+     *
+     * Build 85: it is also THE BACKPRESSURE GOVERNOR's signal. The counter publishes its depth
+     * after every mutation, from inside its own monitor, to the endpointer's depth member — so a
+     * commit on the capture thread and a resolution on Main can never publish out of order, and
+     * the endpointer steps its fast/slow floor from a depth the queue actually holds
+     * (`BackpressureWiringPinTest`). Declared BELOW [endpointer] because the bound reference
+     * captures the instance at construction. Every resolution decrements — `EmptyExpected` and
+     * `Lost` included — because the decrement lives above the blank guard in onSegmentResolved.
      */
-    private val segmentQueueDepth = SegmentQueueDepth()
+    private val segmentQueueDepth = SegmentQueueDepth(onDepth = endpointer::onQueueDepth)
 
     /**
      * 3.7 Workstream F: speech-end -> text-visible per segment, the headline acceptance metric.
@@ -2861,7 +2869,7 @@ class FloatingBubbleService : Service(),
                     // section, SileroEndpointerTest's volatility pin, and
                     // SileroEndpointerConcurrencyTest's class KDoc, which carries the count.
                     //
-                    // NAMED arguments, not positional: onSessionStart takes two same-typed Longs
+                    // NAMED arguments, not positional: onSessionStart takes three same-typed Longs
                     // whose order nothing else pins, and minCommitIntervalMs takes a nullable
                     // String beside a Boolean. EndpointerLifecyclePinTest quotes these names.
                     //
@@ -2874,6 +2882,16 @@ class FloatingBubbleService : Service(),
                     endpointer.onSessionStart(
                         nowMs = sessionOpenMs,
                         minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(
+                            tierId = installedModel?.id,
+                            isCloudBatch = cloudWrapper != null,
+                        ),
+                        // Build 85 — THE BACKPRESSURE GOVERNOR's slow row, from the SAME two
+                        // facts: 3 200 on npu-turbo, equal to the fast row on every other tier
+                        // (inert by construction), the flat 3 000 in a cloud-batch session. The
+                        // parameter is defaulted on the interface (slow == fast), so omitting it
+                        // compiles and ships turbo without the guard; BackpressureWiringPinTest
+                        // holds it here, resolved before startAudioInput() like the fast row.
+                        slowCommitIntervalMs = CommitCadencePolicy.slowCommitIntervalMs(
                             tierId = installedModel?.id,
                             isCloudBatch = cloudWrapper != null,
                         ),

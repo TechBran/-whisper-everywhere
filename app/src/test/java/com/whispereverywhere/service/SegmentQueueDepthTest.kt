@@ -111,6 +111,101 @@ class SegmentQueueDepthTest {
         assertEquals(0, SegmentQueueDepth().depth())
     }
 
+    // ---------------------------------------------------------------------------------------
+    // THE BACKPRESSURE GOVERNOR's feed (build 85): every depth change reaches the listener, in
+    // the order the set changed, from INSIDE the monitor. The listener in production is
+    // `Endpointer.onQueueDepth` — one volatile write — and the ordering guarantee is the whole
+    // reason the feed lives here rather than at the two call sites: a commit on the capture
+    // thread and a resolution on Main racing to publish would otherwise be able to leave the
+    // endpointer holding a depth the queue had already left.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun theListenerHearsEveryDepthChangeInOrder() {
+        val heard = mutableListOf<Int>()
+        val q = SegmentQueueDepth(onDepth = { heard += it })
+        q.onCommitted(0L); q.onCommitted(1L); q.onResolved(0L)
+        q.onCommitted(2L); q.onResolved(1L); q.onResolved(2L)
+        assertEquals(listOf(1, 2, 1, 2, 1, 0), heard)
+    }
+
+    @Test
+    fun aCommitThatCutNothingAndAnUnknownResolutionStillPublishTheUnchangedDepth() {
+        // The feed says what the depth IS after every event, changed or not. A republished
+        // value is harmless to a listener whose step is idempotent (BackpressureRule.slowActive
+        // is: the same depth in the same mode is the same mode) and simpler than a diff.
+        val heard = mutableListOf<Int>()
+        val q = SegmentQueueDepth(onDepth = { heard += it })
+        q.onCommitted(-1L)
+        q.onResolved(99L)
+        assertEquals(listOf(0, 0), heard)
+    }
+
+    @Test
+    fun resetPublishesZero() {
+        // Session start: the counter empties and the endpointer hears it — belt and braces beside
+        // Endpointer.onSessionStart clearing its own copy, and harmless in either order.
+        val heard = mutableListOf<Int>()
+        val q = SegmentQueueDepth(onDepth = { heard += it })
+        q.onCommitted(0L); q.onCommitted(1L); q.reset()
+        assertEquals(listOf(1, 2, 0), heard)
+    }
+
+    @Test
+    fun theDefaultListenerIsANoOpSoEveryExistingConstructionStillWorks() {
+        val q = SegmentQueueDepth()
+        assertEquals(1, q.onCommitted(0L))
+        assertEquals(0, q.onResolved(0L))
+        q.reset()
+        assertEquals(0, q.depth())
+    }
+
+    @Test
+    fun theListenerIsCalledUnderTheMonitorSoPublishedDepthsNeverJump() {
+        // Two committers and two resolvers with no ordering between them, the storm the pin
+        // above already runs. Every mutation moves the set by at most ONE element, so a feed
+        // serialised WITH the mutation can only ever publish consecutive values that differ by
+        // at most one. A feed that ran after the monitor was released could publish an older
+        // size after a newer one — a jump of two or more — and that reordering is exactly the
+        // stale depth the endpointer must never be left holding.
+        val heard = java.util.Collections.synchronizedList(mutableListOf<Int>())
+        val q = SegmentQueueDepth(onDepth = { heard += it })
+        val committers = Executors.newFixedThreadPool(2)
+        val resolvers = Executors.newFixedThreadPool(2)
+        try {
+            val start = CountDownLatch(1)
+            val done = CountDownLatch(4)
+            repeat(2) { worker ->
+                committers.execute {
+                    start.await()
+                    for (i in 0 until 500) q.onCommitted((worker * 500 + i).toLong())
+                    done.countDown()
+                }
+            }
+            repeat(2) { worker ->
+                resolvers.execute {
+                    start.await()
+                    for (i in 0 until 500) q.onResolved((worker * 500 + i).toLong())
+                    done.countDown()
+                }
+            }
+            start.countDown()
+            assertTrue("workers did not finish", done.await(20, TimeUnit.SECONDS))
+            val published = heard.toList()
+            assertEquals("one publish per mutation", 2_000, published.size)
+            for (i in 1 until published.size) {
+                assertTrue(
+                    "published depths jumped at $i: ${published[i - 1]} -> ${published[i]}",
+                    kotlin.math.abs(published[i] - published[i - 1]) <= 1,
+                )
+            }
+            assertEquals("the last publish is the depth that stands", q.depth(), published.last())
+        } finally {
+            committers.shutdownNow()
+            resolvers.shutdownNow()
+        }
+    }
+
     @Test
     fun unorderedCommitsAndResolutionsFromFourRealThreadsStayInBounds() {
         // The ORDERED case is pinned above (each resolution enqueued from inside its own commit).
