@@ -1,7 +1,7 @@
 // band_scan.h - the language band's top two, for libqnnasr.so's detect pass (build 85 B1).
 //
 // Header-only and free of Android, JNI and QNN ON PURPOSE. This is the one piece of the detect
-// pass with no device in it, and keeping it apart lets tools/band_scan_check.sh compile the SAME
+// pass with no device in it, and keeping it apart lets tools/band_scan_check.py compile the SAME
 // code the .so carries with the NDK's own clang into a host executable and run
 // app/src/test/cpp/band_scan_test.cpp against it - the only test a C++ change here can have short
 // of a phone. qnn_asr.cpp includes it; nothing else does. NpuNativeContractTest pins the

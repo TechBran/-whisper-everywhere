@@ -928,7 +928,7 @@ class NpuNativeContractTest {
      *  - the margin is SCALED through `logitsScaleLocked()` with `kStatUnreadable` as the no-scale
      *    value — a raw code difference is not comparable across sessions, and a fake 0.000 would
      *    read as a tie;
-     *  - `band_scan.h` is Android-free, so `tools/band_scan_check.sh` can run it on the host —
+     *  - `band_scan.h` is Android-free, so `tools/band_scan_check.py` can run it on the host —
      *    the only test this C++ has.
      */
     @Test

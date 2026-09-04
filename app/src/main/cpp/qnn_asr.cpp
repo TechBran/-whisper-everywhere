@@ -1947,7 +1947,7 @@ int32_t suppressThenArgmax(uint16_t *logits, uint32_t vocab,
 
 // The language-detect pass's argmax restricted to `[lo, hi)` is scanBandTop2 in band_scan.h since
 // build 85 B1, which also yields the runner-up and the tie count the always-on `detect:` line
-// prints. It left this file for one reason - a host compiler can run it (tools/band_scan_check.sh)
+// prints. It left this file for one reason - a host compiler can run it (tools/band_scan_check.py)
 // - and it kept the property that mattered here: a range restriction is strictly simpler than the
 // 1589-entry mask above, and it sits on the SAME side of the boundary for the same reason: the
 // caller must never be handed an unrestricted argmax and asked to decide whether it counts.

@@ -1,5 +1,5 @@
 // The host-side check for band_scan.h - the one piece of libqnnasr.so's detect pass with no device
-// in it. Run it with tools/band_scan_check.sh; there is no gradle task and no JVM test for C++.
+// in it. Run it with tools/band_scan_check.py; there is no gradle task and no JVM test for C++.
 //
 // FREESTANDING BY DESIGN: no CRT, no <cstdio>, no allocation. The exit code IS the report - 0 when
 // every case holds, otherwise the NUMBER OF THE FIRST CASE THAT FAILED, so a red run names its
@@ -74,7 +74,7 @@ int run() {
 
 }  // namespace
 
-// Two entry points because two builds exist: tools/band_scan_check.sh links freestanding on Windows
+// Two entry points because two builds exist: tools/band_scan_check.py links freestanding on Windows
 // through the NDK's clang and lld (`mainCRTStartup`, no CRT), and a hosted clang++/g++ anywhere
 // else wants `main`. Both return run()'s case number.
 #if defined(BAND_SCAN_FREESTANDING)
