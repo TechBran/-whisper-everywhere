@@ -36,7 +36,7 @@ object OnboardingLogic {
     /**
      * The language step's hint — what picking ONE language does, in the owner's 2026-09-03 ruling
      * (the build 85 re-rule of the 3.8 sentence). The 3.8 text said a picked language makes
-     * multilingual transcription "faster": on the shipping AI chip tier the saving is a ~9 ms
+     * multilingual transcription "faster": on the shipping AI chip tier the saving is a ~5-9 ms
      * detect step inside a ~2 s commit, and on the CPU tier [com.whispereverywhere.transcription.LanguagePin]
      * already skips the detect from the second segment on — a speed claim nobody can notice. What
      * a pick actually does on a MULTILINGUAL tier: an explicit language passes through to whisper
@@ -58,7 +58,7 @@ object OnboardingLogic {
      * explanation true for the shipping tier. The 3.8 text ("Slower on multilingual models —
      * detects per session.") described the CPU path (LanguagePin: first detection wins for the
      * session) and was false on both counts for the AI chip model, where the detect pass runs per
-     * utterance (NpuWhisperBackend: `lang == null` -> nativeDetectLanguage on every segment, ~9 ms
+     * utterance (NpuWhisperBackend: `lang == null` -> nativeDetectLanguage on every segment, ~5-9 ms
      * of a ~2 s commit) and a mixed-language video therefore comes out in each language. The
      * sentence is SCOPED to that model on purpose: this step runs before the model is picked, so
      * nothing here can tell the tier, and the CPU tiers' per-session pin is neither claimed nor

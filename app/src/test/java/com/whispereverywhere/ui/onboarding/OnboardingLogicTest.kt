@@ -100,7 +100,7 @@ class OnboardingLogicTest {
      * make Auto TRUE for the chip tier, keep the one-language lock rationale. It re-rules the 3.8
      * text, whose two clauses ("faster" for a pick; "slower … detects per session" for Auto)
      * described the CPU path and were false on the shipping AI chip model, where detection is per
-     * utterance at ~9 ms of a ~2 s commit and a picked language never runs it at all. The pin
+     * utterance at ~5-9 ms of a ~2 s commit and a picked language never runs it at all. The pin
      * exists so a copy change is a decision; this one was the owner's.
      */
     @Test fun the_language_hint_is_the_owners_2026_09_03_lock_sentence() {
