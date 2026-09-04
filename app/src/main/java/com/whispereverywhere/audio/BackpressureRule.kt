@@ -24,7 +24,7 @@ package com.whispereverywhere.audio
  * with a `@Volatile` depth the service published and the mode as it stands, stores the answer,
  * and selects the floor with [floorMs]. That keeps the step inside [Endpointer]'s "allocation-free
  * and lock-light on the onFrame path" obligation, and — more to the point — it keeps the only
- * Main-written field a plain integer: the MODE is written on the capture thread and nowhere else.
+ * Main-written field a plain integer: the MODE is stepped on the capture thread, and the only other writer is the Main-thread onSessionStart clear (SileroEndpointer.onSessionStart), which happens before any frame of the session.
  */
 object BackpressureRule {
 
