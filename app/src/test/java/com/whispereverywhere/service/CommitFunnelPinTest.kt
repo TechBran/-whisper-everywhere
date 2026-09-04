@@ -124,9 +124,49 @@ class CommitFunnelPinTest {
             count("transcriptionEngine?.commit()"),
         )
         // The funnel's body is the ONLY place either engine entry point is called. See the class
-        // KDoc for why this needle carries its `else`.
-        assertEquals(1, count("else engine.commit()"))
+        // KDoc for why this needle carries its `else`. Since 4.3.2 both calls carry THE SPEECH
+        // EVIDENCE, and the evidence-less form is gone from the funnel: a commit that dropped the
+        // argument would compile (the interface defaults it) and silently re-encode every silent
+        // window the floor exists to skip.
+        assertEquals(1, count("else engine.commit(evidence)"))
+        assertEquals(0, count("else engine.commit()"))
         assertEquals(1, count("engine.commitRetainingTailMs("))
+        assertEquals(1, count("engine.commitRetainingTailMs(retainMs, evidence)"))
+    }
+
+    @Test
+    fun theFunnelReadsTheSpeechEvidenceOnceBeforeTheCommitAndReBasesTheEndpointerAfterIt() {
+        // THE SPEECH EVIDENCE (4.3.2), pinned the way the cut record is: ONE read of the
+        // endpointer, and its POSITION is the contract. Before the commit, because the buffer it
+        // describes is the one about to be cut; the re-base after, because a re-base before the
+        // read would hand the engine UNKNOWN for every segment (never skipped — the whole feature
+        // silently off), and a re-base missing altogether would let every buffer inherit the
+        // last one's count (a silent window after a sentence reads as speech; a stop flush
+        // after a skipped window reads as nothing and is skipped with the words still in it).
+        val read = indexOfOrFail("        val evidence = SpeechEvidence.of(endpointer.speechEvidenceMs())\n")
+        val commit = indexOfOrFail(
+            "        val seq = if (retainMs > 0L) engine.commitRetainingTailMs(retainMs, evidence) " +
+                "else engine.commit(evidence)\n"
+        )
+        val rebase = indexOfOrFail("        endpointer.onBufferCommitted(tailRetained = retainMs > 0L)\n")
+        assertTrue("the evidence is read BEFORE the commit", read < commit)
+        assertTrue("the endpointer is re-based AFTER the commit", commit < rebase)
+        assertEquals(
+            "the evidence is read from exactly one place, the funnel",
+            1,
+            count(".speechEvidenceMs()"),
+        )
+        assertEquals(
+            "the endpointer is re-based from exactly one place, the funnel — every cut kind " +
+                "commits a buffer it counted, and the cap site's retain travels as tailRetained",
+            1,
+            count("endpointer.onBufferCommitted("),
+        )
+        // Inside the funnel, deliberately: the reset sites that follow the cap, switch and stop
+        // commits must not be where the count is re-based — the cap's reset would erase the
+        // retained tail's carry. The funnel ends at its `return seq`; both lines sit above it.
+        val end = text.indexOf("        return seq\n    }", read)
+        assertTrue(rebase < end)
     }
 
     @Test

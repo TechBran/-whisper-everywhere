@@ -46,6 +46,7 @@ import com.whispereverywhere.text.TextJoin
 import com.whispereverywhere.transcription.LocalWhisperEngine
 import com.whispereverywhere.transcription.NpuBackendSelector
 import com.whispereverywhere.transcription.SegmentOutcome
+import com.whispereverywhere.transcription.SpeechEvidence
 import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine
 import com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine
@@ -3335,6 +3336,20 @@ class FloatingBubbleService : Service(),
      *
      * Callable from the CAPTURE thread (the endpoint and cap cuts) and from Main (switchSource,
      * stopRecording, the projection-consent flush) — [SegmentQueueDepth] is synchronized.
+     *
+     * THE SPEECH EVIDENCE (4.3.2) is the funnel's ONE other read of the endpointer, and it adds
+     * nothing to the commit DECISION either: [Endpointer.speechEvidenceMs] is read once, BEFORE
+     * the engine's commit — the buffer it describes is the one about to be cut — and travels
+     * INTO the commit as a [SpeechEvidence], where `LocalWhisperEngine` alone acts on it (a KNOWN
+     * count under `EndpointerTuning.MIN_SPEECH_EVIDENCE_MS` is resolved `EmptyExpected` without an
+     * encode; the cloud engines drop it on the interface default). Then, AFTER the commit,
+     * [Endpointer.onBufferCommitted] re-bases the count for the next buffer — here and not inside
+     * the endpointer's own cut path, because `onFrame` clears its gate before it returns true and
+     * this funnel reads the count after that; and here for every cut kind, because the cap,
+     * switch and stop sites each commit a buffer the endpointer counted. The cap site passes
+     * `tailRetained` so the audio it kept back carries its own evidence into the next segment.
+     * The amplitude endpointer answers UNKNOWN and takes the re-base as a no-op: never skipped.
+     * Pinned structurally by CommitFunnelPinTest, beside the cut-record read.
      */
     private fun commitSegment(
         engine: TranscriptionEngine,
@@ -3342,7 +3357,9 @@ class FloatingBubbleService : Service(),
         retainMs: Long = 0L,
         nowMs: Long = System.currentTimeMillis(),
     ): Long {
-        val seq = if (retainMs > 0L) engine.commitRetainingTailMs(retainMs) else engine.commit()
+        val evidence = SpeechEvidence.of(endpointer.speechEvidenceMs())
+        val seq = if (retainMs > 0L) engine.commitRetainingTailMs(retainMs, evidence) else engine.commit(evidence)
+        endpointer.onBufferCommitted(tailRetained = retainMs > 0L)
         // Only a VAD cut has a probe behind it. lastCut() is read IMMEDIATELY after the verdict,
         // because the state machine re-arms as it returns true; an amplitude endpointer is not a
         // SileroEndpointer and yields null, which renders the unknown shape (p=-1.00).
