@@ -6,8 +6,9 @@ import java.io.File
 import org.junit.Test
 
 /**
- * THE ACCESSIBILITY SERVICE IS OPTIONAL — the three surfaces' wiring, pinned structurally
- * (4.3.3, accessibility-optional-spec §§1-3, §5).
+ * THE ACCESSIBILITY SERVICE IS OPTIONAL — the three screens' wiring, plus what the bubble service
+ * itself reads, pinned structurally (4.3.3, accessibility-optional-spec §§1-3, §5; review nits
+ * N1-N3).
  *
  * `OnboardingLogicTest`, `AccessibilityAvailabilityTest` and `HomeGateTest` execute the RULES.
  * What no test in this suite can see is whether the screens ask them: every surface here is
@@ -32,6 +33,8 @@ import org.junit.Test
  *    compiles; the pure test stays green because nothing calls it that way.
  *  - *Settings' subtitle reverted to "Required for text injection".* One string; §5 exists
  *    because it was there.
+ *  - *The resting bubble made conditional on the service again.* `alwaysOnMode()` back to the
+ *    bare preference compiles and leaves a clipboard-mode user with an empty screen (N1).
  *
  * The source is read LF-NORMALISED (`core.autocrlf=true` checks this repo out with CRLF).
  * Symbol-scoped, no line numbers.
@@ -66,6 +69,10 @@ class AccessibilityOptionalWiringPinTest {
 
     private val strings: String by lazy {
         read("src/main/res/values/strings.xml")
+    }
+
+    private val service: String by lazy {
+        read("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt")
     }
 
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
@@ -348,6 +355,52 @@ class AccessibilityOptionalWiringPinTest {
             "the resource title reads Recommended",
             1,
             count(strings, "<string name=\"permission_accessibility_title\">Accessibility Service Recommended</string>"),
+        )
+    }
+
+    // ------------------------------------------------------------------ the bubble itself (N1)
+
+    @Test
+    fun theRestingBubbleIsNeverInvisibleWithNoServiceToSummonIt() {
+        // N1: auto pop-up has exactly two summons — the accessibility service's focus callback
+        // and media. With the service off and always-on OFF the user got "Bubble is active" and
+        // an empty screen: nothing to tap, no way to dictate. The mode read is therefore the
+        // preference OR the absence of the service. An OR, never a gate — with the service ON
+        // `!isEnabled()` is false and every caller sees the preference alone, unchanged.
+        assertEquals(
+            "always-on is the preference OR the absence of the service",
+            1,
+            count(
+                service,
+                block(
+                    "    private fun alwaysOnMode(): Boolean =",
+                    "        app.preferencesManager.isBubbleAlwaysOn() || !WhisperAccessibilityService.isEnabled()",
+                ),
+            ),
+        )
+        assertEquals(
+            "and that is the ONE place the display mode is decided",
+            1,
+            liveLineCount(service, "private fun alwaysOnMode()"),
+        )
+        assertEquals(
+            "the preference is read nowhere else in the service — a second read would answer " +
+                "the same question without the service-off clause",
+            1,
+            liveLineCount(service, "isBubbleAlwaysOn()"),
+        )
+        assertEquals(
+            "and start-at-rest still hangs off that one rule, so a clipboard-mode user has a " +
+                "bubble to tap the moment the service starts",
+            1,
+            count(
+                service,
+                block(
+                    "        if (alwaysOnMode()) {",
+                    "            bubbleView.post { showBubbleAtRest() }",
+                    "        }",
+                ),
+            ),
         )
     }
 }

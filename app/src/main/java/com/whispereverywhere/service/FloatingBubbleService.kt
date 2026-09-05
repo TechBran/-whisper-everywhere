@@ -1128,8 +1128,18 @@ class FloatingBubbleService : Service(),
      * auto-moves or auto-hides; focus/media events only change what a tap dictates into.
      * False = "auto pop-up": classic behavior (appear near focused fields / during media, hide
      * when idle). User-facing toggle in Settings -> Preferences.
+     *
+     * WITHOUT THE ACCESSIBILITY SERVICE THE PREFERENCE CANNOT BE HONOURED (4.3.3, review N1):
+     * auto pop-up has exactly two summons — the service's text-field focus callback and media —
+     * so a user with always-on OFF and no service enabled gets "Bubble is active" and nothing on
+     * screen, with no way to start a recording. Clipboard mode is a VISIBLE bubble the user taps.
+     * The service-off read is therefore an OR, not a gate: with the service ON `isEnabled()` is
+     * true, `!isEnabled()` is false, and this is the preference alone — every caller (onCreate's
+     * start-at-rest, the summon arithmetic, focus/media auto-show, [BubbleHidePolicy]'s `alwaysOn`)
+     * behaves exactly as it did before this build.
      */
-    private fun alwaysOnMode(): Boolean = app.preferencesManager.isBubbleAlwaysOn()
+    private fun alwaysOnMode(): Boolean =
+        app.preferencesManager.isBubbleAlwaysOn() || !WhisperAccessibilityService.isEnabled()
 
     // ========== Text Field Focus Listener ==========
 
