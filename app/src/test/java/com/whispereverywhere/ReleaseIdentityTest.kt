@@ -42,6 +42,12 @@ import org.junit.Test
  * (no more "Thank you for watching" out of a quiet room), so the last place moves by one, exactly
  * as the previous paragraph promised. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 87 = 4.3.3 — the plain successor to 86.** 86 went to PRODUCTION on 2026-09-04 (the
+ * silence fix). 87 makes the accessibility service optional: a user whose device forbids it (the
+ * Galaxy XR's policy) or whose install Android restricts (Restricted Settings) can finish onboarding
+ * and dictate to the clipboard instead of being locked out. What a user sees changes, so the name
+ * moves. Every bump still re-arms GpuPolicy's canary latches (below).
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -62,15 +68,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_3_2_at_version_code_86() {
+    fun release_identity_is_4_3_3_at_version_code_87() {
         assertEquals(
-            "versionName must be 4.3.2 for this release (app/build.gradle.kts defaultConfig)",
-            "4.3.2",
+            "versionName must be 4.3.3 for this release (app/build.gradle.kts defaultConfig)",
+            "4.3.3",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 86 for this release (app/build.gradle.kts defaultConfig)",
-            86,
+            "versionCode must be 87 for this release (app/build.gradle.kts defaultConfig)",
+            87,
             BuildConfig.VERSION_CODE,
         )
     }

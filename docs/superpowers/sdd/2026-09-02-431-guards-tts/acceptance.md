@@ -1,6 +1,6 @@
 # 4.3.1 — device acceptance (owner session)
 
-Build under test: **4.3.2 / versionCode 86** (the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
+Build under test: **4.3.3 / versionCode 87** (the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
 device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
 is the OWNER's device session; the implementer prepared this sheet and claims none of it as done.
@@ -331,6 +331,27 @@ E11. **THE SILENCE FIX (new in 86 / 4.3.2).** Three parts, all by eye on the tra
     transcribe anything until I start talking. It definitely works a lot better." E11 = PASS.**
     `[x] PASS  [ ] FAIL`  (owner-reported)
 
+## H — the accessibility service is optional (87 / 4.3.3)
+
+H1. **Phone, service ENABLED (the Fold6 as it is):** everything identical to 86 — onboarding, the
+    bubble, typing into a field, the final delivery. FAIL on any difference.
+    `[ ] PASS  [ ] FAIL`
+H2. **Phone, service DISABLED:** turn the accessibility service OFF in Settings, then re-run onboarding
+    (or open the app): the accessibility card reads "Recommended", offers "Continue without it", and
+    Continue is enabled with mic + overlay alone; the home screen shows "Typing into apps: off —
+    transcripts are copied to the clipboard"; the bubble starts and is VISIBLE at rest (auto mode
+    included); a dictation ends with a "copied" toast and the transcript on the clipboard — paste it
+    somewhere. FAIL if you cannot get past onboarding, if the bubble is invisible, or if nothing is
+    copied.
+    `[ ] PASS  [ ] FAIL`
+H3. **Galaxy XR, debug sideload (the Play copy must be uninstalled first — it holds no model):**
+    onboarding passes with the "This device doesn’t allow apps to type for you" card; then tap the
+    bubble control. This is THE OVERLAY DRAW TEST — record exactly what happens: a bubble appears
+    somewhere in your space / the app reports it cannot show the bubble / nothing. Any of the three
+    is a result; a crash is a FAIL.
+    RECORD: what appeared? ______
+    `[ ] RECORDED`
+
 ## G — the onboarding copy (85)
 
 G1. Fresh install or re-run onboarding: the language step still offers BOTH Auto and a single
@@ -368,7 +389,7 @@ F3. **The one allowed handover discloses itself.** An app that genuinely refuses
 PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
 longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
 promote that build into production."* Promote the internal-track build to production only after
-**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8, E9 and E11** are marked PASS — E1 passes on merged pairs, so
+**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8, E9, E11, H1 and H2** are marked PASS — E1 passes on merged pairs, so
 without E7 the sheet cannot see the one behaviour that decides the language goal.
 
 Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one
