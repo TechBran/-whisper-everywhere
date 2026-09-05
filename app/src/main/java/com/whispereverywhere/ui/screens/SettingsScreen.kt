@@ -610,11 +610,17 @@ fun SettingsScreen(
                 // never required, and reads the device through the one adapter so a headset
                 // whose policy forbids it gets the blocked sentence here too. Settings has no
                 // Enable-then-resume signal of its own, so it can never read RESTRICTED.
-                val accessibilityAvailability = AccessibilityAvailabilityProbe.classify(
-                    context,
-                    returnedFromSettings = false,
-                    serviceEnabled = hasAccessibility,
-                )
+                // Keyed like the flow's (OnboardingFlowScreen's `remember(accessibility, ...)`):
+                // the probe is three device reads — SystemProperties by reflection,
+                // hasSystemFeature and a getInstallSourceInfo binder call — and its answer moves
+                // only when the service state does, so it must not run on every recomposition.
+                val accessibilityAvailability = remember(hasAccessibility) {
+                    AccessibilityAvailabilityProbe.classify(
+                        context,
+                        returnedFromSettings = false,
+                        serviceEnabled = hasAccessibility,
+                    )
+                }
 
                 SettingsItem(
                     icon = Icons.Filled.Mic,

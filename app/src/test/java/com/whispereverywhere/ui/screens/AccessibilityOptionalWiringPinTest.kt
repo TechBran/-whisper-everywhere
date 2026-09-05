@@ -362,18 +362,27 @@ class AccessibilityOptionalWiringPinTest {
         )
         assertEquals(
             "Settings reads the device through the ONE adapter, with no returned-from signal " +
-                "(it has no Enable-then-resume of its own)",
+                "(it has no Enable-then-resume of its own), and keyed like the flow's — the " +
+                "probe is three device reads and its answer moves only when the service does " +
+                "(N5), so a bare call in the composable body re-runs them on every recomposition",
             1,
             count(
                 settings,
                 block(
-                    "                val accessibilityAvailability = AccessibilityAvailabilityProbe.classify(",
-                    "                    context,",
-                    "                    returnedFromSettings = false,",
-                    "                    serviceEnabled = hasAccessibility,",
-                    "                )",
+                    "                val accessibilityAvailability = remember(hasAccessibility) {",
+                    "                    AccessibilityAvailabilityProbe.classify(",
+                    "                        context,",
+                    "                        returnedFromSettings = false,",
+                    "                        serviceEnabled = hasAccessibility,",
+                    "                    )",
+                    "                }",
                 ),
             ),
+        )
+        assertEquals(
+            "and the adapter is asked from exactly one place on this screen",
+            1,
+            liveLineCount(settings, "AccessibilityAvailabilityProbe.classify("),
         )
         // §5's grep, held: no live line on any of the three surfaces (or the resource file)
         // calls the accessibility service required.
