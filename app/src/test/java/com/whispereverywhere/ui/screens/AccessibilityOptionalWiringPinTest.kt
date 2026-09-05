@@ -37,6 +37,9 @@ import org.junit.Test
  *    bare preference compiles and leaves a clipboard-mode user with an empty screen (N1).
  *  - *The keyboard lobe shown on the preference alone.* Its one action returns false with no
  *    bound service, so that is a control that does nothing when tapped (N2).
+ *  - *`&& WhisperAccessibilityService.isEnabled()` bolted onto the boot restart's eligibility
+ *    check or the service's own start.* Either makes the service required again, from a place
+ *    no copy or screen test looks at (N3). Both pins are member-scoped, never file-wide.
  *
  * The source is read LF-NORMALISED (`core.autocrlf=true` checks this repo out with CRLF).
  * Symbol-scoped, no line numbers.
@@ -81,6 +84,10 @@ class AccessibilityOptionalWiringPinTest {
         read("src/main/java/com/whispereverywhere/service/WhisperAccessibilityService.kt")
     }
 
+    private val bootReceiver: String by lazy {
+        read("src/main/java/com/whispereverywhere/receiver/BootReceiver.kt")
+    }
+
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
 
     /** [count] over LIVE lines only — a truthful comment naming a retired spelling stays legal. */
@@ -94,6 +101,28 @@ class AccessibilityOptionalWiringPinTest {
 
     /** A multi-line needle, written as its own source lines so indentation is part of the match. */
     private fun block(vararg lines: String) = lines.joinToString("\n")
+
+    /**
+     * A member's body: the anchor line to the first non-blank line at or left of its own indent.
+     * The house scoping instrument (`AccessibilityOptionalDeliveryPinTest`, `BubbleHideWiringPinTest`,
+     * `DeviceAudioLatchPinTest`), verbatim — a whole-file count is the wrong pin for a file that
+     * legitimately reads the service elsewhere.
+     */
+    private fun memberBody(kt: String, anchor: String): String {
+        val start = kt.indexOf(anchor)
+        assertTrue("anchor missing: $anchor", start >= 0)
+        val lineStart = kt.lastIndexOf('\n', start - 1) + 1
+        val indent = kt.substring(lineStart).substringBefore("\n").takeWhile { it == ' ' }.length
+        val lines = kt.substring(start).split("\n")
+        val body = StringBuilder(lines.first())
+        var closed = false
+        for (line in lines.drop(1)) {
+            if (line.isNotBlank() && line.takeWhile { it == ' ' }.length <= indent) { closed = true; break }
+            body.append("\n").append(line)
+        }
+        assertTrue("member never closes: $anchor", closed)
+        return body.toString()
+    }
 
     // ------------------------------------------------------------------ the flow (§1, §2)
 
@@ -454,6 +483,52 @@ class AccessibilityOptionalWiringPinTest {
             "the tap is still that one service call",
             1,
             count(service, "val shown = WhisperAccessibilityService.toggleSummonedKeyboard()"),
+        )
+    }
+
+    // -------------------------------------------------- the last routes back to "required" (N3)
+    //
+    // Two places still decide whether the bubble may RUN AT ALL: the boot/update restart's
+    // eligibility check and the service's own start. Neither asks about the accessibility service
+    // today, and a single `&& WhisperAccessibilityService.isEnabled()` in either would make it
+    // required again — silently, compile-clean, and green everywhere else in this suite.
+    //
+    // SCOPE, deliberately: each pin reads ONE member body (the house `memberBody`), never the
+    // whole file. `FloatingBubbleService` reads `isEnabled()` legitimately in three other places —
+    // `alwaysOnMode()` (N1), the keyboard lobe's IDLE show (N2) and `deliverFinalTranscript` (§4,
+    // pinned in `AccessibilityOptionalDeliveryPinTest`) — and a file-wide count would forbid those
+    // too, i.e. it would go red on the very fixes the review asked for.
+
+    @Test
+    fun theBootRestartNeverGatesOnTheAccessibilityService() {
+        val eligible = memberBody(bootReceiver, "    private fun eligible(context: Context): Boolean {")
+        assertTrue(
+            "the eligibility check is still the four it was written for",
+            eligible.contains("isBubbleEnabled()") && eligible.contains("canDrawOverlays(context)") &&
+                eligible.contains("Manifest.permission.RECORD_AUDIO") &&
+                eligible.contains("installedModel() == null"),
+        )
+        assertEquals(
+            "and it asks nothing about the accessibility service — a bubble that was on comes " +
+                "back on the permissions it actually needs",
+            0,
+            liveLineCount(eligible, "isEnabled()"),
+        )
+    }
+
+    @Test
+    fun theBubbleServiceStartNeverGatesOnTheAccessibilityService() {
+        val start = memberBody(service, "    override fun onCreate() {") + "\n" +
+            memberBody(service, "    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {")
+        assertTrue(
+            "the start's own guards are still the two it was written for",
+            start.contains("startForeground rejected") && start.contains("canDrawOverlays(this)"),
+        )
+        assertEquals(
+            "and neither start path asks about the accessibility service — the bubble starts on " +
+                "model + mic + overlay, and typing is a status, not a lock",
+            0,
+            liveLineCount(start, "isEnabled()"),
         )
     }
 }
