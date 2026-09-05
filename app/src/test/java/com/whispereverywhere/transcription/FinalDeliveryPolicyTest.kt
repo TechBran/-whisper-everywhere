@@ -10,8 +10,81 @@ import org.junit.Test
  *   field && !degraded         -> (SESSION_BOUND, false)              — the one injection
  *   field && degraded          -> (null, true)                        — one consolidated copy
  *   !field                     -> (FINALIZE_FOCUS if live target else null, true)
+ *
+ * 4.3.3 (accessibility-optional-spec §4) adds a fifth input in front of those four:
+ *   !serviceEnabled && !blank  -> (null, true)                        — no service, no attempt
+ * Every row above is walked with `serviceEnabled = true`, so the with-service table is
+ * byte-identical to the W2 table by construction; the service-off rows have their own test.
  */
 class FinalDeliveryPolicyTest {
+
+    private val tf = listOf(true, false)
+
+    // ----------------------- row 0 (4.3.3): no accessibility service -> straight to the clipboard
+
+    @Test fun without_the_accessibility_service_every_transcript_goes_straight_to_the_clipboard() {
+        // When WhisperAccessibilityService.isEnabled() is false there is nothing to inject INTO —
+        // no session-bound node, no finalize-time focus (both are the service's) — so the plan
+        // is the ONE clipboard write the CLIPBOARD_ONLY branch already performs, and no injection
+        // is attempted. Decided before the field table is consulted, over every combination of
+        // the other three inputs: a TEXT_FIELD context cannot exist without the service (the
+        // focus listener that sets it is the service's), but the rule does not lean on that.
+        for (field in tf) for (degraded in tf) for (live in tf) {
+            assertEquals(
+                "field=$field degraded=$degraded live=$live",
+                FinalDeliveryPlan(inject = null, copyWholeToClipboard = true),
+                FinalDeliveryPolicy.decide(
+                    serviceEnabled = false,
+                    isTextFieldSession = field,
+                    degradedToClipboard = degraded,
+                    hasLiveInputTarget = live,
+                    transcriptBlank = false,
+                ),
+            )
+        }
+        // A blank transcript still delivers nothing: the service being off invents no copy.
+        for (field in tf) for (degraded in tf) for (live in tf) {
+            assertEquals(
+                "blank: field=$field degraded=$degraded live=$live",
+                FinalDeliveryPlan(inject = null, copyWholeToClipboard = false),
+                FinalDeliveryPolicy.decide(
+                    serviceEnabled = false,
+                    isTextFieldSession = field,
+                    degradedToClipboard = degraded,
+                    hasLiveInputTarget = live,
+                    transcriptBlank = true,
+                ),
+            )
+        }
+    }
+
+    @Test fun with_the_service_enabled_the_table_is_the_w2_table_row_for_row() {
+        // The whole with-service function against its own spec, in one walk — so a future
+        // service-off tweak cannot leak into the enabled rows unnoticed (brief §4: "no new
+        // behaviour when the service IS enabled").
+        for (field in tf) for (degraded in tf) for (live in tf) for (blank in tf) {
+            val expected = when {
+                blank -> FinalDeliveryPlan(inject = null, copyWholeToClipboard = false)
+                field && !degraded -> FinalDeliveryPlan(inject = InjectTarget.SESSION_BOUND, copyWholeToClipboard = false)
+                field -> FinalDeliveryPlan(inject = null, copyWholeToClipboard = true)
+                else -> FinalDeliveryPlan(
+                    inject = if (live) InjectTarget.FINALIZE_FOCUS else null,
+                    copyWholeToClipboard = true,
+                )
+            }
+            assertEquals(
+                "field=$field degraded=$degraded live=$live blank=$blank",
+                expected,
+                FinalDeliveryPolicy.decide(
+                    serviceEnabled = true,
+                    isTextFieldSession = field,
+                    degradedToClipboard = degraded,
+                    hasLiveInputTarget = live,
+                    transcriptBlank = blank,
+                ),
+            )
+        }
+    }
 
     // ---------------------------------------------- row 1: blank transcript wins over everything
 
@@ -23,6 +96,7 @@ class FinalDeliveryPolicyTest {
                         "field=$field degraded=$degraded live=$live",
                         FinalDeliveryPlan(inject = null, copyWholeToClipboard = false),
                         FinalDeliveryPolicy.decide(
+                            serviceEnabled = true,
                             isTextFieldSession = field,
                             degradedToClipboard = degraded,
                             hasLiveInputTarget = live,
@@ -43,6 +117,7 @@ class FinalDeliveryPolicyTest {
                 "hasLiveInputTarget=$live",
                 FinalDeliveryPlan(inject = InjectTarget.SESSION_BOUND, copyWholeToClipboard = false),
                 FinalDeliveryPolicy.decide(
+                    serviceEnabled = true,
                     isTextFieldSession = true,
                     degradedToClipboard = false,
                     hasLiveInputTarget = live,
@@ -60,6 +135,7 @@ class FinalDeliveryPolicyTest {
                 "hasLiveInputTarget=$live",
                 FinalDeliveryPlan(inject = null, copyWholeToClipboard = true),
                 FinalDeliveryPolicy.decide(
+                    serviceEnabled = true,
                     isTextFieldSession = true,
                     degradedToClipboard = true,
                     hasLiveInputTarget = live,
@@ -79,6 +155,7 @@ class FinalDeliveryPolicyTest {
                 "degraded=$degraded",
                 FinalDeliveryPlan(inject = InjectTarget.FINALIZE_FOCUS, copyWholeToClipboard = true),
                 FinalDeliveryPolicy.decide(
+                    serviceEnabled = true,
                     isTextFieldSession = false,
                     degradedToClipboard = degraded,
                     hasLiveInputTarget = true,
@@ -96,6 +173,7 @@ class FinalDeliveryPolicyTest {
                 "degraded=$degraded",
                 FinalDeliveryPlan(inject = null, copyWholeToClipboard = true),
                 FinalDeliveryPolicy.decide(
+                    serviceEnabled = true,
                     isTextFieldSession = false,
                     degradedToClipboard = degraded,
                     hasLiveInputTarget = false,

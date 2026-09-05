@@ -3503,7 +3503,14 @@ class FloatingBubbleService : Service(),
     private fun deliverFinalTranscript(full: String) {
         if (finalDelivered) return
         finalDelivered = true
+        // 4.3.3 (accessibility-optional-spec §4): the service-off read comes FIRST and reaches
+        // the policy as its first input, so without the service no injection is attempted and
+        // the plan lands in the consolidated-copy arm below — the clipboard write and the
+        // "copied" toast the CLIPBOARD_ONLY path already performs. Pinned as source by
+        // AccessibilityOptionalDeliveryPinTest: this read precedes both injection sites.
+        val serviceEnabled = WhisperAccessibilityService.isEnabled()
         val plan = com.whispereverywhere.transcription.FinalDeliveryPolicy.decide(
+            serviceEnabled = serviceEnabled,
             isTextFieldSession = sessionContext == BubbleContext.TEXT_FIELD,
             degradedToClipboard = sessionClipboardFallback,
             hasLiveInputTarget = WhisperAccessibilityService.hasLiveInputTarget(),
@@ -3511,7 +3518,8 @@ class FloatingBubbleService : Service(),
         )
         android.util.Log.i(
             "WE-DIAG",
-            "finalDelivery: inject=${plan.inject} copy=${plan.copyWholeToClipboard} len=${full.length}",
+            "finalDelivery: service=$serviceEnabled inject=${plan.inject} " +
+                "copy=${plan.copyWholeToClipboard} len=${full.length}",
         )
         when (plan.inject) {
             com.whispereverywhere.transcription.InjectTarget.SESSION_BOUND -> {
