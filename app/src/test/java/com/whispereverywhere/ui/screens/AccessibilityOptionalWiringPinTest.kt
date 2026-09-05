@@ -199,7 +199,8 @@ class AccessibilityOptionalWiringPinTest {
 
     @Test
     fun theReturnedFromSettingsSignalIsArmedByTheEnableTapAndReadOnResume() {
-        // The only Restricted Settings signal an app has. Both ends are pinned: a flag nothing
+        // The bounce half of the Restricted Settings suspicion (the install-source half is the
+        // probe's, pinned in AccessibilityAvailabilityTest). Both ends are pinned: a flag nothing
         // sets makes RESTRICTED_SETTINGS unreachable; a flag nothing reads makes it decoration.
         assertEquals(
             "the Enable tap arms the flag BEFORE launching Settings",

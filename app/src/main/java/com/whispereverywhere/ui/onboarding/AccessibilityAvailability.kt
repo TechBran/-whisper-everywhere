@@ -3,7 +3,7 @@ package com.whispereverywhere.ui.onboarding
 /**
  * Where the accessibility service can be enabled AT ALL — the pure half of 4.3.3's
  * platform-aware copy (accessibility-optional-spec §2). Android-free so every rule is a JVM
- * test ([AccessibilityAvailabilityTest] walks all eight input combinations); the three reads
+ * test ([AccessibilityAvailabilityTest] walks all eight input combinations); the four reads
  * that feed it are one small adapter, [AccessibilityAvailabilityProbe].
  *
  * Why this exists: the owner's Galaxy XR (SM-I610) has a device policy that permits NO
@@ -52,24 +52,37 @@ object AccessibilityAvailability {
     }
 
     /**
-     * Whether Android's Restricted Settings is SUSPECTED to be refusing the toggle. This is the
-     * ONLY signal an app has (brief §2): Android exposes no "this service was disallowed" API,
-     * so the inference is "the user went to the accessibility screen and came back with the
-     * service still off, on an API >= 33 device that is not a headset". It is an inference, and
-     * the sentence it gates is worded as guidance rather than a diagnosis for that reason.
+     * Whether Android's Restricted Settings is SUSPECTED to be refusing the toggle. Two signals,
+     * both required, and still an inference — Android exposes no "this service was disallowed"
+     * API (the exact AppOps signal, `ACCESS_RESTRICTED_SETTINGS`, has no public op string):
+     *
+     *  - **Can the block apply?** Restricted Settings only guards installs whose installer did
+     *    not declare `PACKAGE_SOURCE_STORE`, and that field IS public on API 33+ —
+     *    `PackageManager.getInstallSourceInfo(pkg).packageSource` (the probe reads it). A Play
+     *    install that declared STORE can never read RESTRICTED, whatever the user did in Settings.
+     *  - **Did it apply?** The user went to the accessibility screen from this step's Enable and
+     *    came back with the service still off. On its own this is also exactly what pressing
+     *    Back without touching the toggle looks like — the most ordinary return there is — which
+     *    is why it was never sufficient (fix round 1, B1), and why the sentence it gates is
+     *    guidance ("may be blocking"), not a diagnosis.
      *
      * @param returnedFromSettings the flow saw an ON_RESUME after its own Enable tap.
      * @param serviceEnabled `WhisperAccessibilityService.isEnabled()` at that resume.
      * @param apiLevel `Build.VERSION.SDK_INT`.
      * @param isHmd the headset read — a headset's "still off" is the device veto, not this.
+     * @param installNotFromStore the install's `packageSource` is not `PACKAGE_SOURCE_STORE` —
+     *        the probe answers `false` below API 33 and on any failed read, the direction that
+     *        keeps Enable primary.
      */
     fun restrictedSettingsSuspected(
         returnedFromSettings: Boolean,
         serviceEnabled: Boolean,
         apiLevel: Int,
         isHmd: Boolean,
+        installNotFromStore: Boolean,
     ): Boolean =
-        returnedFromSettings && !serviceEnabled && apiLevel >= RESTRICTED_SETTINGS_MIN_API && !isHmd
+        returnedFromSettings && !serviceEnabled && apiLevel >= RESTRICTED_SETTINGS_MIN_API &&
+            !isHmd && installNotFromStore
 
     /**
      * Whether a `ro.build.characteristics` value names a head-mounted display. The property is a

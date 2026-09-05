@@ -130,11 +130,13 @@ fun OnboardingFlowScreen(
     var accessibility by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
     var notifListener by remember { mutableStateOf(MediaNotificationListener.isEnabled()) }
 
-    // 4.3.3: THE ONE RESTRICTED-SETTINGS SIGNAL AN APP HAS — the user opened the accessibility
-    // screen from this step's Enable and came back with the service still off. `opened` is set
-    // by the tap; `returned` by the next ON_RESUME after it (the refresh below). Neither is ever
-    // cleared: the guidance stays until the service is actually on, and once it is on the card
-    // renders a check and no note at all, so a stale flag can never show a stale sentence.
+    // 4.3.3: the BOUNCE half of the restricted-settings suspicion — the user opened the
+    // accessibility screen from this step's Enable and came back with the service still off.
+    // (The other half, the install-source read, is the probe's: a Play install can never read
+    // RESTRICTED, however it bounced — fix round 1, B1.) `opened` is set by the tap; `returned`
+    // by the next ON_RESUME after it (the refresh below). Neither is ever cleared: the guidance
+    // stays until the service is actually on, and once it is on the card renders a check and no
+    // note at all, so a stale flag can never show a stale sentence.
     var accessibilitySettingsOpened by remember { mutableStateOf(false) }
     var returnedFromAccessibilitySettings by remember { mutableStateOf(false) }
 
