@@ -33,6 +33,8 @@ import com.whispereverywhere.tts.cloud.CloudVoice
 import com.whispereverywhere.tts.cloud.GeminiTtsVoices
 import com.whispereverywhere.tts.cloud.OpenAiTtsVoices
 import com.whispereverywhere.tts.cloud.SonioxTtsVoices
+import com.whispereverywhere.ui.onboarding.AccessibilityAvailabilityProbe
+import com.whispereverywhere.ui.onboarding.OnboardingLogic
 import com.whispereverywhere.ui.theme.*
 import com.whispereverywhere.util.formatBytes
 import java.io.File
@@ -604,6 +606,15 @@ fun SettingsScreen(
                 val hasOverlay = Settings.canDrawOverlays(context)
                 val hasAccessibility = WhisperAccessibilityService.isEnabled()
                 val hasNotificationListener = com.whispereverywhere.service.MediaNotificationListener.isEnabled()
+                // 4.3.3 (accessibility-optional-spec §5): the row calls the service RECOMMENDED,
+                // never required, and reads the device through the one adapter so a headset
+                // whose policy forbids it gets the blocked sentence here too. Settings has no
+                // Enable-then-resume signal of its own, so it can never read RESTRICTED.
+                val accessibilityAvailability = AccessibilityAvailabilityProbe.classify(
+                    context,
+                    returnedFromSettings = false,
+                    serviceEnabled = hasAccessibility,
+                )
 
                 SettingsItem(
                     icon = Icons.Filled.Mic,
@@ -660,7 +671,7 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Filled.Accessibility,
                     title = "Accessibility Service",
-                    subtitle = if (hasAccessibility) "Enabled" else "Required for text injection",
+                    subtitle = if (hasAccessibility) "Enabled" else OnboardingLogic.accessibilitySettingsSubtitle(accessibilityAvailability),
                     trailing = {
                         if (hasAccessibility) {
                             Icon(

@@ -17,8 +17,8 @@
     <string name="permission_microphone_description">Whisper Everywhere needs microphone access to record your voice for transcription.</string>
     <string name="permission_overlay_title">Overlay Permission Required</string>
     <string name="permission_overlay_description">Whisper Everywhere needs overlay permission to show the floating bubble over other apps.</string>
-    <string name="permission_accessibility_title">Accessibility Service Required</string>
-    <string name="permission_accessibility_description">Enable Whisper Everywhere in Accessibility Settings to allow text injection into any app.</string>
+    <string name="permission_accessibility_title">Accessibility Service Recommended</string>
+    <string name="permission_accessibility_description">Enable Whisper Everywhere in Accessibility Settings to type into any app. Without it, transcripts are copied to the clipboard.</string>
 
     <!-- Home Screen -->
     <string name="home_title">Whisper Everywhere</string>
