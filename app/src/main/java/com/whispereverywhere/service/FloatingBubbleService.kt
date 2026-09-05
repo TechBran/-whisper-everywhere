@@ -3620,8 +3620,14 @@ class FloatingBubbleService : Service(),
                     // permanent lock hanging off the blob was redundant chrome. It flashes for
                     // ~1.5 s as confirmation whenever the pin state changes — see togglePin.
                     lockLobe.visibility = View.GONE
+                    // The lobe's ONE action is WhisperAccessibilityService.toggleSummonedKeyboard(),
+                    // which returns false immediately when the service is not bound — a dead
+                    // control (4.3.3, review N2). The pref alone is not enough to show it; with the
+                    // service ON isEnabled() is true and this is the pref alone, as before.
                     keyboardLobe.visibility =
-                        if (app.preferencesManager.isDictationFirstKeyboard()) View.VISIBLE
+                        if (app.preferencesManager.isDictationFirstKeyboard() &&
+                            WhisperAccessibilityService.isEnabled()
+                        ) View.VISIBLE
                         else View.GONE
                     speakerLobe.visibility = if (!isSpeakingNow &&
                         com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)

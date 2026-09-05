@@ -35,6 +35,8 @@ import org.junit.Test
  *    because it was there.
  *  - *The resting bubble made conditional on the service again.* `alwaysOnMode()` back to the
  *    bare preference compiles and leaves a clipboard-mode user with an empty screen (N1).
+ *  - *The keyboard lobe shown on the preference alone.* Its one action returns false with no
+ *    bound service, so that is a control that does nothing when tapped (N2).
  *
  * The source is read LF-NORMALISED (`core.autocrlf=true` checks this repo out with CRLF).
  * Symbol-scoped, no line numbers.
@@ -73,6 +75,10 @@ class AccessibilityOptionalWiringPinTest {
 
     private val service: String by lazy {
         read("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt")
+    }
+
+    private val accessibilityService: String by lazy {
+        read("src/main/java/com/whispereverywhere/service/WhisperAccessibilityService.kt")
     }
 
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
@@ -358,7 +364,7 @@ class AccessibilityOptionalWiringPinTest {
         )
     }
 
-    // ------------------------------------------------------------------ the bubble itself (N1)
+    // -------------------------------------------------------------- the bubble itself (N1, N2)
 
     @Test
     fun theRestingBubbleIsNeverInvisibleWithNoServiceToSummonIt() {
@@ -401,6 +407,53 @@ class AccessibilityOptionalWiringPinTest {
                     "        }",
                 ),
             ),
+        )
+    }
+
+    @Test
+    fun theKeyboardLobeIsNeverOfferedWhenNothingCanSummonAKeyboard() {
+        // N2: the lobe's ONE action is toggleSummonedKeyboard(), which returns false the instant
+        // the service is unbound — the premise, pinned at its source so this test cannot outlive
+        // it.
+        assertEquals(
+            "the summon returns false with no bound service",
+            1,
+            count(
+                accessibilityService,
+                block(
+                    "        fun toggleSummonedKeyboard(): Boolean {",
+                    "            val svc = instance ?: return false",
+                ),
+            ),
+        )
+        assertEquals(
+            "so the lobe shows on the pref AND a bound service — never the pref alone",
+            1,
+            count(
+                service,
+                block(
+                    "                    keyboardLobe.visibility =",
+                    "                        if (app.preferencesManager.isDictationFirstKeyboard() &&",
+                    "                            WhisperAccessibilityService.isEnabled()",
+                    "                        ) View.VISIBLE",
+                    "                        else View.GONE",
+                ),
+            ),
+        )
+        assertEquals(
+            "and that is the lobe's ONE show: the other two writes are the GONE resets",
+            0,
+            liveLineCount(service, "keyboardLobe.visibility = View.VISIBLE"),
+        )
+        assertEquals(
+            "three visibility writes in all — two resets, one conditional show",
+            3,
+            liveLineCount(service, "keyboardLobe.visibility"),
+        )
+        assertEquals(
+            "the tap is still that one service call",
+            1,
+            count(service, "val shown = WhisperAccessibilityService.toggleSummonedKeyboard()"),
         )
     }
 }
