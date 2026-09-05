@@ -68,11 +68,14 @@ import kotlinx.coroutines.withContext
 // tap writes the same selected_language pref that install's Settings picker edits.
 //
 // MANDATORY except the cloud step (owner decision 2026-08-18, reversing the earlier never-block
-// contract): Continue on the permissions step is gated on the bubble's three permissions, the
-// engines step releases only once the speech model is Ready (a failed download shows Retry and
-// holds), and "Skip setup" exists ONLY on the cloud step — cloud is the one genuinely optional
-// part. Back walks backwards; on the first step it leaves the activity WITHOUT recording
-// completion, so onboarding returns on next launch. No speed claims anywhere.
+// contract): Continue on the permissions step is gated on the two permissions the bubble needs
+// to EXIST — mic and overlay; since 4.3.3 the accessibility service is RECOMMENDED, not required
+// (accessibility-optional-spec: typing degrades to a clipboard copy, and a device whose policy
+// forbids third-party accessibility services must still finish setup) — the engines step
+// releases only once the speech model is Ready (a failed download shows Retry and holds), and
+// "Skip setup" exists ONLY on the cloud step — cloud is the one genuinely optional part. Back
+// walks backwards; on the first step it leaves the activity WITHOUT recording completion, so
+// onboarding returns on next launch. No speed claims anywhere.
 // ---------------------------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,9 +120,10 @@ fun OnboardingFlowScreen(
     val languageTag = java.util.Locale.getDefault().toLanguageTag()
 
     // Permission state lives at flow level (3.5.x): the pinned footer gates Continue on the
-    // bubble's three permissions, so the step and the footer read the same truth. Re-checked on
-    // every ON_RESUME because overlay, accessibility, and notification access are granted in
-    // system Settings and the user bounces there and back per row.
+    // bubble's two required permissions (mic, overlay — 4.3.3 made accessibility a
+    // recommendation), so the step and the footer read the same truth. Re-checked on every
+    // ON_RESUME because overlay, accessibility, and notification access are granted in system
+    // Settings and the user bounces there and back per row.
     var mic by remember { mutableStateOf(hasMic(context)) }
     var overlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var accessibility by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
@@ -189,6 +193,11 @@ fun OnboardingFlowScreen(
                         accessibility = accessibility,
                         notifListener = notifListener,
                         onMicGranted = { mic = it },
+                        // 4.3.3: the accessibility card's plain secondary action is the SAME
+                        // advance as the footer's Continue, behind the SAME two-permission gate
+                        // — one rule, two places to tap it, and neither can outrun the other.
+                        continueWithoutEnabled = OnboardingLogic.permissionsContinueEnabled(mic, overlay),
+                        onContinueWithout = { OnboardingLogic.next(step)?.let { next -> step = next } },
                     )
                     Step.LANGUAGE -> LanguageStep(
                         languageTag = languageTag,
@@ -224,7 +233,9 @@ fun OnboardingFlowScreen(
                 val speech by setupVm.speechState.collectAsState()
                 val voice by setupVm.voiceState.collectAsState()
                 if (step == Step.PERMISSIONS) {
-                    val missing = OnboardingLogic.missingBubblePermissions(mic, overlay, accessibility)
+                    // 4.3.3: the count and the gate read mic + overlay ONLY — the accessibility
+                    // service is recommended, and the card above carries its own way past.
+                    val missing = OnboardingLogic.missingBubblePermissions(mic, overlay)
                     OnboardingLogic.permissionsContinueHint(missing)?.let {
                         Text(
                             it,
@@ -235,7 +246,7 @@ fun OnboardingFlowScreen(
                     }
                     Button(
                         onClick = { OnboardingLogic.next(step)?.let { next -> step = next } },
-                        enabled = OnboardingLogic.permissionsContinueEnabled(mic, overlay, accessibility),
+                        enabled = OnboardingLogic.permissionsContinueEnabled(mic, overlay),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Continue")
@@ -321,6 +332,11 @@ fun OnboardingFlowScreen(
  * Settings' Permissions section, so what the user grants here is exactly what Settings later
  * reports. Live state is hoisted to the flow (3.5.x): the pinned footer gates Continue on it, so
  * the step and the footer read the same truth.
+ *
+ * 4.3.3: the accessibility row is RECOMMENDED, not required ([AccessibilityRow]). It says what
+ * the service buys and what happens without it, keeps Enable as the primary action, and offers
+ * `Continue without it` as a plain secondary one — [onContinueWithout], gated by
+ * [continueWithoutEnabled], which the flow binds to the footer's own two-permission rule.
  */
 @Composable
 private fun PermissionsStep(
@@ -329,6 +345,8 @@ private fun PermissionsStep(
     accessibility: Boolean,
     notifListener: Boolean,
     onMicGranted: (Boolean) -> Unit,
+    continueWithoutEnabled: Boolean,
+    onContinueWithout: () -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -363,11 +381,12 @@ private fun PermissionsStep(
             )
         },
     )
-    PermissionRow(
-        title = "Accessibility service",
-        why = "Types the transcribed text into the app you're using",
+    AccessibilityRow(
         granted = accessibility,
-        onGrant = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+        note = OnboardingLogic.ACCESSIBILITY_WITHOUT_IT,
+        continueWithoutEnabled = continueWithoutEnabled,
+        onEnable = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+        onContinueWithout = onContinueWithout,
     )
     PermissionRow(
         title = "Notification access",
@@ -408,6 +427,87 @@ private fun PermissionRow(
                 Icon(Icons.Filled.CheckCircle, contentDescription = "Granted", tint = Primary)
             } else {
                 OutlinedButton(onClick = onGrant) { Text("Grant") }
+            }
+        }
+    }
+}
+
+/**
+ * The accessibility row (4.3.3, accessibility-optional-spec §1): RECOMMENDED, not required. The
+ * [PermissionRow] visual family with three additions — the "Recommended" chip, a [note] line
+ * saying what happens without the service (platform-aware: the flow passes the copy for what
+ * THIS device can do), and `Continue without it` as a plain secondary action under it. Enable
+ * stays the primary action and keeps its outlined button; the without-it path is a text button,
+ * enabled on exactly the footer's gate, so neither path is a dark pattern for the other. Once the
+ * service is on, the row reads like every granted row: a check, and nothing to decide.
+ */
+@Composable
+private fun AccessibilityRow(
+    granted: Boolean,
+    note: String,
+    continueWithoutEnabled: Boolean,
+    onEnable: () -> Unit,
+    onContinueWithout: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Accessibility service",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        if (!granted) {
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                color = Primary.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(
+                                    OnboardingLogic.ACCESSIBILITY_RECOMMENDED_BADGE,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Primary,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        OnboardingLogic.ACCESSIBILITY_WHY,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                if (granted) {
+                    Icon(Icons.Filled.CheckCircle, contentDescription = "Enabled", tint = Primary)
+                } else {
+                    OutlinedButton(onClick = onEnable) { Text("Enable") }
+                }
+            }
+            if (!granted) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = onContinueWithout,
+                    enabled = continueWithoutEnabled,
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                ) {
+                    Text(OnboardingLogic.CONTINUE_WITHOUT_ACCESSIBILITY)
+                }
             }
         }
     }

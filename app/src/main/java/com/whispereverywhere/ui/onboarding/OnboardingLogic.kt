@@ -491,28 +491,78 @@ object OnboardingLogic {
             )
         }
 
+    // ------------------------------------ the accessibility service is RECOMMENDED (4.3.3)
+
     /**
-     * How many of the three permissions the BUBBLE needs (mic, overlay, accessibility) are
-     * missing. Notification access is deliberately not counted: media detection degrades
-     * gracefully without it, and the bubble's canEnable gate has never included it.
+     * 4.3.3 (accessibility-optional-spec, 2026-09-04): the accessibility service stopped being a
+     * gate and became a recommendation. What it BUYS is typing — the transcript lands in the app
+     * the user is using. What the app does WITHOUT it is transcribe, show and copy, and that
+     * works on every device — including the Galaxy XR, whose device policy permits no
+     * third-party accessibility service at all (`AccessibilityManagerService: Skipping enabling
+     * service disallowed by device admin policy`), where the old three-permission gate made the
+     * whole product unreachable. The row says both things, the Enable path stays the primary
+     * action, and [CONTINUE_WITHOUT_ACCESSIBILITY] is a plain secondary one — no dark pattern in
+     * either direction. Every string here is pinned verbatim by OnboardingLogicTest; the brief is
+     * the source, and a change is a decision.
      */
-    fun missingBubblePermissions(mic: Boolean, overlay: Boolean, accessibility: Boolean): Int =
-        listOf(mic, overlay, accessibility).count { !it }
+    const val ACCESSIBILITY_RECOMMENDED_BADGE = "Recommended"
+
+    /** What the service buys — the accessibility row's why line (brief §1). */
+    const val ACCESSIBILITY_WHY = "Types your words into the app you're using"
+
+    /** What happens without it — the row's note wherever the service CAN be enabled (brief §1). */
+    const val ACCESSIBILITY_WITHOUT_IT =
+        "Without it, your transcript is copied — paste it where you need it."
+
+    /**
+     * The plain secondary action beside Enable (brief §1). It advances the step exactly as the
+     * footer's Continue does, behind the SAME gate — [permissionsContinueEnabled] — so the card
+     * can never let a user past a missing mic or overlay that the footer would hold them on.
+     */
+    const val CONTINUE_WITHOUT_ACCESSIBILITY = "Continue without it"
+
+    /**
+     * Settings' accessibility row while the service is off (brief §5: "recommended", never
+     * "required" — the old subtitle called it "Required for text injection").
+     */
+    const val ACCESSIBILITY_SETTINGS_OFF =
+        "Recommended — without it, transcripts are copied to the clipboard"
+
+    /**
+     * How many of the permissions the BUBBLE needs to START (mic, overlay) are missing.
+     * Notification access is deliberately not counted: media detection degrades gracefully
+     * without it, and the bubble's canEnable gate has never included it. Since 4.3.3 the
+     * accessibility service is not counted either — it is what TYPING needs, not what the bubble
+     * needs, and typing degrades to a clipboard copy (FinalDeliveryPolicy's service-off row)
+     * that works on every device.
+     */
+    fun missingBubblePermissions(mic: Boolean, overlay: Boolean): Int =
+        listOf(mic, overlay).count { !it }
 
     /**
      * The permissions step's Continue gate (owner decision 2026-08-18: crucial steps are
-     * mandatory). The three bubble permissions are required; notification access is deliberately
-     * NOT required — media detection degrades gracefully without it, matching
-     * [missingBubblePermissions].
+     * mandatory). The two permissions the bubble needs to EXIST are required; notification
+     * access and — since 4.3.3 — the accessibility service are deliberately NOT: the first
+     * degrades media detection gracefully, the second degrades typing to a clipboard copy, and a
+     * device that cannot enable it at all (Galaxy XR) must still be able to finish setup.
+     * Matches [missingBubblePermissions] by construction.
      */
-    fun permissionsContinueEnabled(mic: Boolean, overlay: Boolean, accessibility: Boolean): Boolean =
-        missingBubblePermissions(mic, overlay, accessibility) == 0
+    fun permissionsContinueEnabled(mic: Boolean, overlay: Boolean): Boolean =
+        missingBubblePermissions(mic, overlay) == 0
 
-    /** Sub-line under the permissions Continue button; null once nothing required is missing. */
+    /**
+     * Sub-line under the permissions Continue button; null once nothing required is missing.
+     * The tail names BOTH optional rows (4.3.3): "notification access is optional" on its own
+     * implied the accessibility row was required.
+     */
     fun permissionsContinueHint(missing: Int): String? = when {
         missing <= 0 -> null
-        missing == 1 -> "1 required permission still needed — notification access is optional."
-        else -> "$missing required permissions still needed — notification access is optional."
+        missing == 1 ->
+            "1 required permission still needed — the accessibility service and notification " +
+                "access are optional."
+        else ->
+            "$missing required permissions still needed — the accessibility service and " +
+                "notification access are optional."
     }
 
     /**

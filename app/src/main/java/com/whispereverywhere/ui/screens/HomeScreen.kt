@@ -223,11 +223,12 @@ fun HomeScreen(
             // was named nowhere; the disabled button's generic "Grant permissions in Settings" was
             // the only clue). Tap goes straight to Settings' Permissions rows. When everything is
             // granted this renders nothing, keeping the clean dashboard the refresh established.
+            // 4.3.3: the count is mic + overlay — the accessibility service no longer blocks the
+            // bubble, so it is not "still needed"; its own status line sits under the control.
             com.whispereverywhere.ui.onboarding.OnboardingLogic.homePermissionChipText(
                 com.whispereverywhere.ui.onboarding.OnboardingLogic.missingBubblePermissions(
                     mic = hasMicrophonePermission,
                     overlay = hasOverlayPermission,
-                    accessibility = hasAccessibilityEnabled,
                 )
             )?.let { chip ->
                 Text(

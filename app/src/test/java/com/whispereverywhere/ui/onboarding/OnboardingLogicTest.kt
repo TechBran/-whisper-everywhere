@@ -749,10 +749,15 @@ class OnboardingLogicTest {
 
     // ---------------------------------------------------------------- home permission chip
 
-    @Test fun the_chip_counts_only_bubble_blocking_permissions() {
-        assertEquals(0, OnboardingLogic.missingBubblePermissions(mic = true, overlay = true, accessibility = true))
-        assertEquals(1, OnboardingLogic.missingBubblePermissions(mic = true, overlay = true, accessibility = false))
-        assertEquals(3, OnboardingLogic.missingBubblePermissions(mic = false, overlay = false, accessibility = false))
+    @Test fun the_chip_counts_only_the_two_required_bubble_permissions() {
+        // 4.3.3 (accessibility-optional-spec §1, §3): the accessibility service left the count.
+        // It is recommended, not required — a user without it is not "missing" anything the
+        // bubble needs to START; their transcripts are copied instead of typed. The signature
+        // itself is the pin: there is no third parameter to count.
+        assertEquals(0, OnboardingLogic.missingBubblePermissions(mic = true, overlay = true))
+        assertEquals(1, OnboardingLogic.missingBubblePermissions(mic = true, overlay = false))
+        assertEquals(1, OnboardingLogic.missingBubblePermissions(mic = false, overlay = true))
+        assertEquals(2, OnboardingLogic.missingBubblePermissions(mic = false, overlay = false))
     }
 
     @Test fun the_chip_is_absent_when_everything_is_granted() {
@@ -764,7 +769,8 @@ class OnboardingLogicTest {
 
     @Test fun the_chip_text_counts_honestly() {
         assertEquals("1 permission still needed — tap to review", OnboardingLogic.homePermissionChipText(1))
-        assertEquals("3 permissions still needed — tap to review", OnboardingLogic.homePermissionChipText(3))
+        // Two is the most the count can now reach (mic + overlay) — 4.3.3.
+        assertEquals("2 permissions still needed — tap to review", OnboardingLogic.homePermissionChipText(2))
     }
 
     // ---------------------------------------------------------------- engines chooser (3.5.0)
@@ -814,24 +820,79 @@ class OnboardingLogicTest {
         )
     }
 
-    // ---------------------------------------------------------------- permissions gate (3.5.x)
+    // ------------------------------------------- permissions gate (3.5.x; two-of-three at 4.3.3)
 
-    @Test fun permissions_continue_unlocks_only_when_all_three_bubble_permissions_are_granted() {
-        assertTrue(OnboardingLogic.permissionsContinueEnabled(mic = true, overlay = true, accessibility = true))
-        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = false, overlay = true, accessibility = true))
-        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = true, overlay = false, accessibility = true))
-        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = true, overlay = true, accessibility = false))
+    @Test fun permissions_continue_unlocks_on_mic_and_overlay_alone() {
+        // 4.3.3 (accessibility-optional-spec §1): the three-permission gate became two. The mic
+        // and the overlay are what the BUBBLE needs to exist; the accessibility service is what
+        // TYPING needs, and typing has a clipboard fallback that works on every device —
+        // including the one (Galaxy XR) whose device policy permits no third-party accessibility
+        // service at all, where the old gate made the whole product unreachable. The signature
+        // is the pin: Continue cannot consult a parameter it no longer takes.
+        assertTrue(OnboardingLogic.permissionsContinueEnabled(mic = true, overlay = true))
+        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = false, overlay = true))
+        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = true, overlay = false))
+        assertFalse(OnboardingLogic.permissionsContinueEnabled(mic = false, overlay = false))
+        // And the gate is the count, so the footer's hint and its button can never disagree.
+        for (mic in listOf(true, false)) for (overlay in listOf(true, false)) {
+            assertEquals(
+                "gate == (nothing required missing) for mic=$mic overlay=$overlay",
+                OnboardingLogic.missingBubblePermissions(mic, overlay) == 0,
+                OnboardingLogic.permissionsContinueEnabled(mic, overlay),
+            )
+        }
     }
 
     @Test fun permissions_hint_counts_whats_missing_and_stays_silent_when_nothing_is() {
         assertNull(OnboardingLogic.permissionsContinueHint(0))
+        // 4.3.3: the tail names BOTH optional rows now. "notification access is optional" alone
+        // implied the accessibility row was required, which is the sentence this build retires.
         assertEquals(
-            "1 required permission still needed — notification access is optional.",
+            "1 required permission still needed — the accessibility service and notification " +
+                "access are optional.",
             OnboardingLogic.permissionsContinueHint(1),
         )
         assertEquals(
-            "3 required permissions still needed — notification access is optional.",
-            OnboardingLogic.permissionsContinueHint(3),
+            "2 required permissions still needed — the accessibility service and notification " +
+                "access are optional.",
+            OnboardingLogic.permissionsContinueHint(2),
         )
+    }
+
+    // ------------------------------------- the accessibility service is recommended (4.3.3)
+
+    /**
+     * THE ACCESSIBILITY STEP'S COPY IS THE 4.3.3 BRIEF, PINNED VERBATIM (accessibility-optional-
+     * spec §1: "the step's copy says what the service buys ('types your words into the app you're
+     * using') and what happens without it ('your transcript is copied — paste it where you need
+     * it')", plus the plain secondary `Continue without it`). The pin exists so a copy change is
+     * a decision; this one was the brief's.
+     */
+    @Test fun the_accessibility_step_copy_is_the_4_3_3_brief_verbatim() {
+        assertEquals("Recommended", OnboardingLogic.ACCESSIBILITY_RECOMMENDED_BADGE)
+        assertEquals(
+            "Types your words into the app you're using",
+            OnboardingLogic.ACCESSIBILITY_WHY,
+        )
+        assertEquals(
+            "Without it, your transcript is copied — paste it where you need it.",
+            OnboardingLogic.ACCESSIBILITY_WITHOUT_IT,
+        )
+        assertEquals("Continue without it", OnboardingLogic.CONTINUE_WITHOUT_ACCESSIBILITY)
+        // The Settings row's off-state subtitle (brief §5): "recommended", never "required".
+        assertEquals(
+            "Recommended — without it, transcripts are copied to the clipboard",
+            OnboardingLogic.ACCESSIBILITY_SETTINGS_OFF,
+        )
+        // No sentence on this step may call the service required — that is the whole change.
+        for (s in listOf(
+            OnboardingLogic.ACCESSIBILITY_RECOMMENDED_BADGE,
+            OnboardingLogic.ACCESSIBILITY_WHY,
+            OnboardingLogic.ACCESSIBILITY_WITHOUT_IT,
+            OnboardingLogic.CONTINUE_WITHOUT_ACCESSIBILITY,
+            OnboardingLogic.ACCESSIBILITY_SETTINGS_OFF,
+        )) {
+            assertFalse("<<$s>> calls the service required", s.lowercase().contains("required"))
+        }
     }
 }
