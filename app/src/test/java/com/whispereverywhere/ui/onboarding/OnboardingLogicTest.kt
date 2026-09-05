@@ -897,11 +897,14 @@ class OnboardingLogicTest {
     }
 
     /**
-     * THE PLATFORM NOTES ARE THE 4.3.3 BRIEF, PINNED VERBATIM (accessibility-optional-spec §2) —
-     * one sentence per [AccessibilityAvailability.Availability], chosen by the pure rule and
-     * rendered by the flow's accessibility card. The blocked sentence is what a Galaxy XR user
-     * reads (acceptance H3); the restricted sentence is the App-info remedy for an Android 13+
-     * Restricted Settings block. Total over the enum, so a new availability cannot render nothing.
+     * THE PLATFORM NOTES, PINNED VERBATIM (accessibility-optional-spec §2; the restricted one
+     * re-worded in fix round 1, B1) — one sentence per [AccessibilityAvailability.Availability],
+     * chosen by the pure rule and rendered by the flow's accessibility card. The blocked sentence
+     * is what a Galaxy XR user reads (acceptance H3); the restricted sentence is GUIDANCE toward
+     * the App-info remedy for a SUSPECTED Android 13+ Restricted Settings block — the rule behind
+     * it is an inference, so the sentence says "may be" and names the one thing the user can see
+     * (a greyed-out toggle), never a diagnosis. Total over the enum, so a new availability cannot
+     * render nothing.
      */
     @Test fun the_platform_notes_are_the_4_3_3_brief_verbatim_one_per_availability() {
         assertEquals(
@@ -909,10 +912,13 @@ class OnboardingLogicTest {
             OnboardingLogic.ACCESSIBILITY_BLOCKED_BY_DEVICE,
         )
         assertEquals(
-            "Android is blocking this for a sideloaded-style install. Open App info -> the menu " +
-                "-> Allow restricted settings, then try again.",
+            "If the toggle is greyed out, Android may be blocking it for a sideloaded-style install — " +
+                "open App info → ⋮ → Allow restricted settings, then try again.",
             OnboardingLogic.ACCESSIBILITY_RESTRICTED_SETTINGS,
         )
+        // B1: hedged, and stays hedged — the sentence may suspect, never assert.
+        assertTrue(OnboardingLogic.ACCESSIBILITY_RESTRICTED_SETTINGS.contains("may be blocking"))
+        assertFalse(OnboardingLogic.ACCESSIBILITY_RESTRICTED_SETTINGS.contains("is blocking"))
         assertEquals(
             OnboardingLogic.ACCESSIBILITY_WITHOUT_IT,
             OnboardingLogic.accessibilityNote(AccessibilityAvailability.Availability.ENABLEABLE),

@@ -538,14 +538,17 @@ object OnboardingLogic {
         "This device doesn't allow apps to type for you. Your transcript will be copied instead."
 
     /**
-     * The note where Android 13+ Restricted Settings is SUSPECTED (brief §2, verbatim — the
-     * `->` arrows included). Guidance, not a diagnosis: the signal behind it is an inference
-     * ([AccessibilityAvailability.restrictedSettingsSuspected]), and the remedy it names is the
-     * real one — App info's overflow menu, "Allow restricted settings".
+     * The note where Android 13+ Restricted Settings is SUSPECTED (brief §2, re-worded in fix
+     * round 1, B1). Guidance, not a diagnosis: the rule behind it
+     * ([AccessibilityAvailability.restrictedSettingsSuspected]) is an inference — a non-store
+     * install that bounced off the accessibility screen with the service still off — and that
+     * bounce is also what pressing Back looks like, so the sentence says "may be" and names the
+     * one condition the user can see for themselves (a greyed-out toggle). The remedy it names
+     * is the real one — App info's overflow menu (⋮), "Allow restricted settings".
      */
     const val ACCESSIBILITY_RESTRICTED_SETTINGS =
-        "Android is blocking this for a sideloaded-style install. Open App info -> the menu -> " +
-            "Allow restricted settings, then try again."
+        "If the toggle is greyed out, Android may be blocking it for a sideloaded-style install — " +
+            "open App info → ⋮ → Allow restricted settings, then try again."
 
     /**
      * The accessibility card's note, one sentence per availability — the flow's platform-aware
