@@ -529,6 +529,49 @@ object OnboardingLogic {
         "Recommended — without it, transcripts are copied to the clipboard"
 
     /**
+     * The note where the DEVICE forbids the service — a headset / XR device (brief §2, verbatim;
+     * acceptance row H3 is a Galaxy XR reading this sentence). Enable stays on the card because
+     * the veto is inferred from device signals, not asked of the policy; the sentence is what
+     * keeps that button from being a dead end.
+     */
+    const val ACCESSIBILITY_BLOCKED_BY_DEVICE =
+        "This device doesn't allow apps to type for you. Your transcript will be copied instead."
+
+    /**
+     * The note where Android 13+ Restricted Settings is SUSPECTED (brief §2, verbatim — the
+     * `->` arrows included). Guidance, not a diagnosis: the signal behind it is an inference
+     * ([AccessibilityAvailability.restrictedSettingsSuspected]), and the remedy it names is the
+     * real one — App info's overflow menu, "Allow restricted settings".
+     */
+    const val ACCESSIBILITY_RESTRICTED_SETTINGS =
+        "Android is blocking this for a sideloaded-style install. Open App info -> the menu -> " +
+            "Allow restricted settings, then try again."
+
+    /**
+     * The accessibility card's note, one sentence per availability — the flow's platform-aware
+     * copy (brief §2). Total over the enum: a new availability cannot render nothing.
+     */
+    fun accessibilityNote(availability: AccessibilityAvailability.Availability): String =
+        when (availability) {
+            AccessibilityAvailability.Availability.ENABLEABLE -> ACCESSIBILITY_WITHOUT_IT
+            AccessibilityAvailability.Availability.BLOCKED_BY_DEVICE -> ACCESSIBILITY_BLOCKED_BY_DEVICE
+            AccessibilityAvailability.Availability.RESTRICTED_SETTINGS -> ACCESSIBILITY_RESTRICTED_SETTINGS
+        }
+
+    /**
+     * Settings' accessibility row while the service is off (brief §5), through the same rule:
+     * the device veto is a device fact and shows there too; everywhere else the row reads
+     * "Recommended". Settings has no Enable-tap-then-resume signal, so it passes
+     * `returnedFromSettings = false` and reads RESTRICTED only if a future surface hands it one.
+     */
+    fun accessibilitySettingsSubtitle(availability: AccessibilityAvailability.Availability): String =
+        when (availability) {
+            AccessibilityAvailability.Availability.ENABLEABLE -> ACCESSIBILITY_SETTINGS_OFF
+            AccessibilityAvailability.Availability.BLOCKED_BY_DEVICE -> ACCESSIBILITY_BLOCKED_BY_DEVICE
+            AccessibilityAvailability.Availability.RESTRICTED_SETTINGS -> ACCESSIBILITY_RESTRICTED_SETTINGS
+        }
+
+    /**
      * How many of the permissions the BUBBLE needs to START (mic, overlay) are missing.
      * Notification access is deliberately not counted: media detection degrades gracefully
      * without it, and the bubble's canEnable gate has never included it. Since 4.3.3 the

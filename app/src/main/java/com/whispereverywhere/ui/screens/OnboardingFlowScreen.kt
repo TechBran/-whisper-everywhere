@@ -39,6 +39,7 @@ import com.whispereverywhere.npu.NpuPackController
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.service.MediaNotificationListener
 import com.whispereverywhere.service.WhisperAccessibilityService
+import com.whispereverywhere.ui.onboarding.AccessibilityAvailabilityProbe
 import com.whispereverywhere.ui.onboarding.OnboardingLogic
 import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel
@@ -129,11 +130,30 @@ fun OnboardingFlowScreen(
     var accessibility by remember { mutableStateOf(WhisperAccessibilityService.isEnabled()) }
     var notifListener by remember { mutableStateOf(MediaNotificationListener.isEnabled()) }
 
+    // 4.3.3: THE ONE RESTRICTED-SETTINGS SIGNAL AN APP HAS — the user opened the accessibility
+    // screen from this step's Enable and came back with the service still off. `opened` is set
+    // by the tap; `returned` by the next ON_RESUME after it (the refresh below). Neither is ever
+    // cleared: the guidance stays until the service is actually on, and once it is on the card
+    // renders a check and no note at all, so a stale flag can never show a stale sentence.
+    var accessibilitySettingsOpened by remember { mutableStateOf(false) }
+    var returnedFromAccessibilitySettings by remember { mutableStateOf(false) }
+
     fun refreshPermissions() {
         mic = hasMic(context)
         overlay = Settings.canDrawOverlays(context)
         accessibility = WhisperAccessibilityService.isEnabled()
         notifListener = MediaNotificationListener.isEnabled()
+        if (accessibilitySettingsOpened) returnedFromAccessibilitySettings = true
+    }
+
+    // What THIS device can do about the service (brief §2): the pure rule, fed by the one
+    // adapter. Keyed on the two inputs that move; the device reads behind it are cheap.
+    val accessibilityAvailability = remember(accessibility, returnedFromAccessibilitySettings) {
+        AccessibilityAvailabilityProbe.classify(
+            context,
+            returnedFromSettings = returnedFromAccessibilitySettings,
+            serviceEnabled = accessibility,
+        )
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -193,6 +213,10 @@ fun OnboardingFlowScreen(
                         accessibility = accessibility,
                         notifListener = notifListener,
                         onMicGranted = { mic = it },
+                        // 4.3.3: the card's note is the platform-aware sentence (brief §2), and
+                        // its Enable tap arms the returned-from-Settings signal above.
+                        accessibilityNote = OnboardingLogic.accessibilityNote(accessibilityAvailability),
+                        onAccessibilitySettingsOpened = { accessibilitySettingsOpened = true },
                         // 4.3.3: the accessibility card's plain secondary action is the SAME
                         // advance as the footer's Continue, behind the SAME two-permission gate
                         // — one rule, two places to tap it, and neither can outrun the other.
@@ -345,6 +369,8 @@ private fun PermissionsStep(
     accessibility: Boolean,
     notifListener: Boolean,
     onMicGranted: (Boolean) -> Unit,
+    accessibilityNote: String,
+    onAccessibilitySettingsOpened: () -> Unit,
     continueWithoutEnabled: Boolean,
     onContinueWithout: () -> Unit,
 ) {
@@ -383,9 +409,12 @@ private fun PermissionsStep(
     )
     AccessibilityRow(
         granted = accessibility,
-        note = OnboardingLogic.ACCESSIBILITY_WITHOUT_IT,
+        note = accessibilityNote,
         continueWithoutEnabled = continueWithoutEnabled,
-        onEnable = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+        onEnable = {
+            onAccessibilitySettingsOpened()
+            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        },
         onContinueWithout = onContinueWithout,
     )
     PermissionRow(

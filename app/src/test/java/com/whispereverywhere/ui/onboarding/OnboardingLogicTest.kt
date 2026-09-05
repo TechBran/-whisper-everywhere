@@ -895,4 +895,58 @@ class OnboardingLogicTest {
             assertFalse("<<$s>> calls the service required", s.lowercase().contains("required"))
         }
     }
+
+    /**
+     * THE PLATFORM NOTES ARE THE 4.3.3 BRIEF, PINNED VERBATIM (accessibility-optional-spec §2) —
+     * one sentence per [AccessibilityAvailability.Availability], chosen by the pure rule and
+     * rendered by the flow's accessibility card. The blocked sentence is what a Galaxy XR user
+     * reads (acceptance H3); the restricted sentence is the App-info remedy for an Android 13+
+     * Restricted Settings block. Total over the enum, so a new availability cannot render nothing.
+     */
+    @Test fun the_platform_notes_are_the_4_3_3_brief_verbatim_one_per_availability() {
+        assertEquals(
+            "This device doesn't allow apps to type for you. Your transcript will be copied instead.",
+            OnboardingLogic.ACCESSIBILITY_BLOCKED_BY_DEVICE,
+        )
+        assertEquals(
+            "Android is blocking this for a sideloaded-style install. Open App info -> the menu " +
+                "-> Allow restricted settings, then try again.",
+            OnboardingLogic.ACCESSIBILITY_RESTRICTED_SETTINGS,
+        )
+        assertEquals(
+            OnboardingLogic.ACCESSIBILITY_WITHOUT_IT,
+            OnboardingLogic.accessibilityNote(AccessibilityAvailability.Availability.ENABLEABLE),
+        )
+        assertEquals(
+            OnboardingLogic.ACCESSIBILITY_BLOCKED_BY_DEVICE,
+            OnboardingLogic.accessibilityNote(AccessibilityAvailability.Availability.BLOCKED_BY_DEVICE),
+        )
+        assertEquals(
+            OnboardingLogic.ACCESSIBILITY_RESTRICTED_SETTINGS,
+            OnboardingLogic.accessibilityNote(AccessibilityAvailability.Availability.RESTRICTED_SETTINGS),
+        )
+        // Settings' row (brief §5) reads the same rule: the device veto is a device fact and
+        // shows there too; everything else reads "Recommended", never "required".
+        assertEquals(
+            OnboardingLogic.ACCESSIBILITY_SETTINGS_OFF,
+            OnboardingLogic.accessibilitySettingsSubtitle(AccessibilityAvailability.Availability.ENABLEABLE),
+        )
+        assertEquals(
+            OnboardingLogic.ACCESSIBILITY_BLOCKED_BY_DEVICE,
+            OnboardingLogic.accessibilitySettingsSubtitle(AccessibilityAvailability.Availability.BLOCKED_BY_DEVICE),
+        )
+        assertEquals(
+            OnboardingLogic.ACCESSIBILITY_RESTRICTED_SETTINGS,
+            OnboardingLogic.accessibilitySettingsSubtitle(AccessibilityAvailability.Availability.RESTRICTED_SETTINGS),
+        )
+        for (availability in AccessibilityAvailability.Availability.values()) {
+            for (s in listOf(
+                OnboardingLogic.accessibilityNote(availability),
+                OnboardingLogic.accessibilitySettingsSubtitle(availability),
+            )) {
+                assertTrue("$availability renders a sentence", s.isNotBlank())
+                assertFalse("<<$s>> calls the service required", s.lowercase().contains("required"))
+            }
+        }
+    }
 }
