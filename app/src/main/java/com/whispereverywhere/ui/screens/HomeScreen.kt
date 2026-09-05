@@ -201,10 +201,16 @@ fun HomeScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Main Control Button (bubble toggle) — canEnable logic unchanged.
+            // Main Control Button (bubble toggle). 4.3.3: the gate is HomeGate.canEnable — model,
+            // mic, overlay — and no longer the accessibility service (accessibility-optional-
+            // spec §3); the status line under it says what its absence costs.
             MainControlButton(
                 isEnabled = bubbleEnabled,
-                canEnable = hasSpeechModel && hasMicrophonePermission && hasOverlayPermission && hasAccessibilityEnabled,
+                canEnable = HomeGate.canEnable(
+                    hasSpeechModel = hasSpeechModel,
+                    hasMicrophonePermission = hasMicrophonePermission,
+                    hasOverlayPermission = hasOverlayPermission,
+                ),
                 onToggle = {
                     if (bubbleEnabled) {
                         FloatingBubbleService.stop(context)
@@ -215,6 +221,25 @@ fun HomeScreen(
                     }
                 }
             )
+
+            // 4.3.3: the accessibility service is a STATUS here, not a blocker — one line under
+            // the control naming the trade (typing off, transcripts copied), tapping through to
+            // Settings' accessibility row, which carries the Enable path and the platform-aware
+            // guidance. Renders nothing while the service is on: the clean dashboard stays clean.
+            HomeGate.typingStatusLine(hasAccessibilityEnabled)?.let { status ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onNavigateToSettings() }
+                        .padding(vertical = 8.dp),
+                )
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 
