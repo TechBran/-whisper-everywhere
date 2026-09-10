@@ -178,7 +178,8 @@ object GeminiLiveEvents {
  * everything, every time. So the engine runs `serverDriven = false`, `LiveTurnPolicy` keeps the
  * client VAD for a Gemini live session, and this adapter maps the engine's turn to an ACTIVITY:
  * `activityStart` LAZILY on the first audio frame of a turn (so the endpointer's pre-roll lands
- * inside it), audio frames, `activityEnd` on [onCommit]. Three rules from P3d/P3e/P3f:
+ * inside it — and so does the silence before the onset, which Gemini bills: see [pump]), audio
+ * frames, `activityEnd` on [onCommit]. Three rules from P3d/P3e/P3f:
  *  - never send an EMPTY activity (start then end with no audio): the server closes 1007
  *    "Precondition check failed" — structurally impossible here, an activity opens only on a frame;
  *  - the NEXT `activityStart` only after the server's `ACTIVITY_END` ack (or [ACK_GAP_MS]); frames
@@ -507,6 +508,27 @@ class GeminiRealtimeProtocol(
      * Move queued turns onto the wire while the server can take a new activity: after
      * `setupComplete`, with no activity open, and past the ack gate. A discarded turn is dropped
      * unsent; a closed turn goes out as start + audio + end; the live turn opens and stays open.
+     *
+     * **What the `activityStart` below actually bills (implementation concern #1, 2026-09-10 —
+     * RECORDED, not changed here).** The activity opens on the FIRST FRAME THE ENGINE HANDS US
+     * after the previous cut — not on the first frame of SPEECH. The service feeds this engine
+     * unconditionally (its `sendAudio` sits ahead of the VAD gate, pinned by `CapSeamPinTest`), so
+     * an activity spans cut-to-cut and the silence between the previous cut and the moment the
+     * speaker starts is INSIDE it. Gemini bills audio seconds (~$0.009/min on a paid key), so that
+     * silence is billed. The same holds with no speech at all: the endpointer's
+     * `SegmentCapPolicy.MAX_SEGMENT_WALL_MS` (15 s) cut still commits, so a silent stretch sends
+     * one `activityStart`/`activityEnd` pair every 15 s, each answered by an ack with no final
+     * (→ EMPTY, nothing typed) — a paused device-audio video costs roughly four silent activities
+     * a minute. T0 §2.11's premise ("under manual VAD the app sends only speech") is therefore NOT
+     * what this wiring does; the settings row's "billed per minute while the mic is open"
+     * (`liveModeCaption`, `ui/screens/CloudProvidersScreen.kt:238`) is the honest reading and is
+     * the copy that ships — pinned by `CloudProvidersScreenLogicTest`.
+     *
+     * FOLLOW-UP (not this branch, no behaviour change here): open the activity on the ENDPOINTER's
+     * first SPEECH frame instead of the first frame after the cut. The endpointer already knows the
+     * onset and already holds the pre-roll that T0 §2.2 wants inside the activity, so this is a
+     * signal handed down from the engine — not a VAD of our own inside the protocol — and it would
+     * cut both the leading silence and the silent cap activities out of the bill.
      */
     private fun pump(now: Long, out: MutableList<String>) {
         while (ready && !open && queue.isNotEmpty()) {
