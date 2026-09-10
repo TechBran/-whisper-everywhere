@@ -117,10 +117,14 @@ class PreviewPackLayoutTest {
     @Test
     fun theAppDeclaresThePreviewPackInItsOneAssetPacksStatement() {
         assertEquals(
-            "the three packs are declared in ONE list — a pack missing here ships no variants " +
-                "at all, silently, and a second assetPacks statement would be a second list to " +
-                "keep correct",
-            1, count(appGradle, "assetPacks += listOf(\":npu_turbo\", \":npu_small\", \":$module\")"),
+            "the packs are declared in ONE list — a pack missing here ships no variants at all, " +
+                "silently, and a second assetPacks statement would be a second list to keep " +
+                "correct. (4.4.0 Task 2b appended the untargeted :tts_kokoro; this pin is scoped " +
+                "to the NPU pair PLUS this pack's own position, so it still fails if :preview_en " +
+                "is dropped or reordered, while TtsPackLayoutTest owns the voice pack's half — " +
+                "neither can be deleted by editing the other's test.)",
+            1,
+            count(appGradle, "assetPacks += listOf(\":npu_turbo\", \":npu_small\", \":$module\","),
         )
         assertEquals(1, count(appGradle, "assetPacks +="))
     }
@@ -205,8 +209,10 @@ class PreviewPackLayoutTest {
             1, count(appGradle, "dependsOn(verifyNpuPacks)"),
         )
         assertEquals(
-            "and neither gate hangs off preBuild or assemble",
-            2, count(appGradle, "it.name.startsWith(\"package\") && it.name.endsWith(\"Bundle\")"),
+            "and no gate hangs off preBuild or assemble — three packs' worth of payload " +
+                "(4.2 F4's two, this one, and Task 2b's voice archive) must never be demanded " +
+                "by the everyday APK build, which carries no packs at all",
+            3, count(appGradle, "it.name.startsWith(\"package\") && it.name.endsWith(\"Bundle\")"),
         )
     }
 

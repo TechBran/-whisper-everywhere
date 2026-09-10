@@ -27,3 +27,9 @@ include(":npu_turbo", ":npu_small")
 // four files; the committed tree carries the build file, the wall and the .gitkeep anchor), but
 // NOT device-targeted: one untargeted variant, every device.
 include(":preview_en")
+// The read-aloud voice's on-demand pack (4.4.0, the 2026-09-10 amendment, Task 2b) — its own
+// statement for the same reason: it carries kokoro-multi-lang-v1_0.tar.bz2 AS-IS, so
+// TtsModelManager.verifyExtractInstall runs unchanged on the pack's copy. Same payload discipline
+// (tools/build_asset_packs.py tts places the archive; the committed tree carries the build file,
+// the wall and the .gitkeep anchor) and NOT device-targeted: one untargeted variant, every device.
+include(":tts_kokoro")

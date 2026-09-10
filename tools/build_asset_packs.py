@@ -787,20 +787,14 @@ def verify_preview_dir(out_dir: str) -> "str | None":
     return None
 
 
-def place_preview_file(name: str, want_bytes: int, want_sha: str, out_dir: str,
-                       mirror: str) -> str:
-    """Stream ONE pinned file into out_dir with sha256 riding the copy, from the local mirror
-    when it already holds those exact bytes and from the commit-pinned URL otherwise. The .part
-    is promoted only after both the length and the digest match the literals above."""
-    dest = os.path.join(out_dir, name)
+def stream_pinned(reader, dest: str, name: str, want_bytes: int, want_sha: str,
+                  source: str) -> None:
+    """Stream ONE pinned artefact from an open reader into dest with sha256 riding the copy. The
+    .part is promoted only after BOTH the length and the digest match the caller's literals, so a
+    truncated transfer or a replaced upstream file leaves nothing behind that a later run could
+    mistake for the real thing. Shared by the two untargeted packs -- preview_en's four files and
+    tts_kokoro's one archive -- so "the bytes are the ones we pinned" is decided in ONE place."""
     part = dest + ".part"
-    local = os.path.join(mirror, name)
-    source = "mirror"
-    if os.path.isfile(local) and os.path.getsize(local) == want_bytes:
-        reader = open(local, "rb")
-    else:
-        source = "pinned commit"
-        reader = urllib.request.urlopen(PREVIEW_BASE_URL + name, timeout=120)
     digest = hashlib.sha256()
     copied = 0
     try:
@@ -822,6 +816,20 @@ def place_preview_file(name: str, want_bytes: int, want_sha: str, out_dir: str,
         raise fail(f"{name} sha256 {digest.hexdigest()} from the {source} != the catalog "
                    f"{want_sha}")
     os.replace(part, dest)
+
+
+def place_preview_file(name: str, want_bytes: int, want_sha: str, out_dir: str,
+                       mirror: str) -> str:
+    """Place ONE pinned file into out_dir, from the local mirror when it already holds those exact
+    bytes and from the commit-pinned URL otherwise. The length/digest gate is stream_pinned's."""
+    local = os.path.join(mirror, name)
+    source = "mirror"
+    if os.path.isfile(local) and os.path.getsize(local) == want_bytes:
+        reader = open(local, "rb")
+    else:
+        source = "pinned commit"
+        reader = urllib.request.urlopen(PREVIEW_BASE_URL + name, timeout=120)
+    stream_pinned(reader, os.path.join(out_dir, name), name, want_bytes, want_sha, source)
     return source
 
 
@@ -860,17 +868,131 @@ def place_preview_pack(mirror: str) -> None:
     print(f"preview OK: {placed} file(s) placed, four files verified from disk, {total} B total")
 
 
+# ---------------------------------------------------------------------------- tts_kokoro (4.4.0)
+# The read-aloud voice's pack (owner ruling 2026-09-10, the amendment pad, Task 2b): ONE archive
+# placed AS-IS into the pack module's single UNTARGETED directory, so
+# TtsModelManager.verifyExtractInstall runs unchanged on the pack's copy -- same size gate, same
+# known-good digest set, same extract + atomic swap. Both arrival routes hand over the same
+# artefact, which is the only way ONE verification can serve both.
+#
+# THE INCIDENT THIS ROW CLOSES (2026-09-08 to 2026-09-10). The URL below is a ROLLING release tag:
+# k2-fsa re-uploaded this archive under it, the size stayed inside the app's +-5 % band, the pinned
+# sha256 stopped matching, and every fresh voice install on every build failed for two days,
+# production included. So the digest here is not merely "a" digest of the archive: it is the FIRST
+# entry of TtsModelManager.KNOWN_GOOD_TAR_SHA256 -- the archive the device's own gate accepts --
+# and TtsPackLayoutTest holds the two equal. A pack built from a third upload fails HERE, loudly,
+# instead of shipping an AAB whose voice can never install.
+TTS_MODULE = "tts_kokoro"
+
+# (name, bytes, sha256) -- the 2026-09-08 archive, verified compatible on 2026-09-10 (53 voice
+# slots byte-identical, em_santa appended at id 53). Restated as literals because this script
+# cannot read the app's classes; pinned equal to TtsModelManager by TtsPackLayoutTest.
+#
+# Both literals are spelled on ONE line each, deliberately: TtsPackLayoutTest pins them as
+# contiguous text, and a wrapped tuple is a pin that a re-indent can silently retire.
+TTS_ARCHIVE = ("kokoro-multi-lang-v1_0.tar.bz2", 349_906_910, "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298")
+
+TTS_TAR_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2"
+
+DEFAULT_TTS_MIRROR = r"C:\Users\bastr\.androidbuild\tts-tar"
+
+# The mirror's spellings, in preference order. `.NEW.tar.bz2` is the 2026-09-08 download archived
+# during the incident: it is the verified evidence file, so it is preferred over re-pulling 350 MB
+# through a tag that has already moved once. Either way the digest gate below is the authority.
+TTS_MIRROR_NAMES = ("kokoro-multi-lang-v1_0.tar.bz2", "kokoro-multi-lang-v1_0.NEW.tar.bz2")
+
+# The one file in the payload directory that is NOT payload: the tracked anchor that proves the
+# directory exists in a clean clone (the module's .gitignore re-includes it by name).
+TTS_ANCHOR = ".gitkeep"
+
+
+def tts_payload_dir() -> str:
+    """The pack module's single untargeted asset directory, named after the PACK (4.2 F8: no two
+    modules may ship the same entry path, and Play strips a group suffix on delivery, so the device
+    sees assets/tts_kokoro/ -- which is what TtsModelManager.packTarIn opens)."""
+    return os.path.join(repo_root(), TTS_MODULE, "src", "main", "assets", TTS_MODULE)
+
+
+def verify_tts_dir(out_dir: str) -> "str | None":
+    """What LANDED, re-read from disk: exactly the archive plus the anchor, the byte count
+    TtsModelManager's and the digest re-hashed to the one the device's gate accepts. None when
+    green, else the first problem as one sentence. Everything in this directory rides into the AAB
+    and onto every device that fetches the voice, so 'nothing else is in here' is part of the
+    verdict."""
+    name, want_bytes, want_sha = TTS_ARCHIVE
+    if not os.path.isdir(out_dir):
+        return f"{out_dir} does not exist"
+    names = sorted(os.listdir(out_dir))
+    want = sorted([name, TTS_ANCHOR])
+    if names != want:
+        return f"carries {names}; the voice pack is exactly {want}"
+    path = os.path.join(out_dir, name)
+    got = os.path.getsize(path)
+    if got != want_bytes:
+        return f"{name} is {got} B, the catalog says {want_bytes}"
+    got_sha = sha256_file(path)
+    if got_sha != want_sha:
+        return f"{name} sha256 {got_sha} != the catalog {want_sha}"
+    return None
+
+
+def place_tts_pack(mirror: str) -> None:
+    """Assemble the tts_kokoro payload, then re-verify the whole directory from disk."""
+    name, want_bytes, want_sha = TTS_ARCHIVE
+    out_dir = tts_payload_dir()
+    os.makedirs(out_dir, exist_ok=True)
+    anchor = os.path.join(out_dir, TTS_ANCHOR)
+    if not os.path.isfile(anchor):
+        with open(anchor, "w", encoding="utf-8"):
+            pass
+    print(f"TTS module={TTS_MODULE} -> {TTS_MODULE}/src/main/assets/{TTS_MODULE}")
+    if verify_tts_dir(out_dir) is None:
+        print("  already the catalog (re-hashed from disk), rewrite skipped")
+        return
+    # Anything that is neither payload nor the anchor would ride into the AAB: cleared, not kept.
+    for stale in os.listdir(out_dir):
+        if stale not in (name, TTS_ANCHOR):
+            os.remove(os.path.join(out_dir, stale))
+    dest = os.path.join(out_dir, name)
+    if os.path.isfile(dest) and os.path.getsize(dest) == want_bytes and \
+            sha256_file(dest) == want_sha:
+        print(f"  {name}: already the catalog, kept")
+    else:
+        source = "mirror"
+        reader = None
+        for candidate in TTS_MIRROR_NAMES:
+            local = os.path.join(mirror, candidate)
+            if os.path.isfile(local) and os.path.getsize(local) == want_bytes:
+                reader = open(local, "rb")
+                source = f"mirror ({candidate})"
+                break
+        if reader is None:
+            # The ROLLING tag, and the reason the digest gate below is not optional.
+            source = "upstream release (ROLLING tag)"
+            reader = urllib.request.urlopen(TTS_TAR_URL, timeout=600)
+        stream_pinned(reader, dest, name, want_bytes, want_sha, source)
+        print(f"  {name}: {want_bytes} B from the {source}, catalog digest reproduced")
+    problem = verify_tts_dir(out_dir)
+    if problem is not None:
+        raise fail(f"the placed voice pack failed its own verification: {problem}")
+    print(f"tts OK: the archive verified from disk, {want_bytes} B total")
+
+
 def main(argv: list) -> None:
     usage = (
         f"usage: python {os.path.basename(argv[0])} measure [workspace]\n"
         f"       python {os.path.basename(argv[0])} build [workspace]\n"
         f"       python {os.path.basename(argv[0])} delivery-zip <familyId> <tierId> [workspace]\n"
-        f"       python {os.path.basename(argv[0])} preview [mirror]"
+        f"       python {os.path.basename(argv[0])} preview [mirror]\n"
+        f"       python {os.path.basename(argv[0])} tts [mirror]"
     )
-    if len(argv) < 2 or argv[1] not in ("measure", "build", "delivery-zip", "preview"):
+    if len(argv) < 2 or argv[1] not in ("measure", "build", "delivery-zip", "preview", "tts"):
         raise SystemExit(usage)
     if argv[1] == "preview":
         place_preview_pack(argv[2] if len(argv) > 2 else DEFAULT_PREVIEW_MIRROR)
+        return
+    if argv[1] == "tts":
+        place_tts_pack(argv[2] if len(argv) > 2 else DEFAULT_TTS_MIRROR)
         return
     if argv[1] == "measure":
         workspace = argv[2] if len(argv) > 2 else DEFAULT_WORKSPACE

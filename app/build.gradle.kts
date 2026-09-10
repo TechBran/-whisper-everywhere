@@ -240,7 +240,12 @@ android {
     // deliberately untouched. ONE assetPacks statement, because a second list is a second thing
     // to keep correct and a pack missing from it ships no variants at all, silently.
     // verifyPreviewPack is its gate, wired below beside verifyNpuPacks'.
-    assetPacks += listOf(":npu_turbo", ":npu_small", ":preview_en")
+    //
+    // (4.4.0, Task 2b) :tts_kokoro joins on the same terms — the read-aloud voice's
+    // kokoro-multi-lang-v1_0.tar.bz2 carried AS-IS, on-demand, untargeted — so the 2026-09-08
+    // rolling-tag incident cannot recur: the archive rides the AAB and a voice update becomes a
+    // deliberate release. verifyTtsPack is its gate, wired below beside the other two.
+    assetPacks += listOf(":npu_turbo", ":npu_small", ":preview_en", ":tts_kokoro")
 
     bundle {
         // The census spelled for Play — committed, and byte-pinned to NpuFleetCensus by
@@ -513,6 +518,12 @@ tasks.withType<Test>().configureEach {
         // they used to be. (The script, settings.gradle.kts and this build file are already here.)
         rootProject.file("preview_en/build.gradle.kts"),
         rootProject.file("preview_en/.gitignore"),
+        // (4.4.0, Task 2b) TtsPackLayoutTest's own two, by exactly the same rule: the fourth pack
+        // module's build file and its payload wall are inputs to no compile task, so without
+        // these entries an edit confined to either would leave testDebugUnitTest UP-TO-DATE and
+        // the voice pack's layout pins green against the files as they used to be.
+        rootProject.file("tts_kokoro/build.gradle.kts"),
+        rootProject.file("tts_kokoro/.gitignore"),
         // (4.4.0) The previewer's FETCH SHELL, by the comment-only rule BatchTranscriber.kt is
         // here for: StreamingPackShellPinTest's pins include ORDER and ZERO-count assertions over
         // the whole file (registerListener before fetch, installFromPack before Installed, no
@@ -917,6 +928,71 @@ val verifyPreviewPack = tasks.register("verifyPreviewPack") {
 // single wiring line stays exactly what it was, and each gate says when it runs.
 tasks.matching { it.name.startsWith("package") && it.name.endsWith("Bundle") }
     .configureEach { dependsOn(verifyPreviewPack) }
+
+// (4.4.0, Task 2b) The THIRD gate, one pack over: the read-aloud voice's archive is a BUILD
+// artifact placed by `python tools/build_asset_packs.py tts`, and an AAB whose tts_kokoro payload
+// is missing or stale would ship a voice that can never install — which is precisely the
+// 2026-09-08 production incident, reproduced deliberately and invisibly, because an APK build
+// carries no packs at all and every JVM test would stay green.
+//
+// THE PLACEMENT TABLE: one row, name and byte count. The literals are TtsModelManager.TAR_NAME
+// and TAR_BYTES, restated because a build script cannot read the app's classes, and pinned EQUAL
+// to them by TtsPackLayoutTest (the verifyNpuPacks discipline). sha256 of 350 MB per bundle build
+// is deliberately NOT taken here: the script hash-verifies what it places against the app's own
+// KNOWN_GOOD_TAR_SHA256 literal, TtsModelManager.verifyExtractInstall re-hashes on the device
+// before a byte is extracted, and this gate's job is a MISSING or wrong-sized payload, which an
+// exact byte count catches instantly.
+//
+// The payload directory is UNTARGETED — one variant, every device — so, as with the previewer,
+// there is no empty-default rule to hold here: there is no default variant to keep empty, and the
+// .gitkeep anchor is the only non-payload entry the directory may carry.
+val ttsPackFiles = listOf(
+    listOf("kokoro-multi-lang-v1_0.tar.bz2", 349_906_910L),
+)
+val verifyTtsPack = tasks.register("verifyTtsPack") {
+    description = "Verifies the tts_kokoro asset pack's payload against TtsModelManager's " +
+        "archive byte count. Runs before every bundle packaging task."
+    doLast {
+        val problems = mutableListOf<String>()
+        val payloadDir = rootProject.file("tts_kokoro/src/main/assets/tts_kokoro")
+        if (!payloadDir.isDirectory) {
+            problems += "tts_kokoro: assets/tts_kokoro/ is MISSING"
+        } else {
+            val listed = (payloadDir.listFiles() ?: emptyArray()).map { it.name }.sorted()
+            val expected = (ttsPackFiles.map { it[0] as String } + ".gitkeep").sorted()
+            if (listed != expected) {
+                problems += "tts_kokoro/assets/tts_kokoro: carries $listed; the pack is exactly " +
+                    "$expected"
+            } else {
+                for (row in ttsPackFiles) {
+                    val name = row[0] as String
+                    val bytes = row[1] as Long
+                    val placed = File(payloadDir, name)
+                    if (placed.length() != bytes) {
+                        problems += "tts_kokoro/assets/tts_kokoro: $name is ${placed.length()} B, " +
+                            "TtsModelManager says $bytes"
+                    }
+                }
+            }
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "verifyTtsPack: the voice pack's payload is not the pinned archive — a bundle " +
+                    "built now would ship a read-aloud voice that can never install.\n  " +
+                    problems.joinToString("\n  ") +
+                    "\n  Place the payload with: python tools/build_asset_packs.py tts"
+            )
+        }
+        logger.lifecycle(
+            "verifyTtsPack: the voice pack's ${ttsPackFiles.size} file matches " +
+                "TtsModelManager's archive byte count."
+        )
+    }
+}
+// Its own clause, like the previewer's: the two older gates' single wiring lines stay exactly
+// what they were, and each gate says when it runs.
+tasks.matching { it.name.startsWith("package") && it.name.endsWith("Bundle") }
+    .configureEach { dependsOn(verifyTtsPack) }
 
 dependencies {
     // On-device TTS (Track F): sherpa-onnx runs Kokoro-82M on CPU (fetched above). arm64

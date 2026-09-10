@@ -202,7 +202,25 @@ class TtsModelManager(private val context: Context) {
         // TtsVoices catalog indexes THIS model's voices.bin order.
         const val DIR_NAME = "kokoro-v1_0"
         const val MODEL_FILE = "model.onnx"
-        private const val TAR_NAME = "kokoro-multi-lang-v1_0.tar.bz2"
+
+        /**
+         * The archive's name — public since 4.4.0's amendment (Task 2b), because it is now also
+         * the name of the ONE file the `tts_kokoro` Play asset pack carries: the pack's payload
+         * is this archive placed AS-IS, so the build script's placement row, the bundle gate and
+         * [packTarIn]'s read all key on this one string. `TtsPackLayoutTest` holds them equal.
+         */
+        const val TAR_NAME = "kokoro-multi-lang-v1_0.tar.bz2"
+
+        /**
+         * The Play asset pack that carries [TAR_NAME], and therefore also the name of the
+         * directory it arrives in: Play strips a `#group_<g>` suffix on delivery and this pack has
+         * none (one untargeted variant, every device), so the delivered path is
+         * `<AssetPackLocation.assetsPath()>/<PACK_NAME>/<TAR_NAME>` — the same read the NPU packs
+         * and `preview_en` perform, and 4.2 F8's entry-clash rule is why the directory carries the
+         * pack's name in the first place.
+         */
+        const val PACK_NAME = "tts_kokoro"
+
         private const val TAR_URL =
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$TAR_NAME"
         /**
