@@ -266,8 +266,15 @@ def cmd_summarize(a):
     print()
     for o in rows:
         db = o.get("decbench")
-        dbs = ("; decbench n=%d: per-step compute %.1f ms (single run+read %.1f, final read %.1f)" % (
-            db["n"], db["per_step_ms"], db["single_run_plus_read_ms"], db["final_read_ms"])) if db else ""
+        dbs = ""
+        if db:
+            # n enqueued runs then one read: total = n*C + R; one run+read: single = C + R  =>  C = (total - single)/(n-1)
+            # (the app's own per_step_ms subtracts the whole final read, which on the GPU also waits for the queue
+            # to drain, so it under-reads C; this is the honest split)
+            c = (db["total_ms"] - db["single_run_plus_read_ms"]) / (db["n"] - 1)
+            r = db["single_run_plus_read_ms"] - c
+            dbs = "; decbench n=%d: per-step compute %.1f ms + logits readback %.1f ms (single run+read %.1f, %d runs+read %.1f)" % (
+                db["n"], c, r, db["single_run_plus_read_ms"], db["n"], db["total_ms"])
         we = o.get("warm_encode") or {}
         ws = o.get("warm_step") or {}
         print("- `%s`: create %s ms%s, mem after create %s, end %s, start %s, end %s; warm encode n=%s mean %s (min %s max %s); warm step n=%s mean %s (min %s max %s)%s; %s" % (
