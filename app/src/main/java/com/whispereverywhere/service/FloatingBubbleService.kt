@@ -344,7 +344,9 @@ internal fun deltaOwnsPreviewStrip(sessionIsLive: Boolean, sessionHasLocalPrevie
 internal fun inFlightStripLabel(depth: Int, sessionHasLocalPreview: Boolean): String? = when {
     // RULING ASSUMED (R2): while a local preview paints the words, the label is DISPLACED —
     // the strip IS the pending text, and the `queue:` diag line keeps the depth. A flip to
-    // "shared" (label after the words) or "moved" (into the window) changes THIS row only.
+    // "shared" (label after the words) or "moved" (into the window) is THIS row and the render's
+    // row: [renderInFlightStrip]'s owner gate returns early whenever the flag is set, so this row
+    // never fires in production and is the flip's declaration rather than the whole of it.
     sessionHasLocalPreview -> null
     depth <= 0 -> null
     depth == 1 -> "Transcribing…"

@@ -55,7 +55,9 @@ class InFlightStripTest {
 
     @Test fun a_local_preview_displaces_the_label_at_every_depth() {
         // RULING ASSUMED (R2): DISPLACED. The strip carries the words; `queue:` keeps the depth.
-        // A flip to "shared" or "moved" is a change to THIS function and this test, nowhere else.
+        // A flip to "shared" or "moved" is this function, this test AND the render's row — the
+        // render's owner gate returns early whenever the flag is set, so this row never fires in
+        // production. The spec's wording: one pure function *and its render row*.
         listOf(-1, 0, 1, 2, 7, 9).forEach { d ->
             assertNull("depth $d under a local preview", inFlightStripLabel(d, sessionHasLocalPreview = true))
         }
