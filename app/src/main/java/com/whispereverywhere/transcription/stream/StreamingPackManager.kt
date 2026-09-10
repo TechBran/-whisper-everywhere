@@ -119,11 +119,24 @@ class StreamingPackManager(private val context: Context) {
      * `remove` runs STRICTLY AFTER the install returns — the remove-after-land rule the NPU fetch
      * flow owns, for the same reason: the delivered pack is the ONLY copy of those bytes until
      * the rename commits, and a failed verify leaves it in place so the retry costs nothing.
+     *
+     * FREE SPACE IS GATED FIRST, on the same 1.1 × rule the download uses
+     * ([StreamingPackInstall.hasRoomFor]) — spec §6's "free-space gate first", and it belongs
+     * here at least as much as on the download: this route copies 72,654,782 B into `filesDir`,
+     * and on a full device that copy would fail partway with Play's own 73 MB still on the
+     * device beside a half-written temp. One volume, not two: nothing external is staged here.
      */
     suspend fun installFromPack(pack: StreamingPack, onProgress: (soFar: Long, total: Long) -> Unit): Unit =
         withContext(Dispatchers.IO) {
             val source = packSourceDir(pack)
                 ?: throw StreamingPackException("Google Play has not delivered the preview model to this device yet.")
+            val free = runCatching { StatFs(root().absolutePath).availableBytes }.getOrDefault(Long.MAX_VALUE)
+            if (!StreamingPackInstall.hasRoomFor(pack, free)) {
+                throw StreamingPackException(
+                    "Not enough free storage: the preview model needs about " +
+                        "${StreamingPackInstall.requiredFreeBytes(pack) / 1_000_000} MB free to install."
+                )
+            }
             onProgress(0L, pack.totalBytes)
             when (val v = StreamingPackInstall.verify(source, pack)) {
                 PackVerdict.Ok -> Unit
@@ -155,10 +168,12 @@ class StreamingPackManager(private val context: Context) {
         withContext(Dispatchers.IO) {
             val dm = downloadManager()
             val staging = stagingDir(pack).apply { mkdirs() }
-            val required = (pack.totalBytes * 1.1).toLong()
+            // The same headroom rule as the pack route, from the same function: the download
+            // needs it on BOTH volumes, because the staged copy and the install coexist.
+            val required = StreamingPackInstall.requiredFreeBytes(pack)
             val extFree = runCatching { StatFs(staging.absolutePath).availableBytes }.getOrDefault(Long.MAX_VALUE)
             val intFree = runCatching { StatFs(root().absolutePath).availableBytes }.getOrDefault(Long.MAX_VALUE)
-            if (extFree < required || intFree < required) {
+            if (!StreamingPackInstall.hasRoomFor(pack, extFree) || !StreamingPackInstall.hasRoomFor(pack, intFree)) {
                 throw StreamingPackException(
                     "Not enough free storage: the preview model needs about ${(2 * required) / 1_000_000} MB free during install."
                 )

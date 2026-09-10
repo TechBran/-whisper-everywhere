@@ -520,6 +520,12 @@ tasks.withType<Test>().configureEach {
         // comment-shaped or produce byte-identical .class files, so without this entry the one
         // edit each pin exists to catch is the one that never re-runs it.
         "src/main/java/com/whispereverywhere/transcription/stream/StreamingPackController.kt",
+        // (4.4.0) And the manager, for its own ORDER pin: the free-space gate must sit above the
+        // verify and the copy on the pack route, and neither route may re-derive the 1.1 x
+        // headroom. Reordering three statements inside one suspend function is invisible to every
+        // behavioural test — there is no JVM path through `StatFs` — and it is the difference
+        // between a refusal that costs nothing and ~146 MB of dead bytes on a full device.
+        "src/main/java/com/whispereverywhere/transcription/stream/StreamingPackManager.kt",
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a

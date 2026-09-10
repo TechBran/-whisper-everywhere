@@ -110,6 +110,70 @@ class StreamingPackInstallTest {
         assertTrue("the bytes stay; only the verdict is withdrawn", File(dir, "encoder.onnx").exists())
     }
 
+    @Test fun bothArrivalRoutesGateOnTheOneTenPercentHeadroomRule() {
+        // The TtsModelManager.kt:66-76 number, spelled once. The PACK route needs it as much as
+        // the download does — more, since the amendment made it the primary route on the
+        // shipping build: it copies the pack's bytes into filesDir, and out of space that copy
+        // fails partway with Play's own copy still on the device.
+        val total = pack.totalBytes
+        assertEquals((total * 1.1).toLong(), StreamingPackInstall.requiredFreeBytes(pack))
+        assertTrue(
+            "exactly the requirement is enough — the gate refuses BELOW it, not at it",
+            StreamingPackInstall.hasRoomFor(pack, StreamingPackInstall.requiredFreeBytes(pack)),
+        )
+        assertFalse(
+            "one byte short is short",
+            StreamingPackInstall.hasRoomFor(pack, StreamingPackInstall.requiredFreeBytes(pack) - 1),
+        )
+        assertFalse(
+            "the pack's own size is NOT enough: the headroom is the point",
+            StreamingPackInstall.hasRoomFor(pack, total),
+        )
+        assertFalse(StreamingPackInstall.hasRoomFor(pack, 0L))
+        // And against the real pack, so a drift in the rule reads as a real number here.
+        assertEquals(79_920_260L, StreamingPackInstall.requiredFreeBytes(StreamingPackCatalog.EN))
+    }
+
+    @Test fun aFailedCopyLeavesNoTempDirectoryAndThrowsTheTypeTheContractNames() {
+        // Out of space mid-copy is the case this exists for: without the sweep, up to 73 MB of
+        // dead bytes stay under filesDir in a directory `state()` never reads, on a device that
+        // was already full; without the wrap, a raw java.io.IOException walks straight past the
+        // `catch (e: StreamingPackException)` every caller's KDoc promises is enough.
+        val root = tmp.newFolder("root")
+        val staged = stage()
+        File(staged, "joiner.onnx").delete()
+        val thrown = try {
+            StreamingPackInstall.install(staged, root, pack, moveSource = false)
+            null
+        } catch (t: Throwable) {
+            t
+        }
+        assertTrue("a StreamingPackException, not a raw IOException: $thrown", thrown is StreamingPackException)
+        assertFalse(
+            "no .tmp survives a failed install — those are up to 73 MB nothing else clears",
+            StreamingPackInstall.tmpDir(root, pack).exists(),
+        )
+        assertFalse(StreamingPackInstall.installDir(root, pack).exists())
+    }
+
+    @Test fun aFailedInstallLeavesAPreviousInstallExactlyAsItWas() {
+        // The marker is the last write inside the try and the old directory is removed only
+        // after it: a repair that runs out of space must not cost the user the install they had.
+        val root = tmp.newFolder("root")
+        StreamingPackInstall.install(stage(), root, pack)
+        val dir = StreamingPackInstall.installDir(root, pack)
+        val broken = stage()
+        File(broken, "encoder.onnx").delete()
+        try {
+            StreamingPackInstall.install(broken, root, pack, moveSource = false)
+        } catch (expected: StreamingPackException) {
+            // the point of the test
+        }
+        assertTrue("the previous install survives a failed one", StreamingPackInstall.isInstalled(dir, pack))
+        assertEquals("ENCODER", File(dir, "encoder.onnx").readText())
+        assertFalse(StreamingPackInstall.tmpDir(root, pack).exists())
+    }
+
     @Test fun deleteRemovesTheInstallAndAnyTmp() {
         val root = tmp.newFolder("root")
         StreamingPackInstall.install(stage(), root, pack)

@@ -171,6 +171,25 @@ object StreamingPackInstall {
     fun playCanDeliver(isDebugBuild: Boolean, playRefused: Boolean): Boolean =
         !isDebugBuild && !playRefused
 
+    /**
+     * The headroom an install of [pack] needs on the volume it writes: 1.1 × the pack's bytes —
+     * the `TtsModelManager.kt:66-76` rule, spelled ONCE so both arrival routes gate at the same
+     * number. The 10 % covers the marker, the filesystem's own overhead and the fact that a
+     * `.tmp` directory and the previous install briefly coexist.
+     */
+    fun requiredFreeBytes(pack: StreamingPack): Long = (pack.totalBytes * 1.1).toLong()
+
+    /**
+     * Whether [availableBytes] on the volume about to be written admits an install of [pack].
+     *
+     * The PACK route needs this as much as the download does — more, since the amendment made it
+     * the primary route on the shipping build: it copies 72,654,782 B into `filesDir`, and out of
+     * space that copy fails partway with the destination half written and Play's own 73 MB still
+     * on the device. A refusal costing nothing is the whole point of gating first (spec §6).
+     */
+    fun hasRoomFor(pack: StreamingPack, availableBytes: Long): Boolean =
+        availableBytes >= requiredFreeBytes(pack)
+
     /** Every file's length must EQUAL its pin before anything is hashed (a cheap refusal); then sha256 per file. */
     fun verify(staged: File, pack: StreamingPack): PackVerdict {
         for (f in pack.files) {
@@ -188,6 +207,15 @@ object StreamingPackInstall {
      * Moves (or, for a delivered pack, COPIES) the VERIFIED files from [source] into place
      * atomically; the marker is written LAST.
      *
+     * A copy that fails partway — out of space is the case that matters, and it is the one the
+     * caller's storage gate exists to make unreachable — takes the whole `.tmp` directory with
+     * it and surfaces as a [StreamingPackException], the type this object's callers' KDoc names.
+     * Both halves are load-bearing: without the sweep up to 73 MB of dead bytes stay under
+     * `filesDir` in a directory `state()` does not read (the next [install] reclaims them, but
+     * nothing else does), and without the wrap a raw `java.io.IOException` walks straight past a
+     * `catch (e: StreamingPackException)`. The previous install is untouched either way — it is
+     * only removed once the marker is written, which is the last thing inside the `try`.
+     *
      * @param moveSource true for a download's staging dir, which is ours to empty. FALSE for
      *        Play's delivered pack: those bytes are the only copy until `removePack`, and the
      *        rename-then-copy-then-delete fallback below would delete Play's file mid-install
@@ -197,17 +225,29 @@ object StreamingPackInstall {
         val tmp = tmpDir(root, pack)
         if (tmp.exists()) tmp.deleteRecursively()
         tmp.mkdirs()
-        for (f in pack.files) {
-            val src = File(source, f.name)
-            val dst = File(tmp, f.name)
-            if (!moveSource) {
-                src.copyTo(dst, overwrite = true)
-            } else if (!src.renameTo(dst)) {
-                src.copyTo(dst, overwrite = true)
-                src.delete()
+        try {
+            for (f in pack.files) {
+                val src = File(source, f.name)
+                val dst = File(tmp, f.name)
+                if (!moveSource) {
+                    src.copyTo(dst, overwrite = true)
+                } else if (!src.renameTo(dst)) {
+                    src.copyTo(dst, overwrite = true)
+                    src.delete()
+                }
+            }
+            marker(tmp).writeText(StreamingPackCatalog.markerText(pack))
+        } catch (t: Throwable) {
+            tmp.deleteRecursively()
+            throw if (t is StreamingPackException) {
+                t
+            } else {
+                StreamingPackException(
+                    "The preview model could not be written to storage: " +
+                        "${t.javaClass.simpleName}: ${t.message}"
+                )
             }
         }
-        marker(tmp).writeText(StreamingPackCatalog.markerText(pack))
         val final = installDir(root, pack)
         if (final.exists()) final.deleteRecursively()
         if (!tmp.renameTo(final)) {

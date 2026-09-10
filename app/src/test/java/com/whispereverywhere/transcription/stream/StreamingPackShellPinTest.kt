@@ -65,8 +65,20 @@ class StreamingPackShellPinTest {
         return -1
     }
 
+    /** [from] up to the next [to], so a count or an order pin can name ONE member's body. */
+    private fun scopeOf(text: String, from: String, to: String): String {
+        val a = text.indexOf(from)
+        assertTrue("cannot find `$from`", a >= 0)
+        val b = text.indexOf(to, a + from.length)
+        return if (b < 0) text.substring(a) else text.substring(a, b)
+    }
+
     private val controller: String by lazy {
         source("src/main/java/com/whispereverywhere/transcription/stream/StreamingPackController.kt")
+    }
+
+    private val manager: String by lazy {
+        source("src/main/java/com/whispereverywhere/transcription/stream/StreamingPackManager.kt")
     }
 
     // ------------------------------------------------------------------ the fetch itself
@@ -201,6 +213,48 @@ class StreamingPackShellPinTest {
                 "status read here (COMPLETED means delivered, not installed)",
             1,
             liveLineCount(controller, "if (next is NpuPackFetch.FetchState.Verifying) beginInstall("),
+        )
+    }
+
+    /**
+     * THE STORAGE GATE RUNS FIRST, ON BOTH ROUTES, ON ONE RULE (spec §6: "free-space gate
+     * first", the `TtsModelManager.kt:66-76` shape).
+     *
+     * The amendment made the PACK route the primary one on the shipping build, so an ungated
+     * pack route is the ungated route every real user takes: 72,654,782 B copied into `filesDir`
+     * on a device that may have less, failing partway with Play's own 73 MB still on it. The gate
+     * is not a `StatFs` call this test can execute — but WHERE it sits, and that both routes ask
+     * the same pure function for the number rather than re-deriving 1.1 ×, is pinnable and is
+     * exactly what would rot.
+     */
+    @Test
+    fun theStorageGateRunsBeforeEitherRouteWritesAByte() {
+        val fromPack = scopeOf(manager, "suspend fun installFromPack(", "suspend fun download(")
+        assertEquals(
+            "the pack route gates exactly once",
+            1,
+            liveLineCount(fromPack, "StreamingPackInstall.hasRoomFor("),
+        )
+        val gate = offsetOfLive(fromPack, "StreamingPackInstall.hasRoomFor(")
+        val verify = offsetOfLive(fromPack, "StreamingPackInstall.verify(")
+        val install = offsetOfLive(fromPack, "StreamingPackInstall.install(")
+        assertTrue(
+            "gate ($gate) -> verify ($verify) -> install ($install): the cheapest refusal " +
+                "first, and nothing is read or written before the volume is known to fit",
+            gate in 0 until verify && verify in 0 until install,
+        )
+        assertEquals(
+            "both routes gate — the pack route's one line, and the download's one line asking " +
+                "for both volumes",
+            2,
+            liveLineCount(manager, "StreamingPackInstall.hasRoomFor("),
+        )
+        assertEquals(
+            "and NEITHER route re-derives the headroom: 1.1 x lives in one function " +
+                "(StreamingPackInstall.requiredFreeBytes), or the two routes can disagree about " +
+                "what 'enough space' means",
+            0,
+            liveLineCount(manager, "* 1.1"),
         )
     }
 
