@@ -313,7 +313,29 @@ class InFlightStripWiringPinTest {
         // 3.6.0 body was a bare `visibility = View.GONE`; under a local preview that is a reveal
         // per utterance. The branch now asks `deltaBlankVisibility`, and its HIDDEN row is the
         // only GONE write left in onDelta.
-        assertEquals(1, count(onDelta, "deltaBlankVisibility("))
+        assertEquals("one blank-visibility call in onDelta, not two", 1, count(onDelta, "deltaBlankVisibility("))
+        // ...and it is the FULLY NAMED form — the class KDoc's single-Boolean hazard, one rule
+        // over. `deltaBlankVisibility(Boolean, Boolean)` accepts the positional swap
+        // `deltaBlankVisibility(transcriptionDeltaText.visibility == View.GONE, sessionHasLocalPreview)`,
+        // which compiles, keeps every other census in this test intact, and binds
+        // `sessionHasLocalPreview` to "the strip is hidden": a CLOUD_LIVE blank delta arriving on a
+        // GONE strip then returns OCCUPYING_BLANK and writes `text = ""` + INVISIBLE, breaking the
+        // spec's untouchable that onDelta's LIVE branch keeps its `View.GONE` blank — and
+        // `estimatedWindowSize` then grants that INVISIBLE strip its ~100dp of window. Pinned as
+        // ONE needle because the argument lines cannot be counted separately:
+        // `sessionHasLocalPreview = sessionHasLocalPreview` is also the gate's argument at the top
+        // of onDelta, so that census is 2, not 1.
+        assertEquals(
+            "the blank branch NAMES both arguments — they are both Boolean, so the swap is silent",
+            1,
+            count(
+                onDelta,
+                "deltaBlankVisibility(\n" +
+                    "                            sessionHasLocalPreview = sessionHasLocalPreview,\n" +
+                    "                            currentlyHidden = transcriptionDeltaText.visibility == View.GONE,\n" +
+                    "                        )",
+            ),
+        )
         assertEquals(1, count(onDelta, "StripVisibility.HIDDEN -> transcriptionDeltaText.visibility = View.GONE"))
         assertEquals(1, count(onDelta, "transcriptionDeltaText.visibility = View.GONE"))
         assertEquals(1, count(onDelta, "transcriptionDeltaText.visibility = View.INVISIBLE"))
