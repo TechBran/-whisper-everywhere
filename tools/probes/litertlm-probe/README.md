@@ -37,5 +37,14 @@ python drive.py --tag e4_base_npu_1  mode=litert model=/data/user/0/com.whispere
 python drive.py --tag e3_gemma_npu_1 mode=lm     model=/data/user/0/com.whispereverywhere.probe/files/Gemma3-1B-IT_q4_ekv1280_mt6989.litertlm accel=npu
 ```
 
-Results: `~/.androidbuild/probe-logs/<tag>.{json,filtered.log,full.log}`; the numbers are copied into
-`docs/measurements/2026-09-09-tab-apu-probe.md`.
+Results: `~/.androidbuild/probe-logs/<tag>.{json,filtered.log,full.log}`; `python summarize.py [tag ...]`
+prints them as the markdown tables in `docs/measurements/2026-09-09-tab-apu-probe.md`.
+
+Notes:
+- `gradlew.bat` runs from PowerShell/cmd. From Git Bash, prefix every `drive.py` / `adb shell` call with
+  `MSYS_NO_PATHCONV=1`, or `/data/...` arguments arrive on the device as `C:/Program Files/Git/data/...`.
+- litert 2.1.1 is the default runtime (the last release whose NPU zip ships the MediaTek pair; the APK on
+  the Tab is this exact build). `-PlitertVersion=2.2.0` builds the newer runtime, GPU/CPU only on MT6989.
+- `litert-community/Gemma3-1B-IT` (the MT6989 `.litertlm` E3 wants) is `gated: auto` on Hugging Face: a
+  read token from an account that accepted the Gemma licence is needed (HTTP 401 otherwise). The un-gated
+  `litert-community/Qwen3-0.6B` `.litertlm` is the substitute E3 arm.

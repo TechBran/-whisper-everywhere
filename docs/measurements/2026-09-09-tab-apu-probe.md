@@ -141,7 +141,84 @@ GPU accelerator(libLiteRtOpenClAccelerator.so) registered.`, `tflite: Loaded Ope
 
 ## 3. E4 — the AOT-compiled MT6989 artefact (litert-community `whisper_tiny_30s_f32_MediaTek_MT6989.tflite`)
 
-(pending — see the session log; filled in below as the runs land)
+`litert-community/whisper-tiny` publishes AOT-compiled variants for twelve MediaTek SoCs (MT6877/6878/6879/6897/
+6983/6985/**6989**/6991/6993/MT8171/8188/8189) and seven Qualcomm ones (listed 2026-09-10) — exactly the
+artefact §1.4 E4 wanted an Ubuntu host to produce, made by Google's own toolchain. `whisper-base` has no such
+variant (f32 + i8 only), nor has `whisper-large-v3-turbo`. tiny's `encode` is `f32[1,80,3000] → f32[1,1500,384]`
+(4 layers, d=384; by the research doc's formula 24·d²·L·T + 4·T²·d·L + 4·d²·n_text·T + conv ≈ **40.5 GFLOP** at
+1500 frames — INFERRED, base = 96.7 by the same formula, so base/tiny ≈ 2.4×, turbo/tiny ≈ 57×).
+
+| tag | artefact | backend | thr | warm n | mean ms | median ms | min ms | max ms | cold run ms | create ms | RSS/PSS MB after create | RSS/PSS MB after warm | batt C / thermal at start | after warm | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| e4_tiny_npu_aot_1 | whisper_tiny_30s_f32_MediaTek_MT6989.tflite | npu (AOT bytecode) | - | 20 | 48.1 | 47.7 | 45.9 | 50.8 | 47.0 | 5759.6 | 419 / 444 | 429 / 449 | 26.5 C / 0 | 26.5 C / 0 | ok; run-only warm mean 43.3 (sd 0.3) |
+| e4_tiny_npu_aot_2 | whisper_tiny_30s_f32_MediaTek_MT6989.tflite | npu (AOT bytecode) | - | 20 | 48.4 | 48.1 | 45.6 | 51.9 | 49.5 | 5381.6 | 417 / 458 | 431 / 452 | 26.5 C / 0 | 26.5 C / 0 | ok |
+| e4_tiny_npu_jit_1 | whisper_tiny_30s_f32.tflite | npu (JIT) | - | 0 | - | - | - | - | - | 36284.6 | 777 / 800 | - | 26.5 C / 0 | - | compile OK (36.3 s, same 3 restore failures as base), then the probe failed reading the output tensor type: `LiteRtException: Unsupported element type in Kotlin` (`litert_compiled_model_jni.cc:618 … type: 0` — the JIT-reserialized tiny graph has an untyped output; base's stayed FLOAT) — a probe/Kotlin-binding limit, not a run |
+| e4_tiny_cpu_1 | whisper_tiny_30s_f32.tflite | cpu | 4 | 20 | 223.1 | 223.6 | 210.3 | 234.4 | 250.7 | 67.7 | 467 / 407 | 569 / 489 | 26.5 C / 0 | 26.5 C / 0 | ok |
+| e4_tiny_gpu_1 | whisper_tiny_30s_f32.tflite | gpu (strict) | - | 0 | - | - | - | - | - | - | - | - | 26.5 C / 0 | - | FAIL `Failed to compile model`: `STABLEHLO_COMPOSITE: LayerNorm has bad input tensor dims` → `17 operations will run on the GPU, and the remaining 65 operations will run on the CPU` (tiny's d=384 LayerNorm composite is refused where base's d=512 one was accepted) |
+
+**The AOT artefact runs the tiny encoder in 43 ms run-only / 48 ms run+read on the APU, 4.6–5.2× the 4-thread
+CPU (223 ms), at 5.4–5.8 s model create (no compile: `[compiled_model.cc:453] Compiler plugin path is provided in
+the environment, but the model is pre-compiled. Plugins won't be applied.`; the 5 s is the dispatch library's own
+init — `Loading shared library: …/libLiteRtDispatch_MediaTek.so` at 04:58:36.344, `Loading MediaTek NeuronAdapter
+.so from: libneuronusdk_adapter.mtk.so` at 04:58:41.739 — the same 5 s gap as in the JIT runs).**
+
+**And the #6462 restore failure is present here too, with Google's own AOT bytecode and no compiler plugin in
+the process** (`e4_tiny_npu_aot_1`, 6 occurrences = one per partition):
+
+```
+04:58:41.739 I litert : [dispatch_delegate.cc:176] Dispatch API build ID: MediaTek Dispatch API version 0.1.0, NeuronAdaptor API version 8.2.26
+04:58:41.739 I tflite : Replacing 1 out of 1 node(s) with delegate (DispatchDelegate) node, yielding 1 partitions for subgraph 0.
+04:58:41.739 I litert : [schema_resolver.h:99] Found graph: Partition_0   … Partition_5
+04:58:41.740 I litert : [schema_resolver.h:104] There are 6 subgraphs in the bytecode
+04:58:41.743 E neuron : The header of DLA is invalid
+04:58:41.743 E neuron : Cannot set a nullptr compiled network.
+04:58:41.743 E neuron : NeuronModel_restoreFromCompiledNetwork - Failed to load compiled network from the given buffer
+04:58:41.746 E neuron : PrepareTensors: Currently we can't support dynamic shape, the dimension size of a tensor Operand type 3 should not be zero
+04:58:41.746 E neuron : Fail to convert model
+04:58:41.795 I apuware_hidl: FastAPU is available
+04:58:41.908 I tflite : Replacing 5 out of 11 node(s) with delegate (DispatchDelegate) node, yielding 10 partitions for subgraph 1.
+04:58:41.930 W litert : [dispatch_delegate_kernel.cc:604] MediaTek dispatch API returned contradictory buffer requirements for Float32 tensor …: dims=[6,128,128], expected size=393216 bytes  But dispatch API returned: 2359296 bytes (24.0 bytes per element instead of 4)
+04:58:41.996 I tflite : Replacing 4 out of 11 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 9 partitions for subgraph 1.
+04:58:41.997 I PROBE  : litert|create_ms=5759.6|accel=NPU|threads=4
+04:58:42.113 I PROBE  : litert|cold_run_ms=44.4|cold_run_plus_read_ms=47.0
+04:58:43.207 I PROBE  : litert|warm|n=20|mean_ms=48.1|median_ms=47.7|min_ms=45.9|max_ms=50.8|sd_ms=1.5|(run+read)
+04:58:43.207 I PROBE  : litert|warm_run_only|n=20|mean_ms=43.3|median_ms=43.2|min_ms=42.7|max_ms=43.8|sd_ms=0.3
+```
+
+The encode subgraph (subgraph 0) is one dispatch node and ran; the decode subgraph (1) is split 5 dispatch +
+4 XNNPACK + the dynamic-shape partition that `Fail to convert model` refused. Fingerprint
+`n=576000 nan=0 mean=0.02935 mean_abs=0.85068 min=-17.3906 max=19.25` (fp16-class values). Reading: with the
+v2.1.1 dispatch library + Neuron 8.2.26 on this tablet, **`restoreFromCompiledNetwork` fails for every
+bytecode anyone can produce today — Google's AOT artefact and the on-device JIT alike — and the dispatch then
+executes through whatever fallback it has**, which still lands on the reduced-precision unit at 43 ms (tiny) /
+100 ms (base). Per FLOP the two paths agree (base/tiny = 100/43 = 2.3× against a 2.4× FLOP ratio), so the
+JIT-vs-AOT control finds **no toolchain penalty between them** — the caveat is that neither is the intended
+"restored compiled network" path, so a faster number may still exist behind the restore failure.
+
+### 3.1 Whether the "NPU" runs are on the APU and not the Mali GPU (utilization-sampled runs)
+
+The Neuron compiler's own target report lists `EDPA / NEON / GPU / MVPU / MDLA` as execution targets (§1), so
+"it ran through the Neuron runtime" does not by itself say the MDLA did the work. `/sys/kernel/gpu/gpu_busy` and
+`/sys/kernel/gpu/gpu_clock` are world-readable on this tablet; an `adb shell` loop sampled them every 0.25 s
+while long runs executed (files `util_<tag>.txt`; the APU's own power nodes under
+`/sys/devices/platform/soc/19020000.apu-top-3` are not readable by the shell user, and `/proc/apusys_rv` is
+permission-denied, so the APU side has no direct counter here).
+
+| tag | backend | warm n | warm mean ms | samples | samples with `gpu_clock` = 0 | `gpu_clock` values seen (Hz) | max `gpu_busy` |
+|---|---|---|---|---|---|---|---|
+| e4_tiny_npu_aot_3_sampled | NPU (tiny AOT) | 400 | 50.0 (median 50.3, min 44.9, max 54.6) | 92 | **91** | 260,000 ×1 (idle floor blip) | 28 % (the probe's own TextView appends) |
+| e4_tiny_cpu_2_sampled | CPU 4 thr (tiny) | 100 | 248.0 (median 242.4, min 211.2, max 288.9) | 91 | 89 | 260,000 ×2 | 49 % |
+| e5_base_gpu_211_5_sampled | GPU (base) | 200 | 104.9 (median 105.4, min 96.1, max 113.5) | 88 | 18 | **1,170,000 ×56, 1,300,000 ×5, 1,248,000, 1,144,000 ×2, 1,118,000 ×2, 1,066,000, 1,040,000** | **99 %** (71 of 88 samples non-zero) |
+| e4_base_npu_211_5_sampled | NPU (base JIT) | 200 | 108.9 (median 109.7, min 94.7, max 114.4; thermal 1 at start) | 179 | **171** | 260,000 ×7, 26,000 ×1 | 33 % |
+
+**The Mali never leaves its idle clock during 400 tiny-AOT and 200 base-JIT NPU runs, and runs at 1.04–1.30 GHz
+at 97–99 % busy throughout the OpenCL run of the same base model.** With XNNPACK reaching 182 GFLOP/s on tiny
+(40.5 GFLOP / 223 ms) the 43 ms NPU figure (≈ 940 GFLOP/s) is also out of reach of a CPU fallback (§3.2 adds a
+`/proc/stat` CPU-load sample to close that side). The "NPU" numbers are the APU's.
+
+### 3.2 CPU load during the NPU run (`/proc/stat` sampled)
+
+(pending)
 
 ## 4. E5 — whisper-large-v3-turbo `encode` (`whisper_large_v3_turbo_30s_i8.tflite`, `[1,128,3000] → [1,1500,1280]`, 2,312.5 GFLOP)
 
@@ -177,7 +254,35 @@ turbo's differs by exactly one `GATHER` with non-1D indices, which the OpenCL de
 (S23U/Adreno, `[1,128,3000]` turbo encoder) is not reproduced on Mali as a crash; it is reproduced as a
 compile refusal.** Attempt 2 (GPU with CPU fallback allowed) is in §4.1.
 
-### 4.1 (pending — second cold CPU run; GPU attempt 2 with `Options(GPU, CPU)`)
+### 4.1 Second cold CPU run and GPU attempt 2 (`CompiledModel.Options(GPU, CPU)` — CPU fallback allowed)
+
+| tag | artefact | backend | thr | warm n | mean ms | median ms | min ms | max ms | cold run ms | create ms | RSS/PSS MB after create | RSS/PSS MB after warm | batt C / thermal at start | after warm | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| e5_turbo_cpu_211_2 | whisper_large_v3_turbo_30s_i8.tflite | cpu | 4 | 20 | 6393.5 | 6505.7 | 5707.7 | 6517.2 | 5246.0 | 1485.9 | 1751 / 1665 | 2019 / 1939 | 25.1 C / 0 | 25.8 C / 2 | ok |
+| e5_turbo_gpu_211_2 | whisper_large_v3_turbo_30s_i8.tflite | gpu (+CPU fallback) | - | 20 | 1855.2 | 1863.1 | 1780.5 | 1870.3 | 1808.3 | 4165.7 | 3303 / 3214 | 3363 / 3274 | 25.1 C / 0 | 25.1 C / 0 | ok; run-only mean 338.2 (async) |
+
+**GPU with the CPU fallback allowed runs.** Proof lines (`e5_turbo_gpu_211_2`): `tflite: Loaded OpenCL library
+with dlopen.` · `litert: [gpu_environment.cc:223] Created OpenCL device from provided device id and platform
+id.` · `E tflite: GATHER: Only support 1D indices` · `E tflite: 320 operations will run on the GPU, and the
+remaining 1 operations will run on the CPU.` · `tflite: Replacing 320 out of 321 node(s) with delegate
+(LITERT_CL) node, yielding 2 partitions for subgraph 0.` The full turbo encoder on Mali-G720: **cold 1,808 ms,
+warm 1,780–1,870 ms (mean 1,855, sd 23 — flat, no thermal ramp over 20 runs, thermal status stayed 0),
+create 4.17 s, RSS 3.3–3.4 GB** (the fp32 activations of a `[1,1500,1280]` 32-layer encoder plus the OpenCL
+copies of 1.09 GB of weights). Run-only 338 ms is the asynchronous return; run+read is the number. Fingerprint
+`mean=-0.00422 mean_abs=0.26142 min=-9.4531 max=10.6328 head=0.0967,0.4756,-0.1846,0.3701` — fp16-class
+values, within ~3 % of the CPU's `0.26226 / -9.5298 / 10.3313 / 0.0853,0.3999,-0.1882,0.3790` on the
+aggregate statistics (whether that error is acceptable for transcription is untested; the GPU delegate ran
+fp16 by default, `GpuOptions.Precision.DEFAULT`).
+
+The second cold CPU process started at thermal 0 and ended at **thermal status 2 (MODERATE), battery 25.8 C**
+with warm runs 5,708 → 6,517 ms — the sustained CPU number for the full window is ~6.5 s, the GPU's 1.86 s.
+
+**R3 reading (research doc §1.2):** "GPU crash or slower-than-CPU ⇒ R3 closed" — neither happened. Strict
+`Options(GPU)` refuses the graph over one `GATHER`; `Options(GPU, CPU)` runs it 3.4× faster than the 4-thread
+CPU and 0.93× of the 2 s bar per full 30 s window, with no `audio_ctx` floor available in this `.tflite` (every
+commit bills 1500 frames) and 3.4 GB of RSS. **R3 is not closed by E5 on this device; it is the only route
+measured today that puts a turbo encoder under 2 s.** The base reference (§2) says the same GPU does base in
+105 ms vs turbo 1,855 ms = 17.7× for a 23.9× FLOP ratio.
 
 ## 5. E3 — LiteRT-LM on `Backend.NPU(nativeLibraryDir)`
 
@@ -208,6 +313,66 @@ python drive.py --tag e3_gemma_npu_1 mode=lm accel=npu model=/data/user/0/com.wh
 ```
 
 ### 5.2 Substitute arm — un-gated `Qwen3-0.6B.litertlm` (CPU/GPU model) on `Backend.NPU`, then GPU and CPU
+
+`litert-community/Qwen3-0.6B/Qwen3-0.6B.litertlm` (614,236,160 B, sha256 `555579ff…`, Apache-2.0, not gated) is
+a CPU/GPU model with no `TF_LITE_AUX` NPU section; loading it on `Backend.NPU(nativeLibraryDir)` exercises every
+part of LiteRT-LM's MediaTek NPU path that does not need the gated model — the dispatch library load and its
+version check — and the runtime says exactly what it did (run `e3_qwen_npu_1`, `Engine.setNativeMinLogSeverity(INFO)`):
+
+```
+04:55:25.856 W native : litert_lm_loader.h:129] TFLite model for type: TF_LITE_AUX not found. Skipping.
+04:55:25.858 W litert : [npu_registry.cc:34] NPU accelerator could not be loaded and registered: kLiteRtStatusErrorInvalidArgument.
+04:55:25.858 I litert : [gpu_registry.cc:109] Statically linked GPU accelerator registered.
+04:55:25.858 I litert : [cpu_registry.cc:75] XNNPACK CPU accelerator registered.
+04:55:25.969 I litert : [npu_registry.cc:30] NPU accelerator registered.
+04:55:25.969 W native : llm_litert_compiled_model_executor_factory.cc:245] NPU backend requested, but TF_LITE_AUX is not packaged in the model. Using the generic LiteRT compiler-plugin path.
+04:55:25.970 I litert : [compiler_plugin.cc:308] Attempting to load plugin at: .../lib/arm64/libLiteRtCompilerPlugin_MediaTek.so
+04:55:25.972 I litert : [compiler_plugin.cc:260] Loaded plugin at: .../libLiteRtCompilerPlugin_MediaTek.so
+04:55:25.972 W litert : [compiler_plugin.cc:312] Failed to load plugin at: .../libLiteRtCompilerPlugin_MediaTek.so with error: ERROR: [third_party/odml/litert/litert/compiler/plugin/compiler_plugin.cc:26
+04:55:25.972 W litert : └ Could not load symbol LiteRtCompilerPluginCheckCompilerCompatibility: undefined symbol: LiteRtCompilerPluginCheckCompilerCompatibility.
+04:55:25.972 W litert : [compiled_model.cc:1321] Failed to apply compiler plugins: No compiler plugin found
+04:55:26.000 I litert : [dispatch_delegate.cc:187] Lazy initializing Dispatch API for GetHooks.
+04:55:26.000 I litert : [litert_dispatch.cc:160] Loading shared library: .../lib/arm64/libLiteRtDispatch_MediaTek.so
+04:55:26.002 E litert : [litert_dispatch.cc:187] Unsupported dispatch runtime version
+04:55:26.002 E litert : [compiled_model.cc:1039] Failed to get hooks from accelerator: 3
+04:55:26.002 E litert : [dispatch_delegate.cc:131] Failed to initialize Dispatch API: ERROR: [third_party/odml/litert/litert/runtime/dispatch/dispatch_delegate.cc:201]
+04:55:26.043 I tflite : Created TensorFlow Lite XNNPACK delegate for CPU.
+```
+
+Read: LiteRT-LM 0.17.0 statically embeds a LiteRT newer than any public release (its log paths are
+`third_party/odml/litert/…` and its line numbers differ from 2.1.1's), and that runtime **refuses both halves of
+the only MediaTek pair Google has ever published**: the compiler plugin because it lacks the newer
+`LiteRtCompilerPluginCheckCompilerCompatibility` entry point, the dispatch library through
+`IsSameVersionAsRuntime(TheApi.version)` → `kLiteRtStatusErrorWrongVersion` ("Unsupported dispatch runtime
+version", `litert/runtime/dispatch/litert_dispatch.cc:190-192` on `main`, read 2026-09-10) — although
+`LITERT_API_VERSION` is `0.1.0` in `litert/c/litert_common.h` at v2.1.1, v2.1.4, v2.2.0 and `main` alike and the
+v2.1.1 dispatch reports `Dispatch API version: 0.1.0` when the 2.1.1 runtime loads it (§1). The engine then
+**silently ran the LLM on XNNPACK** (TTFT 3.4 s, RSS 2.8 GB; run `e3_qwen_npu_1`). The dispatch-version check
+happens before any model is touched, so **the gated Gemma3-1B MT6989 artefact would hit the same wall on
+LiteRT-LM 0.17.0**; the older LiteRT-LM AARs on Google Maven (0.10.2 of 2026-04-17, 0.13.1 of 2026-06-04) already
+carry both the `LiteRtCompilerPluginCheckCompilerCompatibility` dlsym and the "Unsupported dispatch runtime
+version" check (strings in their `liblitertlm_jni.so`), and no LiteRT release after v2.1.1 (2026-01-27) ships a
+MediaTek runtime (v2.1.3/v2.1.4 have no NPU zip at all; v2.1.5/v2.1.6/v2.2.0 zips carry only
+`google_tensor_runtime/` and `qualcomm_runtime_v*/`; Google Maven has no vendor-runtime artefact). **There is
+no publicly downloadable MediaTek dispatch library that LiteRT-LM accepts today — E3 through LiteRT-LM is
+NO-GO on public artefacts, independent of the Gemma licence gate.**
+
+First-pass LiteRT-LM numbers on the same model (`Conversation.sendMessageAsync` stream, 64-token budget,
+`maxNumTokens` 320; the probe's `getBenchmarkInfo()` was refused — "Benchmark is not enabled. Please make sure the
+BenchmarkParams is set in the EngineSettings" — because the 0.17.0 Kotlin `EngineConfig` has no benchmark switch;
+the runtime's own `BenchmarkKt.benchmark()` numbers are in §5.3):
+
+| tag | backend requested | backend that ran | initialize ms | TTFT ms | stream total ms | chunks (≈ tokens) | chunks/s after TTFT | RSS/PSS MB after init | batt C / thermal |
+|---|---|---|---|---|---|---|---|---|---|
+| e3_qwen_npu_1 | NPU(nativeLibraryDir) | XNNPACK CPU (dispatch refused, above) | 1617.3 | 3386.5 | 28754.8 | 215 | 8.4 | 2723 / 2637 | 25.8 C / 1 |
+| e3_qwen_gpu_1 | GPU | LiteRT GPU (OpenCL): `Statically linked GPU accelerator registered`, `Loaded OpenCL library with dlopen`, `gpu_model_builder.cc:4404 Weights preparation on Gpu is disabled for PowerVR, Broadcom, Mali GPUs`, `delegate_kernel.cc:907 Initializing OpenCL-based API from serialized data`; sampler fell back to C (`Could not load shared library libLiteRtTopKOpenClSampler.so`) | 9279.5 | 1564.1 | 28756.8 | 188 | 6.9 | 1384 / 1888 | 26.2 C / 1 |
+| e3_qwen_cpu_1 | CPU(4 threads) | XNNPACK CPU | 1118.9 | 1146.0 | 20023.4 | 215 | 11.3 | 1320 / 1235 | 26.2 C / 1 |
+
+(The response was Qwen3's `<think>` monologue in all three — identical text on the two CPU-backed runs, a
+different one on the GPU; the sampler is greedy-by-default, so the two CPU runs reproducing each other and the
+GPU differing is itself a precision fingerprint.)
+
+### 5.3 The runtime's own benchmark (`BenchmarkKt.benchmark`) — rerun with the fixed probe
 
 (pending)
 

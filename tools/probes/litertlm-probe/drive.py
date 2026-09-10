@@ -19,8 +19,8 @@ import time
 
 PKG = "com.whispereverywhere.probe"
 ACT = PKG + "/.MainActivity"
-INT_KEYS = {"threads", "warm", "maxtokens"}
-BOOL_KEYS = {"nofallback"}
+INT_KEYS = {"threads", "warm", "maxtokens", "prefill"}
+BOOL_KEYS = {"nofallback", "bench"}
 FILTER = re.compile(
     r"PROBE|LiteRt|litert|LITERT|tflite|TfLite|TFLite|neuron|Neuron|NEURON|apusys|APUSYS|apuware|mtk|MTK|"
     r"MediaTek|Mediatek|dispatch|Dispatch|xnnpack|XNNPACK|OpenCL|opencl|clGl|Mali|mali|linker|AndroidRuntime|"

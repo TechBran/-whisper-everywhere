@@ -16,6 +16,8 @@ import android.content.Intent
  *   --es gpuprec   default | fp16 | fp32     (litert GpuOptions.precision)
  *   --es dispatchdir override the dispatch/compiler-plugin dir (default applicationInfo.nativeLibraryDir)
  *   --ez nofallback  litert: request ONLY the named accelerator (default true)
+ *   --ez bench     lm: also run the runtime's own BenchmarkKt.benchmark() after the conversation (default true)
+ *   --ei prefill   lm: prefillTokens for benchmark() (default 64)
  */
 data class ProbeArgs(
     val mode: String?,
@@ -30,6 +32,8 @@ data class ProbeArgs(
     val gpuPrecision: String,
     val dispatchDir: String?,
     val noFallback: Boolean,
+    val bench: Boolean,
+    val prefillTokens: Int,
 ) {
     companion object {
         fun from(intent: Intent?): ProbeArgs = ProbeArgs(
@@ -45,6 +49,8 @@ data class ProbeArgs(
             gpuPrecision = intent?.getStringExtra("gpuprec") ?: "default",
             dispatchDir = intent?.getStringExtra("dispatchdir"),
             noFallback = intent?.getBooleanExtra("nofallback", true) ?: true,
+            bench = intent?.getBooleanExtra("bench", true) ?: true,
+            prefillTokens = intent?.getIntExtra("prefill", 64) ?: 64,
         )
     }
 }

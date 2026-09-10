@@ -69,7 +69,50 @@ class LmProbe(private val ctx: Context, private val args: ProbeArgs) {
         res.put("response_head", sb.toString().take(160))
         ProbeLog.i("lm|response_head=" + sb.toString().take(160).replace('\n', ' '))
 
-        val bi = conv.getBenchmarkInfo()
+        // Stream-derived rates (chunks are one token each for a text conversation): the probe's own numbers,
+        // independent of the runtime's benchmark plumbing.
+        val decodeS = (totalMs - ttftMs) / 1000.0
+        val streamDecodeTps = if (chunks > 1 && decodeS > 0) (chunks - 1) / decodeS else -1.0
+        res.put("stream_decode_tps", streamDecodeTps)
+        ProbeLog.i("lm|stream_rates|decode_chunks_per_s=${"%.2f".format(streamDecodeTps)}|(chunks-1)/(total-ttft)")
+
+        // Conversation.getBenchmarkInfo() needs BenchmarkParams in the native EngineSettings, which the 0.17.0
+        // Kotlin EngineConfig does not expose (measured 2026-09-10: "Benchmark is not enabled. Please make sure
+        // the BenchmarkParams is set in the EngineSettings."). Try it, record the outcome, never fail the run.
+        try {
+            val bi = conv.getBenchmarkInfo()
+            res.put("benchmark", benchJson(bi))
+            ProbeLog.i("lm|benchmark|" + benchLine(bi))
+        } catch (t: Throwable) {
+            res.put("benchmark_error", t.toString())
+            ProbeLog.w("lm|benchmark_unavailable|" + t.toString().replace('\n', ' ').take(200))
+        }
+        Metrics.snapshot(ctx, "after_generate").let { res.put("mem_after_generate", it) }
+
+        conv.close()
+        engine.close()
+        Metrics.snapshot(ctx, "after_close").let { res.put("mem_after_close", it) }
+
+        // The runtime's own benchmark entry point (BenchmarkKt.benchmark: modelPath, backend, prefillTokens,
+        // decodeTokens, cacheDir, prompt -> nativeCreateBenchmark) -- a fresh engine with BenchmarkParams set.
+        if (args.bench) {
+            try {
+                val t1 = System.nanoTime()
+                val bi = com.google.ai.edge.litertlm.benchmark(
+                    modelPath, backend, args.prefillTokens, args.maxTokens, cacheDir, args.prompt)
+                val benchMs = (System.nanoTime() - t1) / 1e6
+                res.put("benchmark_fn", benchJson(bi))
+                res.put("benchmark_fn_wall_ms", benchMs)
+                ProbeLog.i("lm|benchmark_fn|wall_ms=${"%.1f".format(benchMs)}|" + benchLine(bi))
+            } catch (t: Throwable) {
+                res.put("benchmark_fn_error", t.toString())
+                ProbeLog.w("lm|benchmark_fn_failed|" + t.toString().replace('\n', ' ').take(300))
+            }
+            Metrics.snapshot(ctx, "after_benchmark_fn").let { res.put("mem_after_benchmark_fn", it) }
+        }
+    }
+
+    private fun benchJson(bi: com.google.ai.edge.litertlm.BenchmarkInfo): JSONObject {
         val b = JSONObject()
         b.put("init_time_s", bi.initTimeInSecond)
         b.put("ttft_s", bi.timeToFirstTokenInSecond)
@@ -77,14 +120,11 @@ class LmProbe(private val ctx: Context, private val args: ProbeArgs) {
         b.put("decode_tokens", bi.lastDecodeTokenCount)
         b.put("prefill_tps", bi.lastPrefillTokensPerSecond)
         b.put("decode_tps", bi.lastDecodeTokensPerSecond)
-        res.put("benchmark", b)
-        ProbeLog.i("lm|benchmark|init_s=${bi.initTimeInSecond}|ttft_s=${bi.timeToFirstTokenInSecond}|prefill_tokens=${bi.lastPrefillTokenCount}|prefill_tps=${bi.lastPrefillTokensPerSecond}|decode_tokens=${bi.lastDecodeTokenCount}|decode_tps=${bi.lastDecodeTokensPerSecond}")
-        Metrics.snapshot(ctx, "after_generate").let { res.put("mem_after_generate", it) }
-
-        conv.close()
-        engine.close()
-        Metrics.snapshot(ctx, "after_close").let { res.put("mem_after_close", it) }
+        return b
     }
+
+    private fun benchLine(bi: com.google.ai.edge.litertlm.BenchmarkInfo): String =
+        "init_s=${bi.initTimeInSecond}|ttft_s=${bi.timeToFirstTokenInSecond}|prefill_tokens=${bi.lastPrefillTokenCount}|prefill_tps=${bi.lastPrefillTokensPerSecond}|decode_tokens=${bi.lastDecodeTokenCount}|decode_tps=${bi.lastDecodeTokensPerSecond}"
 
     private fun textOf(m: Message): String =
         m.contents.contents.joinToString("") { c -> if (c is Content.Text) c.text else "" }
