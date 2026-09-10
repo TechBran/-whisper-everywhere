@@ -318,11 +318,13 @@ here.
 |---|---|---|---|---|---|---|---|
 | e4_tiny_npu_aot_3_sampled | NPU (tiny AOT) | 400 | 50.0 (median 50.3, min 44.9, max 54.6) | 92 | **91** | 260,000 ×1 (idle floor blip) | 28 % (the probe's own TextView appends) |
 | e4_tiny_cpu_2_sampled | CPU 4 thr (tiny) | 100 | 248.0 (median 242.4, min 211.2, max 288.9) | 91 | 89 | 260,000 ×2 | 49 % |
-| e5_base_gpu_211_5_sampled | GPU (base) | 200 | 104.9 (median 105.4, min 96.1, max 113.5) | 88 | 18 | **1,170,000 ×56, 1,300,000 ×5, 1,248,000, 1,144,000 ×2, 1,118,000 ×2, 1,066,000, 1,040,000** | **99 %** (71 of 88 samples non-zero) |
+| e5_base_gpu_211_5_sampled | GPU (base) | 200 | 104.9 (median 105.4, min 96.1, max 113.5) | 88 | 18 | **1,170,000 ×56, 1,300,000 ×5, 1,248,000, 1,144,000 ×2, 1,118,000 ×2, 1,066,000, 1,040,000**, 260,000 ×2 (idle floor) | **99 %** (70 of 88 samples non-zero) |
 | e4_base_npu_211_5_sampled | NPU (base JIT) | 200 | 108.9 (median 109.7, min 94.7, max 114.4; thermal 1 at start) | 179 | **171** | 260,000 ×7, 26,000 ×1 | 33 % |
 
 **The Mali never leaves its idle clock during 400 tiny-AOT and 200 base-JIT NPU runs, and runs at 1.04–1.30 GHz
-at 97–99 % busy throughout the OpenCL run of the same base model.** With XNNPACK reaching 182 GFLOP/s on tiny
+at 97–99 % busy throughout the OpenCL run of the same base model.** (Every cell of the table above is
+reproducible from the recorded files with
+`python tools/probes/litertlm-probe/tools/sample_util.py --summarize util_<tag>.txt`.) With XNNPACK reaching 182 GFLOP/s on tiny
 (40.5 GFLOP / 223 ms) the 43 ms NPU figure (≈ 940 GFLOP/s) is also out of reach of a CPU fallback (§3.2 adds a
 `/proc/stat` CPU-load sample to close that side). The "NPU" numbers are the APU's.
 
@@ -598,9 +600,11 @@ encoder runs in **1.81 s cold / 1.86 s warm (flat over 20 runs), 3.4 GB RSS, fp1
 number of the day. **R3 is not closed; it is the cheapest live route to turbo on this tablet**, with three open
 questions: fp16 transcription quality, 3.4 GB of RSS on a 12 GB device, and every commit billing 1500 frames.
 
-**E4-lite / E4 (APU direction-finder):** whisper-base JIT **≈ 100 ms** run-only (107 ms run+read) over four
-cold processes; the Google AOT tiny artefact **43 ms** run-only (48 ms run+read) over three cold processes +
-800 sampled runs. Cold-start cost, correctly attributed (§1.1): base `create` 28.7 s = **5.2 s of on-device
+**E4-lite / E4 (APU direction-finder):** whisper-base JIT **≈ 100 ms** run-only (107 ms run+read) over five
+cold processes and 280 warm runs (§1 plus the sampled run of §3.1; six processes / 300 runs counting the
+review's re-run, §8); the Google AOT tiny artefact **43 ms** run-only (48 ms run+read) over four cold
+processes and 840 warm runs (five / 890 with §8). Cold-start cost, correctly attributed (§1.1): base
+`create` 28.7 s = **5.2 s of on-device
 JIT compile** + 20.0 s of `waitForService(…neuronservice.INeuronService…)` binder timeouts (four of them, on a
 service this ROM does not register) + ~3.4 s of partitioning/reserialization; tiny AOT `create` 5.4–5.8 s =
 one such 5 s timeout + **0.14–0.26 s of actual bytecode load and restore**. So R2's "JIT at every cold start"
