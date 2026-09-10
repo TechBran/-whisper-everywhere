@@ -218,7 +218,18 @@ at 97–99 % busy throughout the OpenCL run of the same base model.** With XNNPA
 
 ### 3.2 CPU load during the NPU run (`/proc/stat` sampled)
 
-(pending)
+An `adb shell` loop read the aggregate `cpu` line of `/proc/stat` every 0.5 s (busy = 1 − Δ(idle+iowait)/Δtotal,
+over all 8 cores, so 12.5 % = one core saturated); both runs started at thermal status 2 (battery 27.2 C) after
+the E3 LLM runs.
+
+| tag | backend | warm n | warm mean ms | CPU busy, aggregate of 8 cores: mean / median / p90 / max | samples |
+|---|---|---|---|---|---|
+| e4_tiny_npu_aot_4_cpusampled | NPU (tiny AOT) | 400 | 50.3 (median 50.5, min 44.6, max 56.0) | **16.1 % / 14.8 % / 20.0 % / 40.7 %** (steady 13–16 % ≈ one core: the probe's driver thread plus the dispatch's host side) | 56 |
+| e4_tiny_cpu_3_cpusampled | CPU 4 thr (tiny) | 100 | 258.5 (median 249.7, min 213.6, max 313.3) | **54.7 % / 59.2 % / 61.5 % / 65.4 %** (steady 58–61 % ≈ 4.7 cores) | 56 |
+
+The NPU run occupies about one core and no GPU clock (§3.1) while delivering 5× the 4-thread XNNPACK
+throughput: **the work is on the APU.** (Which APU unit — MDLA vs MVPU — the shell cannot read; the Neuron
+target report names MDLA as the transformer target and MVPU rejected the one unknown op.)
 
 ## 4. E5 — whisper-large-v3-turbo `encode` (`whisper_large_v3_turbo_30s_i8.tflite`, `[1,128,3000] → [1,1500,1280]`, 2,312.5 GFLOP)
 
@@ -374,11 +385,62 @@ GPU differing is itself a precision fingerprint.)
 
 ### 5.3 The runtime's own benchmark (`BenchmarkKt.benchmark`) — rerun with the fixed probe
 
-(pending)
+`com.google.ai.edge.litertlm.benchmark(modelPath, backend, prefillTokens = 64, decodeTokens = 64, cacheDir,
+prompt)` builds a fresh engine with `BenchmarkParams` set (`nativeCreateBenchmark`) and returns the runtime's
+`BenchmarkInfo`; it ran after the conversation of each process (the `Conversation.getBenchmarkInfo()` refusal is
+now recorded, not fatal). Same three backends, same model, probe build sha256 `5991f075…`, installed 05:05:26.
+
+| tag | backend requested | backend that ran | engine initialize ms | stream TTFT ms | stream chunks/s after TTFT | benchmark(): init s | TTFT s | prefill 64 tok, tok/s | decode 64 tok, tok/s | benchmark wall ms | RSS/PSS MB after init | batt C / thermal after |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| e3_qwen_npu_2 | NPU(nativeLibraryDir) | XNNPACK CPU via the "generic LiteRT compiler-plugin path" (dispatch refused, §5.2) | 1571.7 | 3369.9 | 8.35 | 3.460 | 3.606 | **18.5** | **7.22** | 14219.6 | 2721 / 2655 | 26.5 C / 1 |
+| e3_qwen_gpu_2 | GPU | LiteRT GPU (OpenCL, Mali-G720; second process, OpenCL kernels from cache) | 1715.8 | 1061.3 | 8.23 | 3.032 | 0.963 | **79.4** | **6.37** | 12509.7 | 1358 / 1849 | 26.5 C / 1 |
+| e3_qwen_cpu_2 | CPU(4 threads) | XNNPACK CPU | 321.3 | 1468.8 | 11.65 | 0.226 | 1.393 | **49.0** | **11.5** | 7029.6 | 1165 / 1098 | 27.2 C / 2 |
+
+For the record (direction 2 of the research doc, a 0.6 B text LLM on this tablet through LiteRT-LM 0.17.0):
+GPU prefill 79 tok/s vs CPU 49; decode CPU 11.5 tok/s vs GPU 6.4; the NPU-requested path, which is a CPU
+fallback through a different executor, is the slowest of the three (18.5 / 7.2). The first-process GPU
+initialize was 9.3 s (§5.2, OpenCL kernel build), 1.7 s once cached.
 
 ## 6. Verdicts
 
-(pending — filled in at the end)
+**E3 (the APU go/no-go through LiteRT-LM):** **NO-GO on public artefacts; the APU itself is GO.** The Gemma3-1B
+MT6989 `.litertlm` is gated (HTTP 401; needs the owner's Hugging Face licence acceptance + token, §5.1), and even
+with it LiteRT-LM 0.17.0 would refuse the only MediaTek dispatch library Google has published (v2.1.1's, "Unsupported
+dispatch runtime version" — an exact-version check against a runtime whose expected version is not public; the v2.1.1
+compiler plugin is refused for a missing symbol; every published LiteRT-LM AAR from 0.10.2 on carries both checks;
+no LiteRT release after v2.1.1 ships a MediaTek runtime; §5.2). The `Backend.NPU` engine "comes up" only by silently
+running on XNNPACK. The question E3 was written to answer — can a normal, sideloaded, non-Play app on this tablet
+reach the APU — is answered **yes** by E4-lite/E4 instead: LiteRT 2.1.1 + the v2.1.1 pair loads
+`libneuronusdk_adapter.mtk.so` (Neuron 8.2.26), opens an `apuware` AIDL v3 session (`FastAPU is available`), and
+executes Whisper encoders on the APU with the Mali idle (§3.1) and one CPU core busy (§3.2). What the owner would
+need for the LiteRT-LM route: a MediaTek dispatch library matching LiteRT-LM's embedded runtime — built from the
+LiteRT tree (`bazel build @litert//litert/vendors/mediatek/dispatch:dispatch_api_so`, the NPU doc's own step) on a
+Linux host, plus the gated model.
+
+**E5 (turbo on CPU / GPU):** CPU/XNNPACK int8 4-thread: **4.66 s cold, 4.9–6.5 s sustained** per 30 s window,
+2.0 GB RSS — 8–10× better per GFLOP than the ggml-q5 calibration but still 2.3–3× the 2 s bar with no
+`audio_ctx` floor. Mali-G720 through the LiteRT OpenCL accelerator: strict GPU refuses the graph over one non-1D
+`GATHER` (no crash — #3188 is a refusal on Mali, not a crash); with the CPU fallback allowed for that one op the
+encoder runs in **1.81 s cold / 1.86 s warm (flat over 20 runs), 3.4 GB RSS, fp16** — the only sub-2 s turbo
+number of the day. **R3 is not closed; it is the cheapest live route to turbo on this tablet**, with three open
+questions: fp16 transcription quality, 3.4 GB of RSS on a 12 GB device, and every commit billing 1500 frames.
+
+**E4-lite / E4 (APU direction-finder):** whisper-base JIT **≈ 100 ms** run-only (107 ms run+read) over four
+cold processes, 28.7 s compile at every cold start; the Google AOT tiny artefact **43 ms** run-only (48 ms
+run+read) over three cold processes + 800 sampled runs, 5.5 s create. Against the research doc's thresholds
+(≲ 75 ms turbo-class · ~145 ms `multi`-class · ≳ 240–260 ms close), base at 100 ms sits **between turbo-class and
+`multi`-class**: turbo/base = 23.9× by FLOPs (calibrated 20–22×) projects **2.0–2.4 s per 1500-frame encode on
+the APU** — no better than the GPU's measured 1.86 s. **Could the toolchain rather than the silicon set that
+number? Yes, and the evidence says it does:** every APU run, JIT and AOT alike, logs the #6462 signature
+(`The header of DLA is invalid` → `NeuronModel_restoreFromCompiledNetwork - Failed to load compiled network`), so
+the executable the APU ran is whatever the v2.1.1 dispatch falls back to after the restore fails — not the
+compiled network Google's pipeline intended (§1, §3). The AOT-vs-JIT control cannot separate toolchain from
+silicon because both take the same fallback; the number that would (a bytecode that restores) needs a dispatch/
+Neuron pair that agrees with the bytecode format, which nobody outside Google/MediaTek can build today. Until then
+the honest reading is **`multi`-class at best on the public toolchain, R1 stays a research bet, and the GPU
+route (E5) is the one that already meets the bar on paper.**
+
+Turbo JIT on the APU (one attempt, §4.2) — see below.
 
 ## 7. Teardown proof
 
