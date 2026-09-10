@@ -129,14 +129,117 @@ object StreamingPackInstall {
      * rather than forked: the family is [NpuPackFetch]'s own (API_NOT_AVAILABLE,
      * PLAY_STORE_NOT_FOUND, APP_NOT_OWNED, UNRECOGNIZED_INSTALLATION all render one sentence),
      * so the previewer and the NPU tiers cannot disagree about which failures are the install's
-     * own fault. The NPU sentence is used here as a CLASSIFIER only; the previewer's own words
-     * live in `StreamingPackCopy` (spec §9).
+     * own fault. The NPU sentence is used here as a CLASSIFIER only — never shown: the words the
+     * previewer's card renders are [fetchRefusal]'s, bound for `StreamingPackCopy` (spec §9).
      *
      * A transient failure (network, storage, an internal Play error) is deliberately NOT in the
      * family: the fetch stays the offer and a retry costs nothing.
      */
     fun playRefusedThisInstall(reason: String): Boolean =
         reason == NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_NOT_OWNED)
+
+    /**
+     * The ONE previewer sentence that promises anything, and it is promised exactly where
+     * [playRefusedThisInstall] latches: by the time a card renders this, `playCanDeliver()` has
+     * gone false and `state()` has already moved the row to [StreamingPackState.Downloadable], so
+     * the retry really does come from the commit-pinned base. Held to that by
+     * `StreamingPackInstallTest.thePreviewerPromisesTheDirectDownloadExactlyWhereTheLatchFlips`.
+     *
+     * The NPU tiers' sentence for this same family ends *"Use 'Import model pair…' below instead"*
+     * — their model chooser's SAF importer for whisper **ggml pairs** (`NpuImportController`),
+     * which is not on the previewer's row and could not read these four ONNX files.
+     */
+    private const val SIDELOAD_ANSWER: String =
+        "Google Play can't deliver the preview model to this install — it wasn't installed from " +
+            "Play. Retry: the preview model is downloaded directly instead."
+
+    /**
+     * THE PREVIEWER'S OWN REFUSAL COPY — the words its card shows when Play will not deliver the
+     * pack — keyed by Play's error CODE and total over Int, `NpuPackFetch.failureReason`'s shape
+     * with this feature's affordances.
+     *
+     * Why it exists when that table already answers the same question: the table is the NPU MODEL
+     * CHOOSER's copy, and `NpuPackFetch.FetchState.Failed`'s own contract is *"[reason] is
+     * user-facing copy, rendered verbatim by the card"* — which is how both NPU surfaces treat it
+     * (`OnboardingLogic`, `OnboardingModelScreen`). Six of its codes name a control the previewer
+     * does not have: the four sideload codes render one sentence ending *"Use 'Import model
+     * pair…' below instead"*, APP_UNAVAILABLE and PACK_UNAVAILABLE append the same phrase, and
+     * INSUFFICIENT_STORAGE offers to fetch *"the model pair"* for a four-file pack. Rendering any
+     * of them here would point a user at another feature's importer.
+     *
+     * The seam is narrow on purpose: the CLASSIFIER is still the NPU family's own
+     * ([playRefusedThisInstall], applied by [StreamingPackManager.notePlayFailure]), so the two
+     * features cannot disagree about which failures are the install's own fault. Only the WORDS
+     * are ours.
+     *
+     * TODO(Task 6): these sentences belong in `StreamingPackCopy` (spec §9, every user-facing
+     * string of the feature, pinned verbatim and banned-word scanned). They live here until that
+     * file exists because a pure, JVM-executed home beats a `Failed` carrying the other feature's
+     * copy; `StreamingPackInstallTest` already scans them for the banned words and for the
+     * chooser's affordances, so the move is a relocation, not a re-decision. The previewer's
+     * OTHER sentences want the same sweep: `StreamingPackController.kt`'s no-pack-module and
+     * install-failure lines, and the four `StreamingPackException` messages in
+     * `StreamingPackManager.installFromPack`/`download` and [install].
+     *
+     * @param downloadBytes Play's own `totalBytesToDownload`, used by the storage refusal to name
+     *        a real number — 0 when Play never said, in which case none is invented.
+     */
+    fun fetchRefusal(errorCode: Int, downloadBytes: Long = 0L): String = when (errorCode) {
+        NpuPackFetch.ERROR_NO_ERROR ->
+            "Google Play reported a failure without naming a reason. Retry the download."
+        NpuPackFetch.ERROR_APP_UNAVAILABLE ->
+            "Google Play says this app is currently unavailable, so it can't deliver the " +
+                "preview model right now. Try again later."
+        NpuPackFetch.ERROR_PACK_UNAVAILABLE ->
+            "This version of the app doesn't offer the preview model on Google Play. Update the " +
+                "app from Play, then retry."
+        NpuPackFetch.ERROR_INVALID_REQUEST ->
+            "Google Play rejected the download request as invalid. Restart the app and retry."
+        NpuPackFetch.ERROR_DOWNLOAD_NOT_FOUND ->
+            "Google Play lost track of this download. Retry it."
+        NpuPackFetch.ERROR_NETWORK_ERROR ->
+            "The download couldn't reach Google Play. Check your connection and retry."
+        NpuPackFetch.ERROR_ACCESS_DENIED ->
+            "Google Play refused this app access to the download. Check that the Play Store is " +
+                "signed in, then retry."
+        NpuPackFetch.ERROR_INSUFFICIENT_STORAGE ->
+            if (downloadBytes > 0L) {
+                "Not enough free storage to download the preview model: it needs about " +
+                    "${StreamingPackCatalog.sizeBadge(downloadBytes)}. Free some space and retry."
+            } else {
+                "Not enough free storage to download the preview model. Free some space and retry."
+            }
+        NpuPackFetch.ERROR_CONFIRMATION_NOT_REQUIRED ->
+            "Google Play answered that no confirmation was needed. Retry the download."
+        // The sideload family — the one path the amendment keeps the commit-pinned download alive
+        // for, so it is the first refusal a release sideload reads.
+        NpuPackFetch.ERROR_API_NOT_AVAILABLE,
+        NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND,
+        NpuPackFetch.ERROR_APP_NOT_OWNED,
+        NpuPackFetch.ERROR_UNRECOGNIZED_INSTALLATION,
+        -> SIDELOAD_ANSWER
+        NpuPackFetch.ERROR_INTERNAL_ERROR ->
+            "Google Play hit an internal error while delivering the preview model. Retry the " +
+                "download."
+        else -> "Google Play reported error $errorCode while delivering the preview model."
+    }
+
+    /**
+     * [fetchRefusal] for a whole `AssetPackState` reading, so the shell has one call to make.
+     *
+     * `NpuPackFetch.advance` produces `Failed` from three places: Play's FAILED status, which
+     * carries an error code; the UNKNOWN status; and any status the library adds later. The last
+     * two carry no code at all, so they are named by their NUMBER here rather than mis-attributed
+     * to whatever `errorCode()` happened to return beside them (0 reads "a failure without
+     * naming a reason", which would be a guess dressed as a fact).
+     */
+    fun deliveryRefusal(status: Int, errorCode: Int, downloadBytes: Long): String =
+        if (status == NpuPackFetch.STATUS_FAILED) {
+            fetchRefusal(errorCode, downloadBytes)
+        } else {
+            "Google Play stopped the preview model download at an unexpected status ($status). " +
+                "Retry the download."
+        }
 
     /**
      * The fetch shell's SINGLE-FLIGHT predicate: whether the fetch of a pack is still in Play's

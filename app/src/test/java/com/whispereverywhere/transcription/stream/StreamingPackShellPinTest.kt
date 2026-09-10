@@ -259,6 +259,65 @@ class StreamingPackShellPinTest {
     }
 
     /**
+     * THE CARD SPEAKS THE PREVIEWER'S WORDS, not the NPU model chooser's.
+     *
+     * `NpuPackFetch.FetchState.Failed`'s own contract is *"[reason] is user-facing copy, rendered
+     * verbatim by the card"*, and that is exactly how both NPU surfaces treat it. Six of that
+     * table's codes name a control the previewer does not have — the four sideload codes render
+     * one sentence ending *"Use 'Import model pair…' below instead"* (the chooser's SAF importer
+     * for whisper **ggml pairs**, unreachable from a Settings previewer row and unable to read
+     * these four ONNX files), APP_UNAVAILABLE and PACK_UNAVAILABLE append the same phrase, and
+     * INSUFFICIENT_STORAGE offers to fetch *"the model pair"*.
+     *
+     * This is the pin that stops it coming back: whoever renders `state` renders `reason`
+     * verbatim, so `reason` must never be that table's. The words are
+     * [StreamingPackInstall.fetchRefusal]'s (pure, total over Int, banned-word scanned by
+     * `StreamingPackInstallTest`); the NPU table survives here as the LATCH's classifier only,
+     * applied once, inside the manager.
+     */
+    @Test
+    fun everyRefusalThisShellPublishesCarriesThePreviewersOwnWords() {
+        assertEquals(
+            "zero NpuPackFetch.failureReason call sites in the shell: that table is the NPU " +
+                "chooser's copy, and its sideload family tells the user to tap 'Import model " +
+                "pair…', which does not exist on the previewer's row",
+            0,
+            liveLineCount(controller, "NpuPackFetch.failureReason("),
+        )
+        assertEquals(
+            "the listener's failures are re-told by the previewer's own pure function, which " +
+                "sees the status too (an UNKNOWN status carries no error code)",
+            1,
+            liveLineCount(controller, "StreamingPackInstall.deliveryRefusal("),
+        )
+        assertEquals(
+            "and so is the fetch Task's own failure — the sideload's route, and the FIRST " +
+                "refusal a release sideload reads",
+            1,
+            liveLineCount(controller, "StreamingPackInstall.fetchRefusal("),
+        )
+        assertEquals(
+            "the classifier that keys the latch stays the NPU family's own, applied by the " +
+                "manager (one site) and never rendered",
+            1,
+            liveLineCount(manager, "NpuPackFetch.failureReason("),
+        )
+        // Calling the re-teller is not enough: the RE-TOLD state has to be the one published.
+        // `publish(packName, next)` would call the previewer's function and throw its answer
+        // away, leaving the NPU words on the card with every other pin still green.
+        assertEquals(
+            "the publish funnel takes the re-told state",
+            1,
+            liveLineCount(controller, "publish(packName, shown)"),
+        )
+        assertEquals(
+            "and never the raw mapping, whose Failed carries the NPU table's sentence",
+            0,
+            liveLineCount(controller, "publish(packName, next)"),
+        )
+    }
+
+    /**
      * The previewer narrates itself and borrows no NPU line. `NpuDiagTest` pins the `pack:`
      * family at exactly one emitter each inside `NpuPackController.kt`; a `NpuDiag.packLine` from
      * here would put a previewer fetch under a tier's name in the run-book — and the previewer

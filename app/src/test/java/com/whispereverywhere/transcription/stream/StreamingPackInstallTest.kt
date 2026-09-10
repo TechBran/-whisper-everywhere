@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription.stream
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -417,5 +418,146 @@ class StreamingPackInstallTest {
                 ),
             )
         }
+    }
+
+    // ---------------------------------------------------------------- the previewer's own copy
+
+    /** Every error code this build declares, plus one it has never heard of. */
+    private val everyPlayErrorCode: List<Int> = listOf(
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_NO_ERROR,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_APP_UNAVAILABLE,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_PACK_UNAVAILABLE,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_INVALID_REQUEST,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_DOWNLOAD_NOT_FOUND,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_API_NOT_AVAILABLE,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_NETWORK_ERROR,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_ACCESS_DENIED,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_INSUFFICIENT_STORAGE,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_APP_NOT_OWNED,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_CONFIRMATION_NOT_REQUIRED,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_UNRECOGNIZED_INSTALLATION,
+        com.whispereverywhere.npu.NpuPackFetch.ERROR_INTERNAL_ERROR,
+        -12_345,
+    )
+
+    @Test fun noPlayRefusalTheCardCanShowNamesAControlThePreviewerDoesNotHave() {
+        // `NpuPackFetch.FetchState.Failed.reason` is rendered VERBATIM by a card (its own KDoc
+        // says so, and both NPU surfaces do it), so the previewer publishing that table's words
+        // would tell users to tap 'Import model pair…' — the NPU chooser's SAF importer for
+        // whisper GGML PAIRS, which is not on a Settings previewer row and could not read these
+        // four ONNX files. Total over Int: an unheard-of code is named, never silent.
+        for (code in everyPlayErrorCode) {
+            val text = StreamingPackInstall.fetchRefusal(code)
+            assertFalse(
+                "code $code must not name the NPU chooser's importer: $text",
+                text.contains("Import model pair"),
+            )
+            assertFalse(
+                "code $code must not call a four-file pack a 'model pair': $text",
+                text.contains("model pair"),
+            )
+            assertTrue("code $code must say something", text.isNotBlank())
+            assertTrue("code $code must end its sentence: $text", text.endsWith("."))
+        }
+        // The six the NPU table gets wrong for this feature are the six that must DIFFER.
+        for (code in listOf(
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_API_NOT_AVAILABLE,
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND,
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_APP_NOT_OWNED,
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_UNRECOGNIZED_INSTALLATION,
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_APP_UNAVAILABLE,
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_PACK_UNAVAILABLE,
+        )) {
+            assertNotEquals(
+                "code $code is one of the six whose NPU sentence names the chooser's importer",
+                com.whispereverywhere.npu.NpuPackFetch.failureReason(code),
+                StreamingPackInstall.fetchRefusal(code),
+            )
+        }
+    }
+
+    @Test fun thePreviewerPromisesTheDirectDownloadExactlyWhereTheLatchFlips() {
+        // THE invariant that makes the sideload sentence honest rather than hopeful: the only
+        // codes whose copy says "downloaded directly" are the codes `playRefusedThisInstall`
+        // latches on — the ones after which `state()` really does offer the commit-pinned
+        // download. Promise it anywhere else and the card names a route the row will not offer;
+        // withhold it on the sideload family and the release sideloader reads a dead end.
+        for (code in everyPlayErrorCode) {
+            val latches = StreamingPackInstall.playRefusedThisInstall(
+                com.whispereverywhere.npu.NpuPackFetch.failureReason(code)
+            )
+            val promises = StreamingPackInstall.fetchRefusal(code).contains("downloaded directly")
+            assertEquals(
+                "code $code: the sentence and the fallback latch must agree",
+                latches,
+                promises,
+            )
+        }
+    }
+
+    @Test fun noPreviewerRefusalTripsTheBannedSpeedWords() {
+        // Spec §9's list, the union of HowToGuideTest / InFlightStripTest / ModelTierCopyTest /
+        // CloudProvidersScreenLogicTest: this feature never promises a latency, and the refusal
+        // sentences are as user-facing as the row's own.
+        val banned = listOf(
+            "faster", "fastest", "quicker", "quickest", "instant", "real-time", "blazing",
+            "lightning", "speed",
+        )
+        val sentences = everyPlayErrorCode.map { StreamingPackInstall.fetchRefusal(it) } +
+            StreamingPackInstall.fetchRefusal(
+                com.whispereverywhere.npu.NpuPackFetch.ERROR_INSUFFICIENT_STORAGE,
+                72_654_782L,
+            ) +
+            StreamingPackInstall.deliveryRefusal(
+                com.whispereverywhere.npu.NpuPackFetch.STATUS_UNKNOWN, 0, 0L
+            )
+        for (text in sentences) {
+            for (word in banned) {
+                assertFalse("'$word' in: $text", text.lowercase().contains(word))
+            }
+        }
+    }
+
+    @Test fun theStorageRefusalNamesTheDownloadsRealSizeAndInventsNoNumber() {
+        val named = StreamingPackInstall.fetchRefusal(
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_INSUFFICIENT_STORAGE,
+            72_654_782L,
+        )
+        assertTrue(
+            "Play told us the size, so the refusal spends it — in the house badge, not raw bytes",
+            named.contains(StreamingPackCatalog.sizeBadge(72_654_782L)),
+        )
+        val unnamed = StreamingPackInstall.fetchRefusal(
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_INSUFFICIENT_STORAGE
+        )
+        assertFalse("Play never said, so no number is invented: $unnamed", unnamed.contains("MB"))
+        assertTrue(unnamed.contains("preview model"))
+    }
+
+    @Test fun aFailurePlayGaveNoErrorCodeForIsNamedByItsStatusNumber() {
+        // `advance` maps THREE things to Failed: the FAILED status (which carries a code), the
+        // UNKNOWN status, and any status the library adds later. Reading `errorCode()` on the
+        // last two would render "a failure without naming a reason" — a guess dressed as a fact.
+        val failed = StreamingPackInstall.deliveryRefusal(
+            com.whispereverywhere.npu.NpuPackFetch.STATUS_FAILED,
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_NETWORK_ERROR,
+            0L,
+        )
+        assertEquals(
+            "a FAILED status is its error code's sentence, and nothing else",
+            StreamingPackInstall.fetchRefusal(
+                com.whispereverywhere.npu.NpuPackFetch.ERROR_NETWORK_ERROR
+            ),
+            failed,
+        )
+        val unknown = StreamingPackInstall.deliveryRefusal(
+            com.whispereverywhere.npu.NpuPackFetch.STATUS_UNKNOWN,
+            com.whispereverywhere.npu.NpuPackFetch.ERROR_NO_ERROR,
+            0L,
+        )
+        assertTrue("the status number is what the user is told: $unknown", unknown.contains("(0)"))
+        val future = StreamingPackInstall.deliveryRefusal(99, 0, 0L)
+        assertTrue("and so is a status this build has never seen: $future", future.contains("(99)"))
     }
 }

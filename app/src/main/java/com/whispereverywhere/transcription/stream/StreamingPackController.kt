@@ -68,6 +68,14 @@ import kotlinx.coroutines.launch
  *  - **Cellular consent is Play's own dialog**: [confirm] delegates to `showConfirmationDialog`
  *    and there is deliberately no re-ask of ours — Play already knows the download's size and the
  *    user's setting.
+ *  - **The refusal card speaks the PREVIEWER's words**: [NpuPackFetch] maps every status and
+ *    names every error code, but its failure sentences are the NPU model chooser's copy — six of
+ *    them send the user to `'Import model pair…'`, that feature's ggml SAF importer, which is not
+ *    on this row — so every `Failed` published here is re-told by
+ *    [StreamingPackInstall.deliveryRefusal] (the listener) or [StreamingPackInstall.fetchRefusal]
+ *    (the `fetch` Task's own failure) first. `StreamingPackShellPinTest` pins ZERO
+ *    `NpuPackFetch.failureReason` call sites in this file; the classifier that keys the latch
+ *    still applies it, once, inside [StreamingPackManager.notePlayFailure].
  *
  * Retry is [start] called again: the state machine's terminal states are not busy, so the same
  * entry point re-attaches to a download Play still owns or begins a new one.
@@ -141,7 +149,7 @@ object StreamingPackController {
             latchRefusal(code)
             publish(
                 packName,
-                NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(code)),
+                NpuPackFetch.FetchState.Failed(StreamingPackInstall.fetchRefusal(code)),
             )
         }
         true
@@ -184,7 +192,22 @@ object StreamingPackController {
             packState.totalBytesToDownload(),
         )
         if (next is NpuPackFetch.FetchState.Failed) latchRefusal(packState.errorCode())
-        publish(packName, next)
+        // The MAPPING is NpuPackFetch's; the WORDS on this card are the previewer's own. That
+        // table's failure sentences send the user to 'Import model pair…' — the NPU chooser's
+        // ggml SAF importer, which is not on this row and cannot read these four ONNX files — so
+        // every Failed is re-told by StreamingPackInstall.deliveryRefusal before it is published.
+        val shown = if (next is NpuPackFetch.FetchState.Failed) {
+            NpuPackFetch.FetchState.Failed(
+                StreamingPackInstall.deliveryRefusal(
+                    packState.status(),
+                    packState.errorCode(),
+                    packState.totalBytesToDownload(),
+                )
+            )
+        } else {
+            next
+        }
+        publish(packName, shown)
         // COMPLETED means DELIVERED: verify + land is where OUR work begins.
         if (next is NpuPackFetch.FetchState.Verifying) beginInstall(pack = packOf(packName), packName = packName)
     }
