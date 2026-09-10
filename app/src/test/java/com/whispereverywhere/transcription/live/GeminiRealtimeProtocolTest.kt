@@ -270,6 +270,16 @@ class GeminiRealtimeProtocolTest {
         assertTrue(sink.committed.isEmpty() && sink.completed.isEmpty())
     }
 
+    @Test fun the_ack_of_a_speech_less_activity_resets_the_preview_so_the_next_turns_first_interim_shows() {
+        // Review nit 5: only the final reset the preview; an activity that produced interims but no
+        // final left it armed, and an identical first interim of the NEXT turn was deduped away.
+        val p = ready(protocol())
+        p.onAppend(ByteArray(64)); p.onText(INTERIM_1); p.onCommit()
+        p.onText(VA_END) // no final
+        p.onAppend(ByteArray(64)); p.onText(INTERIM_1)
+        assertEquals(listOf("" to "And so", "" to "And so"), sink.deltas)
+    }
+
     @Test fun commit_with_no_audio_since_the_last_end_sends_nothing_so_an_activity_is_never_empty() {
         // P3d: start-then-end with no audio closes the socket 1007. An activity opens only on a
         // frame, so a stray commit can never produce one.

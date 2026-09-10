@@ -222,8 +222,6 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
     /** The OPEN activity's `activityStart` is unanswered; a close hands liveness to the end watchdog. */
     private var startAckPending = false
     private var activityStartSentNanos = 0L
-    /** Closed turns that never reached the wire (their audio was shed) and are still owed an EMPTY resolve. */
-    private var extraEmptyOwed = 0
     private var lastPreview = ""
     private var openedAtNanos = 0L
     private var setupSentNanos = 0L
@@ -344,15 +342,14 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
                         owner.discard -> owner.finalSeen = true // the engine already rescued this turn locally
                         else -> { owner.finalSeen = true; resolves += Completion(ids.incrementAndGet().toString(), e.text) }
                     }
-                    drainExtraEmpty(resolves)
                 }
                 is GeminiLiveEvents.In.ActivityStart -> startAckPending = false
                 is GeminiLiveEvents.In.ActivityEnd -> {
+                    lastPreview = "" // a speech-less activity's unconfirmed interims must not dedupe the next turn's first
                     val done = pending.removeFirstOrNull() // a stray ack (never observed) pops nothing
                     if (done != null) {
                         // A speech-less activity: no final ever comes (P3f) -> resolve EMPTY on its ack.
                         if (!done.finalSeen && !done.discard) resolves += Completion(ids.incrementAndGet().toString(), "")
-                        drainExtraEmpty(resolves)
                         android.util.Log.i(
                             TAG,
                             "gemini turn ${done.turn} end ack=${(now - done.sentNanos) / 1_000_000}ms final=${done.finalSeen} queued=${queue.size}",
@@ -405,6 +402,7 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
 
     // ---- turn machine (all callers hold [gate]) --------------------------------------------------
 
+    /** The ONLY place a [QueuedTurn] is created, and always with a frame: a queued turn is never empty. */
     private fun enqueue(pcm: ByteArray): Boolean {
         if (queuedBytes + pcm.size > MAX_QUEUED_BYTES) return false // ~2 s buffered: shed, the mirror rescues
         val turn = queue.lastOrNull()?.takeIf { !it.closed } ?: QueuedTurn().also { queue.addLast(it) }
@@ -429,7 +427,6 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
             for (f in t.frames) bytes += f.size
             queuedBytes -= bytes
             if (t.discard) continue // the engine rescued it locally; the server never needs it
-            if (t.frames.isEmpty()) { if (t.closed) extraEmptyOwed++; continue } // audio shed before it reached us: no activity possible
             out += GeminiLiveEvents.activityStart()
             open = true
             startAckPending = true
@@ -445,10 +442,6 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
         startAckPending = false // from here the end watchdog times this activity, not the start one
         turns++
         pending.addLast(PendingClose(turn = turns, sentNanos = now, discard = discard))
-    }
-
-    private fun drainExtraEmpty(resolves: MutableList<Completion>) {
-        while (extraEmptyOwed > 0) { extraEmptyOwed--; resolves += Completion(ids.incrementAndGet().toString(), "") }
     }
 
     /** The rotation reason due NOW, or null. Once per open; the transport's ceiling bounds the rest. */
@@ -482,7 +475,6 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
         open = false
         pending.clear()
         startAckPending = false
-        extraEmptyOwed = 0
         lastPreview = ""
         rotateAtBoundary = false
         hardStopNanos = Long.MAX_VALUE
