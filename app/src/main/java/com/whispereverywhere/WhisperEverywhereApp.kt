@@ -37,6 +37,16 @@ class WhisperEverywhereApp : Application() {
     }
 
     /**
+     * 4.4.0: the streaming-previewer pack (spec §6) — a sibling of the TTS voice, keyed by
+     * LANGUAGE and carrying no tier identity, so it touches nothing [whisperModelManager] owns.
+     * Pack-first since the 2026-09-10 amendment: the four files ride the `preview_en` Play asset
+     * pack, and the commit-pinned download is the fallback for builds with no Play.
+     */
+    val streamingPackManager: com.whispereverywhere.transcription.stream.StreamingPackManager by lazy {
+        com.whispereverywhere.transcription.stream.StreamingPackManager(this)
+    }
+
+    /**
      * Whether this device's HARDWARE can run the 4.0 `npu` tier: the SoC gate, then the QNN probe.
      *
      * **`by lazy` because the probe dlopens `libQnnSystem.so` and `libQnnHtp.so`** — a real load

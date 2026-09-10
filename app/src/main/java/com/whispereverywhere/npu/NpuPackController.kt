@@ -9,6 +9,7 @@ import com.google.android.play.core.assetpacks.AssetPackManagerFactory
 import com.google.android.play.core.assetpacks.AssetPackState
 import com.google.android.play.core.assetpacks.AssetPackStateUpdateListener
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.play.PlayPacks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -251,7 +252,11 @@ object NpuPackController {
                     "was installed."
             )
         } else {
-            val assetsPath = mgr.getPackLocation(packName)?.assetsPath()
+            // (4.4.0) Located through the SHARED helper, with the manager this object already
+            // registered its listener on — same instance, same call, same nullability. The
+            // previewer's pack (and the voice's) read their delivered assets through the very
+            // same function, so there is exactly one spelling of "where a delivered pack is".
+            val assetsPath = PlayPacks.assetsPath(mgr, packName)
             if (assetsPath == null) {
                 // Delivered, but Play answers no location: treat as the empty delivery — the
                 // fail-safe reading, with the import path named.
