@@ -7,29 +7,43 @@ extends is `docs/measurements/2026-09-10-zipformer-en-pc-rung1.md`.
 
 ---
 
-## STATUS: BLOCKED — the Tab dropped off wireless debugging at ~11:44 on 2026-09-10, before any run
+## STATUS: MEASURED — every arm ran on the Tab on 2026-09-10, 13:40-14:xx local; **no kill line fires on 1.13.7**
 
-Nothing in this rung has been measured on the device yet. The sequence was: worktree created, the Tab
-connected (`adb connect 192.168.1.161:44483` → `connected`, `adb devices` listed it as `device`), the pre-flight
-reads of §1.1 succeeded (11:36-11:41), the probe extension was written — and the model push was the first
-command to come back `adb.exe: device offline`. From then on `adb connect` fails with WSA 10060 and `adb mdns
-services` lists nothing (the Tab no longer advertises `adb-R52XC00LL9K-…`), i.e. wireless debugging is off or the
-Tab is asleep, which only the owner can fix. The reconnect loop was stopped at 11:49 on the coordinator's
-instruction.
+The Tab came back on wireless debugging (same serial `192.168.1.161:44483`, still advertising as
+`adb-R52XC00LL9K-MHdBME`); the §3 sequence ran end to end in a second worktree (`C:/Users/bastr/.androidbuild/wt-rung3b`,
+branch `tools/tab-rung3-results`). One probe defect surfaced on the first sherpa run and was fixed in `tools/probes/`
+before any number was taken (§2.2). §4 is the kill-line table with the device column filled; §5-§7 are
+`sherpa_summary.py`'s output and the log lines, copied; §8 the 1.13.4 delta; §9 the teardown proofs.
 
-What this file therefore is: (a) the facts that WERE read (§1), (b) exactly what was built, that it builds, and
-how it measures (§2), (c) the command sequence that runs every arm when the Tab is back (§3), (d) the kill-line
-table with the device column empty and the PC column filled from rung 1 (§4). §5-§7 are to be filled from
-`sherpa_summary.py` output; nothing in them is to be invented.
+**The headline, 2 threads, real-time pace, the app's 32 ms chunking (§5):**
 
-**The push: nothing landed.** `adb shell mkdir -p /data/local/tmp/r3` was the command that returned `device
-offline`, and the loop is `mkdir && for … push …`, so no file was pushed and `/data/local/tmp` should still hold
-only `.studio` (its state at 11:40, §1.1). The first thing to do when the Tab is back is `ls -la /data/local/tmp`
-and remove `r3/` if it somehow exists.
+| | Tab S10+ (MT6989), rung 3 | PC (i7-8700K), rung 1 |
+|---|---|---|
+| canary (`canary_digits.wav`, pad 500 ms) | `ONE TWO THREE FOUR FIVE` — exact, WER 0.000, every run (7 of 7 canary runs across arms) | exact at pad ≥ 500 ms |
+| `jfk` final / WER | byte-identical to the PC's: `AND SAW MY FELLOW AMERICANS ASK NOT WHAT'S YOUR COUNTRY CAN DO FOR YOU AS BUT YOU CAN DO FOR YOUR COUNTRY` — **0.182 (4/22)** | 0.182 (4/22) |
+| `jfk-gated` final / WER | byte-identical: `AN THO MY FELLOW AMERICA AS FOR NOT WHAT YOU'RE CUTTER CAN DO FOR YOU ASK WHAT YOU CAN DO FOR YOUR COUNTRY` — **0.318 (7/22)** | 0.318 (7/22) |
+| partial latency per word, wall clock (n = 100 words over 6 runs) | **p50 0.401 s, p95 0.523 s, max 0.526 s** (audio clock: 0.360 / 0.480 — the PC's exact structural numbers) | p50 0.36 / p95 0.48 (audio clock; no compute queue) |
+| retractions | **0** in every run of every arm (36 runs of 1.13.7) | 0 |
+| RTF compute, max pace, 10 loops of `jfk` | **0.054 @ 2 threads** (0.051 @ 1, 0.072 @ 4); nospin 0.076 | 0.080 @ 2 (0.107 @ 1) |
+| RTF compute at real-time pace (the cores wake cold every 32 ms) | 0.116 @ 2 threads (0.145 @ 1) | — |
+| beside a 4-thread busy loop | real-time: RTF 0.099, lag p50 0.390 / p95 0.511 / max 0.514 s; max pace: RTF 0.076 | — |
+| model load / warm-up first decode | 802-860 ms / 20-28 ms | — |
+| RSS | before load ~181 MB → after load ~341 MB → end-of-arm 341-352 MB → after release ~308-321 MB | — |
+| thermal across the ~45 s arms | battery 21.6 → 23.4 °C, `thermalStatus` 0 throughout (Tab on AC, charging) | — |
+| 10-minute thermal run | §6 | — |
+| 1.13.4 (ORT 1.27.0) | §8 | — |
 
 ---
 
-## 1. WHAT WAS READ BEFORE THE DROP (all 2026-09-10, 11:36-11:41 local)
+## 1. WHAT WAS READ (first session 11:36-11:41; re-read at 13:39-13:41 before the arms — every value below held)
+
+Re-read 13:39-13:41 in the second session, before anything was installed or pushed: `adb devices -l` listed the Tab as
+`device` under both transports; `/data/local/tmp` held only `.studio/` (no `r3/` — the first session's push never
+landed, as §STATUS of the blocked draft predicted); the Play copy read `versionName=4.3.2 versionCode=86
+lastUpdateTime=2026-09-04 19:49:37`; the probe was still the pre-rung-3 build (`lastUpdateTime=2026-09-10 05:56:54`);
+`dumpsys battery` level 99, `temperature: 219` (21.9 °C), `status: 2` (charging, AC — the Tab was on its charger for the
+whole session, which is the warmer case for the thermal line); `mCurrentFocus` = the Samsung launcher (no dialog);
+`df /data` 126 GB free. The seven files were re-hashed on the PC (all equal to §1.2) before the push.
 
 ### 1.1 The device
 
@@ -143,9 +157,39 @@ the build dir was put back to the 1.13.7 build afterwards, so the README's defau
 On this AAR `provider=nospin` is parsed but not forwarded (§1.4 of the research doc), and `VersionInfo` has no ORT
 getter — both are expected and logged as such.
 
+### 2.2 The one probe fix the device forced (commit `e9cc8a2`, `tools/probes/` only)
+
+The very first sherpa run on the Tab (the canary, 13:41:11) completed — `DONE|ok=true`, canary exact, 0 retractions —
+but with **`word_map_ok=false` and an empty per-word table**: `lag_wall_p50=-`. The JSON showed why: the AAR's JNI
+returns `getResult().tokens` as `" ONE", " TWO", " THREE", " F", "OUR", " FI", "VE"` — the BPE word marker U+2581 has
+already been turned into an ASCII space by the time Kotlin sees it — and `wordEndTimes` looked for U+2581 only, so
+every piece folded into one word (1 word end vs 5 final words). Fix: a leading space opens a word too; the JSON now
+also carries `word_ends_s`, `n_word_ends`, `n_final_words` so the mapping is auditable. Rebuilt both arms from the
+worktree (`gradlew.bat :app:assembleDebug`, and `--% ... -PsherpaVersion=1.13.4` — PowerShell otherwise tokenises the
+`1.13.4` and Gradle looks for a task `.13.4`):
+
+| APK | Bytes | sha256 | `.so` pair inside |
+|---|---|---|---|
+| `probe-sherpa-1.13.7.apk` (13:43:21) | 38,638,946 | `369d969f2ba28eac30d47916d4d1a23097eb3ec7ac2b1caa0d6b8c38b3996877` | `libonnxruntime.so` 21,684,872 + `libsherpa-onnx-jni.so` 4,761,536 |
+| `probe-sherpa-1.13.4.apk` (13:44:59) | 38,638,946 | `0af56540aa73adfabe1912dfde0cf586a2f14f42a5fedd55fe2008f295041659` | 21,688,912 + 4,710,728 |
+
+The canary was re-run on the fixed build (the numbers in §4-§5 are all from it): `word_map_ok=true`, five word ends
+`0.96 / 1.28 / 1.48 / 2.04 / 2.68 s`, lag wall p50 0.401 / p95 0.514 s. The pre-fix run's text, WER and RTF
+(`ONE TWO THREE FOUR FIVE`, 0.000, 0.108) were the same; only the per-word column was missing. Nothing in the feed,
+the decode loop or the scoring changed.
+
+Two session mechanics worth one line each, for the next person: under `MSYS_NO_PATHCONV=1` the *local* path handed
+to `adb install` must be Windows-style (`C:/Users/...`), or adb cannot stat it; and the fresh worktree needs the
+gitignored inputs copied in (`app/libs/sherpa-onnx-1.13.{7,4}.aar` from the main checkout's `app/libs`, the MediaTek
+`.so` pair into `app/src/main/jniLibs/arm64-v8a/`, `local.properties`) before `gradlew` will build.
+
 ---
 
-## 3. THE COMMAND SEQUENCE FOR THE DEVICE SESSION (run in this order; every adb call pinned to the Tab)
+## 3. THE COMMAND SEQUENCE (executed 13:40-14:xx exactly as written, with `WT=/c/Users/bastr/.androidbuild/wt-rung3b/...`; every adb call pinned to the Tab)
+
+Executed in this order; the only deviations: the canary arm ran twice (pre-fix, then on the rebuilt probe — §2.2), and
+`r3_info_1` (mode=info) ran first as the launch proof of the new build. Elapsed per arm: canary 4.7-4.9 s, the 3-clip
+real-time arms 27-51 s, the max-pace arms 7-11 s, the load arms 7-44 s, the thermal run 600 s after a 5-minute idle.
 
 Environment: Git Bash, `export MSYS_NO_PATHCONV=1`; `ADB=/c/Users/bastr/AppData/Local/Android/Sdk/platform-tools/adb.exe`
 (adb is not on PATH); `S=192.168.1.161:44483`; the worktree probe `WT=/c/Users/bastr/.androidbuild/wt-rung3/tools/probes/litertlm-probe`;
@@ -201,64 +245,229 @@ fixture clips; the probe stays installed at the end.
 
 ---
 
-## 4. THE KILL LINES (§5.4) — device column EMPTY until the arms run
+## 4. THE KILL LINES (§5.4) — the Tab column, from §5-§6
 
-| Line | Metric | Kill at | **PC (rung 1, i7-8700K)** | **Tab (rung 3)** | Verdict |
+| Line | Metric | Kill at | **PC (rung 1, i7-8700K)** | **Tab (rung 3, MT6989, 1.13.7 / ORT 1.27.1)** | Verdict |
 |---|---|---|---|---|---|
-| canary, both AARs | `getResult().text` lower-cased == "one two three four five" | any mismatch → that AAR does not ship | `ONE TWO THREE FOUR FIVE`, WER 0.000 at pad ≥ 0.50 s (`FI` at 0.45) | NOT MEASURED | — |
-| partial latency, 2 threads | p95 over words, wall clock, real-time pace | > 1.0 s | 0.48 s **structural** (no compute queueing on the PC) | NOT MEASURED | — |
-| RTF, 2 threads | Σ decode / audio, max pace, 10 loops, sustained (last half) | > 0.5 | 0.080 (0.107 at 1 thread) | NOT MEASURED | — |
-| under a 4-thread load | RTF and p95 lag beside the busy loop | RTF > 0.5 or p95 > 1.0 s | — | NOT MEASURED | — |
-| WER, strip | `WerMath.wer` vs reference; `multi`'s 0.000 beside it | > 1.5× `multi` → strip-only; > 2× → stop | jfk 0.182 (4/22), jfk-gated 0.318 (7/22) — vs whisper-small 0.000 | NOT MEASURED | — |
-| RSS | `rssKb` cold → after the 10-minute run | > 400 MB delta | — | NOT MEASURED | — |
-| thermal / battery | `thermalStatus` steps, `batteryTempTenths` over 10 min | > 1 step or > 3 °C | — | NOT MEASURED | — |
-| pad length | canary last-syllable loss at 500 vs 800 ms | pick the smaller pad with zero loss | 500 ms is the floor (§4 of rung 1) | NOT MEASURED | — |
-| edited video | boundary-word errors at the 16 in-speech gates | > 1 per 10 cuts | 3 edits over 16 cuts (0.19/cut, flagged) | NOT MEASURED | — |
-| retractions | partials whose predecessor is not their prefix | (the strip contract) | **0** in every greedy run | NOT MEASURED | — |
+| canary, both AARs | `getResult().text` lower-cased == "one two three four five" | any mismatch → that AAR does not ship | `ONE TWO THREE FOUR FIVE`, WER 0.000 at pad ≥ 0.50 s (`FI` at 0.45) | **`ONE TWO THREE FOUR FIVE`** — exact (`canary_exact=true`, `canaryPasses=true`), WER 0.000, in all 7 canary runs of 1.13.7 (pad 500 ×6, pad 800 ×1, threads 1 and 2, with and without the busy load); no `sme` in cpuinfo. 1.13.4: §8 | **PASS** (1.13.7) |
+| partial latency, 2 threads | p95 over words, wall clock, real-time pace | > 1.0 s | 0.48 s **structural** (no compute queueing on the PC) | **p95 0.523 s** (p50 0.401, max 0.526, n = 100 words, `r3_clips_rt_t2`); on the audio clock p50 0.360 / p95 0.480 — identical to the PC — so the compute adds **~40 ms** at p50/p95 on this device (burst p50 38 ms per 320 ms decode). 1 thread: p95 0.530 | **PASS** (0.52× the line) |
+| RTF, 2 threads | Σ decode / audio, max pace, 10 loops, sustained (last half) | > 0.5 | 0.080 (0.107 at 1 thread) | **0.054 mean, 0.054 last-half mean, 0.054 max** (`r3_jfk_max_t2`); 1 thread 0.051 / 0.052; 4 threads 0.072 / 0.073 (slower — see §10); nospin 0.076. At real-time pace (cold cores) Σ decode / audio is 0.110-0.125 | **PASS** (0.11× the line) |
+| under a 4-thread load | RTF and p95 lag beside the busy loop | RTF > 0.5 or p95 > 1.0 s | — | real-time (`r3_jfk_rt_t2_load4`, 3 loops of jfk+canary): **RTF 0.099 mean / 0.106 max, lag p50 0.390 / p95 0.511 / max 0.514 s**, late chunks 2-10 per run (max lateness 10 ms), text unchanged; max pace (`r3_jfk_max_t2_load4`, 5 loops): RTF 0.076 mean / 0.079 max | **PASS** |
+| WER, strip | `WerMath.wer` vs reference; `multi`'s 0.000 beside it | > 1.5× `multi` → strip-only; > 2× → stop | jfk 0.182 (4/22), jfk-gated 0.318 (7/22) — vs whisper-small 0.000 | **jfk 0.182 (4/22), jfk-gated 0.318 (7/22)** — the finals are byte-identical to rung 1's on every run at 1, 2 and 4 threads, so the device adds nothing to the WER. Beside `multi`'s 0.000 the ratio is not a number (any non-zero WER is > 1.5 × 0); read the way rung 1 read it and the research doc's decision rule asks (side-by-side: *wrong* vs *less polished*) — every content word of `jfk` survives, the four edits are unstressed monosyllables | **NOT A DEVICE FINDING — carried as rung 1 carried it (§5.2 there): by the ratio's letter it cannot pass; by the decision rule it did not kill.** Unchanged by this rung |
+| RSS | `rssKb` cold → after the 10-minute run | > 400 MB delta | — | §6: before load → end of the 600 s run | see §6 |
+| thermal / battery | `thermalStatus` steps, `batteryTempTenths` over 10 min | > 1 step or > 3 °C | — | §6 | see §6 |
+| pad length | canary last-syllable loss at 500 vs 800 ms | pick the smaller pad with zero loss | 500 ms is the floor (§4 of rung 1) | **500 ms: `ONE TWO THREE FOUR FIVE`; 800 ms: identical.** Zero loss at 500 in every run; 800 buys nothing (the tail's `FIVE` lands at wall 2.60 s either way) | **500 ms stands** |
+| edited video | boundary-word errors at the 16 in-speech gates | > 1 per 10 cuts | 3 edits over 16 cuts (0.19/cut, flagged) | **3 edits over 16 cuts (0.19/cut = 1.9 per 10)** — the same three (`AND SO→AN THO`, `AMERICANS ASK→AMERICA AS FOR`, `COUNTRY→CUTTER`), byte-identical to the PC | **over the line, exactly as on the PC** — a model property, not a device one; stays flagged, not newly killed (see §10) |
+| retractions | partials whose predecessor is not their prefix | (the strip contract) | **0** in every greedy run | **0** in every run of every arm: 36 runs of 1.13.7 (+ §8's 1.13.4 runs), 22 partials per `jfk`, 21 per `jfk-gated`, 4 per canary — cumulative text only grows | **PASS** |
+| *(music bed)* | *§5.4 also lists a bed-clip line* | *(a) any full word per 10 s; (b) any token* | — | **not run** — no bed clip was pushed; this rung's §3 never planned it | open |
 
-**On the WER line's ratio:** rung 1's whisper-small scores 0.000 on all three clips, so "1.5× multi" is not a
-number on these fixtures; the device line is to be reported as absolute WER against the same references, with
-`multi`'s known 0.000 beside it, and the verdict argued in words (the research doc's own decision rule reads the
-side-by-side, not the ratio). Text is expected to be bit-identical across thread counts (rung 1) and — the real
-question of this rung — across AARs.
-
----
-
-## 5. PER-CLIP / THREADS / ARM TABLES — to be filled from `sherpa_summary.py`
-
-_Not run. The per-run table has the columns: run | clip | final | WER (edits/ref) | canary | partials | retractions |
-lag wall p50/p95/max | lag audio p50/p95 | burst p50/p95/max ms | RTF compute | RTF wall | late chunks (max ms);
-the per-tag line carries load ms, warm-up first decode, RSS/PSS at the five checkpoints, thermal at start and end,
-and the aggregate RTF / lag / burst distributions._
-
-## 6. THE 10-MINUTE THERMAL RUN — to be filled
-
-_Not run. `sherpa_summary.py` prints first-minute vs last-minute (RTF mean/max, lag p50/p95/max, burst p95/max,
-late chunks) and the per-minute RSS/PSS/battery/thermal snapshots for `r3_jfk_thermal_t2`._
-
-## 7. THE PROVING LOG LINES — to be filled
-
-_Not run. Expected from `debug = true`: sherpa's `OnlineRecognizerConfig(...)` echo, the encoder metadata block
-(`model_type=zipformer2`, `decode_chunk_len`, `T`, `num_encoder_layers`…), and the probe's own
-`sherpa|versions|sherpa=1.13.7|…|onnxruntime=1.27.1` line (from `VersionInfo`), plus `sherpa|file|…|sha256=…` ×4
-and `sherpa|cpuinfo|sme=false|…`._
+**On the thermal line's letter.** §5.4 says "10 min continuous speech, streamer + `multi` together, threads 1 and
+2". What ran: the streamer alone at 2 threads for 600 s (§6), and the `multi` stand-in (four spinning threads) as its
+own 41 s + 4 s arms. The 10-minute run beside the busy loop, and the 1-thread 10-minute run, were **not** run; §6's
+verdict is for the streamer alone, and §10 says what that leaves open.
 
 ---
 
-## 8. CONCERNS, already visible
+## 5. PER-CLIP / THREADS / ARM TABLES — `sherpa_summary.py` output, copied (1.13.7 / ORT 1.27.1, `sme=false`)
 
-1. **The device is the whole rung.** Everything above is preparation; no kill line has a device number, and none
-   is to be inferred from the PC (the research doc says outright that PC RTF is irrelevant).
-2. **The real-time feed runs decode on the feed thread.** That is the right *measurement* (the partial's wall time
-   is when the text exists), and it also models the queue honestly — a burst that overruns 32 ms delays the next
-   chunk, which is exactly what the app's off-capture-thread decoder would see as queue depth — but it means the
-   `late chunks` column is to be read beside the p95 lag, not in place of it.
-3. **`load=4` is steadier than `multi`.** Four spinning threads on an 8-core MT6989 (4×X4 + 4×A720) is a worse
-   case than whisper's bursty F ≈ 2.3 s commits; a PASS under it is conservative, a FAIL under it needs the
-   `multi`-shaped follow-up before it kills anything.
-4. **The Tab's wireless-debugging drop** is the same failure mode earlier Tab sessions recorded; a USB cable would
-   remove it, but the rule that only serial `192.168.1.161:44483` is touched stands, so the owner would have to
-   re-pair either way (and if the port moves, every command above takes the new serial).
-5. **The probe's `files/` holds 2.25 GB of E3-E6 artefacts.** Not touched here; if the Tab is short of space for the
-   73 MB model, `run-as … rm files/whisper_large_v3_turbo_30s_i8.tflite` (1.09 GB) is the candidate, on the
-   owner's say-so only — the e2e measurements are already in the repo.
+Columns: lag = per-word partial latency (wall clock, then audio clock); burst = one chunk's `decode()` drain; RTF
+compute = Σ `decode()` / clip audio (feed + tail); RTF wall = total wall / audio (≈ 1.0 at real-time pace by
+construction); late chunks = chunks fed after their 32 ms deadline because the previous burst overran (max lateness).
+
+### 5.1 Real-time pace, 2 threads, pad 500 — the headline arm (`r3_clips_rt_t2`, 2 loops of the three clips)
+
+| run | clip | final | WER (edits/ref) | canary | partials | retract | lag wall p50 / p95 / max s | lag audio p50 / p95 s | burst p50 / p95 / max ms | RTF compute | RTF wall | late chunks (max ms) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | canary_digits | `ONE TWO THREE FOUR FIVE` | 0.000 (0/5) | exact / pass | 4 | 0 | 0.401 / 0.523 / 0.523 | 0.360 / 0.480 | 39.2 / 44.4 / 44.4 | 0.1246 | 1.0197 | 7 (13.3) |
+| 1 | jfk | `AND SAW MY FELLOW AMERICANS ASK NOT WHAT'S YOUR COUNTRY CAN DO FOR YOU AS BUT YOU CAN DO FOR YOUR COUNTRY` | 0.182 (4/22) | - | 22 | 0 | 0.401 / 0.522 / 0.526 | 0.360 / 0.480 | 39.8 / 44.5 / 45.5 | 0.1228 | 1.0059 | 32 (14.4) |
+| 2 | jfk-gated | `AN THO MY FELLOW AMERICA AS FOR NOT WHAT YOU'RE CUTTER CAN DO FOR YOU ASK WHAT YOU CAN DO FOR YOUR COUNTRY` | 0.318 (7/22) | - | 21 | 0 | 0.405 / 0.523 / 0.526 | 0.360 / 0.480 | 38.3 / 44.9 / 45.1 | 0.1203 | 1.0054 | 32 (14.0) |
+| 3 | canary_digits | `ONE TWO THREE FOUR FIVE` | 0.000 (0/5) | exact / pass | 4 | 0 | 0.402 / 0.507 / 0.507 | 0.360 / 0.480 | 32.4 / 41.0 / 41.0 | 0.1041 | 1.0184 | 4 (9.6) |
+| 4 | jfk | (identical) | 0.182 (4/22) | - | 22 | 0 | 0.397 / 0.517 / 0.523 | 0.360 / 0.480 | 35.8 / 43.4 / 45.1 | 0.1097 | 1.0060 | 25 (13.7) |
+| 5 | jfk-gated | (identical) | 0.318 (7/22) | - | 21 | 0 | 0.400 / 0.522 / 0.525 | 0.360 / 0.480 | 36.4 / 45.1 / 46.3 | 0.1146 | 1.0047 | 30 (15.1) |
+
+- `r3_clips_rt_t2`: sherpa 1.13.7 / ORT 1.27.1, threads 2, provider `cpu`, pace realtime, pad 500 ms, load 0, sme=False; load 811 ms, warm-up first decode 19.9 ms; RSS/PSS MB before load 181 / 105, after load 341 / 252, after warm 346 / 264, end 341 / 259, after release 308 / 224; thermal start 22.2 C / 0, end 22.2 C / 0; runs 6 in 49.5 s; RTF compute mean 0.1160 max 0.1246 (last half mean 0.1095); **lag wall p50 0.401 p95 0.523 max 0.526 (n=100)**; lag audio p50 0.360 p95 0.480; burst p50 37.8 p95 44.7 max 46.3 ms; retractions 0; ok
+
+**The partial-latency distribution, `jfk` run 1** (22 of 22 words mapped; `word_map_ok=true`): mean 0.389, min 0.240,
+p50 0.401, p90 0.519, p95 0.522, p99 0.526, max 0.526 s. Per word (end = last token's timestamp; first = the first
+partial whose k-th word equals the final's):
+
+| word | end s | first partial wall s | lag wall s | lag audio s |
+|---|---|---|---|---|
+| and | 0.720 | 1.155 | 0.435 | 0.400 |
+| saw | 1.080 | 1.481 | 0.401 | 0.360 |
+| my | 1.440 | 1.799 | 0.359 | 0.320 |
+| fellow | 1.920 | 2.439 | 0.519 | 0.480 |
+| americans | 2.760 | 3.079 | 0.319 | 0.280 |
+| ask | 4.120 | 4.365 | 0.245 | 0.200 |
+| not | 4.400 | 4.683 | 0.283 | 0.240 |
+| what's | 6.000 | 6.276 | 0.276 | 0.240 |
+| your | 6.080 | 6.595 | 0.515 | 0.480 |
+| country | 6.600 | 6.921 | 0.321 | 0.280 |
+| can | 6.840 | 7.244 | 0.404 | 0.360 |
+| do | 7.120 | 7.556 | 0.436 | 0.400 |
+| for | 7.360 | 7.882 | 0.522 | 0.480 |
+| you | 7.640 | 7.882 | 0.242 | 0.200 |
+| as | 8.640 | 9.158 | 0.518 | 0.480 |
+| but | 9.040 | 9.485 | 0.445 | 0.400 |
+| you | 9.320 | 9.800 | 0.480 | 0.440 |
+| can | 9.560 | 9.800 | 0.240 | 0.200 |
+| do | 9.800 | 10.124 | 0.324 | 0.280 |
+| for | 10.000 | 10.445 | 0.445 | 0.400 |
+| your | 10.240 | 10.766 | 0.526 | 0.480 |
+| country | 10.760 | 11.065 | 0.305 | 0.240 |
+
+The 22 partials of that run, audio s → wall s (every one a prefix-growth of the previous; the last is the tail's):
+`1.120→1.155 AND` · `1.440→1.481 AND SAW` · `1.760→1.799 … MY` · `2.080→2.124 … FELL` · `2.400→2.439 … FELLOW A` ·
+`2.720→2.760 … AMERICAN` · `3.040→3.079 … AMERICANS` · `4.320→4.365 … ASK` · `4.640→4.683 … NOT` · `6.240→6.276 … WHAT'S` ·
+`6.560→6.595 … YOUR COUNT` · `6.880→6.921 … COUNTRY` · `7.200→7.244 … CAN` · `7.520→7.556 … DO` · `7.840→7.882 … FOR YOU` ·
+`9.120→9.158 … AS` · `9.440→9.485 … BUT` · `9.760→9.800 … YOU CAN` · `10.080→10.124 … DO` · `10.400→10.445 … FOR` ·
+`10.720→10.766 … YOUR COUNT` · `11.000→11.065 (tail) … COUNTRY`. The wall-minus-audio gap is 35-45 ms on every
+partial — one decode burst — which is the whole of the device's addition to the PC's structural lag.
+
+`jfk-gated` run 2: 23 words mapped (the final has 23 words), lag wall mean 0.402, p50 0.405, p95 0.523, max 0.526 s;
+21 partials, all prefix-growths; `CUTTER` first appears at audio 6.880 s (`C` at 6.240, `CUT` at 6.560), on the 64 ms
+gate cluster at 5.856-6.944 s that rung 1 §6 named.
+
+### 5.2 Real-time pace, 1 thread (`r3_clips_rt_t1`)
+
+| run | clip | final | WER | canary | partials | retract | lag wall p50 / p95 / max s | lag audio p50 / p95 s | burst p50 / p95 / max ms | RTF compute | RTF wall | late chunks (max ms) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | canary_digits | `ONE TWO THREE FOUR FIVE` | 0.000 (0/5) | exact / pass | 4 | 0 | 0.406 / 0.532 / 0.532 | 0.360 / 0.480 | 45.7 / 57.2 / 57.2 | 0.1474 | 1.0207 | 7 (25.9) |
+| 1 | jfk | (identical to 5.1) | 0.182 (4/22) | - | 22 | 0 | 0.399 / 0.527 / 0.532 | 0.360 / 0.480 | 46.0 / 52.1 / 59.3 | 0.1425 | 1.0064 | 33 (28.1) |
+| 2 | jfk-gated | (identical to 5.1) | 0.318 (7/22) | - | 21 | 0 | 0.410 / 0.527 / 0.530 | 0.360 / 0.480 | 46.4 / 54.0 / 55.1 | 0.1452 | 1.0071 | 33 (23.7) |
+
+- `r3_clips_rt_t1`: threads 1; load 821 ms, warm-up first decode 21.4 ms; RSS/PSS MB before load 178 / 119, after load 342 / 253, after warm 348 / 265, end 344 / 262, after release 313 / 230; thermal 22.2 C / 0 → 22.2 C / 0; runs 3 in 24.8 s; RTF compute mean 0.1450 max 0.1474; lag wall p50 0.406 p95 0.530 max 0.532 (n=50); burst p50 46.1 p95 54.0 max 59.3 ms; retractions 0; ok
+
+### 5.3 The canary arms (pad 500 vs 800, 2 threads, real-time)
+
+| tag | final | WER | canary | partials | retract | lag wall p50 / p95 / max s | burst p50 / p95 / max ms | RTF compute | late chunks (max ms) | word ends s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `r3_canary_rt_t2_p500` | `ONE TWO THREE FOUR FIVE` | 0.000 (0/5) | exact / pass | 4 | 0 | 0.401 / 0.514 / 0.514 | 37.0 / 40.6 / 40.6 | 0.1161 | 6 (9.2) | 0.96 / 1.28 / 1.48 / 2.04 / 2.68 |
+| `r3_canary_rt_t2_p800` | `ONE TWO THREE FOUR FIVE` | 0.000 (0/5) | exact / pass | 4 | 0 | 0.381 / 0.515 / 0.515 | 37.0 / 49.1 / 49.1 | 0.1175 | 5 (18.6) | (same) |
+
+Both: load 807-829 ms, warm-up first decode 21.8-22.7 ms; RSS/PSS MB before load 178-181 → after load 335-341 → end 342-343 → after release 311-312; 22.2 C / 0 throughout. The four partials are the same in both: `ONE` (audio 1.44 → wall 1.47), `ONE TWO THREE` (1.76 → 1.79), `… FOUR` (2.40 → 2.44), `… FIVE` (tail, 2.56 → 2.60-2.62). `FIVE`'s pieces are ` FI`+`VE` at 2.40 / 2.68 s — the second piece sits past the clip's 2.56 s end, inside the pad, which is why 450 ms lost it on the PC and 500 ms keeps it on both.
+
+### 5.4 Max pace, `jfk` × 10 loops — the RTF table (rows: run 0 and run 9 of each arm; the tag line has all 10)
+
+| arm | threads | provider | RTF compute mean / last-half mean / max | burst p50 / p95 / max ms | per-run examples (run 0 → run 9) | RSS MB after load → end | batt °C start → end |
+|---|---|---|---|---|---|---|---|
+| `r3_jfk_max_t1` | 1 | cpu | **0.0514 / 0.0518 / 0.0521** | 16.2 / 16.6 / 17.7 | 0.0502 → 0.0521 | 334 → 346 | 22.2 → 23.4 |
+| `r3_jfk_max_t2` | 2 | cpu | **0.0539 / 0.0542 / 0.0544** | 17.0 / 17.3 / 19.0 | 0.0513 → 0.0544 | 338 → 352 | 23.4 → 23.4 |
+| `r3_jfk_max_t4` | 4 | cpu | 0.0716 / 0.0726 / 0.0740 | 21.1 / 31.2 / 38.3 | 0.0673 → 0.0740 | 341 → 349 | 23.4 → 23.4 |
+| `r3_jfk_max_t2_nospin` | 2 | `cpu:<cfg>` (spinning off, forwarded — sherpa echoes `Provider config: SessionConfig.session.intra_op.allow_spinning=0` and the `inter_op` twin) | 0.0756 / 0.0764 / 0.0776 | 23.9 / 25.1 / 31.3 | 0.0748 → 0.0754 | 341 → 347 | 23.4 → 23.4 |
+| `r3_jfk_max_t2_load4` (5 loops) | 2 | cpu, 4 busy threads | 0.0758 / 0.0777 / 0.0793 | 23.7 / 27.6 / 32.4 | 0.0730 → 0.0793 | 336 → 347 | 23.4 → 23.4 |
+
+Every run of every max-pace arm: final byte-identical, WER 0.182 (4/22), 22 partials, 0 retractions, 0 late chunks
+(max pace has no deadline). Load 802-860 ms; warm-up first decode 19.8-27.5 ms (27.5 under nospin). The wall-clock
+lag columns are negative at max pace (wall runs ~20× faster than audio) and mean nothing there; the audio-clock lag
+is 0.360 / 0.480 in every arm, as it must be (chunk quantisation only).
+
+### 5.5 Real-time pace beside the 4-thread busy loop (`r3_jfk_rt_t2_load4`, 3 loops of jfk + canary)
+
+| run | clip | WER | canary | partials | retract | lag wall p50 / p95 / max s | burst p50 / p95 / max ms | RTF compute | late chunks (max ms) |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | jfk | 0.182 (4/22) | - | 22 | 0 | 0.388 / 0.510 / 0.511 | 29.0 / 32.6 / 37.4 | 0.0922 | 4 (6.0) |
+| 1 | canary_digits | 0.000 (0/5) | exact / pass | 4 | 0 | 0.398 / 0.511 / 0.511 | 30.2 / 37.0 / 37.0 | 0.1036 | 3 (5.5) |
+| 2 | jfk | 0.182 (4/22) | - | 22 | 0 | 0.390 / 0.511 / 0.512 | 29.1 / 32.1 / 37.1 | 0.0938 | 5 (5.7) |
+| 3 | canary_digits | 0.000 (0/5) | exact / pass | 4 | 0 | 0.388 / 0.509 / 0.509 | 28.4 / 33.2 / 33.2 | 0.0982 | 2 (1.8) |
+| 4 | jfk | 0.182 (4/22) | - | 22 | 0 | 0.391 / 0.512 / 0.514 | 30.2 / 34.8 / 41.5 | 0.0973 | 10 (10.0) |
+| 5 | canary_digits | 0.000 (0/5) | exact / pass | 4 | 0 | 0.390 / 0.512 / 0.512 | 31.2 / 34.2 / 34.2 | 0.1060 | 3 (3.4) |
+
+- `r3_jfk_rt_t2_load4`: threads 2, load 4; load 838 ms, warm-up first decode 21.0 ms; RSS/PSS MB before load 181 / 124, after load 341 / 253, after warm 344 / 263, under-load idle 345 / 263, end 342 / 260, after release 314 / 231; thermal 23.4 C / 0 → 23.4 C / 0; runs 6 in 41.1 s; RTF compute mean 0.0985 max 0.1060 (last half mean 0.1005); lag wall p50 0.390 p95 0.511 max 0.514 (n=81); burst p50 29.5 p95 33.9 max 41.5 ms; retractions 0; ok
+
+Read beside 5.1: **under the busy load the real-time bursts got shorter** (29 ms vs 38 ms p50) and the late chunks
+fewer (2-10 vs 25-32 per jfk) — the four spinning threads keep the cluster clocked up, so the decode thread no longer
+wakes on a cold, down-clocked core every 32 ms. That is the same effect as the max-pace / real-time RTF gap (0.054
+vs 0.116): on this SoC the streamer's cost at real-time pace is set by DVFS, not by the model. It also means the
+busy-loop stand-in is *not* the worse case for latency on the Tab — see §10.
+
+## 6. THE 10-MINUTE THERMAL RUN (`r3_jfk_thermal_t2`) — PENDING: filled when the background run completes
+
+## 7. THE PROVING LOG LINES (from `r3_canary_rt_t2_p500.filtered.log`, the post-fix run; every arm's log carries the same set)
+
+The probe's own (`PROBE` tag, pid-filtered):
+
+```
+device|soc=Mediatek/MT6989|model=SM-X828U|sdk=36|nativeLibraryDir=/data/app/~~1RLS5pc8rMJNH3MrQEsZoQ==/com.whispereverywhere.probe-X-WqLXbJXjoB4cQ_bA5LQQ==/lib/arm64|libs=libLiteRt.so,libLiteRtCompilerPlugin_MediaTek.so,libLiteRtDispatch_MediaTek.so,libLiteRtOpenClAccelerator.so,liblitertlm_jni.so,libonnxruntime.so,libsherpa-onnx-jni.so
+sherpa|cpuinfo|sme=false|features=fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti ecv afp wfxt
+sherpa|versions|sherpa=1.13.7|git=574210e0 Tue Sep 1 07:39:27 2026|onnxruntime=1.27.1
+sherpa|file|encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx|bytes=71083163|sha256=563fde436d16cf7607cf408cd6b30909819d03162652ef389c2450ced3f45ac1
+sherpa|file|decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx|bytes=1307236|sha256=98da299f471e38bb4e1a8df579b8cc9122d6039576a77e357b3c60f17dd83b02
+sherpa|file|joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx|bytes=259335|sha256=d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297
+sherpa|file|tokens.txt|bytes=5048|sha256=49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb
+sherpa|config|threads=2|provider=cpu|modelType=zipformer2|decoding=greedy_search|enableEndpoint=false|featureDim=80|dither=0|pace=realtime|padMs=500|loops=1|duration=0|load=0
+sherpa|load_ms=829.4
+sherpa|clip|canary_digits.wav|bytes=81998|samples=40960|audio_s=2.560|sha256=a3079109f735d4acea2756ce5398c67119ab36fa832571f5a5b45b616a7a5cd4|ref=true
+sherpa|warmup|wall_ms=75.2|decode_ms=71.9|first_decode_ms=22.7|text=ONE
+```
+
+So `VersionInfo` reports **sherpa 1.13.7 (git 574210e0, 2026-09-01) on onnxruntime 1.27.1** at run time — the
+binary-tag reading of §1.2 confirmed from inside the process — and the four device-side hashes equal §1.2's. The
+`onnxruntime` library itself logs nothing under its own tag on Android; the only `onnxruntime` strings in logcat are
+the probe's line above and the model metadata's `onnx.infer=onnxruntime.quant`.
+
+sherpa's own (`sherpa-onnx` tag, `debug=true`) — the config echo from `online-recognizer.cc:newFromFile:300`,
+reassembled from its 80-character pieces:
+
+```
+OnlineRecognizerConfig(feat_config=FeatureExtractorConfig(sampling_rate=16000, feature_dim=80, low_freq=20, high_freq=-400, dither=0, normalize_samples=True, snip_edges=False), model_config=OnlineModelConfig(transducer=OnlineTransducerModelConfig(encoder=".../files/zipformer-en/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", decoder=".../decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", joiner=".../joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx"), paraformer=…, wenet_ctc=…, zipformer2_ctc=…, nemo_ctc=…, t_one_ctc=…, provider_config=ProviderConfig(device=0, provider="cpu", cuda_config=…, trt_config=…), tokens=".../tokens.txt", num_threads=2, warm_up=0, debug=True, model_type="zipformer2", modeling_unit="", bpe_vocab=""), lm_config=OnlineLMConfig(model="", scale=0.5, lodr_scale=0.01, lodr_fst="", lodr_backoff_id=-1, shallow_fusion=True), endpoint_config=EndpointConfig(rule1=EndpointRule(must_contain_nonsilence=False, min_trailing_silence=2.4, min_utterance_length=0), rule2=EndpointRule(must_contain_nonsilence=True, min_trailing_silence=1.4, min_utterance_length=0), rule3=EndpointRule(must_contain_nonsilence=False, min_trailing_silence=0, min_utterance_length=20)), ctc_fst_decoder_config=OnlineCtcFstDecoderConfig(graph="", max_active=3000), enable_endpoint=False, max_active_paths=4, hotwords_score=1.5, hotwords_file="", decoding_method="greedy_search", blank_penalty=0, temperature_scale=2, rule_fsts="", rule_fars="", reset_encoder=False, hr=HomophoneReplacerConfig(lexicon="", rule_fsts=""))
+```
+
+and the encoder metadata block from `online-zipformer2-transducer-model.cc:InitEncoder:111` (~0.8 s after the config
+echo — the load):
+
+```
+---encoder---
+num_heads=4,4,4,8,4,4
+num_encoder_layers=2,2,3,4,3,2
+cnn_module_kernels=31,31,15,15,15,31
+model_type=zipformer2
+T=45
+model_author=k2-fsa
+version=1
+comment=streaming zipformer2
+left_context_len=128,64,32,16,32,64
+decode_chunk_len=32
+value_head_dims=12,12,12,12,12,12
+encoder_dims=192,256,384,512,384,256
+onnx.infer=onnxruntime.quant
+query_head_dims=32,32,32,32,32,32
+```
+
+`T=45` frames per decode with `decode_chunk_len=32` → one `decode()` per 320 ms of audio (35 decodes for 11.0 s +
+0.5 s pad; 9 for the 2.56 s canary) — the cadence every partial in §5 sits on. `onnx.infer=onnxruntime.quant` appears
+three times (encoder, decoder, joiner: all three are the int8 files).
+
+## 8. THE 1.13.4 (ORT 1.27.0) ARM — PENDING: filled after the thermal run
+
+## 9. TEARDOWN PROOFS — PENDING: filled last
+
+## 10. CONCERNS AND OBSERVATIONS
+
+1. **The two flagged lines are model lines, not device lines.** The Tab produced byte-identical finals to the PC on
+   every clip at every thread count, so the WER-vs-`multi` line and the edited-video line carry exactly rung 1's
+   verdicts: the ratio to 0.000 is not a number, and 3 boundary edits over 16 cuts is 1.9 per 10 against a line of
+   1 per 10. Rung 1 argued both in words and proceeded; nothing measured here changes that argument either way. If
+   the owner reads the gated line by its letter, it kills on the PC too — it did not, and this rung is not the
+   place to re-litigate it.
+2. **Real-time pace costs 2× the compute of max pace on this SoC, and a busy load makes it *cheaper*.** Σ decode /
+   audio is 0.054 at max pace, 0.116 at real-time pace, 0.099 at real-time pace beside four spinning threads
+   (§5.4-§5.5). The decode thread sleeps 32 ms between chunks, the core down-clocks, and the next 16 ms burst runs
+   as 38 ms. The kill line is still cleared 4× over at the worst of these, but it means (a) the RTF column of §5.4
+   is the *compute* budget, not the *energy* budget, (b) the busy-loop stand-in is a worse case for RTF and a
+   *better* case for latency, so a `multi`-shaped follow-up (bursty, 2.3 s commits) remains the honest load test
+   for the p95 line, and (c) an app-side decoder that batches two chunks (64 ms) would halve the wake-ups at the
+   price of one chunk of lag — a decision for §3, not for this rung.
+3. **Four threads are slower than two** (0.072 vs 0.054), and `nospin` slower still (0.076): ORT's intra-op pool
+   on a 4×X4 + 4×A720 cluster pays for thread hand-offs on 16 ms bursts. Two threads is the right number for
+   the app; one thread costs almost nothing (0.051 max pace; 0.145 real-time) and would be the choice if the tee
+   has to sit beside whisper's four.
+4. **The thermal line's letter was not fully executed** (§4's note): the streamer alone for 10 minutes, the busy
+   load for 45 s. The Tab was on AC the whole session (the warmer case). A 10-minute run beside the busy loop is
+   a 10-minute follow-up if §6's numbers leave any doubt.
+5. **`late chunks` is a queue-depth read, not a latency read.** 25-33 of 344 chunks per `jfk` arrive 10-28 ms
+   late at real-time pace because the previous burst (38-46 ms) overran the 32 ms slot; the queue never exceeds
+   one chunk (max lateness < one chunk period) and the lag columns already contain it.
+6. **The music-bed line was not run**; no bed clip was pushed. It is a 5-minute addition once a clip is chosen.
+7. **The probe's `files/` still holds the 2.25 GB of E3-E6 artefacts** plus this rung's 73 MB model and three clips;
+   nothing was removed. The `ort-nospin.cfg` (3 lines) written by the nospin arm is also there.
