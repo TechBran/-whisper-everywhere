@@ -68,6 +68,15 @@ interface RealtimeProtocol {
      *  Returns false = the finalize could not be sent (engine resolves the turn Lost, existing path). */
     fun onCommit(): Boolean
 
+    /**
+     * Client-VAD mode only: the engine resolved the current turn LOCALLY without committing it
+     * (shed by a reconnect gap / backpressure, or under its 100 ms minimum), so the server must
+     * not fold that turn's audio into the next one. Default: nothing to do (the server-driven
+     * providers never receive it — the engine enqueues no client ops in server mode). Gemini
+     * closes the open activity and swallows its final.
+     */
+    fun onDiscard(): Boolean = true
+
     /** One inbound TEXT frame → parse and dispatch to the bound sink (or ignore). */
     fun onText(text: String)
 

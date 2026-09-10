@@ -273,6 +273,16 @@ class RealtimeTransport(
         return sent
     }
 
+    /** Client-VAD mode: the engine dropped the current turn locally — see [RealtimeProtocol.onDiscard]. */
+    fun sendDiscard(): Boolean {
+        val sent = synchronized(lock) {
+            if (webSocket == null || !bootstrapped) return false
+            protocol.onDiscard()
+        }
+        drainDisconnect()
+        return sent
+    }
+
     /** Clean, idempotent close. A second call no-ops; a pending reconnect is cancelled. */
     fun close() {
         synchronized(lock) {
