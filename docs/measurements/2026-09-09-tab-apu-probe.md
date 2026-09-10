@@ -318,7 +318,9 @@ The legalizer visited every op (233 `Legalize Fully Connected`, 80 `Legalize Bat
 kept none: `whisper_large_v3_turbo_30s_i8.tflite` carries **dynamic-range int8 weights with fp32 activations**
 ("hybrid" FULLY_CONNECTED), which the v2.1.1 MediaTek plugin does not accept, whereas the f32 base/tiny graphs
 were taken whole (343/343, §1). RSS 2.4–2.6 GB, create 22.2 s (the two partition passes + reserialization),
-cold 4,794 ms = the CPU's number (§4). **Turbo cannot reach the APU in its published `.tflite` form; an f32 (or
+cold 4,794 ms = the CPU's number (§4); warm n=20 mean 6,523 ms (median 6,670, min 5,131, max 7,030) with the
+thermal status climbing 2 → 3 (SEVERE) at battery 27.4 C — the sustained-CPU figure of §4.1 again, from a
+process that asked for the NPU. **Turbo cannot reach the APU in its published `.tflite` form; an f32 (or
 a NeuroPilot-quantized) export is the precondition for any APU turbo number, on top of everything in §6.**
 
 ## 5. E3 — LiteRT-LM on `Backend.NPU(nativeLibraryDir)`
