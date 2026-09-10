@@ -410,6 +410,25 @@ class GeminiRealtimeProtocolTest {
         assertEquals("nothing resolved the discarded turn", 1, sink.completed.size)
     }
 
+    @Test fun a_discarded_activitys_interims_never_reach_the_preview_strip() {
+        // Review N2: after a reconnect-gap shed the mirror rescues the whole turn and the bubble
+        // types it; the server keeps sending interims for the activity that DID reach it, and every
+        // one of them previewed words the user already had until the next activity replaced them.
+        val p = ready(protocol())
+        p.onAppend(ByteArray(64))
+        assertTrue(p.onDiscard())
+        p.onText(INTERIM_1); p.onText(INTERIM_2)
+        assertTrue("no preview for a turn the engine already rescued locally", sink.deltas.isEmpty())
+        p.onText(FINAL_1); p.onText(VA_END) // its final is swallowed, its ack pops it
+        assertEquals(0, sink.dispatchCount)
+
+        // The next activity previews normally — the skip is not a latch, and the same first interim
+        // is not deduped away (the discarded activity never armed lastPreview).
+        p.onAppend(ByteArray(64) { 5 })
+        p.onText(INTERIM_1)
+        assertEquals(listOf("" to "And so"), sink.deltas)
+    }
+
     @Test fun discard_with_nothing_open_sends_nothing() {
         val p = ready(protocol())
         assertTrue(p.onDiscard())

@@ -297,7 +297,8 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
     /**
      * The engine resolved the turn LOCALLY without committing it (shed by a reconnect gap or
      * backpressure, or under the 100 ms minimum). Its audio must not fold into the next final: a
-     * queued turn is dropped unsent, an open activity is closed and its final swallowed. Without
+     * queued turn is dropped unsent, an open activity is closed and its final swallowed — and its
+     * INTERIMS never reach the preview strip either (the mirror already typed those words). Without
      * this every rotation would duplicate the shed turn's tail into the next Gemini sentence.
      */
     override fun onDiscard(): Boolean {
@@ -335,8 +336,14 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
                 is GeminiLiveEvents.In.Interim -> {
                     // Transcription in flight proves an activity was taken — the OPEN one only when no
                     // closed activity is still owed its final (the server answers in activity order).
-                    if (pending.none { !it.finalSeen }) startAckPending = false
-                    if (e.text != lastPreview) { lastPreview = e.text; delta = e.text }
+                    val owed = pending.firstOrNull { !it.finalSeen }
+                    if (owed == null) startAckPending = false
+                    // These words belong to the activity whose final is still owed. If the engine
+                    // DISCARDED that activity it already rescued the turn from the mirror and typed
+                    // it, so previewing the server's version of the same words would flicker text the
+                    // bubble already owns until the next activity's interim replaced it. Skip them —
+                    // and leave [lastPreview] alone, so the next activity's first interim still shows.
+                    if (owed?.discard != true && e.text != lastPreview) { lastPreview = e.text; delta = e.text }
                 }
                 is GeminiLiveEvents.In.Final -> {
                     lastPreview = ""
