@@ -29,6 +29,7 @@ import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.WhisperAccessibilityService
+import com.whispereverywhere.tts.VoiceInstallRoute
 import com.whispereverywhere.tts.cloud.CloudVoice
 import com.whispereverywhere.tts.cloud.GeminiTtsVoices
 import com.whispereverywhere.tts.cloud.OpenAiTtsVoices
@@ -155,9 +156,79 @@ fun SettingsScreen(
     // Read aloud (Track F)
     val ttsScope = rememberCoroutineScope()
     var ttsRefreshKey by remember { mutableStateOf(0) }
-    val ttsManager = remember { com.whispereverywhere.tts.TtsModelManager(context) }
+    // (4.4.0, Task 2b) The APPLICATION's manager, not a per-composition one: its Play-refusal
+    // latch has to outlive this screen, and TtsPackController reads the same instance.
+    val ttsManager = app.ttsModelManager
     val ttsInstalled = remember(ttsRefreshKey) { ttsManager.isInstalled() }
     var ttsDownloadStatus by remember { mutableStateOf<String?>(null) }
+    // The voice's Play fetch: state() answers from the delivered pack first, and the row's ONE
+    // action routes on it (TtsModelManager.installRoute). The fetch's own progress/refusal line
+    // is the shell's StateFlow, so a fetch that outlives this screen is still narrated on return.
+    val voiceFetch by com.whispereverywhere.tts.TtsPackController.state.collectAsState()
+    val voiceFetchLine = com.whispereverywhere.tts.TtsModelManager.fetchLine(voiceFetch)
+    val voiceRoute = remember(ttsRefreshKey, voiceFetch) {
+        com.whispereverywhere.tts.TtsModelManager.installRoute(ttsManager.state())
+    }
+    // A landed pack install has to re-read isInstalled(): the row is keyed on ttsRefreshKey.
+    LaunchedEffect(voiceFetch) {
+        if (voiceFetch is com.whispereverywhere.npu.NpuPackFetch.FetchState.Installed) {
+            ttsRefreshKey++
+        }
+    }
+    // THE ROW'S ONE ACTION, spelled once and shared by the offer row and the in-flight row's
+    // retry. It has to be shared: after a Play refusal the fallback latch has already moved
+    // voiceRoute to Download, so a "Retry" that always re-asked Play would keep failing under a
+    // sentence promising the direct download instead. The SOURCE decision is installRoute's
+    // (pure, total over StreamingPackState); these are only the four actuators.
+    val startVoiceInstall: () -> Unit = {
+        when (voiceRoute) {
+            VoiceInstallRoute.None -> Unit
+            VoiceInstallRoute.Fetch -> {
+                com.whispereverywhere.tts.TtsPackController.start(context)
+            }
+            VoiceInstallRoute.FromPack -> {
+                ttsDownloadStatus = "Verifying and unpacking…"
+                ttsScope.launch {
+                    runCatching {
+                        ttsManager.installFromPack(
+                            onProgress = { _, _ -> },
+                            onExtracting = { ttsDownloadStatus = "Verifying and unpacking…" },
+                        )
+                    }.onFailure {
+                        android.widget.Toast.makeText(
+                            context,
+                            it.message ?: "Voice install failed",
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    ttsDownloadStatus = null
+                    ttsRefreshKey++
+                }
+            }
+            VoiceInstallRoute.Download -> {
+                ttsDownloadStatus = "Starting…"
+                ttsScope.launch {
+                    runCatching {
+                        ttsManager.download(
+                            onProgress = { soFar, total ->
+                                ttsDownloadStatus =
+                                    "${soFar / 1_000_000} / ${total / 1_000_000} MB"
+                            },
+                            onExtracting = { ttsDownloadStatus = "Verifying and unpacking…" },
+                        )
+                    }.onFailure {
+                        android.widget.Toast.makeText(
+                            context,
+                            it.message ?: "Voice download failed",
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    ttsDownloadStatus = null
+                    ttsRefreshKey++
+                }
+            }
+        }
+    }
     var ttsSpeedState by remember { mutableStateOf(app.preferencesManager.ttsSpeed) }
     var showDeleteVoiceDialog by remember { mutableStateOf(false) }
     var showReadAloudGuide by remember { mutableStateOf(false) }
@@ -498,36 +569,36 @@ fun SettingsScreen(
                             subtitle = ttsDownloadStatus ?: "",
                         )
                     }
+                    // (4.4.0, Task 2b) A Play fetch in flight — or the refusal it ended in, in
+                    // this feature's own words. Tapping retries THROUGH THE ROUTE, so a refusal
+                    // that promised the direct download delivers it; a NeedsConfirmation tap
+                    // re-shows PLAY'S own dialog, never a re-ask of ours.
+                    voiceFetchLine != null -> {
+                        SettingsItem(
+                            icon = Icons.Filled.CloudDownload,
+                            title = "Read-aloud voice",
+                            subtitle = voiceFetchLine,
+                            onClick = {
+                                val activity = context as? android.app.Activity
+                                if (voiceFetch is
+                                        com.whispereverywhere.npu.NpuPackFetch.FetchState.NeedsConfirmation &&
+                                    activity != null
+                                ) {
+                                    com.whispereverywhere.tts.TtsPackController.confirm(activity)
+                                } else {
+                                    startVoiceInstall()
+                                }
+                            },
+                        )
+                    }
                     else -> {
                         SettingsItem(
                             icon = Icons.Filled.CloudDownload,
-                            title = "Download the read-aloud voice",
-                            subtitle = "Kokoro (365 MB download): speaks highlighted text " +
-                                "aloud, entirely on-device",
-                            onClick = {
-                                ttsDownloadStatus = "Starting…"
-                                ttsScope.launch {
-                                    runCatching {
-                                        ttsManager.download(
-                                            onProgress = { soFar, total ->
-                                                ttsDownloadStatus =
-                                                    "${soFar / 1_000_000} / ${total / 1_000_000} MB"
-                                            },
-                                            onExtracting = {
-                                                ttsDownloadStatus = "Verifying and unpacking…"
-                                            },
-                                        )
-                                    }.onFailure {
-                                        android.widget.Toast.makeText(
-                                            context,
-                                            it.message ?: "Voice download failed",
-                                            android.widget.Toast.LENGTH_LONG,
-                                        ).show()
-                                    }
-                                    ttsDownloadStatus = null
-                                    ttsRefreshKey++
-                                }
-                            },
+                            title = com.whispereverywhere.tts.TtsModelManager
+                                .installRowTitle(voiceRoute),
+                            subtitle = com.whispereverywhere.tts.TtsModelManager
+                                .installRowSubtitle(voiceRoute),
+                            onClick = { startVoiceInstall() },
                         )
                     }
                 }

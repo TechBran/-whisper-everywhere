@@ -1,11 +1,15 @@
 package com.whispereverywhere.tts
 
+import com.whispereverywhere.npu.NpuPackFetch
+import com.whispereverywhere.transcription.stream.StreamingPackCatalog
+import com.whispereverywhere.transcription.stream.StreamingPackInstall
 import com.whispereverywhere.transcription.stream.StreamingPackState
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -179,6 +183,184 @@ class TtsModelManagerTest {
             "and an installed voice has nothing to install",
             VoiceInstallRoute.None,
             TtsModelManager.installRoute(StreamingPackState.Installed),
+        )
+    }
+
+    // ------------------------------------------------------------------ the voice's own copy
+    // `NpuPackFetch.FetchState.Failed.reason` is rendered VERBATIM by a card (its own KDoc says
+    // so, and both NPU surfaces do it), so publishing that table's words on the read-aloud row
+    // would tell users to tap 'Import model pair…' — the NPU chooser's SAF importer for whisper
+    // GGML pairs, which is not on this row and could not read a Kokoro archive. The CLASSIFIER
+    // stays that family's own (playRefusedThisInstall); only the words are ours.
+
+    /** Every error code this build declares, plus one it has never heard of. */
+    private val everyPlayErrorCode: List<Int> = listOf(
+        NpuPackFetch.ERROR_NO_ERROR,
+        NpuPackFetch.ERROR_APP_UNAVAILABLE,
+        NpuPackFetch.ERROR_PACK_UNAVAILABLE,
+        NpuPackFetch.ERROR_INVALID_REQUEST,
+        NpuPackFetch.ERROR_DOWNLOAD_NOT_FOUND,
+        NpuPackFetch.ERROR_API_NOT_AVAILABLE,
+        NpuPackFetch.ERROR_NETWORK_ERROR,
+        NpuPackFetch.ERROR_ACCESS_DENIED,
+        NpuPackFetch.ERROR_INSUFFICIENT_STORAGE,
+        NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND,
+        NpuPackFetch.ERROR_APP_NOT_OWNED,
+        NpuPackFetch.ERROR_CONFIRMATION_NOT_REQUIRED,
+        NpuPackFetch.ERROR_UNRECOGNIZED_INSTALLATION,
+        NpuPackFetch.ERROR_INTERNAL_ERROR,
+        -12_345,
+    )
+
+    @Test
+    fun noPlayRefusalTheVoiceRowCanShowNamesAControlItDoesNotHave() {
+        for (code in everyPlayErrorCode) {
+            val text = TtsModelManager.packRefusal(code)
+            assertFalse(
+                "code $code must not name the NPU chooser's importer: $text",
+                text.contains("Import model pair"),
+            )
+            assertFalse(
+                "code $code must not call a voice archive a 'model pair': $text",
+                text.contains("model pair"),
+            )
+            assertFalse(
+                "and must not borrow the previewer's noun either: $text",
+                text.contains("preview model"),
+            )
+            assertTrue("code $code must say something", text.isNotBlank())
+            assertTrue("code $code must end its sentence: $text", text.endsWith("."))
+        }
+        // The six the NPU table gets wrong for this feature are the six that must DIFFER.
+        for (code in listOf(
+            NpuPackFetch.ERROR_API_NOT_AVAILABLE,
+            NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND,
+            NpuPackFetch.ERROR_APP_NOT_OWNED,
+            NpuPackFetch.ERROR_UNRECOGNIZED_INSTALLATION,
+            NpuPackFetch.ERROR_APP_UNAVAILABLE,
+            NpuPackFetch.ERROR_PACK_UNAVAILABLE,
+        )) {
+            assertNotEquals(
+                "code $code is one of the six whose NPU sentence names the chooser's importer",
+                NpuPackFetch.failureReason(code),
+                TtsModelManager.packRefusal(code),
+            )
+        }
+    }
+
+    @Test
+    fun theVoicePromisesTheDirectDownloadExactlyWhereTheLatchFlips() {
+        // THE invariant that makes the sideload sentence honest rather than hopeful: the only
+        // codes whose copy says "downloaded directly" are the codes playRefusedThisInstall
+        // latches on — the ones after which state() really does offer the GitHub download.
+        // Promise it anywhere else and the card names a route the row will not offer; withhold it
+        // on the sideload family and the release sideloader reads a dead end.
+        for (code in everyPlayErrorCode) {
+            val latches = StreamingPackInstall.playRefusedThisInstall(
+                NpuPackFetch.failureReason(code)
+            )
+            val promises = TtsModelManager.packRefusal(code).contains("downloaded directly")
+            assertEquals("code $code: the sentence and the fallback latch must agree", latches, promises)
+        }
+    }
+
+    @Test
+    fun theStorageRefusalNamesPlaysRealSizeAndInventsNoNumber() {
+        val named = TtsModelManager.packRefusal(
+            NpuPackFetch.ERROR_INSUFFICIENT_STORAGE,
+            TtsModelManager.TAR_BYTES,
+        )
+        assertTrue(
+            "Play told us the size, so the refusal spends it — in the house badge, not raw bytes",
+            named.contains(StreamingPackCatalog.sizeBadge(TtsModelManager.TAR_BYTES)),
+        )
+        val unnamed = TtsModelManager.packRefusal(NpuPackFetch.ERROR_INSUFFICIENT_STORAGE)
+        assertFalse("Play never said, so no number is invented: $unnamed", unnamed.contains("MB"))
+    }
+
+    @Test
+    fun aFailurePlayGaveNoErrorCodeForIsNamedByItsStatusNumber() {
+        // `advance` maps THREE things to Failed: the FAILED status (which carries a code), the
+        // UNKNOWN status, and any status the library adds later. The last two carry no code at
+        // all, so naming them by whatever errorCode() returned beside them would be a guess
+        // dressed as a fact.
+        assertEquals(
+            TtsModelManager.packRefusal(NpuPackFetch.ERROR_NETWORK_ERROR, 10L),
+            TtsModelManager.deliveryRefusal(NpuPackFetch.STATUS_FAILED, NpuPackFetch.ERROR_NETWORK_ERROR, 10L),
+        )
+        val unknown = TtsModelManager.deliveryRefusal(NpuPackFetch.STATUS_UNKNOWN, 0, 0L)
+        assertTrue("the status NUMBER is named: $unknown", unknown.contains("(0)"))
+        assertFalse(
+            "and it is NOT told as 'a failure without naming a reason', which is code 0's line",
+            unknown == TtsModelManager.packRefusal(NpuPackFetch.ERROR_NO_ERROR),
+        )
+    }
+
+    @Test
+    fun theInstallRowNamesTheSourceItWillActuallyUse() {
+        val fetch = TtsModelManager.installRowSubtitle(VoiceInstallRoute.Fetch)
+        assertTrue("the Play route says where the bytes come from: $fetch", fetch.contains("Google Play"))
+        assertFalse(
+            "and must not promise a download from anywhere else — on a Play install there is " +
+                "no third-party transfer at all, which is the whole point of Task 2b: $fetch",
+            fetch.contains("download"),
+        )
+        assertTrue(
+            "the badge is the archive's real size (the row said 365 MB for a 350 MB archive " +
+                "before this task), and it comes from the one house formatter",
+            fetch.contains(StreamingPackCatalog.sizeBadge(TtsModelManager.TAR_BYTES)),
+        )
+        val download = TtsModelManager.installRowSubtitle(VoiceInstallRoute.Download)
+        assertTrue("the fallback route is honest about being a download: $download", download.contains("download"))
+        val fromPack = TtsModelManager.installRowSubtitle(VoiceInstallRoute.FromPack)
+        assertFalse("delivered bytes are not downloaded again: $fromPack", fromPack.contains("download"))
+        // Total, and no two routes read the same — a row that cannot tell the user which of the
+        // four things is about to happen is a row that will surprise them.
+        val titles = VoiceInstallRoute.entries.map { TtsModelManager.installRowTitle(it) }
+        assertEquals(VoiceInstallRoute.entries.size, titles.distinct().size)
+        for (t in titles) assertTrue("every route has a title", t.isNotBlank())
+        for (r in VoiceInstallRoute.entries) {
+            assertTrue("every route has a subtitle", TtsModelManager.installRowSubtitle(r).isNotBlank())
+        }
+    }
+
+    @Test
+    fun theRowsFetchLineIsTotalOverTheFetchMachineAndSilentOnlyAtRest() {
+        val silent = listOf(
+            NpuPackFetch.FetchState.Idle,
+            NpuPackFetch.FetchState.Installed,
+            NpuPackFetch.FetchState.Cancelled,
+        )
+        for (state in silent) {
+            assertEquals(
+                "at rest the row goes back to its own offer — a stale 'fetching…' line under an " +
+                    "installed voice is a lie the user cannot dismiss",
+                null,
+                TtsModelManager.fetchLine(state),
+            )
+        }
+        val speaking = listOf(
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.FetchState.Downloading(1_000_000L, 349_906_910L),
+            NpuPackFetch.FetchState.Downloading(0L, 0L),
+            NpuPackFetch.FetchState.Transferring,
+            NpuPackFetch.FetchState.Verifying(0L, 0L),
+            NpuPackFetch.FetchState.NeedsConfirmation,
+            NpuPackFetch.FetchState.Failed("the card's own words."),
+        )
+        for (state in speaking) {
+            val line = TtsModelManager.fetchLine(state)
+            assertTrue("$state must narrate itself", !line.isNullOrBlank())
+        }
+        assertEquals(
+            "a Failed shows the refusal VERBATIM — the shell has already re-told it in this " +
+                "feature's words, so re-wording it here would be a second copy of the copy",
+            "the card's own words.",
+            TtsModelManager.fetchLine(NpuPackFetch.FetchState.Failed("the card's own words.")),
+        )
+        assertFalse(
+            "and an unknown total invents no denominator",
+            TtsModelManager.fetchLine(NpuPackFetch.FetchState.Downloading(0L, 0L))!!.contains("of 0"),
         )
     }
 

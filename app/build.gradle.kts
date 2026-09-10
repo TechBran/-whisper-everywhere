@@ -460,6 +460,12 @@ tasks.withType<Test>().configureEach {
         // those mutations are comment-shaped, so without this entry the one edit each pin exists
         // to catch is the one that never re-runs it.
         "src/main/java/com/whispereverywhere/tts/TtsModelManager.kt",
+        // (4.4.0, Task 2b) And the voice's FETCH SHELL, by the comment-only rule: every
+        // TtsPackShellPinTest assertion over it is an ORDER or ZERO-count claim (register before
+        // fetch, the re-told refusal is the one published, no removePack, no borrowed NpuPackFetch
+        // sentence, both latch sites present) and several of those mutations produce
+        // byte-identical .class files.
+        "src/main/java/com/whispereverywhere/tts/TtsPackController.kt",
         // (4.0 Q9 fix round, I1) BatchTranscriber.kt joins for the NARROW reason, the same one
         // NpuWhisperBackend.kt is here for: BatchLocalModelTest's wiring pin includes NEGATIVE
         // assertions over the whole file INCLUDING comments (`installedModelPath()` must not be read

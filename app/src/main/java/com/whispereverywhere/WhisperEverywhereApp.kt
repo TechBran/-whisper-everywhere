@@ -47,6 +47,17 @@ class WhisperEverywhereApp : Application() {
     }
 
     /**
+     * 4.4.0 (Task 2b): the read-aloud voice's manager, PROCESS-scoped for two reasons Settings
+     * cannot provide with a `remember { }` — the Play-refusal latch that moves the row from "ask
+     * Play" to "download directly" must outlive the Compose tree, and [TtsPackController] has to
+     * read the SAME instance the row reads or a refusal Play named would never reach the offer.
+     * Lazy for [whisperModelManager]'s reason: created on first use, not at process start.
+     */
+    val ttsModelManager: com.whispereverywhere.tts.TtsModelManager by lazy {
+        com.whispereverywhere.tts.TtsModelManager(this)
+    }
+
+    /**
      * Whether this device's HARDWARE can run the 4.0 `npu` tier: the SoC gate, then the QNN probe.
      *
      * **`by lazy` because the probe dlopens `libQnnSystem.so` and `libQnnHtp.so`** — a real load

@@ -10,6 +10,7 @@ import androidx.core.net.toUri
 import com.whispereverywhere.BuildConfig
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.play.PlayPacks
+import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackInstall
 import com.whispereverywhere.transcription.stream.StreamingPackState
 import kotlinx.coroutines.Dispatchers
@@ -178,12 +179,13 @@ class TtsModelManager(private val context: Context) {
                     "${extractRequiredBytes() / 1_000_000} MB free."
             )
         }
-        onProgress(tar.length(), tar.length())
+        onProgress(0L, tar.length())
         onExtracting()
         // ownsSource = false: those bytes are Play's until the give-back below, so the installer's
         // own sweep must not touch them — least of all on a failed verify, which would turn a free
         // retry into a 350 MB re-fetch.
         verifyExtractInstall(tar, ownsSource = false)
+        onProgress(tar.length(), tar.length())
         PlayPacks.remove(context, PACK_NAME)
     }
 
@@ -462,6 +464,167 @@ class TtsModelManager(private val context: Context) {
             StreamingPackState.PackFetchable -> VoiceInstallRoute.Fetch
             StreamingPackState.Downloadable -> VoiceInstallRoute.Download
             is StreamingPackState.Repair -> installRoute(state.via)
+        }
+
+        /**
+         * The install row's title for each route — so the row NAMES THE SOURCE IT WILL ACTUALLY
+         * USE. Before Task 2b every build read "Download the read-aloud voice"; on a Play install
+         * that is now false (the archive is fetched from Play, not pulled from a third party) and
+         * it was already stale (the archive is 350 MB, the row said 365).
+         *
+         * TODO(Task 6): the amendment gives Task 6 this row's final wording ("the voice row
+         * likewise" — the previewer's row says "included with the app" on Play builds). These two
+         * functions are where that edit lands; they are pure and route-keyed so it is one table.
+         */
+        fun installRowTitle(route: VoiceInstallRoute): String = when (route) {
+            VoiceInstallRoute.None -> "Kokoro voice — installed"
+            VoiceInstallRoute.FromPack -> "Install the read-aloud voice"
+            VoiceInstallRoute.Fetch -> "Get the read-aloud voice"
+            VoiceInstallRoute.Download -> "Download the read-aloud voice"
+        }
+
+        /** The install row's subtitle for each route; see [installRowTitle]. */
+        fun installRowSubtitle(route: VoiceInstallRoute): String = when (route) {
+            VoiceInstallRoute.None ->
+                "Speaks highlighted or copied text aloud, fully on-device."
+            VoiceInstallRoute.FromPack ->
+                "Kokoro, already on this device: speaks highlighted text aloud, entirely " +
+                    "on-device"
+            VoiceInstallRoute.Fetch ->
+                "Kokoro (${StreamingPackCatalog.sizeBadge(TAR_BYTES)} from Google Play): speaks " +
+                    "highlighted text aloud, entirely on-device"
+            VoiceInstallRoute.Download ->
+                "Kokoro (${StreamingPackCatalog.sizeBadge(TAR_BYTES)} download): speaks " +
+                    "highlighted text aloud, entirely on-device"
+        }
+
+        /**
+         * The ONE voice sentence that promises anything, and it is promised exactly where
+         * [StreamingPackInstall.playRefusedThisInstall] latches: by the time a row renders this,
+         * `playCanDeliver()` has gone false and [state] has already moved to
+         * [StreamingPackState.Downloadable], so the retry really does come from the GitHub
+         * release. Held to that by
+         * `TtsModelManagerTest.theVoicePromisesTheDirectDownloadExactlyWhereTheLatchFlips`.
+         */
+        private const val SIDELOAD_ANSWER: String =
+            "Google Play can't deliver the read-aloud voice to this install — it wasn't " +
+                "installed from Play. Retry: the voice is downloaded directly instead."
+
+        /**
+         * THE VOICE'S OWN REFUSAL COPY — the words the read-aloud row shows when Play will not
+         * deliver the pack — keyed by Play's error CODE and total over Int,
+         * `NpuPackFetch.failureReason`'s shape with this feature's affordances.
+         *
+         * Why it exists when that table already answers the same question: the table is the NPU
+         * MODEL CHOOSER's copy, and `NpuPackFetch.FetchState.Failed`'s own contract is *"[reason]
+         * is user-facing copy, rendered verbatim by the card"* — which is how both NPU surfaces
+         * treat it. Six of its codes name a control this row does not have: the four sideload
+         * codes render one sentence ending *"Use 'Import model pair…' below instead"*,
+         * APP_UNAVAILABLE and PACK_UNAVAILABLE append the same phrase, and INSUFFICIENT_STORAGE
+         * offers to fetch *"the model pair"* for a voice archive. Rendering any of them here would
+         * point a user at the whisper model chooser's SAF importer, which cannot read this file.
+         *
+         * The seam is narrow on purpose: the CLASSIFIER is still that family's own
+         * ([notePlayFailure]), so the two features cannot disagree about which failures are the
+         * install's own fault. Only the WORDS are ours.
+         *
+         * TODO(Task 6): the amendment gives Task 6 the voice row's copy ("the voice row
+         * likewise"). These sentences, [fetchLine]'s, and the four `TtsDownloadException`
+         * messages in [installFromPack]/[download] want the same sweep — they live here until
+         * then because a pure, JVM-executed home beats a `Failed` carrying the other feature's
+         * copy, so the move is a relocation and not a re-decision.
+         *
+         * @param downloadBytes Play's own `totalBytesToDownload`, used by the storage refusal to
+         *        name a real number — 0 when Play never said, in which case none is invented.
+         */
+        fun packRefusal(errorCode: Int, downloadBytes: Long = 0L): String = when (errorCode) {
+            NpuPackFetch.ERROR_NO_ERROR ->
+                "Google Play reported a failure without naming a reason. Retry the download."
+            NpuPackFetch.ERROR_APP_UNAVAILABLE ->
+                "Google Play says this app is currently unavailable, so it can't deliver the " +
+                    "read-aloud voice right now. Try again later."
+            NpuPackFetch.ERROR_PACK_UNAVAILABLE ->
+                "This version of the app doesn't offer the read-aloud voice on Google Play. " +
+                    "Update the app from Play, then retry."
+            NpuPackFetch.ERROR_INVALID_REQUEST ->
+                "Google Play rejected the download request as invalid. Restart the app and retry."
+            NpuPackFetch.ERROR_DOWNLOAD_NOT_FOUND ->
+                "Google Play lost track of this download. Retry it."
+            NpuPackFetch.ERROR_NETWORK_ERROR ->
+                "The download couldn't reach Google Play. Check your connection and retry."
+            NpuPackFetch.ERROR_ACCESS_DENIED ->
+                "Google Play refused this app access to the download. Check that the Play Store " +
+                    "is signed in, then retry."
+            NpuPackFetch.ERROR_INSUFFICIENT_STORAGE ->
+                if (downloadBytes > 0L) {
+                    "Not enough free storage to download the read-aloud voice: it needs about " +
+                        "${StreamingPackCatalog.sizeBadge(downloadBytes)}. Free some space and retry."
+                } else {
+                    "Not enough free storage to download the read-aloud voice. Free some space " +
+                        "and retry."
+                }
+            NpuPackFetch.ERROR_CONFIRMATION_NOT_REQUIRED ->
+                "Google Play answered that no confirmation was needed. Retry the download."
+            // The sideload family — the one path the amendment keeps the direct download alive
+            // for, so it is the first refusal a release sideload reads.
+            NpuPackFetch.ERROR_API_NOT_AVAILABLE,
+            NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND,
+            NpuPackFetch.ERROR_APP_NOT_OWNED,
+            NpuPackFetch.ERROR_UNRECOGNIZED_INSTALLATION,
+            -> SIDELOAD_ANSWER
+            NpuPackFetch.ERROR_INTERNAL_ERROR ->
+                "Google Play hit an internal error while delivering the read-aloud voice. Retry " +
+                    "the download."
+            else ->
+                "Google Play reported error $errorCode while delivering the read-aloud voice."
+        }
+
+        /**
+         * [packRefusal] for a whole `AssetPackState` reading, so the shell has one call to make.
+         *
+         * `NpuPackFetch.advance` produces `Failed` from three places: Play's FAILED status, which
+         * carries an error code; the UNKNOWN status; and any status the library adds later. The
+         * last two carry no code at all, so they are named by their NUMBER here rather than
+         * mis-attributed to whatever `errorCode()` happened to return beside them (0 reads "a
+         * failure without naming a reason", which would be a guess dressed as a fact).
+         */
+        fun deliveryRefusal(status: Int, errorCode: Int, downloadBytes: Long): String =
+            if (status == NpuPackFetch.STATUS_FAILED) {
+                packRefusal(errorCode, downloadBytes)
+            } else {
+                "Google Play stopped the read-aloud voice download at an unexpected status " +
+                    "($status). Retry the download."
+            }
+
+        /**
+         * What the voice row says while a fetch is in Play's hands or ours — total over
+         * `NpuPackFetch.FetchState`, and null for exactly the three states at rest, where the row
+         * goes back to its own offer (a stale "fetching…" under an installed voice is a lie the
+         * user cannot dismiss).
+         *
+         * A `Failed` is shown VERBATIM: the shell has already re-told it in this feature's words
+         * through [deliveryRefusal] / [packRefusal], so re-wording it here would be a second copy
+         * of the copy.
+         */
+        fun fetchLine(state: NpuPackFetch.FetchState): String? = when (state) {
+            is NpuPackFetch.FetchState.Idle,
+            is NpuPackFetch.FetchState.Installed,
+            is NpuPackFetch.FetchState.Cancelled,
+            -> null
+            is NpuPackFetch.FetchState.Pending -> "Asking Google Play for the voice…"
+            is NpuPackFetch.FetchState.Downloading ->
+                if (state.total > 0L) {
+                    "Fetching the voice: ${state.soFar / 1_000_000} of " +
+                        "${state.total / 1_000_000} MB"
+                } else {
+                    "Fetching the voice…"
+                }
+            is NpuPackFetch.FetchState.Transferring ->
+                "Google Play is moving the voice into place…"
+            is NpuPackFetch.FetchState.Verifying -> "Verifying and unpacking…"
+            is NpuPackFetch.FetchState.NeedsConfirmation ->
+                "Google Play needs your confirmation to download the voice — tap to answer."
+            is NpuPackFetch.FetchState.Failed -> state.reason
         }
 
         /** ±5% band, same policy as the whisper downloads. */
