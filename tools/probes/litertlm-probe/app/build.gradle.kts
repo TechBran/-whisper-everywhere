@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -39,7 +40,13 @@ android {
         // DispatchLibraryDir / CompilerPluginLibraryDir) and LiteRT-LM (Backend.NPU(nativeLibraryDir))
         // dlopen the vendor dispatch library BY PATH from that directory, which only works when the
         // libraries are really on disk there (not left compressed/aligned inside the APK).
-        jniLibs { useLegacyPackaging = true }
+        jniLibs {
+            useLegacyPackaging = true
+            // sherpa-onnx AAR dead weight, excluded exactly as the main app excludes it (app/build.gradle.kts:167-172):
+            // the Kotlin API needs libsherpa-onnx-jni.so + libonnxruntime.so only.
+            excludes += "**/libsherpa-onnx-c-api.so"
+            excludes += "**/libsherpa-onnx-cxx-api.so"
+        }
     }
 
     sourceSets {
@@ -60,6 +67,40 @@ kotlin {
 // builds the newer runtime (GPU/CPU only on this device: its libLiteRt.so cannot load the v2.1.1 MediaTek plugin).
 val litertVersion: String = (project.findProperty("litertVersion") as String?) ?: "2.1.1"
 
+// sherpa-onnx AAR for `mode=sherpa` (rung 3 of the streaming-local-tier plan). Default 1.13.7 = the artefact the
+// main app ships since 4.3.4 (ORT 1.27.1 inside — the KleidiAI ConvolveSme fix, k2-fsa/sherpa-onnx#3845/#3791);
+// `-PsherpaVersion=1.13.4` builds the comparison arm on the previously shipped AAR (ORT 1.27.0). *.aar is
+// gitignored repo-wide, so the file is taken from the main checkout's app/libs when it is there (the main build
+// fetched and verified it), else fetched from the GitHub release — and sha256-verified either way, every build.
+val sherpaVersion: String = (project.findProperty("sherpaVersion") as String?) ?: "1.13.7"
+val sherpaSha256 = mapOf(
+    // computed 2026-09-10 on the upstream release assets (49,113,869 B and 48,847,529 B as published)
+    "1.13.7" to "c4ef49e309f24fcee5c106b8a279481aaecaabb078cd37b2cd6e9a62cc8a73c8",
+    "1.13.4" to "03f9c4df965f21c71269365a7951a7f23b5696fddd093fa318c80d65550ab780",
+)
+val sherpaAar = file("libs/sherpa-onnx-${sherpaVersion}.aar")
+val fetchSherpaAar = tasks.register("fetchSherpaAar") {
+    outputs.file(sherpaAar)
+    doLast {
+        val expected = sherpaSha256[sherpaVersion] ?: error("no pinned sha256 for sherpa-onnx $sherpaVersion")
+        if (!sherpaAar.exists()) {
+            sherpaAar.parentFile.mkdirs()
+            val mainCopy = rootProject.file("../../../app/libs/sherpa-onnx-${sherpaVersion}.aar")
+            if (mainCopy.exists()) {
+                mainCopy.copyTo(sherpaAar, overwrite = true)
+            } else {
+                uri("https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaVersion}/sherpa-onnx-${sherpaVersion}.aar")
+                    .toURL().openStream().use { input -> sherpaAar.outputStream().use { out -> input.copyTo(out) } }
+            }
+        }
+        val digest = MessageDigest.getInstance("SHA-256").digest(sherpaAar.readBytes())
+            .joinToString("") { b: Byte -> "%02x".format(b) }
+        check(digest == expected) { "sherpa-onnx-${sherpaVersion}.aar sha256 mismatch ($digest) — delete app/libs and re-run" }
+        println("sherpa-onnx-${sherpaVersion}.aar ${sherpaAar.length()} B sha256 $digest OK")
+    }
+}
+tasks.named("preBuild") { dependsOn(fetchSherpaAar) }
+
 dependencies {
     // LiteRT (CompiledModel / Accelerator.{CPU,GPU,NPU}). 2.2.0 is the latest on Google Maven
     // (maven-metadata lastUpdated 2026-08-13); its AAR ships libLiteRt.so + libLiteRtClGlAccelerator.so
@@ -76,4 +117,6 @@ dependencies {
     // (maven-metadata lastUpdated 2026-09-04).
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    // sherpa-onnx (OnlineRecognizer for mode=sherpa; see fetchSherpaAar above). arm64-v8a only, like the app.
+    implementation(files("libs/sherpa-onnx-${sherpaVersion}.aar"))
 }

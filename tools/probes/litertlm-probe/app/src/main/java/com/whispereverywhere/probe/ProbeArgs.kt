@@ -32,6 +32,14 @@ import android.content.Intent
  *   --ez dumpstates e2e: write utterance 0's encoder states (f32 LE) to files/results/<tag>.states.bin for the PC
  *   --ei decbench  e2e: after utterance 0, enqueue N decode runs with the same inputs and read ONCE -- separates
  *                  the accelerator's per-step compute from the 26 MB logits readback the Kotlin API forces (default 0)
+ *   --es clips     sherpa: comma list of files/<name>.wav (PCM16 mono 16 kHz); `model` is the DIRECTORY holding the
+ *                  four streaming-zipformer-en-2023-06-26 files
+ *   --es pace      sherpa: realtime (sleep each 32 ms chunk to the clip's clock) | max (compute-only RTF) (default realtime)
+ *   --ei padms     sherpa: zeros appended before inputFinished (default 500 — rung 1's measured floor; 800 is the other arm)
+ *   --ei loops     sherpa: rounds over the clip list (default 1)
+ *   --ei duration  sherpa: loop the clip list for this many seconds instead of `loops` (the 10-minute thermal run)
+ *   --ei load      sherpa: busy-loop threads spun for the whole run, the stand-in for whisper multi's 4 (default 0)
+ *   --es provider  sherpa: cpu | nnapi | nospin (= cpu:<cfg> with ORT thread spinning off; forwarded on >= 1.13.5 only)
  */
 data class ProbeArgs(
     val mode: String?,
@@ -60,6 +68,13 @@ data class ProbeArgs(
     val decAccel: String,
     val dumpStates: Boolean,
     val decBench: Int,
+    val clips: String?,
+    val pace: String,
+    val padMs: Int,
+    val loops: Int,
+    val duration: Int,
+    val load: Int,
+    val provider: String,
 ) {
     companion object {
         fun from(intent: Intent?): ProbeArgs = ProbeArgs(
@@ -89,6 +104,13 @@ data class ProbeArgs(
             decAccel = intent?.getStringExtra("decaccel") ?: "same",
             dumpStates = intent?.getBooleanExtra("dumpstates", false) ?: false,
             decBench = intent?.getIntExtra("decbench", 0) ?: 0,
+            clips = intent?.getStringExtra("clips"),
+            pace = intent?.getStringExtra("pace") ?: "realtime",
+            padMs = intent?.getIntExtra("padms", 500) ?: 500,
+            loops = intent?.getIntExtra("loops", 1) ?: 1,
+            duration = intent?.getIntExtra("duration", 0) ?: 0,
+            load = intent?.getIntExtra("load", 0) ?: 0,
+            provider = intent?.getStringExtra("provider") ?: "cpu",
         )
     }
 }

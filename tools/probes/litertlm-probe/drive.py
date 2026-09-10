@@ -2,6 +2,7 @@
 """Drive one probe run from the PC and collect everything it logged.
 
   python drive.py --tag e5_turbo_cpu_1 mode=litert model=/data/user/0/com.whispereverywhere.probe/files/whisper_large_v3_turbo_30s_i8.tflite accel=cpu threads=4 warm=20
+  python drive.py --tag r3_jfk_rt_t2 mode=sherpa model=/data/user/0/com.whispereverywhere.probe/files/zipformer-en clips=jfk.wav threads=2 pace=realtime padms=500
 
 Every run: force-stop the probe (so the run is a fresh process = a true cold start), clear logcat,
 `am start` the activity with the key=value pairs as extras (ints for threads/warm/maxtokens, booleans for
@@ -26,17 +27,18 @@ import time
 
 PKG = "com.whispereverywhere.probe"
 ACT = PKG + "/.MainActivity"
-INT_KEYS = {"threads", "warm", "maxtokens", "prefill", "utts", "eot", "pad", "decbench"}
+INT_KEYS = {"threads", "warm", "maxtokens", "prefill", "utts", "eot", "pad", "decbench", "padms", "loops", "duration", "load"}
 BOOL_KEYS = {"nofallback", "bench", "freshbufs", "rewriteall", "dumpstates"}
 FILTER = re.compile(
     r"PROBE|LiteRt|litert|LITERT|tflite|TfLite|TFLite|neuron|Neuron|NEURON|apusys|APUSYS|apuware|mtk|MTK|"
     r"MediaTek|Mediatek|dispatch|Dispatch|xnnpack|XNNPACK|OpenCL|opencl|clGl|Mali|mali|linker|AndroidRuntime|"
-    r"DEBUG|libc|SIGSEGV|SIGABRT|Fatal|FATAL|probe|npu|NPU|JIT|restoreFrom|CompilerPlugin|nnapi|NNAPI"
+    r"DEBUG|libc|SIGSEGV|SIGABRT|Fatal|FATAL|probe|npu|NPU|JIT|restoreFrom|CompilerPlugin|nnapi|NNAPI|"
+    r"sherpa|onnxruntime|onnx"
 )
 HILITE = re.compile(
     r"PROBE|litert|LiteRt|LITERT|tflite|neuron|Neuron|NEURON|apusys|Dispatch_|dispatch_|JIT|restoreFrom|"
     r"CompilerPlugin|xnnpack|XNNPACK|OpenCL|libc    :|DEBUG   :|AndroidRuntime|SIGSEGV|SIGABRT|nativeloader|"
-    r" linker|Fatal signal|mali|Mali"
+    r" linker|Fatal signal|mali|Mali|sherpa-onnx"
 )
 # `logcat -v threadtime`: "MM-DD HH:MM:SS.mmm  <pid>  <tid> <L> <tag>: <msg>"
 PIDCOL = re.compile(r"^\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}\s+(\d+)\s+\d+\s")

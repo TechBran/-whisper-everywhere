@@ -10,6 +10,7 @@ Whisper Everywhere and never touches it. It runs the experiments from
 | `info` | `Environment.availableAccelerators`, `NpuCompatibilityChecker.Mediatek` | sanity |
 | `lm` | LiteRT-LM `Engine` on `Backend.NPU(nativeLibraryDir)` / `GPU` / `CPU`, one prompt, `BenchmarkInfo` | **E3** |
 | `litert` | LiteRT `CompiledModel` one signature, `Accelerator.CPU` (XNNPACK, N threads) / `GPU` / `NPU` (JIT) — 1 cold + N warm | **E5**, **E4-lite** |
+| `sherpa` | sherpa-onnx `OnlineRecognizer` on `streaming-zipformer-en-2023-06-26` (int8), fed 512-sample / 32 ms chunks at real-time or max pace, endpointing off, zero-pad + `inputFinished` + release/createStream per clip; every partial with its wall time, per-word partial latency, WER through the app's `WerMath`, retractions, compute RTF, RSS, thermal; `load=N` busy threads, `duration=S` thermal loop | **rung 3** of `docs/superpowers/research/2026-09-09-streaming-local-tier-research.md` §5.4 |
 
 ## Build (PC)
 
@@ -39,6 +40,29 @@ python drive.py --tag e3_gemma_npu_1 mode=lm     model=/data/user/0/com.whispere
 
 Results: `~/.androidbuild/probe-logs/<tag>.{json,filtered.log,full.log}`; `python summarize.py [tag ...]`
 prints them as the markdown tables in `docs/measurements/2026-09-09-tab-apu-probe.md`.
+
+## `mode=sherpa` (rung 3 — `docs/measurements/2026-09-10-tab-sherpa-rung3.md`)
+
+The AAR is the one the main app ships (`sherpa-onnx-1.13.7.aar`, ORT 1.27.1; taken from the main checkout's
+`app/libs` or fetched, sha256-verified on every build); `-PsherpaVersion=1.13.4` builds the comparison arm on the
+previously shipped AAR (ORT 1.27.0). The four model files go under `files/zipformer-en/`, the clips under `files/`
+(the README's push recipe; the probe hashes all of them and logs the hashes). `model` is the model DIRECTORY.
+
+```
+M=/data/user/0/com.whispereverywhere.probe/files/zipformer-en
+python drive.py --tag r3_canary_rt_t2   mode=sherpa model=$M clips=canary_digits.wav threads=2 pace=realtime padms=500
+python drive.py --tag r3_jfk_rt_t2      mode=sherpa model=$M clips=jfk.wav,jfk-gated.wav threads=2 pace=realtime
+python drive.py --tag r3_jfk_max_t2     mode=sherpa model=$M clips=jfk.wav threads=2 pace=max loops=10
+python drive.py --tag r3_jfk_rt_t2_load mode=sherpa model=$M clips=jfk.wav threads=2 pace=realtime loops=3 load=4
+python drive.py --tag r3_jfk_thermal_t2 mode=sherpa model=$M clips=jfk.wav threads=2 pace=realtime duration=600 --timeout 900
+python sherpa_summary.py [--words] [tag ...]
+```
+
+`pace=realtime` feeds chunk i no earlier than t0 + (i+1)·32 ms (late if the previous decode burst overran — the
+queue the app would carry); `pace=max` is the compute-only RTF read. Partial latency per word = wall time of the
+first partial whose k-th `WerMath` word equals the final's k-th word, minus the word's last token timestamp (rung
+1's definition). `provider=nospin` writes an ORT session-config file (`SessionConfig.session.intra_op.allow_spinning=0`)
+and passes `cpu:<path>` — forwarded on >= 1.13.5 only. Never `reset`: each clip is its own stream, released.
 
 ## Utilization sampling (which unit actually ran — measurements §3.1, §3.2)
 
