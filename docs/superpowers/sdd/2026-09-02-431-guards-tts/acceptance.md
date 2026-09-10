@@ -1,6 +1,6 @@
 # 4.3.1 — device acceptance (owner session)
 
-Build under test: **4.3.4 / versionCode 88** (Gemini Live — §J; the sherpa runtime bump — §J6; 87 = 4.3.3, the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
+Build under test: **4.3.4 / versionCode 89** (supersedes 88 on the internal track — the owner confirmed Gemini Live working in real time on 88; 89 adds live-by-default, the turbo card copy, and the voice-archive fix — §K; Gemini Live — §J; the sherpa runtime bump — §J6; 87 = 4.3.3, the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
 device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
 is the OWNER's device session; the implementer prepared this sheet and claims none of it as done.
@@ -352,7 +352,7 @@ H3. **Galaxy XR, debug sideload (the Play copy must be uninstalled first — it 
     RECORD: what appeared? ______
     `[ ] RECORDED`
 
-## J — Gemini Live (88 / 4.3.4)
+## J — Gemini Live (88 / 4.3.4; J1 effectively PASSED on 88 — owner 2026-09-10: "Gemini is working in real time")
 
 Precondition: the Gemini key is entered in Engines & voices (the same key as batch). **Live is ON by
 default once the key is entered; the switch on the Gemini row turns it off** (your ruling
@@ -429,7 +429,7 @@ F3. **The one allowed handover discloses itself.** An app that genuinely refuses
 PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
 longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
 promote that build into production."* Promote the internal-track build to production only after
-**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8, E9, E11, H1, H2, J1, J3, J5 and J6** are marked PASS — E1 passes on merged pairs, so
+**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8, E9, E11, H1, H2, J1, J3, J5, J6, K1 and K3** are marked PASS — E1 passes on merged pairs, so
 without E7 the sheet cannot see the one behaviour that decides the language goal.
 
 Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one
@@ -448,3 +448,19 @@ for pauses >= 544 ms, worse for 384-544 ms) — it is not a return to 4.3.0 at a
 inert on turbo. E3 -> raise the hangover toward 420-450 rather than reverting, since the named
 acoustic floor is 300; E4 -> report it before changing anything, because nothing in this retune
 should be able to cause it and the cause matters more than the number.
+
+## K — the voice-archive fix (89)
+
+K1. **Fresh voice install.** In Engines & voices, remove the local voice if installed, then install it
+    again on THIS build. EXPECTED: the download completes and verifies, and a read-aloud plays. This
+    was failing on every build since 2026-09-08 ("Voice archive failed integrity verification")
+    because the upstream archive was silently replaced; 89 accepts the known-good set. FAIL if the
+    verification error returns.
+    `[ ] PASS  [ ] FAIL`
+K2. **Turbo card.** Open the model chooser on the Fold6: the AI-chip card reads "Best accuracy,
+    fastest" with the body naming the 190 MB Multilingual model as the comparison.
+    `[ ] PASS  [ ] FAIL`
+K3. **Live by default.** With the Gemini key entered and nothing else touched, a session is live
+    (words streaming) without flipping any switch; the switch on the Gemini row is ON and turning it
+    OFF falls back to batch.
+    `[ ] PASS  [ ] FAIL`

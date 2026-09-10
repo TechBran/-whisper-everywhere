@@ -54,6 +54,13 @@ import org.junit.Test
  * streaming local tier, when it lands, is 4.4.0 (the owner's naming since 4.3.0). Every bump still
  * re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 89 — the plain successor to 88.** 88 went to the INTERNAL TRACK on 2026-09-10 and
+ * the owner confirmed Gemini Live working in real time on it; it is spent on the track exactly as
+ * 81, 83 and 85 were. 89 supersedes it there with three things 88 lacks: live by default (owner
+ * ruling), the corrected turbo card, and the voice-archive gate fix. The NAME stays 4.3.4 — a name
+ * is spent by a release, and 88 was not promoted. If 88 IS promoted before 89 uploads, 89 becomes
+ * 4.3.5 and this paragraph is wrong: change both.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -74,15 +81,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_3_4_at_version_code_88() {
+    fun release_identity_is_4_3_4_at_version_code_89() {
         assertEquals(
             "versionName must be 4.3.4 for this release (app/build.gradle.kts defaultConfig)",
             "4.3.4",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 88 for this release (app/build.gradle.kts defaultConfig)",
-            88,
+            "versionCode must be 89 for this release (app/build.gradle.kts defaultConfig)",
+            89,
             BuildConfig.VERSION_CODE,
         )
     }
