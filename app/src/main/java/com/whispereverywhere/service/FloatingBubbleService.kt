@@ -321,8 +321,16 @@ internal fun speechEndMs(nowMs: Long, ec: EndpointCut): Long = nowMs - ec.trailM
  * Pure so the rule is a pinned contract rather than a buried `if` ([InFlightStripTest]), the same
  * discipline as [connectingStatusLabel], [processingTimerRunsIn] and
  * [com.whispereverywhere.transcription.live.LiveTurnPolicy].
+ *
+ * **4.4.0 P0 — the second input.** A LOCAL PREVIEW (`PreviewTeeEngine`, spec
+ * 2026-09-10-streaming-previewer-design.md §4.2) emits partials every 320 ms — the live
+ * session's shape — so it takes the live session's render path. `sessionHasLocalPreview` is a
+ * second session flag beside `sessionIsLive`, set only at the one wrap site; `sessionIsLive`
+ * keeps its three other jobs untouched. Until a producer sets it, every reader answers as
+ * before: this commit is behaviour-neutral by the truth table InFlightStripTest pins.
  */
-internal fun deltaOwnsPreviewStrip(sessionIsLive: Boolean): Boolean = sessionIsLive
+internal fun deltaOwnsPreviewStrip(sessionIsLive: Boolean, sessionHasLocalPreview: Boolean): Boolean =
+    sessionIsLive || sessionHasLocalPreview
 
 /**
  * The in-flight line for [depth] committed-but-unresolved segments, or null when the queue
@@ -333,7 +341,11 @@ internal fun deltaOwnsPreviewStrip(sessionIsLive: Boolean): Boolean = sessionIsL
  * during which nothing on screen changes. The depth suffix appears only past one, and it is the
  * only surface that makes a growing backlog visible WHILE it grows rather than at stop.
  */
-internal fun inFlightStripLabel(depth: Int): String? = when {
+internal fun inFlightStripLabel(depth: Int, sessionHasLocalPreview: Boolean): String? = when {
+    // RULING ASSUMED (R2): while a local preview paints the words, the label is DISPLACED —
+    // the strip IS the pending text, and the `queue:` diag line keeps the depth. A flip to
+    // "shared" (label after the words) or "moved" (into the window) changes THIS row only.
+    sessionHasLocalPreview -> null
     depth <= 0 -> null
     depth == 1 -> "Transcribing…"
     else -> "Transcribing… ($depth in queue)"
@@ -380,6 +392,17 @@ internal fun inFlightStripVisibility(label: String?, currentlyHidden: Boolean): 
     }
 
 /**
+ * What a BLANK delta does to the strip (4.4.0 P0). A server-driven live session keeps 3.6.0's
+ * behaviour — GONE, byte for byte (the three live providers are out of this release's scope).
+ * A local preview blanks between utterances by design (its frozen text resolved, no partial
+ * yet), so it composes with [inFlightStripVisibility]'s anti-churn rule: parked INVISIBLE once
+ * revealed, never revealed for nothing. SHOWING is unreachable here — a blank never shows.
+ */
+internal fun deltaBlankVisibility(sessionHasLocalPreview: Boolean, currentlyHidden: Boolean): StripVisibility =
+    if (sessionHasLocalPreview) inFlightStripVisibility(label = null, currentlyHidden = currentlyHidden)
+    else StripVisibility.HIDDEN
+
+/**
  * Should a released segment's text CLEAR the preview strip (3.7, Workstream G)?
  *
  * Only when deltas own it: there the strip was carrying this very utterance's words and leaving
@@ -392,9 +415,14 @@ internal fun inFlightStripVisibility(label: String?, currentlyHidden: Boolean): 
  * put it back to `currentlyHidden`, so every commit paid the reveal — and its `reclampNow()` — all
  * over again; the rule can only cost one geometry change per session if nothing returns the strip
  * to GONE mid-session.
+ *
+ * **4.4.0 P0:** a LOCAL PREVIEW never clears here. Its tee recomposes the strip after every
+ * resolution (the resolved seq's frozen prefix dropped, the live partial kept) and emits that
+ * as the next delta; a clear in between would GONE the strip and pay the reveal — and its
+ * reclampNow() — once per utterance, which is exactly the churn this rule's other half removes.
  */
-internal fun resolvedTextClearsStrip(sessionIsLive: Boolean, isFinalizing: Boolean): Boolean =
-    !isFinalizing && deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)
+internal fun resolvedTextClearsStrip(sessionIsLive: Boolean, sessionHasLocalPreview: Boolean, isFinalizing: Boolean): Boolean =
+    !isFinalizing && deltaOwnsPreviewStrip(sessionIsLive, sessionHasLocalPreview) && !sessionHasLocalPreview
 
 class FloatingBubbleService : Service(),
     WhisperAccessibilityService.OnTextFieldFocusListener,
@@ -497,6 +525,12 @@ class FloatingBubbleService : Service(),
     // the delta surface to lift the preview strip into a TEXT_FIELD session (deltas render, never
     // inject). Batch/on-device sessions leave it false, so their behavior is byte-unchanged.
     @Volatile private var sessionIsLive = false
+
+    // 4.4.0 P0: frozen per session at the one wrap site in startRecording (Task 7 of the
+    // streaming-previewer plan sets it; this commit only declares and resets it). True only when a
+    // PreviewTeeEngine is this session's engine. Read by onDelta, the render and delivery through
+    // the four pure rules above — never directly.
+    @Volatile private var sessionHasLocalPreview = false
 
     // The live WS transport + reconnect executor, held for the service's life for the SAME reason
     // httpTransport is: a fresh OkHttpClient (dispatcher threads + connection pool) or a fresh
@@ -2672,6 +2706,7 @@ class FloatingBubbleService : Service(),
         // Frozen fresh each session and read by the delta surface; default off so batch/on-device
         // sessions keep their exact behavior. Only the CLOUD_LIVE branch flips it on.
         sessionIsLive = false
+        sessionHasLocalPreview = false
 
         // THE ONLY CALLER PERMITTED TO REBUILD (4.0, Q9 fix round, C1). This runs at session start,
         // from startRecording, before a single byte of audio exists and before any commit() can be
@@ -3038,7 +3073,7 @@ class FloatingBubbleService : Service(),
                 // The callback itself, DeltaThrottle and transcribeStreaming's JNI plumbing are
                 // deliberately left running: CLOUD_LIVE still renders from here, and the local
                 // stream stays available for the next surface that wants it.
-                if (!deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return
+                if (!deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive, sessionHasLocalPreview = sessionHasLocalPreview)) return
                 // Local partial streaming (3.6.0 D) joined cloud-live here. The unified preview
                 // (W2) keeps the container up for EVERY session context, so the strip renders
                 // wherever deltas exist — no context gate. Resolved turns accumulate into the
@@ -3070,7 +3105,18 @@ class FloatingBubbleService : Service(),
                             transcriptionDeltaText.scrollTo(0, overflow.coerceAtLeast(0))
                         }
                     } else {
-                        transcriptionDeltaText.visibility = View.GONE
+                        // 4.4.0 P0: a local preview parks, a live session hides (deltaBlankVisibility).
+                        when (deltaBlankVisibility(
+                            sessionHasLocalPreview = sessionHasLocalPreview,
+                            currentlyHidden = transcriptionDeltaText.visibility == View.GONE,
+                        )) {
+                            StripVisibility.HIDDEN -> transcriptionDeltaText.visibility = View.GONE
+                            StripVisibility.OCCUPYING_BLANK -> {
+                                transcriptionDeltaText.text = ""
+                                transcriptionDeltaText.visibility = View.INVISIBLE
+                            }
+                            StripVisibility.SHOWING -> Unit
+                        }
                     }
                 }
             }
@@ -3528,8 +3574,8 @@ class FloatingBubbleService : Service(),
      */
     private fun renderInFlightStrip() {
         if (currentState != BubbleState.RECORDING) return
-        if (deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return
-        val label = inFlightStripLabel(depth = segmentQueueDepth.depth())
+        if (deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive, sessionHasLocalPreview = sessionHasLocalPreview)) return
+        val label = inFlightStripLabel(depth = segmentQueueDepth.depth(), sessionHasLocalPreview = sessionHasLocalPreview)
         val wasHidden = transcriptionDeltaText.visibility == View.GONE
         when (inFlightStripVisibility(label = label, currentlyHidden = wasHidden)) {
             StripVisibility.HIDDEN -> return
@@ -3562,7 +3608,7 @@ class FloatingBubbleService : Service(),
         // "finishing transcript" status instead. Scroll reset too, so the next turn starts at
         // the top of the panel rather than wherever the last one left it parked.
         val finalizing = currentState == BubbleState.FINALIZING
-        if (resolvedTextClearsStrip(sessionIsLive = sessionIsLive, isFinalizing = finalizing)) {
+        if (resolvedTextClearsStrip(sessionIsLive = sessionIsLive, sessionHasLocalPreview = sessionHasLocalPreview, isFinalizing = finalizing)) {
             transcriptionDeltaText.text = ""
             transcriptionDeltaText.scrollTo(0, 0)
             transcriptionDeltaText.visibility = View.GONE

@@ -12,39 +12,53 @@ class InFlightStripTest {
 
     @Test fun a_server_driven_live_session_keeps_its_deltas_on_the_strip() {
         // CLOUD_LIVE partials stream AS SPOKEN and are the whole point of the strip there.
-        // 3.7 changes nothing for them.
-        assertTrue(deltaOwnsPreviewStrip(sessionIsLive = true))
+        assertTrue(deltaOwnsPreviewStrip(sessionIsLive = true, sessionHasLocalPreview = false))
     }
 
-    @Test fun a_local_session_no_longer_lets_native_deltas_drive_the_strip() {
+    @Test fun a_local_session_without_a_preview_still_hands_the_strip_to_the_in_flight_line() {
         // whisper.cpp fires new_segment AFTER the window's decode, so at utterance cadence the
         // whole burst — and LocalWhisperEngine's terminal onDelta("") — lands inside one
-        // Choreographer frame: set and cleared before anything renders. The commit/resolve
-        // in-flight line replaces it. D4's plumbing (DeltaThrottle, the JNI callback,
-        // transcribeStreaming) is untouched — only this render is gated.
-        assertFalse(deltaOwnsPreviewStrip(sessionIsLive = false))
+        // Choreographer frame. The commit/resolve in-flight line replaces it. Unchanged from 3.7 G.
+        assertFalse(deltaOwnsPreviewStrip(sessionIsLive = false, sessionHasLocalPreview = false))
+    }
+
+    @Test fun a_local_preview_owns_the_strip_exactly_as_a_live_session_does() {
+        // 4.4.0 P0: the second input. A tee whose partials arrive every 320 ms is the live
+        // session's shape, so it takes the live session's render path — words, not the label.
+        assertTrue(deltaOwnsPreviewStrip(sessionIsLive = false, sessionHasLocalPreview = true))
+        // Unreachable by construction (the tee is built only for local sessions) but pinned, so
+        // the rule has no hole where its fourth row should be.
+        assertTrue(deltaOwnsPreviewStrip(sessionIsLive = true, sessionHasLocalPreview = true))
     }
 
     // ------------------------------------------------------------- what the line says
 
     @Test fun an_empty_queue_has_no_line() {
-        assertNull(inFlightStripLabel(0))
+        assertNull(inFlightStripLabel(0, sessionHasLocalPreview = false))
     }
 
     @Test fun a_negative_depth_is_treated_as_empty() {
         // SegmentQueueDepth floors at zero, but the label must not be the only thing standing
         // between a miscount and a "-1 in queue" on a user's screen.
-        assertNull(inFlightStripLabel(-1))
+        assertNull(inFlightStripLabel(-1, sessionHasLocalPreview = false))
     }
 
     @Test fun one_utterance_in_flight_says_only_that() {
-        assertEquals("Transcribing…", inFlightStripLabel(1))
+        assertEquals("Transcribing…", inFlightStripLabel(1, sessionHasLocalPreview = false))
     }
 
     @Test fun a_backlog_names_its_depth() {
         // The ONLY surface that makes a growing multi backlog visible WHILE it grows.
-        assertEquals("Transcribing… (2 in queue)", inFlightStripLabel(2))
-        assertEquals("Transcribing… (7 in queue)", inFlightStripLabel(7))
+        assertEquals("Transcribing… (2 in queue)", inFlightStripLabel(2, sessionHasLocalPreview = false))
+        assertEquals("Transcribing… (7 in queue)", inFlightStripLabel(7, sessionHasLocalPreview = false))
+    }
+
+    @Test fun a_local_preview_displaces_the_label_at_every_depth() {
+        // RULING ASSUMED (R2): DISPLACED. The strip carries the words; `queue:` keeps the depth.
+        // A flip to "shared" or "moved" is a change to THIS function and this test, nowhere else.
+        listOf(-1, 0, 1, 2, 7, 9).forEach { d ->
+            assertNull("depth $d under a local preview", inFlightStripLabel(d, sessionHasLocalPreview = true))
+        }
     }
 
     @Test fun the_line_makes_no_speed_claim_and_names_no_provider() {
@@ -58,7 +72,7 @@ class InFlightStripTest {
         // `depth == 9` branch and this test was the SOLE killer. Do not trim the 9 to the pinned
         // depths: it is the one depth where a banned word has nowhere else to die.
         listOf(0, 1, 2, 9).forEach { d ->
-            val text = (inFlightStripLabel(d) ?: "").lowercase()
+            val text = (inFlightStripLabel(d, sessionHasLocalPreview = false) ?: "").lowercase()
             listOf("faster", "fastest", "quicker", "quickest", "instant", "real-time")
                 .forEach { banned ->
                     assertFalse("in-flight line contains banned word '$banned'", text.contains(banned))
@@ -123,24 +137,55 @@ class InFlightStripTest {
         )
     }
 
+    // ------------------------------------------------------------- a blank delta
+
+    @Test fun a_blank_delta_still_hides_a_live_sessions_strip() {
+        // CLOUD_LIVE keeps 3.6.0's GONE byte for byte — the three live providers are out of scope.
+        assertEquals(StripVisibility.HIDDEN, deltaBlankVisibility(sessionHasLocalPreview = false, currentlyHidden = true))
+        assertEquals(StripVisibility.HIDDEN, deltaBlankVisibility(sessionHasLocalPreview = false, currentlyHidden = false))
+    }
+
+    @Test fun a_blank_delta_parks_a_local_previews_revealed_strip_instead_of_hiding_it() {
+        // THE anti-churn rule, applied to the delta render: a local preview blanks between
+        // utterances (frozen text resolved, no partial yet), and VISIBLE<->GONE there would post a
+        // reclampNow() per utterance — the exact cost 3.7 G removed from the label render.
+        assertEquals(
+            StripVisibility.OCCUPYING_BLANK,
+            deltaBlankVisibility(sessionHasLocalPreview = true, currentlyHidden = false),
+        )
+    }
+
+    @Test fun a_blank_delta_never_reveals_a_still_hidden_strip() {
+        // GONE -> INVISIBLE would grow the window for a line with nothing in it.
+        assertEquals(StripVisibility.HIDDEN, deltaBlankVisibility(sessionHasLocalPreview = true, currentlyHidden = true))
+    }
+
     // ------------------------------------------------------------- resolution vs the strip
 
     @Test fun a_live_resolution_still_clears_the_words_it_was_streaming() {
         // Unchanged 3.6.0 behaviour: the resolved turn moves into the accumulating window, so the
         // strip must reset or the finished words linger UNDER the next utterance as it streams.
-        assertTrue(resolvedTextClearsStrip(sessionIsLive = true, isFinalizing = false))
+        assertTrue(resolvedTextClearsStrip(sessionIsLive = true, sessionHasLocalPreview = false, isFinalizing = false))
     }
 
     @Test fun a_local_resolution_repaints_the_in_flight_line_instead_of_clearing() {
         // The strip is not carrying this utterance's words any more — it is carrying the queue.
         // Clearing it here would blank the backlog signal on every single resolution.
-        assertFalse(resolvedTextClearsStrip(sessionIsLive = false, isFinalizing = false))
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = false, sessionHasLocalPreview = false, isFinalizing = false))
+    }
+
+    @Test fun a_local_previews_resolution_never_clears_the_strip() {
+        // The tee recomposes after every resolution (frozen prefix dropped, partial kept) and
+        // emits that as the next delta. Clearing here would GONE the strip under it and pay the
+        // reveal — and its reclamp — on every utterance.
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = false, sessionHasLocalPreview = true, isFinalizing = false))
     }
 
     @Test fun finalizing_owns_the_strip_in_every_session_kind() {
         // The stop tap writes "Finishing transcript…" / "Finishing… (waiting on provider)" and
         // THEN flushes the tail; nothing released during the drain may overwrite that line.
-        assertFalse(resolvedTextClearsStrip(sessionIsLive = true, isFinalizing = true))
-        assertFalse(resolvedTextClearsStrip(sessionIsLive = false, isFinalizing = true))
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = true, sessionHasLocalPreview = false, isFinalizing = true))
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = false, sessionHasLocalPreview = false, isFinalizing = true))
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = false, sessionHasLocalPreview = true, isFinalizing = true))
     }
 }

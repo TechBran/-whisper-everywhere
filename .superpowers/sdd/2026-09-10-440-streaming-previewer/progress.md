@@ -1,0 +1,14 @@
+# 4.4.0 — the on-device word-for-word previewer — ledger
+
+Task 1 (P0); Tasks 2-8 on the engine branch. Spec docs/superpowers/specs/2026-09-10-streaming-previewer-design.md. Plan docs/superpowers/plans/2026-09-10-streaming-previewer.md. Amendment docs/superpowers/plans/2026-09-10-streaming-previewer-amendment-pad.md (WINS over the plan where they disagree).
+Rulings ASSUMED (spec §0): R1 canary-only + release note; R2 displaced; R3 default-on; R4 Auto=whisper on multilingual; R6 streaming first. R5 identity: the plan says 4.4.0/89, the amendment supersedes it — **4.4.0 = versionCode 90** (89 is spent on the internal track); the identity bump is the controller's commit, no task in this plan touches versionCode/versionName/ReleaseIdentityTest.
+Baseline suite re-measured at f18549b (Step 0, from XML): **178 suites / 2,154 tests / 0 failures / 0 errors.** The plan's 177 / 2,150 was measured at 5efc2be; the four-test / one-suite delta is main's own movement between those commits, not this task's.
+
+Branch deviation (controller's instruction, 2026-09-10): Task 1 was implemented on **feat/4.4.0-previewer** in the worktree C:/Users/bastr/.androidbuild/wt-44, NOT on `main` as the plan's Global Constraints say. The commit is a clean fast-forward candidate for `main` — it touches only the three strip files plus this ledger — so the plan's intent (the strip change does not ride the engine branch) is preserved by merging this commit to `main` before Tasks 2-8 branch off it.
+
+=== Task 1: P0 strip prep (feat/4.4.0-previewer) ===
+- Base: f18549b. Commit: THIS commit — `feat(strip): the strip rules gain sessionHasLocalPreview — behaviour-neutral prep for the 4.4.0 previewer` (the hash cannot be written into a file the commit contains; it is the first commit after f18549b on this branch).
+- Suite after (from XML): 178 suites / 2,162 tests / 0 failures / 0 errors — baseline + 8 (InFlightStripTest 17 -> 23 = +6; InFlightStripWiringPinTest 7 -> 9 = +2). `:app:assembleDebug` BUILD SUCCESSFUL.
+- Interfaces Task 7 consumes, all in FloatingBubbleService.kt: `deltaOwnsPreviewStrip(sessionIsLive, sessionHasLocalPreview)`, `inFlightStripLabel(depth, sessionHasLocalPreview)`, `deltaBlankVisibility(sessionHasLocalPreview, currentlyHidden)` (new), `resolvedTextClearsStrip(sessionIsLive, sessionHasLocalPreview, isFinalizing)`, and the field `@Volatile private var sessionHasLocalPreview = false` — declared and reset beside `sessionIsLive = false`, set true NOWHERE (pinned at 0 occurrences of the literal).
+- Behaviour neutrality: with `sessionHasLocalPreview` false at every read site, all four rules answer exactly as 4.3.4 did (the truth table InFlightStripTest pins), and `onDelta`'s blank branch takes its HIDDEN row, which is the same bare `View.GONE` write. Every pre-existing strip test is green unchanged.
+- Battery (5/5 observed RED under mutation, GREEN after revert): see the task-1 report.

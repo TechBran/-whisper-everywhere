@@ -37,8 +37,8 @@ import java.io.File
  *    G4 introduced the state; **G5 is the task that first makes it reachable** (until delivery
  *    stopped hiding the strip, `OCCUPYING_BLANK` never occurred in production at all), so the pin
  *    lands in the commit that arms the defect.
- *  - *The single-Boolean hazard.* The render asks `deltaOwnsPreviewStrip(sessionIsLive = …)` and
- *    the argument must be `sessionIsLive`, never `cloudWrapper != null`. Those two look
+ *  - *The single-Boolean hazard.* The render asks `deltaOwnsPreviewStrip(sessionIsLive = …, …)` and
+ *    the first argument must be `sessionIsLive`, never `cloudWrapper != null`. Those two look
  *    interchangeable and are not: `cloudWrapper` is non-null for CLOUD_BATCH, which emits no deltas
  *    whatsoever, so the substitution makes the render return early on the majority cloud path and
  *    restores the "nothing on screen changes for four seconds" state Workstream G exists to remove.
@@ -53,10 +53,17 @@ import java.io.File
  * needle written with a bare `\n` finds nothing and every assertion would pass or fail for the
  * wrong reason. The normalisation happens once, at the single read site below.
  *
- * **Everything here is SYMBOL-SCOPED.** `deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)`
- * occurs three times in the file — the rule's own body, the `onDelta` gate and the render — so a
- * whole-file census could not say which one moved. Line numbers are never used: every anchor this
- * workstream inherited from the plan had drifted, by up to ~155 lines.
+ * **Everything here is SYMBOL-SCOPED.** The fully named call form
+ * `deltaOwnsPreviewStrip(sessionIsLive = …, sessionHasLocalPreview = …)` occurs twice in the file
+ * — the `onDelta` gate and the render — so a whole-file census could not say which one moved.
+ * (4.4.0 P0 took the third occurrence out of the census: `resolvedTextClearsStrip` now forwards
+ * both flags positionally.) Line numbers are never used: every anchor this workstream inherited
+ * from the plan had drifted, by up to ~155 lines.
+ *
+ * **4.4.0 P0 added the second session flag** (`sessionHasLocalPreview`) to all four rules, and
+ * with it two more structural obligations no JVM test can otherwise see: the flag is RESET beside
+ * `sessionIsLive` and set true NOWHERE in the prep commit, and `onDelta`'s blank branch asks
+ * [deltaBlankVisibility] instead of writing a bare `View.GONE`. The last two tests below are those.
  */
 class InFlightStripWiringPinTest {
 
@@ -130,12 +137,17 @@ class InFlightStripWiringPinTest {
         assertEquals(
             "the render asks who owns the strip with the SESSION KIND, exactly once",
             1,
-            count(render, "deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)"),
+            count(render, "deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive, sessionHasLocalPreview = sessionHasLocalPreview)"),
         )
         assertFalse(
             "the render never reads cloudWrapper: it is non-null for CLOUD_BATCH, which streams " +
                 "no deltas, so it is not a synonym for `this session is live`",
             render.contains("cloudWrapper"),
+        )
+        assertEquals(
+            "the render asks the label with the second input too (R2 lives in that function)",
+            1,
+            count(render, "inFlightStripLabel(depth = segmentQueueDepth.depth(), sessionHasLocalPreview = sessionHasLocalPreview)"),
         )
     }
 
@@ -190,7 +202,7 @@ class InFlightStripWiringPinTest {
         // still renders from it, so the ONLY thing standing between a local session and the old
         // per-frame set-and-clear burst is this one early return. Deleted, the commit's whole
         // premise is gone with a green suite.
-        val gate = "                if (!deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive)) return\n"
+        val gate = "                if (!deltaOwnsPreviewStrip(sessionIsLive = sessionIsLive, sessionHasLocalPreview = sessionHasLocalPreview)) return\n"
         val gateAt = indexOfOrFail(onDelta, gate)
         // FIRST statement, ahead of the Main hop: gating inside the coroutine would still schedule
         // a dispatch per delta — at whisper.cpp's burst rate, for nothing.
@@ -245,7 +257,7 @@ class InFlightStripWiringPinTest {
         indexOfOrFail(
             delivery,
             "        if (resolvedTextClearsStrip(sessionIsLive = sessionIsLive, " +
-                "isFinalizing = finalizing)) {\n",
+                "sessionHasLocalPreview = sessionHasLocalPreview, isFinalizing = finalizing)) {\n",
         )
         assertEquals(
             "delivery repaints the in-flight line rather than hiding the strip under it",
@@ -278,5 +290,30 @@ class InFlightStripWiringPinTest {
             count(text, "renderInFlightStrip()"),
         )
         assertEquals(1, count(text, "    private fun renderInFlightStrip() {"))
+    }
+
+    @Test
+    fun theSecondInputIsResetBesideTheFirstAndNeverSetTrueByThisCommit() {
+        // 4.4.0 P0 is behaviour-neutral: the flag is declared, reset per session on the line under
+        // `sessionIsLive = false`, and set true NOWHERE until the wrap site lands (Task 7). A
+        // `= true` appearing here would mean a producer rode the prep commit.
+        val resolve = body("    private fun resolveTranscriptionEngine(): TranscriptionEngine {", "\n    }\n")
+        assertEquals(1, count(resolve, "        sessionIsLive = false\n        sessionHasLocalPreview = false\n"))
+        assertEquals(1, count(text, "@Volatile private var sessionHasLocalPreview = false"))
+        // The literal assignment to true is forbidden in this file for good: Task 7 assigns the
+        // GATE's answer (`sessionHasLocalPreview = previewArmed`), never a constant.
+        assertEquals(0, count(text, "sessionHasLocalPreview = true"))
+    }
+
+    @Test
+    fun theBlankDeltaBranchAsksTheRuleAndParksOnlyALocalPreview() {
+        // The delta render's blank branch is the second place the anti-churn rule must hold. The
+        // 3.6.0 body was a bare `visibility = View.GONE`; under a local preview that is a reveal
+        // per utterance. The branch now asks `deltaBlankVisibility`, and its HIDDEN row is the
+        // only GONE write left in onDelta.
+        assertEquals(1, count(onDelta, "deltaBlankVisibility("))
+        assertEquals(1, count(onDelta, "StripVisibility.HIDDEN -> transcriptionDeltaText.visibility = View.GONE"))
+        assertEquals(1, count(onDelta, "transcriptionDeltaText.visibility = View.GONE"))
+        assertEquals(1, count(onDelta, "transcriptionDeltaText.visibility = View.INVISIBLE"))
     }
 }
