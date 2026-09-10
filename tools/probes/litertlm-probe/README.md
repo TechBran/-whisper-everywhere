@@ -40,9 +40,30 @@ python drive.py --tag e3_gemma_npu_1 mode=lm     model=/data/user/0/com.whispere
 Results: `~/.androidbuild/probe-logs/<tag>.{json,filtered.log,full.log}`; `python summarize.py [tag ...]`
 prints them as the markdown tables in `docs/measurements/2026-09-09-tab-apu-probe.md`.
 
+## Utilization sampling (which unit actually ran — measurements §3.1, §3.2)
+
+Start a sampler in a second shell just before `drive.py`, so its window brackets the warm phase:
+
+```
+python tools/sample_util.py --mode gpu --duration 60 --out ~/.androidbuild/probe-logs/util_<tag>.txt
+python tools/sample_util.py --mode cpu --duration 40 --out ~/.androidbuild/probe-logs/cpustat_<tag>.txt
+python tools/sample_util.py --summarize ~/.androidbuild/probe-logs/util_<tag>.txt   # §3.1 columns
+python tools/cpustat.py            ~/.androidbuild/probe-logs/cpustat_<tag>.txt     # §3.2 columns
+```
+
+`--mode gpu` reads `/sys/kernel/gpu/{gpu_busy,gpu_clock}`; `--mode cpu` reads the aggregate `cpu` line of
+`/proc/stat`. One `adb shell` per sample, so the round trip sets the cadence (~0.30 s / ~0.52 s measured).
+
 Notes:
 - `gradlew.bat` runs from PowerShell/cmd. From Git Bash, prefix every `drive.py` / `adb shell` call with
   `MSYS_NO_PATHCONV=1`, or `/data/...` arguments arrive on the device as `C:/Program Files/Git/data/...`.
+- Also from Git Bash: an MSYS-style `--out /c/Users/...` used to be written literally and landed under
+  `C:\c\Users\...`. `drive.py` and `sample_util.py` now normalise `/<drive>/…` to `<drive>:/…` themselves,
+  so either spelling works.
+- `<tag>.filtered.log` is a regex over all of logcat, so other processes' matching lines are in it too
+  (Samsung's `e:iwhInfService` emits `TfLiteFlexDelegate` lines during NPU runs). `drive.py --pid` keeps
+  only the probe's own pid plus lines that name it (the `apuware_server` `client_pid=` proof lines
+  survive). `<tag>.full.log` is always the complete logcat.
 - litert 2.1.1 is the default runtime (the last release whose NPU zip ships the MediaTek pair; the APK on
   the Tab is this exact build). `-PlitertVersion=2.2.0` builds the newer runtime, GPU/CPU only on MT6989.
 - `litert-community/Gemma3-1B-IT` (the MT6989 `.litertlm` E3 wants) is `gated: auto` on Hugging Face: a

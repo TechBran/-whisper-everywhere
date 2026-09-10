@@ -9,6 +9,12 @@ nofallback, strings otherwise), wait for `PROBE ... DONE|tag=<tag>`, then save t
 filtered view (PROBE + LiteRT/LiteRT-LM/neuron/apusys/linker/crash lines) under --out, and pull the
 result JSON the app wrote to files/results/<tag>.json (via run-as; the package is debuggable).
 ADB is pinned to ONE serial; nothing here ever touches another device.
+
+The filtered view is a regex over ALL of logcat, so other processes' matching lines land in it too —
+Samsung's `e:iwhInfService` contributes `TfLiteFlexDelegate` lines to every NPU run, for instance.
+Pass --pid to keep only the probe's own pid plus the lines that name it (the apuware server logs the
+`client_pid=`/`session from pid:` proof lines from its own pid, so those survive). <tag>.full.log is
+always the complete logcat either way.
 """
 import argparse
 import os
@@ -31,10 +37,29 @@ HILITE = re.compile(
     r"CompilerPlugin|xnnpack|XNNPACK|OpenCL|libc    :|DEBUG   :|AndroidRuntime|SIGSEGV|SIGABRT|nativeloader|"
     r" linker|Fatal signal|mali|Mali"
 )
+# `logcat -v threadtime`: "MM-DD HH:MM:SS.mmm  <pid>  <tid> <L> <tag>: <msg>"
+PIDCOL = re.compile(r"^\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}\s+(\d+)\s+\d+\s")
 
 
 def adb(serial, *a):
     return subprocess.run(["adb", "-s", serial, *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+
+def norm_out(p):
+    """Git Bash on Windows hands over MSYS-style absolute paths: '/c/Users/...' means 'C:/Users/...'.
+    Written literally, os.makedirs() would silently create C:\\c\\Users\\... instead."""
+    p = os.path.expanduser(p)
+    if os.name == "nt":
+        m = re.match(r"^/([A-Za-z])/(.*)$", p)
+        if m:
+            p = m.group(1).upper() + ":/" + m.group(2)
+    return os.path.abspath(p)
+
+
+def from_pid(line, pid):
+    """The probe's own lines, plus anyone else's that name its pid (apuware's `client_pid=`)."""
+    m = PIDCOL.match(line)
+    return bool(m and m.group(1) == pid) or pid in line
 
 
 def main():
@@ -47,8 +72,11 @@ def main():
     ap.add_argument("--tag", required=True)
     ap.add_argument("--timeout", type=int, default=1200)
     ap.add_argument("--out", default=os.path.join(os.path.expanduser("~"), ".androidbuild", "probe-logs"))
+    ap.add_argument("--pid", action="store_true",
+                    help="restrict <tag>.filtered.log to the probe's own pid (see the module docstring)")
     ap.add_argument("kv", nargs="*")
     a = ap.parse_args()
+    a.out = norm_out(a.out)
     os.makedirs(a.out, exist_ok=True)
     extras = ["--es", "tag", a.tag]
     for kv in a.kv:
@@ -68,6 +96,7 @@ def main():
     if r.stderr.strip():
         print(r.stderr.strip())
     done = None
+    probe_pid = None
     while time.time() - t0 < a.timeout:
         time.sleep(2.0)
         lc = adb(a.serial, "logcat", "-d", "-s", "PROBE:*").stdout
@@ -76,13 +105,21 @@ def main():
             done = m.group(1)
             break
         pid = adb(a.serial, "shell", "pidof", PKG).stdout.strip()
-        if not pid:
+        if pid:
+            probe_pid = pid.split()[0]
+        else:
             done = "crashed"  # process gone without a DONE line: a native crash
             time.sleep(3.0)
             break
     full = adb(a.serial, "logcat", "-d", "-v", "threadtime").stdout
     open(os.path.join(a.out, a.tag + ".full.log"), "w", encoding="utf-8").write(full)
-    filt = "\n".join(l for l in full.splitlines() if FILTER.search(l))
+    lines = [l for l in full.splitlines() if FILTER.search(l)]
+    if a.pid:
+        if probe_pid:
+            lines = [l for l in lines if from_pid(l, probe_pid)]
+        else:
+            print("--pid: never resolved the probe's pid; keeping the unfiltered view")
+    filt = "\n".join(lines)
     open(os.path.join(a.out, a.tag + ".filtered.log"), "w", encoding="utf-8").write(filt)
     js = adb(a.serial, "shell", "run-as", PKG, "cat", "files/results/" + a.tag + ".json").stdout
     if js.strip().startswith("{"):
