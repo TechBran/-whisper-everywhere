@@ -65,7 +65,8 @@ import java.io.File
  * `sessionIsLive` and set true NOWHERE in the prep commit, and `onDelta`'s blank branch asks
  * [deltaBlankVisibility] instead of writing a bare `View.GONE` — with the non-blank branch's own
  * reveal, `== View.GONE` and not `!= View.VISIBLE` AND its reclamp still inside that reveal's
- * guard, since a park the reveal ignores is no park at all and an unguarded reclamp is the churn
+ * guard and the ONLY one that method posts, since a park the reveal ignores is no park at all and
+ * an unguarded reclamp — the guarded one hoisted, or a second one added beside it — is the churn
  * back in full. The last two tests below are those.
  */
 class InFlightStripWiringPinTest {
@@ -383,6 +384,27 @@ class InFlightStripWiringPinTest {
                 "loses the 28-space indent and this census drops to 0",
             1,
             count(onDelta, "                            bubbleView.post { reclampNow() }\n"),
+        )
+        // ...AND THERE IS ONLY THE ONE. The two needles above are POSITION censuses: they see the
+        // guarded post move or vanish, and neither bounds onDelta's TOTAL. So the guarded block can
+        // stay exactly as written and an UNGUARDED TWIN be added beside it — the line after
+        // `transcriptionDeltaText.text = text`, say, or after the guard's closing brace — with
+        // `if (wasHidden) {` still 1, the 28-space post still 1, and the whole suite green. That
+        // twin has the same consequence as hoisting: onDelta's non-blank branch is entered only
+        // when `sessionIsLive`, so it posts a reclamp on EVERY CLOUD_LIVE partial today and on
+        // every ~320ms partial once the previewer tee lands (Task 7) — the churn spec:139 budgets
+        // one reveal + reclamp per session against, and the `~16x/minute` this class's KDoc calls
+        // the one line the workstream's churn argument reduces to. This census bounds the total;
+        // the two needles above bind the placement. Both halves are load-bearing and neither
+        // subsumes the other. Scoped to onDelta because the bare posted form occurs SIX times in
+        // the file (the render's one-line twin among them); the comment inside the guard writes
+        // `reclampNow()` unposted, so prose cannot inflate this count. If a second reclamp site in
+        // this method is ever genuinely warranted, this expected value must be raised DELIBERATELY,
+        // with the reason recorded — that edit is the one thing this assertion exists to make loud.
+        assertEquals(
+            "and it is the ONLY reclamp onDelta posts",
+            1,
+            count(onDelta, "bubbleView.post { reclampNow() }"),
         )
     }
 }
