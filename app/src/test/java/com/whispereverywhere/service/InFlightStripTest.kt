@@ -179,6 +179,13 @@ class InFlightStripTest {
         // emits that as the next delta. Clearing here would GONE the strip under it and pay the
         // reveal — and its reclamp — on every utterance.
         assertFalse(resolvedTextClearsStrip(sessionIsLive = false, sessionHasLocalPreview = true, isFinalizing = false))
+        // Unreachable by construction (the tee is built only for local sessions) but pinned, for
+        // the same reason the owner rule's fourth row is — and here it is the row that makes the
+        // guard necessary at all. Without it every other pinned row is ALSO satisfied by
+        // `!isFinalizing && sessionIsLive`, so the deltaOwnsPreviewStrip forward and the whole
+        // `&& !sessionHasLocalPreview` guard are both deletable with a green suite:
+        // `deliveryRepaintsTheStripInsteadOfHidingIt` reads only the call SITE, never the body.
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = true, sessionHasLocalPreview = true, isFinalizing = false))
     }
 
     @Test fun finalizing_owns_the_strip_in_every_session_kind() {
