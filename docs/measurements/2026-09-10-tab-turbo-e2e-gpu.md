@@ -258,3 +258,72 @@ on base, `' And'` + SOT on turbo) — E5 §4.1's 1,855 ms is void as a tier numb
 end-to-end commit is 5.9 s at about 6 GB. **R3 (research doc §1.2) is closed for the 2,000 ms row by E6**, and it
 is closed for the 8,000 ms row too unless a 512-frame fp32 export lands under 5.3 s with a cached decoder — three
 artefacts away. The Tab's honest turbo today is the CPU at 7–9 s, which the owner already ruled out.
+
+## 6. Rung 2 — the prebuilt k2-fsa sherpa-onnx streaming English APK: BLOCKED by Play Protect on this tablet
+
+Fetched 2026-09-10 05:37 from the k2-fsa APK mirror the docs page links
+(`https://huggingface.co/csukuangfj2/sherpa-onnx-apk/resolve/main/asr/<ver>/…`):
+
+| file | bytes | sha256 | package / version | targetSdk | bundled model |
+|---|---|---|---|---|---|
+| `sherpa-onnx-1.13.4-arm64-v8a-asr-en-zipformer2.apk` | 72,640,211 (the research's "~72.6 MB") | `e02a41f6aa1947847a137a3e0f63ed9f44793223151d89558b33a59900e82531` | `com.k2fsa.sherpa.onnx` 1.13.4 (versionCode 20260707) | **32** | `sherpa-onnx-streaming-zipformer-en-2023-06-26`: encoder int8 70,108,816 B, decoder 2,093,080 B, joiner 1,026,462 B, `tokens.txt`; `libonnxruntime.so` 21,688,920 B + `libsherpa-onnx-jni.so` |
+| `sherpa-onnx-1.13.7-arm64-v8a-asr-en-zipformer2.apk` | 72,644,307 | `2902526c75cb65b8df0d52fb2419cec7ca48152d8f4224893092fa44d0838a7a` | same package, 1.13.7 (versionCode 20260901) | **32** | identical model assets |
+
+(`aapt2 dump badging`; the only permission is `RECORD_AUDIO`; application label "ASR".) Both on
+`C:/Users/bastr/.androidbuild/sherpa-apk/`.
+
+**Install (1.13.7), after the 5-minute cool (06:06:47, battery 27.0 °C, thermal 0):** `adb -s <tab> install -r`
+never returned — killed after 20 minutes; a second attempt via `adb push` + `pm install -r /data/local/tmp/sherpa.apk`
+timed out at 180 s the same way. The tablet's foreground window throughout was
+`com.android.vending/com.google.android.finsky.protectdialogs.activity.PlayProtectDialogsActivity`, and its
+text (`uiautomator dump`) is: **"Google Play Protect — Unsafe app blocked — ASR — This app was built for an
+older version of Android and doesn't include the latest privacy protections."** with `More details` / `Got it`.
+That is Play Protect on Android 16 refusing a sideload that targets API 32; `BACK` does not dismiss it. The
+package was **not** installed (`pm list packages | grep k2fsa` → nothing), no launch happened, no logcat or RSS
+exists, and the prompt was left on the screen for the owner rather than clicked through — overriding a Play
+Protect block on the owner's device is the owner's decision, not the probe's.
+
+What this leaves the owner: (a) tap `More details → Install anyway` on the Tab (or pause Play Protect scanning
+in the Play Store's settings for the one install) and rerun the launch half of
+`scratchpad/e6/rung2.sh` (`am start -W -n com.k2fsa.sherpa.onnx/.MainActivity`, logcat, `/proc/<pid>/status`);
+the "feel" dictation was always going to be the owner's — the app reads the microphone, and no clip can be
+injected from the PC; or (b) build the sherpa-onnx Android demo from source against the AAR the app already
+pins (`sherpa-onnx-1.13.4.aar`, `app/build.gradle.kts:582`) with targetSdk 36, which is what a tier would do
+anyway. The first RTF number for the streaming zipformer on this tablet is therefore **still unmeasured**; the
+research's route survives untested, not refuted.
+
+## 7. Teardown proof (2026-09-10 06:31, `adb -s 192.168.1.161:44483`)
+
+```
+$ adb devices -l
+192.168.1.161:44483    device product:gts10psqw model:SM_X828U device:gts10p transport_id:8
+$ dumpsys package com.whispereverywhere | grep -E 'versionCode|versionName|lastUpdateTime|installerPackageName|codePath'
+    codePath=/data/app/~~9genVoVOFixkBuwhZjv7HA==/com.whispereverywhere-FOMQ4iihLzFvw2x31Zy08g==
+    versionCode=86 minSdk=26 targetSdk=36
+    versionName=4.3.2
+    lastUpdateTime=2026-09-04 19:49:37
+    installerPackageName=com.android.vending
+$ dumpsys package com.whispereverywhere.probe | grep -E 'versionCode|lastUpdateTime'
+    versionCode=1 minSdk=31 targetSdk=36
+    lastUpdateTime=2026-09-10 05:56:54
+$ pm list packages | grep -ic k2fsa
+0
+$ ls -la /data/local/tmp
+drwxrwxr-x 5 shell shell 3452 2026-06-17 17:00 .studio          (the pm-install's dalvik-cache/ and sherpa.apk removed; only the pre-existing .studio/)
+$ dumpsys battery | grep temperature ; dumpsys thermalservice | grep -m1 'Thermal Status'
+  temperature: 258
+Thermal Status: 0
+```
+
+The Play copy was never installed to, uninstalled, force-stopped or launched (same `lastUpdateTime` and
+`codePath` as on 09-09; installer `com.android.vending`). The probe's `files/` keeps the five models (2.25 GB)
+plus the four mel files (5.0 MB) and `files/results/` (62 JSONs + three 3 MB encoder-state dumps, 9.2 MB).
+Only the Tab was ever addressed; every adb command carried `-s 192.168.1.161:44483`.
+
+## 8. Files
+
+- Probe: `tools/probes/litertlm-probe/app/src/main/java/com/whispereverywhere/probe/E2eProbe.kt` (mode `e2e`),
+  `ProbeArgs.kt` / `ProbeRunner.kt` / `drive.py` (new keys), `whisper_e2e.py` (mel, PC run, detok, summarize),
+  `compare_states.py` (encoder-state comparison). Branch `tools/tab-e6` off `tools/tab-apu-probe`.
+- Logs: `C:/Users/bastr/.androidbuild/probe-logs/e6_*.{json,filtered.log,full.log}` (20 runs this session) and
+  `e6_base_*_dump.states.bin`; mels and tokenizers under `C:/Users/bastr/.androidbuild/probe-models/`.
