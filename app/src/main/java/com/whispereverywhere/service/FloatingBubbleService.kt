@@ -3093,10 +3093,19 @@ class FloatingBubbleService : Service(),
                         // label render uses. A local preview parks the strip at INVISIBLE between
                         // utterances (deltaBlankVisibility's OCCUPYING_BLANK row, below), and
                         // INVISIBLE already occupies layout height — estimatedWindowSize grants
-                        // the strip its ~100dp on `!= GONE` — so INVISIBLE -> VISIBLE changes no
-                        // geometry and needs no reclamp. Widened to `!= VISIBLE` this fires on
-                        // every parked reveal, paying one reclampNow() per utterance and making
-                        // the park inert: exactly the churn the park exists to remove.
+                        // the strip its ~100dp on `!= GONE` — so a parked reveal is not the
+                        // window-growing step a reveal from GONE is. Not a promise of NO growth:
+                        // currentWindowSize prefers the measured view once laid out, and a
+                        // five-line partial landing on a one-line parked strip does grow the
+                        // window — un-reclamped, exactly as every delta-to-delta text change
+                        // already is, and spec:139 budgets one reclamp per session rather than one
+                        // per repaint. Widened to `!= VISIBLE` this fires on every parked reveal,
+                        // paying one reclampNow() per utterance and making the park inert: exactly
+                        // the churn the park exists to remove. Both spellings above drop the
+                        // `View.` prefix deliberately: the wiring pin holds the View-prefixed
+                        // spelling of the widened predicate at ZERO occurrences in this method, so
+                        // prose that quotes it in full breaks that census — as this very sentence
+                        // did on its first draft.
                         val wasHidden = transcriptionDeltaText.visibility == View.GONE
                         transcriptionDeltaText.visibility = View.VISIBLE
                         if (wasHidden) {

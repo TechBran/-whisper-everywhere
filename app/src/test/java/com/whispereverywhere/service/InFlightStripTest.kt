@@ -196,5 +196,10 @@ class InFlightStripTest {
         assertFalse(resolvedTextClearsStrip(sessionIsLive = true, sessionHasLocalPreview = false, isFinalizing = true))
         assertFalse(resolvedTextClearsStrip(sessionIsLive = false, sessionHasLocalPreview = false, isFinalizing = true))
         assertFalse(resolvedTextClearsStrip(sessionIsLive = false, sessionHasLocalPreview = true, isFinalizing = true))
+        // The eighth and last row of the three-input table. Unreachable like its !isFinalizing
+        // twin above, and no mutation reaches only this cell — but the sibling rules' discipline is
+        // that a rule with a hole where a row should be is worse than an unreachable row, and this
+        // is the only cell the table was missing.
+        assertFalse(resolvedTextClearsStrip(sessionIsLive = true, sessionHasLocalPreview = true, isFinalizing = true))
     }
 }
