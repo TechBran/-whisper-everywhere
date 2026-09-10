@@ -245,6 +245,10 @@ def cmd_summarize(a):
     for o in rows:
         art = os.path.basename(o.get("model") or "-")
         backend = o.get("accel") + ("" if o.get("no_fallback") else " (+CPU fallback)") + (" %d thr" % o["threads"] if o.get("accel") == "cpu" else "")
+        if o.get("accel") == "gpu":
+            backend += " " + (o.get("gpuprec") or "default")
+        if o.get("decaccel") and o.get("decaccel") != "same":
+            backend += " / decoder on %s %d thr" % (o["decaccel"], o.get("threads", 0))
         tokp = o.get("tokenizer")
         tk = None
         if Tokenizer and tokp and os.path.exists(tokp):
@@ -261,8 +265,17 @@ def cmd_summarize(a):
             print("| %s | %s | %s | FAIL `%s` |" % (o.get("tag"), art, backend, (o.get("error") or "")[:200].replace("|", "/")))
     print()
     for o in rows:
-        print("- `%s`: create %s ms, mem after create %s, start %s, end %s; %s" % (
-            o["tag"], f1(o.get("create_ms")), mem(o, "mem_after_create"), therm(o, "mem_start"), therm(o, "mem_end"),
+        db = o.get("decbench")
+        dbs = ("; decbench n=%d: per-step compute %.1f ms (single run+read %.1f, final read %.1f)" % (
+            db["n"], db["per_step_ms"], db["single_run_plus_read_ms"], db["final_read_ms"])) if db else ""
+        we = o.get("warm_encode") or {}
+        ws = o.get("warm_step") or {}
+        print("- `%s`: create %s ms%s, mem after create %s, end %s, start %s, end %s; warm encode n=%s mean %s (min %s max %s); warm step n=%s mean %s (min %s max %s)%s; %s" % (
+            o["tag"], f1(o.get("create_ms")),
+            (" + decoder model %s ms" % f1(o.get("decode_model_create_ms"))) if o.get("decode_model_create_ms") else "",
+            mem(o, "mem_after_create"), mem(o, "mem_end"), therm(o, "mem_start"), therm(o, "mem_end"),
+            we.get("n", 0), f1(we.get("mean_ms")), f1(we.get("min_ms")), f1(we.get("max_ms")),
+            ws.get("n", 0), f1(ws.get("mean_ms")), f1(ws.get("min_ms")), f1(ws.get("max_ms")), dbs,
             "ok" if o.get("ok") else "FAIL " + (o.get("error") or "")))
 
 

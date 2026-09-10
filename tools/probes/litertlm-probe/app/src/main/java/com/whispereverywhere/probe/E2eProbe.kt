@@ -195,6 +195,13 @@ class E2eProbe(private val ctx: Context, private val args: ProbeArgs) {
                 uo.put("encode_ms", encMs)
                 uo.put("handoff_ms", handoffMs)
                 uo.put("encode_fingerprint", fingerprint(states))
+                if (args.dumpStates && index == 0) {
+                    val f = File(File(ctx.filesDir, "results").apply { mkdirs() }, args.tag + ".states.bin")
+                    val bb = ByteBuffer.allocate(states.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+                    bb.asFloatBuffer().put(states)
+                    f.writeBytes(bb.array())
+                    ProbeLog.i("e2e|dumped encoder states of utt 0 to ${f.absolutePath} (${f.length()} B)")
+                }
 
                 // decode: greedy, full-window re-run per step
                 val ids = IntArray(DECODE_WINDOW) { pad }
@@ -261,6 +268,30 @@ class E2eProbe(private val ctx: Context, private val args: ProbeArgs) {
                 ProbeLog.i("e2e|utt=$index|step_ms=" + stepMs.joinToString(",") { "%.1f".format(it) })
                 utterances.put(uo)
                 if (index > 0) { allEncodeMs.add(encMs); allStepMs.addAll(stepMs); allRunOnlyMs.addAll(runOnlyMs) }
+                if (index == 0 && args.decBench > 0) {
+                    // N enqueued runs of the same step, one read at the end: on the asynchronous GPU backend the
+                    // runs queue up and (total - one readback) / N is the per-step compute; on the CPU run() is
+                    // synchronous and the same arithmetic holds.
+                    decIdsBuf.writeInt(ids)
+                    val r0 = System.nanoTime()
+                    decModel.run(decInputs, decOutputs, SIG_DECODE)
+                    decOutBuf.readFloat()
+                    val single = (System.nanoTime() - r0) / 1e6
+                    val b0 = System.nanoTime()
+                    for (i in 0 until args.decBench) decModel.run(decInputs, decOutputs, SIG_DECODE)
+                    val b1 = System.nanoTime()
+                    decOutBuf.readFloat()
+                    val b2 = System.nanoTime()
+                    val runsMs = (b1 - b0) / 1e6
+                    val readMsB = (b2 - b1) / 1e6
+                    val totalMs = (b2 - b0) / 1e6
+                    val perStep = (totalMs - readMsB) / args.decBench
+                    val bo = JSONObject()
+                    bo.put("n", args.decBench); bo.put("single_run_plus_read_ms", single); bo.put("runs_ms", runsMs)
+                    bo.put("final_read_ms", readMsB); bo.put("total_ms", totalMs); bo.put("per_step_ms", perStep)
+                    res.put("decbench", bo)
+                    ProbeLog.i("e2e|decbench|n=${args.decBench}|single_run_plus_read_ms=${"%.1f".format(single)}|runs_ms=${"%.1f".format(runsMs)}|final_read_ms=${"%.1f".format(readMsB)}|total_ms=${"%.1f".format(totalMs)}|per_step_ms=${"%.1f".format(perStep)}")
+                }
                 index++
             }
         }

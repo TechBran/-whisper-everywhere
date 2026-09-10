@@ -29,6 +29,9 @@ import android.content.Intent
  *   --ei pad       e2e: the id filling the window beyond the current position (default = eot; a causal mask
  *                  must make it irrelevant -- a different answer with pad=0 means the mask leaks)
  *   --es decaccel  e2e: same | cpu -- run `decode` on a SECOND CompiledModel on the CPU (encoder stays on accel)
+ *   --ez dumpstates e2e: write utterance 0's encoder states (f32 LE) to files/results/<tag>.states.bin for the PC
+ *   --ei decbench  e2e: after utterance 0, enqueue N decode runs with the same inputs and read ONCE -- separates
+ *                  the accelerator's per-step compute from the 26 MB logits readback the Kotlin API forces (default 0)
  */
 data class ProbeArgs(
     val mode: String?,
@@ -55,6 +58,8 @@ data class ProbeArgs(
     val rewriteAll: Boolean,
     val pad: Int?,
     val decAccel: String,
+    val dumpStates: Boolean,
+    val decBench: Int,
 ) {
     companion object {
         fun from(intent: Intent?): ProbeArgs = ProbeArgs(
@@ -82,6 +87,8 @@ data class ProbeArgs(
             rewriteAll = intent?.getBooleanExtra("rewriteall", false) ?: false,
             pad = intent?.let { if (it.hasExtra("pad")) it.getIntExtra("pad", 0) else null },
             decAccel = intent?.getStringExtra("decaccel") ?: "same",
+            dumpStates = intent?.getBooleanExtra("dumpstates", false) ?: false,
+            decBench = intent?.getIntExtra("decbench", 0) ?: 0,
         )
     }
 }
