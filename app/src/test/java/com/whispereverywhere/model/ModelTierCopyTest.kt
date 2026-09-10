@@ -605,11 +605,13 @@ class ModelTierCopyTest {
 
     @Test fun the_npu_turbo_headline_is_pinned_exactly_and_takes_a_position() {
         val copy = ModelTierCopy.forId("npu-turbo")!!
-        // "Best quality" is the spec's owner-approved framing (decision 8); ", slower" is the
-        // disclosure the house rules require beside it — and it is already in POSITION_WORDS, so
-        // the census passes WITHOUT the test's constant being edited to fit the copy, which
-        // would be the wrong way round.
-        assertEquals("Best quality, slower", copy.headline)
+        // 4.1 shipped "Best quality, slower" (decision 8: accuracy unproved, so no speed claim).
+        // The owner's A/B of 2026-08-29 proved the accuracy and the 2026-09 measurements proved
+        // the speed (encode 1.78 s fixed vs Multilingual's 2.3 s per commit on the same phone),
+        // and the owner ruled on 2026-09-10: "it's actually the fastest one we have and most
+        // accurate". Both words are already in POSITION_WORDS, so the census passes without the
+        // constant being edited to fit the copy — which would be the wrong way round.
+        assertEquals("Best accuracy, fastest", copy.headline)
         assertTrue(
             "the npu-turbo headline takes no speed-vs-accuracy position",
             POSITION_WORDS.any { copy.headline.lowercase().contains(it) },
@@ -638,22 +640,30 @@ class ModelTierCopyTest {
         )
     }
 
-    @Test fun the_npu_turbo_body_states_the_trade_and_claims_no_speed_win() {
+    @Test fun the_npu_turbo_body_names_our_own_visible_tier_and_scopes_both_claims_to_this_device() {
         val copy = ModelTierCopy.forId("npu-turbo")!!
         assertEquals(
-            "Large-v3's own encoder, on your phone's AI chip. Bigger and slower than " +
-                "Multilingual on NPU — the reason to pick it is the words, not the speed.",
+            "Large-v3's own encoder, on your phone's AI chip. The most accurate model this " +
+                "app ships, and the fastest on this device — ahead of the 190 MB Multilingual " +
+                "model on both counts.",
             copy.body,
         )
-        // The comparison is OUR OWN other NPU card, named by its display family — the only
-        // before/after this branch is entitled to. And the trade is stated against it honestly:
-        // no WER has been measured for any w8a16 Whisper variant, so "the words" is a reason to
-        // A/B, never a measured claim, and "faster" appears nowhere on this card.
-        assertTrue(copy.body.contains("Multilingual on NPU"))
-        assertTrue(copy.body.contains("slower"))
+        // The comparison is OUR OWN tier — and one the user can SEE: since 4.3's one-tier-per-
+        // device, "Multilingual on NPU" is never offered beside turbo, so naming it (as 4.1 did)
+        // was a comparison to an invisible card. The 190 MB Multilingual model is what this user
+        // would otherwise run. Both claims are measured on our own devices (encode 1.78 s fixed
+        // vs 2.3 s per commit on the Fold6; the owner's 2026-08-29 accuracy A/B) and the speed
+        // claim is scoped to "this device", like the npu card's — never an absolute.
+        assertTrue(copy.body.contains("Multilingual"))
         assertFalse(
-            "the turbo card may not claim a speed win anywhere",
-            (copy.headline + " " + copy.body).lowercase().contains("faster"),
+            "the comparison must be to a tier the user can see, not the hidden npu card",
+            copy.body.contains("Multilingual on NPU"),
+        )
+        assertTrue(copy.body.contains("this device"))
+        assertTrue(copy.body.contains("190 MB"))
+        assertFalse(
+            "the card no longer disclaims speed — the ruling and the measurements say it is the fastest",
+            (copy.headline + " " + copy.body).lowercase().contains("slower"),
         )
     }
 

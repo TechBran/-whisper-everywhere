@@ -45,19 +45,25 @@ object ModelTierCopy {
             badges = listOf("90+ languages", "358 MB"),
             body = "Runs on your phone's AI chip. Same model as Multilingual, much faster on this device.",
         ),
-        // 4.1: the second gated tier. "Best quality" is the spec's owner-approved framing
-        // (decision 8) and ", slower" is the disclosure the house rules require beside it. The
-        // body states the trade and then declines to make a speed claim at all: no WER has been
-        // measured for any w8a16 Whisper variant, so "the reason to pick it is the words" is the
-        // most this copy is entitled to say — the owner's A/B is what measures the rest. The
-        // comparison is OUR OWN other NPU card, never another app, never an absolute.
+        // 4.1 wrote this card as "Best quality, slower" against the OTHER NPU card, back when no
+        // WER existed for any w8a16 variant and the two NPU tiers were offered side by side. Both
+        // premises are gone. The owner's on-device A/B (2026-08-29) resolved accuracy — "V3 Turbo
+        // is clearly the winner, much more accurate" — and 4.3's one-tier-per-device means the
+        // user who sees this card never sees "Multilingual on NPU", so a comparison to it was the
+        // exact mistake the pro card fixed in 3.7 (a tier the user cannot see). The comparison is
+        // now OUR OWN CPU tier the user would otherwise run, on THIS device, and both halves are
+        // measured: encode 1.78 s fixed per commit on the Fold6 against Multilingual's 2.3 s
+        // (docs/measurements, 2026-09-02) and ~6 s per 17.6 s chunk on the Tab S10+ (2026-09-09).
+        // Owner ruling 2026-09-10: "it's actually the fastest one we have and most accurate".
+        // Still no absolute — "fastest" and "most accurate" rank our lineup, not the world.
         "npu-turbo" to TierCopy(
-            headline = "Best quality, slower",
+            headline = "Best accuracy, fastest",
             // 1072 MB = the PAIR (encoder 775,831,552 + decoder 295,854,080), same rule as npu's
             // badge: what the user installs, not the one file WhisperModel.fileName names.
             badges = listOf("90+ languages", "1072 MB"),
-            body = "Large-v3's own encoder, on your phone's AI chip. Bigger and slower than " +
-                "Multilingual on NPU — the reason to pick it is the words, not the speed.",
+            body = "Large-v3's own encoder, on your phone's AI chip. The most accurate model this " +
+                "app ships, and the fastest on this device — ahead of the 190 MB Multilingual " +
+                "model on both counts.",
         ),
     )
 
