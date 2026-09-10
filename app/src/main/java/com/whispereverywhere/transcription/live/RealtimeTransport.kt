@@ -62,11 +62,17 @@ class RealtimeTransport(
     /**
      * How many consecutive reconnects to attempt before giving up for this session. A dead network,
      * DNS failure, sustained 5xx, or a persistent non-fatal 4xx must NOT loop connect->fail->backoff
-     * forever, waking the radio every [Backoff.capMs] for the whole mic session. Reset to zero on a
-     * successful open; once exceeded the socket stays down and the engine rides its local fallback
-     * (every send returns false -> the turn resolves Lost) until the next explicit [connect].
+     * forever, waking the radio every [Backoff.capMs] for the whole mic session. Reset to zero by a
+     * connection that STAYED UP for [MIN_HEALTHY_OPEN_MS] (not by the mere fact of an open — see
+     * [scheduleReconnect]); once exceeded the socket stays down and the engine rides its local
+     * fallback (every send returns false -> the turn resolves Lost) until the next explicit [connect].
      */
     private val maxReconnects: Int = DEFAULT_MAX_RECONNECTS,
+    /**
+     * Monotonic clock, injectable so the healthy-connection rule above is assertable without real
+     * waits. Only ever used for durations (open time), never for wall-clock or logging.
+     */
+    private val nowNanos: () -> Long = System::nanoTime,
 ) {
 
     /**
@@ -118,7 +124,8 @@ class RealtimeTransport(
 
     /**
      * Capped exponential backoff. Pure and pinned so the reconnect schedule is asserted directly:
-     * 500, 1000, 2000, 4000, 8000, 8000, ... (ms). A successful open resets the attempt counter.
+     * 500, 1000, 2000, 4000, 8000, 8000, ... (ms). A connection that stays up for
+     * [MIN_HEALTHY_OPEN_MS] resets the attempt counter.
      */
     data class Backoff(val baseMs: Long, val capMs: Long) {
         fun delayFor(attempt: Int): Long {
@@ -147,6 +154,11 @@ class RealtimeTransport(
     private var language: String? = null
     private var closed = false
     private var reconnectAttempts = 0
+    /**
+     * When the CURRENT socket opened, or 0 when none is up. Read once, in [scheduleReconnect]: only
+     * a connection that lasted [MIN_HEALTHY_OPEN_MS] earns a fresh ceiling.
+     */
+    private var openedAtNanos = 0L
     /**
      * Set by [SessionControl.rotate], consumed by [drainDisconnect]: the ONE disconnect a rotation
      * owes the engine. rotate() may be reached from inside [sendAppend]/[sendCommit] (a protocol
@@ -236,6 +248,7 @@ class RealtimeTransport(
             this.language = language
             closed = false
             reconnectAttempts = 0
+            openedAtNanos = 0L
             protocol.bind(control, listener) // once per session: hand the protocol its socket + sink
             openSocket()
         }
@@ -291,6 +304,7 @@ class RealtimeTransport(
             webSocket?.close(NORMAL_CLOSURE, null)
             webSocket = null
             bootstrapped = false // the next socket must re-bootstrap before any audio
+            openedAtNanos = 0L
             protocol.reset() // drop any protocol-held state; OpenAI's reset is a no-op
         }
     }
@@ -307,6 +321,18 @@ class RealtimeTransport(
 
     private fun scheduleReconnect() {
         // caller holds [lock]
+        // A connection that STAYED UP earns a fresh ceiling; one that merely opened does not.
+        // Until 4.3.4 [InternalListener.onOpen] reset the counter, so the ceiling only ever counted
+        // consecutive FAILED opens — and a server that answers every open with a close this
+        // protocol classifies as transient (101 -> setupComplete -> close, an unmapped reason) looped
+        // open/close every ~0.75 s for the whole mic session, unbounded and untoasted. The close
+        // path only became a reconnect path in 4.3.4 (see [InternalListener.serverClosed]), which is
+        // what turned that reset into new exposure. Health is measured in socket LIFETIME because
+        // that is what the loop lacks: an inbound frame would not do (the loop above delivers
+        // `setupComplete` every time).
+        val openedAt = openedAtNanos
+        if (openedAt != 0L && nowNanos() - openedAt >= MIN_HEALTHY_OPEN_MS * 1_000_000L) reconnectAttempts = 0
+        openedAtNanos = 0L // this socket is gone; the next open stamps its own
         if (reconnectAttempts >= maxReconnects) {
             // Give up rather than burn battery retrying a dead network forever. The socket stays
             // down; the engine keeps routing turns Lost -> local until the next explicit connect().
@@ -331,7 +357,9 @@ class RealtimeTransport(
                 // A socket retired (rotate) or superseded while its handshake was still in flight
                 // must not become the live socket beside the replacement: cancel it and move on.
                 if (webSocket !== this@RealtimeTransport.webSocket) { webSocket.cancel(); return }
-                reconnectAttempts = 0
+                // Stamp the open; the CEILING is cleared in [scheduleReconnect] only if this socket
+                // lives MIN_HEALTHY_OPEN_MS. An open by itself proves nothing about the session.
+                openedAtNanos = nowNanos()
                 // Bootstrap INSIDE the publish lock, then open the audio gate. Until this line
                 // runs, sendAppend/sendCommit refuse — so the config is provably the first frame
                 // on the wire for every provider.
@@ -451,6 +479,15 @@ class RealtimeTransport(
 
         /** Consecutive reconnects before the transport gives up for the session (see [maxReconnects]). */
         const val DEFAULT_MAX_RECONNECTS = 6
+
+        /**
+         * How long a socket must stay open before its reconnect counter is forgiven. Under this, an
+         * open/close loop consumes the ceiling exactly like a failed open, so a server that accepts
+         * the upgrade and then closes cannot be retried forever. 30 s is far longer than any open we
+         * measure (handshake + setup ≈ 0.17 s, T0 P1) and far shorter than a real session's own
+         * rotation cadence (570 s), so a healthy session is always forgiven and a loop never is.
+         */
+        const val MIN_HEALTHY_OPEN_MS = 30_000L
 
         /**
          * Shed the turn once OkHttp's outbound buffer passes this, well under its 16 MiB hard cap

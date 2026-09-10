@@ -62,8 +62,17 @@ class RealtimeTransportTest {
         private val tasks = mutableListOf<() -> Unit>()
         override fun schedule(delayMs: Long, task: () -> Unit) { delays += delayMs; tasks += task }
         fun runNext() { tasks.removeAt(0).invoke() }
+        /** Runs a scheduled reconnect if there is one; false once the ceiling stops scheduling them. */
+        fun runNextIfAny(): Boolean {
+            if (tasks.isEmpty()) return false
+            tasks.removeAt(0).invoke()
+            return true
+        }
         val lastDelay get() = delays.last()
     }
+
+    /** A fake monotonic clock, in ms, so socket LIFETIME (the healthy-open rule) is driveable. */
+    private class FakeClock { var ms = 1_000L; fun nanos(): Long = ms * 1_000_000L; fun advance(dMs: Long) { ms += dMs } }
 
     private class RecordingListener : RealtimeTransport.Listener {
         val deltas = mutableListOf<Pair<String, String>>()
@@ -104,7 +113,8 @@ class RealtimeTransportTest {
         val factory = FakeFactory()
         val scheduler = FakeScheduler()
         val listener = RecordingListener()
-        val transport = RealtimeTransport(factory, scheduler, listener)
+        val clock = FakeClock()
+        val transport = RealtimeTransport(factory, scheduler, listener, nowNanos = clock::nanos)
     }
 
     // --- tests -----------------------------------------------------------------------------------
@@ -366,29 +376,43 @@ class RealtimeTransportTest {
         assertEquals(RealtimeTransport.DEFAULT_MAX_RECONNECTS + 1, r.listener.disconnects)
     }
 
-    @Test fun a_successful_open_resets_the_reconnect_ceiling() {
+    @Test fun a_healthy_connection_resets_the_reconnect_ceiling() {
         val r = Rig()
         r.transport.connect("sk-x", null)
         repeat(RealtimeTransport.DEFAULT_MAX_RECONNECTS) {
             r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null)
             r.scheduler.runNext()
         }
-        // A successful open clears the consecutive-failure count, so the socket is willing again.
+        // A connection that STAYED UP clears the consecutive-failure count, so the socket is willing
+        // again. The open alone does not (r1 nit 1) — see the open/close-loop test below.
         r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+        r.clock.advance(RealtimeTransport.MIN_HEALTHY_OPEN_MS)
         val before = r.scheduler.delays.size
         r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null)
-        assertEquals("open re-armed reconnect", before + 1, r.scheduler.delays.size)
+        assertEquals("a healthy connection re-armed reconnect", before + 1, r.scheduler.delays.size)
         assertEquals("and from the base delay", 500L, r.scheduler.lastDelay)
     }
 
-    @Test fun a_successful_open_resets_the_backoff() {
+    @Test fun a_healthy_connection_resets_the_backoff() {
         val r = Rig()
         r.transport.connect("sk-x", null)
         r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null) // -> 500
         r.scheduler.runNext()
-        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))      // reset
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+        r.clock.advance(RealtimeTransport.MIN_HEALTHY_OPEN_MS)                       // reset
         r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null) // back to 500
         assertEquals(500L, r.scheduler.lastDelay)
+    }
+
+    @Test fun a_short_lived_open_does_not_forgive_the_backoff() {
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null) // -> 500
+        r.scheduler.runNext()
+        r.factory.lastListener.onOpen(r.factory.lastSocket, httpResponse(101))
+        r.clock.advance(750) // the loop's cadence: open, then gone again
+        r.factory.lastListener.onFailure(r.factory.lastSocket, IOException(), null)
+        assertEquals("the counter kept climbing", 1000L, r.scheduler.lastDelay)
     }
 
     @Test fun backoff_schedule_is_pinned_and_capped() {
@@ -493,7 +517,8 @@ class RealtimeTransportTest {
         val scheduler = FakeScheduler()
         val listener = RecordingListener()
         val protocol = ProbeProtocol()
-        val transport = RealtimeTransport(factory, scheduler, listener, protocol)
+        val clock = FakeClock()
+        val transport = RealtimeTransport(factory, scheduler, listener, protocol, nowNanos = clock::nanos)
     }
 
     @Test fun a_transient_server_close_surfaces_one_disconnect_and_reconnects_with_backoff() {
@@ -521,6 +546,40 @@ class RealtimeTransportTest {
         assertEquals("the replacement is re-bootstrapped", listOf(RealtimeEvents.sessionUpdate()), ws2.sent)
         assertTrue("audio flows on the replacement", r.transport.sendAppend(byteArrayOf(1, 2)))
         assertEquals(2, r.listener.connects)
+    }
+
+    @Test fun an_open_close_loop_within_seconds_still_hits_the_reconnect_ceiling() {
+        // r1 nit 1: onOpen used to reset the ceiling, so it only ever counted consecutive FAILED
+        // opens. A server that answers every open with a close this protocol reads as transient
+        // (101 -> setupComplete -> close, an unmapped reason — the shape the 4.3.4 close path made
+        // reconnectable) looped open/close every ~0.75 s for the whole mic session, no toast, no
+        // bound. The counter now needs MIN_HEALTHY_OPEN_MS of socket life to be forgiven, so the
+        // loop consumes the ceiling exactly like a failed open and the transport gives up.
+        val r = ProbeRig()
+        r.transport.connect("k", null)
+        var opens = 0
+        repeat(RealtimeTransport.DEFAULT_MAX_RECONNECTS + 1) {
+            val ws = r.factory.lastSocket
+            r.factory.lastListener.onOpen(ws, httpResponse(101))
+            opens++
+            r.clock.advance(750) // the server hangs up well inside MIN_HEALTHY_OPEN_MS
+            r.factory.lastListener.onClosing(ws, 1011, "internal error")
+            r.factory.lastListener.onClosed(ws, 1011, "internal error")
+            r.scheduler.runNextIfAny()
+        }
+        assertEquals("every open was answered by a transient close", opens, r.listener.disconnects)
+        assertEquals(
+            "the ceiling bit: no reconnect past it, whatever the socket did in between",
+            RealtimeTransport.DEFAULT_MAX_RECONNECTS,
+            r.scheduler.delays.size,
+        )
+        assertEquals(
+            "so the loop is bounded at ceiling + the original socket",
+            RealtimeTransport.DEFAULT_MAX_RECONNECTS + 1,
+            r.factory.sockets.size,
+        )
+        assertTrue("all of it inside seconds", r.clock.ms < RealtimeTransport.MIN_HEALTHY_OPEN_MS)
+        assertTrue("the socket stays down; the engine rides the local fallback", !r.transport.sendAppend(byteArrayOf(1)))
     }
 
     @Test fun a_fatal_server_close_latches_without_reconnect_and_only_the_code_crosses() {
