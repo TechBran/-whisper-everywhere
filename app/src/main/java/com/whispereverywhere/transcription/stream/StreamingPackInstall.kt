@@ -139,6 +139,29 @@ object StreamingPackInstall {
         reason == NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_NOT_OWNED)
 
     /**
+     * The fetch shell's SINGLE-FLIGHT predicate: whether the fetch of a pack is still in Play's
+     * hands or ours. Total over [NpuPackFetch.FetchState] on purpose — a state added to that
+     * machine later must be classified here rather than fall through a wildcard into "idle", or a
+     * second `fetch` would be issued on top of a live one.
+     *
+     * `NeedsConfirmation` counts as in flight: Play is waiting for the user's answer to Play's own
+     * dialog, and a second fetch would ask it twice.
+     */
+    fun fetchInFlight(state: NpuPackFetch.FetchState): Boolean = when (state) {
+        is NpuPackFetch.FetchState.Pending,
+        is NpuPackFetch.FetchState.Downloading,
+        is NpuPackFetch.FetchState.Transferring,
+        is NpuPackFetch.FetchState.NeedsConfirmation,
+        is NpuPackFetch.FetchState.Verifying,
+        -> true
+        is NpuPackFetch.FetchState.Idle,
+        is NpuPackFetch.FetchState.Installed,
+        is NpuPackFetch.FetchState.Failed,
+        is NpuPackFetch.FetchState.Cancelled,
+        -> false
+    }
+
+    /**
      * THE discriminator, and the only one: whether Google Play may be asked for this pack at all.
      * A debug build carries no asset packs — they exist only in an AAB install, which is exactly
      * why the amendment keeps the commit-pinned download alive for "the probe and dev sideloads"

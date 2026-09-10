@@ -513,6 +513,13 @@ tasks.withType<Test>().configureEach {
         // they used to be. (The script, settings.gradle.kts and this build file are already here.)
         rootProject.file("preview_en/build.gradle.kts"),
         rootProject.file("preview_en/.gitignore"),
+        // (4.4.0) The previewer's FETCH SHELL, by the comment-only rule BatchTranscriber.kt is
+        // here for: StreamingPackShellPinTest's pins include ORDER and ZERO-count assertions over
+        // the whole file (registerListener before fetch, installFromPack before Installed, no
+        // removePack, no NpuDiag line, both latch sites present). Several of those mutations are
+        // comment-shaped or produce byte-identical .class files, so without this entry the one
+        // edit each pin exists to catch is the one that never re-runs it.
+        "src/main/java/com/whispereverywhere/transcription/stream/StreamingPackController.kt",
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a

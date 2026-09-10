@@ -297,6 +297,34 @@ class StreamingPackInstallTest {
         assertFalse(StreamingPackInstall.playCanDeliver(isDebugBuild = true, playRefused = true))
     }
 
+    @Test fun theSingleFlightPredicateIsTotalOverTheFetchMachinesStates() {
+        // The fetch shell's ONE guard against a second `fetch` on top of a live one. Total over
+        // the machine on purpose: a state added to NpuPackFetch later must be classified here
+        // rather than fall through a wildcard into "not busy". NeedsConfirmation counts as in
+        // flight — Play is waiting for the user's answer to Play's OWN dialog, and a second fetch
+        // would ask it twice.
+        val busy = listOf<com.whispereverywhere.npu.NpuPackFetch.FetchState>(
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Pending,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Downloading(1L, 2L),
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Transferring,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.NeedsConfirmation,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Verifying(0L, 2L),
+        )
+        val free = listOf<com.whispereverywhere.npu.NpuPackFetch.FetchState>(
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Idle,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Installed,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Failed("any reason at all"),
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Cancelled,
+        )
+        for (s in busy) assertTrue("$s is in flight", StreamingPackInstall.fetchInFlight(s))
+        for (s in free) {
+            assertFalse(
+                "$s is terminal — retry is the same entry point called again",
+                StreamingPackInstall.fetchInFlight(s),
+            )
+        }
+    }
+
     @Test fun aRefusalPlayNamedAsThisInstallsOwnFaultTurnsOffTheFetchOffer() {
         // REUSED, not forked: the sideload family is `NpuPackFetch`'s own — the four codes whose
         // reason carries `OnboardingLogic.SIDELOAD_MARKER` — so the previewer and the NPU tiers

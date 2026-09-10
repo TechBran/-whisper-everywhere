@@ -11,6 +11,10 @@ import com.google.android.play.core.assetpacks.AssetPackManagerFactory
  * Asset Delivery, and the amendment's rule for their runtime side is "reuse the same helper for
  * the two new packs; do not fork it").
  *
+ * Since the previewer's fetch shell landed it also hands out the manager itself ([managerFor]):
+ * a shell that registers a listener needs the instance, not just a read, and the one spelling of
+ * "get the manager" belongs beside the two reads rather than copied into each shell.
+ *
  * Everything policy-shaped stays out: which pack to fetch, what a failure means, when a delivered
  * pack may be removed are decisions their own owners make and their own JVM tests execute
  * (`NpuPackFetch`, `StreamingPackInstall`). This object only answers the question Android is the
@@ -48,6 +52,14 @@ object PlayPacks {
         runCatching { managerFor(context).removePack(packName) }
     }
 
-    private fun managerFor(context: Context): AssetPackManager =
+    /**
+     * The `AssetPackManager` itself, for the one caller that needs more than a read: a fetch
+     * shell, which must `registerListener` / `fetch` / `cancel` / `showConfirmationDialog` on ONE
+     * instance and keep it (`StreamingPackController`). Spelled here so there is a single
+     * `AssetPackManagerFactory.getInstance(applicationContext)` in the app outside the NPU
+     * shell's own — the factory is documented to return a per-context instance and a listener
+     * registered on a throwaway one narrates nothing.
+     */
+    fun managerFor(context: Context): AssetPackManager =
         AssetPackManagerFactory.getInstance(context.applicationContext)
 }

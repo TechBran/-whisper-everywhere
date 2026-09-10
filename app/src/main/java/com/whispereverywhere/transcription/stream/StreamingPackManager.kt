@@ -7,6 +7,7 @@ import android.os.Environment
 import android.os.StatFs
 import androidx.core.net.toUri
 import com.whispereverywhere.BuildConfig
+import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.play.PlayPacks
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -20,7 +21,7 @@ import java.io.File
  * ```
  * state(pack)  ->  Installed        the recognizer opens filesDir/zf-stream/<dirName>/
  *              ->  PackDelivered    Play already has the 73 MB: installFromPack(), no network
- *              ->  PackFetchable    ask Play (the UI's fetch affordance, task 6)
+ *              ->  PackFetchable    ask Play ([StreamingPackController.start], which lands here)
  *              ->  Downloadable     no Play here: download() from the commit-pinned HF base
  *              ->  Repair(via …)    bytes present, verdict withdrawn — repair from the same source
  * ```
@@ -82,11 +83,19 @@ class StreamingPackManager(private val context: Context) {
 
     /**
      * Record a Play fetch failure so the offer can move to the fallback if — and only if — the
-     * refusal was about this install. The caller passes `NpuPackFetch.failureReason(code)`, the
-     * one table that turns a Play error code into words.
+     * refusal was about this install. Keyed by Play's own ERROR CODE, not by words: the caller is
+     * a shell holding an `AssetPackException`, and a caller that handed over its own sentence
+     * would silently never latch. `NpuPackFetch.failureReason` — the one table that turns a code
+     * into words — is applied here, so the classifier still compares the NPU family's own text
+     * and there is no second opinion about which failures are the install's own fault.
+     *
+     * Called by [StreamingPackController] on every Failed, from the listener and from a `fetch`
+     * Task that failed before any `AssetPackState` existed (the sideload's own failure).
      */
-    fun notePlayFailure(reason: String) {
-        if (StreamingPackInstall.playRefusedThisInstall(reason)) playRefused = true
+    fun notePlayFailure(errorCode: Int) {
+        if (StreamingPackInstall.playRefusedThisInstall(NpuPackFetch.failureReason(errorCode))) {
+            playRefused = true
+        }
     }
 
     /** What the Settings row offers and what the previewer's gate reads (spec §6). */
