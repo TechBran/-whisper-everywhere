@@ -379,7 +379,10 @@ turbo's differs by exactly one `GATHER` with non-1D indices, which the OpenCL de
 (S23U/Adreno, `[1,128,3000]` turbo encoder) is not reproduced on Mali as a crash; it is reproduced as a
 compile refusal.** Attempt 2 (GPU with CPU fallback allowed) is in §4.1.
 
-### 4.1 Second cold CPU run and GPU attempt 2 (`CompiledModel.Options(GPU, CPU)` — CPU fallback allowed)
+### 4.1 Second cold CPU run and GPU attempt 2
+
+> **SUPERSEDED 2026-09-10 by E6 (`2026-09-10-tab-turbo-e2e-gpu.md`):** the fp16 encoder output measured here is WRONG (correlation 0.82 with the reference; a correct CPU decoder turns it into `>> >>`). The 1,855 ms was the time of a wrong encoder. The exact (fp32) encoder on the Mali costs 3.46-3.51 s, and the GPU decoder is wrong at both precisions; the correct end-to-end path (GPU fp32 encoder + CPU decoder) is 5.9 s per 20-token commit at ~6 GB RSS. The "fp16-class, within ~3 %" reading below was an aggregate-fingerprint artefact.
+ (`CompiledModel.Options(GPU, CPU)` — CPU fallback allowed)
 
 | tag | artefact | backend | thr | warm n | mean ms | median ms | min ms | max ms | cold run ms | create ms | RSS/PSS MB after create | RSS/PSS MB after warm | batt C / thermal at start | after warm | result |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
