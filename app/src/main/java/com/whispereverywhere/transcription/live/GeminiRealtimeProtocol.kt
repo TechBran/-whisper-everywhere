@@ -145,7 +145,9 @@ object GeminiLiveEvents {
  *  - never send an EMPTY activity (start then end with no audio): the server closes 1007
  *    "Precondition check failed" — structurally impossible here, an activity opens only on a frame;
  *  - the NEXT `activityStart` only after the server's `ACTIVITY_END` ack (or [ACK_GAP_MS]); frames
- *    arriving inside that gap are held and flushed after the deferred start;
+ *    arriving inside that gap are held and flushed after the deferred start. The fallback means a
+ *    second activity can open — and close — before the first is answered, so closes are kept as
+ *    a FIFO ([pending]) and each final/ack is attributed to its own activity, never to a flag;
  *  - a speech-less activity returns NO final, only the ack → that turn resolves EMPTY on the ack
  *    (`onCommitted` + `onCompleted(id, "")` → the engine's EmptyExpected) or the engine's seq strands.
  *
@@ -191,6 +193,16 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
         var discard = false
     }
 
+    /**
+     * An `activityEnd` on the wire whose `ACTIVITY_END` ack has not arrived. [discard]: the engine
+     * resolved the turn locally, its final is swallowed; otherwise the engine expects exactly one
+     * completion. [finalSeen] flips on its `inputTranscription`; [turn] and [sentNanos] feed the
+     * diag line and the end watchdog.
+     */
+    private class PendingClose(val turn: Long, val sentNanos: Long, val discard: Boolean) {
+        var finalSeen = false
+    }
+
     // All state guarded by [gate]; control.* / sink.* are never called while holding it.
     private val gate = Any()
     private var ready = false
@@ -199,15 +211,17 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
     private var queuedBytes = 0
     /** An activity is open on the wire. Invariant: `open` implies [queue] is empty. */
     private var open = false
-    private var ackPending = false
-    private var activityEndSentNanos = 0L
-    private var endWatchdogArmed = false
+    /**
+     * Activities closed on the wire and not yet acked, oldest first (B1). The [ACK_GAP_MS]
+     * fallback deliberately opens the NEXT activity before the previous ack, so TWO closes can be
+     * outstanding; the server answers per activity, in activity order (T0 finding 5:
+     * `inputTranscription → generationComplete → ACTIVITY_END`), so a final belongs to the oldest
+     * entry without one and an ack pops the head. One boolean per outcome misattributed them.
+     */
+    private val pending = ArrayDeque<PendingClose>()
+    /** The OPEN activity's `activityStart` is unanswered; a close hands liveness to the end watchdog. */
     private var startAckPending = false
     private var activityStartSentNanos = 0L
-    /** An `activityEnd` went out for a turn the engine expects a completion for. */
-    private var awaitingFinal = false
-    /** The activity just closed was DISCARDED by the engine (shed / too short): swallow its final. */
-    private var discardPending = false
     /** Closed turns that never reached the wire (their audio was shed) and are still owed an EMPTY resolve. */
     private var extraEmptyOwed = 0
     private var lastPreview = ""
@@ -317,34 +331,33 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
                     // The queued frames flush on the next sender-thread call — never from here.
                 }
                 is GeminiLiveEvents.In.Interim -> {
-                    startAckPending = false // transcription in flight proves the activity was taken
+                    // Transcription in flight proves an activity was taken — the OPEN one only when no
+                    // closed activity is still owed its final (the server answers in activity order).
+                    if (pending.none { !it.finalSeen }) startAckPending = false
                     if (e.text != lastPreview) { lastPreview = e.text; delta = e.text }
                 }
                 is GeminiLiveEvents.In.Final -> {
-                    startAckPending = false
-                    endWatchdogArmed = false
                     lastPreview = ""
+                    val owner = pending.firstOrNull { !it.finalSeen }
                     when {
-                        discardPending -> discardPending = false // the engine already rescued this turn locally
-                        awaitingFinal -> { awaitingFinal = false; resolves += Completion(ids.incrementAndGet().toString(), e.text) }
-                        else -> Unit // a final for no open turn (never observed): ignore, never bind
+                        owner == null -> Unit // a final for no closed activity (never observed): ignore, never bind
+                        owner.discard -> owner.finalSeen = true // the engine already rescued this turn locally
+                        else -> { owner.finalSeen = true; resolves += Completion(ids.incrementAndGet().toString(), e.text) }
                     }
                     drainExtraEmpty(resolves)
                 }
                 is GeminiLiveEvents.In.ActivityStart -> startAckPending = false
                 is GeminiLiveEvents.In.ActivityEnd -> {
-                    val ackMs = (now - activityEndSentNanos) / 1_000_000
-                    val hadFinal = !awaitingFinal && !discardPending
-                    ackPending = false
-                    endWatchdogArmed = false
-                    startAckPending = false
-                    if (awaitingFinal) { // a speech-less activity: no final ever comes (P3f) -> resolve EMPTY
-                        awaitingFinal = false
-                        resolves += Completion(ids.incrementAndGet().toString(), "")
+                    val done = pending.removeFirstOrNull() // a stray ack (never observed) pops nothing
+                    if (done != null) {
+                        // A speech-less activity: no final ever comes (P3f) -> resolve EMPTY on its ack.
+                        if (!done.finalSeen && !done.discard) resolves += Completion(ids.incrementAndGet().toString(), "")
+                        drainExtraEmpty(resolves)
+                        android.util.Log.i(
+                            TAG,
+                            "gemini turn ${done.turn} end ack=${(now - done.sentNanos) / 1_000_000}ms final=${done.finalSeen} queued=${queue.size}",
+                        )
                     }
-                    discardPending = false
-                    drainExtraEmpty(resolves)
-                    android.util.Log.i(TAG, "gemini turn $turns end ack=${ackMs}ms final=$hadFinal queued=${queue.size}")
                 }
                 is GeminiLiveEvents.In.GoAway -> {
                     rotateAtBoundary = true
@@ -407,7 +420,10 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
      */
     private fun pump(now: Long, out: MutableList<String>) {
         while (ready && !open && queue.isNotEmpty()) {
-            if (ackPending && now - activityEndSentNanos < ACK_GAP_MS * 1_000_000L) return // P3e: gate on the ack, else 500 ms
+            // P3e: the next start waits for the LATEST close's ack (acks pop in order, so any entry
+            // outstanding means the latest is), else 500 ms since that close.
+            val latest = pending.lastOrNull()
+            if (latest != null && now - latest.sentNanos < ACK_GAP_MS * 1_000_000L) return
             val t = queue.removeFirst()
             var bytes = 0
             for (f in t.frames) bytes += f.size
@@ -418,7 +434,6 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
             open = true
             startAckPending = true
             activityStartSentNanos = now
-            ackPending = false
             for (f in t.frames) out += GeminiLiveEvents.audio(encode(f))
             if (t.closed) closeWireActivity(now, out, discard = false)
         }
@@ -427,11 +442,9 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
     private fun closeWireActivity(now: Long, out: MutableList<String>, discard: Boolean) {
         out += GeminiLiveEvents.activityEnd()
         open = false
-        ackPending = true
-        endWatchdogArmed = true
-        activityEndSentNanos = now
-        if (discard) discardPending = true else awaitingFinal = true
+        startAckPending = false // from here the end watchdog times this activity, not the start one
         turns++
+        pending.addLast(PendingClose(turn = turns, sentNanos = now, discard = discard))
     }
 
     private fun drainExtraEmpty(resolves: MutableList<Completion>) {
@@ -441,10 +454,11 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
     /** The rotation reason due NOW, or null. Once per open; the transport's ceiling bounds the rest. */
     private fun rotationDue(now: Long): String? {
         if (rotated) return null
-        val atBoundary = !open && !ackPending && !awaitingFinal && !discardPending
+        val atBoundary = !open && pending.isEmpty()
+        val stalled = pending.firstOrNull { !it.finalSeen } // the oldest close still owed its final (or ack)
         val reason = when {
             now >= hardStopNanos -> "goaway-hardstop"
-            endWatchdogArmed && now - activityEndSentNanos > WATCHDOG_MS * 1_000_000L -> "watchdog-end"
+            stalled != null && now - stalled.sentNanos > WATCHDOG_MS * 1_000_000L -> "watchdog-end"
             startAckPending && now - activityStartSentNanos > WATCHDOG_MS * 1_000_000L -> "watchdog-start"
             atBoundary && rotateAtBoundary -> "goaway"
             atBoundary && ready && now - openedAtNanos >= PROACTIVE_ROTATE_MS * 1_000_000L -> "age"
@@ -466,11 +480,8 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
         queue.clear()
         queuedBytes = 0
         open = false
-        ackPending = false
-        endWatchdogArmed = false
+        pending.clear()
         startAckPending = false
-        awaitingFinal = false
-        discardPending = false
         extraEmptyOwed = 0
         lastPreview = ""
         rotateAtBoundary = false

@@ -406,6 +406,88 @@ class GeminiRealtimeProtocolTest {
         assertTrue(control.frames.isEmpty())
     }
 
+    // ---- two activities in flight: the 500 ms fallback opens B before A is answered (review B1) ----
+
+    private fun finalOf(text: String) = """{"serverContent":{"inputTranscription":{"text":"$text"}}}"""
+
+    /** A committed, then 600 ms with no ack: B's first frame opens B on the fallback. */
+    private fun twoInFlight(p: GeminiRealtimeProtocol) {
+        p.onAppend(ByteArray(64) { 1 }); p.onCommit() // A
+        clock.advance(600)
+        p.onAppend(ByteArray(64) { 2 }) // B opens on the fallback, A still unanswered
+    }
+
+    @Test fun two_committed_activities_in_flight_resolve_in_order_and_neither_final_is_dropped() {
+        // T0 §3 puts A's final at p95 0.42 s on fibre; radio RTT pushes it past the fallback a few
+        // times a session. One boolean per outcome dropped B's final here and left B's seq unbound
+        // in the engine -> every later sentence bound one turn late, the last one typed twice.
+        val p = ready(protocol())
+        twoInFlight(p); p.onCommit() // B committed too: two closes outstanding
+        p.onText(finalOf("one")); p.onText(VA_END) // A's final, A's ack
+        p.onText(finalOf("two")); p.onText(VA_END) // B's final, B's ack
+        assertEquals(listOf("1" to "one", "2" to "two"), sink.completed)
+        assertEquals(listOf("committed:1", "completed:1", "committed:2", "completed:2"), sink.order)
+    }
+
+    @Test fun a_discarded_second_activity_never_swallows_the_first_activitys_final() {
+        // The engine sheds B (too short / reconnect gap): B's final is swallowed, A's is NOT B's.
+        val p = ready(protocol())
+        twoInFlight(p); p.onDiscard()
+        p.onText(finalOf("one")); p.onText(VA_END) // A's
+        assertEquals("A's words reach the engine", listOf("1" to "one"), sink.completed)
+        p.onText(finalOf("shed")); p.onText(VA_END) // B's: swallowed
+        assertEquals(listOf("1" to "one"), sink.completed)
+    }
+
+    @Test fun a_speech_less_first_activity_resolves_empty_before_the_second_activitys_text() {
+        val p = ready(protocol())
+        twoInFlight(p); p.onCommit()
+        p.onText(VA_END) // A: ack only, no final (P3f)
+        p.onText(finalOf("two")); p.onText(VA_END) // B
+        assertEquals("EMPTY binds A's seq first, then B's text binds B's", listOf("1" to "", "2" to "two"), sink.completed)
+    }
+
+    @Test fun the_ack_gate_keys_on_the_latest_close_not_on_the_oldest_ack() {
+        // A's late ack must not open C 100 ms after B's end: P3e is about the previous activity.
+        val p = ready(protocol())
+        twoInFlight(p)
+        clock.advance(100); p.onCommit() // B's end at A+700
+        p.onText(finalOf("one")); p.onText(VA_END) // A answered at A+700
+        val before = control.frames.size
+        clock.advance(100)
+        p.onAppend(ByteArray(64) { 3 }) // C's first frame: 200 ms since B's end, B unacked -> held
+        assertEquals(before, control.frames.size)
+        p.onText(finalOf("two")); p.onText(VA_END) // B's ack clears the gate
+        p.onAppend(ByteArray(64) { 4 })
+        assertEquals(ACTIVITY_START, control.texts[before])
+    }
+
+    @Test fun the_end_watchdog_follows_the_oldest_close_still_owed_its_final() {
+        val p = ready(protocol())
+        p.onAppend(ByteArray(64)); p.onText(VA_START); p.onCommit() // A at t
+        clock.advance(600)
+        p.onAppend(ByteArray(64)); p.onText(VA_START)
+        clock.advance(100); p.onCommit() // B at t+700
+        p.onText(finalOf("one")) // A's final disarms A, not B
+        clock.advance(2_800) // B's end 2.8 s unanswered
+        p.onAppend(ByteArray(64))
+        assertEquals(0, control.rotates)
+        clock.advance(300) // 3.1 s
+        p.onAppend(ByteArray(64))
+        assertEquals("B's end is the one unanswered", 1, control.rotates)
+    }
+
+    @Test fun an_older_activitys_final_and_ack_do_not_answer_the_open_activitys_start() {
+        // A's answers prove A was taken; B's start still owes its own ACTIVITY_START.
+        val p = ready(protocol())
+        twoInFlight(p) // B's start at A+600, unacked
+        clock.advance(100)
+        p.onText(INTERIM_1); p.onText(finalOf("one")); p.onText(VA_END) // all A's
+        clock.advance(3_100) // B's start 3.2 s unanswered
+        p.onAppend(ByteArray(64))
+        assertEquals(1, control.rotates)
+    }
+
     // ---- rotation: GoAway at a boundary / at the next boundary / hard stop; proactive age -----------
 
     @Test fun go_away_at_a_turn_boundary_rotates_at_once() {
