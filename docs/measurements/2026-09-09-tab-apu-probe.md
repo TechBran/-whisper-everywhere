@@ -18,17 +18,24 @@ Timing convention: **`mean/median/min/max ms` are run+read** — `CompiledModel.
 `outputBuffer.readFloat()` — because the GPU accelerator's `run()` returns before the OpenCL queue drains
 (measured: 2–4 ms "runs" on Mali until the output is read; runs `e5_base_gpu_211_1/2` below still carry the
 run-only timing and are kept for the record). `cold run ms` is the first invoke after `create` (run+read from
-run 3 on). `create ms` is `CompiledModel.create()` — on the NPU that is where the JIT compile lands. RSS/PSS
-are `/proc/self/status VmRSS` and `Debug.getMemoryInfo().totalPss`; battery temperature is
-`BatteryManager.EXTRA_TEMPERATURE`/10; thermal is `PowerManager.currentThermalStatus` (0 = NONE, 1 = LIGHT).
+run 3 on). `create ms` is `CompiledModel.create()` — on the NPU that is where the JIT compile lands, but most
+of an NPU `create` is **not** compilation: §1.1 breaks it down. RSS/PSS are `/proc/self/status VmRSS` and
+`Debug.getMemoryInfo().totalPss`; battery temperature is `BatteryManager.EXTRA_TEMPERATURE`/10; thermal is
+`PowerManager.currentThermalStatus` (0 = NONE, 1 = LIGHT). Six memory snapshots are taken per run (`start`,
+`before_create`, `after_create`, `after_cold`, `after_warm`, `after_close`) and all six are in every result
+JSON; the tables carry `after_create` and `after_warm`, and **`after_warm` is the maximum of the six in every
+one of the 25 runs that has a full set** — `after_cold` always falls between the two reported columns (base
+JIT 1,175–1,183 MB after cold vs 1,185–1,213 after warm; tiny AOT 420–424 vs 425–431; base GPU 991–996 vs
+1,005–1,018; turbo GPU 3,337 vs 3,363; turbo CPU 1,992 vs 2,045). So the "after warm" column is the peak RSS
+a tier design should budget from.
 
 ## 0. Runtime versions and what was on the device
 
 | Piece | Version / artefact | Where from |
 |---|---|---|
 | LiteRT runtime in the probe | `com.google.ai.edge.litert:litert:2.1.1` (`libLiteRt.so` 5,104,832 B, `libLiteRtOpenClAccelerator.so` 2,675,512 B) | Google Maven. **2.1.1, not 2.2.0**: 2.2.0's `libLiteRt.so` cannot load the v2.1.1 MediaTek compiler plugin (`dlopen failed: cannot locate symbol "LiteRtMediatekOptionsGet"` — 2.2.0 exports none of the 17 `LiteRtMediatekOptions*` symbols 2.1.1 does; measured 2026-09-09, run `e4_base_npu_1` on the 2.2.0 build also failed earlier with `Signature not found` at `getInputTensorType`). Google Maven's `com.google.ai.edge.litert` group carries **no** vendor-runtime artefact at all (`group-index.xml`, read 2026-09-10: `litert, litert-api, litert-gpu, litert-gpu-api, litert-metadata, litert-support, litert-support-api`). |
-| MediaTek NPU runtime pair | `libLiteRtDispatch_MediaTek.so` 409,728 B (sha256 `9e963c56…`), `libLiteRtCompilerPlugin_MediaTek.so` 492,784 B (sha256 `28335079…`) | `https://github.com/google-ai-edge/LiteRT/releases/download/v2.1.1/litert_npu_runtime_libraries_jit.zip` (`mediatek_runtime/src/main/jni/arm64-v8a/`), zip sha256 `4d6433ec…`; fetched by `fetch_mediatek_runtime.py`. **v2.1.1 (2026-01-27) is the last release whose NPU zip ships a `mediatek_runtime/` at all** — the v2.1.5, v2.1.6 and v2.2.0 zips contain only `google_tensor_runtime/` and `qualcomm_runtime_v*/` (listed 2026-09-09). Both `.so` carry `DT_NEEDED libLiteRt.so`. |
-| LiteRT-LM | `com.google.ai.edge.litertlm:litertlm-android:0.17.0` (`liblitertlm_jni.so` 21,802,952 B; latest on Google Maven, `maven-metadata` 2026-09-04) | Google Maven. Statically embeds its own LiteRT (`DT_NEEDED`: `libandroid, libz, libGLESv2, libEGL, libGLESv3, liblog, libdl, libm, libc` — no `libLiteRt.so`); exports `LiteRtDispatchGetApi` and four `LiteRtCompilerPlugin*` names but **zero** `LiteRtGet*Option*` / `LiteRtMediatekOptions*` symbols (the ones the v2.1.1 plugin imports). |
+| MediaTek NPU runtime pair | `libLiteRtDispatch_MediaTek.so` 409,728 B (sha256 `9e963c56…`), `libLiteRtCompilerPlugin_MediaTek.so` 492,784 B (sha256 `28335079…`) | `https://github.com/google-ai-edge/LiteRT/releases/download/v2.1.1/litert_npu_runtime_libraries_jit.zip` (`mediatek_runtime/src/main/jni/arm64-v8a/`), zip sha256 `4d6433ec…`; fetched by `fetch_mediatek_runtime.py`. **v2.1.1 (2026-01-27) is the last release whose NPU zip ships a `mediatek_runtime/` at all** — the v2.1.5, v2.1.6 and v2.2.0 JIT zips and the v2.2.0 AOT zip contain only `google_tensor_runtime/`, `qualcomm_runtime_v69…v81/`, `runtime_strings/` and `fetch_qualcomm_library.sh`: no `mediatek_runtime/`, no `*MediaTek*.so` (all four re-downloaded and re-listed **2026-09-10**; first listed 2026-09-09). Both `.so` carry `DT_NEEDED libLiteRt.so`. |
+| LiteRT-LM | `com.google.ai.edge.litertlm:litertlm-android:0.17.0` (`liblitertlm_jni.so` 21,802,952 B; latest on Google Maven, `maven-metadata` 2026-09-04) | Google Maven. Statically embeds its own LiteRT (`DT_NEEDED`: `libandroid, libz, libGLESv2, libEGL, libGLESv3, liblog, libdl, libm, libc` — no `libLiteRt.so`); exports `LiteRtDispatchGetApi` and four `LiteRtCompilerPlugin*` names but **zero** `LiteRtGet*Option*` / `LiteRtMediatekOptions*` symbols (the ones the v2.1.1 plugin imports). LiteRT-LM's own GitHub releases **v0.14.0 → v0.17.0** publish xcframeworks, a macOS binary and a C-API zip — **no NPU/MediaTek runtime asset of any kind** (release listings read 2026-09-10). |
 | Models in `files/` (pushed via `/data/local/tmp` + `run-as cp`, sha256 equal on PC and Tab, tmp copies deleted) | `whisper_base_30s_f32.tflite` 290,082,636 B · `whisper_large_v3_turbo_30s_i8.tflite` 1,088,340,944 B · `whisper_tiny_30s_f32.tflite` 150,979,184 B (sha256 `0c8f0e2a…`) · `whisper_tiny_30s_f32_MediaTek_MT6989.tflite` 155,634,208 B (sha256 `fcc46116…`) · `Qwen3-0.6B.litertlm` 614,236,160 B (sha256 `555579ff…`) | `https://huggingface.co/litert-community/{whisper-base,whisper-large-v3-turbo,whisper-tiny,Qwen3-0.6B}` |
 | Probe APK | `app-debug.apk` 27,835,604 B, sha256 `cd092e69…` — identical to the `base.apk` installed on the Tab (`adb shell sha256sum` of the codePath) and to the 2026-09-09 build | `gradlew.bat :app:assembleDebug` (build dir `C:/Users/bastr/.androidbuild/litertlm-probe/`), reinstalled 2026-09-10 04:50:30 with `adb -s <tab> install -r`, launch proved by run `info_2` |
 
@@ -61,7 +68,9 @@ output fingerprint identifies the backend that computed it.
 | e4_base_npu_211_4 | whisper_base_30s_f32.tflite | npu | - | 20 | 106.9 | 106.2 | 100.6 | 111.7 | 106.4 | 28697.9 | 1179 / 1267 | 1212 / 1280 | 24.7 C / 0 | 24.7 C / 0 | ok; run-only warm mean 100.9 |
 
 Four cold processes, 80 warm runs: **encode ≈ 100 ms run-only (99–101 ms mean in every process), ≈ 107 ms
-run+read; JIT compile 28.6–29.0 s at every cold start; ~1.2 GB RSS while compiled.** Output fingerprint is
+run+read; `create` 28.6–29.0 s at every cold start — of which the on-device JIT compile is ~5.2 s and 20.0 s
+is four 5 s binder timeouts on a vendor service this ROM does not register (§1.1); ~1.2 GB RSS while
+compiled.** Output fingerprint is
 bit-identical across the four processes (`mean=-0.03311 mean_abs=0.80799 min=-23.9688 max=16.1719
 head=-0.1128,-0.7305,-0.6240,-0.9717`) and differs from CPU's (`-0.03321 / 0.80887 / -23.9580 / 16.1774 /
 -0.1198,-0.7220,-0.6286,-0.9701`) and from GPU's (`-0.03339 / 0.80945 / -23.9375 / 16.1719 /
@@ -110,14 +119,101 @@ tablet, E0). APU session: opened from the untrusted app through `apuware` AIDL v
 are not needed. **So the APU is reachable from a normal, sideloaded, non-Play app on this device — the
 question E3 was written to answer is answered by E4-lite with a Whisper encoder, not a Gemma decoder.**
 
-**The #6462 signature is present on every one of the four runs** (12 occurrences in 4 logs, 3 per run =
-one per subgraph in the bytecode): `NeuronModel_restoreFromCompiledNetwork - Failed to load compiled network
-from the given buffer`, preceded by `The header of DLA is invalid`, after which the model still runs — the
-"silent JIT fallback" the issue describes (https://github.com/google-ai-edge/LiteRT/issues/6462). What the
-compiler plugin produced (5.2 s, `soc_model=(null)`) the dispatch could not restore; the executable the
-APU ran came from whatever the dispatch did next. The ~100 ms is therefore a number **with** the #6462
-toolchain gap in play — §3 (the AOT-compiled tiny artefact) is the control that separates the toolchain
-from the silicon.
+### 1.1 What the 28.7 s `create` is made of — 5.2 s of compile, 20.0 s of `waitForService`
+
+Every load of the NeuronAdapter inside the probe's process is preceded by the same binder timeout, logged from
+the probe's own pid (`e4_base_npu_211_4.full.log` lines 1164 / 2278 / 2279 / 2306, the first of four such
+groups):
+
+```
+23:46:57.426 23626 I ServiceManagerCppClient: Waiting for service 'vendor.mediatek.hardware.neuropilot.neuronservice.INeuronService/default' on '/dev/binder'...
+23:47:02.438 23626 W ServiceManagerCppClient: Service vendor.mediatek.hardware.neuropilot.neuronservice.INeuronService/default didn't start. Returning NULL
+23:47:02.438 23626 E verywhere.probe: Faild to get neuron serivce
+23:47:02.608 23626 I litert  : [neuron_adapter_api.cc:113] Loading MediaTek NeuronAdapter .so from: libneuronusdk_adapter.mtk.so
+```
+
+`adb -s <tab> shell service list` on this build registers
+`vendor.mediatek.hardware.apuware.apusys.INeuronApusys/default`,
+`vendor.mediatek.hardware.apuware.utils.IApuwareUtils/default` and
+`android.hardware.neuralnetworks.IDevice/mtk-neuron_shim` — and **no
+`vendor.mediatek.hardware.neuropilot.neuronservice.INeuronService`** (checked 2026-09-10). The USDK adapter's
+first choice is that neuronservice AIDL; on this ROM it can never resolve, so the adapter waits out libbinder's
+5 s default, gives up, and falls back to the in-process `apuware` path — which is the path that then opens the
+APU (`FastAPU is available`, §1 above). The v2.1.1 plugin instantiates the adapter once per phase and the
+dispatch instantiates it once more, and **every instantiation pays the full 5 s**:
+
+| run | adapter loads = 5 s waits | waits total | real compile (`Starting MediaTek Compilation` → `applied successfully`) | rest | `create_ms` |
+|---|---|---|---|---|---|
+| `e4_base_npu_211_4` (base, JIT) | 4 | **20.05 s** | **5.21 s** | ~3.4 s (partition passes 0.52 + 2.25 s, reserialize 0.17 s, dispatch load + restore 0.30 s) | 28,698 |
+| `e4_base_npu_211_1` (base, JIT) | 4 | 20.05 s | 5.12 s | ~3.8 s | 28,964 |
+| `rv_base_npu_jit_1` (base, JIT — review re-run, §8) | 4 | 20.05 s | 5.19 s | ~3.4 s | 28,692 |
+| `e4_tiny_npu_jit_1` (tiny, JIT) | 6 | **30.06 s** | 3.01 s | ~3.2 s | 36,285 |
+| `e4_tiny_npu_aot_1` (tiny, AOT) | 1 | **5.01 s** | none (pre-compiled) | **0.26 s** (adapter load 04:58:41.739 → `create_ms` 04:58:41.997) | 5,760 |
+| `rv_tiny_npu_aot_1` (tiny, AOT — review re-run, §8) | 1 | 5.01 s | none | **0.14 s** | 5,373 |
+| `e4_turbo_npu_211_1` (turbo, JIT — 0 subgraphs selected, §4.2) | 4 | 20.05 s | 0 s (nothing to compile) | ~2.1 s | 22,191 |
+
+So the real cold-start cost on this ROM is: **on-device JIT compile ~5.2 s for base and ~3.0 s for tiny; the
+pre-compiled AOT artefact loads and restores in 0.14–0.26 s; and ~5 s per adapter instantiation of a
+vendor-service lookup that this build cannot satisfy.** `create_ms` is exactly what the process waited — no
+measurement changes — but the attribution matters for sizing R1/R2: "≈29 s of compile at every cold start"
+overstates the compile by ~5.5× and hides 20 s that is not compute at all. Whether that 20 s can be removed
+(one shared adapter instance instead of four, or a property/build flag that makes the USDK adapter skip the
+neuronservice lookup) is **untested** — the adapter is a closed system library and nothing here measured it
+either way.
+
+### 1.2 The `E neuron` restore lines: the *primary* load path failed; the fallback restore succeeded
+
+Every APU run logs the same group of `E neuron` lines once per bytecode partition (12 occurrences in the four
+base logs, 3 per run = one per subgraph in the bytecode), and that group is the signature discussed in LiteRT
+issue #6462 (https://github.com/google-ai-edge/LiteRT/issues/6462). What it means follows from the v2.1.1
+dispatch source, `litert/vendors/mediatek/dispatch/litert_dispatch_invocation_context.cc` @ v2.1.1 (read
+2026-09-10), which has exactly **two** load paths and tries the extension-op one **first**:
+
+```
+// lines 216-227
+LoadModelAndCompilation(...) {
+  if (auto result = LoadFromDlaBytecode(neuron_adapter_api, bytecode_addr,
+                                        bytecode_size, num_inputs, num_outputs);
+      !result) {
+    return LoadFromCachedNetwork(neuron_adapter_api, bytecode_addr, bytecode_size);   // FALLBACK
+  } else {
+    return result;
+  }
+}
+// LoadFromDlaBytecode (line 76) = PRIMARY: fake NEURON_TENSOR_FLOAT32 I/O operands declared with
+//   `.dimensionCount = 0` (lines 86-91), the bytecode as the value of a "com.mediatek.compiled_network"
+//   extension operand (type 0x0200 on Neuron >= 8), then NEURON_PRIORITY_HIGH,
+//   NEURON_PREFER_SUSTAINED_SPEED, AotCompileOptions(), compilation_finish.
+// LoadFromCachedNetwork (line 47) = FALLBACK: plain NeuronModel_restoreFromCompiledNetwork(&model,
+//   &compilation, bytecode_addr, bytecode_size) — logs nothing when it succeeds.
+```
+
+Mapping the group, in the order it appears in the log:
+
+| log line | where it comes from |
+|---|---|
+| `The header of DLA is invalid` · `Cannot set a nullptr compiled network.` · `Cannot set compiled network.` · `NeuronModel_restoreFromCompiledNetwork - Failed to load compiled network from the given buffer` | the adapter handling the `com.mediatek.compiled_network` extension operand **inside `LoadFromDlaBytecode`** — v2.1.1's framing of that extension is not what Neuron 8.2.26 expects |
+| `PrepareTensors: Currently we can't support dynamic shape, the dimension size of a tensor Operand type 3 should not be zero` | the **fake I/O operands** of that same primary path: `NEURON_TENSOR_FLOAT32` is operand type 3 and they are declared `.dimensionCount = 0`, so this is its `compilation_finish` |
+| `Fail to convert model` | `LoadFromDlaBytecode` gives up and returns an `Error` |
+| *(nothing — then `compilation_get_input_padded_size returned 960000 bytes …` and the run)* | `LoadFromCachedNetwork`, the plain `NeuronModel_restoreFromCompiledNetwork` on the same buffer, **succeeded** |
+
+Had the plain restore failed as well, `Create` would have returned an error, the dispatch delegate kernel would
+have failed and `CompiledModel.create()` would have thrown. It did not — and §3.1/§3.2 prove independently
+that the compute is on the APU. **So the executable the APU ran is the compiled network carried in the
+bytecode** (the on-device Neuron compiler's output here; Google's AOT output in §3), not "whatever the dispatch
+fell back to": there is no third path and no CPU path in this dispatch.
+
+What survives of the #6462 caveat, and is the whole of it:
+
+1. the JIT base number is the on-device compiler's output **with whatever options the v2.1.1 plugin forwards**
+   (`soc_model=(null)`, `NeuronCompilation_setPreference … 2`) — the flag-forwarding half of #6462 still
+   applies to this number; the tiny AOT number of §3 carries Google's own compile flags instead, which makes
+   §3 a real control on exactly that variable;
+2. all the failed primary path would have added is `NEURON_PRIORITY_HIGH`, `NEURON_PREFER_SUSTAINED_SPEED` and
+   the AOT optimization string **on the compilation object** — a priority/preference delta, not a different
+   executable;
+3. #6462's "silent JIT fallback" is what LiteRT does when the dispatch `Create` fails **outright**. Here it
+   did not fail, so that fallback never happened.
 
 ## 2. E5 — the whisper-base reference on CPU and GPU (same artefact, same input)
 
@@ -152,18 +248,24 @@ variant (f32 + i8 only), nor has `whisper-large-v3-turbo`. tiny's `encode` is `f
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | e4_tiny_npu_aot_1 | whisper_tiny_30s_f32_MediaTek_MT6989.tflite | npu (AOT bytecode) | - | 20 | 48.1 | 47.7 | 45.9 | 50.8 | 47.0 | 5759.6 | 419 / 444 | 429 / 449 | 26.5 C / 0 | 26.5 C / 0 | ok; run-only warm mean 43.3 (sd 0.3) |
 | e4_tiny_npu_aot_2 | whisper_tiny_30s_f32_MediaTek_MT6989.tflite | npu (AOT bytecode) | - | 20 | 48.4 | 48.1 | 45.6 | 51.9 | 49.5 | 5381.6 | 417 / 458 | 431 / 452 | 26.5 C / 0 | 26.5 C / 0 | ok |
-| e4_tiny_npu_jit_1 | whisper_tiny_30s_f32.tflite | npu (JIT) | - | 0 | - | - | - | - | - | 36284.6 | 777 / 800 | - | 26.5 C / 0 | - | compile OK (36.3 s, same 3 restore failures as base), then the probe failed reading the output tensor type: `LiteRtException: Unsupported element type in Kotlin` (`litert_compiled_model_jni.cc:618 … type: 0` — the JIT-reserialized tiny graph has an untyped output; base's stayed FLOAT) — a probe/Kotlin-binding limit, not a run |
+| e4_tiny_npu_jit_1 | whisper_tiny_30s_f32.tflite | npu (JIT) | - | 0 | - | - | - | - | - | 36284.6 | 777 / 800 | - | 26.5 C / 0 | - | compile OK (`create` 36.3 s = 3.0 s compile + six 5 s `waitForService` timeouts + ~3.2 s, §1.1; same 3 restore-error groups as base, §1.2), then the probe failed reading the output tensor type: `LiteRtException: Unsupported element type in Kotlin` (`litert_compiled_model_jni.cc:618 … type: 0` — the JIT-reserialized tiny graph has an untyped output; base's stayed FLOAT) — a probe/Kotlin-binding limit, not a run |
 | e4_tiny_cpu_1 | whisper_tiny_30s_f32.tflite | cpu | 4 | 20 | 223.1 | 223.6 | 210.3 | 234.4 | 250.7 | 67.7 | 467 / 407 | 569 / 489 | 26.5 C / 0 | 26.5 C / 0 | ok |
 | e4_tiny_gpu_1 | whisper_tiny_30s_f32.tflite | gpu (strict) | - | 0 | - | - | - | - | - | - | - | - | 26.5 C / 0 | - | FAIL `Failed to compile model`: `STABLEHLO_COMPOSITE: LayerNorm has bad input tensor dims` → `17 operations will run on the GPU, and the remaining 65 operations will run on the CPU` (tiny's d=384 LayerNorm composite is refused where base's d=512 one was accepted) |
 
 **The AOT artefact runs the tiny encoder in 43 ms run-only / 48 ms run+read on the APU, 4.6–5.2× the 4-thread
-CPU (223 ms), at 5.4–5.8 s model create (no compile: `[compiled_model.cc:453] Compiler plugin path is provided in
-the environment, but the model is pre-compiled. Plugins won't be applied.`; the 5 s is the dispatch library's own
-init — `Loading shared library: …/libLiteRtDispatch_MediaTek.so` at 04:58:36.344, `Loading MediaTek NeuronAdapter
-.so from: libneuronusdk_adapter.mtk.so` at 04:58:41.739 — the same 5 s gap as in the JIT runs).**
+CPU (223 ms), at 5.4–5.8 s model create — of which loading and restoring the pre-compiled bytecode is only
+0.14–0.26 s** (no compile at all: `[compiled_model.cc:453] Compiler plugin path is provided in the environment,
+but the model is pre-compiled. Plugins won't be applied.`). The 5 s between `Loading shared library:
+…/libLiteRtDispatch_MediaTek.so` at 04:58:36.344 and `Loading MediaTek NeuronAdapter .so from:
+libneuronusdk_adapter.mtk.so` at 04:58:41.739 is **not** the dispatch library's own init: it is one
+`waitForService('…neuropilot.neuronservice.INeuronService/default')` binder timeout, the same one that occurs
+four times in the base JIT runs (§1.1 — the pair of log lines is in the log at 04:58:36.347 / 04:58:41.360).
+From the adapter load to `create_ms` is 0.26 s here and 0.14 s in the review re-run (§8) — **that** is what
+restoring a pre-compiled MT6989 bytecode actually costs on this device.
 
-**And the #6462 restore failure is present here too, with Google's own AOT bytecode and no compiler plugin in
-the process** (`e4_tiny_npu_aot_1`, 6 occurrences = one per partition):
+**And the same restore-error group appears here too, with Google's own AOT bytecode and no compiler plugin in
+the process** (`e4_tiny_npu_aot_1`, 6 occurrences = one per partition; per §1.2 these come from the
+extension-op path that the dispatch tries first, after which the plain restore succeeds silently):
 
 ```
 04:58:41.739 I litert : [dispatch_delegate.cc:176] Dispatch API build ID: MediaTek Dispatch API version 0.1.0, NeuronAdaptor API version 8.2.26
@@ -188,21 +290,29 @@ the process** (`e4_tiny_npu_aot_1`, 6 occurrences = one per partition):
 The encode subgraph (subgraph 0) is one dispatch node and ran; the decode subgraph (1) is split 5 dispatch +
 4 XNNPACK + the dynamic-shape partition that `Fail to convert model` refused. Fingerprint
 `n=576000 nan=0 mean=0.02935 mean_abs=0.85068 min=-17.3906 max=19.25` (fp16-class values). Reading: with the
-v2.1.1 dispatch library + Neuron 8.2.26 on this tablet, **`restoreFromCompiledNetwork` fails for every
-bytecode anyone can produce today — Google's AOT artefact and the on-device JIT alike — and the dispatch then
-executes through whatever fallback it has**, which still lands on the reduced-precision unit at 43 ms (tiny) /
-100 ms (base). Per FLOP the two paths agree (base/tiny = 100/43 = 2.3× against a 2.4× FLOP ratio), so the
-JIT-vs-AOT control finds **no toolchain penalty between them** — the caveat is that neither is the intended
-"restored compiled network" path, so a faster number may still exist behind the restore failure.
+v2.1.1 dispatch library + Neuron 8.2.26 on this tablet, **the extension-op ("restore DLA") load path fails for
+every bytecode anyone can produce today — Google's AOT artefact and the on-device JIT alike — and the plain
+`NeuronModel_restoreFromCompiledNetwork` the dispatch tries next succeeds and runs the bytecode's own compiled
+network** (§1.2), on the reduced-precision unit, at 43 ms (tiny) / 100 ms (base). Per FLOP the two agree —
+1.06 ms/GFLOP for tiny under Google's AOT flags vs 1.03 for base under the on-device compiler's defaults, i.e.
+within 3 % (base/tiny = 100/43 = 2.3× against a 2.4× FLOP ratio) — so the JIT-vs-AOT control finds **no
+toolchain penalty between the two flag sets**, and it is a genuine control: both are real compiled networks,
+differing only in who compiled them and with which flags.
 
 ### 3.1 Whether the "NPU" runs are on the APU and not the Mali GPU (utilization-sampled runs)
 
 The Neuron compiler's own target report lists `EDPA / NEON / GPU / MVPU / MDLA` as execution targets (§1), so
 "it ran through the Neuron runtime" does not by itself say the MDLA did the work. `/sys/kernel/gpu/gpu_busy` and
-`/sys/kernel/gpu/gpu_clock` are world-readable on this tablet; an `adb shell` loop sampled them every 0.25 s
-while long runs executed (files `util_<tag>.txt`; the APU's own power nodes under
-`/sys/devices/platform/soc/19020000.apu-top-3` are not readable by the shell user, and `/proc/apusys_rv` is
-permission-denied, so the APU side has no direct counter here).
+`/sys/kernel/gpu/gpu_clock` are world-readable on this tablet; a PC-side `adb shell` loop
+(`tools/probes/litertlm-probe/tools/sample_util.py --mode gpu`) sampled them while long runs executed — one
+`adb` round trip per sample, so the nominal 0.25 s interval comes out at a **measured ~0.30 s cadence**
+(92 samples over 05:02:40–05:03:08, 179 over 05:04:07–05:05:01) — into the files `util_<tag>.txt`. Each
+sampler window brackets that run's warm phase: tiny AOT samples 05:02:40–05:03:08 vs warm runs
+05:02:47.9–05:03:08.1; base GPU 05:03:39–05:04:05 vs 05:03:44.1–05:04:05.3; base JIT NPU 05:04:07–05:05:01 vs
+05:04:38.1–05:05:00.1 (its first ~31 s of samples fall in `create`); tiny CPU 05:03:10–05:03:37 vs
+05:03:12.2–05:03:37.1. The APU's own power nodes under `/sys/devices/platform/soc/19020000.apu-top-3` are not
+readable by the shell user and `/proc/apusys_rv` is permission-denied, so the APU side has no direct counter
+here.
 
 | tag | backend | warm n | warm mean ms | samples | samples with `gpu_clock` = 0 | `gpu_clock` values seen (Hz) | max `gpu_busy` |
 |---|---|---|---|---|---|---|---|
@@ -218,9 +328,11 @@ at 97–99 % busy throughout the OpenCL run of the same base model.** With XNNPA
 
 ### 3.2 CPU load during the NPU run (`/proc/stat` sampled)
 
-An `adb shell` loop read the aggregate `cpu` line of `/proc/stat` every 0.5 s (busy = 1 − Δ(idle+iowait)/Δtotal,
-over all 8 cores, so 12.5 % = one core saturated); both runs started at thermal status 2 (battery 27.2 C) after
-the E3 LLM runs.
+A PC-side `adb shell` loop (`tools/probes/litertlm-probe/tools/sample_util.py --mode cpu`) read the aggregate
+`cpu` line of `/proc/stat` every 0.5 s — measured cadence 0.52–0.54 s, 56 samples per 29–30 s window — and
+`tools/probes/litertlm-probe/tools/cpustat.py` reduces those files (busy = 1 − Δ(idle+iowait)/Δtotal over all
+8 cores, so 12.5 % = one core saturated); both runs started at thermal status 2 (battery 27.2 C) after the E3
+LLM runs.
 
 | tag | backend | warm n | warm mean ms | CPU busy, aggregate of 8 cores: mean / median / p90 / max | samples |
 |---|---|---|---|---|---|
@@ -317,7 +429,8 @@ The MediaTek compiler plugin **selects none of the int8 turbo graph** and the wh
 The legalizer visited every op (233 `Legalize Fully Connected`, 80 `Legalize BatchMatMul`, 328 Reshape, …) and
 kept none: `whisper_large_v3_turbo_30s_i8.tflite` carries **dynamic-range int8 weights with fp32 activations**
 ("hybrid" FULLY_CONNECTED), which the v2.1.1 MediaTek plugin does not accept, whereas the f32 base/tiny graphs
-were taken whole (343/343, §1). RSS 2.4–2.6 GB, create 22.2 s (the two partition passes + reserialization),
+were taken whole (343/343, §1). RSS 2.4–2.6 GB, create 22.2 s (**20.05 s of it the four `waitForService`
+timeouts of §1.1**, the rest the two partition passes + reserialization; no compile — 0 subgraphs were selected),
 cold 4,794 ms = the CPU's number (§4); warm n=20 mean 6,523 ms (median 6,670, min 5,131, max 7,030) with the
 thermal status climbing 2 → 3 (SEVERE) at battery 27.4 C — the sustained-CPU figure of §4.1 again, from a
 process that asked for the NPU. **Turbo cannot reach the APU in its published `.tflite` form; an f32 (or
@@ -381,18 +494,24 @@ version check — and the runtime says exactly what it did (run `e3_qwen_npu_1`,
 Read: LiteRT-LM 0.17.0 statically embeds a LiteRT newer than any public release (its log paths are
 `third_party/odml/litert/…` and its line numbers differ from 2.1.1's), and that runtime **refuses both halves of
 the only MediaTek pair Google has ever published**: the compiler plugin because it lacks the newer
-`LiteRtCompilerPluginCheckCompilerCompatibility` entry point, the dispatch library through
-`IsSameVersionAsRuntime(TheApi.version)` → `kLiteRtStatusErrorWrongVersion` ("Unsupported dispatch runtime
-version", `litert/runtime/dispatch/litert_dispatch.cc:190-192` on `main`, read 2026-09-10) — although
-`LITERT_API_VERSION` is `0.1.0` in `litert/c/litert_common.h` at v2.1.1, v2.1.4, v2.2.0 and `main` alike and the
-v2.1.1 dispatch reports `Dispatch API version: 0.1.0` when the 2.1.1 runtime loads it (§1). The engine then
+`LiteRtCompilerPluginCheckCompilerCompatibility` entry point, and the dispatch library with **`Unsupported
+dispatch runtime version`** (228 occurrences in `e3_qwen_npu_1`, 456 in `_2` — the engine retries per compiled
+model). **The mechanism of that refusal is unverified.** The only source that carries the message is
+`litert/runtime/dispatch/litert_dispatch.cc:190-192` on LiteRT `main` (read 2026-09-10), where it is emitted by
+`IsSameVersionAsRuntime(TheApi.version)` → `kLiteRtStatusErrorWrongVersion`; but the binary that refused here is
+the LiteRT that LiteRT-LM 0.17.0 statically embeds, which is not published in any form, so what it actually
+compares against cannot be read. Against the public constants the comparison should have passed:
+`LITERT_API_VERSION` is `0.1.0` in `litert/c/litert_common.h` at v2.1.1, v2.1.4, v2.2.0 and `main` alike, and
+the v2.1.1 dispatch reports `Dispatch API version: 0.1.0` when the 2.1.1 runtime loads it (§1). The observation
+is what the NO-GO rests on, not the mechanism. The engine then
 **silently ran the LLM on XNNPACK** (TTFT 3.4 s, RSS 2.8 GB; run `e3_qwen_npu_1`). The dispatch-version check
 happens before any model is touched, so **the gated Gemma3-1B MT6989 artefact would hit the same wall on
 LiteRT-LM 0.17.0**; the older LiteRT-LM AARs on Google Maven (0.10.2 of 2026-04-17, 0.13.1 of 2026-06-04) already
 carry both the `LiteRtCompilerPluginCheckCompilerCompatibility` dlsym and the "Unsupported dispatch runtime
 version" check (strings in their `liblitertlm_jni.so`), and no LiteRT release after v2.1.1 (2026-01-27) ships a
-MediaTek runtime (v2.1.3/v2.1.4 have no NPU zip at all; v2.1.5/v2.1.6/v2.2.0 zips carry only
-`google_tensor_runtime/` and `qualcomm_runtime_v*/`; Google Maven has no vendor-runtime artefact). **There is
+MediaTek runtime (v2.1.3/v2.1.4 have no NPU zip at all; the v2.1.5/v2.1.6/v2.2.0 zips carry only
+`google_tensor_runtime/` and `qualcomm_runtime_v*/`; Google Maven has no vendor-runtime artefact; and LiteRT-LM's
+own releases through v0.17.0 ship no NPU asset — all three re-verified 2026-09-10, §0). **There is
 no publicly downloadable MediaTek dispatch library that LiteRT-LM accepts today — E3 through LiteRT-LM is
 NO-GO on public artefacts, independent of the Gemma licence gate.**
 
@@ -433,10 +552,12 @@ initialize was 9.3 s (§5.2, OpenCL kernel build), 1.7 s once cached.
 
 **E3 (the APU go/no-go through LiteRT-LM):** **NO-GO on public artefacts; the APU itself is GO.** The Gemma3-1B
 MT6989 `.litertlm` is gated (HTTP 401; needs the owner's Hugging Face licence acceptance + token, §5.1), and even
-with it LiteRT-LM 0.17.0 would refuse the only MediaTek dispatch library Google has published (v2.1.1's, "Unsupported
-dispatch runtime version" — an exact-version check against a runtime whose expected version is not public; the v2.1.1
-compiler plugin is refused for a missing symbol; every published LiteRT-LM AAR from 0.10.2 on carries both checks;
-no LiteRT release after v2.1.1 ships a MediaTek runtime; §5.2). The `Backend.NPU` engine "comes up" only by silently
+with it LiteRT-LM 0.17.0 would refuse the only MediaTek dispatch library Google has published (v2.1.1's, with
+`Unsupported dispatch runtime version` — 228 and 456 times across the two runs; **mechanism unverified**, since the
+refusing runtime is the one LiteRT-LM embeds and does not publish, so what it compares against cannot be read, and
+every public `LITERT_API_VERSION` is `0.1.0`; the v2.1.1 compiler plugin is refused for a missing symbol; every
+published LiteRT-LM AAR from 0.10.2 on carries both checks; no LiteRT release after v2.1.1 ships a MediaTek
+runtime; §5.2). The `Backend.NPU` engine "comes up" only by silently
 running on XNNPACK. The question E3 was written to answer — can a normal, sideloaded, non-Play app on this tablet
 reach the APU — is answered **yes** by E4-lite/E4 instead: LiteRT 2.1.1 + the v2.1.1 pair loads
 `libneuronusdk_adapter.mtk.so` (Neuron 8.2.26), opens an `apuware` AIDL v3 session (`FastAPU is available`), and
@@ -444,6 +565,30 @@ executes Whisper encoders on the APU with the Mali idle (§3.1) and one CPU core
 need for the LiteRT-LM route: a MediaTek dispatch library matching LiteRT-LM's embedded runtime — built from the
 LiteRT tree (`bazel build @litert//litert/vendors/mediatek/dispatch:dispatch_api_so`, the NPU doc's own step) on a
 Linux host, plus the gated model.
+
+**What "reachable from a sideloaded app" does and does not carry over to the Play build.** The probe and the Play
+copy run in the *same* SELinux domain — verified 2026-09-10 with `ps -Z`: probe `u:r:untrusted_app:s0:c9,c258,c512,c768`,
+Play copy `u:r:untrusted_app:s0:c69,c258,c512,c768` (same domain; only the per-app MLS categories differ, as they
+must), both `targetSdk 36`, `getenforce` = `Enforcing`. `/dev/apusys` (`system:camera 0660`, `apusys_device`) is
+never opened by either app — the `apuware` server (pid 1369) opens it and the app talks to that server over AIDL.
+So reachability is not a sepolicy question. Four things do differ, and one of them bites:
+
+1. **Native-library packaging (the one that bites).** The probe extracts its `.so` (`jniLibs { useLegacyPackaging =
+   true }`, `tools/probes/litertlm-probe/app/build.gradle.kts:42`) and LiteRT dlopens the dispatch and the compiler
+   plugin **by absolute path** out of `nativeLibraryDir` (`Loading shared library: /data/app/~~…/lib/arm64/libLiteRtDispatch_MediaTek.so`).
+   The main app sets no `useLegacyPackaging`, i.e. it ships with AGP's default `extractNativeLibs="false"` — which
+   is exactly why its QNN skels are re-materialised into `filesDir` (`app/build.gradle.kts:185`). A Play build must
+   therefore either stage the two MediaTek `.so` into `filesDir` and point `DispatchLibraryDir` /
+   `CompilerPluginLibraryDir` there, or flip packaging for that module. An integration task, not a permission one.
+2. **`<uses-native-library>`** for the 12 names the probe manifest declares (10 `*.mtk.so`, `libneuron_adapter_mgvi.so`,
+   `libOpenCL.so`, plus `libvndksupport.so`) — of which the linker actually extends 8 on this ROM
+   (`nativeloader: Extending system_exposed_libraries: …`, §0). Same rule the main app already pays for
+   `libcdsprpc.so` / `libadsprpc.so`.
+3. **`debuggable` (CheckJNI on), `run-as`, a debug signature, `installerPackageName=null`** vs
+   `com.android.vending`: none of these gates the `apuware` AIDL — the server accepted the probe's pid. CheckJNI
+   makes the probe's JNI-side cost (the `readFloat` copy in the run+read numbers) slightly *pessimistic*, never
+   optimistic.
+4. **`largeHeap="true"`**, Play's per-ABI splits, and the runtime's version name: irrelevant to reachability.
 
 **E5 (turbo on CPU / GPU):** CPU/XNNPACK int8 4-thread: **4.66 s cold, 4.9–6.5 s sustained** per 30 s window,
 2.0 GB RSS — 8–10× better per GFLOP than the ggml-q5 calibration but still 2.3–3× the 2 s bar with no
@@ -454,21 +599,40 @@ number of the day. **R3 is not closed; it is the cheapest live route to turbo on
 questions: fp16 transcription quality, 3.4 GB of RSS on a 12 GB device, and every commit billing 1500 frames.
 
 **E4-lite / E4 (APU direction-finder):** whisper-base JIT **≈ 100 ms** run-only (107 ms run+read) over four
-cold processes, 28.7 s compile at every cold start; the Google AOT tiny artefact **43 ms** run-only (48 ms
-run+read) over three cold processes + 800 sampled runs, 5.5 s create. Against the research doc's thresholds
-(≲ 75 ms turbo-class · ~145 ms `multi`-class · ≳ 240–260 ms close), base at 100 ms sits **between turbo-class and
-`multi`-class**: turbo/base = 23.9× by FLOPs (calibrated 20–22×) projects **2.0–2.4 s per 1500-frame encode on
-the APU** — no better than the GPU's measured 1.86 s. **Could the toolchain rather than the silicon set that
-number? Yes, and the evidence says it does:** every APU run, JIT and AOT alike, logs the #6462 signature
-(`The header of DLA is invalid` → `NeuronModel_restoreFromCompiledNetwork - Failed to load compiled network`), so
-the executable the APU ran is whatever the v2.1.1 dispatch falls back to after the restore fails — not the
-compiled network Google's pipeline intended (§1, §3). The AOT-vs-JIT control cannot separate toolchain from
-silicon because both take the same fallback; the number that would (a bytecode that restores) needs a dispatch/
-Neuron pair that agrees with the bytecode format, which nobody outside Google/MediaTek can build today. Until then
-the honest reading is **`multi`-class at best on the public toolchain, R1 stays a research bet, and the GPU
-route (E5) is the one that already meets the bar on paper.**
+cold processes; the Google AOT tiny artefact **43 ms** run-only (48 ms run+read) over three cold processes +
+800 sampled runs. Cold-start cost, correctly attributed (§1.1): base `create` 28.7 s = **5.2 s of on-device
+JIT compile** + 20.0 s of `waitForService(…neuronservice.INeuronService…)` binder timeouts (four of them, on a
+service this ROM does not register) + ~3.4 s of partitioning/reserialization; tiny AOT `create` 5.4–5.8 s =
+one such 5 s timeout + **0.14–0.26 s of actual bytecode load and restore**. So R2's "JIT at every cold start"
+really costs ~5 s of compute, and the 20 s next to it is a lookup that a single shared adapter instance might
+remove — untested, and not to be assumed.
 
-Turbo JIT on the APU (one attempt, §4.2) — see below.
+Against the research doc's thresholds (≲ 75 ms turbo-class · ~145 ms `multi`-class · ≳ 240–260 ms close), base
+at 100 ms sits **between turbo-class and `multi`-class**. Projecting turbo from it: the FLOP ratio is
+turbo/base = 2,312.5 / 96.7 = **23.9×**, and the research doc's calibrated 20–22× comes from a Hexagon
+small→turbo pair that scaled sub-linearly. This APU's own tiny→base pair scales **almost linearly** (100/43 =
+2.3× against a 2.4× FLOP ratio), which is weak support for applying that discount here — so the honest range is
+**2.0–2.6 s** per 1500-frame encode (run-only 100 ms × 20 … run+read 107 ms × 23.9), not a tighter one. Either
+end of it is ≥ the GPU's measured **1.86 s**, so the conclusion does not depend on the choice.
+
+**Could the toolchain rather than the silicon set that number?** Only narrowly. The `E neuron` restore-error
+group on every APU run is *not* evidence of a fallback executable: in the v2.1.1 dispatch the extension-op path
+(`LoadFromDlaBytecode`) is tried **first** and it is that path which logs the errors, after which the plain
+`NeuronModel_restoreFromCompiledNetwork` succeeds silently and the APU runs **the compiled network in the
+bytecode** (§1.2 — with the source; had it not succeeded, `create` would have thrown). What remains open is one
+variable, not the executable: the compile-flag set the v2.1.1 plugin forwards to the on-device compiler
+(`soc_model=(null)`, preference 2), plus the `NEURON_PRIORITY_HIGH` / `NEURON_PREFER_SUSTAINED_SPEED` the
+failed primary path would have set on the compilation object. And §3 is a real control on the flag half:
+Google's own AOT flags (tiny) and the on-device defaults (base) land within 3 % of each other per FLOP. The
+honest reading is therefore **base sits between turbo-class and `multi`-class on this device's own compiler,
+the remaining toolchain variable is the compile-flag/priority set rather than the load path, R1 stays a
+research bet, and the GPU route (E5) is the one that already meets the bar on paper.**
+
+**Turbo JIT on the APU (one attempt, §4.2):** the v2.1.1 MediaTek plugin selects **0 of 321** encoder ops and
+**0 of 1,462** decoder ops from the published dynamic-range int8 graph, so the whole model falls to XNNPACK and
+that "NPU" run is a CPU run (cold 4,794 ms, warm mean 6,523 ms, thermal 2 → 3 SEVERE). An f32 or
+NeuroPilot-quantized turbo export is a precondition for any APU turbo number at all — on top of everything
+above.
 
 ## 7. Teardown proof (2026-09-10 05:10, `adb -s 192.168.1.161:44483`)
 
@@ -495,3 +659,27 @@ models in its private `files/` (2.25 GB: Qwen3-0.6B.litertlm, whisper_base, whis
 whisper_tiny, whisper_tiny_MT6989) — `adb shell pm uninstall com.whispereverywhere.probe` removes all of it
 whenever the owner wants the space back. No other device was addressed at any point (every adb call carried
 `-s 192.168.1.161:44483`; the only device listed by `adb devices` during the session was the Tab).
+
+## 8. Independent re-run (measurement review, 2026-09-10 05:19–05:23)
+
+The measurement review of this document re-ran the two APU arms on the same Tab, from the same installed probe
+build, without touching anything else (`adb -s 192.168.1.161:44483` only; logs `rv_*.{json,full.log,filtered.log}`).
+Both reproduce within 3 %, both carry the same backend-proof lines (`Replacing 1 out of 1 node(s) with delegate
+(DispatchDelegate) … subgraph 0`, `libneuronusdk_adapter.mtk.so`, `Neuron api version: 8.2.26`, an `apusys`
+session opened from the probe's own pid, and the 3 / 6 restore-error groups of §1.2), and both produce a
+**bit-identical output fingerprint** to the original runs:
+
+| tag | create ms (of which) | cold run+read | warm n | mean run+read | mean run-only | RSS MB after create / warm | batt C / thermal | the row it re-runs |
+|---|---|---|---|---|---|---|---|---|
+| `rv_tiny_npu_aot_1` | 5,372.6 (one 5.01 s `waitForService` + **0.14 s** AOT load/restore) | 48.8 | 50 | 49.7 (median 50.1, min 45.4, max 52.8, sd 1.8) | 43.6 (sd 0.57) | 416 / 432 | 27.7 C / 0 → 0 | §3 `e4_tiny_npu_aot_1/2`: 48.1–48.4 run+read, 43.3 run-only |
+| `rv_base_npu_jit_1` | 28,691.8 (four 5.0 s waits = **20.05 s**; compile **5.19 s**) | 92.6 | 20 | 103.2 (median 103.7, min 97.0, max 106.8, sd 2.9) | 97.5 (sd 2.6) | 1,165 / 1,194 | 27.7 C / 0 → 0 | §1 `e4_base_npu_211_1..4`: 98.7–106.9 run+read, 99–101 run-only |
+
+Fingerprints: tiny `mean=0.029353075034916402 mean_abs=0.8506803088709712 min=-17.390625 max=19.25`; base
+`mean=-0.03311093514226377 mean_abs=0.807993526428317`. The review also re-verified the Play copy untouched at
+05:16 and 05:29 (`versionCode=86 … versionName=4.3.2 … lastUpdateTime=2026-09-04 19:49:37 …
+installerPackageName=com.android.vending`, process alive and never force-stopped) and force-stopped the probe
+afterwards.
+
+One clarification the review recorded: the stray `TfLiteFlexDelegate` lines that show up in the NPU runs'
+`filtered.log` belong to a Samsung system process (`e:iwhInfService`), not to the probe — `drive.py`'s logcat
+filter is a regex over all of logcat, not a pid filter (use `--pid` to restrict it).
