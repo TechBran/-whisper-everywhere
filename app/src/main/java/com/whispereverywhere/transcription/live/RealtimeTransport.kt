@@ -40,8 +40,10 @@ fun interface ReconnectScheduler {
  *
  *  1. connect + per-open bootstrap (send the protocol's [RealtimeProtocol.bootstrap] frames once per open),
  *  2. outbound send ([sendAppend] / [sendCommit]) — delegated to the protocol, framed via [control],
- *  3. typed inbound dispatch to [Listener] (via [RealtimeProtocol.onText]),
- *  4. the reconnect-with-backoff policy — which lives HERE and nowhere else.
+ *  3. typed inbound dispatch to [Listener] (via [RealtimeProtocol.onText] / [RealtimeProtocol.onBinary]),
+ *  4. the reconnect-with-backoff policy — which lives HERE and nowhere else — including, since
+ *     4.3.4, the reconnect on a server close the protocol classifies as transient, and the
+ *     socket-identity guard that keeps a retired socket's late callbacks away from its replacement.
  *
  * Credential safety is load-bearing: the API key goes into the upgrade header the protocol returns
  * ONLY (empty for config-first providers), and a handshake failure logs the STATUS CODE ONLY — never
@@ -97,15 +99,19 @@ class RealtimeTransport(
         fun onErrorEvent(code: String?, messageLength: Int)
 
         /**
-         * The socket dropped for a transient reason; a reconnect has been scheduled. Outstanding
-         * turns should resolve `Lost` (the server buffer is gone) so the local fallback rescues
-         * them — but the transport will re-establish the session itself.
+         * The socket is gone for a transient reason — a network failure, a server close the
+         * protocol classified as transient, or a protocol-requested [SessionControl.rotate] — and
+         * a reconnect has been scheduled (under the ceiling; past it the socket stays down).
+         * Outstanding turns should resolve `Lost` (the server buffer is gone) so the local fallback
+         * rescues them — the transport re-establishes the session itself. Exactly once per socket:
+         * a retired socket's later callbacks never surface a second one.
          */
         fun onDisconnected()
 
         /**
-         * A terminal, non-retryable handshake failure (bad key / no credit / forbidden). No
-         * reconnect is attempted. [code] is the HTTP status only.
+         * A terminal, non-retryable failure (bad key / no credit / forbidden / a config the server
+         * rejects). No reconnect is attempted. [code] is the HTTP handshake status, or the
+         * WebSocket close code when the server accepted the upgrade and then closed (Gemini).
          */
         fun onFatal(kind: FatalKind, code: Int)
     }
@@ -128,11 +134,25 @@ class RealtimeTransport(
     }
 
     private val lock = Any()
+    /**
+     * The CURRENT socket — the only one whose callbacks this transport acts on. Every
+     * [InternalListener] callback first checks the socket it arrived on against this reference
+     * and ignores a stale one: a socket retired by [SessionControl.rotate] (whose close handshake,
+     * or the onFailure OkHttp fires up to 60 s later when a stalled peer never answers the close,
+     * would otherwise NULL THE REPLACEMENT, surface a spurious disconnect and feed the protocol a
+     * late duplicate final), or a socket already handled on its first close callback.
+     */
     private var webSocket: WebSocket? = null
     private var apiKey: String = ""
     private var language: String? = null
     private var closed = false
     private var reconnectAttempts = 0
+    /**
+     * Set by [SessionControl.rotate], consumed by [drainDisconnect]: the ONE disconnect a rotation
+     * owes the engine. rotate() may be reached from inside [sendAppend]/[sendCommit] (a protocol
+     * watchdog) with [lock] held by that caller, so it cannot fire the listener itself.
+     */
+    private var disconnectOwed = false
 
     /**
      * The tolerant connector. Current docs omit the `OpenAI-Beta: realtime=v1` header; older
@@ -183,12 +203,31 @@ class RealtimeTransport(
             if (closed) return@synchronized
             // Empty-frame finalize is the protocol's job before it calls rotate(); here we just cycle
             // the socket under the SAME reconnect ceiling, so a pathological rotation loop still gives up.
+            // The retired socket is forgotten HERE: from this line every callback it still makes —
+            // its close handshake, a late message, the 60 s onFailure of a stalled peer — fails the
+            // identity check and is ignored, so it can neither null the replacement nor surface a
+            // second disconnect. The ONE disconnect a rotation owes the engine (outstanding turns
+            // resolve Lost -> local rescue) is surfaced by [drainDisconnect], outside the lock.
             webSocket?.close(NORMAL_CLOSURE, null)
             webSocket = null
             bootstrapped = false // the next socket must re-bootstrap before any audio
+            disconnectOwed = true
             scheduleReconnect()
         }
     }
+
+    /**
+     * Surfaces the disconnect a [SessionControl.rotate] owes, OUTSIDE [lock]. Called after every
+     * protocol entry point ([sendAppend], [sendCommit], inbound text/binary) once its lock is
+     * released — deterministic, and never dependent on the retired socket's own callbacks.
+     */
+    private fun drainDisconnect() {
+        val owed = synchronized(lock) { disconnectOwed.also { disconnectOwed = false } }
+        if (owed) listener.onDisconnected()
+    }
+
+    /** True when [ws] is not the current socket: retired by rotate(), superseded, or already handled. */
+    private fun isStale(ws: WebSocket): Boolean = synchronized(lock) { ws !== webSocket }
 
     /** Open the session for [language] (null = auto) using [apiKey]. Resets backoff state. */
     fun connect(apiKey: String, language: String?) {
@@ -213,17 +252,25 @@ class RealtimeTransport(
      * bytes piled up invisibly inside OkHttp for minutes before the hard cap fired. Watching
      * [WebSocket.queueSize] in [control] lets the false return reach the engine as a prompt shed signal.
      */
-    fun sendAppend(pcm: ByteArray): Boolean = synchronized(lock) {
-        // [bootstrapped], not just a non-null socket: newWebSocket() hands back a socket before the
-        // handshake, so "non-null" is not "ready to receive audio". See the [bootstrapped] KDoc.
-        if (webSocket == null || !bootstrapped) return false
-        protocol.onAppend(pcm)
+    fun sendAppend(pcm: ByteArray): Boolean {
+        val sent = synchronized(lock) {
+            // [bootstrapped], not just a non-null socket: newWebSocket() hands back a socket before the
+            // handshake, so "non-null" is not "ready to receive audio". See the [bootstrapped] KDoc.
+            if (webSocket == null || !bootstrapped) return false
+            protocol.onAppend(pcm)
+        }
+        drainDisconnect() // a protocol watchdog may have rotated from inside onAppend
+        return sent
     }
 
     /** Finalize the current turn per the [protocol] (commit event / commit-flag / client assembly). */
-    fun sendCommit(): Boolean = synchronized(lock) {
-        if (webSocket == null || !bootstrapped) return false
-        protocol.onCommit()
+    fun sendCommit(): Boolean {
+        val sent = synchronized(lock) {
+            if (webSocket == null || !bootstrapped) return false
+            protocol.onCommit()
+        }
+        drainDisconnect()
+        return sent
     }
 
     /** Clean, idempotent close. A second call no-ops; a pending reconnect is cancelled. */
@@ -271,8 +318,10 @@ class RealtimeTransport(
         override fun onOpen(webSocket: WebSocket, response: Response) {
             synchronized(lock) {
                 if (closed) return
+                // A socket retired (rotate) or superseded while its handshake was still in flight
+                // must not become the live socket beside the replacement: cancel it and move on.
+                if (webSocket !== this@RealtimeTransport.webSocket) { webSocket.cancel(); return }
                 reconnectAttempts = 0
-                this@RealtimeTransport.webSocket = webSocket
                 // Bootstrap INSIDE the publish lock, then open the audio gate. Until this line
                 // runs, sendAppend/sendCommit refuse — so the config is provably the first frame
                 // on the wire for every provider.
@@ -294,12 +343,26 @@ class RealtimeTransport(
             listener.onConnected()
         }
 
-        override fun onMessage(webSocket: WebSocket, text: String) = protocol.onText(text)
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (isStale(webSocket)) return // a retired socket's late message: never a duplicate final
+            protocol.onText(text)
+            drainDisconnect() // the protocol may have rotated on what it just read (GoAway, max duration)
+        }
 
-        // No provider sends inbound BINARY — decline it explicitly rather than inherit a silent no-op.
-        override fun onMessage(webSocket: WebSocket, bytes: ByteString) = Unit
+        // Inbound BINARY goes to the protocol's [RealtimeProtocol.onBinary], whose DEFAULT body
+        // declines it: none of OpenAI/ElevenLabs/Soniox sends inbound binary, and the silent no-op
+        // stays a tripwire for them. Gemini overrides it — its server sends every message as a
+        // binary frame carrying UTF-8 JSON (T0 2026-09-10), so without this it received nothing.
+        override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+            if (isStale(webSocket)) return
+            protocol.onBinary(bytes)
+            drainDisconnect()
+        }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            // A superseded socket's late failure (the 60 s OkHttp cancel of a rotated socket whose
+            // peer never answered the close) must not null the replacement or surface a disconnect.
+            if (isStale(webSocket)) return
             val code = response?.code
             // STATUS CODE ONLY. Never touch response.body (it can echo request detail) or headers.
             android.util.Log.w(TAG, if (code != null) "realtime http $code" else "realtime dropped")
@@ -333,23 +396,42 @@ class RealtimeTransport(
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            // Server-initiated close: complete the handshake unless we already closed ourselves.
+            // Server-initiated close: complete the handshake unless we already closed ourselves,
+            // then classify it — this is the FIRST callback carrying the server's code and reason.
             synchronized(lock) {
                 if (closed) return
                 webSocket.close(NORMAL_CLOSURE, null)
             }
+            serverClosed(webSocket, code, reason)
         }
 
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            val wasSelfInitiated: Boolean
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) =
+            serverClosed(webSocket, code, reason)
+
+        /**
+         * A server-initiated close frame, acted on ONCE per socket (onClosing first; the onClosed
+         * that follows finds the socket already retired and is ignored). Until 4.3.4 this path
+         * scheduled NOTHING — scheduleReconnect was reachable only from rotate() and onFailure —
+         * so any post-upgrade close frame ended the cloud half of the session with zero reconnects
+         * and no toast; T0 (2026-09-10) showed Gemini answers EVERY error, the bad key included,
+         * as a 101 upgrade followed by a close frame. The protocol now classifies the close by code
+         * + reason: fatal -> [Listener.onFatal] and no reconnect (the engine latches, toasts at
+         * stop, and rides the local engine); transient -> [Listener.onDisconnected] AND a reconnect
+         * under the ceiling. The reason text reaches the protocol's classifier and NOTHING else:
+         * only the code is logged, only the kind crosses the seam. Our own close() stays silent.
+         */
+        private fun serverClosed(webSocket: WebSocket, code: Int, reason: String) {
+            val fatal = protocol.classifyClose(code, reason)
             synchronized(lock) {
-                wasSelfInitiated = closed
+                if (closed) return
+                if (webSocket !== this@RealtimeTransport.webSocket) return // stale, or already handled
+                // CODE ONLY — the reason can echo request detail and never reaches a log line.
+                android.util.Log.w(TAG, "realtime close $code" + (fatal?.let { " fatal=$it" } ?: ""))
                 this@RealtimeTransport.webSocket = null
                 bootstrapped = false // the next socket must re-bootstrap before any audio
+                if (fatal == null) scheduleReconnect()
             }
-            // An unexpected server close surfaces as a disconnect so outstanding turns resolve
-            // Lost; our own close() is silent.
-            if (!wasSelfInitiated) listener.onDisconnected()
+            if (fatal != null) listener.onFatal(fatal, code) else listener.onDisconnected()
         }
     }
 

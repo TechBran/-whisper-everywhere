@@ -11,6 +11,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.ByteString.Companion.encodeUtf8
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -430,6 +431,246 @@ class RealtimeTransportTest {
         assertTrue(r.listener.deltas.isEmpty())
         assertTrue(r.listener.completed.isEmpty())
         assertNull(RealtimeEventParser.parse("""{"type":"response.done"}"""))
+    }
+
+    // ---- SERVER-INITIATED CLOSE FRAMES (4.3.4 / T4, from the Gemini T0 probes 2026-09-10) -------
+    //
+    // Until this change no test drove onClosing/onClosed, and the transport's onClosed scheduled
+    // NOTHING: any post-upgrade close frame ended the cloud half of the session with zero
+    // reconnects and no toast. Gemini answers EVERY error — the bad key included — as a 101 upgrade
+    // followed by a close frame, so the close path had to grow the classification + reconnect the
+    // onFailure path always had, plus the socket-identity guard that keeps a retired socket's late
+    // callbacks away from its replacement.
+
+    /**
+     * A minimal protocol for the close/rotate/binary probes: classifies one close reason as fatal,
+     * rotates on request (from an inbound message, or from inside onAppend — the watchdog shape),
+     * and records what reaches it. Its bootstrap frame is distinctive so re-bootstrap is provable.
+     */
+    private class ProbeProtocol : RealtimeProtocol {
+        override val endpoint = "wss://probe.invalid/live"
+        override val tolerant4xxRetry = false
+        lateinit var control: SessionControl
+        val texts = mutableListOf<String>()
+        val binaries = mutableListOf<ByteString>()
+        var rotateOnNextAppend = false
+        var bootstraps = 0
+        override fun upgradeHeaders(apiKey: String): List<Pair<String, String>> = emptyList()
+        override fun bind(control: SessionControl, sink: RealtimeTransport.Listener) { this.control = control }
+        override fun bootstrap(apiKey: String, language: String?): List<Frame> {
+            bootstraps++
+            return listOf(Frame.Text(PROBE_SETUP))
+        }
+        override fun onAppend(pcm16k: ByteArray): Boolean {
+            if (rotateOnNextAppend) {
+                rotateOnNextAppend = false
+                control.rotate() // the stall watchdog's shape: rotate from INSIDE the send path
+                return false
+            }
+            return control.send(Frame.Text("audio"))
+        }
+        override fun onCommit(): Boolean = true
+        override fun onText(text: String) {
+            texts += text
+            if (text == "rotate") control.rotate() // the GoAway / max-duration shape
+        }
+        override fun onBinary(bytes: ByteString) { binaries += bytes }
+        override fun classifyFatal(code: Int): FatalKind? = null
+        override fun classifyClose(code: Int, reason: String): FatalKind? =
+            if (reason.contains("api key not valid", ignoreCase = true)) FatalKind.INVALID_KEY else null
+        override fun reset() {}
+    }
+
+    private companion object {
+        const val PROBE_SETUP = """{"setup":"probe"}"""
+        const val GEMINI_CAP_REASON =
+            "Connection aborted because the client failed to close the connection after receiving a GoAway signal once the session durat"
+        const val GEMINI_BAD_KEY_REASON = "API key not valid. Please pass a valid API key."
+    }
+
+    private class ProbeRig {
+        val factory = FakeFactory()
+        val scheduler = FakeScheduler()
+        val listener = RecordingListener()
+        val protocol = ProbeProtocol()
+        val transport = RealtimeTransport(factory, scheduler, listener, protocol)
+    }
+
+    @Test fun a_transient_server_close_surfaces_one_disconnect_and_reconnects_with_backoff() {
+        // The default protocol classifies no close (classifyClose = null): the 10-minute-cap close
+        // shape is TRANSIENT — the engine resolves outstanding turns Lost (local rescue) and the
+        // transport re-establishes the session under the ceiling, exactly as a network drop does.
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        val ws1 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws1, httpResponse(101))
+
+        r.factory.lastListener.onClosing(ws1, 1008, GEMINI_CAP_REASON)
+        assertEquals("the close handshake is completed", 1000, ws1.closeCode)
+        r.factory.lastListener.onClosed(ws1, 1008, GEMINI_CAP_REASON)
+
+        assertEquals("exactly one disconnect for the pair of close callbacks", 1, r.listener.disconnects)
+        assertEquals("a transient close is not a fatal", 0, r.listener.fatals.size)
+        assertEquals("one reconnect scheduled, from the base delay", listOf(500L), r.scheduler.delays)
+        assertTrue("the gate is shut while down", !r.transport.sendAppend(byteArrayOf(1, 2)))
+
+        r.scheduler.runNext()
+        assertEquals("a replacement socket was opened", 2, r.factory.sockets.size)
+        val ws2 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws2, httpResponse(101))
+        assertEquals("the replacement is re-bootstrapped", listOf(RealtimeEvents.sessionUpdate()), ws2.sent)
+        assertTrue("audio flows on the replacement", r.transport.sendAppend(byteArrayOf(1, 2)))
+        assertEquals(2, r.listener.connects)
+    }
+
+    @Test fun a_fatal_server_close_latches_without_reconnect_and_only_the_code_crosses() {
+        // Gemini's bad key: 101 then close 1007 "API key not valid…". classifyClose maps it, the
+        // transport surfaces onFatal(kind, CLOSE CODE) and schedules nothing — no disconnect, no
+        // reconnect loop against a dead key. The reason text reaches the classifier and nothing else.
+        val r = ProbeRig()
+        r.transport.connect("k", null)
+        val ws1 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws1, httpResponse(101))
+
+        r.factory.lastListener.onClosing(ws1, 1007, GEMINI_BAD_KEY_REASON)
+        r.factory.lastListener.onClosed(ws1, 1007, GEMINI_BAD_KEY_REASON)
+
+        assertEquals(listOf(FatalKind.INVALID_KEY to 1007), r.listener.fatals)
+        assertEquals("a fatal close never reconnects", 0, r.scheduler.delays.size)
+        assertEquals("a fatal close is not a transient disconnect", 0, r.listener.disconnects)
+        assertTrue("the socket stays down", !r.transport.sendAppend(byteArrayOf(1, 2)))
+    }
+
+    @Test fun our_own_close_keeps_the_close_handshake_silent() {
+        // close() then the server's half of the handshake: neither a disconnect nor a reconnect.
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        val ws1 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws1, httpResponse(101))
+        r.transport.close()
+        r.factory.lastListener.onClosing(ws1, 1000, "")
+        r.factory.lastListener.onClosed(ws1, 1000, "")
+        assertEquals(0, r.listener.disconnects)
+        assertEquals(0, r.scheduler.delays.size)
+        assertEquals("closed exactly once, by us", 1, ws1.closeCount)
+    }
+
+    @Test fun a_late_callback_from_a_superseded_socket_cannot_null_the_replacement() {
+        // The clobber hazard: OkHttp cancels an unanswered close only after 60 s, so a retired
+        // socket's onFailure/onClosed can land long after the replacement is live. Before the
+        // identity guard it nulled the replacement, fired a spurious disconnect (a whisper sentence
+        // + shed audio) and scheduled yet another open.
+        val r = Rig()
+        r.transport.connect("sk-x", null)
+        val ws1 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws1, httpResponse(101))
+        r.factory.lastListener.onFailure(ws1, IOException("reset"), null)
+        r.scheduler.runNext()
+        val ws2 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws2, httpResponse(101))
+        assertTrue(r.transport.sendAppend(byteArrayOf(1, 2)))
+        val disconnectsBefore = r.listener.disconnects
+        val delaysBefore = r.scheduler.delays.size
+
+        // The OLD socket speaks again, every way it can.
+        r.factory.lastListener.onClosing(ws1, 1006, "")
+        r.factory.lastListener.onClosed(ws1, 1006, "")
+        r.factory.lastListener.onFailure(ws1, IOException("late cancel"), null)
+        r.factory.lastListener.onMessage(ws1, deltaJson("stale", "ghost"))
+
+        assertTrue("the replacement is still live", r.transport.sendAppend(byteArrayOf(3, 4)))
+        assertEquals("no spurious disconnect", disconnectsBefore, r.listener.disconnects)
+        assertEquals("no extra reconnect", delaysBefore, r.scheduler.delays.size)
+        assertTrue("a retired socket's message is never dispatched", r.listener.deltas.none { it.first == "stale" })
+        assertEquals("no extra socket", 2, r.factory.sockets.size)
+    }
+
+    @Test fun rotate_retires_the_socket_and_surfaces_exactly_one_disconnect_independent_of_its_close_frames() {
+        // A protocol rotation (GoAway / max duration): the socket is closed with 1000, ONE
+        // disconnect is surfaced at once (outstanding turns -> local rescue), one reconnect is
+        // scheduled — and the retired socket's own close handshake and late messages add nothing.
+        val r = ProbeRig()
+        r.transport.connect("k", null)
+        val ws1 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws1, httpResponse(101))
+        assertEquals(1, r.protocol.bootstraps)
+
+        r.factory.lastListener.onMessage(ws1, "rotate")
+        assertEquals("rotate closes normally", 1000, ws1.closeCode)
+        assertEquals("the one disconnect a rotation owes", 1, r.listener.disconnects)
+        assertEquals(listOf(500L), r.scheduler.delays)
+        assertEquals(0, r.listener.fatals.size)
+
+        // The retired socket finishes its handshake and even squeezes out a late message.
+        r.factory.lastListener.onClosing(ws1, 1000, "")
+        r.factory.lastListener.onClosed(ws1, 1000, "")
+        r.factory.lastListener.onMessage(ws1, "late")
+        assertEquals("still exactly one disconnect", 1, r.listener.disconnects)
+        assertEquals("still exactly one reconnect", 1, r.scheduler.delays.size)
+        assertEquals("the late message never reached the protocol", listOf("rotate"), r.protocol.texts)
+
+        r.scheduler.runNext()
+        val ws2 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws2, httpResponse(101))
+        assertEquals("the replacement re-bootstraps", listOf(PROBE_SETUP), ws2.sent)
+        assertEquals(2, r.protocol.bootstraps)
+        assertTrue(r.transport.sendAppend(byteArrayOf(1, 2)))
+    }
+
+    @Test fun rotate_from_inside_the_send_path_surfaces_the_disconnect_after_the_lock_is_released() {
+        // The stall watchdog rotates from INSIDE onAppend, i.e. under the transport lock held by
+        // sendAppend. The disconnect must still reach the listener — after the lock is released,
+        // on the same call — not depend on the retired socket ever answering the close.
+        val r = ProbeRig()
+        r.transport.connect("k", null)
+        val ws1 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws1, httpResponse(101))
+        r.protocol.rotateOnNextAppend = true
+
+        assertTrue("the append that rotated is reported unsent (the turn is shed)", !r.transport.sendAppend(byteArrayOf(1, 2)))
+        assertEquals(1000, ws1.closeCode)
+        assertEquals("the disconnect surfaced on the rotating call itself", 1, r.listener.disconnects)
+        assertEquals(listOf(500L), r.scheduler.delays)
+        assertTrue("the gate is shut until the replacement bootstraps", !r.transport.sendAppend(byteArrayOf(1, 2)))
+    }
+
+    @Test fun inbound_binary_reaches_the_protocol_and_the_default_declines_it() {
+        // Gemini sends every message as a BINARY frame carrying UTF-8 JSON. The transport forwards
+        // binary to RealtimeProtocol.onBinary; the default body declines it (the three shipped
+        // providers never receive binary and must keep their tripwire).
+        val probe = ProbeRig()
+        probe.transport.connect("k", null)
+        probe.factory.lastListener.onOpen(probe.factory.lastSocket, httpResponse(101))
+        val payload = """{"setupComplete":{}}""".encodeUtf8()
+        probe.factory.lastListener.onMessage(probe.factory.lastSocket, payload)
+        assertEquals(listOf(payload), probe.protocol.binaries)
+
+        val openai = Rig()
+        openai.transport.connect("sk-x", null)
+        openai.factory.lastListener.onOpen(openai.factory.lastSocket, httpResponse(101))
+        openai.factory.lastListener.onMessage(openai.factory.lastSocket, deltaJson("it_1", "hel").encodeUtf8())
+        assertTrue("the default protocol declines binary — a delta in a binary frame dispatches nothing", openai.listener.deltas.isEmpty())
+    }
+
+    @Test fun a_socket_that_opens_after_being_retired_is_cancelled_not_adopted() {
+        // rotate() during a handshake: the retired socket's onOpen must not become the live socket
+        // beside the replacement the reconnect is about to open.
+        val r = ProbeRig()
+        r.transport.connect("k", null)
+        val ws1 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws1, httpResponse(101))
+        r.factory.lastListener.onMessage(ws1, "rotate")
+        r.scheduler.runNext()
+        val ws2 = r.factory.lastSocket
+        r.factory.lastListener.onOpen(ws1, httpResponse(101)) // the retired socket "opens" late
+        assertEquals("no second bootstrap onto the retired socket", listOf(PROBE_SETUP), ws1.sent)
+        assertEquals(1, r.protocol.bootstraps)
+        assertTrue("the gate stays shut until the REPLACEMENT opens", !r.transport.sendAppend(byteArrayOf(9)))
+        r.factory.lastListener.onOpen(ws2, httpResponse(101))
+        assertEquals(listOf(PROBE_SETUP), ws2.sent)
+        assertEquals(2, r.protocol.bootstraps)
+        assertTrue(r.transport.sendAppend(byteArrayOf(1)))
+        assertEquals("audio went to the replacement only", listOf(PROBE_SETUP, "audio"), ws2.sent)
     }
 }
 
