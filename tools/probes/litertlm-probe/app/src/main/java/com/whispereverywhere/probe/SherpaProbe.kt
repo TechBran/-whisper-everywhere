@@ -366,6 +366,9 @@ class SherpaProbe(private val ctx: Context, private val args: ProbeArgs) {
         val finalWords = WerMath.tokens(fin.text)
         val wordEnd = wordEndTimes(fin.tokens, fin.timestamps)
         o.put("word_map_ok", wordEnd.size == finalWords.size)
+        o.put("word_ends_s", JSONArray(wordEnd))
+        o.put("n_word_ends", wordEnd.size)
+        o.put("n_final_words", finalWords.size)
         val lagWall = ArrayList<Double>()
         val lagAudio = ArrayList<Double>()
         val perWord = JSONArray()
@@ -395,14 +398,19 @@ class SherpaProbe(private val ctx: Context, private val args: ProbeArgs) {
         return o
     }
 
-    /** Words from the BPE pieces: a piece starting with U+2581 opens a word; each word's end = its last piece's timestamp. */
+    /**
+     * Words from the BPE pieces: a piece starting with U+2581 opens a word; each word's end = its last piece's
+     * timestamp. Measured on the Tab (rung 3, first run): the AAR's JNI hands `tokens` back with the U+2581
+     * already turned into an ASCII space (`" ONE", " TWO", " F", "OUR", " FI", "VE"`), so a leading space opens a
+     * word too — without that every piece folded into one word and `word_map_ok` was false on every clip.
+     */
     private fun wordEndTimes(tokens: Array<String>, ts: FloatArray): List<Double> {
         val ends = ArrayList<Double>()
         var open = false
         for (i in tokens.indices) {
             val t = tokens[i]
-            val startsWord = t.startsWith("▁")
-            val body = t.removePrefix("▁")
+            val startsWord = t.startsWith("▁") || t.startsWith(" ")
+            val body = t.removePrefix("▁").removePrefix(" ")
             if (startsWord || !open) {
                 if (body.isEmpty()) continue        // a bare "▁" piece is a space, not a word
                 ends.add(ts.getOrElse(i) { Float.NaN }.toDouble()); open = true
