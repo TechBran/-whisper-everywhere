@@ -55,18 +55,22 @@ kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
-val litertVersion: String = (project.findProperty("litertVersion") as String?) ?: "2.2.0"
+// Default 2.1.1: the LAST LiteRT release whose NPU zip ships the MediaTek dispatch + compiler plugin, and the
+// runtime every number in docs/measurements/2026-09-09-tab-apu-probe.md was taken with. `-PlitertVersion=2.2.0`
+// builds the newer runtime (GPU/CPU only on this device: its libLiteRt.so cannot load the v2.1.1 MediaTek plugin).
+val litertVersion: String = (project.findProperty("litertVersion") as String?) ?: "2.1.1"
 
 dependencies {
-    // LiteRT (CompiledModel / Accelerator.{CPU,GPU,NPU}); 2.2.0 is the latest on Google Maven
-    // (maven-metadata lastUpdated 2026-08-13). Its AAR ships libLiteRt.so + libLiteRtClGlAccelerator.so
-    // (the GPU accelerator) — the old 1.x `litert-gpu` artefact (latest 1.4.2) is the TFLite Interpreter
-    // GPU delegate, not the CompiledModel accelerator, and is deliberately NOT added.
-    // Overridable: `-PlitertVersion=2.1.1` pairs the runtime with the LAST LiteRT release whose NPU zip
-    // shipped the MediaTek dispatch + compiler plugin (v2.1.1, 2026-01-27). Measured 2026-09-09: the
-    // v2.1.1 libLiteRtCompilerPlugin_MediaTek.so does not load against 2.2.0's libLiteRt.so
-    // (`dlopen failed: cannot locate symbol "LiteRtMediatekOptionsGet"` -- 2.2.0 exports none of the 17
-    // LiteRtMediatekOptions* symbols that 2.1.1 does), so the NPU arm is built with 2.1.1.
+    // LiteRT (CompiledModel / Accelerator.{CPU,GPU,NPU}). 2.2.0 is the latest on Google Maven
+    // (maven-metadata lastUpdated 2026-08-13); its AAR ships libLiteRt.so + libLiteRtClGlAccelerator.so
+    // (the GPU accelerator; 2.1.1 names it libLiteRtOpenClAccelerator.so). The old 1.x `litert-gpu`
+    // artefact (latest 1.4.2) is the TFLite Interpreter GPU delegate, not the CompiledModel accelerator,
+    // and is deliberately NOT added. Google Maven's com.google.ai.edge.litert group carries NO vendor
+    // runtime artefact (group-index.xml read 2026-09-10: litert, litert-api, litert-gpu(-api),
+    // litert-metadata, litert-support(-api) only), so the MediaTek pair can only come from the release zip.
+    // Measured 2026-09-09: the v2.1.1 libLiteRtCompilerPlugin_MediaTek.so does not load against 2.2.0's
+    // libLiteRt.so (`dlopen failed: cannot locate symbol "LiteRtMediatekOptionsGet"` -- 2.2.0 exports none
+    // of the 17 LiteRtMediatekOptions* symbols that 2.1.1 does), hence the 2.1.1 default above.
     implementation("com.google.ai.edge.litert:litert:${litertVersion}")
     // LiteRT-LM Android (Engine / EngineConfig / Backend.NPU(nativeLibraryDir)); 0.17.0 is the latest
     // (maven-metadata lastUpdated 2026-09-04).
