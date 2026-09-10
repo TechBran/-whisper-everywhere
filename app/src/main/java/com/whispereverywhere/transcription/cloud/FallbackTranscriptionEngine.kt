@@ -110,6 +110,15 @@ class FallbackTranscriptionEngine(
      * every retry this session will ever start is already queued on local.
      */
     @Suppress("unused") private val scope: CoroutineScope,
+    /**
+     * Maps the session language handed to [connect] to the language the LOCAL mirror runs under.
+     * Identity by default (the shipped behaviour: both halves get the same hint). The service
+     * passes `sessionLanguageFor(installedScope, it, LOCAL)` — the 3.8 cloud-"en" leak fix — so a
+     * cloud session's provider receives the user's own selection while the English-only local
+     * mirror that rescues its lost turns keeps "en". The mirror's language and the cloud's diverge
+     * deliberately inside one session; this hook is the ONE place that divergence is expressed.
+     */
+    private val mirrorLanguage: (String?) -> String? = { it },
 ) : TranscriptionEngine {
 
     /**
@@ -178,7 +187,7 @@ class FallbackTranscriptionEngine(
         // moments later queues behind that load rather than finding no context. Its relay swallows
         // every lifecycle callback — a cloud user must never be shown "No speech model installed"
         // for a safety net they never asked about.
-        local.connect(language, LocalRelay())
+        local.connect(mirrorLanguage(language), LocalRelay())
         accepting = true
         cloud.connect(language, CloudRelay(listener))
     }

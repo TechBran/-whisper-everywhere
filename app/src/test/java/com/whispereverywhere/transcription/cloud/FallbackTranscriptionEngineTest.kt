@@ -201,6 +201,17 @@ class FallbackTranscriptionEngineTest {
         assertEquals(1, local.closes)
     }
 
+    @Test fun the_mirror_language_hook_maps_only_the_local_half() {
+        // The 3.8 cloud-"en" leak fix: the provider gets the user's selection untouched, the
+        // English-only local mirror is re-pinned through the hook. Default (identity) is the
+        // shipped behaviour and is pinned by connect_opens_through_and_close_closes_once above.
+        val cloud = FakeEngine(); val local = FakeEngine()
+        val e = FallbackTranscriptionEngine(cloud, local, scope(), mirrorLanguage = { "en" })
+        e.connect("es", Rec())
+        assertEquals("the cloud half keeps the selection", listOf<String?>("es"), cloud.languages.toList())
+        assertEquals("the mirror runs under the mapped language", listOf<String?>("en"), local.languages.toList())
+    }
+
     // ---------------------------------------------------------------- the policy, plumbed
 
     @Test fun a_cloud_loss_is_retried_on_local_under_the_original_seq() {

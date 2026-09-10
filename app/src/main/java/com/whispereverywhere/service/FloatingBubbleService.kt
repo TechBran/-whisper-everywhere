@@ -162,6 +162,36 @@ internal fun connectingStatusLabel(isCloudSession: Boolean, localEngineWarm: Boo
     if (!isCloudSession && !localEngineWarm) "Loading speech model…" else null
 
 /**
+ * Which engine will run a session's audio through its weights, for [sessionLanguageFor]: LOCAL is
+ * the on-device engine — as the session's transcriber OR as the English-only local MIRROR that
+ * rescues a cloud session's lost turns; CLOUD is a batch or live provider.
+ */
+internal enum class TranscribingEngine { LOCAL, CLOUD }
+
+/**
+ * The session language for one engine — the 3.8 cloud-"en" leak fix (spec §1, pinned by
+ * SessionLanguageTest).
+ *
+ * The ENGLISH-scope override is a fact about whisper's `.en` weights (auto-detect is unreliable on
+ * them, and they cannot transcribe another language anyway), so it applies ONLY to the engine that
+ * runs those weights. Until 4.3.4 the service computed ONE language from the LOCAL installed
+ * model's scope and fed it to every engine, so a cloud user with the English-only default `eco`
+ * installed had "en" forced on the provider whatever they had chosen — and a Gemini live user with
+ * `pro` installed would have sent `languageCodes:["en"]` forever. Now the cloud half of a session
+ * gets the user's own [selection] (null = auto) and only the LOCAL engine — the on-device
+ * transcriber, or a cloud session's local mirror — keeps the "en" pin. Mirror and cloud language
+ * therefore diverge deliberately inside one fallback session; the mirror's language is mapped
+ * through this function again by `FallbackTranscriptionEngine`'s `mirrorLanguage` hook.
+ */
+internal fun sessionLanguageFor(
+    installedScope: com.whispereverywhere.model.ModelScope?,
+    selection: String?,
+    engine: TranscribingEngine,
+): String? =
+    if (engine == TranscribingEngine.LOCAL && installedScope == com.whispereverywhere.model.ModelScope.ENGLISH) "en"
+    else selection
+
+/**
  * The states whose elapsed ticker runs (3.6.0, Workstream E4). PROCESSING kept for the legacy
  * branch that has always owned the ticker UI; FINALIZING added so the stop-tap drain counts up
  * visibly alongside the "Finishing…" status line instead of an unchanging spinner. The ticker's
@@ -2531,6 +2561,19 @@ class FloatingBubbleService : Service(),
             ?: com.whispereverywhere.transcription.live.ExecutorReconnectScheduler().also { liveReconnectScheduler = it }
 
     /**
+     * The LOCAL leg of the 3.8 cloud-"en" leak fix ([sessionLanguageFor]): the language the
+     * English-only local MIRROR of a cloud session runs under. The cloud half received the user's
+     * selection at connect(); the mirror re-pins "en" on an ENGLISH-scope tier because that is the
+     * one thing its weights can transcribe. Wired as FallbackTranscriptionEngine's `mirrorLanguage`.
+     */
+    private fun localMirrorLanguage(sessionLanguage: String?): String? =
+        sessionLanguageFor(
+            installedScope = app.whisperModelManager.installedModel()?.scope,
+            selection = sessionLanguage,
+            engine = TranscribingEngine.LOCAL,
+        )
+
+    /**
      * User-facing copy for a live-session [com.whispereverywhere.transcription.cloud.FatalKind],
      * kept word-for-word identical to the batch providers' `SttError.Fatal` messages so the
      * latch-toast reads the same whichever transport failed (batch carries its own message string;
@@ -2643,7 +2686,8 @@ class FloatingBubbleService : Service(),
                 // it. Consent is the same triad as mic audio (key + selection + disclosure) plus
                 // the per-session MediaProjection sheet, and the local fallback rescues failures
                 // for both sources alike.
-                FallbackTranscriptionEngine(cloud, local, serviceScope).also { cloudWrapper = it }
+                FallbackTranscriptionEngine(cloud, local, serviceScope, mirrorLanguage = ::localMirrorLanguage)
+                    .also { cloudWrapper = it }
             }
             EngineChoice.CLOUD_LIVE -> {
                 // Realtime-capable-and-key-present, both guaranteed by decideEngineChoice: the live
@@ -2690,7 +2734,7 @@ class FloatingBubbleService : Service(),
                 // A dropped socket resolves its turn Lost and the fallback rescues it locally from
                 // the mirrored PCM, mic and device audio alike. In live mode the SERVER cuts
                 // device-audio turns exactly as it cuts mic turns — same socket, same VAD.
-                val fallback = FallbackTranscriptionEngine(cloud, local, serviceScope)
+                val fallback = FallbackTranscriptionEngine(cloud, local, serviceScope, mirrorLanguage = ::localMirrorLanguage)
                 // Server turns rotate the SAME fallback that mirrors this engine's PCM — the seq the
                 // callback returns is the paired seq the mirror just retained. Wired here, where both
                 // objects exist, so FallbackTranscriptionEngine stays provider-agnostic and
@@ -2832,16 +2876,20 @@ class FloatingBubbleService : Service(),
             bubbleView.post { reclampNow() }
         }
 
-        // Resolve the transcription language. English-only (.en) models must NOT use auto-detect:
-        // whisper's language auto-detect is unreliable on non-multilingual models. Force "en" for
-        // ENGLISH-scope tiers; honor the user's setting (auto / specific) only for multilingual.
+        // Resolve the transcription language for the engine that will TRANSCRIBE this session
+        // (sessionLanguageFor — the 3.8 cloud-"en" leak fix). English-only (.en) models must NOT
+        // use auto-detect and cannot transcribe another language, so "en" is forced for
+        // ENGLISH-scope tiers ONLY when the on-device engine is the transcriber; a cloud session
+        // (cloudWrapper != null — batch or live) gets the user's setting (auto / specific) as is,
+        // and its English-only local MIRROR is re-pinned to "en" through the fallback's
+        // mirrorLanguage hook, wired in resolveTranscriptionEngine.
         val installedModel = app.whisperModelManager.installedModel()
-        val lang = if (installedModel?.scope == com.whispereverywhere.model.ModelScope.ENGLISH) {
-            "en"
-        } else {
-            app.preferencesManager.getLanguageForApi()
-        }
-        android.util.Log.i("WE-DIAG", "connect lang resolved=$lang (modelScope=${installedModel?.scope})")
+        val lang = sessionLanguageFor(
+            installedScope = installedModel?.scope,
+            selection = app.preferencesManager.getLanguageForApi(),
+            engine = if (cloudWrapper != null) TranscribingEngine.CLOUD else TranscribingEngine.LOCAL,
+        )
+        android.util.Log.i("WE-DIAG", "connect lang resolved=$lang (modelScope=${installedModel?.scope} cloud=${cloudWrapper != null})")
 
         engine.connect(lang, object : TranscriptionEngine.Listener {
             override fun onOpen() {
