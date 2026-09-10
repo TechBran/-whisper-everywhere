@@ -472,13 +472,13 @@ class GeminiRealtimeProtocolTest {
         assertEquals(ACTIVITY_START, control.texts[before])
     }
 
-    @Test fun the_end_watchdog_follows_the_oldest_close_still_owed_its_final() {
+    @Test fun the_end_watchdog_follows_the_oldest_close_still_owed_its_ack() {
         val p = ready(protocol())
         p.onAppend(ByteArray(64)); p.onText(VA_START); p.onCommit() // A at t
         clock.advance(600)
         p.onAppend(ByteArray(64)); p.onText(VA_START)
         clock.advance(100); p.onCommit() // B at t+700
-        p.onText(finalOf("one")) // A's final disarms A, not B
+        p.onText(finalOf("one")); p.onText(VA_END) // A answered and popped; B is the head now
         clock.advance(2_800) // B's end 2.8 s unanswered
         p.onAppend(ByteArray(64))
         assertEquals(0, control.rotates)
@@ -581,13 +581,29 @@ class GeminiRealtimeProtocolTest {
         assertEquals(1, control.rotates)
     }
 
-    @Test fun a_final_or_the_ack_disarms_the_end_watchdog() {
+    @Test fun the_ack_disarms_the_end_watchdog() {
         val p = ready(protocol())
         p.onAppend(ByteArray(64)); p.onText(VA_START); p.onCommit()
-        p.onText(FINAL_1)
+        p.onText(FINAL_1); p.onText(VA_END)
         clock.advance(5_000)
         p.onAppend(ByteArray(64))
-        assertEquals("the final proved the server alive", 0, control.rotates)
+        assertEquals("the ack closed the turn: nothing is outstanding to time", 0, control.rotates)
+    }
+
+    @Test fun a_final_whose_activity_end_never_arrives_still_rotates_at_the_watchdog() {
+        // Review N1: keying the watchdog on the FINAL left an entry whose ack never came at the head
+        // of the FIFO forever — `atBoundary` false for the rest of the open, so a GoAway degraded to
+        // the hard stop (mid-activity shed) and the 570 s age rotation never fired at all.
+        val p = ready(protocol())
+        p.onAppend(ByteArray(64)); p.onText(VA_START); p.onCommit()
+        p.onText(FINAL_1) // the final arrives; its ACTIVITY_END never does
+        clock.advance(2_900)
+        p.onAppend(ByteArray(64))
+        assertEquals(0, control.rotates)
+        clock.advance(200) // 3.1 s since the activityEnd
+        p.onAppend(ByteArray(64))
+        assertEquals("exactly one rotation, on the missing ack", 1, control.rotates)
+        assertEquals("the final it did send still reached the engine", listOf("1" to FINAL_TEXT), sink.completed)
     }
 
     @Test fun no_activity_start_ack_within_3s_of_activity_start_rotates() {

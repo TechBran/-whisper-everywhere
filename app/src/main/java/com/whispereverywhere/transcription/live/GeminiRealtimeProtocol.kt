@@ -172,7 +172,11 @@ object GeminiLiveEvents {
  * session resumption exists on this model, so every open sends a full `setup` and there is no
  * handle to carry. Rotate at the next turn boundary after GoAway, hard-stop at `timeLeft − 10 s`,
  * proactively at [PROACTIVE_ROTATE_MS] of connection age if no GoAway came. Watchdog: `activityEnd`
- * sent and no final/`ACTIVITY_END` within [WATCHDOG_MS] → rotate (P9: acks arrive ≤ 0.44 s).
+ * sent and no `ACTIVITY_END` ack within [WATCHDOG_MS] → rotate. The ACK, not the final, is what
+ * pops the close and frees the boundary, so it is the ack the watchdog times: a final whose ack
+ * never arrives would otherwise wedge the FIFO head for the rest of the open (`atBoundary` false →
+ * GoAway degrades to the hard stop, the age rotation never fires). P9: acks arrive ≤ 0.44 s, always
+ * right behind their own final, so timing the ack cannot false-fire inside [WATCHDOG_MS].
  *
  * **The key never becomes a field**: it arrives per open through [upgradeHeaders] as the
  * `x-goog-api-key` header pair (what Google's own SDK sends) and is consumed by the transport.
@@ -448,7 +452,10 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
     private fun rotationDue(now: Long): String? {
         if (rotated) return null
         val atBoundary = !open && pending.isEmpty()
-        val stalled = pending.firstOrNull { !it.finalSeen } // the oldest close still owed its final (or ack)
+        // The oldest close still owed its ACK. Not "still owed its final": the ack is what pops the
+        // entry, so a close whose final arrived and whose `ACTIVITY_END` never did must still time
+        // out — otherwise it wedges the head and [atBoundary] stays false for the rest of the open.
+        val stalled = pending.firstOrNull()
         val reason = when {
             now >= hardStopNanos -> "goaway-hardstop"
             stalled != null && now - stalled.sentNanos > WATCHDOG_MS * 1_000_000L -> "watchdog-end"
