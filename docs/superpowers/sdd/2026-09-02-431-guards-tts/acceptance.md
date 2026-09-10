@@ -1,6 +1,6 @@
 # 4.3.1 — device acceptance (owner session)
 
-Build under test: **4.3.3 / versionCode 87** (the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
+Build under test: **4.3.4 / versionCode 88** (Gemini Live — §J; the sherpa runtime bump — §J6; 87 = 4.3.3, the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
 device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
 is the OWNER's device session; the implementer prepared this sheet and claims none of it as done.
@@ -352,6 +352,44 @@ H3. **Galaxy XR, debug sideload (the Play copy must be uninstalled first — it 
     RECORD: what appeared? ______
     `[ ] RECORDED`
 
+## J — Gemini Live (88 / 4.3.4)
+
+Precondition: the Gemini key is entered in Engines & voices (the same key as batch); the new
+**Live** switch on the Gemini row is ON (it is OFF by default — existing Gemini users stay on batch
+until they flip it). Language = Auto or a picked language — both must work.
+J1. **Partials.** Own voice, three sentences with normal pauses. EXPECTED: the strip shows the current
+    sentence growing about a second behind your voice, one final per pause, the transcript reads as
+    the cloud providers do (cased, punctuated). FAIL if nothing arrives, if the second and later
+    sentences never appear (the API’s own voice detection failing — the build drives it manually to
+    avoid exactly that), or if a sentence is duplicated.
+    `[ ] PASS  [ ] FAIL`
+J2. **Ten minutes.** Keep dictating (or play a video with device audio) for 10+ minutes. EXPECTED: at
+    about 9 minutes the connection rotates on Google’s GoAway with no lost words and no visible gap
+    beyond one pause; the session continues past 10 minutes. FAIL if words are lost at the rotation or
+    the session ends.
+    `[ ] PASS  [ ] FAIL`
+J3. **Bad key.** Temporarily edit the key to something wrong, start a session, speak. EXPECTED: a toast
+    naming the key problem and the session continuing on the local model — not a silent stop. Restore
+    the key afterwards.
+    `[ ] PASS  [ ] FAIL`
+J4. **Silence.** Leave the mic open in silence for 30 s, then speak. EXPECTED: nothing typed during
+    the silence, the next sentence transcribed normally. KNOWN COST CHARACTERISTIC (recorded, not a
+    failure): Google bills the audio inside each activity, and an activity opens with the first frame
+    after the previous cut, so leading silence inside an activity is billed — the row copy says
+    “billed per minute while the mic is open”; the follow-up is to open activities on the first
+    speech frame.
+    `[ ] PASS  [ ] FAIL`
+J5. **The other three live providers unchanged.** One short session each on OpenAI Realtime,
+    ElevenLabs and Soniox (whichever keys you hold): behaviour identical to 87 — and a session that
+    outlives the provider’s own connection limit now reconnects instead of ending the cloud half
+    silently (the transport fix applies to all four).
+    `[ ] PASS  [ ] FAIL`
+J6. **Read-aloud on the release build (the sherpa runtime bump).** One full read-aloud with the local
+    Kokoro voice on THIS track build: audio starts, no buffering, the scrubber works, a second read
+    after the idle unload re-loads cleanly. FAIL on any stall or crash — the historical crash class
+    this guards against was release-only.
+    `[ ] PASS  [ ] FAIL`
+
 ## G — the onboarding copy (85)
 
 G1. Fresh install or re-run onboarding: the language step still offers BOTH Auto and a single
@@ -389,7 +427,7 @@ F3. **The one allowed handover discloses itself.** An app that genuinely refuses
 PROMOTION GATE. The merge already happened (locally, on the owner's instruction), so this sheet no
 longer gates a merge -- it gates the step the owner named: *"if it all works out great, then I just
 promote that build into production."* Promote the internal-track build to production only after
-**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8, E9, E11, H1 and H2** are marked PASS — E1 passes on merged pairs, so
+**A2, A3, B1, B4, C1, D1, E1, E4, E7, E8, E9, E11, H1, H2, J1, J3, J5 and J6** are marked PASS — E1 passes on merged pairs, so
 without E7 the sheet cannot see the one behaviour that decides the language goal.
 
 Why those two are the §E entries: **E1** is the change's whole purpose, and **E4** is the one

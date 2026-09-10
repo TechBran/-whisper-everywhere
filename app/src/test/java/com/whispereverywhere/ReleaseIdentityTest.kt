@@ -48,6 +48,12 @@ import org.junit.Test
  * and dictate to the clipboard instead of being locked out. What a user sees changes, so the name
  * moves. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 88 = 4.3.4 — the plain successor to 87.** 87 was built and uploaded as 4.3.3. 88 adds
+ * a live Gemini provider (a settings surface and a BYOK mode a user can see), fixes the cloud-language
+ * leak, and carries the sherpa-onnx runtime bump — a new surface, so the last place moves. The
+ * streaming local tier, when it lands, is 4.4.0 (the owner's naming since 4.3.0). Every bump still
+ * re-arms GpuPolicy's canary latches (below).
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -68,15 +74,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_3_3_at_version_code_87() {
+    fun release_identity_is_4_3_4_at_version_code_88() {
         assertEquals(
-            "versionName must be 4.3.3 for this release (app/build.gradle.kts defaultConfig)",
-            "4.3.3",
+            "versionName must be 4.3.4 for this release (app/build.gradle.kts defaultConfig)",
+            "4.3.4",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 87 for this release (app/build.gradle.kts defaultConfig)",
-            87,
+            "versionCode must be 88 for this release (app/build.gradle.kts defaultConfig)",
+            88,
             BuildConfig.VERSION_CODE,
         )
     }
