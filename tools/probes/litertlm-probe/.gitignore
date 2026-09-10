@@ -1,0 +1,13 @@
+# per-machine
+local.properties
+.gradle/
+build/
+app/build/
+.kotlin/
+.idea/
+*.iml
+# Fetched binaries (Apache-2.0 LiteRT release artefacts) — regenerate with fetch_mediatek_runtime.py
+app/src/main/jniLibs/
+# Raw device logs / pulled results live outside the repo (see drive.py --out)
+logs/
+results/

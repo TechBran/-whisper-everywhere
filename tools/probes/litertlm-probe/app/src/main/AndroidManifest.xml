@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature android:name="android.hardware.npu" android:required="false" />
+
+    <application
+        android:label="@string/app_name"
+        android:largeHeap="true"
+        android:allowBackup="false">
+
+        <!-- targetSdk >= 31: a vendor/OEM native library the manifest does not name is invisible to the
+             app (source.android.com/docs/core/permissions/namespaces_libraries). The litert 2.2.0 AAR
+             merges its own list in; these are repeated here so the E3/E4 dlopen chain is explicit:
+             GPU (OpenCL) -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <!-- MediaTek NeuroPilot, the SYSTEM-partition public list (/system/etc/public.libraries-mtk.txt,
+             read on the tablet 2026-09-09, E0): the USDK adapter the LiteRT MediaTek dispatch dlopens,
+             the sys_util it reads the NeuroPilot magic number from, and the AIDL client libs. -->
+        <uses-native-library android:name="libneuron_sys_util.mtk.so" android:required="false" />
+        <uses-native-library android:name="libneuronusdk_adapter.mtk.so" android:required="false" />
+        <uses-native-library android:name="libneuronusdk_adapter.9.mtk.so" android:required="false" />
+        <uses-native-library android:name="libneuronservice_adapter.mtk.so" android:required="false" />
+        <uses-native-library android:name="libneuron_graph_delegate.mtk.so" android:required="false" />
+        <uses-native-library android:name="libapuwareutils_v2.mtk.so" android:required="false" />
+        <uses-native-library android:name="libapuwareutils.mtk.so" android:required="false" />
+        <uses-native-library android:name="libapuwareapusys_v2.mtk.so" android:required="false" />
+        <uses-native-library android:name="libapuwareapusys.mtk.so" android:required="false" />
+        <!-- The VENDOR-partition adapter LiteRT tries first; NOT in /vendor/etc/public.libraries.txt on
+             this tablet (E0), so this line is expected to resolve to nothing — kept so the linker log
+             says so rather than the probe assuming it. -->
+        <uses-native-library android:name="libneuron_adapter_mgvi.so" android:required="false" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
