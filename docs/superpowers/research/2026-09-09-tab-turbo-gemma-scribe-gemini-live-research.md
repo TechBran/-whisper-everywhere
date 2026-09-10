@@ -1116,3 +1116,35 @@ Primary wins. Each row names the loser, the primary that decided it, and what th
 | 34 | Memory index: "4.3.1/83 on local main, UNPUSHED" | `MEMORY.md` index line | `app/build.gradle.kts:53-54`: 87 / 4.3.3 at `e4e9627`; the note body agrees | Index stale; the note body is current. |
 | 35 | `RealtimeProtocol` members at `:107-142` | `tg-map-engine.md` §4 | `RealtimeProtocol.kt:40-73` (read 2026-09-09) | The gemini map's numbering is the correct one. |
 | 36 | "Dimensity 9300" | the brief | the device's 3.4 GHz prime clock matches MediaTek's **9300+** sheet; both are MT6989 | Recorded so a later reader is not confused by the clock; nothing depends on the "+". |
+
+---
+
+## 7. E0 RESULT — read from the tablet on 2026-09-09 22:45 (after §0-§6 were written)
+
+The three reads in §1.4 were run (`C:/Users/bastr/.androidbuild/tab-s10-e0.txt`), plus the system-partition
+lists this document did not ask for. **The gate passes, and by a route this document under-weighted.**
+
+- `ro.soc.manufacturer` = `Mediatek`, `ro.soc.model` = `MT6989` — exactly the strings LiteRT's device CSV expects.
+- `/vendor/etc/public.libraries.txt` (208 B) whitelists `libnir_neon_driver_ndk.mtk.vndk.so`, `libarmnn_ndk.mtk.vndk.so`,
+  `libcmdl_ndk.mtk.vndk.so`, `libOpenCL.so` and three Samsung camera libs. **`libneuron_adapter_mgvi.so` is NOT
+  whitelisted** — the runtime's first dlopen candidate is not app-loadable, as §1.4 allowed for.
+- **But `/system/etc/public.libraries-mtk.txt` (955 B) whitelists MediaTek's third-party stack on the SYSTEM
+  partition**, and every file exists in `/system/lib64/`: **`libneuronusdk_adapter.mtk.so` (13,659,272 B)**,
+  `libneuron_graph_delegate.mtk.so`, `libneuronservice_adapter.mtk.so`, `libneuron_sys_util.mtk.so`,
+  `libtflite_mtk.mtk.so`, the `libapuware{apusys,utils,xrp,hmp}*.mtk.so` set,
+  `vendor.mediatek.hardware.neuropilot.neuronservice-V1-ndk.so`, and the MVPU runtime family. Under Android's
+  rule for `public.libraries-<company>.txt` (names ending `.<company>.so`, loadable by any app via
+  `System.loadLibrary` / `dlopen`), **a Play app on this tablet may load the NeuroPilot USDK adapter directly.**
+  §1.5's claim (from `tg-analysis-tab.md:416`) that `libneuronusdk_adapter.mtk.so` is absent was an artefact of an
+  inventory that listed `/vendor/lib64` only — **refuted by the device.**
+- `/dev/apusys` is `crw-rw---- system camera`, label `apusys_device`; `/dev/apusys_apummu` and `_sapu` are root-only.
+  An untrusted app cannot open the nodes itself — irrelevant if access goes through the USDK adapter → the
+  `neuronservice` / `apuware` AIDL services (their NDK client libs are in the same public list), which is what the
+  adapter exists for. Whether that IPC path is sepolicy-open to `untrusted_app` is the one thing E0 cannot read;
+  **E3 answers it empirically**, and E3 is unchanged.
+- The NNAPI shim is running (feature level 7), so the deprecated NNAPI route also exists.
+
+**What changes:** R1's (a) is answered YES pending E3; the "bundle MediaTek libraries in the app binary" fork
+(LiteRT v2.1.3) is a fallback, not the main line; E3's probe should log which adapter name the runtime opened.
+Nothing else in §1 moves — the toolchain gap (#6462), the absence of any Whisper-on-MediaTek result, and the
+direction-finder thresholds in E4 all stand.
