@@ -63,9 +63,10 @@ import java.io.File
  * **4.4.0 P0 added the second session flag** (`sessionHasLocalPreview`) to all four rules, and
  * with it two more structural obligations no JVM test can otherwise see: the flag is RESET beside
  * `sessionIsLive` and set true NOWHERE in the prep commit, and `onDelta`'s blank branch asks
- * [deltaBlankVisibility] instead of writing a bare `View.GONE` — with the blank branch's own
- * reveal, `== View.GONE` and not `!= View.VISIBLE`, since a park the reveal ignores is no park at
- * all. The last two tests below are those.
+ * [deltaBlankVisibility] instead of writing a bare `View.GONE` — with the non-blank branch's own
+ * reveal, `== View.GONE` and not `!= View.VISIBLE` AND its reclamp still inside that reveal's
+ * guard, since a park the reveal ignores is no park at all and an unguarded reclamp is the churn
+ * back in full. The last two tests below are those.
  */
 class InFlightStripWiringPinTest {
 
@@ -357,6 +358,31 @@ class InFlightStripWiringPinTest {
                 "strip, and makes the OCCUPYING_BLANK row inert",
             0,
             count(onDelta, "!= View.VISIBLE"),
+        )
+        // ...AND THE PAYLOAD, not just the predicate. The two assertions above pin WHICH state
+        // reveals; these two pin THAT the reclamp is conditioned on it. Hoisted out of the guard —
+        // the single most natural edit anyone will make in this branch, and the one the class KDoc
+        // (`the anti-churn rule's actual payload`) was written for — the post fires on EVERY
+        // non-blank delta: CLOUD_LIVE's partials today, since `sessionIsLive` is the only way into
+        // this branch at all, and the tee's ~320ms partials from Task 7 on. That is strictly worse
+        // than the per-utterance churn the narrowing above removes; spec:139 budgets exactly one
+        // reveal + reclamp per session. No whole-file census can see it: the one-line twin
+        // `if (wasHidden) bubbleView.post { reclampNow() }` is the RENDER's form (held at 1 by
+        // theRevealPostsItsReclampOnlyOnTheReveal), and `bubbleView.post { reclampNow() }` on its
+        // own occurs SIX times in the file. So both needles are indentation-scoped — the house
+        // idiom — and neither quotes the comment sitting between them, so a prose edit cannot
+        // break them. Collapsing this `if` to the render's one-line spelling fails here first and
+        // would also double that test's census: fix both pins or neither.
+        assertEquals(
+            "onDelta's reclamp is posted ONLY on the reveal",
+            1,
+            count(onDelta, "                        if (wasHidden) {\n"),
+        )
+        assertEquals(
+            "and the reclamp is INSIDE that guard: hoisted to onDelta's own statement level it " +
+                "loses the 28-space indent and this census drops to 0",
+            1,
+            count(onDelta, "                            bubbleView.post { reclampNow() }\n"),
         )
     }
 }
