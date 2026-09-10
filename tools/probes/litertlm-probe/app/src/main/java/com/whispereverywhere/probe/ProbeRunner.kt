@@ -23,6 +23,7 @@ class ProbeRunner(private val ctx: Context, private val args: ProbeArgs) {
                 "info" -> LiteRtProbe(ctx, args).info(res)
                 "litert" -> LiteRtProbe(ctx, args).run(res)
                 "lm" -> LmProbe(ctx, args).run(res)
+                "e2e" -> E2eProbe(ctx, args).run(res)
                 else -> throw IllegalArgumentException("unknown mode ${args.mode}")
             }
             res.put("ok", true)

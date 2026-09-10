@@ -19,14 +19,15 @@ always the complete logcat either way.
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 
 PKG = "com.whispereverywhere.probe"
 ACT = PKG + "/.MainActivity"
-INT_KEYS = {"threads", "warm", "maxtokens", "prefill"}
-BOOL_KEYS = {"nofallback", "bench"}
+INT_KEYS = {"threads", "warm", "maxtokens", "prefill", "utts", "eot", "pad"}
+BOOL_KEYS = {"nofallback", "bench", "freshbufs", "rewriteall"}
 FILTER = re.compile(
     r"PROBE|LiteRt|litert|LITERT|tflite|TfLite|TFLite|neuron|Neuron|NEURON|apusys|APUSYS|apuware|mtk|MTK|"
     r"MediaTek|Mediatek|dispatch|Dispatch|xnnpack|XNNPACK|OpenCL|opencl|clGl|Mali|mali|linker|AndroidRuntime|"
@@ -41,8 +42,25 @@ HILITE = re.compile(
 PIDCOL = re.compile(r"^\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}\s+(\d+)\s+\d+\s")
 
 
+def adb_exe():
+    """adb is not on PATH on this PC (build-env note); fall back to the SDK's platform-tools."""
+    found = shutil.which("adb")
+    if found:
+        return found
+    for root in (os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT"),
+                 os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk")):
+        if root:
+            cand = os.path.join(root, "platform-tools", "adb.exe" if os.name == "nt" else "adb")
+            if os.path.exists(cand):
+                return cand
+    return "adb"
+
+
+ADB = adb_exe()
+
+
 def adb(serial, *a):
-    return subprocess.run(["adb", "-s", serial, *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return subprocess.run([ADB, "-s", serial, *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def norm_out(p):
