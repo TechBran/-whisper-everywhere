@@ -25,7 +25,9 @@ import java.util.concurrent.atomic.AtomicLong
  * `interimInputTranscription`, one `inputTranscription` per activity, the undocumented top-level
  * `voiceActivity {type, audioOffset}` that rides with an EMPTY `serverContent`, and `goAway`.
  * Everything else — `generationComplete`, `turnComplete`, `modelTurn`, `usageMetadata`,
- * `sessionResumptionUpdate`, malformed frames — parses to nothing (forward-compatible).
+ * `sessionResumptionUpdate`, malformed frames — parses to nothing (forward-compatible). A frame
+ * that names no member this codec knows is still DROPPED, but [unknownKind] names its kind so the
+ * protocol can log it once instead of dropping it in silence.
  */
 object GeminiLiveEvents {
     const val MODEL = "models/gemini-3.5-transcribe-live"
@@ -86,6 +88,41 @@ object GeminiLiveEvents {
         (o["goAway"] as? JsonObject)?.let { out += In.GoAway(durationMs(it.str("timeLeft"))) }
         return out
     }
+
+    /**
+     * The top-level members this codec knows: the four [parse] maps, plus the two it drops on
+     * purpose. Anything else is a shape the server invented — or not a frame at all.
+     */
+    private val KNOWN_TOP_LEVEL = setOf(
+        "setupComplete", "serverContent", "voiceActivity", "goAway", // mapped
+        "usageMetadata", "sessionResumptionUpdate", // known and deliberately dropped
+    )
+
+    /**
+     * A CONTENT-FREE name for a frame this codec understood NOTHING of — its top-level member
+     * names, sorted, `,`-joined, stripped to word characters and capped at [KIND_MAX_CHARS] — or
+     * null when the frame names a member we know, whether we act on it or drop it on purpose
+     * (`serverContent` carrying only `generationComplete`, `usageMetadata`): that is not a surprise
+     * and must not be logged. `"unparseable"` when it is not a JSON OBJECT at all, `"empty"` for
+     * `{}`.
+     *
+     * The granularity is deliberately the TOP LEVEL: it is the smallest key that separates "the
+     * server speaks a shape we do not" from "we ignore this on purpose", and a member NAME can
+     * carry no transcript, no key and no close reason — the frame's content never reaches a log
+     * line through this.
+     */
+    fun unknownKind(json: String): String? {
+        val o = try { IN.parseToJsonElement(json) as? JsonObject } catch (_: Throwable) { null }
+            ?: return "unparseable"
+        if (o.isEmpty()) return "empty"
+        if (o.keys.any { it in KNOWN_TOP_LEVEL }) return null
+        return o.keys.sorted().joinToString(",")
+            .filter { it.isLetterOrDigit() || it == '_' || it == ',' } // no server-chosen punctuation in a log line
+            .take(KIND_MAX_CHARS)
+    }
+
+    /** A kind name is a key LIST, never content — this is the whole budget for one (r1 nit 3). */
+    const val KIND_MAX_CHARS = 40
 
     /** `"50s"` / `"6.680s"` / `"0s"` → milliseconds; anything else → null. Lenient on purpose (undocumented shape). */
     internal fun durationMs(s: String?): Long? {
@@ -181,7 +218,16 @@ object GeminiLiveEvents {
  * **The key never becomes a field**: it arrives per open through [upgradeHeaders] as the
  * `x-goog-api-key` header pair (what Google's own SDK sends) and is consumed by the transport.
  */
-class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime) : RealtimeProtocol {
+class GeminiRealtimeProtocol(
+    private val nowNanos: () -> Long = System::nanoTime,
+    /**
+     * Sink for the unknown-frame diagnostics ONLY (the other WE-DIAG lines are unconditional
+     * [android.util.Log] calls). Injectable because the rate limit — one line per distinct kind,
+     * then a tally — is the behaviour worth pinning, and a log line is not assertable under
+     * `isReturnDefaultValues = true`.
+     */
+    private val diag: (String) -> Unit = { android.util.Log.w(TAG, it) },
+) : RealtimeProtocol {
 
     override val endpoint = ENDPOINT
     override val tolerant4xxRetry = false
@@ -233,6 +279,16 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
     private var hardStopNanos = Long.MAX_VALUE
     private var rotated = false
     private var turns = 0L
+    /**
+     * Inbound frames this codec understood nothing of, by KIND ([GeminiLiveEvents.unknownKind]) →
+     * how many arrived. The first of each kind logs one line, the rest only count, and [reset]
+     * logs the tally — so a server that changes its vocabulary is visible in a bug report without a
+     * line per frame (`generationComplete` and friends arrive several times per turn) and without
+     * the frame's content ever reaching a log. SESSION-scoped on purpose: [clearPerOpenState] does
+     * not touch it, so a rotation does not re-log the same surprise. Capped at [MAX_UNKNOWN_KINDS]
+     * distinct kinds, the rest counted under [OTHER_KIND], so an adversarial server cannot grow it.
+     */
+    private val unknownFrames = LinkedHashMap<String, Int>()
 
     override fun upgradeHeaders(apiKey: String): List<Pair<String, String>> {
         val p = ProviderCatalog.byId(ProviderId.GEMINI) // x-goog-api-key, bare value (T0 P1: verified)
@@ -321,7 +377,7 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
 
     override fun onText(text: String) {
         val events = GeminiLiveEvents.parse(text)
-        if (events.isEmpty()) return
+        if (events.isEmpty()) { noteUnknownFrame(text); return }
         var delta: String? = null
         val resolves = ArrayList<Completion>(2) // built under gate, fired outside it
         var rotate: String? = null
@@ -409,7 +465,32 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
         }
     }
 
-    override fun reset() = synchronized(gate) { clearPerOpenState() }
+    override fun reset() {
+        val tally = synchronized(gate) {
+            clearPerOpenState()
+            val t = unknownFrames.entries.joinToString(" ") { "${it.key}=${it.value}" }
+            unknownFrames.clear()
+            t.ifEmpty { null }
+        }
+        tally?.let { diag("gemini unknown frames this session: $it") } // kinds + counts, never content
+    }
+
+    /**
+     * A frame that parsed to no event: log ONE line naming its kind the first time that kind
+     * arrives, count it after that (r1 nit 3 — until now these dropped in total silence, so a
+     * server-side vocabulary change looked exactly like "no transcription came back"). A frame we
+     * know and drop on purpose is not unknown and logs nothing.
+     */
+    private fun noteUnknownFrame(text: String) {
+        val kind = GeminiLiveEvents.unknownKind(text) ?: return
+        val first = synchronized(gate) {
+            val key = if (kind in unknownFrames || unknownFrames.size < MAX_UNKNOWN_KINDS) kind else OTHER_KIND
+            val n = (unknownFrames[key] ?: 0) + 1
+            unknownFrames[key] = n
+            key.takeIf { n == 1 }
+        }
+        first?.let { diag("gemini unknown frame kind=$it") }
+    }
 
     // ---- turn machine (all callers hold [gate]) --------------------------------------------------
 
@@ -519,5 +600,11 @@ class GeminiRealtimeProtocol(private val nowNanos: () -> Long = System::nanoTime
 
         /** After GoAway, rotate no later than `timeLeft` minus this, mid-activity if it must (the 50 s window). */
         const val HARD_STOP_MARGIN_MS = 10_000L
+
+        /** Distinct unknown frame kinds tracked per session; past this they count under [OTHER_KIND]. */
+        const val MAX_UNKNOWN_KINDS = 8
+
+        /** The overflow bucket for [MAX_UNKNOWN_KINDS] — a server cannot make this map grow. */
+        const val OTHER_KIND = "other"
     }
 }

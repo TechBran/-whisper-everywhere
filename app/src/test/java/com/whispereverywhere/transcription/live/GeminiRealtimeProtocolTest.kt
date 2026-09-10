@@ -56,8 +56,11 @@ class GeminiRealtimeProtocolTest {
     private val sink = RecordingListener()
     private val clock = Clock()
 
+    /** The unknown-frame diagnostics, captured instead of logged (r1 nit 3). */
+    private val diag = mutableListOf<String>()
+
     private fun protocol(ctrl: SessionControl = control): GeminiRealtimeProtocol =
-        GeminiRealtimeProtocol(nowNanos = clock::nanos).apply { bind(ctrl, sink) }
+        GeminiRealtimeProtocol(nowNanos = clock::nanos, diag = diag::add).apply { bind(ctrl, sink) }
 
     /** bootstrap + setupComplete: the state a live session is in when the first audio frame arrives. */
     private fun ready(p: GeminiRealtimeProtocol, language: String? = null): GeminiRealtimeProtocol {
@@ -707,6 +710,77 @@ class GeminiRealtimeProtocolTest {
         p.onText("not json at all")
         assertEquals(0, sink.dispatchCount)
         assertEquals(0, control.rotates)
+    }
+
+    // ---- unknown frames: dropped, but named once (review r1 nit 3) ---------------------------------
+
+    @Test fun unknownKind_separates_a_surprise_from_a_member_we_drop_on_purpose() {
+        // Known top-level member -> null: these arrive several times per turn and are not news.
+        assertNull(GeminiLiveEvents.unknownKind(GENERATION_COMPLETE))
+        assertNull(GeminiLiveEvents.unknownKind(EMPTY_ACTIVITY_EDGE))
+        assertNull(GeminiLiveEvents.unknownKind(SETUP_COMPLETE))
+        assertNull(GeminiLiveEvents.unknownKind(VA_END))
+        assertNull(GeminiLiveEvents.unknownKind(GO_AWAY))
+        assertNull(GeminiLiveEvents.unknownKind("""{"sessionResumptionUpdate":{"newHandle":"h"}}"""))
+        // A shape this codec knows nothing of -> its member NAMES, nothing else.
+        assertEquals("unparseable", GeminiLiveEvents.unknownKind("not json at all"))
+        assertEquals("unparseable", GeminiLiveEvents.unknownKind("[1,2,3]"))
+        assertEquals("empty", GeminiLiveEvents.unknownKind("{}"))
+        assertEquals("toolCall", GeminiLiveEvents.unknownKind("""{"toolCall":{"functionCalls":[]}}"""))
+        assertEquals("alpha,beta", GeminiLiveEvents.unknownKind("""{"beta":1,"alpha":2}"""))
+    }
+
+    @Test fun an_unknown_frames_kind_never_carries_its_content() {
+        val kind = GeminiLiveEvents.unknownKind(
+            """{"mystery-${"x".repeat(80)}":{"text":"my private sentence","apiKey":"AIza-secret"}}""",
+        )!!
+        assertTrue("capped at a key list", kind.length <= GeminiLiveEvents.KIND_MAX_CHARS)
+        assertFalse(kind.contains("private"))
+        assertFalse(kind.contains("AIza"))
+        assertFalse("server punctuation cannot shape the log line", kind.contains("-"))
+    }
+
+    @Test fun a_garbage_frame_logs_one_line_per_kind_and_then_only_counts() {
+        val p = ready(protocol())
+        repeat(3) { p.onText("not json at all") }
+        assertEquals("the first occurrence only", listOf("gemini unknown frame kind=unparseable"), diag)
+
+        p.onText("""{"toolCall":{}}""") // a second, distinct kind
+        p.onText("""{"toolCall":{}}""")
+        assertEquals(
+            listOf("gemini unknown frame kind=unparseable", "gemini unknown frame kind=toolCall"),
+            diag,
+        )
+
+        // A frame we drop on purpose is not a surprise and adds nothing.
+        p.onText(GENERATION_COMPLETE); p.onText(EMPTY_ACTIVITY_EDGE)
+        assertEquals(2, diag.size)
+        assertEquals("and none of it reaches the engine", 0, sink.dispatchCount)
+
+        // Session end: the counts, once.
+        p.reset()
+        assertEquals("gemini unknown frames this session: unparseable=3 toolCall=2", diag.last())
+        assertEquals(3, diag.size)
+        p.reset()
+        assertEquals("a second reset has nothing left to report", 3, diag.size)
+    }
+
+    @Test fun a_rotation_does_not_re_log_the_same_unknown_kind() {
+        // bootstrap() resets the per-OPEN state; the unknown-frame tally is per SESSION.
+        val p = ready(protocol())
+        p.onText("""{"toolCall":{}}""")
+        ready(p) // the reopen after a rotation
+        p.onText("""{"toolCall":{}}""")
+        assertEquals(listOf("gemini unknown frame kind=toolCall"), diag)
+    }
+
+    @Test fun an_adversarial_server_cannot_grow_the_unknown_frame_tally() {
+        val p = ready(protocol())
+        repeat(GeminiRealtimeProtocol.MAX_UNKNOWN_KINDS + 5) { p.onText("""{"kind$it":{}}""") }
+        assertEquals(GeminiRealtimeProtocol.MAX_UNKNOWN_KINDS + 1, diag.size) // 8 kinds + one "other"
+        assertEquals("gemini unknown frame kind=${GeminiRealtimeProtocol.OTHER_KIND}", diag.last())
+        p.reset()
+        assertTrue(diag.last(), diag.last().endsWith("other=5"))
     }
 
     @Test fun backpressure_from_control_propagates_as_false() {
