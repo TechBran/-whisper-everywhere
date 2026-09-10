@@ -149,8 +149,10 @@ to every streaming-capable BYOK provider (OpenAI, ElevenLabs, Soniox) via a per-
 RealtimeProtocol seam; OpenAI's wire is byte-identical (regression contract held). ElevenLabs =
 xi-api-key header + 16 kHz base64 + commit-on-last-chunk with single-in-flight serialization; Soniox =
 config-message key under the no-log discipline + raw s16le binary + client-assembled turns +
-finalize/rotate under the reconnect ceiling. Gemini stays segment-only (no client realtime path), no
-apology copy. Deltas never inject; mic-only via SourceRouted; Fallback(live, local) preserved. No new
+finalize/rotate under the reconnect ceiling. Gemini stayed segment-only in THIS wave (no
+client-usable realtime path was known then — the Live API appeared to want backend-minted ephemeral
+tokens), with no apology copy; **superseded by 4.3.4, whose ledger entry below is the current
+Gemini truth.** Deltas never inject; mic-only via SourceRouted; Fallback(live, local) preserved. No new
 recipient, no disclosure-version change (same audio-to-a-provider meaning under v3). Per-provider
 "about" prices: OpenAI $0.017/min, ElevenLabs $0.007/min, Soniox $0.002/min. No speed claims.
 
@@ -166,6 +168,26 @@ or services" and real-time (`tts-rt`) is not the async/storage path, so read-alo
 retained — the wording is audio/transcript-centric, disclosed honestly on the privacy line.
 Ledger entry: **Soniox TTS: fourth read-aloud recipient, same UGC-read-aloud class, no new class,
 v3 unchanged; Console narrative names four TTS providers.**
+
+**Release ledger — Gemini live word-for-word (4.3.4, 2026-09-10):** Gemini becomes the FOURTH live
+streaming STT provider (`generativelanguage.googleapis.com`, BidiGenerateContent WebSocket,
+`gemini-3.5-transcribe-live`, MANUAL voice activity detection — the app's own endpointer cuts the
+turns), so the mode-selector row now offers all four. **Opt-in, and BATCH remains the default for
+Gemini:** its live switch is a separate preference defaulting to off, so an existing Gemini user is
+never moved onto the live path unasked. The row states the price and the training stance together —
+label "Real-time streaming (Google Gemini) · about $0.009/min on a paid key, free on the free tier",
+caption "Streams your transcription in real time as you speak — billed per minute while the mic is
+open. On Google's free tier, Google uses what you send to improve its products, and human reviewers
+may read it. Paid tiers do not." (the free badge and the training sentence never travel apart).
+**Determination: SAME data class already declared — "Audio files → Voice or sound recordings",
+Shared = Yes, Optional — to a recipient already enumerated.** NO new Data Safety class, NO new
+shared type, NO new recipient, NO disclosure-version bump, NO re-prompt: the same
+audio-to-a-provider meaning covered by disclosure v3, with one more transport (WebSocket) and price
+tier, exactly as C4 live transcribe was for OpenAI. On-device stays the default and the automatic
+fallback; a provider failure still rescues the turn locally. Ledger entry: **Gemini live: fourth
+streaming STT provider, opt-in with batch as its default, same audio class and recipient, v3
+unchanged.** This entry supersedes both earlier "Gemini has no live path" statements (the
+2026-07-31 realtime ledger above and the 3.3.0 corrections list in §7).
 
 - **Audio files → Voice or sound recordings:** Collected **Yes**, Shared **Yes**, purpose
   **App functionality**, **Optional**. The user must take two independent, deliberate actions
@@ -276,9 +298,12 @@ pre-audit claims:
   new WebSocket transport + price tier only). No re-prompt, no Data Safety change from either.
 - **Live word-for-word is no longer OpenAI-only.** The mode-selector row now offers three providers
   (OpenAI, ElevenLabs, Soniox) — whichever streaming-capable provider is the globally selected STT
-  engine, each behind its own per-provider price. Gemini still shows no live row (it has no
-  client-usable realtime path — a provider limitation, not a defect) and gets no apology copy. Same
-  audio-to-a-provider meaning already covered by disclosure v3; no re-prompt, no Data Safety change.
+  engine, each behind its own per-provider price. Same audio-to-a-provider meaning already covered
+  by disclosure v3; no re-prompt, no Data Safety change.
+  **Updated 4.3.4 (2026-09-10): all FOUR providers now offer a live row.** Gemini's is opt-in with
+  batch as its default (a separate switch, default off) and carries its own price + free-tier
+  training caption — see the Gemini live ledger in §5. The pre-4.3.4 "Gemini shows no live row, no
+  apology copy" instruction is void; do not set the Console to it.
 - **Home usage-stats footer** no longer claims "runs entirely on-device / no usage limits" to cloud
   users; no storefront "no limits" copy may contradict the honest per-engine footer.
 - **Batch cloud STT now offers all four providers** (OpenAI, Gemini, ElevenLabs, Soniox) — the
