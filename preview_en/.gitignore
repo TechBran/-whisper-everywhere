@@ -1,0 +1,19 @@
+# The pack payload is a BUILD artifact (4.4.0, the 2026-09-10 amendment): `python
+# tools/build_asset_packs.py preview` places the four streaming-zipformer files here from the
+# pinned Hugging Face commit (or a local mirror it re-hashes), every byte checked against
+# StreamingPackCatalog.EN's own literals on the way in and re-hashed out of the directory
+# afterwards. 73 MB of model must never enter a repo with a public remote, and the root
+# .gitignore's blob walls (*.so, *.dlc, *.context, *.bin) do not cover .onnx — so this pattern IS
+# the wall.
+#
+# The wall is written as "everything in the payload directory EXCEPT the anchor" rather than as a
+# list of the four names: a fifth file added by a future upstream layout would otherwise be
+# committable by default, and everything in this directory rides into the AAB and onto every
+# device (the pack is untargeted — one variant, all devices).
+#
+# The .gitkeep is TRACKED and is the one file here that must stay visible to git: it is what
+# proves the payload directory exists in a clean clone, and PreviewPackLayoutTest reads the
+# directory from the repo. Note the negation can only re-include a DIRECT child, which is why the
+# wall stops at the payload directory's contents instead of walling src/main/assets/ wholesale.
+src/main/assets/preview_en/*
+!src/main/assets/preview_en/.gitkeep

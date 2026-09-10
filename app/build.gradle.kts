@@ -233,7 +233,14 @@ android {
     // devices get the EMPTY default variant AND no fetch, two independent mechanisms. An APK
     // build (assembleDebug) carries no packs at all; only bundle builds demand the payload,
     // and verifyNpuPacks below is what demands it.
-    assetPacks += listOf(":npu_turbo", ":npu_small")
+    //
+    // (4.4.0, the 2026-09-10 amendment) :preview_en joins them — the streaming previewer's four
+    // ONNX files, on-demand, but NOT device-targeted: the same bytes on every device, so the pack
+    // carries one untargeted directory (assets/preview_en/) and device_targeting_config.xml is
+    // deliberately untouched. ONE assetPacks statement, because a second list is a second thing
+    // to keep correct and a pack missing from it ships no variants at all, silently.
+    // verifyPreviewPack is its gate, wired below beside verifyNpuPacks'.
+    assetPacks += listOf(":npu_turbo", ":npu_small", ":preview_en")
 
     bundle {
         // The census spelled for Play — committed, and byte-pinned to NpuFleetCensus by
@@ -499,6 +506,13 @@ tasks.withType<Test>().configureEach {
         rootProject.file("npu_small/build.gradle.kts"),
         rootProject.file("npu_turbo/.gitignore"),
         rootProject.file("npu_small/.gitignore"),
+        // (4.4.0, the 2026-09-10 amendment) PreviewPackLayoutTest's own two, by the same rule:
+        // the third pack module's build file (packName/on-demand/no-#group_ pins) and its payload
+        // wall are inputs to no compile task, so without these entries an edit confined to either
+        // would leave testDebugUnitTest UP-TO-DATE and the layout pins green against the files as
+        // they used to be. (The script, settings.gradle.kts and this build file are already here.)
+        rootProject.file("preview_en/build.gradle.kts"),
+        rootProject.file("preview_en/.gitignore"),
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a
@@ -824,6 +838,72 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
 // carries no packs at all, and the everyday build must never demand 4.3 GB of payload.
 tasks.matching { it.name.startsWith("package") && it.name.endsWith("Bundle") }
     .configureEach { dependsOn(verifyNpuPacks) }
+
+// (4.4.0, the 2026-09-10 amendment) The SAME gate, one pack over: the streaming previewer's four
+// files are a BUILD artifact placed by `python tools/build_asset_packs.py preview`, and an AAB
+// whose preview_en payload is missing or stale would ship a previewer that can never install —
+// invisible in every APK build, because an APK carries no packs at all.
+//
+// THE PLACEMENT TABLE: one row per pinned file, name and byte count. The literals are
+// StreamingPackCatalog.EN's own, restated because a build script cannot read the app's classes,
+// and pinned EQUAL to the catalog by PreviewPackLayoutTest (the verifyNpuPacks discipline).
+// sha256 of 73 MB per bundle build is deliberately NOT taken here: the script hash-verifies what
+// it places, StreamingPackInstall.verify re-hashes on the device before a byte is installed, and
+// this gate's job is a MISSING or wrong-sized payload, which exact byte counts catch instantly.
+//
+// The payload directory is UNTARGETED — one variant, every device — so unlike the NPU gate there
+// is no empty-default rule to hold here: there is no default variant to keep empty, and the
+// .gitkeep anchor is the only non-payload entry the directory may carry.
+val previewPackFiles = listOf(
+    listOf("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 71_083_163L),
+    listOf("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_307_236L),
+    listOf("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 259_335L),
+    listOf("tokens.txt", 5_048L),
+)
+val verifyPreviewPack = tasks.register("verifyPreviewPack") {
+    description = "Verifies the preview_en asset pack's payload against the streaming catalog's " +
+        "byte counts. Runs before every bundle packaging task."
+    doLast {
+        val problems = mutableListOf<String>()
+        val payloadDir = rootProject.file("preview_en/src/main/assets/preview_en")
+        if (!payloadDir.isDirectory) {
+            problems += "preview_en: assets/preview_en/ is MISSING"
+        } else {
+            val listed = (payloadDir.listFiles() ?: emptyArray()).map { it.name }.sorted()
+            val expected = (previewPackFiles.map { it[0] as String } + ".gitkeep").sorted()
+            if (listed != expected) {
+                problems += "preview_en/assets/preview_en: carries $listed; the pack is exactly " +
+                    "$expected"
+            } else {
+                for (row in previewPackFiles) {
+                    val name = row[0] as String
+                    val bytes = row[1] as Long
+                    val placed = File(payloadDir, name)
+                    if (placed.length() != bytes) {
+                        problems += "preview_en/assets/preview_en: $name is ${placed.length()} B, " +
+                            "the catalog says $bytes"
+                    }
+                }
+            }
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "verifyPreviewPack: the preview pack's payload is not the catalog — a bundle " +
+                    "built now would ship a previewer that can never install.\n  " +
+                    problems.joinToString("\n  ") +
+                    "\n  Place the payload with: python tools/build_asset_packs.py preview"
+            )
+        }
+        logger.lifecycle(
+            "verifyPreviewPack: all ${previewPackFiles.size} preview pack files match the " +
+                "streaming catalog's byte counts."
+        )
+    }
+}
+// Its own clause, for the same reason the include line is its own statement: the NPU gate's
+// single wiring line stays exactly what it was, and each gate says when it runs.
+tasks.matching { it.name.startsWith("package") && it.name.endsWith("Bundle") }
+    .configureEach { dependsOn(verifyPreviewPack) }
 
 dependencies {
     // On-device TTS (Track F): sherpa-onnx runs Kokoro-82M on CPU (fetched above). arm64

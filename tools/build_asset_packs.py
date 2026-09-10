@@ -57,12 +57,26 @@ binaries under the census's delivery names. Same verification, then the zip's ow
 publishing beside the file. ``tools/pack_npu_zip.py`` is untouched: its pins stand, and it
 remains the 8gen3 recipe the 4.1 acceptance used.
 
+``preview`` (4.4.0, owner ruling 2026-09-10) places the STREAMING PREVIEWER's pack payload: the
+four ``streaming-zipformer-en-2023-06-26`` files into ``preview_en/src/main/assets/preview_en/``,
+each streamed with sha256 riding the copy and ASSERTED against ``StreamingPackCatalog.EN``'s own
+byte counts and digests (restated here as literals; ``PreviewPackLayoutTest`` pins the two tables
+equal), then the whole directory re-verified from disk. Files are taken from a local mirror when
+one has them at the right size and hash, and otherwise downloaded from the COMMIT-PINNED Hugging
+Face base — ``resolve/<sha>/``, never ``resolve/main`` — so a clean clone reproduces the pack.
+Unlike the NPU packs this one is NOT device-targeted: one untargeted directory, every device, no
+``#group_`` variants and no empty default to keep empty.
+
 Usage:
     python build_asset_packs.py measure [workspace]
     python build_asset_packs.py build [workspace]
     python build_asset_packs.py delivery-zip <familyId> <tierId> [workspace]
+    python build_asset_packs.py preview [mirror]
 
     workspace   defaults to C:\\Users\\bastr\\.androidbuild\\fleet-packs
+    mirror      defaults to C:\\Users\\bastr\\.androidbuild\\streaming-models\\en-2023-06-26
+                (a directory that need not exist: missing files are fetched from the pinned
+                commit instead)
 """
 
 import hashlib
@@ -713,14 +727,151 @@ def delivery_zip(workspace: str, family: str, tier: str) -> None:
     print(f"  sha256 {sha256_file(out)}")
 
 
+# ---------------------------------------------------------------------------- preview_en (4.4.0)
+# The streaming previewer's pack (owner ruling 2026-09-10, the amendment pad): four raw files at
+# ONE immutable Hugging Face commit, placed into the pack module's single UNTARGETED directory.
+#
+# Why the table is here as literals, again: this script cannot read the app's classes, so the
+# byte counts and digests are restated -- and PreviewPackLayoutTest pins each row equal to
+# StreamingPackCatalog.EN, so a re-pin on either side is a red test rather than a silent drift.
+# The names are the upstream file names at the commit; verifyPreviewPack (in app/build.gradle.kts)
+# re-checks the placed sizes before every bundle build, and StreamingPackInstall re-hashes on the
+# device before a byte is installed. Three gates, one census.
+PREVIEW_MODULE = "preview_en"
+
+# resolve/<commit sha>/, the catalog's own rule (WhisperModel.kt:103-108): resolve/main is a
+# MUTABLE ref, and a replaced upstream file would rebuild a DIFFERENT pack under the same name.
+PREVIEW_BASE_URL = "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/"
+
+# (name, bytes, sha256) -- re-hashed on the PC (rung 1 section 1.2) and on the Tab (rung 3).
+PREVIEW_FILES = (
+    ("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 71_083_163, "563fde436d16cf7607cf408cd6b30909819d03162652ef389c2450ced3f45ac1"),
+    ("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_307_236, "98da299f471e38bb4e1a8df579b8cc9122d6039576a77e357b3c60f17dd83b02"),
+    ("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 259_335, "d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297"),
+    ("tokens.txt", 5_048, "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb"),
+)
+
+DEFAULT_PREVIEW_MIRROR = r"C:\Users\bastr\.androidbuild\streaming-models\en-2023-06-26"
+
+# The one file in the payload directory that is NOT payload: the tracked anchor that proves the
+# directory exists in a clean clone (the module's .gitignore re-includes it by name).
+PREVIEW_ANCHOR = ".gitkeep"
+
+
+def preview_payload_dir() -> str:
+    """The pack module's single untargeted asset directory, named after the PACK (4.2 F8: no two
+    modules may ship the same entry path, and Play strips a group suffix on delivery, so the
+    device sees assets/preview_en/ -- which is what StreamingPackInstall.packSourceDir opens)."""
+    return os.path.join(repo_root(), PREVIEW_MODULE, "src", "main", "assets", PREVIEW_MODULE)
+
+
+def verify_preview_dir(out_dir: str) -> "str | None":
+    """What LANDED, re-read from disk: exactly the four files plus the anchor, every byte count
+    the catalog's, every digest re-hashed to the catalog's. None when green, else the first
+    problem as one sentence. Everything in this directory rides into the AAB and onto every
+    device (the pack is untargeted), so 'nothing else is in here' is part of the verdict."""
+    if not os.path.isdir(out_dir):
+        return f"{out_dir} does not exist"
+    names = sorted(os.listdir(out_dir))
+    want = sorted([name for name, _, _ in PREVIEW_FILES] + [PREVIEW_ANCHOR])
+    if names != want:
+        return f"carries {names}; the preview pack is exactly {want}"
+    for name, want_bytes, want_sha in PREVIEW_FILES:
+        path = os.path.join(out_dir, name)
+        got = os.path.getsize(path)
+        if got != want_bytes:
+            return f"{name} is {got} B, the catalog says {want_bytes}"
+        got_sha = sha256_file(path)
+        if got_sha != want_sha:
+            return f"{name} sha256 {got_sha} != the catalog {want_sha}"
+    return None
+
+
+def place_preview_file(name: str, want_bytes: int, want_sha: str, out_dir: str,
+                       mirror: str) -> str:
+    """Stream ONE pinned file into out_dir with sha256 riding the copy, from the local mirror
+    when it already holds those exact bytes and from the commit-pinned URL otherwise. The .part
+    is promoted only after both the length and the digest match the literals above."""
+    dest = os.path.join(out_dir, name)
+    part = dest + ".part"
+    local = os.path.join(mirror, name)
+    source = "mirror"
+    if os.path.isfile(local) and os.path.getsize(local) == want_bytes:
+        reader = open(local, "rb")
+    else:
+        source = "pinned commit"
+        reader = urllib.request.urlopen(PREVIEW_BASE_URL + name, timeout=120)
+    digest = hashlib.sha256()
+    copied = 0
+    try:
+        with open(part, "wb") as dst:
+            while True:
+                chunk = reader.read(CHUNK)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                dst.write(chunk)
+                copied += len(chunk)
+    finally:
+        reader.close()
+    if copied != want_bytes:
+        os.remove(part)
+        raise fail(f"{name} produced {copied} B from the {source}, the catalog says {want_bytes}")
+    if digest.hexdigest() != want_sha:
+        os.remove(part)
+        raise fail(f"{name} sha256 {digest.hexdigest()} from the {source} != the catalog "
+                   f"{want_sha}")
+    os.replace(part, dest)
+    return source
+
+
+def place_preview_pack(mirror: str) -> None:
+    """Assemble the preview_en payload, then re-verify the whole directory from disk."""
+    out_dir = preview_payload_dir()
+    os.makedirs(out_dir, exist_ok=True)
+    anchor = os.path.join(out_dir, PREVIEW_ANCHOR)
+    if not os.path.isfile(anchor):
+        with open(anchor, "w", encoding="utf-8"):
+            pass
+    print(f"PREVIEW module={PREVIEW_MODULE} -> "
+          f"{PREVIEW_MODULE}/src/main/assets/{PREVIEW_MODULE}")
+    if verify_preview_dir(out_dir) is None:
+        print("  already the catalog (re-hashed from disk), rewrite skipped")
+        return
+    # Anything that is neither payload nor the anchor would ride into the AAB: cleared, not kept.
+    keep = {name for name, _, _ in PREVIEW_FILES} | {PREVIEW_ANCHOR}
+    for stale in os.listdir(out_dir):
+        if stale not in keep:
+            os.remove(os.path.join(out_dir, stale))
+    placed = 0
+    for name, want_bytes, want_sha in PREVIEW_FILES:
+        path = os.path.join(out_dir, name)
+        if os.path.isfile(path) and os.path.getsize(path) == want_bytes and \
+                sha256_file(path) == want_sha:
+            print(f"  {name}: already the catalog, kept")
+            continue
+        source = place_preview_file(name, want_bytes, want_sha, out_dir, mirror)
+        print(f"  {name}: {want_bytes} B from the {source}, catalog digest reproduced")
+        placed += 1
+    problem = verify_preview_dir(out_dir)
+    if problem is not None:
+        raise fail(f"the placed preview pack failed its own verification: {problem}")
+    total = sum(b for _, b, _ in PREVIEW_FILES)
+    print(f"preview OK: {placed} file(s) placed, four files verified from disk, {total} B total")
+
+
 def main(argv: list) -> None:
     usage = (
         f"usage: python {os.path.basename(argv[0])} measure [workspace]\n"
         f"       python {os.path.basename(argv[0])} build [workspace]\n"
-        f"       python {os.path.basename(argv[0])} delivery-zip <familyId> <tierId> [workspace]"
+        f"       python {os.path.basename(argv[0])} delivery-zip <familyId> <tierId> [workspace]\n"
+        f"       python {os.path.basename(argv[0])} preview [mirror]"
     )
-    if len(argv) < 2 or argv[1] not in ("measure", "build", "delivery-zip"):
+    if len(argv) < 2 or argv[1] not in ("measure", "build", "delivery-zip", "preview"):
         raise SystemExit(usage)
+    if argv[1] == "preview":
+        place_preview_pack(argv[2] if len(argv) > 2 else DEFAULT_PREVIEW_MIRROR)
+        return
     if argv[1] == "measure":
         workspace = argv[2] if len(argv) > 2 else DEFAULT_WORKSPACE
         measure(workspace)

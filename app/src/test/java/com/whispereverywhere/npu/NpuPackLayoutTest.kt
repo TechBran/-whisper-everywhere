@@ -252,11 +252,14 @@ class NpuPackLayoutTest {
     }
 
     @Test
-    fun theAppListsExactlyTheTwoPackModules() {
+    fun theAppListsBothNpuPackModulesFirstInItsOnePackList() {
         assertEquals(
-            "the app declares exactly the two NPU packs, in one spelling — a pack missing " +
-                "here ships no variants at all, silently",
-            1, count(appGradle, "assetPacks += listOf(\":npu_turbo\", \":npu_small\")")
+            "the app declares both NPU packs, in one spelling, at the head of the ONE pack " +
+                "list — a pack missing here ships no variants at all, silently. (4.4.0 added " +
+                "the untargeted :preview_en behind them; PreviewPackLayoutTest owns that half " +
+                "and this pin owns the NPU pair's, so neither can be dropped by editing the " +
+                "other's test.)",
+            1, count(appGradle, "assetPacks += listOf(\":npu_turbo\", \":npu_small\",")
         )
         assertEquals(
             "and no second assetPacks statement exists to widen or shadow the list",

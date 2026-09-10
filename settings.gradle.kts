@@ -21,3 +21,9 @@ include(":app")
 // zips — so each committed module tree carries only its build file, the EMPTY default variant
 // (model/.gitkeep) and the .gitignore that keeps the payload dirs out.
 include(":npu_turbo", ":npu_small")
+// The streaming previewer's on-demand pack (4.4.0, the 2026-09-10 amendment) — its own statement
+// so the NPU pair's line above stays exactly what it was: a rewritten include list is how a pack
+// silently stops shipping. Same payload discipline (tools/build_asset_packs.py preview places the
+// four files; the committed tree carries the build file, the wall and the .gitkeep anchor), but
+// NOT device-targeted: one untargeted variant, every device.
+include(":preview_en")
