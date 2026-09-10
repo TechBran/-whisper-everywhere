@@ -123,7 +123,8 @@ class EngineSelectionTest {
     @Test fun live_flag_with_gemini_and_key_and_net_gives_CLOUD_LIVE_since_4_3_4() {
         // Gemini joined the realtime set behind GeminiRealtimeProtocol (manual-VAD activities cut
         // by the app's endpointer). The `liveMode` axis it receives is the RESOLVED flag — Gemini's
-        // own opt-in, see liveModeFor below — so this leaf is reached only for a user who chose it.
+        // own flag, see liveModeFor below — which now defaults TRUE (owner ruling 2026-09-10), so
+        // this leaf is the one a stored Gemini key reaches unless the user turned the switch off.
         assertEquals(
             EngineChoice.CLOUD_LIVE,
             decideEngineChoice(
@@ -138,14 +139,19 @@ class EngineSelectionTest {
         )
     }
 
-    // --- liveModeFor: the shared flag for three providers, Gemini's own opt-in for Gemini ---
+    // --- liveModeFor: the shared flag for three providers, Gemini's own flag for Gemini ---
 
-    @Test fun live_mode_for_gemini_is_its_own_flag_and_defaults_to_batch() {
-        // The controller ruling (2026-09-10): an existing Gemini user — whose shared flag defaults
-        // true and who could never have switched it off — stays on batch until they opt in.
-        assertFalse(liveModeFor("GEMINI", sharedLive = true, geminiLive = false))
+    @Test fun live_mode_for_gemini_reads_its_own_flag_which_now_defaults_to_live() {
+        // Owner ruling 2026-09-10: "Gemini Live must be the DEFAULT whenever a Gemini key is
+        // present — we shouldn't even have to select." PreferencesManager.sttLiveModeGemini
+        // therefore defaults TRUE, so an untouched install resolves live (the `geminiLive = true`
+        // rows below) — the same answer the shared flag gives the other three.
+        assertTrue("the untouched default: both flags true -> live", liveModeFor("GEMINI", sharedLive = true, geminiLive = true))
+        // The switch is an OPT-OUT, and it opts out of Gemini ONLY: a stored false wins over the
+        // shared true, exactly as a stored true wins over a shared false. This branch is the whole
+        // reason Gemini keeps a second preference — one provider's "off" must not move another's.
+        assertFalse("Gemini's own off beats the shared on", liveModeFor("GEMINI", sharedLive = true, geminiLive = false))
         assertTrue(liveModeFor("GEMINI", sharedLive = false, geminiLive = true))
-        assertTrue(liveModeFor("GEMINI", sharedLive = true, geminiLive = true))
     }
 
     @Test fun live_mode_for_the_other_providers_is_the_shared_flag_untouched_by_geminis() {

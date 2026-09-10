@@ -62,8 +62,9 @@ object ProviderCatalog {
             // closes at 590 s — and the protocol rotates onto a fresh setup at the next turn
             // boundary before that, so a session outlives the cap. Its OWN VAD drops most speech
             // after the first sentence, so the app's endpointer cuts the turns (manual VAD).
-            // Live is opt-in per provider for Gemini (PreferencesManager.sttLiveModeGemini):
-            // existing Gemini users stay on batch until they flip it.
+            // Live is ON by default for Gemini too (PreferencesManager.sttLiveModeGemini, owner
+            // ruling 2026-09-10): a stored Gemini key streams. Gemini keeps its own flag so its
+            // switch is an opt-out that does not move the other three's shared one.
             supportsStreaming = true,
             keyHelpUrl = "https://aistudio.google.com/apikey",
             // Unpaid tier: Google uses submitted content to improve its products and human

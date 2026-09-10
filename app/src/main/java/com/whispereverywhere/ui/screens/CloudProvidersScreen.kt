@@ -195,8 +195,9 @@ internal fun sttSelectionCaption(providerDisplayName: String): String =
  * OpenAI-only: any provider with a native BYOK realtime WebSocket ([Provider.supportsStreaming])
  * shows the row — all four since 4.3.4, when Gemini joined behind GeminiRealtimeProtocol (its
  * key rides the upgrade header like the others'; the old ephemeral-token blocker is obsolete).
- * For Gemini the row's switch drives its OWN opt-in flag, `sttLiveModeGemini` (default false), not
- * the shared one — see `liveModeFor`.
+ * For Gemini the row's switch drives its OWN flag, `sttLiveModeGemini` (default TRUE since the
+ * owner's 2026-09-10 ruling), not the shared one — see `liveModeFor`. On every provider the switch
+ * is therefore an OPT-OUT: it is already on when the row first appears.
  *
  * Gated on the SAME [disclosureAccepted] v3 flag as selection itself — live adds a cost tier, not a
  * new data class, so it needs no new consent surface. Requiring the stored key too means the toggle
@@ -239,16 +240,27 @@ internal fun liveModeCaption(): String =
     "Streams your transcription in real time as you speak — billed per minute while the mic is open."
 
 /**
- * The per-provider caption: [liveModeCaption] plus, for Gemini, the free-tier training sentence —
- * the price line above says the free tier costs nothing, and the same row must say what it costs
- * instead (the catalog's `trainsOnDataByDefault`, in the words the key screen already uses).
- * The two travel together on purpose: a free badge without the training sentence would be a
- * half-truth. Only Gemini's live row carries it; the other three are unchanged.
+ * The per-provider caption: [liveModeCaption] plus, for Gemini, the free-tier training sentence and
+ * the opt-out sentence.
+ *
+ * The training sentence is owed by the price line above: it says the free tier costs nothing, so the
+ * same row must say what it costs instead (the catalog's `trainsOnDataByDefault`, in the words the
+ * key screen already uses). The two travel together on purpose — a free badge without the training
+ * sentence would be a half-truth — which is why it stays immediately after the shared caption.
+ *
+ * The opt-out sentence is owed by the owner's 2026-09-10 ruling: Gemini live is now ON the moment a
+ * key is stored (`sttLiveModeGemini` defaults true), so this switch is the way OUT and the row has
+ * to say both that it is already on and what turning it off actually buys — batch bills the audio
+ * in each phrase rather than every minute the mic is open, and its text lands at the end of the
+ * phrase instead of during it. Still no speed claim, on either mode. Only Gemini's live row carries
+ * either sentence; the other three read [liveModeCaption] verbatim.
  */
 internal fun liveModeCaption(providerId: ProviderId): String =
     if (providerId == ProviderId.GEMINI)
         liveModeCaption() + " On Google's free tier, Google uses what you send to improve its products, " +
-            "and human reviewers may read it. Paid tiers do not."
+            "and human reviewers may read it. Paid tiers do not. On as soon as your Gemini key is in — " +
+            "turn it off to send each finished phrase as one batch request instead, which bills only the " +
+            "audio in that phrase and shows its text when the phrase ends."
     else liveModeCaption()
 
 /**

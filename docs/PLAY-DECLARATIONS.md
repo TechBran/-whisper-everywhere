@@ -172,21 +172,29 @@ v3 unchanged; Console narrative names four TTS providers.**
 **Release ledger — Gemini live word-for-word (4.3.4, 2026-09-10):** Gemini becomes the FOURTH live
 streaming STT provider (`generativelanguage.googleapis.com`, BidiGenerateContent WebSocket,
 `gemini-3.5-transcribe-live`, MANUAL voice activity detection — the app's own endpointer cuts the
-turns), so the mode-selector row now offers all four. **Opt-in, and BATCH remains the default for
-Gemini:** its live switch is a separate preference defaulting to off, so an existing Gemini user is
-never moved onto the live path unasked. The row states the price and the training stance together —
-label "Real-time streaming (Google Gemini) · about $0.009/min on a paid key, free on the free tier",
-caption "Streams your transcription in real time as you speak — billed per minute while the mic is
-open. On Google's free tier, Google uses what you send to improve its products, and human reviewers
-may read it. Paid tiers do not." (the free badge and the training sentence never travel apart).
+turns), so the mode-selector row now offers all four. **Live is the DEFAULT for Gemini, and the
+switch is an opt-out:** owner ruling 2026-09-10 — "Gemini Live must be the DEFAULT whenever a Gemini
+key is present — we shouldn't even have to select" — so its preference defaults ON and a stored
+Gemini key streams with no second choice to find. This changes the TRANSPORT a Gemini user's audio
+takes, never whether it leaves: the two deliberate actions that gate any sharing (store a Gemini key
+AND select Gemini as the transcription engine) are exactly the ones batch already required, and a
+user who has set the switch either way keeps that stored value — only the absent-preference default
+flips. The row states the price, the training stance and the way out together — label "Real-time
+streaming (Google Gemini) · about $0.009/min on a paid key, free on the free tier", caption "Streams
+your transcription in real time as you speak — billed per minute while the mic is open. On Google's
+free tier, Google uses what you send to improve its products, and human reviewers may read it. Paid
+tiers do not. On as soon as your Gemini key is in — turn it off to send each finished phrase as one
+batch request instead, which bills only the audio in that phrase and shows its text when the phrase
+ends." (the free badge and the training sentence never travel apart, and the opt-out sentence
+follows them rather than splitting them).
 **Determination: SAME data class already declared — "Audio files → Voice or sound recordings",
 Shared = Yes, Optional — to a recipient already enumerated.** NO new Data Safety class, NO new
 shared type, NO new recipient, NO disclosure-version bump, NO re-prompt: the same
 audio-to-a-provider meaning covered by disclosure v3, with one more transport (WebSocket) and price
 tier, exactly as C4 live transcribe was for OpenAI. On-device stays the default and the automatic
 fallback; a provider failure still rescues the turn locally. Ledger entry: **Gemini live: fourth
-streaming STT provider, opt-in with batch as its default, same audio class and recipient, v3
-unchanged.** This entry supersedes both earlier "Gemini has no live path" statements (the
+streaming STT provider, ON by default once the key is stored with an opt-out on its row, same audio
+class and recipient, v3 unchanged.** This entry supersedes both earlier "Gemini has no live path" statements (the
 2026-07-31 realtime ledger above and the 3.3.0 corrections list in §7).
 
 - **Audio files → Voice or sound recordings:** Collected **Yes**, Shared **Yes**, purpose
@@ -300,9 +308,10 @@ pre-audit claims:
   (OpenAI, ElevenLabs, Soniox) — whichever streaming-capable provider is the globally selected STT
   engine, each behind its own per-provider price. Same audio-to-a-provider meaning already covered
   by disclosure v3; no re-prompt, no Data Safety change.
-  **Updated 4.3.4 (2026-09-10): all FOUR providers now offer a live row.** Gemini's is opt-in with
-  batch as its default (a separate switch, default off) and carries its own price + free-tier
-  training caption — see the Gemini live ledger in §5. The pre-4.3.4 "Gemini shows no live row, no
+  **Updated 4.3.4 (2026-09-10): all FOUR providers now offer a live row, and all four are ON by
+  default once a key is stored.** Gemini's sits on a separate switch (its own preference, default
+  on — owner ruling 2026-09-10) so it can be turned off without moving the other three, and it
+  carries its own price + free-tier training caption — see the Gemini live ledger in §5. The pre-4.3.4 "Gemini shows no live row, no
   apology copy" instruction is void; do not set the Console to it.
 - **Home usage-stats footer** no longer claims "runs entirely on-device / no usage limits" to cloud
   users; no storefront "no limits" copy may contradict the honest per-engine footer.

@@ -367,9 +367,10 @@ class PreferencesManager(private val context: Context) {
      *
      * Orthogonal to [sttProviderId], which still names the provider: this only flips HOW the audio
      * is sent. It is consulted only when the selected provider is realtime-capable AND is not
-     * Gemini — Gemini's live mode (4.3.4) has its own opt-in flag, [sttLiveModeGemini], so this
-     * default never reaches it. It is equally inert with no provider selected, no key, or no
-     * network: the live leaf sits AFTER those local guards, so an on-device user is untouched.
+     * Gemini — Gemini's live mode (4.3.4) has its own flag, [sttLiveModeGemini], which carries the
+     * same default-on rule, so this one never reaches it. It is equally inert with no provider
+     * selected, no key, or no network: the live leaf sits AFTER those local guards, so an on-device
+     * user is untouched.
      * Same mic audio, same provider, same v3 disclosure as batch; the ONLY user-visible change is
      * a new transport and a per-provider cost tier (about $0.0045/min OpenAI gpt-transcribe,
      * $0.007/min ElevenLabs, $0.002/min Soniox; Gemini's own row: about $0.009/min on a paid key,
@@ -388,16 +389,28 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
-     * Gemini's OWN batch-vs-live axis (4.3.4), **default false** — the one provider whose live mode
-     * is opt-in. Gemini became streaming-capable AFTER users had chosen it as a batch engine, and
-     * the shared [sttLiveMode] default of true could never have been switched off by a Gemini-only
-     * user (its live row never rendered), so honouring that flag would have moved every existing
-     * Gemini user from ~$0.005/min batch to ~$0.009/min live — or onto the free tier, where Google
-     * may use the audio to improve its products — without asking. Controller ruling 2026-09-10 in
-     * the absence of the owner's: existing Gemini users stay on batch; live is a switch on Gemini's
-     * provider row (`liveModeFor` resolves which flag applies). The owner may flip the default.
+     * Gemini's OWN batch-vs-live axis (4.3.4), **default true** — like the other three, a Gemini key
+     * streams the moment it is in.
+     *
+     * Owner ruling 2026-09-10: *"Gemini Live must be the DEFAULT whenever a Gemini key is present —
+     * we shouldn't even have to select."* This supersedes the controller's holding ruling of the
+     * same morning (made in the owner's absence), which defaulted it false so that users who had
+     * chosen Gemini as a BATCH engine stayed on batch until they opted in. Only the ABSENT-pref
+     * default flips: a stored value always beats it, so anyone who has already set the switch —
+     * either way — keeps their choice untouched.
+     *
+     * Still a SEPARATE preference from [sttLiveMode] rather than a seed into it, for the reason
+     * that outlives the default: a Gemini-only user could never have expressed a choice through
+     * the shared flag (Gemini's live row did not render before 4.3.4), so Gemini's own explicit
+     * on/off has to be recordable apart from the other three's. `liveModeFor` resolves which flag
+     * applies.
+     *
+     * The row's switch is therefore an OPT-OUT, not an opt-in: turned off, Gemini sends each
+     * finished phrase as one batch request instead of streaming (live is about $0.009/min on a paid
+     * key and $0 on the free tier, where Google may use the audio to improve its products — the
+     * cost and training copy lives on the row itself, `liveModeLabel`/`liveModeCaption`).
      */
-    private val _sttLiveModeGemini = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE_GEMINI, false))
+    private val _sttLiveModeGemini = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE_GEMINI, true))
     /** Reactive mirror of [sttLiveModeGemini] for the Dictation card's chip. Additive. */
     val sttLiveModeGeminiFlow: StateFlow<Boolean> = _sttLiveModeGemini.asStateFlow()
 
@@ -499,7 +512,7 @@ class PreferencesManager(private val context: Context) {
             getBoolean(CLOUD_DISCLOSURE_KEY, false)
         private const val KEY_STT_PROVIDER = "stt_provider_id"
         private const val KEY_STT_LIVE_MODE = "stt_live_mode"
-        /** Gemini's own opt-in live flag (4.3.4); the shared key above never applies to Gemini. */
+        /** Gemini's own live flag (4.3.4, default on); the shared key above never applies to Gemini. */
         private const val KEY_STT_LIVE_MODE_GEMINI = "stt_live_mode_gemini"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
 

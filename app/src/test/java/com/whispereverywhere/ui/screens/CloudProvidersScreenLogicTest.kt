@@ -408,7 +408,8 @@ class CloudProvidersScreenLogicTest {
 
     @Test fun live_mode_row_visible_for_gemini_since_4_3_4() {
         // Gemini streams behind GeminiRealtimeProtocol (the key on the upgrade header, no backend
-        // token). Its row's switch drives Gemini's OWN opt-in flag (default off) — see liveModeFor.
+        // token). Its row's switch drives Gemini's OWN flag (default ON since the owner's
+        // 2026-09-10 ruling, so the switch is an opt-out) — see liveModeFor.
         assertTrue(liveModeRowVisible(ProviderId.GEMINI.name, setOf(ProviderId.GEMINI), true))
         assertFalse("same gates as the others: no key -> no row", liveModeRowVisible(ProviderId.GEMINI.name, emptySet(), true))
         assertFalse(liveModeRowVisible(ProviderId.GEMINI.name, setOf(ProviderId.GEMINI), false))
@@ -427,10 +428,34 @@ class CloudProvidersScreenLogicTest {
         assertTrue(caption, caption.contains("free tier", ignoreCase = true))
         assertTrue(caption, caption.contains("improve its products"))
         assertTrue(caption, caption.contains("Paid tiers do not"))
+        // The training sentence stays immediately after the shared caption, before the opt-out
+        // copy: the free badge and what the free tier costs instead must not be separated.
+        assertTrue(
+            caption,
+            caption.indexOf("improve its products") < caption.indexOf("turn it off"),
+        )
         // The other three rows are untouched: no training sentence, the shared caption verbatim.
         listOf(ProviderId.OPENAI, ProviderId.ELEVENLABS, ProviderId.SONIOX).forEach { id ->
             assertEquals(liveModeCaption(), liveModeCaption(id))
         }
+    }
+
+    @Test fun gemini_live_row_reads_as_an_opt_out_and_says_what_turning_it_off_buys() {
+        // Owner ruling 2026-09-10: "Gemini Live must be the DEFAULT whenever a Gemini key is
+        // present — we shouldn't even have to select." sttLiveModeGemini defaults true, so the
+        // switch the user meets is already on. A switch that is on before it is touched has to say
+        // so, and has to say what the other position does — otherwise the row reads as an opt-in
+        // that mysteriously started on. The trade named is the cost/behaviour difference, never a
+        // speed claim: batch bills the audio inside a phrase instead of every minute the mic is
+        // open, and its text lands at the end of the phrase.
+        val caption = liveModeCaption(ProviderId.GEMINI)
+        assertTrue(caption, caption.contains("On as soon as your Gemini key is in"))
+        assertTrue(caption, caption.contains("turn it off"))
+        assertTrue(caption, caption.contains("batch request"))
+        assertTrue(caption, caption.contains("bills only the audio in that phrase"))
+        assertTrue(caption, caption.contains("when the phrase ends"))
+        // The other three keep the shared caption, which says nothing about a default or a switch.
+        assertFalse(liveModeCaption(), liveModeCaption().contains("turn it off"))
     }
 
     @Test fun live_mode_row_hidden_without_disclosure_key_or_active_selection() {

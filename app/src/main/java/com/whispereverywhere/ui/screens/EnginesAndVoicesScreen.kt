@@ -99,8 +99,10 @@ fun EnginesAndVoicesScreen(
 
     // Local mirror of the batch-vs-live axis (C4). false = one-shot batch POST; consulted only
     // while a realtime-capable engine is selected — see decideEngineChoice / isRealtimeStt. Two
-    // flags since 4.3.4: the shared one (OpenAI, ElevenLabs, Soniox; default true) and Gemini's
-    // own opt-in (default false — existing Gemini users stay on batch). liveModeFor picks.
+    // flags since 4.3.4: the shared one (OpenAI, ElevenLabs, Soniox) and Gemini's own — BOTH
+    // default true (owner ruling 2026-09-10: a stored key streams), so the row's switch is an
+    // opt-out on all four; the split only keeps one provider's off from moving another's.
+    // liveModeFor picks which flag the selected engine reads.
     var sttLiveMode by remember { mutableStateOf(app.preferencesManager.sttLiveMode) }
     var sttLiveModeGemini by remember { mutableStateOf(app.preferencesManager.sttLiveModeGemini) }
 

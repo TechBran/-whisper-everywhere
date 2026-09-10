@@ -92,9 +92,9 @@ internal enum class EngineChoice { LOCAL_ONLY, LOCAL_NO_KEY, LOCAL_OFFLINE, CLOU
  *
  * That last leaf is now the ORDINARY path, not the exception: `sttLiveMode` defaults to true, so a
  * user who picks OpenAI, ElevenLabs or Soniox and pastes a key streams word-for-word immediately.
- * Batch remains one toggle away. Gemini (live since 4.3.4) is the exception to the default: its
- * live flag is a separate, opt-in preference ([liveModeFor]), so an existing Gemini user stays on
- * batch until they flip it.
+ * Batch remains one toggle away. Gemini (live since 4.3.4) reads the same way since the owner's
+ * 2026-09-10 ruling — a stored Gemini key streams too — on its own preference rather than the
+ * shared one ([liveModeFor]), which is what lets its opt-out stand alone.
  *
  * The live leaf sits AFTER the local guards on purpose: the one-way valve is untouched, so no key
  * or no network still resolves to on-device — live never opens a socket the batch path would have
@@ -152,14 +152,15 @@ internal val REALTIME_STT_PROVIDERS: Set<ProviderId> =
  * The RESOLVED live flag for the selected provider — the `liveMode` axis [decideEngineChoice] takes.
  *
  * `sttLiveMode` ([sharedLive]) defaults to true and is shared by OpenAI, ElevenLabs and Soniox
- * (owner decision 2026-07-31: a streaming provider streams the moment its key is in). Gemini's live
- * mode arrived in 4.3.4 for users who had ALREADY chosen Gemini as a batch engine, on a preference
- * that defaults true and that a Gemini-only user could never have switched off (the live row never
- * rendered for Gemini) — so flipping the catalog alone would have moved every existing Gemini user
- * from ~$0.005/min batch to ~$0.009/min live (or free-with-training) unasked. Ruling (controller,
- * 2026-09-10, in the absence of the owner's): existing Gemini users STAY ON BATCH; Gemini live is
- * its own opt-in flag ([geminiLive], `sttLiveModeGemini`, default false), selectable on the
- * provider's own row. The three other providers keep the shared flag byte-identically.
+ * (owner decision 2026-07-31: a streaming provider streams the moment its key is in). Gemini
+ * ([geminiLive], `sttLiveModeGemini`) now reads the same way — owner ruling 2026-09-10: *"Gemini
+ * Live must be the DEFAULT whenever a Gemini key is present — we shouldn't even have to select."*
+ * So this function's job is no longer to hold Gemini back; it is to keep Gemini's explicit on/off
+ * on its OWN preference, because a Gemini-only user could never have expressed one through the
+ * shared flag (Gemini's live row did not render before 4.3.4). Both flags default true, so the
+ * resolved answer for an untouched install is the same either side of the branch; the branch is
+ * what lets a Gemini user opt OUT (or a three-provider user opt out) without moving the other.
+ * The three other providers keep the shared flag byte-identically.
  */
 internal fun liveModeFor(sttProviderIdName: String?, sharedLive: Boolean, geminiLive: Boolean): Boolean =
     if (resolveSttProvider(sttProviderIdName) == ProviderId.GEMINI) geminiLive else sharedLive
@@ -2646,7 +2647,8 @@ class FloatingBubbleService : Service(),
             sttProviderId = providerId,
             hasKey = !key.isNullOrBlank(),
             hasValidatedNetwork = connectivityMonitor.hasValidatedNetwork(),
-            // The shared flag for OpenAI/ElevenLabs/Soniox; Gemini's own opt-in (see liveModeFor).
+            // The shared flag for OpenAI/ElevenLabs/Soniox; Gemini's own flag (see liveModeFor).
+            // Both default true, so a stored key streams whichever of the four is selected.
             liveMode = liveModeFor(
                 providerId,
                 sharedLive = app.preferencesManager.sttLiveMode,

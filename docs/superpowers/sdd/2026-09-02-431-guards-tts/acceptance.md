@@ -354,9 +354,11 @@ H3. **Galaxy XR, debug sideload (the Play copy must be uninstalled first — it 
 
 ## J — Gemini Live (88 / 4.3.4)
 
-Precondition: the Gemini key is entered in Engines & voices (the same key as batch); the new
-**Live** switch on the Gemini row is ON (it is OFF by default — existing Gemini users stay on batch
-until they flip it). Language = Auto or a picked language — both must work.
+Precondition: the Gemini key is entered in Engines & voices (the same key as batch). **Live is ON by
+default once the key is entered; the switch on the Gemini row turns it off** (your ruling
+2026-09-10 — "we shouldn't even have to select"), so J1–J4 need no visit to that switch at all;
+check in passing that the row shows it already on. Language = Auto or a picked language — both must
+work.
 J1. **Partials.** Own voice, three sentences with normal pauses. EXPECTED: the strip shows the current
     sentence growing about a second behind your voice, one final per pause, the transcript reads as
     the cloud providers do (cased, punctuated). FAIL if nothing arrives, if the second and later

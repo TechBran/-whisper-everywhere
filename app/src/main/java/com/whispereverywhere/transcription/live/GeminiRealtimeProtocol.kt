@@ -521,7 +521,7 @@ class GeminiRealtimeProtocol(
      * (→ EMPTY, nothing typed) — a paused device-audio video costs roughly four silent activities
      * a minute. T0 §2.11's premise ("under manual VAD the app sends only speech") is therefore NOT
      * what this wiring does; the settings row's "billed per minute while the mic is open"
-     * (`liveModeCaption`, `ui/screens/CloudProvidersScreen.kt:238`) is the honest reading and is
+     * (`liveModeCaption`, `ui/screens/CloudProvidersScreen.kt:239`) is the honest reading and is
      * the copy that ships — pinned by `CloudProvidersScreenLogicTest`.
      *
      * FOLLOW-UP (not this branch, no behaviour change here): open the activity on the ENDPOINTER's
