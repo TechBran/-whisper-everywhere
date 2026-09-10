@@ -63,7 +63,9 @@ import java.io.File
  * **4.4.0 P0 added the second session flag** (`sessionHasLocalPreview`) to all four rules, and
  * with it two more structural obligations no JVM test can otherwise see: the flag is RESET beside
  * `sessionIsLive` and set true NOWHERE in the prep commit, and `onDelta`'s blank branch asks
- * [deltaBlankVisibility] instead of writing a bare `View.GONE`. The last two tests below are those.
+ * [deltaBlankVisibility] instead of writing a bare `View.GONE` — with the blank branch's own
+ * reveal, `== View.GONE` and not `!= View.VISIBLE`, since a park the reveal ignores is no park at
+ * all. The last two tests below are those.
  */
 class InFlightStripWiringPinTest {
 
@@ -315,5 +317,24 @@ class InFlightStripWiringPinTest {
         assertEquals(1, count(onDelta, "StripVisibility.HIDDEN -> transcriptionDeltaText.visibility = View.GONE"))
         assertEquals(1, count(onDelta, "transcriptionDeltaText.visibility = View.GONE"))
         assertEquals(1, count(onDelta, "transcriptionDeltaText.visibility = View.INVISIBLE"))
+        // AND THE PARK'S OTHER HALF — the reveal 19 lines above it, which nothing pinned before.
+        // The park is worth exactly nothing unless the reveal is GONE-scoped: `!= View.VISIBLE` is
+        // true for INVISIBLE as well, so the widened form posts a `reclampNow()` on every parked
+        // reveal — once per utterance, ~16x/minute at 3.7 G's measured cadence — which is the whole
+        // cost OCCUPYING_BLANK exists to remove. INVISIBLE occupies layout height and
+        // `estimatedWindowSize` grants the strip its allowance on `!= GONE`, so the parked reveal
+        // changes no geometry and the post is pure waste, not a safety net. Same predicate as the
+        // label render's, character for character.
+        assertEquals(
+            "onDelta's reveal reads `== View.GONE`, the label render's predicate",
+            1,
+            count(onDelta, "val wasHidden = transcriptionDeltaText.visibility == View.GONE"),
+        )
+        assertEquals(
+            "never widened back to `!= View.VISIBLE`: that also fires for the parked INVISIBLE " +
+                "strip, and makes the OCCUPYING_BLANK row inert",
+            0,
+            count(onDelta, "!= View.VISIBLE"),
+        )
     }
 }

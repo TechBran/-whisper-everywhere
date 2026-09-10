@@ -3087,9 +3087,17 @@ class FloatingBubbleService : Service(),
                     // guard deliverReleasedText already uses for its sibling reset.
                     if (currentState == BubbleState.FINALIZING) return@launch
                     if (text.isNotBlank()) {
-                        val wasGone = transcriptionDeltaText.visibility != View.VISIBLE
+                        // 4.4.0 P0: `== GONE`, never `!= VISIBLE`, and the same predicate the
+                        // label render uses. A local preview parks the strip at INVISIBLE between
+                        // utterances (deltaBlankVisibility's OCCUPYING_BLANK row, below), and
+                        // INVISIBLE already occupies layout height — estimatedWindowSize grants
+                        // the strip its ~100dp on `!= GONE` — so INVISIBLE -> VISIBLE changes no
+                        // geometry and needs no reclamp. Widened to `!= VISIBLE` this fires on
+                        // every parked reveal, paying one reclampNow() per utterance and making
+                        // the park inert: exactly the churn the park exists to remove.
+                        val wasHidden = transcriptionDeltaText.visibility == View.GONE
                         transcriptionDeltaText.visibility = View.VISIBLE
-                        if (wasGone) {
+                        if (wasHidden) {
                             // the strip just grew the window downward — keep it on-screen
                             bubbleView.post { reclampNow() }
                         }
