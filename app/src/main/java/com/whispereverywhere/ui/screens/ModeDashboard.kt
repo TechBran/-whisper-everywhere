@@ -73,12 +73,13 @@ internal fun dictationChip(engineDisplayName: String?, localModelLabel: String?,
 /**
  * Whether word-for-word live streaming is actually active — realtime-capable-provider-only,
  * mirroring [com.whispereverywhere.service.decideEngineChoice], which upgrades a session to
- * CLOUD_LIVE only when `liveMode && isRealtimeStt(sttProviderId)`. The persisted `sttLiveMode` flag
- * is deliberately NOT reset when the engine switches to a non-realtime provider (it is inert on
- * batch-only engines — see PreferencesManager), so the Dictation chip MUST re-apply this rule
- * itself; otherwise a stale flag surfaces "word-for-word" over a Gemini BATCH session (the one
- * provider with no client-usable realtime path). [sttProviderIdName] is the raw persisted id
- * (ProviderId.name) or null for on-device.
+ * CLOUD_LIVE only when `liveMode && isRealtimeStt(sttProviderId)`. [sttLiveMode] is the RESOLVED
+ * flag for the selected provider — the caller passes `liveModeFor(id, shared, gemini)`, never the
+ * raw shared preference, because Gemini's live mode (4.3.4) is its own opt-in flag: the shared
+ * flag is deliberately NOT reset when the engine switches, so passing it raw would surface
+ * "real-time streaming" over a Gemini BATCH session. The chip re-applies the realtime rule itself
+ * as well, so a stale flag over an unresolvable id stays silent. [sttProviderIdName] is the raw
+ * persisted id (ProviderId.name) or null for on-device.
  */
 internal fun dictationLiveActive(sttProviderIdName: String?, sttLiveMode: Boolean): Boolean =
     sttLiveMode && com.whispereverywhere.service.isRealtimeStt(sttProviderIdName)

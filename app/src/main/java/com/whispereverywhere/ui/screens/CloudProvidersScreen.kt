@@ -193,9 +193,10 @@ internal fun sttSelectionCaption(providerDisplayName: String): String =
  * selected provider, so all three must hold: a resolvable provider is the SELECTED engine (not
  * merely configured), its key is stored, and the v3 disclosure is accepted. Widened from
  * OpenAI-only: any provider with a native BYOK realtime WebSocket ([Provider.supportsStreaming])
- * shows the row — currently OpenAI, ElevenLabs, and Soniox. Gemini has no client-usable realtime
- * path (its Live API wants ephemeral backend-minted tokens this app has no server for), so it never
- * shows the row — a provider limitation, not a defect, and no apology copy is added for it.
+ * shows the row — all four since 4.3.4, when Gemini joined behind GeminiRealtimeProtocol (its
+ * key rides the upgrade header like the others'; the old ephemeral-token blocker is obsolete).
+ * For Gemini the row's switch drives its OWN opt-in flag, `sttLiveModeGemini` (default false), not
+ * the shared one — see `liveModeFor`.
  *
  * Gated on the SAME [disclosureAccepted] v3 flag as selection itself — live adds a cost tier, not a
  * new data class, so it needs no new consent surface. Requiring the stored key too means the toggle
@@ -215,16 +216,16 @@ internal fun liveModeRowVisible(
  * surfaced where the mode is chosen, the ONLY new user-facing cost disclosure this mode adds.
  * Deliberately makes NO speed claim for ANY provider — not even Soniox, the cheapest of the three:
  * "real-time streaming", never "faster"/"fastest". Measured on-device transcription is a tie at best
- * against OpenAI, so a speed claim would be a lie. Prices pinned 2026-07-31. [providerId] must be
- * streaming-capable (OpenAI/ElevenLabs/Soniox); Gemini never reaches this — [liveModeRowVisible]
- * never lights for it.
+ * against OpenAI, so a speed claim would be a lie. Prices pinned 2026-07-31; Gemini's 2026-09-08
+ * (pricing page: $0.005/min audio in + $0.004/min text out, "an effective blended rate of ~$0.009
+ * per min"; the free tier is $0 and trains — its sentence is in [liveModeCaption]).
  */
 internal fun liveModeLabel(providerId: ProviderId): String {
     val price = when (providerId) {
         ProviderId.OPENAI -> "about \$0.0045/min"
         ProviderId.ELEVENLABS -> "about \$0.007/min"
         ProviderId.SONIOX -> "about \$0.002/min"
-        ProviderId.GEMINI -> error("Gemini has no live row — not streaming-capable")
+        ProviderId.GEMINI -> "about \$0.009/min on a paid key, free on the free tier"
     }
     return "Real-time streaming (${ProviderCatalog.byId(providerId).displayName}) · $price"
 }
@@ -236,6 +237,19 @@ internal fun liveModeLabel(providerId: ProviderId): String {
  */
 internal fun liveModeCaption(): String =
     "Streams your transcription in real time as you speak — billed per minute while the mic is open."
+
+/**
+ * The per-provider caption: [liveModeCaption] plus, for Gemini, the free-tier training sentence —
+ * the price line above says the free tier costs nothing, and the same row must say what it costs
+ * instead (the catalog's `trainsOnDataByDefault`, in the words the key screen already uses).
+ * The two travel together on purpose: a free badge without the training sentence would be a
+ * half-truth. Only Gemini's live row carries it; the other three are unchanged.
+ */
+internal fun liveModeCaption(providerId: ProviderId): String =
+    if (providerId == ProviderId.GEMINI)
+        liveModeCaption() + " On Google's free tier, Google uses what you send to improve its products, " +
+            "and human reviewers may read it. Paid tiers do not."
+    else liveModeCaption()
 
 /**
  * Body of the one-time cloud disclosure dialog (Release C2a Task 7; extended Task 7 of the cloud

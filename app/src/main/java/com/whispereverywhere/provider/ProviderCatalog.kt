@@ -54,10 +54,17 @@ object ProviderCatalog {
             validationUrl = "https://generativelanguage.googleapis.com/v1beta/models",
             supportsStt = true,
             supportsTts = true,
-            // NOT a preference. The Live API is preview, session-capped at 15 minutes, and
-            // recommends ephemeral tokens minted by a backend this app does not have — so no
-            // usable streaming path exists for a client holding only the user's own key.
-            supportsStreaming = false,
+            // Live since 4.3.4 (gemini-3.5-transcribe-live, GA 2026-08-26) behind
+            // GeminiRealtimeProtocol: the user's own key rides the x-goog-api-key upgrade header
+            // exactly as Google's SDK sends it — no ephemeral token, no backend. Measured on the
+            // wire 2026-09-10 (docs/measurements/2026-09-10-gemini-live-probes-t0.md): one
+            // connection lives ~10 minutes — a GoAway at 540 s with 50 s of grace, the server
+            // closes at 590 s — and the protocol rotates onto a fresh setup at the next turn
+            // boundary before that, so a session outlives the cap. Its OWN VAD drops most speech
+            // after the first sentence, so the app's endpointer cuts the turns (manual VAD).
+            // Live is opt-in per provider for Gemini (PreferencesManager.sttLiveModeGemini):
+            // existing Gemini users stay on batch until they flip it.
+            supportsStreaming = true,
             keyHelpUrl = "https://aistudio.google.com/apikey",
             // Unpaid tier: Google uses submitted content to improve its products and human
             // reviewers may read API input and output. Paid tier excludes this.

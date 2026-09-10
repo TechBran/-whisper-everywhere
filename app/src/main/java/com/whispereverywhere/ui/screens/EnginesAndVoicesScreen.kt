@@ -97,10 +97,12 @@ fun EnginesAndVoicesScreen(
     // Local mirror of the persisted engine selection. null = on-device (the default).
     var sttProviderId by remember { mutableStateOf(app.preferencesManager.sttProviderId) }
 
-    // Local mirror of the batch-vs-live axis (C4). false = one-shot batch POST (the default);
-    // consulted only while a realtime-capable engine is selected (OpenAI, ElevenLabs, Soniox) —
-    // see decideEngineChoice / isRealtimeStt.
+    // Local mirror of the batch-vs-live axis (C4). false = one-shot batch POST; consulted only
+    // while a realtime-capable engine is selected — see decideEngineChoice / isRealtimeStt. Two
+    // flags since 4.3.4: the shared one (OpenAI, ElevenLabs, Soniox; default true) and Gemini's
+    // own opt-in (default false — existing Gemini users stay on batch). liveModeFor picks.
     var sttLiveMode by remember { mutableStateOf(app.preferencesManager.sttLiveMode) }
+    var sttLiveModeGemini by remember { mutableStateOf(app.preferencesManager.sttLiveModeGemini) }
 
     // Read-aloud voice-picker state (lifted verbatim from SettingsScreen). null engine = on-device
     // Kokoro (the default and the one-way fallback); a ProviderId NAME routes read-aloud through a
@@ -178,10 +180,16 @@ fun EnginesAndVoicesScreen(
                     app.preferencesManager.sttProviderId = providerId
                     sttProviderId = providerId
                 },
-                liveMode = sttLiveMode,
+                liveMode = com.whispereverywhere.service.liveModeFor(sttProviderId, sttLiveMode, sttLiveModeGemini),
                 onLiveModeChange = { enabled ->
-                    app.preferencesManager.sttLiveMode = enabled
-                    sttLiveMode = enabled
+                    // The switch on Gemini's row drives Gemini's own flag; every other row the shared one.
+                    if (com.whispereverywhere.service.resolveSttProvider(sttProviderId) == ProviderId.GEMINI) {
+                        app.preferencesManager.sttLiveModeGemini = enabled
+                        sttLiveModeGemini = enabled
+                    } else {
+                        app.preferencesManager.sttLiveMode = enabled
+                        sttLiveMode = enabled
+                    }
                 },
             )
 
@@ -688,7 +696,7 @@ private fun LiveModeRow(providerId: ProviderId, enabled: Boolean, onToggle: (Boo
         Column(modifier = Modifier.weight(1f)) {
             Text(text = liveModeLabel(providerId), style = MaterialTheme.typography.bodyMedium)
             Text(
-                text = liveModeCaption(),
+                text = liveModeCaption(providerId), // Gemini's row adds the free-tier training sentence
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

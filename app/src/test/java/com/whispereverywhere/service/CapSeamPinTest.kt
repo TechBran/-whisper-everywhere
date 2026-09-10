@@ -67,7 +67,10 @@ class CapSeamPinTest {
     @Test
     fun sendAudioIsUnconditionalAndFirst() {
         val send = indexOfOrFail("        engine.sendAudio(chunk)\n")
-        val gate = indexOfOrFail("LiveTurnPolicy.runClientVad(sessionIsLive)")
+        // 4.3.4: the gate is per PROVIDER as well as per session — a Gemini live session keeps the
+        // client VAD (manual-VAD activities), the other three live providers bypass it. The
+        // second argument is the session's cloud provider, resolved once per session.
+        val gate = indexOfOrFail("LiveTurnPolicy.runClientVad(sessionIsLive, sessionCloudProviderId)")
         assertTrue("sendAudio must precede the client-VAD gate", send < gate)
         assertEquals("sendAudio must appear exactly once in onAudioChunk", 1, text.split("engine.sendAudio(chunk)").size - 1)
     }

@@ -28,6 +28,14 @@ class CloudCostMathTest {
         assertEquals(0.20, CloudCostMath.cents(ProviderId.SONIOX, live = true, seconds = 60), 1e-9)
     }
 
+    @Test fun gemini_live_seconds_price_at_the_paid_tier_rate_the_selector_row_shows() {
+        // 4.3.4: $0.009/min paid (pricing page 2026-09-08). The free tier is $0, but the app cannot
+        // tell the tiers apart, so the estimate charges the paid rate — over-stating a free-tier
+        // user's spend is the honest direction; under-stating a paid one's is not.
+        assertEquals(0.90, CloudCostMath.liveCentsPerMinute(ProviderId.GEMINI), 1e-9)
+        assertEquals(0.90, CloudCostMath.cents(ProviderId.GEMINI, live = true, seconds = 60), 1e-9)
+    }
+
     @Test fun an_all_on_device_month_shows_no_footer_at_all() {
         // The clean panel stays clean: a $0 line would just be noise for local-only users.
         assertNull(CloudCostMath.monthCostFooter(0.0))

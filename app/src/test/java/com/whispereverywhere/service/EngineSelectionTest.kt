@@ -5,8 +5,10 @@ import com.whispereverywhere.net.HttpResult
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.transcription.cloud.SttProviderFactory
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -118,17 +120,42 @@ class EngineSelectionTest {
         )
     }
 
-    @Test fun live_flag_with_non_realtime_provider_stays_CLOUD_WITH_FALLBACK() {
-        // Widened from "non-OpenAI" to "non-realtime": OpenAI, ElevenLabs, and Soniox all stream
-        // now via their own RealtimeProtocol. Only Gemini has no client-usable realtime path (its
-        // Live API wants ephemeral backend-minted tokens this app has no server for), so the flag
-        // stays inert for Gemini alone and its batch-POST path is unchanged.
+    @Test fun live_flag_with_gemini_and_key_and_net_gives_CLOUD_LIVE_since_4_3_4() {
+        // Gemini joined the realtime set behind GeminiRealtimeProtocol (manual-VAD activities cut
+        // by the app's endpointer). The `liveMode` axis it receives is the RESOLVED flag — Gemini's
+        // own opt-in, see liveModeFor below — so this leaf is reached only for a user who chose it.
         assertEquals(
-            EngineChoice.CLOUD_WITH_FALLBACK,
+            EngineChoice.CLOUD_LIVE,
             decideEngineChoice(
                 sttProviderId = "GEMINI", hasKey = true, hasValidatedNetwork = true, liveMode = true,
             ),
         )
+        assertEquals(
+            EngineChoice.CLOUD_WITH_FALLBACK,
+            decideEngineChoice(
+                sttProviderId = "GEMINI", hasKey = true, hasValidatedNetwork = true, liveMode = false,
+            ),
+        )
+    }
+
+    // --- liveModeFor: the shared flag for three providers, Gemini's own opt-in for Gemini ---
+
+    @Test fun live_mode_for_gemini_is_its_own_flag_and_defaults_to_batch() {
+        // The controller ruling (2026-09-10): an existing Gemini user — whose shared flag defaults
+        // true and who could never have switched it off — stays on batch until they opt in.
+        assertFalse(liveModeFor("GEMINI", sharedLive = true, geminiLive = false))
+        assertTrue(liveModeFor("GEMINI", sharedLive = false, geminiLive = true))
+        assertTrue(liveModeFor("GEMINI", sharedLive = true, geminiLive = true))
+    }
+
+    @Test fun live_mode_for_the_other_providers_is_the_shared_flag_untouched_by_geminis() {
+        for (id in listOf("OPENAI", "ELEVENLABS", "SONIOX")) {
+            assertTrue(id, liveModeFor(id, sharedLive = true, geminiLive = false))
+            assertFalse(id, liveModeFor(id, sharedLive = false, geminiLive = true))
+        }
+        // No provider / garbage: the shared flag is returned and is inert downstream anyway.
+        assertTrue(liveModeFor(null, sharedLive = true, geminiLive = false))
+        assertFalse(liveModeFor("not-a-real-provider", sharedLive = false, geminiLive = true))
     }
 
     @Test fun live_flag_OFF_with_openai_stays_batch_so_the_default_path_is_unchanged() {
@@ -163,16 +190,16 @@ class EngineSelectionTest {
 
     @Test fun realtime_stt_providers_is_every_catalog_provider_that_streams() {
         assertEquals(
-            setOf(ProviderId.OPENAI, ProviderId.ELEVENLABS, ProviderId.SONIOX),
+            setOf(ProviderId.OPENAI, ProviderId.GEMINI, ProviderId.ELEVENLABS, ProviderId.SONIOX),
             REALTIME_STT_PROVIDERS,
         )
     }
 
-    @Test fun is_realtime_stt_true_for_openai_elevenlabs_soniox_false_for_gemini_and_garbage() {
+    @Test fun is_realtime_stt_true_for_all_four_providers_false_for_garbage() {
         assertEquals(true, isRealtimeStt("OPENAI"))
         assertEquals(true, isRealtimeStt("ELEVENLABS"))
         assertEquals(true, isRealtimeStt("SONIOX"))
-        assertEquals(false, isRealtimeStt("GEMINI"))
+        assertEquals(true, isRealtimeStt("GEMINI"))
         assertEquals(false, isRealtimeStt(null))
         assertEquals(false, isRealtimeStt("not-a-real-provider"))
     }

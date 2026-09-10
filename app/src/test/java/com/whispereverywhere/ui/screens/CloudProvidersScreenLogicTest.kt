@@ -406,10 +406,31 @@ class CloudProvidersScreenLogicTest {
         )
     }
 
-    @Test fun live_mode_row_hidden_for_gemini_which_cannot_stream() {
-        // Gemini has no client-usable realtime path (its Live API wants ephemeral backend-minted
-        // tokens this app has no server for) — a provider limitation, not a defect.
-        assertFalse(liveModeRowVisible(ProviderId.GEMINI.name, setOf(ProviderId.GEMINI), true))
+    @Test fun live_mode_row_visible_for_gemini_since_4_3_4() {
+        // Gemini streams behind GeminiRealtimeProtocol (the key on the upgrade header, no backend
+        // token). Its row's switch drives Gemini's OWN opt-in flag (default off) — see liveModeFor.
+        assertTrue(liveModeRowVisible(ProviderId.GEMINI.name, setOf(ProviderId.GEMINI), true))
+        assertFalse("same gates as the others: no key -> no row", liveModeRowVisible(ProviderId.GEMINI.name, emptySet(), true))
+        assertFalse(liveModeRowVisible(ProviderId.GEMINI.name, setOf(ProviderId.GEMINI), false))
+    }
+
+    @Test fun gemini_live_row_states_the_paid_price_the_free_tier_and_the_training_sentence_together() {
+        // T6: $0.009/min paid (pricing page 2026-09-08: $0.005 audio in + $0.004 text out), free
+        // tier available — and on the free tier Google trains on the audio. The badge and the
+        // sentence travel together; one without the other would be a half-truth.
+        val label = liveModeLabel(ProviderId.GEMINI)
+        assertTrue(label, label.contains("\$0.009/min"))
+        assertTrue(label, label.contains("Google Gemini"))
+        assertTrue(label, label.contains("free tier", ignoreCase = true))
+        val caption = liveModeCaption(ProviderId.GEMINI)
+        assertTrue(caption, caption.contains("billed per minute while the mic is open"))
+        assertTrue(caption, caption.contains("free tier", ignoreCase = true))
+        assertTrue(caption, caption.contains("improve its products"))
+        assertTrue(caption, caption.contains("Paid tiers do not"))
+        // The other three rows are untouched: no training sentence, the shared caption verbatim.
+        listOf(ProviderId.OPENAI, ProviderId.ELEVENLABS, ProviderId.SONIOX).forEach { id ->
+            assertEquals(liveModeCaption(), liveModeCaption(id))
+        }
     }
 
     @Test fun live_mode_row_hidden_without_disclosure_key_or_active_selection() {
@@ -443,10 +464,11 @@ class CloudProvidersScreenLogicTest {
     @Test fun live_mode_copy_says_word_for_word_and_never_claims_speed() {
         // The mode is honest about WHAT it does (word-for-word), never that it is faster —
         // measured on-device transcription is a tie at best, so a speed claim would be a lie.
-        // Pins ALL THREE streaming-capable providers, Soniox included: it is the cheapest of the
-        // three, but the copy never says "fastest"/"cheapest" either.
-        listOf(ProviderId.OPENAI, ProviderId.ELEVENLABS, ProviderId.SONIOX).forEach { id ->
-            val text = liveModeLabel(id) + " " + liveModeCaption()
+        // Pins ALL FOUR streaming-capable providers, Soniox included: it is the cheapest of the
+        // four, but the copy never says "fastest"/"cheapest" either — and Gemini's free tier is
+        // named as free, never as fast.
+        ProviderId.entries.forEach { id ->
+            val text = liveModeLabel(id) + " " + liveModeCaption(id)
             assertTrue(text, text.contains("real-time streaming", ignoreCase = true))
             listOf("faster", "quicker", "speed", "instant", "quick", "fastest", "cheapest").forEach { word ->
                 assertFalse(text, text.contains(word, ignoreCase = true))

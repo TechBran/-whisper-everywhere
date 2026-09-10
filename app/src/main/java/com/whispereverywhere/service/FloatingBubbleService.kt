@@ -92,15 +92,16 @@ internal enum class EngineChoice { LOCAL_ONLY, LOCAL_NO_KEY, LOCAL_OFFLINE, CLOU
  *
  * That last leaf is now the ORDINARY path, not the exception: `sttLiveMode` defaults to true, so a
  * user who picks OpenAI, ElevenLabs or Soniox and pastes a key streams word-for-word immediately.
- * Batch remains one toggle away and stays the only path for Gemini.
+ * Batch remains one toggle away. Gemini (live since 4.3.4) is the exception to the default: its
+ * live flag is a separate, opt-in preference ([liveModeFor]), so an existing Gemini user stays on
+ * batch until they flip it.
  *
  * The live leaf sits AFTER the local guards on purpose: the one-way valve is untouched, so no key
  * or no network still resolves to on-device — live never opens a socket the batch path would have
  * refused. That ordering is what makes the true default safe, and EngineSelectionTest now passes
- * `liveMode = true` through every local-guard case to pin it. Live is realtime-capable-provider-only (OpenAI, ElevenLabs, Soniox) because only those
- * providers have a native BYOK realtime WebSocket behind a [com.whispereverywhere.transcription.live.RealtimeProtocol];
- * Gemini has no client-usable realtime path (its Live API wants ephemeral backend-minted tokens
- * this app has no server for), so the flag is inert for it and its batch path is byte-unchanged.
+ * `liveMode = true` through every local-guard case to pin it. Live is realtime-capable-provider-only
+ * because only those providers have a native BYOK realtime WebSocket behind a
+ * [com.whispereverywhere.transcription.live.RealtimeProtocol] — all four since 4.3.4.
  */
 internal fun decideEngineChoice(
     sttProviderId: String?,
@@ -139,13 +140,29 @@ private val STT_PROVIDERS =
 /**
  * STT providers with a shipped BYOK realtime adapter — the [EngineChoice.CLOUD_LIVE] gate. Derived
  * from [ProviderCatalog.supportsStreaming] rather than hand-listed, so it can never drift from the
- * catalog. Gemini is absent (its Live API needs backend-minted ephemeral tokens this app has no
- * server for). Kept in lockstep with `ModeDashboard.dictationLiveActive` and the CLOUD_LIVE
- * construction in [FloatingBubbleService.resolveTranscriptionEngine], which selects the matching
+ * catalog. All four since 4.3.4 (Gemini joined behind GeminiRealtimeProtocol). Kept in lockstep
+ * with `ModeDashboard.dictationLiveActive` and the CLOUD_LIVE construction in
+ * [FloatingBubbleService.resolveTranscriptionEngine], which selects the matching
  * [com.whispereverywhere.transcription.live.RealtimeProtocol] for whichever id is in this set.
  */
 internal val REALTIME_STT_PROVIDERS: Set<ProviderId> =
     ProviderCatalog.all.filter { it.supportsStreaming }.map { it.id }.toSet()
+
+/**
+ * The RESOLVED live flag for the selected provider — the `liveMode` axis [decideEngineChoice] takes.
+ *
+ * `sttLiveMode` ([sharedLive]) defaults to true and is shared by OpenAI, ElevenLabs and Soniox
+ * (owner decision 2026-07-31: a streaming provider streams the moment its key is in). Gemini's live
+ * mode arrived in 4.3.4 for users who had ALREADY chosen Gemini as a batch engine, on a preference
+ * that defaults true and that a Gemini-only user could never have switched off (the live row never
+ * rendered for Gemini) — so flipping the catalog alone would have moved every existing Gemini user
+ * from ~$0.005/min batch to ~$0.009/min live (or free-with-training) unasked. Ruling (controller,
+ * 2026-09-10, in the absence of the owner's): existing Gemini users STAY ON BATCH; Gemini live is
+ * its own opt-in flag ([geminiLive], `sttLiveModeGemini`, default false), selectable on the
+ * provider's own row. The three other providers keep the shared flag byte-identically.
+ */
+internal fun liveModeFor(sttProviderIdName: String?, sharedLive: Boolean, geminiLive: Boolean): Boolean =
+    if (resolveSttProvider(sttProviderIdName) == ProviderId.GEMINI) geminiLive else sharedLive
 
 /** True when [sttProviderIdName] both resolves to a shipped adapter AND streams in real time. */
 internal fun isRealtimeStt(sttProviderIdName: String?): Boolean =
@@ -553,6 +570,14 @@ class FloatingBubbleService : Service(),
     // during the cloud drain — its local reserve floor (FallbackTranscriptionEngine.awaitIdle,
     // localDrainReserveMs). Still bounded: worst case is this value + 60 s.
     private val FINALIZE_TIMEOUT_MS = 300_000L
+
+    /**
+     * Client-VAD live (Gemini, 4.3.4): how long the finalize drain waits for the provider's final
+     * of the stop-cut tail before rescuing it locally. Gemini's final follows our activityEnd in
+     * 0.26 s p50 / 0.44 s max on a PC (T0 P9, n = 28); 2 s leaves room for the phone's radio RTT.
+     * Passed as LiveTranscriptionEngine.tailGraceMs; server-driven sessions never consult it.
+     */
+    private val LIVE_CLIENT_TAIL_GRACE_MS = 2_000L
 
     // Wall-clock cap per uncommitted stretch. Continuous loud audio (media playback, music) never
     // dips below the segmenter's silence floor, so its pause-based commit never fires — without
@@ -2047,14 +2072,16 @@ class FloatingBubbleService : Service(),
         waveformView.updateAmplitude(amp)
         blobView.updateAmplitude(amp)
         // Client VAD per audio chunk. Commit on a natural pause, or on the wall-clock cap when
-        // the amplitude never dips (continuous media). Live (server-driven) sessions bypass this
-        // ENTIRELY — the SERVER cuts turns via its own VAD for every capture source (device audio
-        // rides the same socket as mic audio since 2026-08-01), and the stop button / session end
-        // is the outer bound. `sendAudio` above stays UNCONDITIONAL, so the engine is always fed;
-        // only the turn CUT moves to the server. Local + Gemini + batch keep this block
-        // byte-identical — including device-audio capture in those sessions, whose segments this
-        // VAD is what cuts.
-        if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(sessionIsLive)) {
+        // the amplitude never dips (continuous media). Server-driven live sessions (OpenAI,
+        // ElevenLabs, Soniox) bypass this ENTIRELY — the SERVER cuts turns via its own VAD for
+        // every capture source (device audio rides the same socket as mic audio since
+        // 2026-08-01), and the stop button / session end is the outer bound. `sendAudio` above
+        // stays UNCONDITIONAL, so the engine is always fed; only the turn CUT moves to the server.
+        // Local + batch keep this block byte-identical — and so does a GEMINI live session
+        // (4.3.4): its server VAD goes deaf after the first sentence, so this endpointer's cut is
+        // the activityEnd the protocol sends (LiveTurnPolicy.clientCutsLiveTurns). Device-audio
+        // capture in all of those sessions is cut here too.
+        if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(sessionIsLive, sessionCloudProviderId)) {
             val now = System.currentTimeMillis()
             if (endpointer.onFrame(chunk, amp, now)) {
                 android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
@@ -2619,7 +2646,12 @@ class FloatingBubbleService : Service(),
             sttProviderId = providerId,
             hasKey = !key.isNullOrBlank(),
             hasValidatedNetwork = connectivityMonitor.hasValidatedNetwork(),
-            liveMode = app.preferencesManager.sttLiveMode,
+            // The shared flag for OpenAI/ElevenLabs/Soniox; Gemini's own opt-in (see liveModeFor).
+            liveMode = liveModeFor(
+                providerId,
+                sharedLive = app.preferencesManager.sttLiveMode,
+                geminiLive = app.preferencesManager.sttLiveModeGemini,
+            ),
         )
         android.util.Log.i("WE-DIAG", "resolveTranscriptionEngine: providerId=$providerId choice=$choice")
 
@@ -2695,9 +2727,9 @@ class FloatingBubbleService : Service(),
                 // hasKey was true. Same mic audio, same provider, same v3 disclosure as batch — this
                 // swaps the transport (a per-provider Realtime WebSocket) and the cost tier, nothing
                 // about what data leaves. `protocol` is the ONE place a provider selects its
-                // RealtimeProtocol; OpenAI/ElevenLabs authenticate via the upgrade header (the key
-                // passed below), Soniox rides its key in the first config message instead — see
-                // SonioxRealtimeProtocol's no-log discipline.
+                // RealtimeProtocol; OpenAI/ElevenLabs/Gemini authenticate via the upgrade header
+                // (the key passed below), Soniox rides its key in the first config message instead
+                // — see SonioxRealtimeProtocol's no-log discipline.
                 val liveProviderId = requireNotNull(provider) { "CLOUD_LIVE reached with a null provider" }
                 val protocol: com.whispereverywhere.transcription.live.RealtimeProtocol = when (liveProviderId) {
                     ProviderId.OPENAI -> com.whispereverywhere.transcription.live.OpenAiRealtimeProtocol()
@@ -2705,15 +2737,26 @@ class FloatingBubbleService : Service(),
                         com.whispereverywhere.transcription.live.ElevenLabsRealtimeProtocol()
                     ProviderId.SONIOX ->
                         com.whispereverywhere.transcription.live.SonioxRealtimeProtocol()
-                    ProviderId.GEMINI -> error("Gemini is not realtime-capable; decideEngineChoice forbids CLOUD_LIVE for it")
+                    ProviderId.GEMINI ->
+                        com.whispereverywhere.transcription.live.GeminiRealtimeProtocol()
                 }
+                // WHO CUTS THE TURNS. OpenAI / ElevenLabs / Soniox: the SERVER (server VAD /
+                // endpoint detection) — the engine allocates seqs from server turn events via the
+                // rotation callback wired below, and the client VAD/commit + wall-cap are disabled
+                // for the session (onAudioChunk's LiveTurnPolicy gate). Gemini (4.3.4): the APP —
+                // its server VAD drops most speech after the first sentence (T0 2026-09-10), so the
+                // endpointer keeps running and each of its commits becomes a manual-VAD
+                // activityEnd; the engine keeps its client-VAD ledger (serverDriven = false).
+                val serverCutsTurns =
+                    !com.whispereverywhere.transcription.live.LiveTurnPolicy.clientCutsLiveTurns(liveProviderId)
                 val cloud = com.whispereverywhere.transcription.live.LiveTranscriptionEngine(
                     apiKey = requireNotNull(key),
                     scope = serviceScope,
-                    // Open socket, server VAD: the SERVER cuts turns. The client VAD/commit + wall-cap
-                    // are disabled for this session (see onAudioChunk's LiveTurnPolicy gate); the engine
-                    // allocates seqs from server turn events via the rotation callback wired below.
-                    serverDriven = true,
+                    serverDriven = serverCutsTurns,
+                    // Client-VAD live only: the provider's final for the stop-cut tail is due within
+                    // ~0.5 s (Gemini: 0.44 s max, T0 P9); past this the tail goes to the local
+                    // rescue instead of holding the finalize for its whole 300 s budget.
+                    tailGraceMs = if (serverCutsTurns) Long.MAX_VALUE else LIVE_CLIENT_TAIL_GRACE_MS,
                     makeTransport = { transportListener ->
                         com.whispereverywhere.transcription.live.LiveTranscriptionEngine.realTransport(
                             com.whispereverywhere.transcription.live.RealtimeTransport(
@@ -2732,14 +2775,17 @@ class FloatingBubbleService : Service(),
                 // session, both capture sources (owner decision 2026-08-01 — device audio follows
                 // the provider selection; see the batch branch above for the consent/docs story).
                 // A dropped socket resolves its turn Lost and the fallback rescues it locally from
-                // the mirrored PCM, mic and device audio alike. In live mode the SERVER cuts
-                // device-audio turns exactly as it cuts mic turns — same socket, same VAD.
+                // the mirrored PCM, mic and device audio alike. In live mode the turn cutter —
+                // the server, or for Gemini this app's endpointer — cuts device-audio turns exactly
+                // as it cuts mic turns: same socket, same VAD.
                 val fallback = FallbackTranscriptionEngine(cloud, local, serviceScope, mirrorLanguage = ::localMirrorLanguage)
                 // Server turns rotate the SAME fallback that mirrors this engine's PCM — the seq the
                 // callback returns is the paired seq the mirror just retained. Wired here, where both
                 // objects exist, so FallbackTranscriptionEngine stays provider-agnostic and
-                // byte-identical (it never knows about server-driven turns).
-                cloud.attachServerTurnRotation { fallback.commit() }
+                // byte-identical (it never knows about server-driven turns). A client-VAD live
+                // session (Gemini) has no server turn events: its commits come through
+                // fallback.commit() from the endpointer, exactly like batch, so nothing is wired.
+                if (serverCutsTurns) cloud.attachServerTurnRotation { fallback.commit() }
                 fallback.also { cloudWrapper = it }
             }
         }
@@ -2933,16 +2979,19 @@ class FloatingBubbleService : Service(),
                     // String beside a Boolean. EndpointerLifecyclePinTest quotes these names.
                     //
                     // isCloudBatch = (cloudWrapper != null) is BROADER than "batch": it is also
-                    // true for CLOUD_LIVE. That is harmless only because LiveTurnPolicy
-                    // .runClientVad(sessionIsLive) is FALSE for CLOUD_LIVE, so onFrame never runs
-                    // in a live session and this cadence is never consulted. A future task that
-                    // ever runs client VAD in a live session must split this predicate first —
-                    // otherwise a live session silently takes the cloud REQUEST floor.
+                    // true for CLOUD_LIVE. For a SERVER-driven live session that is harmless —
+                    // LiveTurnPolicy.runClientVad is false, onFrame never runs, this cadence is
+                    // never consulted. A GEMINI live session (4.3.4) DOES run the client VAD, so
+                    // the predicate is split here as the old note demanded: isCloudLive wins and
+                    // selects the live row (CommitCadencePolicy.MIN_COMMIT_INTERVAL_CLOUD_LIVE_MS)
+                    // — a turn boundary there is an activityEnd, not a billable request, so the
+                    // batch REQUEST floor would only have paired short sentences for nothing.
                     endpointer.onSessionStart(
                         nowMs = sessionOpenMs,
                         minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(
                             tierId = installedModel?.id,
                             isCloudBatch = cloudWrapper != null,
+                            isCloudLive = sessionIsLive,
                         ),
                         // Build 85 — THE BACKPRESSURE GOVERNOR's slow row, from the SAME two
                         // facts: 3 200 on npu-turbo, equal to the fast row on every other tier
@@ -2953,6 +3002,7 @@ class FloatingBubbleService : Service(),
                         slowCommitIntervalMs = CommitCadencePolicy.slowCommitIntervalMs(
                             tierId = installedModel?.id,
                             isCloudBatch = cloudWrapper != null,
+                            isCloudLive = sessionIsLive,
                         ),
                     )
                     val started = startAudioInput()
@@ -3186,7 +3236,9 @@ class FloatingBubbleService : Service(),
         // so the drain below rescues each on-device instead of looping the whole FINALIZE_TIMEOUT_MS
         // on a pending that can never empty and then dropping the tail as a bare marker at teardown.
         // No-op for batch/local (finishServerTurns guards on serverDriven, and lastLiveEngine is only
-        // non-null for a CLOUD_LIVE session).
+        // non-null for a CLOUD_LIVE session) — and for a client-VAD live session (Gemini): there
+        // the stop commit's activityEnd DOES draw the provider's final within ~0.5 s, so the drain
+        // below waits for it under the engine's tailGraceMs and only then rescues locally.
         if (sessionIsLive) lastLiveEngine?.finishServerTurns()
 
         // Drain the ENTIRE transcription backlog before detaching the listener. A slow model (e.g.

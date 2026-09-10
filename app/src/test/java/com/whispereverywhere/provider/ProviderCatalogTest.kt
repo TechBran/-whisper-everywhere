@@ -35,10 +35,12 @@ class ProviderCatalogTest {
         assertFalse(p.authHeaderValue("k123").startsWith("Bearer"))
     }
 
-    @Test fun gemini_does_not_support_streaming() {
-        // Not a preference: the Live API is preview, session-capped, and wants ephemeral tokens
-        // from a backend this app does not have. The UI must not offer streaming for Gemini.
-        assertFalse(ProviderCatalog.byId(ProviderId.GEMINI).supportsStreaming)
+    @Test fun gemini_streams_since_4_3_4_alongside_openai_and_elevenlabs() {
+        // Flipped 4.3.4: gemini-3.5-transcribe-live (GA 2026-08-26) behind GeminiRealtimeProtocol,
+        // the user's own key on the x-goog-api-key upgrade header (T0 2026-09-10 P1) — no ephemeral
+        // token, no backend. The old "session-capped at 15 minutes" reason was never this model's:
+        // one connection lives ~10 min (GoAway 540 s, close 590 s) and the protocol rotates first.
+        assertTrue(ProviderCatalog.byId(ProviderId.GEMINI).supportsStreaming)
         assertTrue(ProviderCatalog.byId(ProviderId.OPENAI).supportsStreaming)
         assertTrue(ProviderCatalog.byId(ProviderId.ELEVENLABS).supportsStreaming)
     }

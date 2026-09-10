@@ -52,19 +52,26 @@ class ModeDashboardLogicTest {
 
     // --- word-for-word is realtime-capable-provider-only (mirrors decideEngineChoice); sttLiveMode
     //     is left set after an engine switch, so the chip must re-apply the rule itself ---
-    @Test fun live_active_for_every_realtime_capable_provider_false_for_gemini() {
+    @Test fun live_active_for_every_realtime_capable_provider_given_its_resolved_flag() {
         assertTrue(dictationLiveActive("OPENAI", sttLiveMode = true))
         assertTrue(dictationLiveActive("ELEVENLABS", sttLiveMode = true))
         assertTrue(dictationLiveActive("SONIOX", sttLiveMode = true))
-        assertFalse(dictationLiveActive("GEMINI", sttLiveMode = true))
+        // Gemini streams since 4.3.4 — when ITS flag (the resolved value the caller passes) is on.
+        assertTrue(dictationLiveActive("GEMINI", sttLiveMode = true))
+        assertFalse(dictationLiveActive("GEMINI", sttLiveMode = false))
         assertFalse(dictationLiveActive(null, sttLiveMode = true))
         assertFalse(dictationLiveActive("OPENAI", sttLiveMode = false))
     }
     @Test fun dictation_chip_no_word_for_word_on_stale_live_after_switch_to_gemini() {
-        // Repro: select OpenAI, enable word-for-word, switch engine to Gemini. sttLiveMode stays true
-        // but is inert (Gemini runs batch). The chip must read "Gemini", never "Gemini · real-time streaming".
-        val live = dictationLiveActive("GEMINI", sttLiveMode = true)
+        // Repro: select OpenAI, enable word-for-word, switch engine to Gemini. The SHARED flag stays
+        // true but Gemini's own opt-in is off, so the resolved flag (liveModeFor — what HomeScreen
+        // passes) is false and the chip reads "Gemini", never "Gemini · real-time streaming".
+        val resolved = com.whispereverywhere.service.liveModeFor("GEMINI", sharedLive = true, geminiLive = false)
+        val live = dictationLiveActive("GEMINI", sttLiveMode = resolved)
         assertEquals("Gemini", dictationChip("Gemini", null, live))
+        // And once the user opts Gemini in, the chip says so.
+        val optedIn = com.whispereverywhere.service.liveModeFor("GEMINI", sharedLive = false, geminiLive = true)
+        assertEquals("Gemini · real-time streaming", dictationChip("Gemini", null, dictationLiveActive("GEMINI", optedIn)))
     }
 
     // --- read-aloud chip ---

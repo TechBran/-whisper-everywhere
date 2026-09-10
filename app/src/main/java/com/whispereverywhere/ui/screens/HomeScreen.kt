@@ -74,6 +74,7 @@ fun HomeScreen(
     // from the hub), with no polling. StateFlows, not a 1000 ms loop.
     val sttProviderId by app.preferencesManager.sttProviderIdFlow.collectAsState()
     val sttLiveMode by app.preferencesManager.sttLiveModeFlow.collectAsState()
+    val sttLiveModeGemini by app.preferencesManager.sttLiveModeGeminiFlow.collectAsState()
     val ttsProviderId by app.preferencesManager.ttsProviderIdFlow.collectAsState()
 
     // Permission states — refreshed on ON_RESUME. hasSpeechModel doubles as the banner's hasModel.
@@ -381,7 +382,10 @@ fun HomeScreen(
                 chip = dictationChip(
                     sttEngineName,
                     localModelLabel,
-                    dictationLiveActive(sttProviderId, sttLiveMode),
+                    dictationLiveActive(
+                        sttProviderId,
+                        com.whispereverywhere.service.liveModeFor(sttProviderId, sttLiveMode, sttLiveModeGemini),
+                    ),
                 ),
                 onClick = onNavigateToEnginesVoices,
             )

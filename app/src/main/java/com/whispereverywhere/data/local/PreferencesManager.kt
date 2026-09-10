@@ -366,14 +366,15 @@ class PreferencesManager(private val context: Context) {
      * Anyone who DOES set it keeps their choice, since a stored value always beats this default.
      *
      * Orthogonal to [sttProviderId], which still names the provider: this only flips HOW the audio
-     * is sent. It is consulted only when the selected provider is realtime-capable — so it is inert
-     * on Gemini, the one provider with no client-usable realtime path, whose batch path is
-     * byte-unchanged by this default (see decideEngineChoice / isRealtimeStt). It is equally inert
-     * with no provider selected, no key, or no network: the live leaf sits AFTER those local
-     * guards, so an on-device user is untouched. Same mic audio, same provider, same v3 disclosure
-     * as batch; the ONLY user-visible change is a new transport and a per-provider cost tier
-     * (about $0.0045/min OpenAI gpt-transcribe, $0.007/min ElevenLabs, $0.002/min Soniox), surfaced
-     * on the selector row itself — which is why the row stays visible and switchable.
+     * is sent. It is consulted only when the selected provider is realtime-capable AND is not
+     * Gemini — Gemini's live mode (4.3.4) has its own opt-in flag, [sttLiveModeGemini], so this
+     * default never reaches it. It is equally inert with no provider selected, no key, or no
+     * network: the live leaf sits AFTER those local guards, so an on-device user is untouched.
+     * Same mic audio, same provider, same v3 disclosure as batch; the ONLY user-visible change is
+     * a new transport and a per-provider cost tier (about $0.0045/min OpenAI gpt-transcribe,
+     * $0.007/min ElevenLabs, $0.002/min Soniox; Gemini's own row: about $0.009/min on a paid key,
+     * $0 on the free tier where Google may train on the audio), surfaced on the selector row
+     * itself — which is why the row stays visible and switchable.
      */
     private val _sttLiveMode = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE, true))
     /** Reactive mirror of [sttLiveMode] for the Dictation card's word-for-word chip. Additive. */
@@ -384,6 +385,27 @@ class PreferencesManager(private val context: Context) {
         set(value) {
             prefs.edit().putBoolean(KEY_STT_LIVE_MODE, value).apply()
             _sttLiveMode.value = value
+        }
+
+    /**
+     * Gemini's OWN batch-vs-live axis (4.3.4), **default false** — the one provider whose live mode
+     * is opt-in. Gemini became streaming-capable AFTER users had chosen it as a batch engine, and
+     * the shared [sttLiveMode] default of true could never have been switched off by a Gemini-only
+     * user (its live row never rendered), so honouring that flag would have moved every existing
+     * Gemini user from ~$0.005/min batch to ~$0.009/min live — or onto the free tier, where Google
+     * may use the audio to improve its products — without asking. Controller ruling 2026-09-10 in
+     * the absence of the owner's: existing Gemini users stay on batch; live is a switch on Gemini's
+     * provider row (`liveModeFor` resolves which flag applies). The owner may flip the default.
+     */
+    private val _sttLiveModeGemini = MutableStateFlow(prefs.getBoolean(KEY_STT_LIVE_MODE_GEMINI, false))
+    /** Reactive mirror of [sttLiveModeGemini] for the Dictation card's chip. Additive. */
+    val sttLiveModeGeminiFlow: StateFlow<Boolean> = _sttLiveModeGemini.asStateFlow()
+
+    var sttLiveModeGemini: Boolean
+        get() = _sttLiveModeGemini.value
+        set(value) {
+            prefs.edit().putBoolean(KEY_STT_LIVE_MODE_GEMINI, value).apply()
+            _sttLiveModeGemini.value = value
         }
 
     /**
@@ -477,6 +499,8 @@ class PreferencesManager(private val context: Context) {
             getBoolean(CLOUD_DISCLOSURE_KEY, false)
         private const val KEY_STT_PROVIDER = "stt_provider_id"
         private const val KEY_STT_LIVE_MODE = "stt_live_mode"
+        /** Gemini's own opt-in live flag (4.3.4); the shared key above never applies to Gemini. */
+        private const val KEY_STT_LIVE_MODE_GEMINI = "stt_live_mode_gemini"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
 
         // Whisper API supported languages with display names

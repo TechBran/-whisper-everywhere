@@ -244,6 +244,24 @@ class CommitCadencePolicyTest {
     }
 
     @Test
+    fun aClientVadLiveSessionTakesTheLiveRowNotTheRequestFloorAndNotTheLocalTiers() {
+        // 4.3.4 (Gemini live under the app's endpointer): a turn boundary is a manual-VAD
+        // activityEnd on an open socket, not a billable request, so neither the 3 000 request floor
+        // nor any local tier's duty floor applies — 500 ms, the server's own minimum gap between
+        // activities (T0 P3e). The service passes isCloudLive beside the broader cloudWrapper
+        // predicate, and isCloudLive wins.
+        assertEquals(500L, CommitCadencePolicy.MIN_COMMIT_INTERVAL_CLOUD_LIVE_MS)
+        for (tier in listOf("eco", "base", "npu", "npu-turbo", "pro", "multi", "extreme", "ultra", null)) {
+            assertEquals(tier, 500L, CommitCadencePolicy.minCommitIntervalMs(tier, isCloudBatch = true, isCloudLive = true))
+            assertEquals(tier, 500L, CommitCadencePolicy.slowCommitIntervalMs(tier, isCloudBatch = true, isCloudLive = true))
+        }
+        // The default (every pre-4.3.4 caller) is the batch/local table, byte-identical.
+        assertEquals(3_000L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = true))
+        assertEquals(2_000L, CommitCadencePolicy.minCommitIntervalMs("npu-turbo", isCloudBatch = false))
+        assertEquals(3_200L, CommitCadencePolicy.slowCommitIntervalMs("npu-turbo", isCloudBatch = false))
+    }
+
+    @Test
     fun cloudBatchIsAFlatFloorForEveryTier() {
         // The spec's tuning table lists cloud batch as ONE row, not as a per-tier maximum, and
         // isCloudBatch wins outright. In CLOUD_WITH_FALLBACK the cloud engine is primary and the

@@ -163,6 +163,19 @@ object CommitCadencePolicy {
     const val MIN_COMMIT_INTERVAL_CLOUD_MS = 3_000L
 
     /**
+     * cloud LIVE under the app's own VAD (Gemini, 4.3.4): a turn boundary is a manual-VAD
+     * `activityEnd` on an open socket, not a billable request — Gemini bills audio seconds, and a
+     * final costs the same whether the session has ten boundaries or fifty — so the batch REQUEST
+     * floor has nothing to pace here and would only have paired short sentences into one final.
+     * 500 ms is the server's own minimum gap between activities (T0 2026-09-10 P3e: 4/4 clean at
+     * 500 ms, merged finals below it); the protocol also gates the next activity on the server's
+     * ack, so this floor merely keeps the endpointer from offering cuts faster than the server
+     * can separate. The server-driven live providers never consult this row (their client VAD is
+     * off), and the local tier's row does not apply: the mirror only runs on a rescue.
+     */
+    const val MIN_COMMIT_INTERVAL_CLOUD_LIVE_MS = 500L
+
+    /**
      * The oldest micro-pause the wall cap will still cut at. An offer older than this is not the
      * boundary near where the cap fired — taking it would defer most of the window into the next
      * one and push the effective wall bound from 15 s to ~28 s. Owner-tunable knob.
@@ -182,8 +195,14 @@ object CommitCadencePolicy {
      *
      * [tierId] is `WhisperModel.id`; null/unrecognised assumes the expensive end. The app cannot
      * reach a recording session without an installed model, so that branch is defensive only.
+     *
+     * [isCloudLive] (4.3.4) wins over everything: a client-VAD LIVE session (Gemini) takes
+     * [MIN_COMMIT_INTERVAL_CLOUD_LIVE_MS]. The service passes `sessionIsLive` for it beside the
+     * broader `cloudWrapper != null`, which is what keeps a live session off the batch REQUEST
+     * floor now that one live provider runs the endpointer.
      */
-    fun minCommitIntervalMs(tierId: String?, isCloudBatch: Boolean): Long {
+    fun minCommitIntervalMs(tierId: String?, isCloudBatch: Boolean, isCloudLive: Boolean = false): Long {
+        if (isCloudLive) return MIN_COMMIT_INTERVAL_CLOUD_LIVE_MS
         if (isCloudBatch) return MIN_COMMIT_INTERVAL_CLOUD_MS
         return when (tierId) {
             // npu rides the FAST row, not multi's 6 s, even though it is the same whisper-small
@@ -266,7 +285,8 @@ object CommitCadencePolicy {
      * that would give it a slow row of its own. Until then it returns its fast floor like every
      * other non-turbo tier, and the test that pins this table names it so the change is a decision.
      */
-    fun slowCommitIntervalMs(tierId: String?, isCloudBatch: Boolean): Long {
+    fun slowCommitIntervalMs(tierId: String?, isCloudBatch: Boolean, isCloudLive: Boolean = false): Long {
+        if (isCloudLive) return MIN_COMMIT_INTERVAL_CLOUD_LIVE_MS // slow == fast: nothing to buy back on a live socket
         if (isCloudBatch) return MIN_COMMIT_INTERVAL_CLOUD_MS
         return when (tierId) {
             "npu-turbo" -> MIN_COMMIT_INTERVAL_TURBO_SLOW_MS

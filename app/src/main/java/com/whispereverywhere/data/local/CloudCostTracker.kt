@@ -22,14 +22,17 @@ object CloudCostMath {
     /**
      * Live (realtime WebSocket) ¢/min — the same rates liveModeLabel shows on the selector row,
      * pinned from live docs 2026-07-31: OpenAI $0.0045/min, ElevenLabs $0.007/min, Soniox
-     * $0.002/min. Batch rates come from [BatchCostEstimator], the single existing price pin.
-     * Gemini has no live path (not realtime-capable), so no live rate exists for it.
+     * $0.002/min; Gemini (live since 4.3.4) $0.009/min from the pricing page 2026-09-08 — the
+     * PAID-tier blended rate ($0.005 audio in + $0.004 text out). A free-tier key pays $0 and
+     * the app cannot tell the tiers apart, so the estimate charges the paid rate: it may
+     * over-state a free-tier user's spend, never under-state a paid one's. Batch rates come from
+     * [BatchCostEstimator], the single existing price pin.
      */
     fun liveCentsPerMinute(providerId: ProviderId): Double = when (providerId) {
         ProviderId.OPENAI -> 0.45
         ProviderId.ELEVENLABS -> 0.70
         ProviderId.SONIOX -> 0.20
-        ProviderId.GEMINI -> BatchCostEstimator.centsPerMinute(ProviderId.GEMINI)
+        ProviderId.GEMINI -> 0.90
     }
 
     /** ¢ for [seconds] of cloud transcription on [providerId] in the given transport mode. */
