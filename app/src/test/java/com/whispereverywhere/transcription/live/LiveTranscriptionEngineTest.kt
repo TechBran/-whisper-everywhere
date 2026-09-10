@@ -86,6 +86,12 @@ class LiveTranscriptionEngineTest {
             if (!open || refuseCommits) return false
             commits.incrementAndGet(); return true
         }
+        /** Client mode only: a shed / too-short turn tells the protocol to drop its audio (Gemini). */
+        val discards = AtomicInteger(0)
+        override fun sendDiscard(): Boolean {
+            if (!open) return false
+            discards.incrementAndGet(); return true
+        }
         override fun close() { closes++; open = false }
     }
 
@@ -113,11 +119,16 @@ class LiveTranscriptionEngineTest {
         }
     }
 
-    private inner class Harness(maxBacklog: Int, minCommitBytes: Int, serverDriven: Boolean = false) {
+    private inner class Harness(
+        maxBacklog: Int,
+        minCommitBytes: Int,
+        serverDriven: Boolean = false,
+        tailGraceMs: Long = Long.MAX_VALUE,
+    ) {
         lateinit var transport: FakeTransport
         val l = Rec()
         val engine = LiveTranscriptionEngine(
-            "sk-test", scope(), maxBacklog, minCommitBytes, serverDriven = serverDriven,
+            "sk-test", scope(), maxBacklog, minCommitBytes, serverDriven = serverDriven, tailGraceMs = tailGraceMs,
         ) { listener -> FakeTransport(listener).also { transport = it } }
         init { harnesses += this }
     }
@@ -319,6 +330,101 @@ class LiveTranscriptionEngineTest {
         h.transport.listener.onCommitted("it_B")
         h.transport.listener.onCompleted("it_B", "hello")
         assertEquals(SegmentOutcome.Text("hello"), h.l.all.toMap()[b])
+    }
+
+    // ---- client mode, 4.3.4: a locally-resolved turn is DISCARDED at the protocol, never folded ----
+
+    @Test fun a_subminimum_turn_sends_a_discard_instead_of_a_commit() {
+        // Gemini maps a turn to a server activity that opened on the turn's first frame. The engine
+        // resolved this turn Lost(TOO_SHORT) without committing, so the protocol must close that
+        // activity and drop its final — otherwise its audio folds into the next turn's final while
+        // the fallback also rescues it locally (the same words typed twice).
+        val h = connected(minCommitBytes = 3_200)
+        h.engine.sendAudio(ByteArray(64))
+        h.engine.commit()
+        h.l.next()
+        Thread.sleep(100)
+        assertEquals("no commit for a sub-minimum turn", 0, h.transport.commits.get())
+        assertEquals("one discard for it", 1, h.transport.discards.get())
+    }
+
+    @Test fun a_turn_shed_by_a_refused_append_sends_a_discard_when_it_is_cut() {
+        // The reconnect-gap shape: frames refused by the transport shed the turn; the part that
+        // DID reach the server (inside an open activity) is discarded when the turn is cut.
+        val h = connected()
+        h.engine.sendAudio(ByteArray(64))
+        awaitAppendCalls(h, 1)
+        h.transport.refuseAppends = true
+        h.engine.sendAudio(ByteArray(64))
+        awaitAppendCalls(h, 2)
+        Thread.sleep(50) // markTurnShed() follows the refused append on the sender thread
+        h.transport.refuseAppends = false
+        val seq = h.engine.commit()
+        val (rs, o) = h.l.next()
+        assertEquals(seq, rs)
+        assertTrue(o is SegmentOutcome.Lost)
+        Thread.sleep(100)
+        assertEquals(0, h.transport.commits.get())
+        assertEquals("the shed turn is discarded at the protocol", 1, h.transport.discards.get())
+    }
+
+    @Test fun a_deliverable_turn_never_sends_a_discard_and_server_mode_never_does_either() {
+        val h = connected()
+        h.engine.sendAudio(ByteArray(64))
+        h.engine.commit()
+        Thread.sleep(100)
+        assertEquals(1, h.transport.commits.get())
+        assertEquals(0, h.transport.discards.get())
+
+        val s = connectedServerDriven()
+        s.engine.sendAudio(ByteArray(64))
+        s.engine.commit()
+        Thread.sleep(100)
+        assertEquals("server mode enqueues no client op of any kind", 0, s.transport.commits.get())
+        assertEquals(0, s.transport.discards.get())
+    }
+
+    private fun awaitAppendCalls(h: Harness, n: Int) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (h.transport.appendCalls.get() < n && System.currentTimeMillis() < deadline) Thread.sleep(5)
+        assertTrue("sender drained $n append(s)", h.transport.appendCalls.get() >= n)
+    }
+
+    // ---- client mode, 4.3.4: the stop-tail grace bounds a stalled final ---------------------------
+
+    @Test fun the_tail_grace_resolves_a_stalled_final_lost_so_the_mirror_rescues_it() {
+        // The stop commit cut a tail turn; the provider's final never comes. With a grace the drain
+        // returns promptly and the seq resolves Lost (the fallback's rescue path), instead of
+        // holding the whole finalize budget and then dropping the tail as a bare marker.
+        val h = Harness(128, 0, serverDriven = false, tailGraceMs = 200).also { it.engine.connect(null, it.l) }
+        h.engine.sendAudio(ByteArray(64))
+        val seq = h.engine.commit()
+        val started = System.currentTimeMillis()
+        assertTrue("the drain completes inside the grace", h.engine.awaitIdle(10_000))
+        assertTrue("well under the budget", System.currentTimeMillis() - started < 5_000)
+        val (rs, o) = h.l.next()
+        assertEquals(seq, rs)
+        assertTrue("the tail is a LOSS (rescued locally), never a silent drop", o is SegmentOutcome.Lost)
+        assertTrue(FallbackPolicy.shouldFallBack(o))
+    }
+
+    @Test fun the_tail_grace_is_not_consulted_when_the_final_arrives_in_time() {
+        val h = Harness(128, 0, serverDriven = false, tailGraceMs = 2_000).also { it.engine.connect(null, it.l) }
+        h.engine.sendAudio(ByteArray(64))
+        val seq = h.engine.commit()
+        h.transport.listener.onCommitted("it_tail")
+        h.transport.listener.onCompleted("it_tail", "the last words")
+        assertTrue(h.engine.awaitIdle(10_000))
+        assertEquals(seq to SegmentOutcome.Text("the last words"), h.l.next())
+    }
+
+    @Test fun without_a_grace_the_drain_waits_the_whole_budget_as_before() {
+        // The pre-4.3.4 contract, byte-identical: MAX_VALUE grace = the caller's timeout governs.
+        val h = connected()
+        h.engine.sendAudio(ByteArray(64))
+        h.engine.commit()
+        assertTrue("times out on the dangling tail, resolving nothing", !h.engine.awaitIdle(300))
+        assertTrue(h.l.all.isEmpty())
     }
 
     @Test fun ws_drop_resolves_outstanding_turns_Lost() {

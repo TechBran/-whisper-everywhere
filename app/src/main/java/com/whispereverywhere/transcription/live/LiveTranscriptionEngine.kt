@@ -86,6 +86,17 @@ class LiveTranscriptionEngine(
      */
     private val serverDriven: Boolean = false,
     /**
+     * Client-VAD live only (Gemini, 4.3.4): how long [awaitIdle] waits for the provider's final of
+     * the turn the stop commit just cut before resolving whatever is still pending Lost, so the
+     * wrapping fallback rescues it from the mirror while its retained PCM is still valid. Gemini's
+     * final follows our `activityEnd` within 0.44 s (T0 P9, n = 28); a stalled server would
+     * otherwise hold the finalize for the service's whole 300 s budget and then drop the tail as
+     * a bare marker. `Long.MAX_VALUE` (the default, and every pre-4.3.4 caller) = wait the caller's
+     * whole budget, byte-identical to before. Server-driven sessions never consult it: their tail
+     * is resolved by [finishServerTurns] before awaitIdle runs.
+     */
+    private val tailGraceMs: Long = Long.MAX_VALUE,
+    /**
      * Builds the transport wired to the engine's own listener. A factory, not a ready-made transport,
      * because [RealtimeTransport] takes its listener at construction and the listener IS this engine
      * — the two cannot be built in either order otherwise. Production passes
@@ -106,6 +117,13 @@ class LiveTranscriptionEngine(
         /** One append as raw 16 kHz PCM16; the transport's protocol frames it per provider. */
         fun sendAppend(pcm: ByteArray): Boolean
         fun sendCommit(): Boolean
+        /**
+         * Client-VAD mode: the turn just cut was resolved LOCALLY without a commit (shed, or under
+         * the 100 ms minimum), so a protocol that maps turns to server activities (Gemini) must
+         * close the open one and drop its final rather than fold that audio into the next turn.
+         * Defaulted so the fakes of the three server-driven providers' tests are untouched.
+         */
+        fun sendDiscard(): Boolean = true
         fun close()
     }
 
@@ -171,6 +189,8 @@ class LiveTranscriptionEngine(
         class Append(val pcm: ByteArray) : SendOp
         /** Carries the seq it finalizes so a commit that fails to send (socket down) can resolve it. */
         class Commit(val seq: Long) : SendOp
+        /** Client mode: the turn was resolved locally without a commit — tell the protocol to drop its audio. */
+        object Discard : SendOp
     }
 
     /** The latched fatal for this session, or null. Read by the service's latch-toast and Task 5's valve. */
@@ -271,9 +291,15 @@ class LiveTranscriptionEngine(
             // — so the server raises no item, and this turn owns no bindable slot. Server mode NEVER
             // sends a client input_audio_buffer.commit: the server auto-commits under its own VAD.
             if (latched == null && !shed && !tooShort && !serverDriven) sendQueue.addLast(SendOp.Commit(seq))
+            // Client mode, a shed or too-short turn on a LIVE socket: the part of its audio that did
+            // reach the server must not fold into the next turn's final — the fallback is about to
+            // rescue the WHOLE turn from the mirror, so folding would type those words twice. The
+            // protocol drops it (Gemini closes the open activity and swallows its final). A latched
+            // session's socket is already closed; nothing to discard there.
+            else if (latched == null && !serverDriven && (shed || tooShort)) sendQueue.addLast(SendOp.Discard)
         }
         val deliverable = latched == null && !shed && !tooShort
-        if (deliverable) wakeups.trySend(Unit)
+        if (deliverable || (latched == null && !serverDriven)) wakeups.trySend(Unit)
 
         // Resolve the dead-on-arrival turns OFF this thread. Doing it inline would fire the owner's
         // callback before FallbackTranscriptionEngine.commit() (which is calling us under its mirror
@@ -316,6 +342,10 @@ class LiveTranscriptionEngine(
                     // the tail seq never resolves (orderer stall / awaitIdle timeout). Resolve it Lost
                     // so the fallback rescues it from the mirror and correlation stays aligned.
                     if (!transport.sendCommit()) resolveOnce(op.seq, SegmentOutcome.Lost(WS_DROP))
+                is SendOp.Discard ->
+                    // Nothing to resolve: commit() already resolved the turn Lost off-thread. A
+                    // false here (socket down) means the server never saw the audio either.
+                    transport.sendDiscard()
             }
         }
     }
@@ -561,11 +591,25 @@ class LiveTranscriptionEngine(
      */
     override fun awaitIdle(timeoutMs: Long): Boolean = runBlocking {
         val startNs = System.nanoTime()
-        val drained = withTimeoutOrNull(timeoutMs) {
+        // Client-VAD live (Gemini): the provider's final for the stop-cut tail is due within
+        // ~0.5 s; wait [tailGraceMs] for it, then resolve whatever is still owed Lost so the
+        // fallback — still accepting, retained PCM still valid, because this runs INSIDE its own
+        // awaitIdle — rescues it from the mirror instead of looping the whole budget. Server
+        // mode and every pre-4.3.4 caller (MAX_VALUE) take the plain bounded wait, unchanged.
+        val graceApplies = !serverDriven && tailGraceMs < timeoutMs
+        val firstWait = if (graceApplies) tailGraceMs else timeoutMs
+        var drained = withTimeoutOrNull(firstWait) {
             while (synchronized(bufferLock) { sendQueue.isNotEmpty() }) yield()
             while (synchronized(correlationLock) { pending.isNotEmpty() }) yield()
             true
         } ?: false
+        if (!drained && graceApplies) {
+            val owed = synchronized(correlationLock) { pending.size }
+            android.util.Log.i(TAG, "finalize: live tail grace elapsed after ${tailGraceMs}ms, $owed turn(s) to the local rescue")
+            clearSendBuffer()
+            abandonOutstanding(ENDED)
+            drained = true
+        }
         // C1 finalize-timing: after finishServerTurns this should be near-zero — a large value
         // here convicts the live drain (spec C2 "live path" candidate).
         android.util.Log.i(TAG, "finalize-timing: cloud-drain=${(System.nanoTime() - startNs) / 1_000_000}ms")
@@ -604,6 +648,7 @@ class LiveTranscriptionEngine(
             override fun connect(apiKey: String, language: String?) = rt.connect(apiKey, language)
             override fun sendAppend(pcm: ByteArray): Boolean = rt.sendAppend(pcm)
             override fun sendCommit(): Boolean = rt.sendCommit()
+            override fun sendDiscard(): Boolean = rt.sendDiscard()
             override fun close() = rt.close()
         }
     }
