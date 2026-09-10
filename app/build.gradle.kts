@@ -572,14 +572,36 @@ tasks.named("preBuild") { dependsOn(fetchQnnHeaders) }
 // sherpa-onnx AAR (on-device TTS, Track F): no official Maven coordinates exist (verified
 // 2026-07-18) and *.aar is gitignored, so the pinned upstream release asset is fetched on
 // demand and sha256-verified — self-healing for CI and fresh clones alike.
-val sherpaAar = file("libs/sherpa-onnx-1.13.4.aar")
-val sherpaAarSha256 = "03f9c4df965f21c71269365a7951a7f23b5696fddd093fa318c80d65550ab780"
+//
+// 1.13.4 -> 1.13.7 (B0, 2026-09-10). THE REASON IS THE RUNTIME INSIDE, NOT THE API: 1.13.4
+// bundles ONNX Runtime 1.27.0, whose KleidiAI ConvolveSme kernel is WRONG for Conv
+// pads=[0,1,0,1] on FEAT_SME CPUs — the first node of a Zipformer2 frontend. ORT 1.27.1 fixes
+// it (microsoft/onnxruntime#28571); sherpa-onnx picked that up in 1.13.5 (#3861). Symptoms
+// upstream: silent garbage or empty text for a whole stream, no crash and no NaN
+// (k2-fsa/sherpa-onnx#3845, #3791). No FEAT_SME device is in the test fleet, but SM8850 is an
+// app census family (NpuFleetCensus), so the app would ship a runtime that is documented-broken
+// there the moment anything Zipformer2 lands. TTS (Kokoro) is the only consumer today and is
+// unaffected either way — this bump is the floor a streaming local tier needs, taken early and
+// alone so its blast radius is one dependency.
+//
+// The verified deltas, arm64-v8a, AAR-internal sizes:
+//   libonnxruntime.so     21,688,920 -> 21,684,880 B   (ORT 1.27.0 -> 1.27.1, symbol tag VERS_*)
+//   libsherpa-onnx-jni.so  4,710,728 ->  4,761,536 B
+// Shipped payload therefore moves +46,768 B. classes.jar keeps all 122 classes with no removal
+// and no signature change to anything TTS touches: OfflineTtsConfig, OfflineTtsModelConfig,
+// OfflineTtsKokoroModelConfig, GeneratedAudio and GenerationConfig are BYTE-IDENTICAL across the
+// two AARs. OfflineTts itself gains one `require(ptr != 0L)` per construction path, which turns a
+// failed native init from a later SIGABRT into an early IllegalArgumentException — both app call
+// sites already catch it (TtsEngine.kt:165 runCatching, :225-755 try/catch), so no Kotlin change.
+val sherpaAar = file("libs/sherpa-onnx-1.13.7.aar")
+// sha256 of the upstream release asset, computed 2026-09-10 (49,113,869 B, size as published).
+val sherpaAarSha256 = "c4ef49e309f24fcee5c106b8a279481aaecaabb078cd37b2cd6e9a62cc8a73c8"
 val fetchSherpaAar = tasks.register("fetchSherpaAar") {
     outputs.file(sherpaAar)
     doLast {
         if (!sherpaAar.exists()) {
             sherpaAar.parentFile.mkdirs()
-            uri("https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-1.13.4.aar")
+            uri("https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-1.13.7.aar")
                 .toURL().openStream().use { input ->
                     sherpaAar.outputStream().use { input.copyTo(it) }
                 }
@@ -806,7 +828,7 @@ tasks.matching { it.name.startsWith("package") && it.name.endsWith("Bundle") }
 dependencies {
     // On-device TTS (Track F): sherpa-onnx runs Kokoro-82M on CPU (fetched above). arm64
     // native payload only reaches the APK because of the abiFilters above.
-    implementation(files("libs/sherpa-onnx-1.13.4.aar"))
+    implementation(files("libs/sherpa-onnx-1.13.7.aar"))
 
     // Core Android
     implementation("androidx.core:core-ktx:1.15.0")
