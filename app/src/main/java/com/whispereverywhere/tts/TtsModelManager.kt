@@ -7,6 +7,11 @@ import android.net.Uri
 import android.os.Environment
 import android.os.StatFs
 import androidx.core.net.toUri
+import com.whispereverywhere.BuildConfig
+import com.whispereverywhere.npu.NpuPackFetch
+import com.whispereverywhere.play.PlayPacks
+import com.whispereverywhere.transcription.stream.StreamingPackInstall
+import com.whispereverywhere.transcription.stream.StreamingPackState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -18,15 +23,66 @@ import java.io.FileInputStream
 import java.security.MessageDigest
 
 /**
- * Downloads and installs the Kokoro voice model (Track F). One pinned asset — the sherpa-onnx
- * `kokoro-multi-lang-v1_1` fp32 tarball (fp32 deliberately: int8 measured 1.5x SLOWER on this
+ * Which source an install of the voice would come from — the routing answer the Settings row's one
+ * action needs, derived from [StreamingPackState] so the voice and the previewer read ONE state
+ * machine (4.4.0, the 2026-09-10 amendment, Task 2b).
+ */
+enum class VoiceInstallRoute {
+    /** Already installed: the row offers nothing to install. */
+    None,
+
+    /** Play has delivered the pack — verify + extract, no network at any point. */
+    FromPack,
+
+    /** Ask Play for the pack ([TtsPackController]). The ordinary Play-store path. */
+    Fetch,
+
+    /** The commit-… well, the RELEASE-pinned GitHub download: the one place it is still offered. */
+    Download,
+}
+
+/**
+ * Installs the Kokoro voice model (Track F) from whichever source this install has — **pack-first**
+ * since the 2026-09-10 amendment (Task 2b). One pinned asset — the sherpa-onnx
+ * `kokoro-multi-lang-v1_0` fp32 tarball (fp32 deliberately: int8 measured 1.5x SLOWER on this
  * device class, see the Track F plan bench table) — sha256-verified, then extracted atomically
  * (temp dir + rename) so a mid-extraction kill can never leave a half-installed voice.
+ *
+ * ```
+ * state()  ->  Installed        TtsEngine opens filesDir/tts/kokoro-v1_0/
+ *          ->  PackDelivered    Play already has the 350 MB: installFromPack(), no network
+ *          ->  PackFetchable    ask Play (TtsPackController, which lands here)
+ *          ->  Downloadable     no Play here: download() from the GitHub release
+ *          ->  Repair(via …)    bytes present, verdict withdrawn — repair from the same source
+ * ```
+ *
+ * **The pack route exists to close the 2026-09-08 incident structurally** (see
+ * [KNOWN_GOOD_TAR_SHA256]): the archive's upstream home is a ROLLING release tag, so the bytes the
+ * download route pulls are whatever was uploaded last. Riding `tts_kokoro` in the AAB makes a
+ * voice update a deliberate release, and the download stays alive only where there is no Play to
+ * ask — a debug build or a sideload, exactly the previewer's rule and, deliberately, the SAME
+ * discriminator function ([StreamingPackInstall.playCanDeliver]).
+ *
+ * BOTH routes land through [verifyExtractInstall] unchanged: the same ±5 % size gate, the same
+ * known-good hash set, the same extract + atomic swap, the same marker recording WHICH archive
+ * landed. The one difference is who owns the source bytes — a download's tar is ours to delete,
+ * Play's delivered copy is the only copy until `removePack` — which is the `ownsSource` flag and
+ * nothing more (`StreamingPackInstall.install`'s `moveSource`, same amendment, same reason).
  *
  * Mirrors WhisperModelManager's hardening: completed-file reuse, free-space gate before
  * network, stale DownloadManager row cleanup, verify-then-install.
  */
 class TtsModelManager(private val context: Context) {
+
+    /**
+     * Latched when Google Play has named THIS INSTALL as the reason it will not deliver — the
+     * sideload family, classified by [StreamingPackInstall.playRefusedThisInstall], which is
+     * `NpuPackFetch`'s own table and not a second opinion about it. In-memory on purpose: the
+     * refusal is instant and recurs on the next attempt, so nothing is gained by persisting it and
+     * a user who moves their install to Play must not stay stuck on the fallback.
+     */
+    @Volatile
+    private var playRefused = false
 
     /** context.filesDir/tts, created if missing. */
     fun ttsRoot(): File {
@@ -45,9 +101,97 @@ class TtsModelManager(private val context: Context) {
     fun installedDir(): File? = if (isInstalled()) finalDir() else null
 
     /**
-     * Download + verify + extract + atomically install. [onProgress] gets (soFar, total) for
-     * the network phase; [onExtracting] fires once when the ~30 s verify+extract phase starts.
-     * Main-safe (everything on Dispatchers.IO).
+     * The DELIVERED pack's assets root, or null when Play has not delivered it (or there is no
+     * Play and no pack module). Read through the shared [PlayPacks] helper — the one spelling of
+     * "where a delivered pack's assets are" that the NPU tiers and the previewer use too.
+     */
+    fun packAssetsRoot(): File? =
+        runCatching { PlayPacks.assetsPath(context, PACK_NAME) }.getOrNull()?.let { File(it) }
+
+    /**
+     * Whether Play may be asked at all. A debug build carries no asset packs — packs exist only in
+     * an AAB install — so its install path IS the download, with no wasted refusal; and a release
+     * build Play has already refused by name flips here for the rest of the process. The SAME
+     * function the previewer's pack manager reads, deliberately: two spellings is how one feature
+     * ends up pulling from a third party on a build where the other one fetches.
+     */
+    fun playCanDeliver(): Boolean =
+        StreamingPackInstall.playCanDeliver(isDebugBuild = BuildConfig.DEBUG, playRefused = playRefused)
+
+    /**
+     * Record a Play fetch failure so the offer can move to the download if — and only if — the
+     * refusal was about this install. Keyed by Play's own ERROR CODE, not by words: the caller is a
+     * shell holding an `AssetPackException`, and a caller that handed over its own sentence would
+     * silently never latch. `NpuPackFetch.failureReason` — the one table that turns a code into
+     * words — is applied here, so the classifier still compares that family's own text and there is
+     * no second opinion about which failures are the install's own fault.
+     *
+     * Called by [TtsPackController] on every Failed, from the listener and from a `fetch` Task that
+     * failed before any `AssetPackState` existed (the sideload's own failure).
+     */
+    fun notePlayFailure(errorCode: Int) {
+        if (StreamingPackInstall.playRefusedThisInstall(NpuPackFetch.failureReason(errorCode))) {
+            playRefused = true
+        }
+    }
+
+    /**
+     * What the Settings voice row offers, through the previewer's own four-way machine — one state
+     * machine for both packs, so no surface can render a situation neither produces.
+     */
+    fun state(): StreamingPackState = StreamingPackInstall.resolve(
+        installed = isInstalled(),
+        installDirPresent = finalDir().exists(),
+        packComplete = isPackComplete(packAssetsRoot()),
+        playCanDeliver = playCanDeliver(),
+    )
+
+    /**
+     * Install from the DELIVERED Play pack: verify, extract, land, then hand the pack back. No
+     * network at any point. [onExtracting] fires once when the verify+extract phase starts, the
+     * same contract [download] has. Main-safe (Dispatchers.IO). Throws [TtsDownloadException].
+     *
+     * FREE SPACE IS GATED FIRST ([hasRoomToExtract]) — before a byte is hashed and before the
+     * extractor opens a stream. Out of space, the extract fails partway with Play's own 350 MB
+     * still on the device beside a half-written `.tmp`; a refusal that costs nothing is the point.
+     * ONE volume, not two: nothing is staged externally on this route.
+     *
+     * `remove` runs STRICTLY AFTER [verifyExtractInstall] returns — the remove-after-land rule the
+     * NPU fetch flow owns, for the same reason: the delivered pack is the ONLY copy of those bytes
+     * until the rename commits, and a failed verify leaves it in place so the retry costs nothing.
+     */
+    suspend fun installFromPack(
+        onProgress: (soFar: Long, total: Long) -> Unit,
+        onExtracting: () -> Unit = {},
+    ): Unit = withContext(Dispatchers.IO) {
+        val assetsRoot = packAssetsRoot()
+            ?: throw TtsDownloadException("Google Play has not delivered the read-aloud voice to this device yet.")
+        val tar = packTarIn(assetsRoot)
+        if (!tar.isFile) {
+            throw TtsDownloadException("The delivered read-aloud voice is missing its archive.")
+        }
+        val intFree = runCatching { StatFs(ttsRoot().absolutePath).availableBytes }
+            .getOrDefault(Long.MAX_VALUE)
+        if (!hasRoomToExtract(intFree)) {
+            throw TtsDownloadException(
+                "Not enough free storage: unpacking the voice needs about " +
+                    "${extractRequiredBytes() / 1_000_000} MB free."
+            )
+        }
+        onProgress(tar.length(), tar.length())
+        onExtracting()
+        // ownsSource = false: those bytes are Play's until the give-back below, so the installer's
+        // own sweep must not touch them — least of all on a failed verify, which would turn a free
+        // retry into a 350 MB re-fetch.
+        verifyExtractInstall(tar, ownsSource = false)
+        PlayPacks.remove(context, PACK_NAME)
+    }
+
+    /**
+     * Download + verify + extract + atomically install — the NON-PLAY fallback since the
+     * 2026-09-10 amendment (a debug build, a sideload, or an install Play refused by name).
+     * [onProgress] gets (soFar, total) for the network phase; [onExtracting] fires once when the
+     * ~30 s verify+extract phase starts. Main-safe (everything on Dispatchers.IO).
      */
     suspend fun download(
         onProgress: (soFar: Long, total: Long) -> Unit,
@@ -64,15 +208,17 @@ class TtsModelManager(private val context: Context) {
             return@withContext
         }
 
-        // Free-space gate: transiently needs tar (external) + extracted tree ~1.2x tar (internal).
-        val extRequired = (TAR_BYTES * 1.1).toLong()
-        val intRequired = (TAR_BYTES * 1.4).toLong()
+        // Free-space gate: transiently needs tar (external) + extracted tree ~1.4x tar (internal).
+        // Both numbers come from the two companion functions the PACK route asks as well, so the
+        // two arrival routes cannot disagree about what "enough space" means.
+        val extRequired = stagedTarRequiredBytes()
+        val intRequired = extractRequiredBytes()
         val extFree = runCatching {
             StatFs(tarDest.parentFile!!.apply { mkdirs() }.absolutePath).availableBytes
         }.getOrDefault(Long.MAX_VALUE)
         val intFree = runCatching { StatFs(ttsRoot().absolutePath).availableBytes }
             .getOrDefault(Long.MAX_VALUE)
-        if (extFree < extRequired || intFree < intRequired) {
+        if (!hasRoomToStageTar(extFree) || !hasRoomToExtract(intFree)) {
             throw TtsDownloadException(
                 "Not enough free storage: the voice needs about " +
                     "${(extRequired + intRequired) / 1_000_000} MB free during install."
@@ -139,8 +285,22 @@ class TtsModelManager(private val context: Context) {
         }
     }
 
-    /** sha256-gate the tar, extract to a temp dir, atomically swap into place, delete the tar. */
-    private fun verifyExtractInstall(tar: File) {
+    /**
+     * sha256-gate the tar, extract to a temp dir, atomically swap into place, delete the tar.
+     *
+     * UNCHANGED by the 2026-09-10 amendment in everything that decides whether an archive is
+     * acceptable — the ±5 % size gate, the [KNOWN_GOOD_TAR_SHA256] set, the extract, the
+     * marker-last atomic swap — because ONE verification serving both arrival routes is the point:
+     * a corrupt pack must not be installable on a route a corrupt download could not survive.
+     *
+     * @param ownsSource true for a tar WE downloaded, which is ours to delete once it has been
+     *        consumed (and to sweep on failure, so a bad 350 MB archive is not left behind). FALSE
+     *        for Play's delivered pack: those bytes are the only copy until `removePack`, so
+     *        deleting them here would race the give-back on success and, on a failed verify, would
+     *        turn a costless retry into a 350 MB re-fetch. Exactly the reason
+     *        `StreamingPackInstall.install` takes `moveSource`.
+     */
+    private fun verifyExtractInstall(tar: File, ownsSource: Boolean = true) {
         try {
             if (!sizeWithinTolerance(tar.length())) {
                 throw TtsDownloadException("Voice archive size mismatch (${tar.length()} bytes)")
@@ -159,9 +319,9 @@ class TtsModelManager(private val context: Context) {
                 tmp.deleteRecursively()
                 throw TtsDownloadException("Could not finalize voice install")
             }
-            tar.delete()
+            if (ownsSource) tar.delete()
         } catch (e: Exception) {
-            tar.delete()
+            if (ownsSource) tar.delete()
             File(ttsRoot(), "$DIR_NAME.tmp").deleteRecursively()
             throw e
         }
@@ -247,6 +407,62 @@ class TtsModelManager(private val context: Context) {
         /** The current archive: 349,906,910 B. The 2026-07-18 one (349,418,188 B) is inside the band. */
         const val TAR_BYTES = 349_906_910L
         private const val POLL_INTERVAL_MS = 300L
+
+        // -------------------------------------------------------------- the pack route's decisions
+        // (4.4.0, Task 2b. Pure, so `TtsModelManagerTest` executes every one of them: the shell
+        // above is Context/AssetPackManager/StatFs-bound and no JVM test can construct it.)
+
+        /**
+         * The delivered archive's path under Play's assets root. Play strips a `#group_<g>` suffix
+         * on delivery and this pack carries none (one untargeted variant, every device), so the
+         * archive is at `<assetsPath>/tts_kokoro/kokoro-multi-lang-v1_0.tar.bz2` — the 4.2 F8
+         * entry-clash rule is why the directory is named after the pack.
+         */
+        fun packTarIn(assetsRoot: File): File = File(File(assetsRoot, PACK_NAME), TAR_NAME)
+
+        /**
+         * Whether a delivered pack can serve as an install SOURCE: the archive is there, at a
+         * length inside the same ±5 % band the download route has always used. Deliberately a
+         * LENGTH read — this runs on the Settings row's render path; the sha256 is
+         * [verifyExtractInstall]'s and runs once per install, on either route's copy.
+         *
+         * @param expectedBytes a parameter only so a JVM test can assert the true branch without
+         *        materialising 350 MB; production always takes the default.
+         */
+        fun isPackComplete(assetsRoot: File?, expectedBytes: Long = TAR_BYTES): Boolean =
+            assetsRoot != null &&
+                packTarIn(assetsRoot).let { it.isFile && sizeWithinTolerance(it.length(), expectedBytes) }
+
+        /** The headroom the DOWNLOAD route needs on the external volume it stages the tar on. */
+        fun stagedTarRequiredBytes(): Long = (TAR_BYTES * 1.1).toLong()
+
+        /**
+         * The headroom the extract needs on `filesDir` — 1.4 × the archive, the rule this file has
+         * always used, now spelled ONCE so the download route and the pack route gate at the same
+         * number. (Truncation is real: 349,906,910 × 1.4 is 489,869,673.99999994.)
+         */
+        fun extractRequiredBytes(): Long = (TAR_BYTES * 1.4).toLong()
+
+        fun hasRoomToStageTar(availableBytes: Long): Boolean =
+            availableBytes >= stagedTarRequiredBytes()
+
+        fun hasRoomToExtract(availableBytes: Long): Boolean =
+            availableBytes >= extractRequiredBytes()
+
+        /**
+         * Which source the Settings row's ONE install action uses — total over
+         * [StreamingPackState], so a state added to that machine must be routed here rather than
+         * fall through a wildcard into the third-party download. A [StreamingPackState.Repair]
+         * takes the route a first install would have taken, which is what lets a delivered pack
+         * repair a half install without touching the network.
+         */
+        fun installRoute(state: StreamingPackState): VoiceInstallRoute = when (state) {
+            StreamingPackState.Installed -> VoiceInstallRoute.None
+            StreamingPackState.PackDelivered -> VoiceInstallRoute.FromPack
+            StreamingPackState.PackFetchable -> VoiceInstallRoute.Fetch
+            StreamingPackState.Downloadable -> VoiceInstallRoute.Download
+            is StreamingPackState.Repair -> installRoute(state.via)
+        }
 
         /** ±5% band, same policy as the whisper downloads. */
         fun sizeWithinTolerance(actual: Long, expected: Long = TAR_BYTES): Boolean {

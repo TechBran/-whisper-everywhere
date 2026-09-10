@@ -452,6 +452,14 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt",
         // (4.3.1 B) BubbleHideWiringPinTest reads the controller for speakFromTrigger's Boolean.
         "src/main/java/com/whispereverywhere/tts/TtsController.kt",
+        // (4.4.0, Task 2b) The voice manager, by the list's stated rule and overdue: this file has
+        // been read as text by TtsModelManagerPinTest since the 2026-09-08 incident's fix without
+        // being declared, and Task 2b's pins are ORDER and ZERO/ONE-count assertions over the
+        // whole file (the storage gate above the extract, remove-after-land, ONE
+        // verifyExtractInstall, ONE Play discriminator, every tar.delete() guarded). Several of
+        // those mutations are comment-shaped, so without this entry the one edit each pin exists
+        // to catch is the one that never re-runs it.
+        "src/main/java/com/whispereverywhere/tts/TtsModelManager.kt",
         // (4.0 Q9 fix round, I1) BatchTranscriber.kt joins for the NARROW reason, the same one
         // NpuWhisperBackend.kt is here for: BatchLocalModelTest's wiring pin includes NEGATIVE
         // assertions over the whole file INCLUDING comments (`installedModelPath()` must not be read
