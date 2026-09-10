@@ -146,13 +146,13 @@ class TtsModelManager(private val context: Context) {
                 throw TtsDownloadException("Voice archive size mismatch (${tar.length()} bytes)")
             }
             val actual = sha256HexFile(tar)
-            if (!actual.equals(TAR_SHA256, ignoreCase = true)) {
+            if (KNOWN_GOOD_TAR_SHA256.none { it.equals(actual, ignoreCase = true) }) {
                 throw TtsDownloadException("Voice archive failed integrity verification")
             }
             val tmp = File(ttsRoot(), "$DIR_NAME.tmp")
             extractTarBz2(tar, tmp, stripLeadingComponent = true)
             val marker = File(tmp, ".installed")
-            marker.writeText(TAR_SHA256)
+            marker.writeText(actual.lowercase())
             val final = finalDir()
             if (final.exists()) final.deleteRecursively()
             if (!tmp.renameTo(final)) {
@@ -205,9 +205,29 @@ class TtsModelManager(private val context: Context) {
         private const val TAR_NAME = "kokoro-multi-lang-v1_0.tar.bz2"
         private const val TAR_URL =
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$TAR_NAME"
-        private const val TAR_SHA256 =
-            "c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046"
-        const val TAR_BYTES = 349_418_188L
+        /**
+         * PRODUCTION INCIDENT, 2026-09-08 to 2026-09-10. The GitHub release tag `tts-models` is a
+         * ROLLING tag: k2-fsa re-uploaded this archive on 2026-09-08 04:35 GMT (Last-Modified;
+         * the HF mirror csukuangfj/kokoro-multi-lang-v1_0 commit f7b96bb6 "add models" the same
+         * day). The new archive is 349,906,910 B — inside the +-5 % size band, so [sizeWithinTolerance]
+         * passed — and its sha256 is not the one pinned on 2026-07-18, so EVERY fresh voice install
+         * on EVERY build failed "integrity verification" for two days, production included. Verified
+         * on 2026-09-10 before re-pinning: the new voices.bin is the old 53 slots byte-for-byte plus
+         * ONE appended slot (`em_santa`, speaker id 53; the archive's own README: "Existing speaker
+         * IDs 0 through 52 remain unchanged"), so [TtsVoices]' order is intact; model.onnx was
+         * re-exported with n_speakers = 54 (325,630,829 -> 325,560,556 B).
+         *
+         * The gate now accepts a KNOWN-GOOD SET: the 2026-07-18 archive (a CDN may still serve it,
+         * and it is a valid, compatible install) and the 2026-09-08 one. A third re-upload fails
+         * again, loudly, by design — silent acceptance of an unknown archive is worse than a failed
+         * download. The installed marker records WHICH archive was extracted.
+         */
+        val KNOWN_GOOD_TAR_SHA256: List<String> = listOf(
+            "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298", // 2026-09-08 upload
+            "c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046", // 2026-07-18 pin
+        )
+        /** The current archive: 349,906,910 B. The 2026-07-18 one (349,418,188 B) is inside the band. */
+        const val TAR_BYTES = 349_906_910L
         private const val POLL_INTERVAL_MS = 300L
 
         /** ±5% band, same policy as the whisper downloads. */
