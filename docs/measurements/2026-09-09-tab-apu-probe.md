@@ -295,6 +295,32 @@ commit bills 1500 frames) and 3.4 GB of RSS. **R3 is not closed by E5 on this de
 measured today that puts a turbo encoder under 2 s.** The base reference (§2) says the same GPU does base in
 105 ms vs turbo 1,855 ms = 17.7× for a 23.9× FLOP ratio.
 
+### 4.2 turbo on the APU, JIT — one attempt (`e4_turbo_npu_211_1`, `Accelerator.NPU` only, thermal 2 at start)
+
+The MediaTek compiler plugin **selects none of the int8 turbo graph** and the whole model falls to XNNPACK — the
+"NPU" run is a CPU run (live logcat snapshot `e4_turbo_npu_211_1.live-snapshot.log`, 05:08:49–05:09:11):
+
+```
+05:08:49.193 I litert : [compiler_plugin.cc:444] Use Get supported operations for partition.
+05:08:49.217 I litert : [compiler_plugin.cc:645] Partitioned subgraph<0>, selected 0 ops, from a total of 321 ops. resulted in 0 partitions.
+05:08:54.341 I litert : [compiler_plugin.cc:645] Partitioned subgraph<1>, selected 0 ops, from a total of 1462 ops. resulted in 0 partitions.
+05:08:59.360 I litert : [compiler_plugin.cc:549] Starting MediaTek Compilation for 0 subgraphs, soc_model=(null)
+05:08:59.360 I litert : [compiled_model.cc:406] 0 compiler plugins were applied successfully:
+05:08:59.360 W litert : [compiled_model.cc:408] Plugin errs: MediaTek compiler plugin (ver 0.1.0) ERROR: [third_party/odml/litert/litert/compiler/plugin/compiler_plugin.cc:73]
+05:08:59.360 I litert : [compiled_model.cc:716] JIT compilation changed model, reserializing...
+05:09:05.231 I tflite : Replacing 320 out of 321 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 2 partitions for subgraph 0.
+05:09:05.420 I tflite : Replacing 1462 out of 1462 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 1 partitions for subgraph 1.
+05:09:06.048 I PROBE  : litert|create_ms=22191.2|accel=NPU|threads=4
+05:09:10.988 I PROBE  : litert|cold_run_ms=4793.7|cold_run_plus_read_ms=4795.9
+```
+
+The legalizer visited every op (233 `Legalize Fully Connected`, 80 `Legalize BatchMatMul`, 328 Reshape, …) and
+kept none: `whisper_large_v3_turbo_30s_i8.tflite` carries **dynamic-range int8 weights with fp32 activations**
+("hybrid" FULLY_CONNECTED), which the v2.1.1 MediaTek plugin does not accept, whereas the f32 base/tiny graphs
+were taken whole (343/343, §1). RSS 2.4–2.6 GB, create 22.2 s (the two partition passes + reserialization),
+cold 4,794 ms = the CPU's number (§4). **Turbo cannot reach the APU in its published `.tflite` form; an f32 (or
+a NeuroPilot-quantized) export is the precondition for any APU turbo number, on top of everything in §6.**
+
 ## 5. E3 — LiteRT-LM on `Backend.NPU(nativeLibraryDir)`
 
 ### 5.1 The Gemma3-1B MT6989 artefact — BLOCKED on a Hugging Face licence acceptance
@@ -442,6 +468,28 @@ route (E5) is the one that already meets the bar on paper.**
 
 Turbo JIT on the APU (one attempt, §4.2) — see below.
 
-## 7. Teardown proof
+## 7. Teardown proof (2026-09-10 05:10, `adb -s 192.168.1.161:44483`)
 
-(pending)
+```
+$ adb -s 192.168.1.161:44483 shell "dumpsys package com.whispereverywhere | grep -E 'versionCode|versionName|lastUpdateTime|firstInstallTime'"
+    versionCode=86 minSdk=26 targetSdk=36
+    versionName=4.3.2
+    lastUpdateTime=2026-09-04 19:49:37
+      firstInstallTime=2026-08-30 14:57:15
+$ adb -s 192.168.1.161:44483 shell "dumpsys package com.whispereverywhere.probe | grep -E 'versionCode|versionName|lastUpdateTime'"
+    versionCode=1 minSdk=31 targetSdk=36
+    versionName=0.1-probe
+    lastUpdateTime=2026-09-10 05:05:26
+$ adb -s 192.168.1.161:44483 shell "ls -la /data/local/tmp/"
+drwxrwx--x 3 shell shell 3452 2026-09-10 04:51 .
+drwxrwxr-x 5 shell shell 3452 2026-06-17 17:00 .studio
+$ adb devices -l
+192.168.1.161:44483    device product:gts10psqw model:SM_X828U device:gts10p transport_id:8
+```
+
+The Play copy (86 / 4.3.2) was last updated on 2026-09-04, before this work started; nothing under
+`/data/local/tmp` remains; the probe app stays installed (harmless, separate `applicationId`) with its five
+models in its private `files/` (2.25 GB: Qwen3-0.6B.litertlm, whisper_base, whisper_large_v3_turbo_i8,
+whisper_tiny, whisper_tiny_MT6989) — `adb shell pm uninstall com.whispereverywhere.probe` removes all of it
+whenever the owner wants the space back. No other device was addressed at any point (every adb call carried
+`-s 192.168.1.161:44483`; the only device listed by `adb devices` during the session was the Tab).
