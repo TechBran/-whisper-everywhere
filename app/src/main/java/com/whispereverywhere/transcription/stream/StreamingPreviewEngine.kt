@@ -40,7 +40,10 @@ interface LocalPreview {
  * cut when a tail is retained, hand it to [onFrozen], log `stream-timing:`, then RELEASE the
  * stream and `createStream()` — never `reset`, which cannot drop encoder state through this
  * AAR and would decode the pad into the next utterance (research §3.3). The retained tail is
- * re-fed to the fresh stream from the ring.
+ * re-fed to the fresh stream from the ring — on THAT stream's timeline ([streamBytes]), and not
+ * as the new segment's audio or its first partial: the tail's echo is text the line just logged
+ * already reported, and counting it makes `audio=`, `rtf=` and `firstPartialMs=` fiction on
+ * every cap-cut segment — which is what a long read is almost entirely made of.
  *
  * **The canary** (spec §7.2) runs inside [warm], once per load; a failure or a missing clip
  * DISABLES the previewer for the life of the process — nothing is persisted.
@@ -80,6 +83,22 @@ class StreamingPreviewEngine(
     private var lastEmitted = ""
     private var pendingEmit: String? = null
     private var segment = SegmentStats(0L)
+
+    /**
+     * Bytes the CURRENT stream has consumed — the timeline [cutSeconds] measures a retained-tail
+     * cut against, and deliberately NOT [SegmentStats.audioBytes]: a re-fed tail is on this
+     * stream's timeline but is not new audio for the segment that receives it, and a stream
+     * re-created after a throw starts at zero while the segment's own audio count carries on.
+     */
+    private var streamBytes = 0L
+
+    /**
+     * True only while a retained tail is being re-fed to a fresh stream. The echo of that tail is
+     * text the PREVIOUS `stream-timing:` line already reported, so it is not a partial this
+     * segment earned and must not set [SegmentStats.firstPartialMs] — it still reaches the strip.
+     */
+    private var priming = false
+
     @Volatile private var shedThisSegment = false
     private var consecutiveFailures = 0
     private var priorityApplied = false
@@ -154,6 +173,11 @@ class StreamingPreviewEngine(
             drain()   // everything that arrived before the cut is fed first
             val open = stream
             val frozen = if (open == null || disabled) "" else freeze(rec, open, retainMs)
+            // audio= is the NEW audio this segment carried, never the tail the previous commit
+            // re-fed (that is [streamBytes]) — otherwise rtf='s denominator is inflated and
+            // firstPartialMs reads 0 on every cap-cut segment, the shape a long read is made of.
+            // The prime's decodes DO stay in decodes=/decodeMs=: re-decoding a tail is real work
+            // this segment pays for, so rtf reads compute per second of speech delivered.
             val audioMs = segment.audioBytes / StreamingPreviewTuning.BYTES_PER_MS
             log(
                 StreamDiag.timingLine(
@@ -170,8 +194,13 @@ class StreamingPreviewEngine(
             if (retainMs > 0L) {
                 val tail = ring.last((retainMs * StreamingPreviewTuning.BYTES_PER_MS).toInt())
                 if (tail.isNotEmpty()) {
-                    segment.audioBytes += tail.size
-                    if (feedAndDecode(rec, fresh, AudioMath.pcm16ToFloat(tail))) emitIfChanged(rec, fresh)
+                    streamBytes += tail.size
+                    priming = true
+                    try {
+                        if (feedAndDecode(rec, fresh, AudioMath.pcm16ToFloat(tail))) emitIfChanged(rec, fresh)
+                    } finally {
+                        priming = false
+                    }
                 }
             }
         }
@@ -229,6 +258,7 @@ class StreamingPreviewEngine(
             }
         }
         segment.audioBytes += pcm.size
+        streamBytes += pcm.size
         if (!feedAndDecode(rec, s, AudioMath.pcm16ToFloat(pcm))) return
         emitIfChanged(rec, s)
     }
@@ -286,8 +316,10 @@ class StreamingPreviewEngine(
 
     private fun emit(text: String) {
         lastEmitted = text
-        segment.partials++
-        if (segment.firstPartialMs < 0L) segment.firstPartialMs = clock() - segment.startMs
+        if (!priming) {
+            segment.partials++
+            if (segment.firstPartialMs < 0L) segment.firstPartialMs = clock() - segment.startMs
+        }
         onPartial?.invoke(text)
     }
 
@@ -302,8 +334,9 @@ class StreamingPreviewEngine(
         ""
     }
 
+    /** Where to trim the frozen text: the cut is on the CURRENT stream's timeline, not the segment's. */
     private fun cutSeconds(retainMs: Long): Float =
-        (segment.audioBytes / StreamingPreviewTuning.BYTES_PER_MS - retainMs) / 1000f
+        (streamBytes / StreamingPreviewTuning.BYTES_PER_MS - retainMs) / 1000f
 
     private fun onDecodeFailure(rec: PreviewRecognizer, t: Throwable) {
         stream?.let { runCatching { it.release() } }
@@ -311,6 +344,7 @@ class StreamingPreviewEngine(
         noteFailure(rec, t)
         if (!disabled) {
             stream = rec.createStream()
+            streamBytes = 0L   // the fresh stream's timeline starts here; the dead one's cut is not ours
             lastEmitted = ""
             pendingEmit = null
         }
@@ -331,8 +365,14 @@ class StreamingPreviewEngine(
         }
     }
 
+    /**
+     * Every call site of this is also a STREAM boundary (open and commit create one, close and
+     * release drop one), so the per-stream byte count is seated here too; the one stream boundary
+     * that is not a segment boundary is [onDecodeFailure]'s re-create, which seats it itself.
+     */
     private fun resetSegment() {
         segment = SegmentStats(clock())
+        streamBytes = 0L
         lastEmitted = ""
         pendingEmit = null
         shedThisSegment = false
@@ -348,6 +388,7 @@ class StreamingPreviewEngine(
     private fun msSince(t0: Long): Long = (nanoClock() - t0) / 1_000_000L
 
     private class SegmentStats(val startMs: Long) {
+        /** NEW audio only — a re-fed tail belongs to the stream ([streamBytes]), not to this segment. */
         var audioBytes = 0L
         var decodes = 0
         var decodeUs = 0L
