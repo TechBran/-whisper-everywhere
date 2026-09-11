@@ -100,8 +100,9 @@ class PackTokenFactsTest {
 
     @Test fun theTurkishRowIsTheOneWhereTheSuggestionIsOverriddenAndTheOverrideIsStated() {
         // 448 lower / 34 upper is MIXED, so the sufficiency test suggests Keep — and the
-        // qualification table rules `Fold(tr)` anyway, calling tr the one row where the locale is
-        // load-bearing. That override is the only direction that can cost a character, which is
+        // qualification table rules `Fold` on that row anyway, calling tr the one row where the
+        // locale is load-bearing. That override is the only direction that can cost a character,
+        // which is
         // why the catalogue asserts the DECISION on the row and never this property.
         val tr = facts(*specials, "▁bir", "▁iki", "▁İzmir", "▁Ankara", ".", "?")
         assertTrue(tr.vocabularyIsMixedCase)

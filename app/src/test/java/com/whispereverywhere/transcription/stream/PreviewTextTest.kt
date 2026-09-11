@@ -38,8 +38,8 @@ class PreviewTextTest {
         // the catalogue will actually hold for it: the qualification table's tr row is
         // `emitsCase = partial (448 lower / 34 upper)`, `emitsPunctuation = TRUE (18 pieces)`,
         // `emitsDigits = false`, `normalizeLocale = tr — NOT Locale.US`. "partial" plus a
-        // load-bearing locale is one decision and it is Fold(tr): the fold RUNS, and the locale is
-        // what makes it safe.
+        // load-bearing locale is one decision and it is `Fold`: the fold RUNS, and the row's own
+        // language is the locale, which is what makes it safe.
         //
         // Both directions are wrong under US, and the values below are read out of this JDK rather
         // than remembered (SpecialCasing.txt's `tr`/`az` rules): `I` folds to `i` under Locale.US

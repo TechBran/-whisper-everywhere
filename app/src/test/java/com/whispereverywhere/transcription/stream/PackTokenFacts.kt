@@ -101,11 +101,13 @@ object PackTokenFacts {
          *    LibriSpeech BPE, not a case distinction, which is why the answer is a fold decision on
          *    the row rather than a count.
          *
-         * Against the qualification table §4.1 this reproduces the ruling for **fourteen of the
-         * fifteen rows**: `Fold` for en/fr/de/ru/id/zh-en/pt(lyr), `Keep` for zh (byte fallback)
+         * Against the qualification table §4.1 this reproduces the ruling for **fifteen of the
+         * sixteen rows** (the table has sixteen: en fr de ru id zh zh-en ko et es it nl pt·lyr
+         * pt·Kroko tr ja, and the three groups below enumerate 7 + 1 + 7 of them):
+         * `Fold` for en/fr/de/ru/id/zh-en/pt(lyr), `Keep` for zh (byte fallback)
          * and for ko/et/es/it/nl/pt(Kroko)/ja (mixed). **`tr` is the one row it does not** — 448
-         * lower / 34 upper is mixed, so this suggests `Keep`, and the table rules `Fold(tr)`
-         * anyway. That override is the only direction that can cost a character, so the row taking
+         * lower / 34 upper is mixed, so this suggests `Keep`, and the table rules `Fold` on that
+         * row anyway — folding Turkish, because the row's language is what the fold asks. That override is the only direction that can cost a character, so the row taking
          * it carries the reason in writing and this property is deliberately not the thing the
          * catalogue asserts equal.
          */
