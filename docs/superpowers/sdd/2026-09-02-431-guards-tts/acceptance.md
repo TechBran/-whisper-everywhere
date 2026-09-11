@@ -1,6 +1,6 @@
 # 4.3.1 — device acceptance (owner session)
 
-Build under test: **4.4.0 / versionCode 90** (the word-for-word previewer, the four-pack bundle and the startup ring — §Z and §S; 89 = 4.3.4 went to the internal track with Gemini Live, live-by-default, the turbo card and the voice-archive fix — §J and §K, whose rows carry over untested unless marked) (supersedes 88 on the internal track — the owner confirmed Gemini Live working in real time on 88; 89 adds live-by-default, the turbo card copy, and the voice-archive fix — §K; Gemini Live — §J; the sherpa runtime bump — §J6; 87 = 4.3.3, the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
+Build under test: **4.4.1 / versionCode 91** (the previewer pack now follows the language you pick — **§AF**, the rows to run first; 90 = 4.4.0 went to the internal track with the word-for-word previewer, the four-pack bundle and the startup ring — §Z and §S, whose rows carry over untested unless marked; 89 = 4.3.4 went to the internal track with Gemini Live, live-by-default, the turbo card and the voice-archive fix — §J and §K, whose rows carry over untested unless marked) (supersedes 88 on the internal track — the owner confirmed Gemini Live working in real time on 88; 89 adds live-by-default, the turbo card copy, and the voice-archive fix — §K; Gemini Live — §J; the sherpa runtime bump — §J6; 87 = 4.3.3, the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
 device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
 is the OWNER's device session; the implementer prepared this sheet and claims none of it as done.
@@ -685,3 +685,74 @@ S3. **The two cues say two different things.** There are now two haptics and you
   touching the engine. S1-S3 are the one part of this build that changed the capture seam: a
   failure there is a revert of the ring, not a tuning change, and it must be reported with the tier
   and the tap-to-cue delay.
+
+---
+
+## AF — the pack follows the language you pick (91 / 4.4.1)
+
+**Run these first: they are what 91 exists for.** Everything else in this sheet is 90's, carried over.
+Nothing in §AF changes the typed transcript — the previewer is additive, whisper still cuts the utterances
+and its final still replaces the preview. A failure in any AF row is a live-words failure only.
+
+**The one thing to know before you start.** Z4 is RE-RULED in this build. 90 gave live words to an Auto
+user whose speech model was English-only (whisper resolves Auto to "en" for its own benefit on those
+tiers, and that leaked into the previewer). 91 closes it: **Auto gets no live words, on every tier,
+without exception** — your ruling, now literal rather than nearly true. Z4's old wording describes
+behaviour that is deliberately gone.
+
+AF1. **The top-up, on wifi.** With the pack NOT installed, English picked, and a local tier selected,
+    open the app on wifi. EXPECTED: a card appears on Home, the model fetches and installs with no taps,
+    and live words then work. This is the row the whole release exists for — the user who had 4.4.0 and
+    would never have found the setting.
+    `[ ] PASS  [ ] FAIL`
+AF2. **The same on cellular.** EXPECTED: the card appears with a one-tap fetch naming the size, and
+    **nothing downloads until you tap it.** The app has never spent mobile data unasked and must not
+    start here.
+    `[ ] PASS  [ ] FAIL`
+AF3. **A delete stays deleted.** Delete the model in Settings, then reopen the app. EXPECTED: it does
+    NOT come back. A delete is a decision.
+    `[ ] PASS  [ ] FAIL`
+AF4. **A dismiss stays dismissed.** Dismiss the card, reopen. EXPECTED: it stays gone, and the Settings
+    row still installs on demand. Also: dismissing a card that is mid-transfer **abandons** the transfer.
+    `[ ] PASS  [ ] FAIL`
+AF5. **Picking a language at onboarding.** On a fresh onboarding, pick English. EXPECTED: the fetch
+    starts without you visiting Settings, onboarding continues while it runs, and the progress is on Home
+    when you land there. NOTE the deliberate limit: the progress shows on HOME, not on the onboarding
+    step itself — fetching 73 MB beside onboarding's mandatory 190 MB speech model is contention we
+    refused. Not a failure.
+    `[ ] PASS  [ ] FAIL`
+AF6. **Changing language in the app.** Switch the language to English with the pack missing. EXPECTED:
+    the fetch starts in place, no trip to Settings. **Then expect the FIRST session after the switch NOT
+    to show live words, and the second to.** The model loads asynchronously and nothing was resident —
+    this is the price of not pre-loading for Auto users and is EXPECTED, not a failure.
+    `[ ] PASS  [ ] FAIL`
+AF7. **Auto is honest.** On Auto: nothing downloads, no card nags you, and the Settings rows say live
+    words need a picked language. Your transcript still arrives per utterance exactly as before.
+    `[ ] PASS  [ ] FAIL`
+AF8. **A language with no model is told, not sold.** Pick French (or any language but English).
+    EXPECTED: the rows say live words are not available in that language yet, and **the English model is
+    NOT offered to you.** 4.4.0 would have offered it and taken 73 MB for something that could never arm.
+    `[ ] PASS  [ ] FAIL`
+AF9. **Auto on an English-only tier.** On Auto with an `eco`/English-scope model selected and the pack
+    installed: **no live words.** This is the Z4 re-ruling above. If words appear, 91's copy is lying.
+    `[ ] PASS  [ ] FAIL`
+AF10. **The bytes come back.** With English picked and the model installed, switch to Auto. EXPECTED: the
+    resident recognizer is released — the app's memory drops by roughly 169 MB. (Only the first such
+    switch shows the drop; there is nothing resident to release on later ones.)
+    `[ ] PASS  [ ] FAIL`
+AF11. **Auto can still reclaim storage.** On Auto with the pack installed: the Settings section shows the
+    caveat and the **delete** row. Deleting frees the 73 MB. Two deliberate changes to notice and NOT
+    report as failures: an Auto user can no longer *install* the pack from Settings at all (the picker is
+    the single way in, and the copy says so), and the "Show live words" switch is not shown to a picker
+    whose language has no model — a switch that governs nothing should not be offered.
+    `[ ] PASS  [ ] FAIL`
+
+**Known and deliberately not fixed in 91** (adjudicated into the next build, where the fix is one
+unification rather than four guards — `ADJUDICATION-441.md`): on a build where Play cannot serve the
+install, Settings cannot see a transfer the Home card started and could start a second one; and the delete
+row can draw over a running *repair*. Both are 4.4.0 shapes that 91 makes newly reachable, not new
+breakage. If you hit either, note it and move on — they are already scheduled.
+
+**Promote 91 when AF1, AF2, AF3, AF7, AF8 and AF9 pass.** AF1/AF2 are the delivery promise and the data
+promise; AF3 is the respect-a-decision promise; AF7/AF8/AF9 are the three sentences this build made
+literal. AF5/AF6/AF10/AF11 are informative — a failure there is a bug report, not a gate.

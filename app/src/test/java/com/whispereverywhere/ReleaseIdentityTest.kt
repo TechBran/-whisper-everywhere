@@ -69,6 +69,16 @@ import org.junit.Test
  * (below) — and on this one the previewer's load-time canary is a SECOND, unrelated canary: it
  * guards the Zipformer against the FEAT_SME defect and is not persisted at all.
  *
+ * **versionCode 91 = 4.4.1 — a PATCH, and the name says what it is.** 90 went to the internal
+ * track as 4.4.0 and is spent there. 91 adds no engine, no pack and no payload: it makes the
+ * previewer 90 already shipped reachable, by fetching a language's pack when that language is
+ * picked and by telling the truth on the surfaces where 90 either said nothing or offered English
+ * to someone who could never use it. One new input drives it — the selected language — and three
+ * behaviours that were nearly true in 90 are literal in 91: Auto gets no live words, a "no" is
+ * remembered per language, and nothing is loaded for a session that cannot arm it. Every bump
+ * still re-arms GpuPolicy's canary latches (below); the previewer's own load-time canary is a
+ * SECOND, unrelated canary and is not persisted at all.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -89,15 +99,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_4_0_at_version_code_90() {
+    fun release_identity_is_4_4_1_at_version_code_91() {
         assertEquals(
-            "versionName must be 4.4.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.4.0",
+            "versionName must be 4.4.1 for this release (app/build.gradle.kts defaultConfig)",
+            "4.4.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 90 for this release (app/build.gradle.kts defaultConfig)",
-            90,
+            "versionCode must be 91 for this release (app/build.gradle.kts defaultConfig)",
+            91,
             BuildConfig.VERSION_CODE,
         )
     }
