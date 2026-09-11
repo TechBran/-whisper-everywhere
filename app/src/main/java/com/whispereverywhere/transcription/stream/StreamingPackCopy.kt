@@ -58,8 +58,15 @@ object StreamingPackCopy {
 
     // ---------------------------------------------------------------- the state-free strings
 
-    /** The row's name once the model is installed, and the feature's name everywhere else. */
-    const val SETTINGS_TITLE = "Live words while you speak (English)"
+    /**
+     * The row's name once the model is installed, and the feature's name everywhere else.
+     *
+     * PARAMETERISED by language since 4.4.1's acquisition amendment (owner rulings 2026-09-11):
+     * packs are per language and the pack that arrives is the SELECTED language's, so every
+     * sentence about a pack names the language it is about rather than a literal that was only
+     * ever true while one row existed.
+     */
+    fun featureTitle(language: String): String = "Live words while you speak ($language)"
 
     const val SWITCH_TITLE = "Show live words"
 
@@ -68,8 +75,8 @@ object StreamingPackCopy {
     /** What deleting costs and — the promise again — what it does not cost. */
     val DELETE_SUBTITLE = "Frees $BADGE. Live words stop; the typed transcript is unchanged."
 
-    val SETTINGS_INSTALLED =
-        "Installed ($BADGE). Words appear on the bubble as you speak English; the typed transcript is unchanged."
+    fun installed(language: String): String =
+        "Installed ($BADGE). Words appear on the bubble as you speak $language; the typed transcript is unchanged."
 
     /**
      * RULING ASSUMED (R1): the canary is the only SME guard; this is what the row says after it
@@ -83,11 +90,42 @@ object StreamingPackCopy {
     const val SETTINGS_DISABLED_ON_DEVICE =
         "Live words are off on this device: the preview model did not pass its start-up check. Your transcripts are unaffected."
 
+    /**
+     * What the language step says BEFORE it offers any language — the fair trade, at the one
+     * moment it is actually being made.
+     *
+     * REWRITTEN by the acquisition amendment (owner ruling 1, 2026-09-11: *"we make it explicit
+     * that users just have to select their language. Now if they leave it in auto, then you get no
+     * live streaming at all. And that will seem to be a very fair trade-off."*). The old sentence
+     * said live words were English-only and that other languages "show a progress line" — true of
+     * the pack list, and silent about the thing the user is about to decide. This one names what
+     * the pick buys, what Auto costs, and the promise neither choice touches.
+     *
+     * It names ONE language because one pack exists; when the language list lands this sentence is
+     * where it goes, and the badge in the picker replaces the card as the permanent signpost.
+     */
     const val LANGUAGE_STEP_SENTENCE =
-        "Live words on the bubble are English-only for now; other languages show a progress line while each sentence is transcribed."
+        "Live words on the bubble follow the language you pick: English has a preview model today, and Auto-detect shows none at all. Your typed transcript is the same either way."
 
     /** Rendered in the English row's subtitle slot on the language step when the pack is installed. */
     const val LANGUAGE_CHIP = "Live words on the bubble while you speak — preview model installed."
+
+    // ------------------------------------------------------------- what Auto costs, where it is set
+
+    /**
+     * The Settings row and the in-app picker's own version of the trade, for the user who is
+     * standing on Auto right now (owner ruling 1, 2026-09-11). It has to be SAID and not merely
+     * be true: a user on Auto sees no card, no progress and no offer, and without this sentence
+     * the feature is simply missing rather than declined.
+     *
+     * It names no language, deliberately: it is the sentence for having picked NONE, and the row
+     * above it already names what a pick would get. The additive promise is repeated because this
+     * is the one place a reader could otherwise conclude Auto degrades their transcript.
+     */
+    const val AUTO_ROW_TITLE = "Live words need a chosen language"
+
+    const val AUTO_NO_LIVE_WORDS =
+        "On Auto-detect there are none at all: pick your transcription language to see words on the bubble as you speak. Your typed transcript is unchanged either way."
 
     // ---------------------------------------------------------------- the offer, by source
 
@@ -113,7 +151,8 @@ object StreamingPackCopy {
      * Play has already named as this install's own fault — which is exactly where a download
      * from the commit-pinned Hugging Face base is what the tap does.
      */
-    val SETTINGS_INSTALL_DOWNLOAD = "Download a $BADGE English preview model. $ADDITIVE"
+    fun installDownload(language: String): String =
+        "Download a $BADGE $language preview model. $ADDITIVE"
 
     // ---------------------------------------------------------------- the damaged install
 
@@ -144,20 +183,20 @@ object StreamingPackCopy {
      * A [StreamingPackState.Repair] reads the same whatever would repair it: the user is
      * repairing, not choosing, and the subtitle already says what the repair will cost.
      */
-    fun settingsTitle(state: StreamingPackState): String = when (state) {
-        StreamingPackState.Installed -> SETTINGS_TITLE
-        StreamingPackState.PackDelivered -> "Install the English preview model"
-        StreamingPackState.PackFetchable -> "Get the English preview model"
-        StreamingPackState.Downloadable -> "Download the English preview model"
-        is StreamingPackState.Repair -> "Repair the English preview model"
+    fun settingsTitle(state: StreamingPackState, language: String): String = when (state) {
+        StreamingPackState.Installed -> featureTitle(language)
+        StreamingPackState.PackDelivered -> "Install the $language preview model"
+        StreamingPackState.PackFetchable -> "Get the $language preview model"
+        StreamingPackState.Downloadable -> "Download the $language preview model"
+        is StreamingPackState.Repair -> "Repair the $language preview model"
     }
 
     /** The row's subtitle, by the same table. See the class KDoc for why it is a table. */
-    fun settingsSubtitle(state: StreamingPackState): String = when (state) {
-        StreamingPackState.Installed -> SETTINGS_INSTALLED
+    fun settingsSubtitle(state: StreamingPackState, language: String): String = when (state) {
+        StreamingPackState.Installed -> installed(language)
         StreamingPackState.PackDelivered -> SETTINGS_INSTALL_FROM_PACK
         StreamingPackState.PackFetchable -> SETTINGS_INSTALL_FETCH
-        StreamingPackState.Downloadable -> SETTINGS_INSTALL_DOWNLOAD
+        StreamingPackState.Downloadable -> installDownload(language)
         is StreamingPackState.Repair -> when (state.via) {
             StreamingPackState.PackDelivered -> SETTINGS_REPAIR_FROM_PACK
             StreamingPackState.PackFetchable -> SETTINGS_REPAIR_FETCH
@@ -181,27 +220,47 @@ object StreamingPackCopy {
     const val CARD_TITLE = "Live words on the bubble"
 
     /**
+     * THE FAIR TRADE, said on every card state (owner ruling 1, 2026-09-11) — one sentence source
+     * used three ways, so no two cards can state the trade differently. The card only ever
+     * appears while a language with a pack IS selected, so the useful half for its reader is the
+     * flip side: these words follow that selection, and switching to Auto ends them.
+     *
+     * The CONTROLLER's instruction was *"Say what the selected language is, on every card state,
+     * and say what Auto costs"*; this is the second half, and [featureTitle]'s parameterisation
+     * plus the per-source table's is the first.
+     */
+    fun cardLanguageNote(language: String): String =
+        "Live words follow your transcription language: $language shows them, and Auto-detect " +
+            "shows none at all."
+
+    /**
      * The card while the fetch or the install runs. It promises nothing about when, carries the
      * additive promise in the shortest true form, and asks for nothing — a working card that
      * mentioned Settings or a tap would undo the ruling it exists to serve. The live progress
      * line under it is [fetchLine]'s or [downloadProgress]'s, never a second wording.
+     *
+     * It carries [cardLanguageNote] INLINE rather than in the note slot, because on this state
+     * that slot holds the progress line — and this is the state review r1's nit 1 flagged for
+     * naming the language only through the model's name.
      */
-    const val CARD_WORKING =
-        "The English preview model is arriving now; the typed transcript is unchanged."
+    fun cardWorking(language: String): String =
+        "The $language preview model is arriving now; the typed transcript is unchanged. " +
+            cardLanguageNote(language)
 
     /** The one-time announcement's headline, once the model has landed. */
     const val CARD_INSTALLED_TITLE = "Live words are on"
 
     /**
      * The announcement's body — the owner's own sentence (*"Live words are on — pick English to
-     * see them"*) split across the headline and here, and the ONE place the English gate is
-     * explained. `localPreviewArms` is deliberately unchanged (the owner tests on Auto on purpose
-     * and found the behaviour correct once explained), so this card is where the explanation
-     * belongs.
+     * see them"*) split across the headline and here.
+     *
+     * It CONFIRMS rather than instructs, as of the acquisition amendment: the pack only ever
+     * arrives for a language the user has already selected, so "pick English" would be telling
+     * them to do the thing they just did. The gate's own explanation moves to
+     * [cardLanguageNote], rendered under this one.
      */
-    const val CARD_INSTALLED =
-        "Pick English as your transcription language to see them on the bubble as you speak; " +
-            "the typed transcript is unchanged."
+    fun cardInstalled(language: String): String =
+        "You'll see them on the bubble as you speak $language; the typed transcript is unchanged."
 
     /** The X's content description — the cloud-key note's own label, for the same gesture. */
     const val CARD_DISMISS = "Dismiss"
@@ -229,10 +288,12 @@ object StreamingPackCopy {
      * pack (fix round 1's B1, on the row) one edit later; delegating makes that unexpressible,
      * and `StreamingPackCopyTest` holds the two equal for every state.
      */
-    fun cardOffer(state: StreamingPackState): String = settingsSubtitle(state)
+    fun cardOffer(state: StreamingPackState, language: String): String =
+        settingsSubtitle(state, language)
 
     /** The offer card's action label — the ACTION's own name, so it names the source it will use. */
-    fun cardAction(state: StreamingPackState): String = settingsTitle(state)
+    fun cardAction(state: StreamingPackState, language: String): String =
+        settingsTitle(state, language)
 
     // ---------------------------------------------------------------- our own work in flight
 

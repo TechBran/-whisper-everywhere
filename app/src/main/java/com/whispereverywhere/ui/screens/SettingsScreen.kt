@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.whispereverywhere.BuildConfig
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.model.ModelMigration
 import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.WhisperCatalog
@@ -1086,6 +1087,15 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     val previewScope = rememberCoroutineScope()
     val previewManager = app.streamingPackManager
     val previewPack = StreamingPackCatalog.EN
+    // (4.4.1 acquisition amendment) The previewer's copy is parameterised by language, and this
+    // section is still the ONE pack's — the per-language list is the multilingual build's. The
+    // name comes from the picker's one table, so this row and Home's card cannot name the same
+    // language differently; the fallback is the code, unreachable for a catalogue row.
+    val previewLanguage = PreferencesManager.languageDisplayName(previewPack.language)
+        ?: previewPack.language
+    // ...and whether the user has picked ANY language: on Auto the feature is silent by design
+    // (owner ruling 1, 2026-09-11), which has to be SAID here or it reads as broken.
+    val selectedLanguage by app.preferencesManager.selectedLanguage.collectAsState()
     var previewRefreshKey by remember { mutableStateOf(0) }
     // Set only while OUR OWN work runs (the verify+copy of a delivered pack, or the fallback
     // download); Play's own fetch narrates itself through the shell's StateFlow below.
@@ -1159,12 +1169,24 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
             is StreamingPackState.Repair -> Unit
         }
     }
+    // WHAT AUTO COSTS, first in the section and above every offer (owner ruling 1, 2026-09-11:
+    // *"if they leave it in auto, then you get no live streaming at all. And that will seem to be
+    // a very fair trade-off."*). FIRST for the language step's own reason — a caveat read after
+    // the offer is a caveat that changed nothing — and only on Auto, because with a language
+    // picked the rows below already name it.
+    if (selectedLanguage == "auto") {
+        SettingsItem(
+            icon = Icons.Filled.Subtitles,
+            title = StreamingPackCopy.AUTO_ROW_TITLE,
+            subtitle = StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+        )
+    }
     when {
         previewState.isInstalled -> {
             SettingsItem(
                 icon = Icons.Filled.Subtitles,
-                title = StreamingPackCopy.settingsTitle(previewState),
-                subtitle = StreamingPackCopy.settingsSubtitle(previewState),
+                title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
+                subtitle = StreamingPackCopy.settingsSubtitle(previewState, previewLanguage),
             )
             SettingsSwitchItem(
                 icon = Icons.Filled.Subtitles,
@@ -1192,7 +1214,7 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
         }
         previewInstallStatus != null -> SettingsItem(
             icon = Icons.Filled.CloudDownload,
-            title = StreamingPackCopy.settingsTitle(previewState),
+            title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
             subtitle = previewInstallStatus ?: "",
         )
         previewFetchLine != null -> {
@@ -1213,15 +1235,15 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
             }
             SettingsItem(
                 icon = Icons.Filled.CloudDownload,
-                title = StreamingPackCopy.SETTINGS_TITLE,
+                title = StreamingPackCopy.featureTitle(previewLanguage),
                 subtitle = previewFetchLine,
                 onClick = if (previewTappable) previewRowTap else null,
             )
         }
         else -> SettingsItem(
             icon = Icons.Filled.CloudDownload,
-            title = StreamingPackCopy.settingsTitle(previewState),
-            subtitle = StreamingPackCopy.settingsSubtitle(previewState),
+            title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
+            subtitle = StreamingPackCopy.settingsSubtitle(previewState, previewLanguage),
             onClick = startPreviewInstall,
         )
     }

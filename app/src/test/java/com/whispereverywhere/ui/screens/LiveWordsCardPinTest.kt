@@ -403,16 +403,31 @@ class LiveWordsCardPinTest {
         }
         for (needle in listOf(
             "StreamingPackCopy.CARD_TITLE",
-            "StreamingPackCopy.CARD_WORKING",
+            "StreamingPackCopy.cardWorking(languageName)",
             "StreamingPackCopy.CARD_INSTALLED_TITLE",
-            "StreamingPackCopy.CARD_INSTALLED",
+            "StreamingPackCopy.cardInstalled(languageName)",
             "StreamingPackCopy.CARD_DISMISS",
-            "StreamingPackCopy.cardOffer(",
-            "StreamingPackCopy.cardAction(",
-            "StreamingPackCopy.LANGUAGE_STEP_SENTENCE",
+            "StreamingPackCopy.cardOffer(offered, languageName)",
+            "StreamingPackCopy.cardAction(offered, languageName)",
+            "StreamingPackCopy.cardLanguageNote(languageName)",
         )) {
             assertTrue("<<$needle>> must be what the card renders", liveLineCount(home, needle) >= 1)
         }
+        assertEquals(
+            "every language-bearing sentence takes the SELECTED language's name, from the " +
+                "picker's one table — so the card cannot name a language the decision did not " +
+                "act on (CONTROLLER RULING 2026-09-11)",
+            1,
+            liveLineCount(
+                card,
+                "PreferencesManager.languageDisplayName(selectedLanguage) ?: selectedLanguage",
+            ),
+        )
+        assertEquals(
+            "and what Auto costs is said on every card state, from one sentence rather than two " +
+                "wordings of it",
+            2, liveLineCount(card, "StreamingPackCopy.cardLanguageNote(languageName)"),
+        )
     }
 
     @Test fun theProgressLineIsTheFeaturesOwnAndNotASecondNarration() {

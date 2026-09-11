@@ -200,10 +200,14 @@ class LivePreviewRowsPinTest {
     // ------------------------------------------------------------------ the language step
 
     @Test
-    fun theLanguageStepSaysEnglishOnlyBeforeItOffersAnyLanguage() {
+    fun theLanguageStepSaysWhatThePickCostsBeforeItOffersAnyLanguage() {
+        // 4.4.1's acquisition amendment rewrote this sentence (owner ruling 1, 2026-09-11: Auto
+        // gets no live words, "a very fair trade-off"), so what it must say changed; WHERE it
+        // must be said did not, and that is what this pin is for. The words themselves are
+        // `StreamingPackCopyTest`'s.
         val step = scopeOf(onboardingFlow, "private fun LanguageStep(", "private fun LanguageRow(")
         assertEquals(
-            "the English-only sentence is said once, where the language is chosen (spec §5, §9)",
+            "the trade is stated once, where the language is chosen (spec §5, §9)",
             1, liveLineCount(step, "StreamingPackCopy.LANGUAGE_STEP_SENTENCE"),
         )
         val sentence = offsetOfLive(step, "StreamingPackCopy.LANGUAGE_STEP_SENTENCE")

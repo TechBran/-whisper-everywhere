@@ -876,6 +876,12 @@ private fun LiveWordsCard(
     // language with no row, which is how "no selected language, no live words" costs no predicate
     // of its own: with no pack there is no state to read, no card to show and nothing to fetch.
     val pack = StreamingPackCatalog.forLanguage(selectedLanguage)
+    // The language's own NAME, from the picker's one table, because every sentence on this card
+    // names the language it is about (CONTROLLER RULING 2026-09-11). The fallback is the code
+    // itself, which is unreachable — a pack's language is always a picker code
+    // (StreamingPackCopyTest holds that) — and is a readable word rather than a crash if a later
+    // catalogue row arrives before its picker entry.
+    val languageName = PreferencesManager.languageDisplayName(selectedLanguage) ?: selectedLanguage
     val previewFetch by StreamingPackController.state.collectAsState()
     val ourLine by PreviewAutoFetchController.line.collectAsState()
     val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
@@ -1019,7 +1025,7 @@ private fun LiveWordsCard(
         PreviewAutoFetch.Card.NONE -> Unit
         PreviewAutoFetch.Card.WORKING -> LiveWordsNote(
             title = StreamingPackCopy.CARD_TITLE,
-            body = StreamingPackCopy.CARD_WORKING,
+            body = StreamingPackCopy.cardWorking(languageName),
             // Ours if we are the ones working; Play's own line otherwise; and between the
             // decision and the shell's first publish, the same dead-time line the row uses.
             note = ourLine
@@ -1042,9 +1048,11 @@ private fun LiveWordsCard(
                     title = StreamingPackCopy.CARD_TITLE,
                     // The SAME per-source table the Settings row reads, so this card cannot
                     // promise a route the tap will not take.
-                    body = StreamingPackCopy.cardOffer(offered),
-                    note = StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
-                    action = StreamingPackCopy.cardAction(offered),
+                    body = StreamingPackCopy.cardOffer(offered, languageName),
+                    // What the pick buys and what Auto costs, on the state where the note slot
+                    // is free — the language step's sentence is for someone still choosing.
+                    note = StreamingPackCopy.cardLanguageNote(languageName),
+                    action = StreamingPackCopy.cardAction(offered, languageName),
                     onAction = { PreviewAutoFetchController.start(app, p, offered, auto = false) },
                     onDismiss = dismiss,
                 )
@@ -1052,8 +1060,8 @@ private fun LiveWordsCard(
         }
         PreviewAutoFetch.Card.INSTALLED -> LiveWordsNote(
             title = StreamingPackCopy.CARD_INSTALLED_TITLE,
-            body = StreamingPackCopy.CARD_INSTALLED,
-            note = null,
+            body = StreamingPackCopy.cardInstalled(languageName),
+            note = StreamingPackCopy.cardLanguageNote(languageName),
             action = null,
             onAction = {},
             onDismiss = dismiss,
@@ -1311,9 +1319,10 @@ fun LanguageSelectionCard() {
     val selectedLanguage by app.preferencesManager.selectedLanguage.collectAsState()
     var expanded by remember { mutableStateOf(false) }
 
-    // Find the display name for the current selection
-    val selectedDisplayName = PreferencesManager.SUPPORTED_LANGUAGES
-        .find { it.first == selectedLanguage }?.second ?: "Auto-detect"
+    // Find the display name for the current selection — through the one owner of code-to-word
+    // (4.4.1), so this field and the live-words card cannot name the same language differently.
+    val selectedDisplayName =
+        PreferencesManager.languageDisplayName(selectedLanguage) ?: "Auto-detect"
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1418,6 +1427,18 @@ fun LanguageSelectionCard() {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "Whisper will automatically detect the spoken language",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                // ...and what that costs (owner ruling 1, 2026-09-11): *"if they leave it in
+                // auto, then you get no live streaming at all. And that will seem to be a very
+                // fair trade-off."* A trade the user is never told about is not a trade, and this
+                // is the one surface where they are standing on the Auto side of it — there is no
+                // card on Auto, by design. The sentence is the previewer's own, from the file
+                // that owns every word of it.
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = StreamingPackCopy.AUTO_NO_LIVE_WORDS,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

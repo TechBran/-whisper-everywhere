@@ -641,6 +641,19 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_LIVE_PREVIEW_AUTOFETCH_FAILED_AT = "live_preview_autofetch_failed_at"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
 
+        /**
+         * The picker's own display name for a language code, or null for a code it does not
+         * offer — the ONE place a code becomes a word (4.4.1 acquisition amendment).
+         *
+         * The previewer's copy is parameterised by language, so something has to turn `"en"` into
+         * "English", and [SUPPORTED_LANGUAGES] is already the app's single answer to that: the
+         * Settings picker renders from it, the onboarding step's rows are a permutation of it
+         * ([com.whispereverywhere.ui.onboarding.OnboardingLogic.languageRows]), and a second
+         * table would let a card and a picker name the same language differently.
+         */
+        fun languageDisplayName(code: String): String? =
+            SUPPORTED_LANGUAGES.firstOrNull { it.first == code }?.second
+
         // Whisper API supported languages with display names
         // See: https://platform.openai.com/docs/guides/speech-to-text/supported-languages
         val SUPPORTED_LANGUAGES = listOf(
