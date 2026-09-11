@@ -183,15 +183,31 @@ class LocalPreviewWiringPinTest {
                 "in place and warmed nothing for it",
             1, count(text, "selectedLanguage.drop(1)"),
         )
-        val guard = indexOfOrFail(
-            text,
-            "                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) return@collect\n",
-        )
+        val skip =
+            "                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) return@collect\n"
+        val resident = "                if (streamingPreview == null) return@collect\n"
+        // (fix round 1, H-B1) The skip is read TWICE, and the second read is the one that makes
+        // the release safe: the first was taken above `withContext`, i.e. before the collector's
+        // only suspension point, and across that window a session can have started and BORROWED
+        // this recognizer. Same defect, same fix, as the model-switch collector's "THE GATE,
+        // RE-READ BELOW THE SUSPENSION" 50 lines below.
+        assertEquals("the mid-session skip is read twice, not once", 2, count(text, skip))
+        assertEquals("and so is the resident check it travels with", 2, count(text, resident))
+        val guard = indexOfOrFail(text, skip)
         val condition = indexOfOrFail(text, "                val keep = withContext(Dispatchers.IO) {\n")
+        val reRead = text.indexOf(skip, condition)
+        val reReadResident = text.indexOf(resident, condition)
+        val keepCheck = indexOfOrFail(text, "                if (keep != null) return@collect\n")
         val release = text.indexOf("                streamingPreview?.release()\n")
         assertTrue("the mid-session skip comes FIRST: the tee BORROWS this recognizer", collector < guard)
         assertTrue("then the condition", guard < condition)
-        assertTrue("and only then the release", condition in 0 until release)
+        assertTrue("the skip is RE-READ below the suspension", condition < reRead)
+        assertTrue("with the resident check", reRead < reReadResident)
+        assertTrue(
+            "and nothing between that re-read and the release suspends — the keep test is " +
+                "already in hand, Log.i and release() are ordinary calls",
+            reReadResident < keepCheck && keepCheck in 0 until release,
+        )
         assertEquals(
             "the condition is previewPackToWarm's own answer, never a second language " +
                 "comparison — a release that disagreed with the warm would thrash the load",

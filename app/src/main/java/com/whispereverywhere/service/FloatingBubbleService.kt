@@ -1053,6 +1053,19 @@ class FloatingBubbleService : Service(),
                         userEnabled = app.preferencesManager.localPreviewEnabled,
                     )
                 }
+                // THE SKIP, RE-READ BELOW THE SUSPENSION (pass 3 fix round 1, H-B1) — the
+                // model-switch collector's own lesson 50 lines below, for the identical shape.
+                // The check at the top of this block was taken before the census hopped to IO and
+                // back, so by here it is stale: across that window the user can re-pick the
+                // pack's language AND start a session, which finds the pack installed and
+                // isWarm() true, arms, and lets PreviewTeeEngine BORROW this recognizer — and the
+                // stale body would then free it under that live session, leaving the strip up with
+                // nothing left to draw on. This read is what makes the release below safe, and it
+                // is safe *because* nothing between it and the release suspends: currentState is
+                // Main-confined with one writer, `keep` is already in hand, and Log.i and
+                // release() are ordinary calls. One uninterrupted run on Main.
+                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) return@collect
+                if (streamingPreview == null) return@collect
                 if (keep != null) return@collect
                 android.util.Log.i(
                     "WE-DIAG",
