@@ -911,6 +911,10 @@ private fun LiveWordsCard(
         PreviewAutoFetch.card(
             installed = packState.isInstalled,
             userSaidNo = saidNo,
+            // The switch silences the card as well as the fetch: with it off there is no true
+            // sentence left for this card to spell, least of all "Live words are on" over an
+            // install that landed before it was turned off (review r1, B2).
+            showLiveWords = showLiveWords,
             workInFlight = working || StreamingPackInstall.fetchInFlight(previewFetch),
             decision = decision,
         )

@@ -159,6 +159,12 @@ class LiveWordsCardPinTest {
             1, liveLineCount(card, "localPreviewEnabledFlow"),
         )
         assertEquals(
+            "and it reaches the CARD as well as the decision — twice, once each: with live " +
+                "words off there is no true sentence left to spell, least of all \"Live words " +
+                "are on\" over an install that landed before the switch did (review r1, B2)",
+            2, liveLineCount(card, "showLiveWords = showLiveWords"),
+        )
+        assertEquals(
             "and the previewer's session gate is NOT re-derived here — the owner tests on Auto " +
                 "deliberately and the gate is unchanged (4.4.1 brief, §3)",
             0, liveLineCount(home, "localPreviewArms"),

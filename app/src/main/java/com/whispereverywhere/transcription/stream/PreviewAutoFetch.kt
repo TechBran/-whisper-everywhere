@@ -200,7 +200,7 @@ object PreviewAutoFetch {
     }
 
     /**
-     * WHAT THE CARD SHOWS, as a total mapping of the four things Home knows. Pure for the reason
+     * WHAT THE CARD SHOWS, as a total mapping of the five things Home knows. Pure for the reason
      * every card rule in this app is pure (`CloudKeyNote.shouldShow` is the precedent): a
      * conjunction inside a composable is a rule no test can reach.
      *
@@ -209,12 +209,21 @@ object PreviewAutoFetch {
      * outrank [workInFlight] as well as [decision]: a user who dismissed this card and then
      * installed the model from the Settings row must not have it reappear as a progress card.
      *
+     * [showLiveWords] is answered second and just as absolutely (review r1, B2). It is NOT the
+     * same gesture as the X or the delete — a user who turned the switch off has not declined the
+     * card, and [decide] deliberately leaves [userSaidNo] unwritten for it — but every sentence
+     * this card can spell is false while the switch is off: "Live words are on" most of all, on
+     * an install that landed from the Settings row (a 4.4.0 user upgrading) or from the
+     * auto-fetch before the switch was turned off. A card that cannot say anything true says
+     * nothing, and the Settings switch is where that decision was made and can be unmade.
+     *
      * [installed] then wins over any work in flight: a landed install is what the user has, and a
      * stale "arriving…" line over a working model is a lie they cannot dismiss (the fetch line's
      * own rule, `StreamingPackCopyTest`).
      *
      * @param installed `StreamingPackState.isInstalled`.
      * @param userSaidNo the same persisted flag [decide] reads.
+     * @param showLiveWords the same switch [decide] reads (`PreferencesManager.localPreviewEnabled`).
      * @param workInFlight a fetch or install is running: `StreamingPackInstall.fetchInFlight` of
      *        the Play shell's state, or our own progress line being non-null.
      * @param decision [decide]'s answer for this same moment — passed in rather than recomputed,
@@ -223,10 +232,12 @@ object PreviewAutoFetch {
     fun card(
         installed: Boolean,
         userSaidNo: Boolean,
+        showLiveWords: Boolean,
         workInFlight: Boolean,
         decision: Decision,
     ): Card = when {
         userSaidNo -> Card.NONE
+        !showLiveWords -> Card.NONE
         installed -> Card.INSTALLED
         workInFlight || decision == Decision.FETCH -> Card.WORKING
         decision == Decision.OFFER -> Card.OFFER

@@ -8,9 +8,9 @@ import org.junit.Test
 /**
  * The 4.4.1 auto-fetch decision and the card's state mapping, pinned EXHAUSTIVELY — every cell of
  * installed-state × user-said-no × switch × local tier × metered × session × batch × in-flight ×
- * tried-this-launch × backed-off, and every cell of the card's own four inputs.
+ * tried-this-launch × backed-off, and every cell of the card's own five inputs.
  *
- * The cross product is walked in full (7 × 2^9 = 3,584 cells for the decision, 2^3 × 3 = 24 for
+ * The cross product is walked in full (7 × 2^9 = 3,584 cells for the decision, 2^4 × 3 = 48 for
  * the card) and each cell is checked against the rules stated INDEPENDENTLY as a flat
  * conjunction — not against a copy of the implementation's `if` ladder, which would pass for any
  * ordering of it. What that catches is precisely the bug an example-based test cannot: a refusal
@@ -305,26 +305,50 @@ class PreviewAutoFetchTest {
 
     // ------------------------------------------------------------------ the card's own mapping
 
-    @Test fun theCardMappingIsTotalOverItsFourInputs() {
+    @Test fun theCardMappingIsTotalOverItsFiveInputs() {
         var cells = 0
-        for (installed in bools) for (no in bools) for (busy in bools) {
+        for (installed in bools) for (no in bools) for (sw in bools) for (busy in bools) {
             for (d in PreviewAutoFetch.Decision.entries) {
                 cells++
                 val expected = when {
                     no -> PreviewAutoFetch.Card.NONE
+                    !sw -> PreviewAutoFetch.Card.NONE
                     installed -> PreviewAutoFetch.Card.INSTALLED
                     busy || d == PreviewAutoFetch.Decision.FETCH -> PreviewAutoFetch.Card.WORKING
                     d == PreviewAutoFetch.Decision.OFFER -> PreviewAutoFetch.Card.OFFER
                     else -> PreviewAutoFetch.Card.NONE
                 }
                 assertEquals(
-                    "installed=$installed saidNo=$no inFlight=$busy decision=$d",
+                    "installed=$installed saidNo=$no switch=$sw inFlight=$busy decision=$d",
                     expected,
-                    PreviewAutoFetch.card(installed, no, busy, d),
+                    PreviewAutoFetch.card(installed, no, sw, busy, d),
                 )
             }
         }
-        assertEquals("the full product of the card's inputs", 24, cells)
+        assertEquals("the full product of the card's inputs", 48, cells)
+    }
+
+    @Test fun theSwitchBeingOffSaysNothingRatherThanSomethingUntrue() {
+        // Review r1, B2: the reachable case is an INSTALLED pack with "Show live words" off — a
+        // 4.4.0 user who installed from the Settings row and turned the switch off, upgrading;
+        // or a 4.4.1 user whose pack auto-fetched and who then turned it off. Neither wrote
+        // userSaidNo (the switch is not the X and not the delete), and "Live words are on" is
+        // flatly untrue for both. Every other state is false there too, so the card is silent.
+        for (installed in bools) for (busy in bools) {
+            for (d in PreviewAutoFetch.Decision.entries) {
+                assertEquals(
+                    "installed=$installed inFlight=$busy decision=$d",
+                    PreviewAutoFetch.Card.NONE,
+                    PreviewAutoFetch.card(
+                        installed = installed,
+                        userSaidNo = false,
+                        showLiveWords = false,
+                        workInFlight = busy,
+                        decision = d,
+                    ),
+                )
+            }
+        }
     }
 
     @Test fun aDismissedCardStaysGoneThroughEverythingElse() {
@@ -336,7 +360,13 @@ class PreviewAutoFetchTest {
                 assertEquals(
                     "installed=$installed inFlight=$busy decision=$d",
                     PreviewAutoFetch.Card.NONE,
-                    PreviewAutoFetch.card(installed, userSaidNo = true, workInFlight = busy, decision = d),
+                    PreviewAutoFetch.card(
+                        installed = installed,
+                        userSaidNo = true,
+                        showLiveWords = true,
+                        workInFlight = busy,
+                        decision = d,
+                    ),
                 )
             }
         }
@@ -349,6 +379,7 @@ class PreviewAutoFetchTest {
             PreviewAutoFetch.card(
                 installed = true,
                 userSaidNo = false,
+                showLiveWords = true,
                 workInFlight = true,
                 decision = PreviewAutoFetch.Decision.NONE,
             ),
@@ -363,6 +394,7 @@ class PreviewAutoFetchTest {
             PreviewAutoFetch.card(
                 installed = false,
                 userSaidNo = false,
+                showLiveWords = true,
                 workInFlight = false,
                 decision = PreviewAutoFetch.Decision.FETCH,
             ),
@@ -375,6 +407,7 @@ class PreviewAutoFetchTest {
             PreviewAutoFetch.card(
                 installed = false,
                 userSaidNo = false,
+                showLiveWords = true,
                 workInFlight = false,
                 decision = PreviewAutoFetch.Decision.OFFER,
             ),
@@ -384,6 +417,7 @@ class PreviewAutoFetchTest {
             PreviewAutoFetch.card(
                 installed = false,
                 userSaidNo = false,
+                showLiveWords = true,
                 workInFlight = false,
                 decision = PreviewAutoFetch.Decision.NONE,
             ),
@@ -397,7 +431,13 @@ class PreviewAutoFetchTest {
         assertEquals(PreviewAutoFetch.Decision.FETCH, d)
         assertEquals(
             PreviewAutoFetch.Card.WORKING,
-            PreviewAutoFetch.card(installed = false, userSaidNo = false, workInFlight = false, decision = d),
+            PreviewAutoFetch.card(
+                installed = false,
+                userSaidNo = false,
+                showLiveWords = true,
+                workInFlight = false,
+                decision = d,
+            ),
         )
     }
 
@@ -406,7 +446,13 @@ class PreviewAutoFetchTest {
         assertEquals(PreviewAutoFetch.Decision.OFFER, d)
         assertEquals(
             PreviewAutoFetch.Card.OFFER,
-            PreviewAutoFetch.card(installed = false, userSaidNo = false, workInFlight = false, decision = d),
+            PreviewAutoFetch.card(
+                installed = false,
+                userSaidNo = false,
+                showLiveWords = true,
+                workInFlight = false,
+                decision = d,
+            ),
         )
     }
 
@@ -415,7 +461,13 @@ class PreviewAutoFetchTest {
         assertEquals(PreviewAutoFetch.Decision.NONE, d)
         assertEquals(
             PreviewAutoFetch.Card.NONE,
-            PreviewAutoFetch.card(installed = false, userSaidNo = true, workInFlight = false, decision = d),
+            PreviewAutoFetch.card(
+                installed = false,
+                userSaidNo = true,
+                showLiveWords = true,
+                workInFlight = false,
+                decision = d,
+            ),
         )
     }
 
@@ -424,7 +476,13 @@ class PreviewAutoFetchTest {
         assertEquals(PreviewAutoFetch.Decision.NONE, d)
         assertEquals(
             PreviewAutoFetch.Card.NONE,
-            PreviewAutoFetch.card(installed = false, userSaidNo = true, workInFlight = false, decision = d),
+            PreviewAutoFetch.card(
+                installed = false,
+                userSaidNo = true,
+                showLiveWords = true,
+                workInFlight = false,
+                decision = d,
+            ),
         )
         // ...and the Settings row is untouched by all of this: its own action reads the state
         // machine, not this decision. The pin for that is LivePreviewRowsPinTest, unchanged.
@@ -439,6 +497,7 @@ class PreviewAutoFetchTest {
         val landed = PreviewAutoFetch.card(
             installed = true,
             userSaidNo = false,
+            showLiveWords = true,
             workInFlight = false,
             decision = PreviewAutoFetch.Decision.NONE,
         )
@@ -449,6 +508,7 @@ class PreviewAutoFetchTest {
             PreviewAutoFetch.card(
                 installed = true,
                 userSaidNo = true,
+                showLiveWords = true,
                 workInFlight = false,
                 decision = PreviewAutoFetch.Decision.NONE,
             ),
