@@ -73,15 +73,27 @@ class ScriptedRecognizer(
     }
 }
 
-/** A factory over one scripted recognizer, or one that throws at load. */
-class ScriptedFactory(private val recognizer: PreviewRecognizer?, private val throwAtLoad: Boolean = false) : PreviewRecognizerFactory {
+/**
+ * A factory over one scripted recognizer, or one that throws at load. [next] is returned from the
+ * SECOND load on, so a two-pack sequence gets two distinguishable recognizers — without it a
+ * language switch would hand back the same object and no test could tell a reload from a
+ * short-circuit. [packs] records what each load was asked for, in order, which is the pack
+ * identity itself under test.
+ */
+class ScriptedFactory(
+    private val recognizer: PreviewRecognizer?,
+    private val throwAtLoad: Boolean = false,
+    private val next: PreviewRecognizer? = null,
+) : PreviewRecognizerFactory {
     var loads = 0
     var lastThreads = -1
+    val packs = mutableListOf<StreamingPack>()
     override fun load(dir: java.io.File, pack: StreamingPack, numThreads: Int): PreviewRecognizer {
         loads++
         lastThreads = numThreads
+        packs += pack
         if (throwAtLoad) throw IllegalStateException("scripted load failure")
-        return requireNotNull(recognizer)
+        return if (loads > 1 && next != null) next else requireNotNull(recognizer)
     }
     override fun sherpaVersion(): String = "1.13.7"
     override fun ortVersion(): String = "1.27.1"

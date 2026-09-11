@@ -56,7 +56,14 @@ interface LocalPreview {
 class StreamingPreviewEngine(
     private val factory: PreviewRecognizerFactory,
     private val canaryClip: () -> FloatArray?,
-    private val onLoadFailure: () -> Unit = {},
+    /**
+     * The pack whose LOAD threw, handed over rather than looked up. 4.4.0's hook took no argument
+     * and the service read a field for it — a field Main writes when the SELECTION moves, so with
+     * two packs a switch to B while A was still loading marked **B** corrupt for **A**'s failure,
+     * deleting a healthy pack's marker and leaving the broken one installed. The engine's own task
+     * closes over the pack it was asked for; nothing else can be stale.
+     */
+    private val onLoadFailure: (StreamingPack) -> Unit = {},
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "stream-preview").apply { isDaemon = true }
     },
@@ -76,16 +83,18 @@ class StreamingPreviewEngine(
     @Volatile private var warm = false
 
     /**
-     * The pack the resident [recognizer] was loaded for, or null when none is resident.
+     * The pack the resident [recognizer] was loaded for, or null when none is resident. **The
+     * engine's identity**: [warm] is idempotent on THIS, and everything per-pack that the loop
+     * applies is read off it — the commit pad ([StreamingPack.padMs], derived from the pack's own
+     * `T`) and the strip's text rules (its fold, its locale).
      *
-     * **Every per-pack number the loop needs comes from here** — today the commit pad
-     * ([StreamingPack.padMs], derived from the pack's own `T`), which is why this field exists in
-     * the pad's own commit rather than later: a pad read from a process-wide constant is the
-     * silent defect, and a pad read from "the pack Main happens to be holding" is the same defect
-     * wearing the fix's clothes.
+     * It is assigned only under the canary's Pass, beside [recognizer], and cleared only by
+     * [releaseResident], beside it. A pad or a fold read from a process-wide constant is the
+     * silent defect; one read from "the pack Main happens to be holding right now" is the same
+     * defect wearing the fix's clothes, which is why the engine keeps its own answer.
      *
-     * `@Volatile` because [padSamples] and the timing line run on the executor while `warm`'s
-     * caller may read the engine from Main.
+     * `@Volatile` because the pad and the timing line run on the executor while `warm`'s caller
+     * may read the engine from Main.
      */
     @Volatile private var loadedPack: StreamingPack? = null
 
@@ -121,19 +130,37 @@ class StreamingPreviewEngine(
 
     fun isWarm(): Boolean = warm && !disabled
 
-    /** Load + canary on the executor. Idempotent; a no-op once disabled. */
+    /**
+     * Load + canary on the executor, for THIS pack. A no-op once disabled.
+     *
+     * **Idempotent on the PACK, not on the engine — that is the fix.** 4.4.0 returned early on
+     * `recognizer != null` and never looked at which pack the resident recognizer was for, so
+     * `warm(dirB, packB)` over a resident pack A loaded NOTHING and left A's model decoding B's
+     * speech behind a gate that logged `preview=1` and a diag that said the previewer was warm.
+     * That is a wrong-language strip with every honest signal reading green, and with one
+     * catalogue row it was unreachable and invisible.
+     *
+     * A DIFFERENT pack now releases the resident recognizer first and loads the new one. Both
+     * halves run in this one task on the single executor thread, so no caller has to sequence them
+     * and no window exists where the engine holds A while claiming B.
+     */
     fun warm(packDir: File, pack: StreamingPack) {
         if (disabled) return
         executor.execute {
             applyPriorityOnce()
-            if (recognizer != null || disabled) return@execute
+            if (disabled) return@execute
+            // The resident recognizer already IS this pack's: nothing to do, and nothing to free.
+            if (recognizer != null && loadedPack == pack) return@execute
+            // A different pack. Free the old model before the new one allocates — 802-860 ms and
+            // ~169 MB per load, and two resident recognizers is a shape nothing here allows.
+            if (recognizer != null) releaseResident()
             val t0 = nanoClock()
             val rec = try {
                 factory.load(packDir, pack, StreamingPreviewTuning.NUM_THREADS)
             } catch (t: Throwable) {
                 disabled = true
                 log(StreamDiag.openLine(factory.sherpaVersion(), factory.ortVersion(), StreamingPreviewTuning.NUM_THREADS, msSince(t0), "skipped", 0L, 0, "fail"))
-                onLoadFailure()
+                onLoadFailure(pack)
                 return@execute
             }
             val loadMs = msSince(t0)
@@ -189,6 +216,9 @@ class StreamingPreviewEngine(
             }
             drain()   // everything that arrived before the cut is fed first
             val open = stream
+            // Read BEFORE the freeze: the freeze's own third strike drops the resident pack, and
+            // the line must report the pad the stream actually received, not the fallback.
+            val padMs = padMs()
             val frozen = if (open == null || disabled) "" else freeze(rec, open, retainMs)
             // audio= is the NEW audio this segment carried, never the tail the previous commit
             // re-fed (that is [streamBytes]) — otherwise rtf='s denominator is inflated and
@@ -200,7 +230,7 @@ class StreamingPreviewEngine(
                 StreamDiag.timingLine(
                     seq, audioMs, segment.decodes, segment.decodeUs / 1000L, segment.p50Us(), segment.p99Us(),
                     StreamDiag.rtf(segment.decodeUs / 1000L, audioMs), segment.partials, segment.firstPartialMs,
-                    padMs(), shedThisSegment, segment.retractions,
+                    padMs, shedThisSegment, segment.retractions,
                 ),
             )
             onFrozen(seq, frozen)
@@ -238,16 +268,29 @@ class StreamingPreviewEngine(
     /** Frees the recognizer (onTrimMemory / onDestroy). Not a verdict: a later [warm] reloads. */
     fun release() {
         onPartial = null
-        executor.execute {
-            stream?.let { runCatching { it.release() } }
-            stream = null
-            recognizer?.let { runCatching { it.release() } }
-            recognizer = null
-            warm = false
-            queue.clear()
-            ring.clear()
-            resetSegment()
-        }
+        executor.execute { releaseResident() }
+    }
+
+    /**
+     * Frees the resident recognizer and everything hanging off it, and forgets WHICH pack it was.
+     *
+     * The one body behind [release] and behind [warm]'s swap, so a language change and a trim free
+     * exactly the same things. Clearing [loadedPack] is what makes re-warming the SAME pack after
+     * a trim take the load path rather than the identity short-circuit: the pack is no longer
+     * resident, so it is no longer the pack `warm` can skip for.
+     *
+     * NOT a verdict — `disabled` is untouched, by the same rule [release] has always followed.
+     */
+    private fun releaseResident() {
+        stream?.let { runCatching { it.release() } }
+        stream = null
+        recognizer?.let { runCatching { it.release() } }
+        recognizer = null
+        loadedPack = null
+        warm = false
+        queue.clear()
+        ring.clear()
+        resetSegment()
     }
 
     // ------------------------------------------------------------------ executor-side internals
@@ -401,6 +444,9 @@ class StreamingPreviewEngine(
             stream = null
             runCatching { rec.release() }
             recognizer = null
+            // The identity goes with the recognizer — a later warm of this same pack must take the
+            // load path, not the "already resident" short-circuit, and find `disabled` instead.
+            loadedPack = null
             queue.clear()
             emit("")
         }

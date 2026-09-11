@@ -608,13 +608,19 @@ class FloatingBubbleService : Service(),
     // PreviewTeeEngine, never owned by it, which is why every release site skips mid-session.
     private var streamingPreview: com.whispereverywhere.transcription.stream.StreamingPreviewEngine? = null
 
-    // (4.4.1, CHANGE 5) WHICH pack the resident previewer above holds — ONE PACK PER PROCESS, the
-    // invariant the multilingual build inherits. The engine's warm() is idempotent on the ENGINE
-    // (`if (recognizer != null || disabled) return`), not on the pack, so without this field a
-    // second language would paint the OLD language's model behind the NEW language's gate while
-    // the diag still logged a warm previewer. Written on Main beside `streamingPreview`; read from
-    // the engine's executor thread by the load-failure hook, which must mark the pack whose load
-    // actually failed — hence @Volatile.
+    // (4.4.1, CHANGE 5) WHICH pack the resident previewer above holds — ONE PACK PER PROCESS.
+    //
+    // (4.5.0 T2, defect 1) It is no longer the mechanism for that invariant: the ENGINE now
+    // carries its own pack identity, warm() is idempotent on the PACK rather than on the engine,
+    // and a different pack releases the old recognizer inside the engine's own task. What this
+    // field still does is let Main SKIP posting a release it knows is unnecessary, which is what
+    // keeps the release collector's "re-pick the language you just left" path from releasing an
+    // already-released engine. It is Main's cache of the engine's answer, not the answer.
+    //
+    // No longer read from the engine's executor thread — the load-failure hook is handed the pack
+    // that failed (4.4.1's read of this field marked B corrupt for A's failure whenever the
+    // selection moved during a load) — but @Volatile stays: the cost is nothing and the field is
+    // written on Main while the engine it describes lives on another thread.
     @Volatile private var streamingPreviewPack: com.whispereverywhere.transcription.stream.StreamingPack? = null
 
     // WHICH npu-class tier [localEngine] was built on, or null for the shared CPU backend
@@ -3165,30 +3171,37 @@ class FloatingBubbleService : Service(),
      *
      * **(4.4.1, CHANGE 5) WHICH pack is the caller's decision, and [previewPackToWarm] is the one
      * that makes it** — the same lookup the gate takes, so this never loads a model the gate will
-     * refuse. This function's own job is the process-wide invariant behind that: one pack at a
-     * time, and a change of language RELEASES before it warms, because the engine's idempotence
-     * is on the engine and not on the pack.
+     * refuse.
+     *
+     * **(4.5.0 T2, defect 1) The one-pack-per-process invariant is the ENGINE's now**, not this
+     * function's: `warm` is idempotent on the PACK, and a different pack releases the resident
+     * recognizer inside the engine's own task before it loads. The release below is therefore a
+     * skip, not a mechanism — it spares Main a posted task when the pack has not moved — and it is
+     * what keeps `streamingPreviewPack` honest for the release collector. If the two ever
+     * disagree, the engine wins, by construction: it is the only one holding the recognizer.
      */
     private fun warmStreamingPreview(
         pack: com.whispereverywhere.transcription.stream.StreamingPack,
     ): com.whispereverywhere.transcription.stream.StreamingPreviewEngine? {
         val dir = app.streamingPackManager.installedDir(pack) ?: return null
         val resident = streamingPreview
-        // A DIFFERENT pack than the resident one: free the old recognizer first, or warm() sees a
-        // non-null recognizer and returns having loaded nothing — the old language's model then
-        // decodes the new language's speech behind a gate that says yes. release() is not a
-        // verdict (`disabled` is untouched) and both it and the reload are posted to the engine's
-        // own single-thread executor, so they run in this order. Unreachable with one catalogue
-        // row; stated and pinned now so the multilingual build inherits a contract, not a
-        // surprise.
+        // A DIFFERENT pack than the one Main last asked for: post the release. The engine would
+        // do this itself — its warm() releases a resident recognizer whose pack is not the one
+        // being warmed — so this is an early, cheap agreement with it and never a second opinion:
+        // release() is not a verdict (`disabled` is untouched) and both it and the reload land on
+        // the engine's own single-thread executor in this order. Unreachable with one catalogue
+        // row.
         if (resident != null && streamingPreviewPack != pack) resident.release()
         val engine = resident ?: com.whispereverywhere.transcription.stream.StreamingPreviewEngine(
             factory = com.whispereverywhere.transcription.stream.SherpaPreviewRecognizerFactory(),
             canaryClip = { com.whispereverywhere.transcription.CanaryAudio.samples() },
-            // The pack whose load actually failed — read from the field, never captured from this
-            // call: the engine is built once and outlives any one language, so a closure over
-            // `pack` here would mark ENGLISH corrupt for a Spanish load failure.
-            onLoadFailure = { streamingPreviewPack?.let { failed -> app.streamingPackManager.markCorrupt(failed) } },
+            // The pack whose load actually failed, HANDED OVER by the engine. Neither a closure
+            // over `pack` (the engine is built once and outlives any one language, so that would
+            // mark ENGLISH corrupt for a Spanish failure) nor a read of `streamingPreviewPack`
+            // (Main writes that field when the SELECTION moves, so a switch to B while A is still
+            // loading marked B corrupt for A's failure — deleting a healthy marker and leaving the
+            // broken pack installed). The engine's own load task is the only place that knows.
+            onLoadFailure = { failed -> app.streamingPackManager.markCorrupt(failed) },
         ).also { streamingPreview = it }
         streamingPreviewPack = pack
         engine.warm(dir, pack)

@@ -48,7 +48,7 @@ class StreamingPreviewEngineTest {
         clip: FloatArray? = FloatArray(40_960),
         factory: PreviewRecognizerFactory = ScriptedFactory(rec),
         capacity: Int = StreamingPreviewTuning.QUEUE_CAPACITY,
-        onLoadFailure: () -> Unit = {},
+        onLoadFailure: (StreamingPack) -> Unit = {},
     ) = StreamingPreviewEngine(
         factory = factory, canaryClip = { clip }, onLoadFailure = onLoadFailure, executor = executor,
         clock = { now }, nanoClock = { 0L }, queueCapacity = capacity, log = { logs += it }, enterExecutorThread = {},
@@ -107,13 +107,69 @@ class StreamingPreviewEngineTest {
         assertTrue(logs.single().contains(" canary=none canaryMs=0 outLen=0 load=ok"))
     }
 
-    @Test fun aLoadFailureDisablesAndReportsTheCorruption() {
-        var corrupt = 0
-        val e = engine(null, factory = ScriptedFactory(null, throwAtLoad = true), onLoadFailure = { corrupt++ })
-        e.warm(dir, pack)
+    @Test fun aLoadFailureDisablesAndReportsTheCorruptionAgainstThePackThatFAILED() {
+        val corrupt = mutableListOf<StreamingPack>()
+        val other = pack.copy(language = "xx", dirName = "xx-test", packName = "preview_xx")
+        val e = engine(null, factory = ScriptedFactory(null, throwAtLoad = true), onLoadFailure = { corrupt += it })
+        e.warm(dir, other)
         assertTrue(e.disabled)
-        assertEquals(1, corrupt)
+        // The pack this call was made with — not the engine's last one, and not a field some other
+        // thread may have moved since. 4.4.0's hook took no argument and the service read
+        // `streamingPreviewPack`, which Main writes when the SELECTION moves: a switch to B during
+        // A's load marked B corrupt for A's failure, deleting a healthy marker and leaving the
+        // broken pack installed.
+        assertEquals(listOf(other), corrupt)
         assertTrue(logs.single().endsWith(" canary=skipped canaryMs=0 outLen=0 load=fail"))
+    }
+
+    // ------------------------------------------------------------- pack identity (T2, defect 1)
+
+    @Test fun warmingTheSamePackTwiceLoadsOnceAndWarmingADIFFERENTPackSwapsTheModel() {
+        // 4.4.0 returned early on `recognizer != null` and never looked at WHICH pack was
+        // resident, so this second warm loaded nothing and left English's model decoding the new
+        // language's speech — behind a gate logging preview=1 and a diag saying "warm". A
+        // wrong-language strip with every honest signal green.
+        val first = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
+        val second = ScriptedRecognizer(listOf("BONJOUR"), canaryText = CANARY)
+        val factory = ScriptedFactory(first, next = second)
+        val fr = pack.copy(language = "fr", dirName = "fr-2023-04-14", packName = "preview_fr", modelType = "zipformer", encoderT = 39)
+        val e = engine(first, factory = factory)
+
+        e.warm(dir, pack)
+        e.warm(dir, pack)
+        assertEquals("the same pack twice is ONE load", 1, factory.loads)
+        assertFalse("and the first recognizer is still the resident one", first.released)
+
+        e.warm(dir, fr)
+        assertEquals("a different pack loads", 2, factory.loads)
+        assertEquals("in the order asked", listOf(pack, fr), factory.packs)
+        assertTrue("and the old model is freed before the new one allocates", first.released)
+        assertFalse(second.released)
+        assertTrue(e.isWarm())
+
+        // And the swap moved the per-pack rules with it: fr is T = 39, whose pad is the measured
+        // floor rather than 500-by-coincidence — the point being that the LOADED pack decides.
+        e.open { emitted += it }
+        feedMs(e, 1_024)
+        e.commit(0L, 0L) { _, _ -> }
+        assertEquals("bonjour", emitted.last())
+        assertTrue(logs.last().contains(" padMs=500 "))
+    }
+
+    @Test fun aReleasedEngineReloadsTheSamePackRatherThanShortCircuitingOnIt() {
+        // The identity is "what is RESIDENT", not "what was last asked for": onTrimMemory frees
+        // the recognizer, and re-picking that same language must load again. (This is the exact
+        // path the release collector leaves behind — it deliberately does not clear Main's cache
+        // of the pack, so the engine's own answer is the one that has to be right.)
+        val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
+        val factory = ScriptedFactory(rec, next = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY))
+        val e = engine(rec, factory = factory)
+        e.warm(dir, pack)
+        e.release()
+        assertFalse(e.isWarm())
+        e.warm(dir, pack)
+        assertEquals("released is not resident", 2, factory.loads)
+        assertTrue(e.isWarm())
     }
 
     // ------------------------------------------------------------- the feed and the partials

@@ -275,19 +275,32 @@ class LocalPreviewWiringPinTest {
 
     @Test
     fun onePackPerProcess_aLanguageChangeReleasesBeforeItWarms() {
-        // CHANGE 5's second bullet, as the stated invariant the multilingual build inherits:
-        // StreamingPreviewEngine.warm is idempotent on the ENGINE (`recognizer != null`), not on
-        // the pack, so warming a DIFFERENT pack must release first or the old language's model
-        // decodes the new language's speech behind a gate that says yes. And the corrupt marker
-        // follows the pack whose load FAILED, read from the field — a closure over the pack this
+        // (4.5.0 T2, defect 1) The invariant is the ENGINE's now — `warm` is idempotent on the
+        // PACK and releases a resident recognizer whose pack is not the one being warmed, pinned
+        // behaviourally in StreamingPreviewEngineTest. What is pinned HERE is that Main's copy of
+        // the decision still agrees with it and is still written in exactly one place: two
+        // disagreeing answers to "which pack is resident" is the shape Task 1 spent three rounds
+        // retiring, and this field is a cache of the engine's answer, never a second one.
+        //
+        // The corrupt marker follows the pack whose load FAILED, and the engine HANDS IT OVER.
+        // 4.4.1 read `streamingPreviewPack` for it — a field Main writes when the selection moves,
+        // so a switch to B during A's load marked B corrupt for A's failure, deleting a healthy
+        // marker and leaving the broken pack installed. A closure over the pack this — a closure over the pack this
         // call was made with would mark English corrupt for a Spanish failure.
         assertEquals(1, count(text, "if (resident != null && streamingPreviewPack != pack) resident.release()"))
         assertEquals(1, count(text, "        streamingPreviewPack = pack\n"))
         assertEquals(
+            "the hook marks the pack the ENGINE named, and nothing else",
             1,
-            count(text, "onLoadFailure = { streamingPreviewPack?.let { failed -> app.streamingPackManager.markCorrupt(failed) } },"),
+            count(text, "onLoadFailure = { failed -> app.streamingPackManager.markCorrupt(failed) },"),
         )
-        assertEquals("and the field is written in exactly that one place", 1, count(text, "streamingPreviewPack = "))
+        assertEquals(
+            "and the field is no longer read by the hook — a read there is the stale-pack defect " +
+                "coming back, and it compiles clean",
+            0,
+            count(text, "onLoadFailure = { streamingPreviewPack"),
+        )
+        assertEquals("the field is written in exactly that one place", 1, count(text, "streamingPreviewPack = "))
     }
 
     @Test
