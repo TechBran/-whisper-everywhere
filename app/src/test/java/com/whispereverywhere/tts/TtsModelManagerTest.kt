@@ -365,6 +365,55 @@ class TtsModelManagerTest {
     }
 
     @Test
+    fun theInFlightVoiceRowOffersNoTapThatCouldDuplicateTheInstall() {
+        // Fix round 1, B1. The row renders fetchLine for every state a fetch passes through, so
+        // "the row has a line" is NOT "the row has something to do". A tap while the delivered
+        // pack is being extracted re-enters the row's one action, whose route is still FromPack —
+        // a second installFromPack into the same temp dir, and (before the manager's lock) a
+        // truncated model.onnx under a valid .installed marker.
+        val every = listOf(
+            NpuPackFetch.FetchState.Idle,
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.FetchState.Downloading(1L, 349_906_910L),
+            NpuPackFetch.FetchState.Transferring,
+            NpuPackFetch.FetchState.Verifying(0L, 349_906_910L),
+            NpuPackFetch.FetchState.NeedsConfirmation,
+            NpuPackFetch.FetchState.Installed,
+            NpuPackFetch.FetchState.Cancelled,
+            NpuPackFetch.FetchState.Failed("no."),
+        )
+        assertEquals(
+            "exactly two states answer a tap: the terminal Failed the retry exists for, and the " +
+                "NeedsConfirmation whose tap re-shows PLAY'S own dialog and starts nothing of ours",
+            listOf<NpuPackFetch.FetchState>(
+                NpuPackFetch.FetchState.NeedsConfirmation,
+                NpuPackFetch.FetchState.Failed("no."),
+            ),
+            every.filter { TtsModelManager.fetchLineTappable(it) },
+        )
+        for (state in every) {
+            if (state is NpuPackFetch.FetchState.NeedsConfirmation) continue
+            if (!StreamingPackInstall.fetchInFlight(state)) continue
+            assertFalse(
+                "$state is work in flight — Play's or ours — so a tap on it could only " +
+                    "duplicate that work",
+                TtsModelManager.fetchLineTappable(state),
+            )
+        }
+        // And the two halves agree about what the row is for: every state that speaks a line and
+        // refuses the tap is an in-flight one, so no TERMINAL state is left unreachable (a Failed
+        // whose retry is unclickable is a dead end the user cannot leave without quitting).
+        for (state in every) {
+            if (TtsModelManager.fetchLine(state) == null) continue
+            if (TtsModelManager.fetchLineTappable(state)) continue
+            assertTrue(
+                "$state speaks a line and refuses the tap, so it must be in flight",
+                StreamingPackInstall.fetchInFlight(state),
+            )
+        }
+    }
+
+    @Test
     fun aRepairTakesTheSameRouteAFirstInstallWouldHaveTaken() {
         for (via in listOf(
             StreamingPackState.PackDelivered,

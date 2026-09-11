@@ -180,7 +180,15 @@ fun SettingsScreen(
     // voiceRoute to Download, so a "Retry" that always re-asked Play would keep failing under a
     // sentence promising the direct download instead. The SOURCE decision is installRoute's
     // (pure, total over StreamingPackState); these are only the four actuators.
-    val startVoiceInstall: () -> Unit = {
+    val startVoiceInstall: () -> Unit = start@{
+        // (fix round 1, B1) Refused while the fetch SHELL is working — read at TAP time, not at
+        // composition time, so no row can be left permanently dead by a state change that
+        // scheduled no recomposition. voiceRoute is still FromPack while the shell extracts the
+        // delivered pack, so without this a tap on the offer row (reachable after cancel(),
+        // whose Cancelled publishes at once while the extract runs on) would start a second
+        // install of the same archive. The manager serializes them regardless; doing nothing is
+        // the honest answer to a tap the row cannot serve.
+        if (com.whispereverywhere.tts.TtsPackController.isBusy()) return@start
         when (voiceRoute) {
             VoiceInstallRoute.None -> Unit
             VoiceInstallRoute.Fetch -> {
@@ -574,21 +582,31 @@ fun SettingsScreen(
                     // that promised the direct download delivers it; a NeedsConfirmation tap
                     // re-shows PLAY'S own dialog, never a re-ask of ours.
                     voiceFetchLine != null -> {
+                        // (fix round 1, B1) …and it is TAPPABLE only where a tap does something:
+                        // the terminal Failed the retry is for, and the NeedsConfirmation that
+                        // answers Play. This branch is entered for every in-flight state too, and
+                        // SettingsItem wraps itself in Modifier.clickable whenever it is handed an
+                        // onClick — so one tap during the ~30 s extract used to start a SECOND
+                        // installFromPack into the same temp dir. The decision is pure and tested
+                        // (TtsModelManager.fetchLineTappable); null here means not clickable.
+                        val voiceTappable = com.whispereverywhere.tts.TtsModelManager
+                            .fetchLineTappable(voiceFetch)
+                        val voiceRowTap: () -> Unit = {
+                            val activity = context as? android.app.Activity
+                            if (voiceFetch is
+                                    com.whispereverywhere.npu.NpuPackFetch.FetchState.NeedsConfirmation &&
+                                activity != null
+                            ) {
+                                com.whispereverywhere.tts.TtsPackController.confirm(activity)
+                            } else {
+                                startVoiceInstall()
+                            }
+                        }
                         SettingsItem(
                             icon = Icons.Filled.CloudDownload,
                             title = "Read-aloud voice",
                             subtitle = voiceFetchLine,
-                            onClick = {
-                                val activity = context as? android.app.Activity
-                                if (voiceFetch is
-                                        com.whispereverywhere.npu.NpuPackFetch.FetchState.NeedsConfirmation &&
-                                    activity != null
-                                ) {
-                                    com.whispereverywhere.tts.TtsPackController.confirm(activity)
-                                } else {
-                                    startVoiceInstall()
-                                }
-                            },
+                            onClick = if (voiceTappable) voiceRowTap else null,
                         )
                     }
                     else -> {

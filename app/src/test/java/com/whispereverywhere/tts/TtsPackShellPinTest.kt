@@ -274,6 +274,62 @@ class TtsPackShellPinTest {
     }
 
     @Test
+    fun noTapOnTheInFlightRowCanStartASecondInstall() {
+        // Fix round 1, B1. Three claims, and each of them is load-bearing on its own:
+        //  1. the in-flight/refusal row asks the PURE predicate whether a tap does anything, and
+        //     hands SettingsItem a null onClick when it does not (SettingsItem wraps itself in
+        //     Modifier.clickable whenever onClick != null, so a lambda is a clickable row);
+        //  2. the row's one action refuses while the fetch SHELL is working, read at tap time;
+        //  3. the manager serializes the verify+extract+swap whatever the surfaces do.
+        assertEquals(
+            "the row does not decide tappability either — fetchLineTappable does, and it is " +
+                "total over the fetch machine",
+            1, liveLineCount(settings, ".fetchLineTappable(voiceFetch)"),
+        )
+        assertEquals(
+            "and its answer is what reaches SettingsItem: a lambda here for an in-flight state " +
+                "is a clickable row, and the tap lands on startVoiceInstall() with the route " +
+                "still FromPack — a second installFromPack into the same temp dir",
+            1, liveLineCount(settings, "onClick = if (voiceTappable) voiceRowTap else null"),
+        )
+        val action = scopeOf(settings, "val startVoiceInstall: () -> Unit", "var ttsSpeedState")
+        assertEquals(
+            "the one action refuses while the shell is working",
+            1, liveLineCount(action, "TtsPackController.isBusy()) return@start"),
+        )
+        val refused = offsetOfLive(action, "TtsPackController.isBusy()) return@start")
+        val routed = offsetOfLive(action, "when (voiceRoute) {")
+        assertTrue("the refusal must be IN the action", refused >= 0)
+        assertTrue(
+            "and it must be a GUARD: read at tap time and answered before the route is acted " +
+                "on, never a composition-time flag the row could be left dead by",
+            refused in 0 until routed,
+        )
+        val manager = source("src/main/java/com/whispereverywhere/tts/TtsModelManager.kt")
+        assertEquals(
+            "ONE lock, and it is the manager's own instance state — the manager is " +
+                "process-scoped, so one monitor covers the row, the shell's own install after a " +
+                "delivery, and onboarding's auto-setup",
+            1, liveLineCount(manager, "private val installLock = Any()"),
+        )
+        assertEquals(
+            "held around the WHOLE verify+extract+swap, inside the one function both routes " +
+                "call — around its call sites instead and the next call site added is unguarded",
+            1, liveLineCount(manager, "synchronized(installLock)"),
+        )
+        val guarded = offsetOfLive(manager, "synchronized(installLock)")
+        val extract = offsetOfLive(manager, "extractTarBz2(tar, tmp, stripLeadingComponent = true)")
+        val swap = offsetOfLive(manager, "if (!tmp.renameTo(final))")
+        assertTrue("the extract must be inside the lock", guarded in 0 until extract)
+        assertTrue(
+            "and so must the swap: extractTarBz2 opens by deleting and recreating the temp " +
+                "tree, so two of these interleaved land a truncated model.onnx under a valid " +
+                ".installed marker — an install isInstalled() calls good and TtsEngine cannot open",
+            guarded in 0 until swap,
+        )
+    }
+
+    @Test
     fun theRowAndTheFetchShellShareOneProcessScopedManager() {
         assertEquals(
             "the manager is the APPLICATION's. A per-composition TtsModelManager(context) would " +

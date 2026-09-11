@@ -85,6 +85,24 @@ class TtsModelManager(private val context: Context) {
     @Volatile
     private var playRefused = false
 
+    /**
+     * ONE INSTALL AT A TIME, whichever route it arrived by (fix round 1, B1). Both routes end in
+     * [verifyExtractInstall], which begins by deleting and recreating `filesDir/tts/<dir>.tmp`
+     * ([extractTarBz2]'s first two statements) and ends by swapping it over [finalDir] — so two
+     * of them running at once wipe each other's partial tree, and whichever renames second lands
+     * a TRUNCATED model.onnx under its own `.installed` marker. [isInstalled] then answers true
+     * and `TtsEngine` opens a corrupt 325 MB ONNX, with nothing but Delete + a 350 MB re-fetch to
+     * escape it. This manager is process-scoped (`WhisperEverywhereApp.ttsModelManager`), so one
+     * lock covers every caller: the Settings row, the fetch shell's own install after a delivery,
+     * and onboarding's auto-setup.
+     *
+     * A plain monitor rather than a `Mutex` because the guarded region is BLOCKING code with no
+     * suspension point in it (hash, extract, rename) and every caller is already on
+     * `Dispatchers.IO`: a waiter parks an IO thread for the ~30 s of an extract it would
+     * otherwise have raced, and the holder can never be suspended while holding it.
+     */
+    private val installLock = Any()
+
     /** context.filesDir/tts, created if missing. */
     fun ttsRoot(): File {
         val dir = File(context.filesDir, "tts")
@@ -290,6 +308,11 @@ class TtsModelManager(private val context: Context) {
     /**
      * sha256-gate the tar, extract to a temp dir, atomically swap into place, delete the tar.
      *
+     * SERIALIZED on [installLock] (fix round 1, B1): this is the region both routes share and the
+     * only one that writes `<dir>.tmp` and swaps it over the install, so it is the one region two
+     * callers must never be inside at once. Every present and future call site is covered by
+     * being inside this function rather than around its three call sites.
+     *
      * UNCHANGED by the 2026-09-10 amendment in everything that decides whether an archive is
      * acceptable — the ±5 % size gate, the [KNOWN_GOOD_TAR_SHA256] set, the extract, the
      * marker-last atomic swap — because ONE verification serving both arrival routes is the point:
@@ -303,29 +326,31 @@ class TtsModelManager(private val context: Context) {
      *        `StreamingPackInstall.install` takes `moveSource`.
      */
     private fun verifyExtractInstall(tar: File, ownsSource: Boolean = true) {
-        try {
-            if (!sizeWithinTolerance(tar.length())) {
-                throw TtsDownloadException("Voice archive size mismatch (${tar.length()} bytes)")
+        synchronized(installLock) {
+            try {
+                if (!sizeWithinTolerance(tar.length())) {
+                    throw TtsDownloadException("Voice archive size mismatch (${tar.length()} bytes)")
+                }
+                val actual = sha256HexFile(tar)
+                if (KNOWN_GOOD_TAR_SHA256.none { it.equals(actual, ignoreCase = true) }) {
+                    throw TtsDownloadException("Voice archive failed integrity verification")
+                }
+                val tmp = File(ttsRoot(), "$DIR_NAME.tmp")
+                extractTarBz2(tar, tmp, stripLeadingComponent = true)
+                val marker = File(tmp, ".installed")
+                marker.writeText(actual.lowercase())
+                val final = finalDir()
+                if (final.exists()) final.deleteRecursively()
+                if (!tmp.renameTo(final)) {
+                    tmp.deleteRecursively()
+                    throw TtsDownloadException("Could not finalize voice install")
+                }
+                if (ownsSource) tar.delete()
+            } catch (e: Exception) {
+                if (ownsSource) tar.delete()
+                File(ttsRoot(), "$DIR_NAME.tmp").deleteRecursively()
+                throw e
             }
-            val actual = sha256HexFile(tar)
-            if (KNOWN_GOOD_TAR_SHA256.none { it.equals(actual, ignoreCase = true) }) {
-                throw TtsDownloadException("Voice archive failed integrity verification")
-            }
-            val tmp = File(ttsRoot(), "$DIR_NAME.tmp")
-            extractTarBz2(tar, tmp, stripLeadingComponent = true)
-            val marker = File(tmp, ".installed")
-            marker.writeText(actual.lowercase())
-            val final = finalDir()
-            if (final.exists()) final.deleteRecursively()
-            if (!tmp.renameTo(final)) {
-                tmp.deleteRecursively()
-                throw TtsDownloadException("Could not finalize voice install")
-            }
-            if (ownsSource) tar.delete()
-        } catch (e: Exception) {
-            if (ownsSource) tar.delete()
-            File(ttsRoot(), "$DIR_NAME.tmp").deleteRecursively()
-            throw e
         }
     }
 
@@ -625,6 +650,41 @@ class TtsModelManager(private val context: Context) {
             is NpuPackFetch.FetchState.NeedsConfirmation ->
                 "Google Play needs your confirmation to download the voice — tap to answer."
             is NpuPackFetch.FetchState.Failed -> state.reason
+        }
+
+        /**
+         * Whether a TAP on the row showing [fetchLine] does anything — the guard that keeps the
+         * in-flight row from starting a SECOND install (fix round 1, B1).
+         *
+         * The row renders that line for every state a fetch passes through, in-flight ones
+         * included, and `SettingsItem` makes itself clickable whenever it is given an `onClick`.
+         * A tap during the ~30 s extract therefore used to re-enter the row's one action, whose
+         * route at that instant is still [VoiceInstallRoute.FromPack] — a second
+         * [installFromPack] into the same temp dir. The retry the branch was written for is the
+         * TERMINAL one: a [NpuPackFetch.FetchState.Failed] the user can act on. The one in-flight
+         * state that stays tappable is [NpuPackFetch.FetchState.NeedsConfirmation], where the tap
+         * re-shows PLAY'S OWN dialog and starts no install of ours.
+         *
+         * Total over the machine, with the three at-rest states spelled out even though they
+         * render no line at all: a state added to that machine must be answered here rather than
+         * fall through a wildcard into "tappable, mid-extract".
+         */
+        fun fetchLineTappable(state: NpuPackFetch.FetchState): Boolean = when (state) {
+            // The terminal the retry exists for, and Play's own dialog — neither is our install.
+            is NpuPackFetch.FetchState.Failed,
+            is NpuPackFetch.FetchState.NeedsConfirmation,
+            -> true
+            // Work in flight: Play's or ours. A tap here can only duplicate it.
+            is NpuPackFetch.FetchState.Pending,
+            is NpuPackFetch.FetchState.Downloading,
+            is NpuPackFetch.FetchState.Transferring,
+            is NpuPackFetch.FetchState.Verifying,
+            -> false
+            // At rest, where fetchLine is null and the row shows its own offer instead.
+            is NpuPackFetch.FetchState.Idle,
+            is NpuPackFetch.FetchState.Installed,
+            is NpuPackFetch.FetchState.Cancelled,
+            -> false
         }
 
         /** ±5% band, same policy as the whisper downloads. */
