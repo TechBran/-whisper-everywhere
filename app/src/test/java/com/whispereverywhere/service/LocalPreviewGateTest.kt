@@ -1,6 +1,7 @@
 package com.whispereverywhere.service
 
 import com.whispereverywhere.model.ModelScope
+import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -33,6 +34,14 @@ import org.junit.Test
  * which would arm Auto for eco/pro users while every surface of this release tells them Auto
  * shows none at all. The wrap site's argument is pinned by `LocalPreviewWiringPinTest`; the rows
  * below pin what the two functions answer, and that they answer different things.
+ *
+ * ### And the WARM site asks the same question (CHANGE 5)
+ *
+ * [previewPackToWarm] is the gate's twin — *"warm the pack for the selected language, or warm
+ * nothing"* — so the last section holds the two EQUAL over the same cross product rather than
+ * trusting two call sites to have been read. That equality is what hands an Auto user back the
+ * 802-860 ms load and the +169 MB RSS the old English-literal warm spent on a recognizer the
+ * gate refused.
  */
 class LocalPreviewGateTest {
 
@@ -87,7 +96,7 @@ class LocalPreviewGateTest {
         )
         assertFalse(
             "the catalogue agrees: there is nothing to fetch or arm for Auto",
-            com.whispereverywhere.transcription.stream.StreamingPackCatalog.forLanguage("auto") != null,
+            StreamingPackCatalog.forLanguage("auto") != null,
         )
     }
 
@@ -147,6 +156,59 @@ class LocalPreviewGateTest {
         assertFalse("a batch file job is running", arms("en", batch = true))
         assertFalse("the switch is off (R3 makes it default-on; off is still off)", arms("en", enabled = false))
         assertFalse("the canary failed, or the recognizer is not warm yet", arms("en", ready = false))
+    }
+
+    // --------------------------------------------------- the WARM site's gate (CHANGE 5, B2)
+
+    private fun warms(
+        lang: String?,
+        packs: Set<String> = setOf("en"),
+        enabled: Boolean = true,
+    ) = previewPackToWarm(
+        previewLanguage = lang, installedPackLanguages = packs, userEnabled = enabled,
+    )
+
+    @Test fun theWarmSiteAsksOfTheLANGUAGEExactlyWhatTheArmSiteAsks() {
+        // CONTROLLER RULING CHANGE 5: *"the warm site takes the SAME catalogue lookup as the arm
+        // site. Warm the pack for the selected language, or warm nothing."* Held as an EQUALITY
+        // over the whole cross product, so a warm site that drifts back to "is the English pack
+        // on disk" fails here rather than being caught by reading two call sites.
+        val languages = listOf(null, "auto", "en", "es", "zh")
+        val sets = listOf(emptySet<String>(), setOf("en"), setOf("es"), everyPack)
+        for (lang in languages) for (packs in sets) for (enabled in listOf(true, false)) {
+            val case = "lang=$lang installed=$packs enabled=$enabled"
+            val warm = warms(lang, packs = packs, enabled = enabled)
+            if (warm != null) assertEquals("never another language's model: $case", lang, warm.language)
+            if (lang == null || StreamingPackCatalog.forLanguage(lang) != null) {
+                // The reachable shape: `installedLanguages()` can only answer with catalogue rows,
+                // so for every language that HAS a row the two gates agree exactly.
+                assertEquals("warm == arm: $case", arms(lang, packs = packs, enabled = enabled), warm != null)
+            } else {
+                // "es" and "zh" are fabricated here (the catalogue has one row today). A set that
+                // claims them cannot make the warm invent a pack — and that is the safe direction:
+                // nothing loads, and the gate refuses anyway because nothing is warm.
+                assertNull("no catalogue row means nothing to load: $case", warm)
+            }
+        }
+    }
+
+    @Test fun autoWarmsNothingAtAll_whichIsTheLoadAndThe169MbHandedBack() {
+        // CHANGE 5's own argument: both warm sites used to ask only *is the ENGLISH pack on
+        // disk*, so a user on Auto — the owner's own habit — paid the 802-860 ms load and
+        // +169 MB RSS for a recognizer `localPreviewArms` then refused on its first conjunct.
+        // The bytes bought nothing at all.
+        assertNull(warms(null, packs = everyPack))
+        assertNull("and the raw picker code, if it ever reached here", warms("auto", packs = everyPack))
+        assertNull("the switch off is still off", warms("en", enabled = false))
+        assertNull("nothing on disk is nothing to load", warms("en", packs = emptySet()))
+    }
+
+    @Test fun theWarmedPackIsTheSelectedLanguagesOwnCatalogueRow() {
+        // Not "the first row", not "EN": the row for THIS language, so the warm can never paint
+        // one language's model behind another language's gate.
+        assertEquals(StreamingPackCatalog.EN, warms("en"))
+        assertEquals(StreamingPackCatalog.EN, warms("en", packs = everyPack))
+        assertEquals("en", warms("en", packs = everyPack)?.language)
     }
 
     // ------------------------------------------------------------------ R3, the switch's default

@@ -264,6 +264,39 @@ internal fun localPreviewArms(
         !isCloudSession && !batchJobActive && userEnabled && previewReady
 
 /**
+ * WHICH previewer pack this process should hold resident — [localPreviewArms]' twin, and the whole
+ * of CONTROLLER RULING **CHANGE 5** (2026-09-11): *"the warm site takes the SAME catalogue lookup
+ * as the arm site. Warm the pack for the selected language, or warm nothing."* Pure, so the two
+ * gates can be held equal by a test (LocalPreviewGateTest) rather than by two readings of two
+ * call sites.
+ *
+ * Until 4.4.1 both warm sites asked only *is the ENGLISH pack on disk* and never read the
+ * language, so every user whose selection is not an installed pack language — Auto above all, the
+ * owner's own habit — paid the 802-860 ms load and **+169 MB RSS** for a recognizer the gate then
+ * refused on its first conjunct. The bytes bought nothing at all. This is not a re-ruling of Auto;
+ * it is declining to pay for what Auto does not use.
+ *
+ * The three language-ish terms are exactly the arm site's: a language ([previewLanguage] — the
+ * user's selection, null on Auto), that language's pack being installed, and the switch. The
+ * session vetoes (cloud, batch) are NOT here, deliberately: a cloud session's warm is what arms
+ * the NEXT local one, and refusing to load during one would cost that session its live words.
+ * The gate's `previewReady` has no meaning here either — it is the answer this call produces.
+ *
+ * @return the pack to hand `StreamingPreviewEngine.warm`, or null to warm nothing at all. Never a
+ *   pack for a language that is not [previewLanguage]: the catalogue is asked for that language
+ *   and no other, so a warm can never load a model the gate will refuse.
+ */
+internal fun previewPackToWarm(
+    previewLanguage: String?,
+    installedPackLanguages: Set<String>,
+    userEnabled: Boolean,
+): com.whispereverywhere.transcription.stream.StreamingPack? {
+    if (!userEnabled) return null
+    if (previewLanguage == null || previewLanguage !in installedPackLanguages) return null
+    return com.whispereverywhere.transcription.stream.StreamingPackCatalog.forLanguage(previewLanguage)
+}
+
+/**
  * The states whose elapsed ticker runs (3.6.0, Workstream E4). PROCESSING kept for the legacy
  * branch that has always owned the ticker UI; FINALIZING added so the stop-tap drain counts up
  * visibly alongside the "Finishing…" status line instead of an unchanging spinner. The ticker's
@@ -563,9 +596,19 @@ class FloatingBubbleService : Service(),
 
     // 4.4.0: THE RESIDENT PREVIEWER (spec §4.1 step 1, §7.4) — the sherpa recognizer and its own
     // executor, Main-confined like localEngine. Built lazily by warmStreamingPreview() when the
-    // English pack is installed and the switch is on; released on onTrimMemory (outside a session)
-    // and onDestroy; BORROWED per session by PreviewTeeEngine, never owned by it.
+    // SELECTED language's pack is installed and the switch is on (4.4.1, CHANGE 5); released on
+    // onTrimMemory (outside a session) and onDestroy; BORROWED per session by PreviewTeeEngine,
+    // never owned by it.
     private var streamingPreview: com.whispereverywhere.transcription.stream.StreamingPreviewEngine? = null
+
+    // (4.4.1, CHANGE 5) WHICH pack the resident previewer above holds — ONE PACK PER PROCESS, the
+    // invariant the multilingual build inherits. The engine's warm() is idempotent on the ENGINE
+    // (`if (recognizer != null || disabled) return`), not on the pack, so without this field a
+    // second language would paint the OLD language's model behind the NEW language's gate while
+    // the diag still logged a warm previewer. Written on Main beside `streamingPreview`; read from
+    // the engine's executor thread by the load-failure hook, which must mark the pack whose load
+    // actually failed — hence @Volatile.
+    @Volatile private var streamingPreviewPack: com.whispereverywhere.transcription.stream.StreamingPack? = null
 
     // WHICH npu-class tier [localEngine] was built on, or null for the shared CPU backend
     // (4.0 Q9 as a Boolean; a tier ID since 4.1 L8). It cannot be asked of the engine — `backend`
@@ -959,8 +1002,14 @@ class FloatingBubbleService : Service(),
             delay(1500)
             warmLocalEngine().prewarm()
             // 4.4.0: the previewer's ~0.8 s load and its canary (spec §7.2), off the session's
-            // critical path; the pack check is inside. RULING ASSUMED (R3): the switch defaults on.
-            if (app.preferencesManager.localPreviewEnabled) warmStreamingPreview()
+            // critical path. (4.4.1, CHANGE 5) For the SELECTED language's pack and no other —
+            // the same lookup the arm site takes, so Auto warms nothing and hands back both the
+            // load and the +169 MB RSS. RULING ASSUMED (R3): the switch defaults on.
+            previewPackToWarm(
+                previewLanguage = app.preferencesManager.getLanguageForApi(),
+                installedPackLanguages = app.streamingPackManager.installedLanguages(),
+                userEnabled = app.preferencesManager.localPreviewEnabled,
+            )?.let { warmStreamingPreview(it) }
         }
 
         // Re-prewarm on model switch OR first install (3.6.0, Workstream E1). TWO triggers, ONE
@@ -3043,22 +3092,42 @@ class FloatingBubbleService : Service(),
 
     /**
      * 4.4.0: build (once) and warm the resident previewer — load + canary on its own executor —
-     * when the English pack is installed; null when it is not (the gate then says pack=0).
+     * for [pack]; null when that pack is not installed after all (the gate then says pack=0).
      * Idempotent: a warm engine's warm() is a no-op, a RELEASED one (onTrimMemory) reloads on the
      * next call — spec §4.1 step 10 — and a disabled one never reloads in this process (§7.2,
      * `disabled` survives release()). Called from the prewarm coroutine at service start and
      * again at the wrap site; the latter arms NEXT session, not this one, because warm() is
      * asynchronous and the gate reads isWarm() now — a session started under a second after the
      * service came up is exactly today's session, by design.
+     *
+     * **(4.4.1, CHANGE 5) WHICH pack is the caller's decision, and [previewPackToWarm] is the one
+     * that makes it** — the same lookup the gate takes, so this never loads a model the gate will
+     * refuse. This function's own job is the process-wide invariant behind that: one pack at a
+     * time, and a change of language RELEASES before it warms, because the engine's idempotence
+     * is on the engine and not on the pack.
      */
-    private fun warmStreamingPreview(): com.whispereverywhere.transcription.stream.StreamingPreviewEngine? {
-        val pack = com.whispereverywhere.transcription.stream.StreamingPackCatalog.EN
+    private fun warmStreamingPreview(
+        pack: com.whispereverywhere.transcription.stream.StreamingPack,
+    ): com.whispereverywhere.transcription.stream.StreamingPreviewEngine? {
         val dir = app.streamingPackManager.installedDir(pack) ?: return null
-        val engine = streamingPreview ?: com.whispereverywhere.transcription.stream.StreamingPreviewEngine(
+        val resident = streamingPreview
+        // A DIFFERENT pack than the resident one: free the old recognizer first, or warm() sees a
+        // non-null recognizer and returns having loaded nothing — the old language's model then
+        // decodes the new language's speech behind a gate that says yes. release() is not a
+        // verdict (`disabled` is untouched) and both it and the reload are posted to the engine's
+        // own single-thread executor, so they run in this order. Unreachable with one catalogue
+        // row; stated and pinned now so the multilingual build inherits a contract, not a
+        // surprise.
+        if (resident != null && streamingPreviewPack != pack) resident.release()
+        val engine = resident ?: com.whispereverywhere.transcription.stream.StreamingPreviewEngine(
             factory = com.whispereverywhere.transcription.stream.SherpaPreviewRecognizerFactory(),
             canaryClip = { com.whispereverywhere.transcription.CanaryAudio.samples() },
-            onLoadFailure = { app.streamingPackManager.markCorrupt(pack) },
+            // The pack whose load actually failed — read from the field, never captured from this
+            // call: the engine is built once and outlives any one language, so a closure over
+            // `pack` here would mark ENGLISH corrupt for a Spanish load failure.
+            onLoadFailure = { streamingPreviewPack?.let { failed -> app.streamingPackManager.markCorrupt(failed) } },
         ).also { streamingPreview = it }
+        streamingPreviewPack = pack
         engine.warm(dir, pack)
         return engine
     }
@@ -3494,19 +3563,27 @@ class FloatingBubbleService : Service(),
         // itself, so the previewer reads the selection and whisper's own resolution is untouched:
         // an Auto session on eco still TYPES English, it just shows no live words.
         val previewLanguage = selection
-        val previewPack = com.whispereverywhere.transcription.stream.StreamingPackCatalog.EN
         // (4.4.1 acquisition amendment) WHICH previewer packs are on disk, read ONCE for the gate
         // and the warm-up below: the gate's language term is now "is this session's language one
         // of these" rather than an English literal, and the set is the catalogue's own answer.
         val installedPreviewLanguages = app.streamingPackManager.installedLanguages()
-        val packInstalled = previewPack.language in installedPreviewLanguages
+        val packInstalled = previewLanguage != null && previewLanguage in installedPreviewLanguages
         val userEnabled = app.preferencesManager.localPreviewEnabled
-        // warmStreamingPreview() unconditionally when the pack and the switch allow it, not
-        // `streamingPreview ?: warm…`: after an onTrimMemory the field still holds the engine
-        // with its recognizer freed, and only a second warm() reloads it. Spec §4.1 step 10 —
-        // "the next eligible session re-warms" — is that call. It is a no-op when the engine is
-        // already warm or permanently disabled, so the cost here is one executor post.
-        val preview = if (packInstalled && userEnabled) warmStreamingPreview() else streamingPreview
+        // (4.4.1, CHANGE 5) The warm site takes the SAME lookup as the arm site — warm the pack
+        // for the selected language, or warm nothing — so the load and its +169 MB are never
+        // spent on a recognizer the gate below then refuses. Called unconditionally when that
+        // lookup answers a pack, not `streamingPreview ?: warm…`: after an onTrimMemory the field
+        // still holds the engine with its recognizer freed, and only a second warm() reloads it.
+        // Spec §4.1 step 10 — "the next eligible session re-warms" — is that call, and CHANGE 5's
+        // second bullet is that it re-warms for the SELECTED language only, which this lookup is.
+        // It is a no-op when the engine is already warm on this pack or permanently disabled, so
+        // the cost here is one executor post.
+        val packToWarm = previewPackToWarm(
+            previewLanguage = previewLanguage,
+            installedPackLanguages = installedPreviewLanguages,
+            userEnabled = userEnabled,
+        )
+        val preview = if (packToWarm != null) warmStreamingPreview(packToWarm) else streamingPreview
         val previewReady = preview?.isWarm() == true
         val previewArmed = localPreviewArms(
             sessionLanguage = previewLanguage,
@@ -3519,11 +3596,12 @@ class FloatingBubbleService : Service(),
         // `lang=` on this line is the PREVIEWER's language — the user's selection, `auto` when
         // there is none — and not whisper's resolved pin, which the `connect lang resolved=` line
         // above carries: this line exists to explain the gate's own answer, so it logs the gate's
-        // own input. `pack=` keeps its 4.4.0 meaning — the ENGLISH pack is on disk — because that
-        // is what the warm-up above gates on and what a log read against older captures compares
-        // to. With a non-English `lang=` the gate's own language term is false while this reads 1;
-        // `lang=` is the field that says why. When the language list lands, both this field and
-        // warmStreamingPreview() become the SESSION language's pack together.
+        // own input. `pack=` is now THIS language's pack being on disk, not 4.4.0's "the English
+        // pack is on disk": CHANGE 5 makes the warm-up above the selected language's, and this
+        // field's whole reason for existing is to say what the warm-up and the gate read. So on
+        // Auto it reads 0 with the English pack installed — which is the honest line for a session
+        // that neither warms nor arms, and the one difference a reader comparing against a 4.4.0
+        // capture will see.
         android.util.Log.i(
             "WE-DIAG",
             com.whispereverywhere.transcription.stream.StreamDiag.gateLine(

@@ -15,7 +15,8 @@ import java.io.File
  * capture callback, the commit funnel, the stop path — reads that field); the gate is handed the
  * user's SELECTION and never whisper's `.en` pin of it (4.4.1, owner ruling 1); the session flag is
  * assigned the GATE's answer and never a constant; the resident previewer is released on trim and
- * on destroy and nowhere else; it is warmed beside the local prewarm; the arbiter counts
+ * on destroy and nowhere else; it is warmed beside the local prewarm, and for the SELECTED
+ * language's pack or not at all (4.4.1, CHANGE 5); the arbiter counts
  * CONNECTING as capturing; and the service never imports the AAR — `SherpaPreviewRecognizer` is
  * the one adapter.
  */
@@ -88,7 +89,11 @@ class LocalPreviewWiringPinTest {
             1,
             count(startRecording, "        val selection = app.preferencesManager.getLanguageForApi()\n"),
         )
-        assertEquals("and nowhere else in the service", 1, count(text, "app.preferencesManager.getLanguageForApi()"))
+        assertEquals(
+            "read in exactly two places in the service: here, and the boot warm's own lookup (CHANGE 5)",
+            2,
+            count(text, "app.preferencesManager.getLanguageForApi()"),
+        )
         assertEquals(
             "whisper resolves from that same read",
             1,
@@ -154,11 +159,56 @@ class LocalPreviewWiringPinTest {
     @Test
     fun thePreviewerIsWarmedBesideTheLocalPrewarm() {
         // Off the session's critical path: the ~0.8 s load + the canary run in the same delayed
-        // coroutine as the whisper prewarm, gated on the switch (R3) — the pack check is inside.
+        // coroutine as the whisper prewarm, for the pack previewPackToWarm names and no other.
         val prewarm = indexOfOrFail(text, "            warmLocalEngine().prewarm()\n")
-        val ours = indexOfOrFail(text, "            if (app.preferencesManager.localPreviewEnabled) warmStreamingPreview()\n")
-        assertTrue("directly beside the local prewarm", ours > prewarm && ours - prewarm < 400)
-        assertEquals(1, count(text, "    private fun warmStreamingPreview(): "))
+        val ours = indexOfOrFail(text, "            previewPackToWarm(\n")
+        assertTrue("directly beside the local prewarm", ours > prewarm && ours - prewarm < 700)
+        assertEquals(1, count(text, "    private fun warmStreamingPreview(\n"))
+    }
+
+    @Test
+    fun bothWarmSitesTakeTheSameLanguageLookupAsTheArmSite() {
+        // (4.4.1, CONTROLLER RULING CHANGE 5 — the fix for review B2.) Neither warm site may ask
+        // "is the ENGLISH pack on disk" any more: both go through previewPackToWarm, which
+        // LocalPreviewGateTest pins EQUAL to the gate's own language terms, and
+        // warmStreamingPreview cannot be called without a pack because it takes one. What this
+        // buys is measured: 802-860 ms and +169 MB RSS never spent on a recognizer the gate
+        // refuses on its first conjunct.
+        assertEquals("the decision is declared once, beside the gate", 1, count(text, "internal fun previewPackToWarm(\n"))
+        assertEquals("the boot prewarm asks it", 1, count(text, "            previewPackToWarm(\n"))
+        assertEquals("and it hands the answer straight over", 1, count(text, "            )?.let { warmStreamingPreview(it) }\n"))
+        val wrapSite = indexOfOrFail(startRecording, "        val packToWarm = previewPackToWarm(\n")
+        val warmCall = indexOfOrFail(
+            startRecording,
+            "        val preview = if (packToWarm != null) warmStreamingPreview(packToWarm) else streamingPreview\n",
+        )
+        assertTrue("the wrap site asks it too, before it warms", wrapSite < warmCall)
+        assertEquals("the wrap site's lookup reads the SELECTION and the session's own set", 1, count(startRecording, "            previewLanguage = previewLanguage,\n"))
+        assertEquals(
+            "one disk read of the installed set, handed to BOTH gates — the warm's and the arm's",
+            2,
+            count(startRecording, "            installedPackLanguages = installedPreviewLanguages,\n"),
+        )
+        assertEquals("read once", 1, count(startRecording, "        val installedPreviewLanguages = app.streamingPackManager.installedLanguages()\n"))
+        assertEquals("no English literal is left anywhere in the service", 0, count(text, "StreamingPackCatalog.EN"))
+        assertEquals("two warm calls, both handed a pack", 2, count(text, "warmStreamingPreview(it)") + count(text, "warmStreamingPreview(packToWarm)"))
+    }
+
+    @Test
+    fun onePackPerProcess_aLanguageChangeReleasesBeforeItWarms() {
+        // CHANGE 5's second bullet, as the stated invariant the multilingual build inherits:
+        // StreamingPreviewEngine.warm is idempotent on the ENGINE (`recognizer != null`), not on
+        // the pack, so warming a DIFFERENT pack must release first or the old language's model
+        // decodes the new language's speech behind a gate that says yes. And the corrupt marker
+        // follows the pack whose load FAILED, read from the field — a closure over the pack this
+        // call was made with would mark English corrupt for a Spanish failure.
+        assertEquals(1, count(text, "if (resident != null && streamingPreviewPack != pack) resident.release()"))
+        assertEquals(1, count(text, "        streamingPreviewPack = pack\n"))
+        assertEquals(
+            1,
+            count(text, "onLoadFailure = { streamingPreviewPack?.let { failed -> app.streamingPackManager.markCorrupt(failed) } },"),
+        )
+        assertEquals("and the field is written in exactly that one place", 1, count(text, "streamingPreviewPack = "))
     }
 
     @Test
