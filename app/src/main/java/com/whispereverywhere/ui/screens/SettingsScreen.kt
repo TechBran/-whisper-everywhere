@@ -1315,7 +1315,25 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // where the sherpa load throws. With the repair row now inside the selection gate above, a
     // user whose load failed once and who then picks French or Auto had NO row anywhere in the
     // app that reclaims those bytes. `delete` clears the install dir either way.
-    if (previewState.isInstalled || previewState is StreamingPackState.Repair) {
+    //
+    // (fix round 2, H2-B2) AND THE BYTES HAVE TO BE SETTLED. `previewState` is
+    // `remember(previewRefreshKey, previewStatusWord)` and OUR OWN install changes neither key
+    // while it runs, so through a repair install the state stays `Repair` — which, with the line
+    // above, newly rendered this row BESIDE our running copy. That combination cannot keep this
+    // row's promise: the `onClick` has no busy guard (unlike `startPreviewInstall`), `delete`
+    // clears the install dir under the copy, and `installFromPack` is NOT
+    // cancellation-cooperative (ITEM 4's finding — no suspension point between
+    // `withContext(Dispatchers.IO)`'s entry and its return), so the copy finishes, `install`
+    // re-creates the directory and the marker lands. The user would press *"Frees 73 MB. Live
+    // words stop"* and get *"Installed (73 MB)"* — with the declined flag written, so Home never
+    // mentions it again. (On the `Downloadable` sibling `delete`'s `removeStaleDownloads` kills
+    // the live DownloadManager row instead, failing the install the user actually wanted.)
+    // `previewInstallStatus == null` withdraws the row for exactly the seconds our copy is
+    // running and for no other state: every reclaim path above is at rest by construction.
+    if (
+        (previewState.isInstalled || previewState is StreamingPackState.Repair) &&
+        previewInstallStatus == null
+    ) {
         SettingsItem(
             icon = Icons.Filled.Delete,
             title = StreamingPackCopy.DELETE_TITLE,

@@ -301,7 +301,7 @@ class LivePreviewRowsPinTest {
         // install's 73 MB with no reclaim path in the app for a selection with no pack.
         val guard = offsetOfLive(
             rows,
-            "if (previewState.isInstalled || previewState is StreamingPackState.Repair) {",
+            "(previewState.isInstalled || previewState is StreamingPackState.Repair) &&",
         )
         val delete = offsetOfLive(rows, "StreamingPackCopy.DELETE_TITLE")
         assertTrue("the offer branches must still be there", lastOffer >= 0)
@@ -315,7 +315,22 @@ class LivePreviewRowsPinTest {
             "and that guard answers for the DAMAGED install too — `markCorrupt` removes the " +
                 "marker and leaves the bytes, so a delete keyed on the verdict strands them",
             1,
-            liveLineCount(rows, "previewState is StreamingPackState.Repair) {"),
+            liveLineCount(rows, "previewState is StreamingPackState.Repair)"),
+        )
+        // (fix round 2, H2-B2) ...but only while the bytes are SETTLED. `previewState` is
+        // remembered on keys our own install does not change, so through a repair install it
+        // stays `Repair` and this row rendered beside the running copy. `delete` clears the
+        // install dir under a copy that is not cancellation-cooperative, so the copy lands
+        // anyway: *"Frees 73 MB"* frees nothing and the pack ends up installed AND declined.
+        assertEquals(
+            "the delete row must not render over OUR OWN running install — the one window in " +
+                "which it cannot keep its promise",
+            1, liveLineCount(rows, "previewInstallStatus == null"),
+        )
+        val settled = offsetOfLive(rows, "previewInstallStatus == null")
+        assertTrue(
+            "and that conjunct belongs to the DELETE's guard, not to some earlier row",
+            guard < settled && settled < delete,
         )
         assertEquals(
             "and the decision it records is still the PACK's language, which is what it deletes",
