@@ -606,9 +606,10 @@ private fun LanguageStep(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(Modifier.height(8.dp))
-    // 4.4.0: the previewer is English-only (spec §5, §9) — said HERE, where the language is
-    // picked and before any row is offered, because a caveat read after the tap is a caveat that
-    // changed nothing.
+    // (4.4.1) What live words cost on Auto, and which language has them today — said HERE, where
+    // the language is picked and before any row is offered, because a caveat read after the tap
+    // is a caveat that changed nothing. (Until 4.4.1 this sentence said the previewer was
+    // English-only; the per-language ruling made it about the pick instead.)
     Text(
         com.whispereverywhere.transcription.stream.StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
         style = MaterialTheme.typography.bodySmall,
