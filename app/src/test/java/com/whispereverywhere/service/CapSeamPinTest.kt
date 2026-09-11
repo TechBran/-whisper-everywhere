@@ -64,6 +64,27 @@ class CapSeamPinTest {
         return i
     }
 
+    /**
+     * RE-SPECCED at 4.4.0 S2 (startup amendment), deliberately and not by renaming around it.
+     *
+     * The census used to say "exactly once in `onAudioChunk`". S2 split that function: its engine
+     * half is now `feedEngine(engine, chunk, amp, now)` and the capture callback above it routes
+     * each chunk into the startup ring, into a PACED replay, or straight through. **The census
+     * counts SITES, not calls** — the drain replays through the very same `feedEngine`, so there
+     * is still exactly one `engine.sendAudio(chunk)` in the service and both live and replayed
+     * audio traverse it. That is what "the ring drains through the same `sendAudio` path live
+     * audio uses" means, and it is why no engine changed.
+     *
+     * The `send < gate` half is unaffected: both statements moved together, in order, into
+     * `feedEngine`. What is ADDED is the boundary the split makes assertable — `onAudioChunk`
+     * itself must not grow a `sendAudio` of its own, or there would be two ways into the engine
+     * and only one of them ordered against the client-VAD gate.
+     *
+     * The ONE other `sendAudio` in the service is `stopRecording`'s flush of a ring the paced
+     * drain had not caught up on when the user tapped stop; it is scoped, named and pinned by
+     * `StartupRingWiringPinTest`, and it is on a different receiver (`sessionEngine`), so the
+     * needle below cannot see it. A whole-file count of `.sendAudio(` therefore reads 2.
+     */
     @Test
     fun sendAudioIsUnconditionalAndFirst() {
         val send = indexOfOrFail("        engine.sendAudio(chunk)\n")
@@ -72,7 +93,26 @@ class CapSeamPinTest {
         // second argument is the session's cloud provider, resolved once per session.
         val gate = indexOfOrFail("LiveTurnPolicy.runClientVad(sessionIsLive, sessionCloudProviderId)")
         assertTrue("sendAudio must precede the client-VAD gate", send < gate)
-        assertEquals("sendAudio must appear exactly once in onAudioChunk", 1, text.split("engine.sendAudio(chunk)").size - 1)
+        assertEquals(
+            "ONE site, traversed by live audio and by the replayed startup ring alike",
+            1,
+            text.split("engine.sendAudio(chunk)").size - 1,
+        )
+        // It is the FIRST statement of that one site, which is what "unconditional" means here:
+        // nothing between the function's brace and the engine.
+        indexOfOrFail(
+            "    private fun feedEngine(engine: TranscriptionEngine, chunk: ByteArray, amp: Int, now: Long) {\n" +
+                "        engine.sendAudio(chunk)\n"
+        )
+        // And the capture callback keeps no engine feed of its own.
+        val callback = indexOfOrFail("    private fun onAudioChunk(chunk: ByteArray, amp: Int) {")
+        val feed = indexOfOrFail("    private fun bufferStartupChunk(")
+        assertTrue("bufferStartupChunk follows onAudioChunk", feed > callback)
+        assertEquals(
+            "onAudioChunk must reach the engine only through feedEngine",
+            0,
+            text.substring(callback, feed).split("sendAudio").size - 1,
+        )
     }
 
     @Test

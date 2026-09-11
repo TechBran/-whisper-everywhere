@@ -99,25 +99,73 @@ class EndpointerLifecyclePinTest {
         assertTrue("the reset must precede the source swap", stopOld > commit)
     }
 
+    /**
+     * RE-SPECCED at 4.4.0 S2 (startup amendment), and it was a HARD FAIL BY DESIGN, not a
+     * regression: this test used to anchor on `"                    val started = startAudioInput()"`
+     * — the 20-space form inside `onOpen`'s Main body — and `indexOf` returns −1 once that
+     * statement moves. It was called `onOpenHandsOverThisSessionsCadenceBeforeTheFirstFrame`.
+     *
+     * **The INVARIANT is unchanged and is the whole reason the rewrite is not a workaround:** the
+     * endpointer must be armed before the session's first captured frame can arrive, because
+     * `onSessionStart` fires `probeArm()` and the ordering that carries `probeArm`'s precondition
+     * is a THREAD START (`audio/VadProbeLifecycle.kt` precondition 2). What changed is WHERE the
+     * first frame can arrive from. S2 hoisted the cap anchor, the cloud suppression, the cadence
+     * handover and `startAudioInput()` out of `onOpen` and into `startRecording`, ABOVE
+     * `connect()`, because on a cold local tier `onOpen` arrives up to 4,107 ms after the tap
+     * (`docs/superpowers/research/2026-09-10-startup-cutoff-investigation.md` §3a) and the
+     * microphone may not wait for it. So the same three-way ordering is pinned at its new
+     * indentation, with one assertion ADDED that the old shape could not make: all of it precedes
+     * `connect()`.
+     *
+     * The anchor also moved from `sessionOpenMs` (engine-ready) to `sessionStartMs` (the tap), and
+     * that is a deliberate behaviour change S2 argues for: the replayed chunks carry their own
+     * capture stamps, so the session clocks must be anchored at the instant the audio starts, not
+     * at the instant the engine finishes loading.
+     */
     @Test
-    fun onOpenHandsOverThisSessionsCadenceBeforeTheFirstFrame() {
-        val cadence = indexOfOrFail("                    endpointer.onSessionStart(")
-        val anchor = indexOfOrFail("                        nowMs = sessionOpenMs,")
-        val tier = indexOfOrFail("                            tierId = installedModel?.id,")
-        val cloud = indexOfOrFail("                            isCloudBatch = cloudWrapper != null,")
-        val startInput = text.indexOf("                    val started = startAudioInput()", cadence)
+    fun theSessionOpenHandsOverThisSessionsCadenceBeforeTheFirstFrameCanBeCaptured() {
+        val cadence = indexOfOrFail("        endpointer.onSessionStart(")
+        val anchor = indexOfOrFail("            nowMs = sessionStartMs,")
+        val tier = indexOfOrFail("                tierId = installedModel?.id,")
+        val cloud = indexOfOrFail("                isCloudBatch = cloudWrapper != null,")
+        val startInput = text.indexOf("        val started = startAudioInput()", cadence)
+        val connect = text.indexOf("        engine.connect(lang, object : TranscriptionEngine.Listener {", cadence)
         assertTrue(cadence < anchor && anchor < tier && tier < cloud)
         assertTrue("the endpointer must be armed BEFORE the first frame can arrive", cloud < startInput)
+        assertTrue(
+            "and all of it runs above connect(), which is what makes the recorder's early open " +
+                "safe: the session is fully armed before any engine callback can fire",
+            startInput in 1 until connect,
+        )
+        assertEquals(
+            "nothing may re-nest the recorder's start inside onOpen",
+            0,
+            count("                    val started = startAudioInput()"),
+        )
         assertEquals(1, count("endpointer.onSessionStart("))
         assertEquals(1, count("CommitCadencePolicy.minCommitIntervalMs("))
     }
 
+    /**
+     * RE-SPECCED at 4.4.0 S2: the suppression is no longer "untouched" — it MOVED, and it had to.
+     * It reads the same anchor `segmentCapPolicy.onSessionStart` opened the window with, so
+     * re-anchoring that window at the tap without moving this line with it would have left cloud
+     * sessions with a 4 s first cut again, which is an extra billable provider request and exactly
+     * what 3.6.0 A2 removed. Same rule, same relative order, new anchor.
+     */
     @Test
-    fun theCloudFirstCapSuppressionIsUntouchedAndStillPrecedesTheCadence() {
-        val suppression = indexOfOrFail("                    if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionOpenMs)")
-        val cadence = indexOfOrFail("                    endpointer.onSessionStart(")
-        assertTrue("the 4 s cloud suppression must stay where it is", suppression < cadence)
-        assertEquals(1, count("if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionOpenMs)"))
+    fun theCloudFirstCapSuppressionMovedWithTheAnchorAndStillPrecedesTheCadence() {
+        val window = indexOfOrFail("        segmentCapPolicy.onSessionStart(sessionStartMs)")
+        val suppression = indexOfOrFail("        if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionStartMs)")
+        val cadence = indexOfOrFail("        endpointer.onSessionStart(")
+        assertTrue("the window opens, then the cloud suppression closes it", window < suppression)
+        assertTrue("and both precede the cadence handover", suppression < cadence)
+        assertEquals(1, count("if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionStartMs)"))
+        assertEquals(
+            "the engine-ready anchor is gone: one clock at the tap, not two clocks",
+            0,
+            count("sessionOpenMs"),
+        )
     }
 
     @Test

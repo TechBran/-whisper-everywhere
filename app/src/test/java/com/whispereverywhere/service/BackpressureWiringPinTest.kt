@@ -73,19 +73,30 @@ class BackpressureWiringPinTest {
         assertTrue("the endpointer must be declared before the counter that feeds it", endpointer < counter)
     }
 
+    /**
+     * RE-SPECCED at 4.4.0 S2 (startup amendment), a HARD FAIL BY DESIGN rather than a regression.
+     * This test anchored on `"                    val started = startAudioInput()"` — the 20-space
+     * form inside `onOpen`'s Main body — and `indexOf` returns −1 once S2 hoists that statement
+     * into `startRecording` above `connect()` so the microphone stops waiting out the model load
+     * (`docs/superpowers/research/2026-09-10-startup-cutoff-investigation.md`; 4,107 ms cold on
+     * npu-turbo). **The invariant is identical**: the slow row must ride the same `onSessionStart`
+     * call as the fast row, resolved from the same two facts, before the first captured frame can
+     * arrive. Only the indentation of every needle moved — 20 -> 8 for the call, 24 -> 12 for the
+     * two rows, 28 -> 16 for the two shared facts.
+     */
     @Test
     fun theSlowRowRidesTheSameOnSessionStartCallAsTheFastRow() {
-        val cadence = indexOfOrFail("                    endpointer.onSessionStart(")
-        val fast = indexOfOrFail("                        minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(")
-        val slow = indexOfOrFail("                        slowCommitIntervalMs = CommitCadencePolicy.slowCommitIntervalMs(")
-        val startInput = text.indexOf("                    val started = startAudioInput()", cadence)
+        val cadence = indexOfOrFail("        endpointer.onSessionStart(")
+        val fast = indexOfOrFail("            minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(")
+        val slow = indexOfOrFail("            slowCommitIntervalMs = CommitCadencePolicy.slowCommitIntervalMs(")
+        val startInput = text.indexOf("        val started = startAudioInput()", cadence)
         assertTrue("fast row, then slow row, inside the one onSessionStart call", cadence < fast && fast < slow)
         assertTrue("the slow row must be armed BEFORE the first frame can arrive", slow < startInput)
         assertEquals(1, count("CommitCadencePolicy.slowCommitIntervalMs("))
         assertEquals(1, count("endpointer.onSessionStart("))
         // Both rows resolve from the SAME two facts — the installed tier and the cloud predicate.
-        assertEquals(2, count("                            tierId = installedModel?.id,"))
-        assertEquals(2, count("                            isCloudBatch = cloudWrapper != null,"))
+        assertEquals(2, count("                tierId = installedModel?.id,"))
+        assertEquals(2, count("                isCloudBatch = cloudWrapper != null,"))
     }
 
     @Test

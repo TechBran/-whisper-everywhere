@@ -36,6 +36,8 @@ import com.whispereverywhere.audio.EndpointCut
 import com.whispereverywhere.audio.Endpointer
 import com.whispereverywhere.audio.EndpointerFactory
 import com.whispereverywhere.audio.SileroEndpointer
+import com.whispereverywhere.audio.StartupRing
+import com.whispereverywhere.audio.StartupSeam
 import com.whispereverywhere.net.ConnectivityMonitor
 import com.whispereverywhere.net.OkHttpTransport
 import com.whispereverywhere.npu.NpuDiag
@@ -738,6 +740,35 @@ class FloatingBubbleService : Service(),
     }
     private val sessionTranscript = StringBuilder()
     private var sessionStartMs = 0L
+
+    /**
+     * THE STARTUP RING (4.4.0 startup amendment, Task S2) — the audio captured between the tap and
+     * the engine being ready for it. One instance for the service's life, cleared at every session
+     * open and every session exit; see [com.whispereverywhere.audio.StartupRing] for why it exists,
+     * what the cap is, and which end overflow eats. Touched by the capture thread (append, paced
+     * drain) and by Main (clear, and the stop path's flush behind the capture joins); the ring
+     * synchronises itself.
+     */
+    private val startupRing = StartupRing()
+
+    /**
+     * Has the session's engine reported `onOpen`? The capture thread's only readiness question,
+     * and the whole reason `startAudioInput()` may now run above `connect()`.
+     *
+     * @Volatile because Main writes it (session open, `onOpen`, teardown) and the capture thread
+     * reads it once per 32 ms chunk. A stale `false` costs one chunk of extra buffering and a
+     * stale `true` cannot happen before the write it follows — the drain is idempotent against
+     * either, because the ring is the single source of truth for what has not been fed yet.
+     */
+    @Volatile private var engineReady = false
+
+    /**
+     * Has this session already said it is dropping audio? The overflow line is emitted ONCE per
+     * session rather than once per dropped chunk — at 31.25 Hz the per-chunk version would be a
+     * log flood burying the fact it reports. Written by the capture thread at the first drop and
+     * by Main at session open.
+     */
+    @Volatile private var startupOverflowLogged = false
 
     // Pin icon view reference (lateinit; populated in createBubbleView)
     private lateinit var pinIcon: ImageView
@@ -2152,9 +2183,11 @@ class FloatingBubbleService : Service(),
 
     // ========== Audio source state machine (mic <-> device-audio playback capture) ==========
 
-    /** Shared downstream for BOTH audio sources (mic and playback capture), ROUTED BY SOURCE.
-     *  Runs on the capture/recorder THREAD: the View calls below are thread-safe field writes
-     *  only (redraw is ticker-driven on main) — do not add invalidate() here. */
+    /** Shared downstream for BOTH audio sources (mic and playback capture).
+     *  Runs on the capture/recorder THREAD, and from 4.4.0 S2 it can run BEFORE the engine has a
+     *  loaded context — see the startup-seam block inside. The three things it does, in order: it
+     *  routes the chunk (ring / paced replay / straight through), it feeds whatever is due to the
+     *  engine through the one [feedEngine], and it paints the LIVE chunk's visuals. */
     private fun onAudioChunk(chunk: ByteArray, amp: Int) {
         // Route by SOURCE, never by preference. Playback capture is OTHER APPS' audio — the person
         // on the other end of the call, the podcast host — so the only engines allowed to receive
@@ -2165,11 +2198,67 @@ class FloatingBubbleService : Service(),
         // per-session MediaProjection consent sheet marks each capture. Cost is the user's own key,
         // knowingly. The old source-router (which forced device audio on-device regardless of
         // settings) was retired with this decision — see the 2026-08-01 commit for its rationale.
-        val engine = transcriptionEngine ?: return
-        engine.sendAudio(chunk)
-        // 4-band spectral drive for the visuals (microseconds per 32ms frame): each aurora
-        // sheet + rim region follows its own slice of the audio. Silence gate: below the noise
-        // floor send explicit zeros so the AGC never normalizes room noise into fake motion.
+        val nowMs = System.currentTimeMillis()
+        val engine = transcriptionEngine
+        // ===================== 4.4.0 S2 — THE STARTUP SEAM's three-way head =====================
+        // The recorder now opens ABOVE connect() (startRecording), so this callback can be running
+        // before the engine has a loaded context. The three routes, and the pure decision
+        // StartupSeam.route makes between them, are pinned behaviourally by StartupRingTest
+        // (exactly-once, in-order, under live audio) and structurally by StartupRingWiringPinTest.
+        //
+        //  BUFFER — no engine yet: the chunk goes into the bounded ring with its OWN stamp.
+        //  DRAIN  — engine ready, backlog outstanding: replay a PACED slice through this same
+        //           feedEngine path, then queue this live chunk BEHIND whatever survived the
+        //           slice (order is exactly-once and capture-ordered), or feed it straight
+        //           through when the slice emptied the ring — which is what retires the seam
+        //           instead of leaving the session permanently one chunk behind.
+        //  LIVE   — level again: the pre-S2 path, byte for byte.
+        //
+        // The replay runs HERE, on the capture thread, and that is a correctness requirement, not
+        // a convenience: VadProbeLifecycle keeps ONE shared direct buffer for the Silero probe, so
+        // a second thread replaying into feedEngine would write it concurrently with the real
+        // capture thread — teardown-bill T8 (torn frames) and T9 (cross-session LSTM
+        // contamination), the same intra-session hazard switchSource carries as residue.
+        when (StartupSeam.route(engineReady = engineReady, ringEmpty = startupRing.isEmpty())) {
+            StartupSeam.Route.BUFFER -> bufferStartupChunk(chunk, amp, nowMs)
+            StartupSeam.Route.DRAIN -> if (engine != null) {
+                startupRing.drainSlice(StartupRing.DRAIN_CHUNKS_PER_TICK) { pcm, pcmAmp, pcmNowMs ->
+                    feedEngine(engine, pcm, pcmAmp, pcmNowMs)
+                }
+                if (startupRing.isEmpty()) feedEngine(engine, chunk, amp, nowMs)
+                else startupRing.append(chunk, amp, nowMs)
+            }
+            StartupSeam.Route.LIVE -> if (engine != null) feedEngine(engine, chunk, amp, nowMs)
+        }
+        // ALWAYS the LIVE chunk, on all three routes. The visuals are the one thing that must not
+        // be replayed: painting the ring's 4-second-old audio at 4x during the catch-up would make
+        // the bubble lie about what the microphone is hearing right now, and it is also what keeps
+        // the bubble moving during CONNECTING, where before S2 there was nothing to paint at all.
+        paintVisuals(chunk, amp)
+    }
+
+    /**
+     * The engine is not ready yet (4.4.0 S2): keep the chunk. Capture thread.
+     *
+     * The overflow line is emitted at most ONCE per session — see [startupOverflowLogged].
+     */
+    private fun bufferStartupChunk(chunk: ByteArray, amp: Int, nowMs: Long) {
+        val dropped = startupRing.append(chunk, amp, nowMs)
+        if (dropped > 0 && !startupOverflowLogged) {
+            startupOverflowLogged = true
+            android.util.Log.w("WE-DIAG", StartupRing.overflowLine(StartupRing.msOf(dropped)))
+        }
+    }
+
+    /**
+     * The visuals for ONE chunk. Capture/recorder thread: the View calls below are thread-safe
+     * field writes only (redraw is ticker-driven on Main) — do not add invalidate() here.
+     *
+     * 4-band spectral drive (microseconds per 32 ms frame): each aurora sheet + rim region follows
+     * its own slice of the audio. Silence gate: below the noise floor send explicit zeros so the
+     * AGC never normalizes room noise into fake motion.
+     */
+    private fun paintVisuals(chunk: ByteArray, amp: Int) {
         val bands = if (amp > 350) {
             com.whispereverywhere.util.AudioBands.analyze(chunk, chunk.size)
         } else {
@@ -2179,6 +2268,24 @@ class FloatingBubbleService : Service(),
         blobView.updateBands(bands)
         waveformView.updateAmplitude(amp)
         blobView.updateAmplitude(amp)
+    }
+
+    /**
+     * ONE chunk into the engine and the endpointer — the pre-S2 body of [onAudioChunk], statement
+     * for statement, minus the visuals. Capture thread only.
+     *
+     * **BOTH live audio and the replayed ring arrive here, and that is what "the drain goes
+     * through the same `sendAudio` path live audio uses" means.** `sendAudio` stays UNCONDITIONAL
+     * and FIRST (CapSeamPinTest), and [now] is the chunk's OWN capture stamp — the ring's for a
+     * replayed chunk, `System.currentTimeMillis()` for a live one. Re-stamping a replay at drain
+     * time is the mistake this signature exists to prevent: every wall-clock term below is
+     * `now - <an earlier stamp>` (the hangover, the micro-pause promotion, the cadence floor, the
+     * wall cap), so a 4 s burst restamped inside ~1 s would read as a 1 s burst and every dip in
+     * it as shorter than it was. The terms that are NOT wall-clock — the flatline trigger's frame
+     * COUNT and `speechEvidenceMs`'s `evidenceFrames * FRAME_MS` — are indifferent either way.
+     */
+    private fun feedEngine(engine: TranscriptionEngine, chunk: ByteArray, amp: Int, now: Long) {
+        engine.sendAudio(chunk)
         // Client VAD per audio chunk. Commit on a natural pause, or on the wall-clock cap when
         // the amplitude never dips (continuous media). Server-driven live sessions (OpenAI,
         // ElevenLabs, Soniox) bypass this ENTIRELY — the SERVER cuts turns via its own VAD for
@@ -2190,7 +2297,6 @@ class FloatingBubbleService : Service(),
         // the activityEnd the protocol sends (LiveTurnPolicy.clientCutsLiveTurns). Device-audio
         // capture in all of those sessions is cut here too.
         if (com.whispereverywhere.transcription.live.LiveTurnPolicy.runClientVad(sessionIsLive, sessionCloudProviderId)) {
-            val now = System.currentTimeMillis()
             if (endpointer.onFrame(chunk, amp, now)) {
                 android.util.Log.i("WE-DIAG", "VAD -> commit (rms=$amp)")
                 segmentCapPolicy.onCommit(now)
@@ -2974,7 +3080,15 @@ class FloatingBubbleService : Service(),
         }
 
         updateBubbleState(BubbleState.CONNECTING)
-        vibrateStart()
+        // 4.4.0 S2 (the amendment's haptic ruling): the TAP gets an acknowledgement, and the
+        // "listening" cue moves onto TRUE readiness — it fires from onOpen now. See vibrateTap().
+        vibrateTap()
+        // 4.4.0 S2: a new session opens with an empty ring and an unready engine. Both are read by
+        // the capture thread, which from this task starts BEFORE connect() returns, so they are
+        // written here — above everything that could reach startAudioInput() — and nowhere later.
+        engineReady = false
+        startupOverflowLogged = false
+        startupRing.clear()
         // Capture wins instantly over read-aloud (Track F exclusivity rule).
         com.whispereverywhere.audio.AudioArbiter.requestCapture()
         isSpeakingNow = false
@@ -3111,87 +3225,163 @@ class FloatingBubbleService : Service(),
             baseEngine
         }
 
+        // ======================= 4.4.0 S2 — THE STARTUP SEAM's session open =======================
+        // THE RECORDER OPENS HERE, above connect(), and the capture thread starts with it. Until
+        // this task all four statements below lived inside the engine's onOpen(), so on the local
+        // tiers the microphone stayed shut for the whole native context load — 4,107 ms cold on
+        // npu-turbo (docs/superpowers/research/2026-09-10-startup-cutoff-investigation.md §3a,
+        // measured in capture-yt-84-flatline-0903-1936.txt) — and the audio spoken into that
+        // window was never captured at all. It is now captured into startupRing and replayed
+        // through the same feedEngine path at onOpen.
+        //
+        // THE MOVE IS LEGAL because nothing here depends on connect(): AudioSourcePolicy.decide
+        // reads only mediaPlaying / hasProjection / sdkInt / preferDeviceAudio / consentAvailable
+        // (investigation §2 fact 3), transcriptionEngine is already assigned (resolveTranscriptionEngine
+        // above, and the tee's own `.also` when the previewer arms — §2 fact 1), and sendAudio was
+        // already unconditional with only a 30 s accumulation backstop (§2 fact 2). The one thing
+        // the move DOES change, deliberately: mediaDetector.isCurrentlyPlaying() is now sampled at
+        // the tap instead of up to 4 s later, which is the more faithful reading of intent.
+        //
+        // THE ORDER OF THESE FOUR STATEMENTS IS THE TASK'S CORRECTNESS, and three of the four
+        // hazards fail SILENTLY. StartupRingWiringPinTest, EndpointerLifecyclePinTest and
+        // BackpressureWiringPinTest hold every one of them:
+        //
+        //  1. BOTH SESSION CLOCKS ARE ANCHORED AT THE TAP (sessionStartMs), not at engine-ready.
+        //     That is what makes the replayed stamps arithmetically sound — every wall-clock term
+        //     downstream is `nowMs - <an earlier nowMs>` and the ring's chunks carry their own
+        //     capture stamps, all of which are >= this anchor. It is also a deliberate BEHAVIOUR
+        //     CHANGE: the 4 s first-segment cap window now starts when the user started talking,
+        //     which is what it always meant to measure, so on a slow cold connect it can fire
+        //     DURING the replay and produce the cut the user would have got had the engine been
+        //     warm. The cloud suppression MOVES WITH THE ANCHOR (statement 2) or 3.6.0 A2's "no
+        //     extra billable first request" regresses.
+        //  2. endpointer.onSessionStart MUST PRECEDE startAudioInput(), because it fires probeArm()
+        //     and the ordering that carries probeArm's precondition is a THREAD START, not
+        //     reachability (audio/VadProbeLifecycle.kt precondition 2, EndpointerFactory's `mine`):
+        //     the capture thread snapshots its epoch at its first probe call, so a thread started
+        //     before arm() snapshots NO_SESSION, ensureReady(session) is false forever, and the
+        //     Silero VAD is OFF for the whole session — amplitude fallback, i.e. the pre-3.7
+        //     machine, with no error and no log beyond an absent `probe:` line.
+        //  3. endpointer.onSessionStart MUST ALSO STAY ABOVE setActiveSource, which
+        //     startAudioInput() reaches through startMicSource / startPlaybackSource:
+        //     onSessionStart writes flatlineArmed = false and setActiveSource writes
+        //     armFlatline(source == PLAYBACK), so reversed, the 4.4 flatline cut is permanently
+        //     disarmed for every device-audio session. Keeping startAudioInput() BELOW this call is
+        //     what preserves it — which is why the two moved together and not one of them.
+        //
+        // Per-session reset: the FIRST-segment 4 s cap applies again from here.
+        segmentCapPolicy.onSessionStart(sessionStartMs)
+        // 3.6.0 (Workstream A) — the 4 s first cap is LOCAL-ONLY. This VAD/cap path also runs for
+        // CLOUD_WITH_FALLBACK (runClientVad is true for it; only CLOUD_LIVE sets sessionIsLive),
+        // and there an extra first segment means an extra provider round-trip, an extra fallback
+        // mirror and an extra BILLABLE request — while the user's first-text wait is the network,
+        // not inference. Closing the first-cap window immediately (the same "any commit ends it"
+        // rule SegmentCapPolicyTest pins) leaves cloud sessions on the pre-existing 15 s cap for
+        // every segment: byte-identical to 3.5.0. cloudWrapper is already resolved here —
+        // resolveTranscriptionEngine() ran above — and it is the same cloud predicate stopRecording
+        // uses. 4.4.0 S2: it moved down here WITH the anchor, and had to.
+        if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionStartMs)
+        // 3.7 (Workstream D3): the endpointer's paced-commit floor is the MEASURED cost governor,
+        // and it is per-session because it depends on BOTH the installed tier and whether every
+        // commit becomes a provider request. cloudWrapper is already resolved here — see the note
+        // above — and installedModel was resolved just before this block. Armed BEFORE
+        // startAudioInput() so the first captured frame already sees this session's cadence; the
+        // native probe itself initialises lazily on that first frame, i.e. on the capture thread,
+        // never here on Main.
+        //
+        // This REPLACES the endpointer.reset() that used to open the session here, rather than
+        // joining it: onSessionStart is a documented strict superset of reset() ("Everything
+        // [reset] clears, plus…" — its KDoc), so a pair would clear twice and put two probeResets
+        // inside one session open. Three documents already describe the service as resetting from
+        // THREE sites with the session open carrying onSessionStart instead: SileroEndpointer's
+        // Threading section, SileroEndpointerTest's volatility pin, and
+        // SileroEndpointerConcurrencyTest's class KDoc, which carries the count.
+        //
+        // NAMED arguments, not positional: onSessionStart takes three same-typed Longs whose order
+        // nothing else pins, and minCommitIntervalMs takes a nullable String beside a Boolean.
+        // EndpointerLifecyclePinTest quotes these names.
+        //
+        // isCloudBatch = (cloudWrapper != null) is BROADER than "batch": it is also true for
+        // CLOUD_LIVE. For a SERVER-driven live session that is harmless — LiveTurnPolicy.runClientVad
+        // is false, onFrame never runs, this cadence is never consulted. A GEMINI live session
+        // (4.3.4) DOES run the client VAD, so the predicate is split here as the old note demanded:
+        // isCloudLive wins and selects the live row
+        // (CommitCadencePolicy.MIN_COMMIT_INTERVAL_CLOUD_LIVE_MS) — a turn boundary there is an
+        // activityEnd, not a billable request, so the batch REQUEST floor would only have paired
+        // short sentences for nothing.
+        endpointer.onSessionStart(
+            nowMs = sessionStartMs,
+            minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(
+                tierId = installedModel?.id,
+                isCloudBatch = cloudWrapper != null,
+                isCloudLive = sessionIsLive,
+            ),
+            // Build 85 — THE BACKPRESSURE GOVERNOR's slow row, from the SAME two facts: 3 200 on
+            // npu-turbo, equal to the fast row on every other tier (inert by construction), the
+            // flat 3 000 in a cloud-batch session. The parameter is defaulted on the interface
+            // (slow == fast), so omitting it compiles and ships turbo without the guard;
+            // BackpressureWiringPinTest holds it here, resolved before startAudioInput() like the
+            // fast row.
+            slowCommitIntervalMs = CommitCadencePolicy.slowCommitIntervalMs(
+                tierId = installedModel?.id,
+                isCloudBatch = cloudWrapper != null,
+                isCloudLive = sessionIsLive,
+            ),
+        )
+        val started = startAudioInput()
+        android.util.Log.i("WE-DIAG", "recorder start success=${started.isSuccess}")
+        if (started.isFailure) {
+            showToast("Recording failed: ${started.exceptionOrNull()?.message}")
+            // teardownRealtime() closes both sources and discards the ring; connect() is never
+            // called, so no engine is left holding a session that cannot produce anything.
+            teardownRealtime(); updateBubbleState(BubbleState.ERROR)
+            return
+        }
+
         engine.connect(lang, object : TranscriptionEngine.Listener {
             override fun onOpen() {
                 android.util.Log.i("WE-DIAG", "onOpen handler: state=$currentState")
                 serviceScope.launch(Dispatchers.Main) {
                     if (currentState != BubbleState.CONNECTING) return@launch
-                    // Per-session reset: the FIRST-segment 4 s cap applies again from here.
-                    val sessionOpenMs = System.currentTimeMillis()
-                    segmentCapPolicy.onSessionStart(sessionOpenMs)
-                    // 3.6.0 (Workstream A) — the 4 s first cap is LOCAL-ONLY. This VAD/cap path
-                    // also runs for CLOUD_WITH_FALLBACK (runClientVad is true for it; only
-                    // CLOUD_LIVE sets sessionIsLive), and there an extra first segment means an
-                    // extra provider round-trip, an extra fallback mirror and an extra BILLABLE
-                    // request — while the user's first-text wait is the network, not inference.
-                    // Closing the first-cap window immediately (the same "any commit ends it"
-                    // rule SegmentCapPolicyTest pins) leaves cloud sessions on the pre-existing
-                    // 15 s cap for every segment: byte-identical to 3.5.0. cloudWrapper is
-                    // already resolved here — resolveTranscriptionEngine() ran in startRecording,
-                    // and it is the same cloud predicate stopRecording uses.
-                    if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionOpenMs)
-                    // 3.7 (Workstream D3): the endpointer's paced-commit floor is the MEASURED
-                    // cost governor, and it is per-session because it depends on BOTH the
-                    // installed tier and whether every commit becomes a provider request.
-                    // cloudWrapper is already resolved here — see the note above — and
-                    // installedModel was resolved just before connect(). Armed BEFORE
-                    // startAudioInput() so the first captured frame already sees this session's
-                    // cadence; the native probe itself initialises lazily on that first frame,
-                    // i.e. on the capture thread, never here on Main.
+                    // 4.4.0 S2 — TRUE READINESS, and the only thing left to do here.
                     //
-                    // This REPLACES the endpointer.reset() that used to open the session here,
-                    // rather than joining it: onSessionStart is a documented strict superset of
-                    // reset() ("Everything [reset] clears, plus…" — its KDoc), so a pair would
-                    // clear twice and put two probeResets inside one session open. Three
-                    // documents already describe the service as resetting from THREE sites with
-                    // onOpen carrying onSessionStart instead: SileroEndpointer's Threading
-                    // section, SileroEndpointerTest's volatility pin, and
-                    // SileroEndpointerConcurrencyTest's class KDoc, which carries the count.
+                    // Everything this handler used to do at session open now runs ABOVE connect()
+                    // in startRecording — the cap anchor, the cloud suppression, the cadence
+                    // handover and startAudioInput() itself — because on a cold local tier this
+                    // callback arrives up to 4,107 ms after the tap and the microphone may not
+                    // wait for it. What is left is the one flag the capture thread reads: from the
+                    // next chunk on, onAudioChunk takes the DRAIN route and replays the ring
+                    // through the same feedEngine path, paced, four buffered chunks per live one.
                     //
-                    // NAMED arguments, not positional: onSessionStart takes three same-typed Longs
-                    // whose order nothing else pins, and minCommitIntervalMs takes a nullable
-                    // String beside a Boolean. EndpointerLifecyclePinTest quotes these names.
-                    //
-                    // isCloudBatch = (cloudWrapper != null) is BROADER than "batch": it is also
-                    // true for CLOUD_LIVE. For a SERVER-driven live session that is harmless —
-                    // LiveTurnPolicy.runClientVad is false, onFrame never runs, this cadence is
-                    // never consulted. A GEMINI live session (4.3.4) DOES run the client VAD, so
-                    // the predicate is split here as the old note demanded: isCloudLive wins and
-                    // selects the live row (CommitCadencePolicy.MIN_COMMIT_INTERVAL_CLOUD_LIVE_MS)
-                    // — a turn boundary there is an activityEnd, not a billable request, so the
-                    // batch REQUEST floor would only have paired short sentences for nothing.
-                    endpointer.onSessionStart(
-                        nowMs = sessionOpenMs,
-                        minCommitIntervalMs = CommitCadencePolicy.minCommitIntervalMs(
-                            tierId = installedModel?.id,
-                            isCloudBatch = cloudWrapper != null,
-                            isCloudLive = sessionIsLive,
-                        ),
-                        // Build 85 — THE BACKPRESSURE GOVERNOR's slow row, from the SAME two
-                        // facts: 3 200 on npu-turbo, equal to the fast row on every other tier
-                        // (inert by construction), the flat 3 000 in a cloud-batch session. The
-                        // parameter is defaulted on the interface (slow == fast), so omitting it
-                        // compiles and ships turbo without the guard; BackpressureWiringPinTest
-                        // holds it here, resolved before startAudioInput() like the fast row.
-                        slowCommitIntervalMs = CommitCadencePolicy.slowCommitIntervalMs(
-                            tierId = installedModel?.id,
-                            isCloudBatch = cloudWrapper != null,
-                            isCloudLive = sessionIsLive,
+                    // ONE line, naming what the ring is holding and what this session lost at the
+                    // cap. It is emitted BEFORE the flag so its numbers are the ones the drain is
+                    // about to release, rather than whatever is left after the first slice.
+                    android.util.Log.i(
+                        "WE-DIAG",
+                        StartupRing.drainLine(
+                            chunks = startupRing.chunkCount(),
+                            bufferedMs = StartupRing.msOf(startupRing.byteSize()),
+                            droppedMs = StartupRing.msOf(startupRing.droppedBytes()),
                         ),
                     )
-                    val started = startAudioInput()
-                    android.util.Log.i("WE-DIAG", "recorder start success=${started.isSuccess}")
-                    if (started.isFailure) {
-                        showToast("Recording failed: ${started.exceptionOrNull()?.message}")
-                        teardownRealtime(); updateBubbleState(BubbleState.ERROR)
-                        return@launch
-                    }
+                    engineReady = true
 
                     // One preview pipeline for every session context (W2): the accumulating
                     // window + sink, always. Live sessions additionally stream onto the strip.
                     showSessionPreview(live = sessionIsLive)
 
                     updateBubbleState(BubbleState.RECORDING)
+                    // 4.4.0 S2 (the amendment's haptic ruling) — THE "LISTENING" CUE, and this is
+                    // the site that makes it true. It used to fire at the tap, before connect() was
+                    // even called, so on every cold local session it preceded the first captured
+                    // sample by the whole model load (4,107 ms measured on npu-turbo) and the app
+                    // buzzed "go" at a shut microphone. Note what was ALREADY right: the bubble's
+                    // colour and waveform switch here, at real readiness — only the haptic was
+                    // early. With the startup ring in place the user has been recorded since the
+                    // tap's own vibrateTap(), so moving this is honesty about state, not a gate on
+                    // capture: the cue now means "the engine has your words", and the words spoken
+                    // before it are in the ring on their way through.
+                    vibrateStart()
                     amplitudeJob = serviceScope.launch {
                         audioRecorder.amplitude.collectLatest { amp ->
                             if (currentState != BubbleState.RECORDING) return@collectLatest
@@ -3375,8 +3565,9 @@ class FloatingBubbleService : Service(),
             com.whispereverywhere.audio.MediaProjectionGate.clear()
         }
         // Deliberately the raw field: the session is ending and the final commit + drain below
-        // still belong to this session's engine. Every new session starts on the mic — connect()
-        // runs before startAudioInput() picks a capturer.
+        // still belong to this session's engine. Every new session starts on the mic — 4.4.0 S2:
+        // startAudioInput() picks the capturer at the TAP now, above connect(), and it picks it
+        // from AudioSourcePolicy.decide() rather than from this field.
         activeSource = com.whispereverywhere.audio.ActiveSource.MIC
 
         updateBubbleState(BubbleState.FINALIZING)
@@ -3398,6 +3589,28 @@ class FloatingBubbleService : Service(),
         }
         transcriptionDeltaText.visibility = View.VISIBLE
         
+        // 4.4.0 S2 — THE RING'S LAST FLUSH, and it is not hygiene. stopRecording is reachable only
+        // from RECORDING, which since S2 means "the engine reported ready", so a user who taps stop
+        // within ~2 s of the cue still has a backlog the paced drain has not caught up on: tap,
+        // two words, stop, on a 4 s cold load would otherwise lose exactly the words this task
+        // exists to save. sendAudio ONLY — the CUT is the unconditional commit immediately below,
+        // and the endpointer's native probe may not be driven from Main (VadProbeLifecycle's one
+        // shared direct buffer belongs to the capture thread).
+        //
+        // SAFE HERE AND NOWHERE EARLIER: audioRecorder.stop() and stopPlaybackCapturer() above
+        // have each asked their capture thread to stop and joined it. That join is BEST-EFFORT
+        // (T2-SHARPENED — Thread.join(ms) returns identically on termination and on timeout), and
+        // this is the safe half of that bound rather than a claim about it: the ring synchronises
+        // itself and removes each chunk under its own monitor, so a survivor racing this flush
+        // cannot double-deliver a chunk or tear the byte tally — it just finds less to replay.
+        transcriptionEngine?.let { sessionEngine ->
+            val pendingMs = StartupRing.msOf(startupRing.byteSize())
+            val flushed = startupRing.drainAll { pcm, _, _ -> sessionEngine.sendAudio(pcm) }
+            if (flushed > 0) {
+                android.util.Log.i("WE-DIAG", StartupRing.stopFlushLine(flushed, pendingMs))
+            }
+        }
+
         // Flush whatever is buffered, UNCONDITIONALLY. The amplitude segmenter misses quiet
         // speech below its fixed thresholds — gating this flush on hasPendingSpeech() silently
         // discarded whole sessions for soft talkers ("No speech detected" despite real speech).
@@ -3574,6 +3787,30 @@ class FloatingBubbleService : Service(),
     }
 
     private fun teardownRealtime() {
+        // 4.4.0 S2 — FIRST, and new to this task, because the recorder can now be open on a path
+        // that never reached RECORDING. This function is the convergence point of every session
+        // exit (normal drain end, recorder-start failure, connect-time fatal, onDestroy), and on a
+        // CONNECT-TIME FATAL it is the only one: before S2 the capture thread did not exist on that
+        // path, so nothing there had to close it. Without these calls a session that failed to
+        // connect — no model installed, a dead key — would leave the microphone open and the
+        // system's mic indicator up for a session that produces nothing.
+        //
+        // Both are idempotent (StreamingAudioRecorder.stop() returns immediately on !recording;
+        // stopPlaybackCapturer() nulls its field), so the normal stop path — which stopped and
+        // joined both long before it gets here — is unchanged.
+        //
+        // NOT freed here: the Silero probe's ~2.6 MB native context, which a fatal connect leaves
+        // armed because the probe free is stopRecording's alone. That is the BOUNDED,
+        // already-documented orphan case — VadProbeLifecycle's KDoc and WhisperNative.kt record
+        // that vadProbeInit "frees the previous context first", so the next session's first frame
+        // reclaims it and they cannot accumulate — and it is left as a named residue rather than a
+        // second onSessionEnd site, which would double a census three documents carry.
+        audioRecorder.stop()
+        stopPlaybackCapturer()
+        // And the startup ring is DISCARDED, never replayed: a failed connect has no engine to
+        // replay into, and the next session must never open holding the previous one's audio.
+        engineReady = false
+        startupRing.clear()
         // Backstop flush: teardown is the LAST thing every session-exit path runs — normal drain
         // end (already flushed above, so this returns empty), recorder start failure, fatal
         // onError, and onDestroy. Held text is uniquely fragile: unlike per-segment injection it
@@ -4194,9 +4431,32 @@ class FloatingBubbleService : Service(),
         processingTimerJob = null
     }
 
+    /**
+     * THE "LISTENING" CUE. Fired from `onOpen`'s Main body since 4.4.0 S2 — at true readiness,
+     * beside the bubble's own RECORDING flip, which was always there. Unchanged pattern, so a
+     * warm session feels exactly as it did; a cold one now buzzes a few seconds later, and every
+     * word spoken in that gap still arrives (the startup ring).
+     */
     private fun vibrateStart() {
         if (app.preferencesManager.isVibrationEnabled()) {
             vibrate(longArrayOf(0, 50))
+        }
+    }
+
+    /**
+     * THE TAP ACKNOWLEDGEMENT (4.4.0 S2, the amendment's haptic ruling: "the tap gets its own
+     * distinct short acknowledgement if the house style wants one").
+     *
+     * Deliberately SHORTER than [vibrateStart] — 20 ms against 50 — because the two cues now say
+     * two different things and the user has to be able to tell them apart by feel alone: this one
+     * is "got it, you are being recorded", [vibrateStart] is "the engine has your words". Without
+     * it the tap would feel dead for the whole cold model load, which is the one thing Option B
+     * of the investigation was criticised for on its own (§6, "makes the app feel slower by
+     * exactly the connect time").
+     */
+    private fun vibrateTap() {
+        if (app.preferencesManager.isVibrationEnabled()) {
+            vibrate(longArrayOf(0, 20))
         }
     }
 

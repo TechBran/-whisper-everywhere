@@ -97,8 +97,16 @@ class FlatlineArmPinTest {
         // onSessionStart opens the session DISARMED; the source pick that follows (startAudioInput
         // -> startMicSource / startPlaybackSource -> setActiveSource) is what arms it, and it runs
         // before the capturer can deliver a frame. Order in source is the half a JVM test can see.
-        val cadence = indexOfOrFail("                    endpointer.onSessionStart(")
-        val startInput = text.indexOf("                    val started = startAudioInput()", cadence)
+        //
+        // RE-SPECCED at 4.4.0 S2 (startup amendment): both statements moved out of `onOpen`'s
+        // 20-space Main body into `startRecording` above `connect()`, so the microphone stops
+        // waiting out the model load. THE ORDERING THIS PINS IS THE REASON THEY MOVED AS A PAIR —
+        // `onSessionStart` writes `flatlineArmed = false` and `setActiveSource` (reached only
+        // through `startAudioInput()`) writes `armFlatline(source == PLAYBACK)`, so hoisting
+        // `startAudioInput()` alone would leave the 4.4 flatline cut PERMANENTLY DISARMED for
+        // every device-audio session, silently. Only the indentation of the needles changed.
+        val cadence = indexOfOrFail("        endpointer.onSessionStart(")
+        val startInput = text.indexOf("        val started = startAudioInput()", cadence)
         assertTrue("the source is picked AFTER the session opens", startInput > cadence)
         // Both capturer starts route through the arm site.
         val mic = indexOfOrFail("    private fun startMicSource(): Result<Unit> {\n        setActiveSource(com.whispereverywhere.audio.ActiveSource.MIC)")
