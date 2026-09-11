@@ -3712,12 +3712,22 @@ class FloatingBubbleService : Service(),
             ),
         )
         sessionHasLocalPreview = previewArmed
-        // (4.4.1, CONTROLLER RULING 2026-09-11, CHANGE 4) THE ANNOUNCEMENT RETIRES ITSELF HERE.
-        // Home's card says "Live words are on" until the user has actually seen them, and the
-        // only place that becomes true is the gate answering yes. Written here rather than from
-        // the previewer's first partial because ARMING is the fact the card is about, and this is
-        // the one site that knows it; the gate itself stays pure and is not consulted twice.
-        if (previewArmed) app.preferencesManager.livePreviewArmedOnce = true
+        // (4.4.1, CONTROLLER RULING 2026-09-11, CHANGE 4 — the write MOVED to onOpen in 4.5.0 T4
+        // fix round 1, review r1's B1.) THE ANNOUNCEMENT RETIRES ITSELF WHEN THE SESSION OPENS,
+        // and deliberately not here. Home's card says "Live words are on" until the user has
+        // actually seen them; arming is necessary for that and it is NOT sufficient. This gate has
+        // no tier term (`PreviewUnreachable`'s KDoc), so on a device with no speech model and no
+        // configured provider `decideEngineChoice` answers LOCAL_ONLY, `cloudWrapper` stays null
+        // and the gate answers TRUE — on the one phone where `LocalWhisperEngine.connect` is about
+        // to answer "No speech model installed", the session is torn down out of CONNECTING and
+        // not one word is ever rendered. Writing the flag here marked that user as having watched
+        // live words appear; the flag is global and permanent, so the day they took this feature's
+        // own advice and downloaded a model, `Card.INSTALLED` was suppressed forever — for exactly
+        // the reader the announcement exists for. It is written in onOpen now, where the session
+        // has reached RECORDING and the startup ring begins draining into the engine: before that
+        // instant no audio reaches the previewer at all (`StartupSeam.route` buffers until
+        // `engineReady`), so "armed AND opened" is the earliest moment a word can have appeared,
+        // which is the claim the flag makes.
         val engine: TranscriptionEngine = if (previewArmed) {
             com.whispereverywhere.transcription.stream.PreviewTeeEngine(requireNotNull(preview), baseEngine)
                 .also { transcriptionEngine = it }
@@ -3882,6 +3892,14 @@ class FloatingBubbleService : Service(),
                     // capture: the cue now means "the engine has your words", and the words spoken
                     // before it are in the ring on their way through.
                     vibrateStart()
+                    // (4.4.1 CHANGE 4; MOVED here from the gate's call site by 4.5.0 T4 fix round
+                    // 1 — the argument is at the gate, above.) THE USER HAS SEEN LIVE WORDS.
+                    // Guarded by the gate's own answer and never a re-derivation of it, written at
+                    // the one instant that makes the claim true: this session is RECORDING, so the
+                    // ring is draining into the tee and the previewer is composing. A session that
+                    // arms and never opens — every session on a device with no speech model —
+                    // writes nothing, so the announcement survives for the day a tier lands.
+                    if (previewArmed) app.preferencesManager.livePreviewArmedOnce = true
                     amplitudeJob = serviceScope.launch {
                         audioRecorder.amplitude.collectLatest { amp ->
                             if (currentState != BubbleState.RECORDING) return@collectLatest

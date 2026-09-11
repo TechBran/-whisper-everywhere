@@ -480,10 +480,12 @@ class StreamingPackCopyTest {
                 "language you pick. Your typed transcript is unchanged.",
             StreamingPackCopy.NO_TIER_SUBTITLE,
         )
-        // IT NAMES THE RULE, NOT THE MISSING FILE. `localPreviewArms` refuses on
-        // `!isCloudSession`, and the tier is only the STANDING reason a session is always a cloud
-        // one. Naming the rule is what keeps this sentence true word for word if the open ruling
-        // widens its input to a device that HAS a tier and runs every session in the cloud.
+        // IT NAMES THE RULE, NOT THE MISSING FILE — and the rule is true of BOTH mechanisms
+        // (`PreviewUnreachable`'s KDoc): nothing transcribes on this device at all, and a
+        // configured cloud provider additionally makes every session one `localPreviewArms`
+        // refuses. Naming the rule is what keeps this sentence true word for word if the open
+        // ruling ever widens its input to a device that HAS a tier and runs every session in the
+        // cloud.
         assertTrue(
             "the rule: words only while transcription runs here",
             StreamingPackCopy.NO_TIER_SUBTITLE.contains(

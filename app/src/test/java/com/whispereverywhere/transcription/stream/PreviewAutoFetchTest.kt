@@ -671,9 +671,11 @@ class PreviewAutoFetchTest {
 
     @Test fun theAnnouncementIsSilentForAUserWhosePreviewerCanNeverArm() {
         // (4.4.1 pass 3, ITEM 3 — review r1's nit 2.) "Live words are on" is false, permanently,
-        // for a user with the pack and NO on-device whisper tier: every session of theirs is a
-        // cloud session, `localPreviewArms` refuses on `!isCloudSession`, and nothing will ever
-        // write `livePreviewArmedOnce` — so `previewHasArmed` could not retire it either. `decide`
+        // for a user with the pack and NO on-device whisper tier: nothing transcribes on their
+        // device at all (the session dies at connect — `PreviewUnreachable`'s KDoc, not the
+        // previewer's gate, which has no tier term), and nothing will ever write
+        // `livePreviewArmedOnce`, because the write is `onOpen`'s and that session never opens —
+        // so `previewHasArmed` could not retire it either (4.5.0 T4 fix round 1). `decide`
         // already reads this input and would never have FETCHED the pack for them, but the pack
         // can be there anyway: the Settings row installs on demand, and a 4.4.0 user may have had
         // it before they went cloud-only.

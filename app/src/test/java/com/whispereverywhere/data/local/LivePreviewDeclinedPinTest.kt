@@ -25,6 +25,12 @@ import org.junit.Test
  *  - **the metered reading has ONE home and ONE default.** The CONTROLLER RULING hangs on this
  *    single predicate: no active network reads as METERED, so a phone with no connection shows
  *    the card instead of starting a transfer that would fail.
+ *  - **and *"the user has seen live words"* is written when the session OPENS** (4.5.0 T4 fix
+ *    round 1, review r1's B1). It used to be written wherever the previewer's gate armed, and
+ *    that gate has no tier term: on a device with no speech model and no configured provider it
+ *    arms, the session then dies at connect, and a global permanent flag said that user had
+ *    watched live words appear — suppressing *"Live words are on"* forever for the one reader the
+ *    announcement exists for. The order pinned here is the fix.
  *
  * Both files read here are already in the test task's `sourcePinnedInputs`
  * (`app/build.gradle.kts`) except `ConnectivityMonitor.kt`, which this test adds — without those
@@ -155,7 +161,7 @@ class LivePreviewDeclinedPinTest {
 
     // ------------------------------------------------------------------ the announcement retires
 
-    @Test fun theSeenLiveWordsFlagDefaultsToFalseAndIsWrittenByTheGatesOwnCallSite() {
+    @Test fun theSeenLiveWordsFlagDefaultsToFalseAndIsWrittenWhenTheSessionOPENS() {
         // CONTROLLER RULING 2026-09-11, CHANGE 4. Shipped `true` the announcement never appears
         // at all, which is the silent no-op no behavioural test can see; and if nothing ever
         // writes it, the announcement is permanent again and the X — the permanent no — is the
@@ -178,9 +184,7 @@ class LivePreviewDeclinedPinTest {
             "and it is NOT the declined flag: \"I have seen this\" is not \"I do not want this\"",
             0, liveLineCount(prefs, "KEY_LIVE_PREVIEW_DECLINED = \"live_preview_armed_once\""),
         )
-        // The write lives with the fact it records: the previewer gate's own call site is the one
-        // place that knows an arm happened, and it is guarded by the gate's answer rather than by
-        // a re-derivation of it.
+        // The write is guarded by the gate's own answer and never by a re-derivation of it...
         assertEquals(
             1,
             liveLineCount(
@@ -195,6 +199,30 @@ class LivePreviewDeclinedPinTest {
             "and answer BEFORE the flag is written — a write above the gate would record an arm " +
                 "that never happened",
             gate in 0 until written,
+        )
+        // ...AND IT IS WRITTEN WHEN THE SESSION OPENS, not when the gate answers (4.5.0 T4 fix
+        // round 1, review r1's B1). The gate has no tier term, so on a device with no speech model
+        // and no configured provider it ARMS — `decideEngineChoice` answers LOCAL_ONLY, so the
+        // session is not a cloud one — while `LocalWhisperEngine.connect` answers "No speech model
+        // installed" and the session is torn down out of CONNECTING. Writing the flag at the gate
+        // marked that user as having watched live words appear, and this flag is global and
+        // permanent: the day they followed the feature's own advice and installed a speech model,
+        // "Live words are on" was suppressed forever, for exactly the reader it exists for. onOpen
+        // is the first instant a word can have appeared — before it the capture thread only fills
+        // the startup ring (`StartupSeam.route` buffers until `engineReady`).
+        val opened = offsetOfLive(service, "updateBubbleState(BubbleState.RECORDING)")
+        assertTrue("the session must still reach RECORDING at exactly one site", opened >= 0)
+        assertEquals(
+            1, liveLineCount(service, "updateBubbleState(BubbleState.RECORDING)"),
+        )
+        assertTrue(
+            "the flag is written AFTER the session reaches RECORDING, so a session that arms " +
+                "and never opens writes nothing",
+            opened < written,
+        )
+        assertTrue(
+            "and the write sits inside onOpen, below the readiness flag the capture thread reads",
+            offsetOfLive(service, "engineReady = true") in 0 until written,
         )
         assertEquals(
             "one write site in the whole service, so no other path can claim the user has seen " +

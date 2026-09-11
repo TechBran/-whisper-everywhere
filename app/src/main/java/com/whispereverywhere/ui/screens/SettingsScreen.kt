@@ -654,9 +654,9 @@ fun SettingsScreen(
                 // `modelRefreshKey`-keyed read the model rows and the *"Delete <tier>"* dialog
                 // above are drawn from, so the previewer's section cannot disagree with the
                 // section that took the tier away — and it answers in the same frame the delete
-                // does. Without an on-device tier every session is a cloud session,
-                // `localPreviewArms` refuses on `!isCloudSession`, and no pack, pick or switch
-                // can put a word on the bubble.
+                // does. Without an on-device speech model nothing transcribes on this device at
+                // all (`PreviewUnreachable`'s KDoc has the mechanism, and it is not the
+                // previewer's gate), and no pack, pick or switch can put a word on the bubble.
                 LivePreviewRows(
                     app = app,
                     context = context,
@@ -1099,8 +1099,9 @@ fun SettingsSection(
  *    their SELECTION (4.4.1 pass 3, ITEM 1) — no language is offered a model that has already
  *    been decided cannot arm for it, and the one it can never arm for is told so instead
  *  - ...and whether this DEVICE may be (4.5.0 Task 4): `PreviewUnreachable.of`, which answers the
- *    tier before the selection. With no on-device speech model every session is a cloud session,
- *    `localPreviewArms` refuses on `!isCloudSession`, and no pack, pick, switch or connection can
+ *    tier before the selection. With no on-device speech model nothing transcribes on this device
+ *    at all (the mechanism, and the fourth cell where the gate itself arms, are in
+ *    `PreviewUnreachable`'s KDoc), and no pack, pick, switch or connection can
  *    put a word on the bubble — so this section draws ONE true sentence and offers nothing, in
  *    place of an installed row, a switch, an offer and a repair that all promised words
  *
@@ -1228,9 +1229,10 @@ private fun LivePreviewRows(
     // (4.5.0 Task 4) AND THE DEVICE IS THE THIRD CASE, ANSWERED FIRST. ITEM 1's rule was *"no
     // language may be offered a model that has already been decided cannot arm for it"*; the same
     // rule one axis over is *no DEVICE may be*, and until this task nothing in the feature said
-    // it. With no on-device speech model every session is a cloud session, `localPreviewArms`
-    // refuses on `!isCloudSession`, and the pack, the pick, the switch and the connection are all
-    // beside the point. `PreviewUnreachable` is that order — the tier before the selection,
+    // it. With no on-device speech model nothing transcribes on this device at all — the session
+    // dies at connect with *"No speech model installed"*, and `PreviewUnreachable`'s KDoc has the
+    // rest (it is NOT the previewer's gate, which has no tier term) — and the pack, the pick, the
+    // switch and the connection are all beside the point. `PreviewUnreachable` is that order — the tier before the selection,
     // because Auto's own sentence INSTRUCTS a pick (*"pick your transcription language to see
     // words on the bubble"*) and that instruction is false here for every language they could
     // pick. One pure decision, asked by this section and by Home's language card, so two surfaces
@@ -1265,7 +1267,7 @@ private fun LivePreviewRows(
     // honest answer here too: there is no sentence to rewrite if there is no row.
     //
     // The SWITCH goes with it, and that is deliberate rather than collateral: it is inside this
-    // branch, it changes nothing while `localPreviewArms` refuses on `!isCloudSession`, and this
+    // branch, it changes nothing while no session on this device can transcribe at all, and this
     // feature's own rule is that a control is enabled by the record or it is not offered (Task 1
     // fix round 2's B1c, on the card's X). The preference keeps its value, so the day a tier
     // arrives the switch comes back reading whatever the user last set.
@@ -1418,8 +1420,9 @@ private fun LivePreviewRows(
     // above is drawn from, so the two rows cannot disagree.
     //
     // (4.5.0 Task 4) ...AND THE DEVICE IS THE THIRD ARMING FACT, the one whose remedy is NOT on
-    // this row. With no on-device speech model every session is a cloud session,
-    // `localPreviewArms` refuses on `!isCloudSession`, and the case was LIVE — *"Frees 73 MB.
+    // this row. With no on-device speech model nothing transcribes on this device at all
+    // (`PreviewUnreachable`'s KDoc, and it is not the previewer's gate), and the case was LIVE —
+    // *"Frees 73 MB.
     // Live words stop"* — on a device where no word has ever appeared. Reachable in one gesture
     // from THIS screen: the *"Delete <tier>"* dialog three sections up clears `selectedModelId`
     // and says so in its own words. The value is the same `installedModel` that dialog is drawn

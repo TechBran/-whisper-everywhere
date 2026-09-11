@@ -25,10 +25,11 @@ class PreviewUnreachableTest {
                 hasPackForSelection = pack,
             )
             val expected = when {
-                // The tier is FIRST and it is absolute. With no on-device speech model every
-                // session is a cloud session, `localPreviewArms` refuses on `!isCloudSession`,
-                // and NO pick can change that — so naming the selection there would tell the
-                // user to do something that cannot help them.
+                // The tier is FIRST and it is absolute. With no on-device speech model nothing
+                // transcribes on this device at all — the session dies at connect, which is the
+                // mechanism `PreviewUnreachable`'s KDoc states and NOT the previewer's gate — and
+                // NO pick can change that, so naming the selection there would tell the user to
+                // do something that cannot help them.
                 !tier -> PreviewUnreachable.NO_LOCAL_TIER
                 !pack -> PreviewUnreachable.NO_PACK_FOR_SELECTION
                 else -> null

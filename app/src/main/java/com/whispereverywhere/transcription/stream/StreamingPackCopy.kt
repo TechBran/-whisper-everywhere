@@ -104,9 +104,10 @@ object StreamingPackCopy {
      *    this subtitle was the one sentence that did not ask;
      *  - the install is a `StreamingPackState.Repair` — `markCorrupt` removed the marker and left
      *    the bytes, so again live words are already off;
-     *  - **there is no on-device speech model** (4.5.0 Task 4) — every session is a cloud session,
-     *    `localPreviewArms` refuses on `!isCloudSession`, and no pick, switch or repair on this
-     *    screen can change it. Reachable in one gesture from this very screen: the *"Delete
+     *  - **there is no on-device speech model** (4.5.0 Task 4) — nothing transcribes on this
+     *    device at all (the session dies at connect with *"No speech model installed"*; the
+     *    mechanism is `PreviewUnreachable`'s KDoc and it is NOT a term of `localPreviewArms`),
+     *    and no pick, switch or repair on this screen can change it. Reachable in one gesture from this very screen: the *"Delete
      *    <tier>"* dialog three sections up clears `selectedModelId` and says *"On-device
      *    transcription will stop working until you download a model again"*;
      *  - **a write is in flight**, where *"Frees …"* frees nothing at all: `delete` clears
@@ -306,9 +307,12 @@ object StreamingPackCopy {
     // ----------------------------------- what a DEVICE that can never arm costs (4.5.0 Task 4)
 
     /**
-     * THE TIER AXIS, SPELLED ONCE and carried by every sentence that has to say it — the fact
-     * `localPreviewArms`' `!isCloudSession` conjunct is about, in the user's terms rather than the
-     * gate's.
+     * THE TIER AXIS, SPELLED ONCE and carried by every sentence that has to say it — in the
+     * user's terms rather than the machine's. The machine's version is TWO facts, not one, and
+     * `PreviewUnreachable`'s KDoc states them: nothing transcribes on this device at all (the
+     * session dies at connect), and a configured cloud provider additionally makes every session
+     * one `localPreviewArms` refuses on `!isCloudSession`. This clause is true of both, which is
+     * the second reason it names the rule rather than either mechanism.
      *
      * It names the RULE and not the missing file, deliberately: *"live words appear only while
      * transcription runs on this device"* is the whole of why the previewer cannot arm, and it
@@ -737,8 +741,9 @@ object StreamingPackCopy {
      * `PreviewAutoFetch.card` answers `Card.NONE` on `!showLiveWords` and on `!localTierInstalled`
      * before it will say anything, and each of those guards was earned by a review round —
      * *"every sentence this card can spell is false while the switch is off"* (4.4.1 review r1's
-     * B2) and *"with no on-device tier every session is a cloud session and the gate refuses on
-     * `!isCloudSession`"* (pass 3's ITEM 3). `LivePreviewSelectorStrip` and `LiveWordsCard` are
+     * B2) and *"no device may be told live words are on where none can appear"* (pass 3's ITEM 3 —
+     * whose own mechanism sentence named the wrong reason and is corrected in
+     * `PreviewUnreachable`'s KDoc, 4.5.0 T4 fix round 1). `LivePreviewSelectorStrip` and `LiveWordsCard` are
      * two composables in one `HomeScreen` narrating the SAME pack, so a sentence that is false on
      * one is false on the other. The first version of this function asked nothing, and its READY
      * receipt therefore outlived the switch going off and a device that can never arm.
@@ -752,8 +757,11 @@ object StreamingPackCopy {
      *
      * **And the terms are not a guess about which facts matter: they are `localPreviewArms`' own
      * STANDING terms.** That gate is `sessionLanguage in installedPackLanguages && !isCloudSession
-     * && !batchJobActive && userEnabled && previewReady`. `userEnabled` is [showLiveWords],
-     * `!isCloudSession` is [localTierInstalled] at setup level, `installedPackLanguages` is what
+     * && !batchJobActive && userEnabled && previewReady`. `userEnabled` is [showLiveWords].
+     * [localTierInstalled] is NOT that gate's `!isCloudSession` — the gate has no tier term at all
+     * and the two are different facts (`PreviewUnreachable`'s KDoc, fix round 1); it is the
+     * STANDING fact that nothing transcribes on this device at all, which is why a READY receipt
+     * is false without it. `installedPackLanguages` is what
      * the delete and the withdrawn verdict take away (and with them the record), and
      * `batchJobActive` is momentary rather than standing — *"whenever you pick it"* is a promise
      * about the next session, not about a batch job running now.
@@ -809,8 +817,9 @@ object StreamingPackCopy {
      * @param showLiveWords the *"Show live words"* switch (`PreferencesManager
      *        .localPreviewEnabled`), the same input `card` and `decide` read.
      * @param localTierInstalled an on-device whisper tier exists — the same input, for the same
-     *        reason: without one `localPreviewArms` refuses on `!isCloudSession` and no word can
-     *        ever reach the bubble, however installed the pack is.
+     *        reason: without one nothing transcribes on this device at all (the session dies at
+     *        connect — `PreviewUnreachable`'s KDoc, not `localPreviewArms`, is where that is
+     *        stated) and no word can ever reach the bubble, however installed the pack is.
      * @param disabledLanguages the languages whose previewer THIS PROCESS has taken off
      *        ([PreviewDisabled], written by the engine's own `disable`) — **not** the user's
      *        switch, which is [showLiveWords]. A SET rather than a Boolean for

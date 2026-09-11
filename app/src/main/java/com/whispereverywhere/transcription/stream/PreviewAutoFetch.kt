@@ -90,9 +90,11 @@ package com.whispereverywhere.transcription.stream
  * (`PreferencesManager.localPreviewEnabled`), a running batch job (`BatchJobController.active`),
  * and the pack's own installed state (through [StreamingPackState]). One it deliberately does not
  * borrow: `previewReady` (the recognizer cannot be warm before the model exists).
- * [localTierInstalled] is the SETUP-level reading of that gate's `isCloudSession`: with no
- * on-device tier installed every session is a cloud session, so the previewer could never arm and
- * 73 MB would buy the user nothing.
+ * [localTierInstalled] is NOT a reading of that gate's `isCloudSession` — the gate has no tier
+ * term at all, and the two are different facts (4.5.0 T4 fix round 1; the mechanism is
+ * `PreviewUnreachable`'s KDoc). It is the standing fact that nothing transcribes on this device at
+ * all: the session dies at connect with *"No speech model installed"*, no word can reach the
+ * bubble, and 73 MB would buy the user nothing.
  *
  * ### The LANGUAGE is an input, as of the acquisition amendment (owner rulings 2026-09-11)
  *
@@ -190,7 +192,7 @@ object PreviewAutoFetch {
      *        (R3, default true). Off means the user turned the feature off; fetching its model
      *        would be 73 MB for a surface that will not draw.
      * @param localTierInstalled an on-device whisper tier exists. See the class KDoc: without one
-     *        every session is a cloud session and the previewer can never arm.
+     *        nothing transcribes on this device at all and no word can reach the bubble.
      * @param starter WHO caused this look — [PreviewTrigger.starter] at the one call site, never a
      *        literal. **The asymmetry of rulings 3a and 3b hangs on this one input, and on nothing
      *        else**: an unasked [PreviewStarter.TOP_UP] waits for an unmetered network — offering
@@ -342,12 +344,16 @@ object PreviewAutoFetch {
      * ### Why the ANNOUNCEMENT asks about the local tier (4.4.1 pass 3, ITEM 3)
      *
      * `Card.INSTALLED` says *"Live words are on"* — and for a user with the pack but NO on-device
-     * whisper tier that is simply false, permanently: every session of theirs is a cloud session,
-     * `localPreviewArms` refuses on `!isCloudSession`, and the previewer can never arm. [decide]
+     * whisper tier that is simply false, permanently: nothing transcribes on their device at all,
+     * so no word can reach the bubble (`PreviewUnreachable`'s KDoc for the mechanism, which is not
+     * this gate's `!isCloudSession`). [decide]
      * already reads [localTierInstalled] and would never have FETCHED the pack for them, but the
      * pack can be there anyway — the Settings row installs on demand, and a 4.4.0 user may have
      * had it before they went cloud-only. [previewHasArmed] cannot retire the announcement for
-     * them either, because the thing that writes it can never happen. So the announcement asks the
+     * them either, because the thing that writes it can never happen — the write is `onOpen`'s as
+     * of 4.5.0 T4 fix round 1, and a modelless session never opens. (It used to be the GATE's
+     * answer, which on such a phone fires, so the flag was written and this announcement was
+     * suppressed for the one reader it exists for: review r1's B1.) So the announcement asks the
      * same question the acquisition side asks, and says nothing rather than something false
      * (review r1's nit 2).
      *
@@ -390,8 +396,9 @@ object PreviewAutoFetch {
         userSaidNo -> Card.NONE
         !showLiveWords -> Card.NONE
         // The announcement, and its two silences: the user has already seen live words, or they
-        // never can — with no on-device tier every session is a cloud session and the gate refuses
-        // on `!isCloudSession`, so "Live words are on" would be permanently false (ITEM 3).
+        // never can — with no on-device speech model nothing transcribes on this device at all, so
+        // "Live words are on" would be permanently false (ITEM 3; the mechanism is
+        // `PreviewUnreachable`'s KDoc, and it is NOT this gate, which has no tier term).
         installed -> if (previewHasArmed || !localTierInstalled) Card.NONE else Card.INSTALLED
         workInFlight || decision == Decision.FETCH -> Card.WORKING
         decision == Decision.OFFER -> Card.OFFER

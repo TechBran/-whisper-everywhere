@@ -150,6 +150,46 @@ class LocalPreviewGateTest {
         assertFalse("the English pack on disk is not the Spanish pick's pack", arms("es"))
     }
 
+    /**
+     * THE FOURTH CELL (4.5.0 T4 fix round 1, review r1's B1). The feature said in nine places
+     * that with no on-device speech model *"every session is a cloud session, so this gate can
+     * never fire"*. It can: `decideEngineChoice` answers `LOCAL_ONLY` for a null `sttProviderId`
+     * whatever the key and the network say, that arm never assigns `cloudWrapper`, and this gate
+     * has no tier term among its six inputs. So on a modelless phone with no provider configured
+     * — the default shape of a tier deleted in Settings or an Auto-Backup restore — the gate
+     * ARMS, and the previewer's copy is true for a different reason: the session dies at connect
+     * (`LocalPreviewWiringPinTest` pins that, and `PreviewUnreachable`'s KDoc states it).
+     *
+     * This test is the executable half of that correction. If it ever fails, the enumeration in
+     * the task report is right and this comment is wrong — which is the direction the axis was
+     * wrong in before.
+     */
+    @Test fun theGateItselfArmsWithNoTierAndNoProviderConfigured() {
+        for (hasKey in listOf(false, true)) {
+            for (network in listOf(false, true)) {
+                for (live in listOf(false, true)) {
+                    assertEquals(
+                        "no provider selected is the one-way valve: never a cloud session",
+                        EngineChoice.LOCAL_ONLY,
+                        decideEngineChoice(
+                            sttProviderId = null,
+                            hasKey = hasKey,
+                            hasValidatedNetwork = network,
+                            liveMode = live,
+                        ),
+                    )
+                }
+            }
+        }
+        // ...so `cloudWrapper` is null, `isCloudSession` is false, and with the pack installed,
+        // the language picked, the switch on and the recognizer warm every remaining term is met.
+        assertTrue(
+            "the gate arms on a device that has no speech model at all — the tier is not one of " +
+                "its inputs, and this is the cell the enumeration declared impossible",
+            arms("en"),
+        )
+    }
+
     @Test fun everyOtherInputIsAVeto() {
         assertFalse("no pack", arms("en", packs = emptySet()))
         assertFalse("a cloud session (batch or live) keeps today's strip", arms("en", cloud = true))

@@ -438,8 +438,10 @@ enum class PreviewDeleteCase {
     LIVE,
 
     /**
-     * No on-device speech model, so `localPreviewArms` refuses on `!isCloudSession` and nothing
-     * this row's reader can do to the switch or the selection would put a word on the bubble
+     * No on-device speech model, so nothing transcribes on this device at all — the session dies
+     * at connect with *"No speech model installed"*; the mechanism is `PreviewUnreachable`'s
+     * KDoc, and it is NOT a term of `localPreviewArms` — and nothing this row's reader can do to
+     * the switch or the selection would put a word on the bubble
      * (4.5.0 Task 4). Deleting frees the bytes and stops nothing, and this is the reason to say —
      * because it is the one the user cannot reach from this screen's own controls.
      */

@@ -19,6 +19,12 @@ import java.io.File
  * language's pack or not at all (4.4.1, CHANGE 5); the arbiter counts
  * CONNECTING as capturing; and the service never imports the AAR — `SherpaPreviewRecognizer` is
  * the one adapter.
+ *
+ * **And since 4.5.0 T4 fix round 1: a MODELLESS session dies at connect, which is the fact the
+ * whole device axis's copy rests on.** The gate has no tier term and arms on such a phone when no
+ * provider is configured, so *"live words cannot appear here"* is true because the local engine
+ * refuses at connect and the service treats that as fatal — not because the session is a cloud
+ * one. Both halves are pinned below, over `LocalWhisperEngine.kt` as well as this service.
  */
 class LocalPreviewWiringPinTest {
 
@@ -54,9 +60,66 @@ class LocalPreviewWiringPinTest {
         return text.substring(start, close + closer.length)
     }
 
+    private val engineText: String by lazy {
+        source("src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt")
+            .readText()
+            .replace("\r\n", "\n")
+    }
+
     private val startRecording: String by lazy { body("    private fun startRecording() {", "\n    }\n") }
     private val onTrim: String by lazy { body("    override fun onTrimMemory(level: Int) {", "\n    }\n") }
     private val onDestroy: String by lazy { body("    override fun onDestroy() {", "\n    }\n") }
+
+    /**
+     * WHAT MAKES THE DEVICE AXIS'S SENTENCES TRUE (4.5.0 T4 fix round 1, review r1's B1) — and it
+     * is NOT this gate.
+     *
+     * `NO_TIER_SUBTITLE`, `deleteSubtitle(OFF_TIER, …)` and `cardWorking(lang, false)` all say
+     * that live words cannot appear on a device with no speech model. `localPreviewArms` has no
+     * tier term, and on such a device with no provider configured it ARMS
+     * ([LocalPreviewGateTest.theGateItselfArmsWithNoTierAndNoProviderConfigured]). The reason no
+     * word is rendered is the two lines pinned here: the local engine refuses at CONNECT, and the
+     * service treats a connect-time error as FATAL because the bubble is not RECORDING yet
+     * (RECORDING is set only from `onOpen`).
+     *
+     * The previewer is a second engine beside whisper and needs no tier of its own, so a change
+     * that let a modelless session survive to RECORDING would put real words on the bubble and
+     * make all three of those sentences false. That change would be invisible to every other test
+     * in this repo — which is what this pin is for.
+     */
+    @Test
+    fun aModellessSessionDiesAtConnectAndThatIsWhatMakesTheseSentencesTrue() {
+        // 1. No model on disk => the local engine answers onError and returns, before any load.
+        val path = indexOfOrFail(engineText, "val modelPath = modelPathProvider.installedModelPath()")
+        val refusal = engineText.indexOf("listener.onError(\"No speech model installed\")")
+        assertTrue(
+            "LocalWhisperEngine must still refuse a null model path at connect",
+            refusal > path,
+        )
+        assertTrue(
+            "and the refusal must be guarded by the null path",
+            engineText.indexOf("if (modelPath == null) {", path) in (path + 1) until refusal,
+        )
+
+        // 2. The service treats that error as FATAL, because the bubble is still CONNECTING: the
+        //    "keep recording" arm is guarded on RECORDING, which only onOpen sets.
+        val onError = indexOfOrFail(startRecording, "override fun onError(message: String) {")
+        val keepRecording =
+            indexOfOrFail(startRecording, "if (currentState == BubbleState.RECORDING) {")
+        val teardown = startRecording.indexOf("teardownRealtime()", keepRecording)
+        assertTrue("the mid-session arm must still be RECORDING-only", keepRecording > onError)
+        assertTrue("and the fatal arm must still tear the session down", teardown > keepRecording)
+        assertEquals(
+            "RECORDING is entered at exactly one site, and it is inside onOpen",
+            1,
+            count(startRecording, "updateBubbleState(BubbleState.RECORDING)"),
+        )
+        val onOpen = indexOfOrFail(startRecording, "override fun onOpen() {")
+        assertTrue(
+            "so a session that never opens is never RECORDING, and its connect error is fatal",
+            startRecording.indexOf("updateBubbleState(BubbleState.RECORDING)") > onOpen,
+        )
+    }
 
     @Test
     fun theTeeIsBuiltAtOneSiteAfterTheLanguageResolvesAndBeforeConnect() {

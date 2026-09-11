@@ -1084,10 +1084,13 @@ private fun LiveWordsCard(
             // "no" rather than "I have read this" (CONTROLLER RULING 2026-09-11, CHANGE 4).
             previewHasArmed = hasArmed,
             // (4.4.1 pass 3, ITEM 3) ...and the other way the announcement can be false: with no
-            // on-device tier every session is a cloud session, the gate refuses on
-            // `!isCloudSession`, and "Live words are on" is permanently untrue — which
-            // `previewHasArmed` could never retire, because nothing would ever write it. The same
-            // input the decision reads, so the card and the fetch agree about who this is for.
+            // on-device speech model nothing transcribes on this device at all, so "Live words are
+            // on" is permanently untrue — and `previewHasArmed` cannot retire it, because what
+            // writes that flag is a session REACHING RECORDING and a modelless session dies at
+            // connect (4.5.0 T4 fix round 1, review r1's B1: the reason is not the previewer's
+            // gate, which has no tier term and arms on such a phone when no provider is
+            // configured — see `PreviewUnreachable`'s KDoc). The same input the decision reads, so
+            // the card and the fetch agree about who this is for.
             localTierInstalled = localTierInstalled,
             userSaidNo = saidNo,
             // The switch silences the card as well as the fetch: with it off there is no true
@@ -1110,7 +1113,7 @@ private fun LiveWordsCard(
             // is reached from `workInFlight` too — deliberately, because hiding a transfer the
             // user started would hide their own action from them (D17). So the arriving clause
             // stays and the note becomes the fact: `cardLanguageNote`'s *"English shows them"*
-            // cannot be said on a phone where every session is a cloud session.
+            // cannot be said on a phone where nothing transcribes on-device at all.
             body = StreamingPackCopy.cardWorking(languageName, localTierInstalled),
             // ONE line, from the one observable, whichever route is carrying the bytes — and
             // between the decision and the starter's first board write, the same dead-time line
@@ -1408,8 +1411,9 @@ fun UsageStatsCard(
 
 /**
  * @param localTierInstalled the screen's own `hasSpeechModel`, passed down for the progress strip
- *        below: without an on-device tier every session is a cloud session, `localPreviewArms`
- *        refuses on `!isCloudSession`, and *"English is ready: words appear on the bubble"* is
+ *        below: without an on-device speech model nothing transcribes on this device at all (the
+ *        mechanism is `PreviewUnreachable`'s KDoc and it is not `localPreviewArms`, which has no
+ *        tier term), and *"English is ready: words appear on the bubble"* is
  *        permanently untrue (4.5.0 Task 3 fix round 1, review r1's B2 — the same input
  *        `PreviewAutoFetch.card` and `decide` already read).
  *
@@ -1506,8 +1510,9 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
             // widest-read sentence the previewer has — it renders for every user, on the app's
             // start destination, with no gate of any kind — and on a phone with no on-device
             // speech model BOTH of its claims are false: `PreviewAutoFetch.decide` refuses on
-            // `!localTierInstalled`, so switching language downloads nothing, and
-            // `localPreviewArms` refuses on `!isCloudSession`, so no word would appear if it did.
+            // `!localTierInstalled`, so switching language downloads nothing, and nothing
+            // transcribes on this device at all, so no word would appear if it did
+            // (`PreviewUnreachable`'s KDoc for the mechanism, and for why it is not the gate).
             // The truth for that reader is the sentence under the field (`unreachableSubtitle`),
             // which renders in exactly the cells this one does not.
             if (localTierInstalled) {
