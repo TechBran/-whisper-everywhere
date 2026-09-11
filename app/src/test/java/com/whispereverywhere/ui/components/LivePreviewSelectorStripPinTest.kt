@@ -214,9 +214,10 @@ class LivePreviewSelectorStripPinTest {
             "StreamingPackController.state",
             "streamingPackManager",
             "StreamingPackCatalog.EN",
-            // (fix round 1, review r1's B2) The three facts the sentences depend on arrive as
-            // PARAMETERS, which is the opposite of a second read: no preferences instance, no
-            // second flow, and therefore nothing that can go stale behind the observable. The
+            // (fix round 1, review r1's B2; fix round 2, review r2's N2 — the fourth) The facts
+            // the sentences depend on arrive as PARAMETERS, which is the opposite of a second
+            // read: no preferences instance, no second flow, and therefore nothing that can go
+            // stale behind the observable. The
             // needles below are the READS this file must never grow — `getInstance`, a
             // `preferencesManager`, a `whisperModelManager` — not the inputs it is handed.
             "preferencesManager",
@@ -289,10 +290,12 @@ class LivePreviewSelectorStripPinTest {
             "the line is the copy object's one function over the one observable",
             1, liveLineCount(strip, "StreamingPackCopy.selectorLine("),
         )
-        // (fix round 1, review r1's B2) ...and the strip does not JUDGE the three facts it is
-        // handed. A conjunction here — `if (showLiveWords && localTierInstalled)` — would be a
-        // rule no JVM test can reach on a Compose file, which is `PreviewAutoFetch.card`'s own
-        // founding reason. They go into the pure function whole, and it answers null.
+        // (fix round 1, review r1's B2) ...and the strip does not JUDGE the facts it is handed —
+        // the membership test on the verdict set included (fix round 2, review r2's N2), which is
+        // why the SET goes through whole. A conjunction here — `if (showLiveWords &&
+        // localTierInstalled)` — would be a rule no JVM test can reach on a Compose file, which
+        // is `PreviewAutoFetch.card`'s own founding reason. They go into the pure function whole,
+        // and it answers null.
         for (rule in listOf(
             "if (showLiveWords", "&& localTierInstalled", "if (localTierInstalled",
             // (fix round 2, review r2's N2) The membership test is a rule too, which is why the
