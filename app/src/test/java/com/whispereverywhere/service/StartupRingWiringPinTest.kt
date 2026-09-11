@@ -307,22 +307,47 @@ class StartupRingWiringPinTest {
         //
         // The flush above the boundary commit is the fix that keeps the audio AND the rule: the
         // pre-roll is mic audio, so it belongs to the segment the mic was recording, and the
-        // commit immediately below cuts it there. It also leaves the ring EMPTY, so from the swap
-        // on the new source's thread takes the LIVE route.
+        // commit immediately below cuts it there.
         //
         // ROUND 1, B1: the flush is a FUNCTION, because `switchSource` is not the only handover —
         // `onMediaPlaybackStarted`'s consent-ask branch is its sibling for the no-token case and
         // needs the identical three steps. Both call sites are pinned, here and in the row below.
+        //
+        // ROUND 1, B2: AND IT RUNS BEHIND THE OLD SOURCE'S STOP+JOIN. Ahead of it, the old capture
+        // thread is still live and `drainSlice` releases the ring's monitor before calling its sink
+        // — so it holds a 4-chunk slice in flight and interleaves with this drainAll. The monitor
+        // gives exactly-once and nothing about ORDER, so that window put old-source PCM behind the
+        // boundary commit and behind the endpointer.reset() (up to 128 ms of microphone audio in
+        // the device-audio segment) and put PCM into the engine out of capture order. Stop+join ->
+        // flush -> cut is the order `stopRecording` has always had, and the order asserted here.
         val body = memberBody("    private fun switchSource(to: com.whispereverywhere.audio.ActiveSource) {")
+        val sourceStop = body.indexOf("        when (activeSource) {")
         val flush = body.indexOf("        flushStartupRingAtSourceHandover()")
         val boundary = body.indexOf("        transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }")
+        val reset = body.indexOf("        endpointer.reset()")
+        assertTrue("switchSource must stop the OLD source", sourceStop >= 0)
         assertTrue("switchSource must flush the ring", flush >= 0)
         assertTrue("switchSource must still cut the boundary", boundary >= 0)
+        assertTrue("and still reset the endpointer across the acoustic-source change", reset >= 0)
+        assertTrue(
+            "the old source is stopped and joined BEFORE the flush, or its capture thread " +
+                "interleaves with the flush and lands PCM past the cut, out of order",
+            sourceStop < flush,
+        )
         assertTrue(
             "the microphone's pre-roll is committed on the MIC side of the boundary, never " +
                 "replayed on the device-audio side",
             flush < boundary,
         )
+        assertTrue("and the D9/D10 reset follows the cut it belongs to", boundary < reset)
+        // The stop is the OLD source's, whichever it is — both arms, above the flush.
+        for (arm in listOf(
+            "            com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()",
+            "            com.whispereverywhere.audio.ActiveSource.PLAYBACK -> stopPlaybackCapturer()",
+        )) {
+            val at = body.indexOf(arm)
+            assertTrue("missing from switchSource: <<$arm>>", at in 0 until flush)
+        }
         // The flush says so under its own name, so a log can tell the two flushes apart — and it
         // lives in ONE place: the declaration plus exactly the two handover call sites.
         assertEquals(1, count("StartupRing.switchFlushLine("))

@@ -2588,19 +2588,34 @@ class FloatingBubbleService : Service(),
         // transcribe a YouTube video without their actual spoken words being dictated") broken by
         // a 6 s buffer.
         //
-        // Flushing here keeps the audio AND the rule: the pre-roll is the OLD source's audio, so
-        // it belongs to the segment the old source was recording, and the commit immediately below
-        // cuts it there. It also leaves the ring EMPTY, so from the swap on every thread takes the
-        // LIVE route — S2 therefore adds no new source-mixing window, and the one that remains is
-        // this function's own pre-existing stop-then-join residue named above.
-        flushStartupRingAtSourceHandover()
-        transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
-        endpointer.reset()
-        segmentCapPolicy.onCommit(System.currentTimeMillis())
+        // Flushing keeps the audio AND the rule: the pre-roll is the OLD source's audio, so it
+        // belongs to the segment the old source was recording, and the commit below cuts it there.
+        //
+        // ROUND 1, B2 — THE OLD SOURCE IS STOPPED AND JOINED FIRST, and the order of these four
+        // statements is the rest of that rule. The flush used to run AHEAD of the stop, with the
+        // old source's capture thread still live: StartupRing.drainSlice releases its monitor
+        // before calling the sink (it has to — the sink is sendAudio plus a Silero probe call per
+        // chunk), so that thread routinely holds a 4-chunk slice in flight, ~10 ms of sink work per
+        // 32 ms period. Interleaved with this drainAll that produced two windows the ring's monitor
+        // cannot close, because the monitor gives exactly-once and says nothing about ORDER:
+        // old-source PCM appended by that thread AFTER the boundary commit and after the
+        // endpointer.reset() D9/D10 calls a correctness requirement (up to 128 ms of microphone
+        // audio inside the device-audio segment), and out-of-capture-order PCM in one accumulating
+        // engine buffer (chunks 5..187 preceding 2,3,4). Stop+join -> flush -> cut -> reset is the
+        // same shape stopRecording has always had, and StreamingAudioRecorder.stop()'s own comment
+        // names this hazard class as the reason it stops the record before joining the thread.
+        //
+        // The join is BEST-EFFORT (T2-SHARPENED: Thread.join(ms) returns identically on termination
+        // and on timeout), so this is the safe half of a bound and not a claim about it — the same
+        // standing this ordering has at stopRecording, and the residue named above.
         when (activeSource) {
             com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()
             com.whispereverywhere.audio.ActiveSource.PLAYBACK -> stopPlaybackCapturer()
         }
+        flushStartupRingAtSourceHandover()
+        transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
+        endpointer.reset()
+        segmentCapPolicy.onCommit(System.currentTimeMillis())
         val started = when (to) {
             com.whispereverywhere.audio.ActiveSource.MIC -> startMicSource()
             com.whispereverywhere.audio.ActiveSource.PLAYBACK ->

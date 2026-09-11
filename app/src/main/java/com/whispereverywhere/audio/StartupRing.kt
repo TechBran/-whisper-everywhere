@@ -43,10 +43,17 @@ package com.whispereverywhere.audio
  * ## Threading
  *
  * Every mutator is `synchronized` on the instance. In production the contention is nil — the
- * capture thread appends and drains, Main only [clear]s at session start and [drainAll]s at stop
- * BEHIND the capture joins — and at 31.25 Hz an uncontended monitor is free. It is a monitor and
+ * capture thread appends and drains, and Main only [clear]s at session start and [drainAll]s from
+ * its two flush sites (the stop path, and a source handover), each of which runs BEHIND the
+ * capture source's stop+join — and at 31.25 Hz an uncontended monitor is free. It is a monitor and
  * not a volatile-field dance because the byte tally and the queue must move together: a torn pair
  * would let the cap drift, and the cap is the only thing bounding this object's RAM.
+ *
+ * The monitor is what makes a SURVIVING capture thread (the join is best-effort) harmless to
+ * exactly-once, and that is all it makes harmless: it says nothing about ORDER, so a Main-side
+ * [drainAll] racing a live [drainSlice] would still interleave old-source PCM behind the boundary
+ * and out of capture order. Behind the join is therefore a position both flush sites hold
+ * deliberately, not an incidental one (round 1, B2).
  *
  * **The sink runs OUTSIDE the monitor.** [drainSlice] removes its slice under the lock and only
  * then calls the sink, because the sink is `sendAudio` plus a Silero probe call per chunk — tens
@@ -144,8 +151,10 @@ class StartupRing(private val capacityBytes: Int = CAPACITY_BYTES) {
     }
 
     /**
-     * Everything that is left, in order. The stop path's flush, and Main's only drain — it runs
-     * BEHIND the capture joins, so there is no live drain to interleave with by then.
+     * Everything that is left, in order. Main's two flushes — the stop path's, and a source
+     * handover's — and nothing else: each runs BEHIND its source's stop+join, so there is no live
+     * [drainSlice] left to interleave with by then. See the Threading section for why "behind the
+     * join" is the whole of that sentence.
      */
     fun drainAll(sink: (ByteArray, Int, Long) -> Unit): Int = drainSlice(Int.MAX_VALUE, sink)
 
