@@ -1,5 +1,6 @@
 package com.whispereverywhere.ui.screens
 
+import android.content.Context
 import android.provider.Settings
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -31,12 +32,21 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import com.whispereverywhere.WhisperEverywhereApp
+import com.whispereverywhere.audio.AudioArbiter
 import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.net.ConnectivityMonitor
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.provider.ProviderCatalog
+import com.whispereverywhere.service.BatchJobController
 import com.whispereverywhere.service.FloatingBubbleService
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.service.resolveSttProvider
+import com.whispereverywhere.transcription.stream.PreviewAutoFetch
+import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
+import com.whispereverywhere.transcription.stream.StreamingPackCatalog
+import com.whispereverywhere.transcription.stream.StreamingPackController
+import com.whispereverywhere.transcription.stream.StreamingPackCopy
+import com.whispereverywhere.transcription.stream.StreamingPackInstall
 import com.whispereverywhere.tts.TtsModelManager
 import com.whispereverywhere.tts.TtsPackController
 import com.whispereverywhere.tts.TtsVoices
@@ -377,6 +387,17 @@ fun HomeScreen(
                 }
                 SetupBanner.NONE -> Unit
             }
+
+            // Live words (4.4.1): the previewer's pack arrives on its own, and this is the card
+            // that says so — the owner's discovery ruling of 2026-09-11. ABOVE the cloud-key note
+            // deliberately: both are dismissible nudges, and this one is the on-device feature
+            // the user already paid for in storage, needing no key and no account.
+            LiveWordsCard(
+                app = app,
+                context = context,
+                resumeTick = resumeTick,
+                localTierInstalled = hasSpeechModel,
+            )
 
             // Cloud-key note (3.5.0, Workstream B): a dismissible nudge that better accuracy and
             // wider language coverage exist behind the user's own API key. Visibility is the pure
@@ -798,6 +819,200 @@ private fun CloudKeyNoteCard(
             }
         }
     }
+}
+
+/**
+ * 4.4.1 — HOME'S LIVE-WORDS CARD, and the foreground hook that makes the previewer's 73 MB pack
+ * arrive without being asked for. The owner's ruling of 2026-09-11: the previewer and its English
+ * gate were confirmed working on device, and the gap was DISCOVERY — *"That way the users don't
+ * have to discover the setting at all. But the setting works very well."*
+ *
+ * Every DECISION here is pure and lives elsewhere, so this composable only wires them:
+ *
+ *  - whether the pack may fetch itself right now: [PreviewAutoFetch.decide], called ONCE
+ *  - what the card therefore shows: [PreviewAutoFetch.card], over that same answer
+ *  - which source this install has: `StreamingPackManager.state` → `StreamingPackInstall.resolve`
+ *  - which route the fetch takes: [PreviewAutoFetchController], through the one pure reduction
+ *  - every word, including the delivered-vs-fetch distinction: [StreamingPackCopy]
+ *
+ * It mirrors the Settings row (`LivePreviewRows`) where they overlap — the Application's manager,
+ * the status-word key on the `state()` read, Play's own confirmation dialog — and shares no
+ * actuator with it, because a composable's install lambda cannot outlive the screen and an
+ * auto-fetch has to. `LiveWordsCardPinTest` pins all of that as source.
+ *
+ * The three inputs it reads live rather than through a flow are each read from the one owner the
+ * app already has for that question — the session from `AudioArbiter` (whose `isCapturing` is the
+ * house's single reading of "a session is in flight"), the batch job from `BatchJobController`
+ * (the same input `localPreviewArms` reads), the connection from `ConnectivityMonitor`, once per
+ * foreground. `localPreviewArms` itself is untouched: the owner tests on Auto deliberately, and
+ * the "pick English" sentence belongs on the installed card, not in the gate.
+ */
+@Composable
+private fun LiveWordsCard(
+    app: WhisperEverywhereApp,
+    context: Context,
+    resumeTick: Int,
+    localTierInstalled: Boolean,
+) {
+    val pack = StreamingPackCatalog.EN
+    val previewFetch by StreamingPackController.state.collectAsState()
+    val ourLine by PreviewAutoFetchController.line.collectAsState()
+    val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
+    // Read once into a local mirror — the house convention for plain-var prefs read in
+    // composition, and the cloud-key note's own shape for the same gesture.
+    var saidNo by remember { mutableStateOf(app.preferencesManager.livePreviewDeclined) }
+    // Keyed on the STATUS WORD and on whether our own work is running — never on the progress
+    // line itself: state() is a Play getPackLocation plus five File reads, and a Downloading tick
+    // arrives several times a second for the whole 73 MB (the voice row's review nit 2, which the
+    // Settings row already learned).
+    val statusWord = NpuPackFetch.statusWord(previewFetch)
+    val working = ourLine != null
+    val packState = remember(resumeTick, statusWord, working) {
+        app.streamingPackManager.state(pack)
+    }
+    // One system read per foreground, not one per recomposition of the dashboard.
+    val unmetered = remember(resumeTick) { ConnectivityMonitor(context).isUnmetered() }
+    val decision = PreviewAutoFetch.decide(
+        state = packState,
+        userSaidNo = saidNo,
+        showLiveWords = showLiveWords,
+        localTierInstalled = localTierInstalled,
+        unmetered = unmetered,
+        sessionActive = AudioArbiter.isCapturing(),
+        batchJobActive = BatchJobController.active != null,
+        packWorkInFlight = PreviewAutoFetchController.busy(),
+        attemptedThisLaunch = PreviewAutoFetchController.attemptedThisLaunch(),
+        backedOff = PreviewAutoFetch.backedOff(
+            lastFailureAtMs = app.preferencesManager.livePreviewAutoFetchFailedAt,
+            nowMs = System.currentTimeMillis(),
+        ),
+    )
+    // THE FOREGROUND HOOK, and the whole of it: it performs the decision above and tests nothing
+    // of its own. Keyed on the resume tick, so every return to the foreground asks again, and on
+    // the answer, so the effect cannot fire under a stale one.
+    LaunchedEffect(resumeTick, decision) {
+        if (decision == PreviewAutoFetch.Decision.FETCH) {
+            PreviewAutoFetchController.start(app, pack, packState, auto = true)
+        }
+    }
+    // Play's own consent dialog, once per ENTRY into NeedsConfirmation — the missing-voice row's
+    // rule above, needed here for the same reason: this card can start a 73 MB Play fetch, and
+    // Play raises its own dialog for a transfer that size. Never a re-ask of ours.
+    LaunchedEffect(previewFetch) {
+        if (previewFetch is NpuPackFetch.FetchState.NeedsConfirmation) {
+            (context as? android.app.Activity)?.let { StreamingPackController.confirm(it) }
+        }
+    }
+    val dismiss: () -> Unit = {
+        app.preferencesManager.livePreviewDeclined = true
+        saidNo = true
+    }
+    when (
+        PreviewAutoFetch.card(
+            installed = packState.isInstalled,
+            userSaidNo = saidNo,
+            workInFlight = working || StreamingPackInstall.fetchInFlight(previewFetch),
+            decision = decision,
+        )
+    ) {
+        PreviewAutoFetch.Card.NONE -> Unit
+        PreviewAutoFetch.Card.WORKING -> LiveWordsNote(
+            title = StreamingPackCopy.CARD_TITLE,
+            body = StreamingPackCopy.CARD_WORKING,
+            // Ours if we are the ones working; Play's own line otherwise; and between the
+            // decision and the shell's first publish, the same dead-time line the row uses.
+            note = ourLine
+                ?: StreamingPackCopy.fetchLine(previewFetch)
+                ?: StreamingPackCopy.PROGRESS_STARTING,
+            action = null,
+            onAction = {},
+            onDismiss = dismiss,
+        )
+        PreviewAutoFetch.Card.OFFER -> LiveWordsNote(
+            title = StreamingPackCopy.CARD_TITLE,
+            // The SAME per-source table the Settings row reads, so this card cannot promise a
+            // route the tap will not take.
+            body = StreamingPackCopy.cardOffer(packState),
+            note = StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
+            action = StreamingPackCopy.cardAction(packState),
+            onAction = { PreviewAutoFetchController.start(app, pack, packState, auto = false) },
+            onDismiss = dismiss,
+        )
+        PreviewAutoFetch.Card.INSTALLED -> LiveWordsNote(
+            title = StreamingPackCopy.CARD_INSTALLED_TITLE,
+            body = StreamingPackCopy.CARD_INSTALLED,
+            note = null,
+            action = null,
+            onAction = {},
+            onDismiss = dismiss,
+        )
+    }
+}
+
+/**
+ * The live-words card's layout — [CloudKeyNoteCard]'s own, deliberately: the house already has a
+ * dismissible nudge on this screen (headline row with an X, body, an action button) and a second
+ * visual language for the same job would read as a second kind of thing. All copy arrives as
+ * parameters from [StreamingPackCopy]; this shell spells no sentence and holds no rule. Untested
+ * UI by house convention — the visibility and the words are both pinned elsewhere.
+ */
+@Composable
+private fun LiveWordsNote(
+    title: String,
+    body: String,
+    note: String?,
+    action: String?,
+    onAction: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = Primary.copy(alpha = 0.08f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = StreamingPackCopy.CARD_DISMISS,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (note != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (action != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onAction,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(action)
+                }
+            }
+        }
+    }
+    Spacer(modifier = Modifier.height(16.dp))
 }
 
 @Composable
