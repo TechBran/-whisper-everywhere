@@ -231,11 +231,18 @@ object PreviewAutoFetch {
     }
 
     /**
-     * WHAT THE CARD SHOWS, as a total mapping of the six things Home knows. Pure for the reason
+     * WHAT THE CARD SHOWS, as a total mapping of the seven things Home knows. Pure for the reason
      * every card rule in this app is pure (`CloudKeyNote.shouldShow` is the precedent): a
      * conjunction inside a composable is a rule no test can reach.
      *
-     * [userSaidNo] is answered FIRST and absolutely. It is the whole of AF3 and AF4 — delete the
+     * [hasPackForSelection] is answered FIRST and absolutely. A card is about ONE language's
+     * pack, and with no pack for the selected language — Auto, or a language the catalogue has no
+     * row for — there is no true sentence it can spell. The case that makes this load-bearing
+     * rather than tidy: [workInFlight] spans BOTH starters on purpose, so a user on Auto who taps
+     * the Settings row and returns to Home has a transfer running with no pack of their own,
+     * which without this input rendered *"The Auto-detect preview model is arriving now"*.
+     *
+     * [userSaidNo] is answered next and just as absolutely. It is the whole of AF3 and AF4 — delete the
      * model and reopen, or dismiss the card and reopen, and the card is gone — and it has to
      * outrank [workInFlight] as well as [decision]: a user who dismissed this card and then
      * installed the model from the Settings row must not have it reappear as a progress card.
@@ -265,6 +272,9 @@ object PreviewAutoFetch {
      * have seen this" is not "I do not want this", it is not per language, and it is written by
      * the arm path rather than by a gesture.
      *
+     * @param hasPackForSelection the selected language has a catalogue row
+     *        (`StreamingPackCatalog.forLanguage(selected) != null`) — the same fact [decide] reads
+     *        as [packLanguage] being non-null and equal to [selectedLanguage].
      * @param installed `StreamingPackState.isInstalled`.
      * @param previewHasArmed the previewer has armed for at least one real session on this
      *        install (`PreferencesManager.livePreviewArmedOnce`, written from the gate's own call
@@ -278,6 +288,7 @@ object PreviewAutoFetch {
      *        so the card and the hook can never disagree about what is about to happen.
      */
     fun card(
+        hasPackForSelection: Boolean,
         installed: Boolean,
         previewHasArmed: Boolean,
         userSaidNo: Boolean,
@@ -285,6 +296,7 @@ object PreviewAutoFetch {
         workInFlight: Boolean,
         decision: Decision,
     ): Card = when {
+        !hasPackForSelection -> Card.NONE
         userSaidNo -> Card.NONE
         !showLiveWords -> Card.NONE
         installed -> if (previewHasArmed) Card.NONE else Card.INSTALLED

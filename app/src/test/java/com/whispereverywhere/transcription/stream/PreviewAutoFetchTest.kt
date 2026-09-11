@@ -385,6 +385,7 @@ class PreviewAutoFetchTest {
 
     /** [open]'s twin for the card: everything open, so a named cell states only its own rule. */
     private fun card(
+        hasPackForSelection: Boolean = true,
         installed: Boolean = false,
         previewHasArmed: Boolean = false,
         userSaidNo: Boolean = false,
@@ -392,15 +393,17 @@ class PreviewAutoFetchTest {
         workInFlight: Boolean = false,
         decision: PreviewAutoFetch.Decision = PreviewAutoFetch.Decision.NONE,
     ) = PreviewAutoFetch.card(
-        installed, previewHasArmed, userSaidNo, showLiveWords, workInFlight, decision,
+        hasPackForSelection, installed, previewHasArmed, userSaidNo, showLiveWords,
+        workInFlight, decision,
     )
 
-    @Test fun theCardMappingIsTotalOverItsSixInputs() {
+    @Test fun theCardMappingIsTotalOverItsSevenInputs() {
         var cells = 0
-        for (installed in bools) for (armed in bools) for (no in bools) for (sw in bools) {
-            for (busy in bools) for (d in PreviewAutoFetch.Decision.entries) {
+        for (has in bools) for (installed in bools) for (armed in bools) for (no in bools) {
+            for (sw in bools) for (busy in bools) for (d in PreviewAutoFetch.Decision.entries) {
                 cells++
                 val expected = when {
+                    !has -> PreviewAutoFetch.Card.NONE
                     no -> PreviewAutoFetch.Card.NONE
                     !sw -> PreviewAutoFetch.Card.NONE
                     installed ->
@@ -410,16 +413,43 @@ class PreviewAutoFetchTest {
                     else -> PreviewAutoFetch.Card.NONE
                 }
                 assertEquals(
-                    "installed=$installed armed=$armed saidNo=$no switch=$sw inFlight=$busy " +
-                        "decision=$d",
+                    "hasPack=$has installed=$installed armed=$armed saidNo=$no switch=$sw " +
+                        "inFlight=$busy decision=$d",
                     expected,
                     // Positionally, and deliberately: the helper above has defaults, and a
                     // default is a value this walk must supply rather than inherit.
-                    PreviewAutoFetch.card(installed, armed, no, sw, busy, d),
+                    PreviewAutoFetch.card(has, installed, armed, no, sw, busy, d),
                 )
             }
         }
-        assertEquals("the full product of the card's inputs", 96, cells)
+        assertEquals("the full product of the card's inputs", 192, cells)
+    }
+
+    @Test fun aLanguageWithNoPackSaysNothingEvenWhileAnotherLanguagesFetchIsRunning() {
+        // The hole this input closes, and it is REACHABLE: a user on Auto opens Settings, taps
+        // "Get the English preview model", and returns to Home while it transfers. `workInFlight`
+        // is true (busy() spans both starters, deliberately), `installed` is false and the
+        // decision is NONE — so without this input the card answered WORKING and rendered "The
+        // Auto-detect preview model is arriving now… Auto-detect shows them, and Auto-detect
+        // shows none at all", which is false twice over and contradicts itself.
+        //
+        // A card is about ONE language's pack. With no pack for the selection there is no true
+        // sentence to spell, so the answer is silence — as absolutely as a dismissal.
+        for (installed in bools) for (armed in bools) for (busy in bools) {
+            for (d in PreviewAutoFetch.Decision.entries) {
+                assertEquals(
+                    "installed=$installed armed=$armed inFlight=$busy decision=$d",
+                    PreviewAutoFetch.Card.NONE,
+                    card(
+                        hasPackForSelection = false,
+                        installed = installed,
+                        previewHasArmed = armed,
+                        workInFlight = busy,
+                        decision = d,
+                    ),
+                )
+            }
+        }
     }
 
     @Test fun theAnnouncementRetiresItselfOnceTheUserHasSeenLiveWordsWithTheirOwnEyes() {

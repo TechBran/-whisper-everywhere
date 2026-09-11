@@ -1007,6 +1007,11 @@ private fun LiveWordsCard(
     }
     when (
         PreviewAutoFetch.card(
+            // A card is about ONE language's pack. On Auto (and on any language the catalogue
+            // has no row for) there is none, and `workInFlight` spans the Settings row's own
+            // fetch — so without this the card would narrate an English transfer under the
+            // selected language's name.
+            hasPackForSelection = pack != null,
             // Not-yet-read is not installed: the card says nothing for that one frame.
             installed = packState?.isInstalled == true,
             // The announcement is one-time without being a refusal: once live words have armed
