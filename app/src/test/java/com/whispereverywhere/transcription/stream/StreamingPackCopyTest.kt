@@ -65,8 +65,18 @@ class StreamingPackCopyTest {
             StreamingPackCopy.INSTALL_FAILED,
             StreamingPackCopy.downloadProgress(1_000_000L, 72_654_782L),
             StreamingPackCopy.downloadProgress(0L, 0L),
+            // 4.4.1: Home's card, the discovery surface. Its words join the scan because the
+            // scan's contract is "everything the user can read, from every surface" — and this
+            // is the surface most users will ever read about the previewer.
+            StreamingPackCopy.CARD_TITLE,
+            StreamingPackCopy.CARD_WORKING,
+            StreamingPackCopy.CARD_INSTALLED_TITLE,
+            StreamingPackCopy.CARD_INSTALLED,
+            StreamingPackCopy.CARD_DISMISS,
         ) + everyState.map { StreamingPackCopy.settingsTitle(it) } +
             everyState.map { StreamingPackCopy.settingsSubtitle(it) } +
+            everyState.map { StreamingPackCopy.cardOffer(it) } +
+            everyState.map { StreamingPackCopy.cardAction(it) } +
             everyFetchState.mapNotNull { StreamingPackCopy.fetchLine(it) }
 
     // ------------------------------------------------------------------ the strings themselves
@@ -286,6 +296,83 @@ class StreamingPackCopyTest {
             "The preview model could not be installed.",
             StreamingPackCopy.INSTALL_FAILED,
         )
+    }
+
+    // ------------------------------------------------------------------ Home's card (4.4.1)
+
+    @Test fun theCardStringsArePinnedVerbatim() {
+        assertEquals("Live words on the bubble", StreamingPackCopy.CARD_TITLE)
+        assertEquals(
+            "The English preview model is arriving now; the typed transcript is unchanged.",
+            StreamingPackCopy.CARD_WORKING,
+        )
+        assertEquals("Live words are on", StreamingPackCopy.CARD_INSTALLED_TITLE)
+        assertEquals(
+            "Pick English as your transcription language to see them on the bubble as you " +
+                "speak; the typed transcript is unchanged.",
+            StreamingPackCopy.CARD_INSTALLED,
+        )
+        assertEquals("Dismiss", StreamingPackCopy.CARD_DISMISS)
+    }
+
+    @Test fun theCardsOfferIsTheSAMEPerSourceTableTheRowUses() {
+        // The 4.4.1 brief's rule: "Copy must be true per the delivered-vs-fetch distinction
+        // StreamingPackCopy already makes". The strongest form of that is not a second set of
+        // sentences held to the same rule by a second test — it is the SAME table, so a card
+        // that promised "included with the app" for an undelivered on-demand pack (fix round
+        // 1's B1, on the row) is not expressible.
+        for (state in everyState) {
+            assertEquals(
+                "the card's body for $state",
+                StreamingPackCopy.settingsSubtitle(state),
+                StreamingPackCopy.cardOffer(state),
+            )
+            assertEquals(
+                "and its action names the source that action will actually use",
+                StreamingPackCopy.settingsTitle(state),
+                StreamingPackCopy.cardAction(state),
+            )
+        }
+    }
+
+    @Test fun theCardKeepsTheTwoPromisesTheBriefNames() {
+        // "must say that the typed transcript is unchanged (the additive promise) and that it is
+        // English for now".
+        assertTrue(StreamingPackCopy.CARD_WORKING.contains("typed transcript is unchanged"))
+        assertTrue(StreamingPackCopy.CARD_INSTALLED.contains("typed transcript is unchanged"))
+        for (state in listOf(
+            StreamingPackState.PackDelivered,
+            StreamingPackState.PackFetchable,
+            StreamingPackState.Downloadable,
+        )) {
+            assertTrue(
+                "the offer body carries the additive promise for $state",
+                StreamingPackCopy.cardOffer(state).contains("typed transcript"),
+            )
+            assertTrue(
+                "and its action names the language: ${StreamingPackCopy.cardAction(state)}",
+                StreamingPackCopy.cardAction(state).contains("English"),
+            )
+        }
+        assertTrue(
+            "the English-only caveat is the language step's own sentence, not a second wording " +
+                "of it — the card renders this one",
+            StreamingPackCopy.LANGUAGE_STEP_SENTENCE.contains("English-only for now"),
+        )
+        assertTrue(
+            "and the installed card is where the owner's 'pick English' sentence lives (the " +
+                "gate itself is deliberately unchanged)",
+            StreamingPackCopy.CARD_INSTALLED.startsWith("Pick English"),
+        )
+    }
+
+    @Test fun theCardNeverAnnouncesAnInstallAsSomethingTheUserMustDo() {
+        // The card exists because the Settings row was never found. Its working line must not
+        // send the reader anywhere: there is nothing to do, which is the whole ruling.
+        val working = StreamingPackCopy.CARD_WORKING.lowercase()
+        for (fragment in listOf("settings", "tap", "open the")) {
+            assertFalse("<<$working>> contains '$fragment'", working.contains(fragment))
+        }
     }
 
     @Test fun theDeleteRowSaysWhatIsLostAndWhatIsNot() {

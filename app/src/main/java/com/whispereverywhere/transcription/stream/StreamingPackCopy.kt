@@ -169,6 +169,55 @@ object StreamingPackCopy {
         }
     }
 
+    // ---------------------------------------------------------------- Home's card (4.4.1)
+
+    /**
+     * The discovery card's own name for the feature. The Settings row's [SETTINGS_TITLE] is a ROW
+     * NAME — it answers "what is this row" for someone already reading a settings list — and this
+     * card exists precisely because that list was never opened (owner, 2026-09-11: *"That way the
+     * users don't have to discover the setting at all"*). So the headline names the surface the
+     * words appear on, and the body underneath is the route's own sentence from the table above.
+     */
+    const val CARD_TITLE = "Live words on the bubble"
+
+    /**
+     * The card while the fetch or the install runs. It promises nothing about when, carries the
+     * additive promise in the shortest true form, and asks for nothing — a working card that
+     * mentioned Settings or a tap would undo the ruling it exists to serve. The live progress
+     * line under it is [fetchLine]'s or [downloadProgress]'s, never a second wording.
+     */
+    const val CARD_WORKING =
+        "The English preview model is arriving now; the typed transcript is unchanged."
+
+    /** The one-time announcement's headline, once the model has landed. */
+    const val CARD_INSTALLED_TITLE = "Live words are on"
+
+    /**
+     * The announcement's body — the owner's own sentence (*"Live words are on — pick English to
+     * see them"*) split across the headline and here, and the ONE place the English gate is
+     * explained. `localPreviewArms` is deliberately unchanged (the owner tests on Auto on purpose
+     * and found the behaviour correct once explained), so this card is where the explanation
+     * belongs.
+     */
+    const val CARD_INSTALLED =
+        "Pick English as your transcription language to see them on the bubble as you speak; " +
+            "the typed transcript is unchanged."
+
+    /** The X's content description — the cloud-key note's own label, for the same gesture. */
+    const val CARD_DISMISS = "Dismiss"
+
+    /**
+     * The offer card's body: the SAME per-source table the Settings row reads, by delegation
+     * rather than by a second set of sentences held to the same rule by a second test. A card
+     * with its own wording is how "included with the app" ends up over an undelivered on-demand
+     * pack (fix round 1's B1, on the row) one edit later; delegating makes that unexpressible,
+     * and `StreamingPackCopyTest` holds the two equal for every state.
+     */
+    fun cardOffer(state: StreamingPackState): String = settingsSubtitle(state)
+
+    /** The offer card's action label — the ACTION's own name, so it names the source it will use. */
+    fun cardAction(state: StreamingPackState): String = settingsTitle(state)
+
     // ---------------------------------------------------------------- our own work in flight
 
     /** Between the tap and the first byte — [StreamingPackManager.download]'s own dead time. */
