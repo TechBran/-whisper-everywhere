@@ -1171,7 +1171,7 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // once-per-launch latch (a tap is consent and may be repeated) and it is recorded on the board
     // as the user's own, which is what lets the copy state the deal honestly. It is also the one
     // cause that spends the user's connection whatever the connection reads — this row has never
-    // been gated on metering, and Task 3a's silence is the UNASKED path's alone.
+    // been gated on metering, and the unasked top-up's wait for wifi is that path's alone.
     val startPreviewInstall: () -> Unit = {
         PreviewAutoFetchController.start(app, previewPack, previewState, PreviewTrigger.TAP)
     }

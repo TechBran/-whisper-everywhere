@@ -16,22 +16,22 @@ package com.whispereverywhere.transcription.stream
  * [decide]; the actuator ([PreviewAutoFetchController]) performs whatever it answered. Neither
  * decides anything of its own — `LiveWordsCardPinTest` holds them to that as source.
  *
- * ### THE OWNER'S ACQUISITION RULING ON DATA (2026-09-11), which SUPERSEDES the controller's
+ * ### The CONTROLLER RULING on data (2026-09-11), and where it lives
  *
- * > *"when it comes to being on... not on Wi Fi, the auto download for the model, I think we
- * > should just we should skip that."*
+ * The owner's *"it's nothing, everyone's phone can handle that"* is about STORAGE, and it is
+ * accepted: 73 MB of `filesDir` is nothing on a modern phone. It is not nothing on a capped
+ * plan, and this app has never moved a byte the user did not ask for. So the auto-fetch is
+ * silent on an UNMETERED connection and becomes a CARD WITH A TAP on a metered one — the user's
+ * consent, once, for their own data. One predicate ([unmetered]'s reading at the one call site)
+ * is the whole flip if that ruling is ever overruled.
  *
- * The controller's ruling of the same morning made a metered connection an OFFER: a card with a
- * tap, the user's consent once for their own data. The owner has replaced that with a SILENCE. On
- * a metered connection the unasked top-up does **nothing at all** — no card, no nag, no tap — and
- * waits for an unmetered VALIDATED network (`ConnectivityMonitor.isUnmetered`). It still never
- * moves a byte the user did not ask for; what is gone is the state that ASKED.
- *
- * **This REMOVES a state rather than adding one** (4.5.0 Task 3a): there is no
- * OFFER-because-metered branch any more, so there is no metered sentence anywhere in
- * [StreamingPackCopy] and no metered cell in [card]. [PreviewAutoFetchTest]'s
- * `noConditionAnywhereInTheProductPutsTheMeteredOfferBack` is the claim over the whole product,
- * and not one cell of it, because a deleted state comes back through a back door or not at all.
+ * **RULING 3a, 2026-09-11, KEEPS THIS EXACTLY AS 4.4.1 SHIPPED IT — do not delete it.** The
+ * owner validated AF1 *and* AF2 on device that day, and then ruled only on the SELECTION path
+ * (the section below). An earlier reading of that ruling deleted the OFFER-because-metered
+ * branch, which turned a metered unasked top-up into a card-less, tap-less silence; the owner
+ * withdrew that instruction (4.5.0 Task 3 review r1, B1). He has never ruled on the unasked
+ * top-up's metered behaviour, so the metered case stays an OFFER: *"a cellular user who already
+ * had that language selected still gets the 4.4.1 card and has to tap it."*
  *
  * ### AND ITS OTHER HALF: A PICK IS A CONSENT (owner, 2026-09-11 — Task 3b)
  *
@@ -45,9 +45,11 @@ package com.whispereverywhere.transcription.stream
  * into symmetry, in one of the two directions that each undo a ruling.
  *
  * The consequence, surfaced rather than hidden: **a cellular user who PICKS a language gets an
- * immediate download, while a cellular user who already had that language selected gets nothing
- * until wifi.** Both are the ruling. What tells them apart is [PreviewPicks] — a pick is an event
- * this process watched happen, not a value a preference can report.
+ * immediate download with no tap, while a cellular user who already had that language selected
+ * still gets 4.4.1's offer card and has to tap it.** Both are the ruling — the brief states this
+ * cost in those words and forbids the copy from pretending otherwise. What tells the two apart is
+ * [PreviewPicks] — a pick is an event this process watched happen, not a value a preference can
+ * report.
  *
  * The exception is [StreamingPackState.PackDelivered]: Google Play has already delivered those
  * bytes to the device and the install is a local verify + copy that touches no network at all
@@ -112,10 +114,7 @@ object PreviewAutoFetch {
         /** Show the card with its one action and spend nothing until it is tapped. */
         OFFER,
 
-        /**
-         * Say nothing: installed, declined, switched off, un-armable, busy — or, since Task 3a,
-         * an unasked top-up that would spend the user's data on a metered connection.
-         */
+        /** Say nothing: installed, declined, switched off, un-armable, or busy. */
         NONE,
     }
 
@@ -126,16 +125,7 @@ object PreviewAutoFetch {
         /** The fetch or the install is running; the card carries its progress line. */
         WORKING,
 
-        /**
-         * The offer, with the action that starts it.
-         *
-         * Its reasons are now the THIRD PARTY's route (a sideload or a Play refusal, where the
-         * tap is consent to contact someone other than Google Play) and the two loop guards (this
-         * launch's attempt already spent, or the back-off after a failure). **Metering is no
-         * longer one of them** — the owner's ruling of 2026-09-11 makes a metered top-up silent
-         * instead of an offer, which is why a cellular user who has not picked anything sees no
-         * card at all (Task 3a).
-         */
+        /** The metered (or backed-off) case: the offer, with the action that starts it. */
         OFFER,
 
         /** The one-time announcement that live words are on and English shows them. */
@@ -149,11 +139,7 @@ object PreviewAutoFetch {
      * network"* — where a user reopening the app all afternoon pays for a failing 73 MB transfer
      * once per process start. A day is the interval, because the failures that matter (no
      * connection, Play unavailable, no room) are the kind that are fixed in hours, not seconds,
-     * and the Settings row's own tap is available the whole time.
-     *
-     * (It used to say *"the card's own tap"*. Since Task 3a a metered connection shows no card,
-     * so the always-available tap is the Settings row's — which is ungated by metering and always
-     * has been.)
+     * and the card's own tap is available the whole time.
      */
     const val BACK_OFF_MS: Long = 24L * 60L * 60L * 1_000L
 
@@ -207,16 +193,17 @@ object PreviewAutoFetch {
      *        every session is a cloud session and the previewer can never arm.
      * @param starter WHO caused this look — [PreviewTrigger.starter] at the one call site, never a
      *        literal. **The asymmetry of rulings 3a and 3b hangs on this one input, and on nothing
-     *        else**: an unasked [PreviewStarter.TOP_UP] waits for an unmetered network and is
-     *        silenced by the 24 h back-off, while a [PreviewStarter.PICK] spends the connection at
-     *        once and ignores that back-off, *because the pick IS the consent*. The one rule they
+     *        else**: an unasked [PreviewStarter.TOP_UP] waits for an unmetered network — offering
+     *        4.4.1's card with a tap while it waits — and is held to that offer by the 24 h
+     *        back-off, while a [PreviewStarter.PICK] spends the connection at once and ignores
+     *        that back-off, *because the pick IS the consent*. The one rule they
      *        SHARE is [attemptedThisLaunch]: both are re-decided by a recomposition, so both are
      *        latched, or a failed pick retries itself for the life of the process.
      * @param unmetered the platform's own NOT_METERED *and* VALIDATED reading
      *        (`ConnectivityMonitor.isUnmetered`, false when there is no active network at all and
-     *        false on a captive portal — CONTROLLER RULING 2026-09-11, CHANGE 1). Since the
-     *        owner's ruling of that afternoon (Task 3a) a `false` here is a SILENCE and no longer
-     *        an offer: see the class KDoc.
+     *        false on a captive portal — CONTROLLER RULING 2026-09-11, CHANGE 1). The CONTROLLER
+     *        RULING's one predicate, and it is read on the UNASKED path only: a [starter] of
+     *        [PreviewStarter.PICK] never consults it (ruling 3b).
      * @param sessionActive a dictation session is being set up, recording, or finishing
      *        (`AudioArbiter.isCapturing` — the house's single owner of that question). A 73 MB
      *        transfer and a sha256 of it beside a live transcription is the same CPU contention
@@ -289,13 +276,13 @@ object PreviewAutoFetch {
         // TRANSFER WAITS FOR WIFI; A TRANSFER THE USER JUST CAUSED BY PICKING A LANGUAGE HAPPENS
         // AT ONCE, BECAUSE THE PICK IS THE CONSENT.
         //
-        // 3a deleted the OFFER this cell used to answer — a card, with a tap, on the one
-        // condition the card itself could do nothing about: *"the auto download for the model, I
-        // think we should just we should skip that."* 3b is why the silence is not the whole
-        // answer: *"if you select a different language, then automatically download and set up
-        // the language pack for that language automatically."*
+        // 3a KEEPS 4.4.1's answer for the unasked half, unchanged and by name: the card with a
+        // sized one-tap fetch, which the owner validated on device as AF2. What 3b adds is the
+        // starter term — *"if you select a different language, then automatically download and
+        // set up the language pack for that language automatically"* — so a PICK falls through to
+        // FETCH here instead of being offered a card it has already answered.
         if (wouldSpendTheUsersData && !unmetered && starter == PreviewStarter.TOP_UP) {
-            return Decision.NONE
+            return Decision.OFFER
         }
         // THE LOOP GUARD BINDS ON BOTH STARTERS. A pick is decided in composition and the effect
         // that performs it is keyed on this answer, so a latch-exempt pick whose transfer FAILED

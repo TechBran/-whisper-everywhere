@@ -621,8 +621,9 @@ object StreamingPackCopy {
         PreviewPhase.INSTALLING,
         PreviewPhase.ABANDONED,
         // A FAILED stays on the strip, and it has to: under ruling 3b the user CAUSED this
-        // transfer by picking, and on a metered connection there is no card anywhere else in the
-        // app that would tell them it did not arrive (3a deleted it).
+        // transfer by picking, so the place they picked is the place that owes them the news. The
+        // card's own retry offer is reached by a different route (the launch latch, not the
+        // connection), and a user who has scrolled past it would otherwise read nothing at all.
         PreviewPhase.FAILED,
         -> workLine(work, tappable = false)
     }

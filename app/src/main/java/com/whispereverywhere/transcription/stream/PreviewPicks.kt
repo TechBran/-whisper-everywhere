@@ -21,8 +21,8 @@ import kotlinx.coroutines.flow.update
  *
  * A pick made yesterday is a standing SELECTION, not a live consent to spend today's data. The
  * brief states the consequence it is chosen for: *"a cellular user who already had that language
- * selected gets nothing until wifi"*. Persisting this set would turn every launch into a pick and
- * delete ruling 3a.
+ * selected still gets the 4.4.1 card and has to tap it"*. Persisting this set would turn every
+ * launch into a pick and delete ruling 3a's unasked half.
  *
  * ### Why a StateFlow and not a plain set
  *

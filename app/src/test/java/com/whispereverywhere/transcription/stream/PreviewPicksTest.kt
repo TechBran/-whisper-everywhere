@@ -25,7 +25,8 @@ class PreviewPicksTest {
         // The default is what decides a cold start, and it must be "nobody asked": the language
         // already in the preference at launch is a standing SELECTION, not a live consent to
         // spend today's data. The brief's own consequence — "a cellular user who already had that
-        // language selected gets nothing until wifi" — is exactly this emptiness.
+        // language selected still gets the 4.4.1 card and has to tap it" — is exactly this
+        // emptiness: an empty register means TOP_UP, which is the path that offers the card.
         assertEquals(emptySet<String>(), PreviewPicks.picked.value)
         assertFalse(PreviewPicks.wasPicked("en"))
         assertFalse(PreviewPicks.wasPicked("auto"))
@@ -135,8 +136,16 @@ class PreviewPicksTest {
             attemptedThisLaunch = false,
             backedOff = false,
         )
-        assertEquals(PreviewAutoFetch.Decision.NONE, decide(PreviewPicks.wasPicked("en")))
+        assertEquals(
+            "unpicked: the unasked top-up gets 4.4.1's card with a tap, which ruling 3a keeps",
+            PreviewAutoFetch.Decision.OFFER,
+            decide(PreviewPicks.wasPicked("en")),
+        )
         PreviewPicks.note("en")
-        assertEquals(PreviewAutoFetch.Decision.FETCH, decide(PreviewPicks.wasPicked("en")))
+        assertEquals(
+            "picked: the pack downloads at once, with no card in the way",
+            PreviewAutoFetch.Decision.FETCH,
+            decide(PreviewPicks.wasPicked("en")),
+        )
     }
 }
