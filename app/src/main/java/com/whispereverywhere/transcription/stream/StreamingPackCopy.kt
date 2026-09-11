@@ -75,6 +75,52 @@ object StreamingPackCopy {
     /** What deleting costs and — the promise again — what it does not cost. */
     val DELETE_SUBTITLE = "Frees $BADGE. Live words stop; the typed transcript is unchanged."
 
+    /**
+     * WHAT DELETING COSTS, for each of the four facts the row can be looking at
+     * ([PreviewDeleteCase]) — and the promise again, on all four.
+     *
+     * ### Why this is four sentences and not one (4.5.0 Task 1)
+     *
+     * [DELETE_SUBTITLE] was rendered across all four, and three of them made it false:
+     *
+     *  - the model is installed for a language the user is NOT transcribing (they picked another,
+     *    or Auto) — live words are already off, so *"Live words stop"* stops nothing. The row is
+     *    deliberately OUTSIDE the selection gate, because 73 MB installed for English must stay
+     *    reclaimable after the user picks French, so this is not an edge case but the case the
+     *    row's placement exists for;
+     *  - the install is a `StreamingPackState.Repair` — `markCorrupt` removed the marker and left
+     *    the bytes, so again live words are already off;
+     *  - **a write is in flight**, where *"Frees $BADGE"* frees nothing at all: `delete` clears
+     *    the install dir under a verify + copy that is not cancellation-cooperative, so the copy
+     *    finishes, the marker lands, and the user gets *"Installed"* from pressing *"Frees"* —
+     *    with the declined flag written (review r3's H3-B1). The row renders this sentence with
+     *    NO tap; it is a receipt, the way every other in-flight row in this feature is.
+     *
+     * @param language the PACK's language, as the picker spells it. Three of the four sentences
+     *        name it, because three of them are about a model that is not the one in use; the day
+     *        a second catalogue row lands, a sentence that named none would describe one pack
+     *        under another's name.
+     * @param sizeBytes the PACK's own byte count, rounded through [StreamingPackCatalog.sizeBadge]
+     *        here rather than accepted as a string — English is 73 MB, German 71 MB and French
+     *        128 MB, so a caller that could pass a literal would be wrong for two of the three.
+     */
+    fun deleteSubtitle(case: PreviewDeleteCase, language: String, sizeBytes: Long): String {
+        val badge = StreamingPackCatalog.sizeBadge(sizeBytes)
+        return when (case) {
+            PreviewDeleteCase.LIVE ->
+                "Frees $badge. Live words stop; the typed transcript is unchanged."
+            PreviewDeleteCase.OFF_SELECTION ->
+                "Frees $badge. Live words are already off: they appear only while $language is " +
+                    "the language you pick. The typed transcript is unchanged."
+            PreviewDeleteCase.DAMAGED ->
+                "Frees $badge. The $language model is damaged and live words are already off; " +
+                    "the typed transcript is unchanged."
+            PreviewDeleteCase.WORKING ->
+                "Nothing to free yet: the $language model is being written right now. Deleting " +
+                    "becomes available when it finishes; the typed transcript is unchanged either way."
+        }
+    }
+
     fun installed(language: String): String =
         "Installed ($BADGE). Words appear on the bubble as you speak $language; the typed transcript is unchanged."
 
@@ -441,5 +487,103 @@ object StreamingPackCopy {
         is NpuPackFetch.FetchState.Installed,
         is NpuPackFetch.FetchState.Cancelled,
         -> false
+    }
+
+    // ------------------------------------------- the ONE observable's own line (4.5.0 Task 1)
+
+    /**
+     * WHAT BOTH SURFACES SAY about work in flight — one function over the one observable
+     * ([PreviewWork]), replacing the two that came before it: [fetchLine] for Play's own machine
+     * and the Settings row's `previewInstallStatus` for ours. That split is the defect Task 1
+     * exists to retire: Home collected one of them, Settings collected the other, and a transfer
+     * one surface started was invisible on the other.
+     *
+     * Null for the two phases that are OVER — a stale *"fetching…"* under an installed model is a
+     * lie the user cannot dismiss — and a sentence for every phase that is running. A
+     * [PreviewPhase.FAILED] renders its reason VERBATIM: the fetch shell has already re-told every
+     * Play refusal in this feature's words ([StreamingPackInstall.deliveryRefusal] /
+     * [StreamingPackInstall.fetchRefusal]) and our own routes carry `StreamingPackException`'s own
+     * sentence, so re-wording here would be a second copy of the copy — and the first one knows
+     * Play's error code.
+     *
+     * @param tappable the caller's OWN answer to *"does this row have an onClick right now"*, not
+     *        [workLineTappable]'s answer to *"does this phase deserve one"* — the two differ, and
+     *        review r3 (H3-B3) is what the difference costs. `AWAITING_ANSWER` says *tap to
+     *        answer* because a tap opens Play's dialog; but the Settings row withholds that tap
+     *        once the selection has moved off this pack's language, and then the sentence
+     *        instructs a gesture the app has decided to refuse, with no ripple and no feedback
+     *        when it is performed. Off-selection the line must be a RECEIPT, and it must name the
+     *        one thing that unlocks it, because nothing else on screen does. Defaulted true so the
+     *        card and every other caller read as before.
+     */
+    fun workLine(work: PreviewWork, tappable: Boolean = true): String? = when (work.phase) {
+        PreviewPhase.ASKING -> "Asking Google Play for the preview model…"
+        PreviewPhase.AWAITING_ANSWER ->
+            if (tappable) {
+                "Google Play needs your confirmation before it fetches the preview model — tap to answer."
+            } else {
+                "Google Play needs your confirmation before it fetches the preview model. " +
+                    "Pick that language again to answer."
+            }
+        PreviewPhase.DOWNLOADING -> bytesMoving(work)
+        PreviewPhase.TRANSFERRING -> "Google Play is moving the preview model into place…"
+        PreviewPhase.INSTALLING -> PROGRESS_INSTALLING
+        PreviewPhase.INSTALLED, PreviewPhase.CANCELLED -> null
+        PreviewPhase.FAILED -> work.reason ?: INSTALL_FAILED
+    }
+
+    /**
+     * The bytes in flight, in the words of the ROUTE that is carrying them.
+     *
+     * The verb is the amendment's provenance distinction, kept alive on the progress line: a Play
+     * fetch that said *"Downloading"* would contradict [SETTINGS_INSTALL_FETCH]'s *"never from a
+     * third party"* while those very bytes were moving, and [PreviewRoute.DIRECT_DOWNLOAD] is the
+     * one route where a third party really is serving them ([installDownload] is its offer).
+     *
+     * BOTH halves round through [StreamingPackCatalog.megabytes], so the line cannot end at
+     * *"72 of 72 MB"* under a row that has just promised 73 — which is exactly what Play's own
+     * line did until 4.5.0, having divided by 1,000,000 and truncated. An unknown total invents no
+     * denominator.
+     */
+    private fun bytesMoving(work: PreviewWork): String {
+        val verb = when (work.route) {
+            // Play, never a third party — SETTINGS_INSTALL_FETCH's own promise.
+            PreviewRoute.PLAY_FETCH -> "Fetching the preview model"
+            // Unreachable: a delivered pack moves no bytes over any connection, and its only
+            // phase is the local copy. Answered anyway, so a route cannot fall through into the
+            // wrong provenance word.
+            PreviewRoute.DELIVERED_PACK -> "Fetching the preview model"
+            // The ONE route that admits a third party, and says so.
+            PreviewRoute.DIRECT_DOWNLOAD -> "Downloading the preview model"
+        }
+        return if (work.total > 0L) {
+            "$verb: ${StreamingPackCatalog.megabytes(work.soFar)} of " +
+                StreamingPackCatalog.sizeBadge(work.total)
+        } else {
+            "$verb…"
+        }
+    }
+
+    /**
+     * Whether a TAP on the row showing [workLine] does anything — `TtsModelManager`'s B1 lesson,
+     * inherited rather than re-learned: the row renders a line for every phase, `SettingsItem`
+     * makes itself clickable the moment it is handed an `onClick`, and a tap during the copy+hash
+     * would otherwise re-enter the row's one action and start a SECOND install into the same temp
+     * dir.
+     *
+     * The retry the branch exists for is the TERMINAL one; the one in-flight phase that stays
+     * tappable is [PreviewPhase.AWAITING_ANSWER], where the tap re-shows PLAY'S OWN dialog and
+     * starts no install of ours. Null — no work at all — is not tappable: the row that is
+     * narrating nothing is the row that is OFFERING the install, and that is a different onClick.
+     */
+    fun workLineTappable(work: PreviewWork?): Boolean = when (work?.phase) {
+        PreviewPhase.FAILED, PreviewPhase.AWAITING_ANSWER -> true
+        PreviewPhase.ASKING,
+        PreviewPhase.DOWNLOADING,
+        PreviewPhase.TRANSFERRING,
+        PreviewPhase.INSTALLING,
+        -> false
+        PreviewPhase.INSTALLED, PreviewPhase.CANCELLED -> false
+        null -> false
     }
 }

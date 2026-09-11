@@ -95,7 +95,26 @@ class StreamingPackCopyTest {
             everyState.map { StreamingPackCopy.settingsSubtitle(it, en) } +
             everyState.map { StreamingPackCopy.cardOffer(it, en) } +
             everyState.map { StreamingPackCopy.cardAction(it, en) } +
-            everyFetchState.mapNotNull { StreamingPackCopy.fetchLine(it) }
+            everyFetchState.mapNotNull { StreamingPackCopy.fetchLine(it) } +
+            // (4.5.0 Task 1) The one observable's own sentences, from every route and every
+            // phase, and the delete row's four. The scan's contract is "everything the user can
+            // read, from every surface", and after this task these are the words BOTH surfaces
+            // render for work in flight.
+            PreviewDeleteCase.entries.map {
+                StreamingPackCopy.deleteSubtitle(it, en, StreamingPackCatalog.EN.totalBytes)
+            } +
+            PreviewRoute.entries.flatMap { route ->
+                PreviewPhase.entries.mapNotNull { phase ->
+                    StreamingPackCopy.workLine(
+                        PreviewWork(
+                            language = "en",
+                            route = route,
+                            starter = PreviewStarter.PICK,
+                            step = PreviewStep(phase, 12_000_000L, 72_654_782L, reason = "a refusal."),
+                        ),
+                    )
+                }
+            }
 
     // ------------------------------------------------------------------ the strings themselves
 
@@ -620,6 +639,227 @@ class StreamingPackCopyTest {
                 .contains(StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)),
         )
     }
+
+    // ------------------------------------------- the delete row's FOUR cases (4.5.0 Task 1)
+
+    @Test fun theDeleteRowHasATrueSentenceForEachOfItsFourCases() {
+        // 4.4.1 rendered ONE sentence across all four facts the row can be looking at, and three
+        // of them made it false: the model is installed for a language the user is NOT
+        // transcribing (so "live words stop" is already untrue), the install is DAMAGED (same),
+        // or a write is in flight (so "Frees 73 MB" frees nothing at all). Four cases, four
+        // sentences, and the case is derived from the one observable rather than guessed at here.
+        assertEquals(
+            "Frees 73 MB. Live words stop; the typed transcript is unchanged.",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.LIVE, en, bytes),
+        )
+        assertEquals(
+            "Frees 73 MB. Live words are already off: they appear only while English is the " +
+                "language you pick. The typed transcript is unchanged.",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.OFF_SELECTION, en, bytes),
+        )
+        assertEquals(
+            "Frees 73 MB. The English model is damaged and live words are already off; the " +
+                "typed transcript is unchanged.",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.DAMAGED, en, bytes),
+        )
+        assertEquals(
+            "Nothing to free yet: the English model is being written right now. Deleting " +
+                "becomes available when it finishes; the typed transcript is unchanged either way.",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.WORKING, en, bytes),
+        )
+    }
+
+    @Test fun onlyTheThreeCasesThatActuallyFreeBytesClaimToFreeThem() {
+        for (case in listOf(
+            PreviewDeleteCase.LIVE,
+            PreviewDeleteCase.OFF_SELECTION,
+            PreviewDeleteCase.DAMAGED,
+        )) {
+            val line = StreamingPackCopy.deleteSubtitle(case, en, bytes)
+            assertTrue("$case names the size it frees: $line", line.startsWith("Frees 73 MB."))
+            assertTrue(
+                "and the figure is the CATALOG's, never a retyped number — English is 73 MB, " +
+                    "German 71 MB and French 128 MB, so one literal here is wrong for two of them",
+                line.contains(StreamingPackCatalog.sizeBadge(bytes)),
+            )
+        }
+        val working = StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.WORKING, en, bytes)
+        assertFalse(
+            "the one case that frees nothing must not say it frees anything — this is the " +
+                "largest untrue sentence the feature rendered: $working",
+            working.contains("Frees"),
+        )
+        assertFalse("nor may it carry a size at all: $working", working.contains("MB"))
+    }
+
+    @Test fun everyDeleteCaseKeepsTheAdditivePromiseAndNamesItsLanguage() {
+        for (case in PreviewDeleteCase.entries) {
+            val line = StreamingPackCopy.deleteSubtitle(case, es, bytes)
+            assertTrue(
+                "$case must keep the one promise that matters (spec §10): $line",
+                line.contains("typed transcript is unchanged"),
+            )
+        }
+        // Three of the four are ABOUT a particular language's model, and say so; LIVE is about
+        // the pack the user is actually transcribing in, where the rows around it already name it.
+        for (case in listOf(
+            PreviewDeleteCase.OFF_SELECTION,
+            PreviewDeleteCase.DAMAGED,
+            PreviewDeleteCase.WORKING,
+        )) {
+            assertTrue(
+                "$case names the language it is about, so the day a second row lands it cannot " +
+                    "describe one pack under another's name",
+                StreamingPackCopy.deleteSubtitle(case, es, bytes).contains(es),
+            )
+        }
+    }
+
+    // ------------------------------------------- the one observable's own line (4.5.0 Task 1)
+
+    @Test fun theWorkLineIsTotalOverTheObservableAndSilentOnlyWhenItIsOver() {
+        val silent = listOf(PreviewPhase.INSTALLED, PreviewPhase.CANCELLED)
+        for (phase in silent) {
+            assertNull(
+                "at rest the row goes back to its own offer — a stale 'fetching…' line under an " +
+                    "installed preview model is a lie the user cannot dismiss",
+                StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, phase)),
+            )
+        }
+        for (phase in PreviewPhase.entries.filterNot { it in silent }) {
+            assertTrue(
+                "$phase must narrate itself: a running phase with no sentence is the 73 MB that " +
+                    "was invisible in Settings",
+                !StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, phase)).isNullOrBlank(),
+            )
+        }
+        assertEquals(
+            "a FAILED shows the refusal VERBATIM — the shell has already re-told it in this " +
+                "feature's words, so re-wording it here would be a second copy of the copy",
+            "the shell's own re-told refusal.",
+            StreamingPackCopy.workLine(
+                work(PreviewRoute.PLAY_FETCH, PreviewPhase.FAILED, reason = "the shell's own re-told refusal."),
+            ),
+        )
+        assertEquals(
+            "and a failure that named nothing still says something",
+            StreamingPackCopy.INSTALL_FAILED,
+            StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, PreviewPhase.FAILED)),
+        )
+    }
+
+    @Test fun theRouteChoosesTheVerbSoTheProvenancePromiseSurvivesTheProgressLine() {
+        // The amendment's parenthetical — "it is fetched, not downloaded from a third party" — is
+        // the whole reason the offer is a table. The PROGRESS line has to keep it: a Play fetch
+        // that said "Downloading" would contradict SETTINGS_INSTALL_FETCH's "never from a third
+        // party" while those very bytes were moving, and the fallback is the one route where a
+        // third party really is serving them (installDownload is its sentence).
+        val play = StreamingPackCopy.workLine(
+            work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING, 12_000_000L, 72_654_782L),
+        )
+        val direct = StreamingPackCopy.workLine(
+            work(PreviewRoute.DIRECT_DOWNLOAD, PreviewPhase.DOWNLOADING, 12_000_000L, 72_654_782L),
+        )
+        assertEquals("Fetching the preview model: 12 of 73 MB", play)
+        assertEquals("Downloading the preview model: 12 of 73 MB", direct)
+        assertTrue("a Play route never says 'download'", play?.lowercase()?.contains("download") == false)
+    }
+
+    @Test fun theProgressLineRoundsThroughTheCatalogsOneRuleAndInventsNoDenominator() {
+        // Play's own line divided by 1,000,000 and TRUNCATED until 4.5.0, so a finished fetch read
+        // "72 of 72 MB" under a row that had just promised 73 — the exact defect
+        // StreamingPackCatalog.megabytes exists to prevent, still live on the primary route.
+        assertEquals(
+            "Fetching the preview model: 73 of 73 MB",
+            StreamingPackCopy.workLine(
+                work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING, 72_654_782L, 72_654_782L),
+            ),
+        )
+        for (route in listOf(PreviewRoute.PLAY_FETCH, PreviewRoute.DIRECT_DOWNLOAD)) {
+            val unknown = StreamingPackCopy.workLine(
+                work(route, PreviewPhase.DOWNLOADING, 0L, 0L),
+            )
+            assertFalse("$route invents no denominator: $unknown", unknown!!.contains("of 0"))
+            assertTrue("and still says what is happening: $unknown", unknown.endsWith("…"))
+        }
+    }
+
+    @Test fun theAskBecomesAReceiptWhereTheRowHasNoTapToGive_onTheObservable() {
+        // Review r3's H3-B3, carried onto the one observable. NeedsConfirmation is tappable BY
+        // PHASE, but the Settings row withholds the tap once the selection moves off this pack's
+        // language — and then "tap to answer" instructed a gesture the app had decided to refuse.
+        val awaiting = work(PreviewRoute.PLAY_FETCH, PreviewPhase.AWAITING_ANSWER)
+        val asking = StreamingPackCopy.workLine(awaiting, tappable = true)
+        val telling = StreamingPackCopy.workLine(awaiting, tappable = false)
+        assertTrue("with a tap, it asks for the tap", asking?.contains("tap to answer") == true)
+        assertTrue("without one, it must NOT ask for a tap", telling?.contains("tap") == false)
+        assertTrue(
+            "and it must say what unlocks it — the selection is the only key",
+            telling?.contains("Pick that language again") == true,
+        )
+        assertTrue("the reason is still stated", telling?.contains("confirmation") == true)
+        val everyOther = PreviewPhase.entries.filterNot { it == PreviewPhase.AWAITING_ANSWER }
+        assertEquals(
+            "every OTHER phase reads identically either way — this parameter buys exactly one " +
+                "sentence, and a caller that forgets it changes nothing else",
+            everyOther.map { StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, it), tappable = true) },
+            everyOther.map { StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, it), tappable = false) },
+        )
+        assertEquals(
+            "and the default is the asking one, so the card reads as it did",
+            asking,
+            StreamingPackCopy.workLine(awaiting),
+        )
+    }
+
+    @Test fun onlyTheTerminalRetryAndPlaysOwnDialogAreTappable_onTheObservable() {
+        // TtsModelManager.fetchLineTappable's B1 lesson, inherited rather than re-learned: the row
+        // renders a line for every phase and SettingsItem makes itself clickable the moment it is
+        // handed an onClick, so a tap during the copy+hash used to start a SECOND install into
+        // the same temp dir.
+        assertTrue(
+            StreamingPackCopy.workLineTappable(work(PreviewRoute.PLAY_FETCH, PreviewPhase.FAILED, reason = "x")),
+        )
+        assertTrue(
+            StreamingPackCopy.workLineTappable(work(PreviewRoute.PLAY_FETCH, PreviewPhase.AWAITING_ANSWER)),
+        )
+        for (phase in listOf(
+            PreviewPhase.ASKING,
+            PreviewPhase.DOWNLOADING,
+            PreviewPhase.TRANSFERRING,
+            PreviewPhase.INSTALLING,
+            PreviewPhase.INSTALLED,
+            PreviewPhase.CANCELLED,
+        )) {
+            assertFalse(
+                "$phase: a tap here can only duplicate work in flight",
+                StreamingPackCopy.workLineTappable(work(PreviewRoute.PLAY_FETCH, phase)),
+            )
+        }
+        assertFalse(
+            "and NO work is no tap: the row that is not narrating anything is the row that is " +
+                "offering the install, and that is a different onClick",
+            StreamingPackCopy.workLineTappable(null),
+        )
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    /** The English pack's real size, so the delete sentences read as the user reads them. */
+    private val bytes = StreamingPackCatalog.EN.totalBytes
+
+    private fun work(
+        route: PreviewRoute,
+        phase: PreviewPhase,
+        soFar: Long = 0L,
+        total: Long = 0L,
+        reason: String? = null,
+    ): PreviewWork = PreviewWork(
+        language = "en",
+        route = route,
+        starter = PreviewStarter.PICK,
+        step = PreviewStep(phase, soFar, total, reason),
+    )
 
     // ------------------------------------------------------------------ the fetch's own line
 
