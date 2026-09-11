@@ -493,6 +493,47 @@ object StreamingPackCopy {
     // ------------------------------------------- the ONE observable's own line (4.5.0 Task 1)
 
     /**
+     * WHAT A SURFACE CAN OFFER FOR PLAY'S OWN DIALOG — the input [workLine]'s one instructing
+     * sentence is chosen by, and the whole of what a caller is asked about itself.
+     *
+     * **Three values because there are three surfaces and they really do differ** (4.5.0 Task 3
+     * review r2's N1). Until fix round 2 this was a `Boolean` called `tappable`, and a boolean can
+     * only say *"I have the tap"* or *"I do not"* — so the one surface that has NO tap and for
+     * which the alternative gesture is also inert had to claim one of the two, and claimed the
+     * tap. `AWAITING_ANSWER` is the phase where that costs something: it is Play waiting for a
+     * confirmation, and the sentence is the only thing on screen that says what to do about it.
+     *
+     *  - [ON_THIS_SURFACE] — this row or card carries the gesture itself: the Settings in-flight
+     *    row while the selection is still this pack's language (its `onClick` calls
+     *    `StreamingPackController.confirm`), and Home's card, which draws [CARD_ANSWER_PLAY].
+     *  - [RE_PICK] — no gesture here, but PICKING THIS LANGUAGE AGAIN would raise Play's dialog,
+     *    because it would really move the selection: the Settings row once the selection has
+     *    moved off this pack (review r3's H3-B3), and the strip for a record that is not the
+     *    current selection's.
+     *  - [NONE] — no gesture here and no gesture the reader can perform on this surface at all.
+     *    The progress strip above the language selector, for the language that IS selected: it is
+     *    pinned to have no `onClick` of any kind (`LivePreviewSelectorStripPinTest`
+     *    `theStripDecidesNothingAndActuatesNothing`), and a re-pick of the already-selected
+     *    language writes the same `String` into the same flow, so nothing emits and nothing
+     *    re-raises. Both other forms are false there, which is exactly what fix round 1 shipped.
+     *
+     * The rule this enum exists to keep is stated in the repo twice over — at the Settings row
+     * (*"so AWAITING_ANSWER cannot say 'tap to answer' where there is no tap"*) and in
+     * [CARD_ANSWER_PLAY]'s own reason for existing (*"it left a user who back-pressed out of
+     * Play's dialog on a note reading 'tap to answer' with nothing to tap"*): **no sentence may
+     * instruct a gesture its own surface does not offer.**
+     */
+    enum class AnswerGesture { ON_THIS_SURFACE, RE_PICK, NONE }
+
+    /**
+     * The FACT all three of [AnswerGesture]'s sentences state, before any of them instructs
+     * anything. Shared so the three forms cannot drift into three descriptions of one Play state
+     * — the defect the whole of this object is one table for.
+     */
+    private const val AWAITING_PLAY =
+        "Google Play needs your confirmation before it fetches the preview model"
+
+    /**
      * WHAT BOTH SURFACES SAY about work in flight — one function over the one observable
      * ([PreviewWork]), replacing the two that came before it: `fetchLine` for Play's own machine
      * and the Settings row's `previewInstallStatus` for ours. That split is the defect Task 1
@@ -507,25 +548,28 @@ object StreamingPackCopy {
      * sentence, so re-wording here would be a second copy of the copy — and the first one knows
      * Play's error code.
      *
-     * @param tappable the caller's OWN answer to *"does this row have an onClick right now"*, not
-     *        [workLineTappable]'s answer to *"does this phase deserve one"* — the two differ, and
-     *        review r3 (H3-B3) is what the difference costs. `AWAITING_ANSWER` says *tap to
-     *        answer* because a tap opens Play's dialog; but the Settings row withholds that tap
-     *        once the selection has moved off this pack's language, and then the sentence
-     *        instructs a gesture the app has decided to refuse, with no ripple and no feedback
-     *        when it is performed. Off-selection the line must be a RECEIPT, and it must name the
-     *        one thing that unlocks it, because nothing else on screen does. Defaulted true so the
-     *        card and every other caller read as before.
+     * @param answer WHAT THE SURFACE THIS LINE IS RENDERED ON CAN OFFER for Play's own dialog —
+     *        the caller's own honest answer, never [workLineTappable]'s *"does this phase deserve
+     *        a tap"*. See [AnswerGesture] for why there are three of them and not two. Defaulted
+     *        to [AnswerGesture.ON_THIS_SURFACE] so the card, which carries [CARD_ANSWER_PLAY],
+     *        reads as before.
      */
-    fun workLine(work: PreviewWork, tappable: Boolean = true): String? = when (work.phase) {
+    fun workLine(
+        work: PreviewWork,
+        answer: AnswerGesture = AnswerGesture.ON_THIS_SURFACE,
+    ): String? = when (work.phase) {
         PreviewPhase.ASKING -> "Asking Google Play for the preview model…"
-        PreviewPhase.AWAITING_ANSWER ->
-            if (tappable) {
-                "Google Play needs your confirmation before it fetches the preview model — tap to answer."
-            } else {
-                "Google Play needs your confirmation before it fetches the preview model. " +
-                    "Pick that language again to answer."
-            }
+        PreviewPhase.AWAITING_ANSWER -> when (answer) {
+            AnswerGesture.ON_THIS_SURFACE -> "$AWAITING_PLAY — tap to answer."
+            AnswerGesture.RE_PICK -> "$AWAITING_PLAY. Pick that language again to answer."
+            // No gesture here and none this row's reader can perform by tapping THIS surface, so
+            // the sentence stops at the fact. It names nothing, deliberately: the one control
+            // that answers Play is the card's own button, and that card is not always on screen
+            // (`PreviewAutoFetch.card` is `Card.NONE` with the switch off, while a running
+            // transfer's line is ungated) — so a pointer at it would be the same lie one surface
+            // further out.
+            AnswerGesture.NONE -> "$AWAITING_PLAY."
+        }
         PreviewPhase.DOWNLOADING -> bytesMoving(work)
         PreviewPhase.TRANSFERRING -> "Google Play is moving the preview model into place…"
         PreviewPhase.INSTALLING -> PROGRESS_INSTALLING
@@ -623,17 +667,31 @@ object StreamingPackCopy {
      *
      * ### Why the SELECTION is an input, and what it buys
      *
-     * `workLine`'s `tappable` chooses between *"— tap to answer"* and *"Pick that language again
-     * to answer"*, and that second form is true only where re-picking would CHANGE something. The
-     * Settings row computes it as `workLineTappable(work) && selectedPack == previewPack`
-     * (`SettingsScreen`), so its receipt form renders only once the selection has moved off the
-     * pack — where the named gesture really does move the selection, emit, and re-raise Play's
-     * dialog. Passing `tappable = false` unconditionally put that sentence in front of the user in
-     * the one case where it is INERT: a re-pick of the already-selected language writes the same
-     * string into the same flow and `Set.plus` returns an equal set, so nothing emits, nothing
-     * recomposes, and `LaunchedEffect(previewPhase)` cannot re-fire. On this strip that is not an
-     * edge case, it is the ordinary one — an `AWAITING_ANSWER` record exists BECAUSE that language
-     * was picked. So the selection term comes in and the two forms render where each is true.
+     * **The strip's answer about ITSELF is [AnswerGesture.NONE] and can never be anything else**,
+     * because it has no `onClick` anywhere in it and is pinned never to grow one
+     * (`LivePreviewSelectorStripPinTest.theStripDecidesNothingAndActuatesNothing` — a tap here
+     * would be a fourth actuator). So the selection does NOT choose whether this surface has a
+     * gesture; it chooses between the two sentences that are about a control SOMEWHERE ELSE:
+     *
+     *  - **off-selection** — picking this record's language would really move the selection,
+     *    emit, and re-raise Play's dialog, and the control that does it is the selector
+     *    immediately below this strip. [AnswerGesture.RE_PICK], and it points at something the
+     *    reader can see.
+     *  - **on-selection** — a re-pick writes the same `String` into the same flow, `Set.plus`
+     *    returns an equal set and `MutableStateFlow` conflates by `equals`, so nothing emits,
+     *    nothing recomposes and `LaunchedEffect(previewPhase)` cannot re-fire. The re-pick
+     *    sentence is inert (fix round 1's own finding) and *"tap to answer"* is false (fix round
+     *    2, review r2's N1): there is no tap on this row and none can be added. So the line
+     *    states the fact and instructs nothing.
+     *
+     * On-selection is the ORDINARY case here, which is why getting it wrong mattered: an
+     * `AWAITING_ANSWER` record exists BECAUSE that language was picked.
+     *
+     * **This is deliberately NOT the Settings row's formula.** That row computes
+     * `workLineTappable(work) && selectedPack == previewPack` and both halves are about a tap it
+     * really has. Fix round 1 borrowed the second half alone and called it *"the Settings row's
+     * own formula"*; it was half of it, with the meaning of the parameter changed underneath —
+     * which is how a row with no gesture came to instruct one.
      *
      * @param work the board's record for ONE language. The strip renders a row per record, so two
      *        arrivals are two rows rather than one overwriting the other.
@@ -682,7 +740,17 @@ object StreamingPackCopy {
         // a transfer that is actually happening, in the present tense, and it is happening whoever
         // started it and whatever the device can arm. Hiding a running 73 MB from the user is the
         // silent spend ruling 3c exists to close.
-        -> workLine(work, tappable = selectedLanguage == work.language)
+        -> workLine(
+            work,
+            // This surface has no gesture, ever (see the KDoc): the selection only chooses
+            // between naming the selector below — which really does re-raise Play's dialog for a
+            // record that is not the current pick — and naming nothing at all.
+            answer = if (selectedLanguage == work.language) {
+                AnswerGesture.NONE
+            } else {
+                AnswerGesture.RE_PICK
+            },
+        )
     }
 
     /**

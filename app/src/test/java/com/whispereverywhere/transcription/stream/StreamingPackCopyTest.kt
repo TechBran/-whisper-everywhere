@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription.stream
 
+import com.whispereverywhere.transcription.stream.StreamingPackCopy.AnswerGesture
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -94,15 +95,21 @@ class StreamingPackCopyTest {
                 StreamingPackCopy.deleteSubtitle(it, en, StreamingPackCatalog.EN.totalBytes)
             } +
             PreviewRoute.entries.flatMap { route ->
-                PreviewPhase.entries.mapNotNull { phase ->
-                    StreamingPackCopy.workLine(
-                        PreviewWork(
-                            language = "en",
-                            route = route,
-                            starter = PreviewStarter.PICK,
-                            step = PreviewStep(phase, 12_000_000L, 72_654_782L, reason = "a refusal."),
-                        ),
-                    )
+                PreviewPhase.entries.flatMap { phase ->
+                    // (fix round 2, review r2's N1) Every SURFACE ANSWER too, because each of
+                    // them is a sentence a reader can read — and the third one was added for a
+                    // surface that had been rendering another surface's instruction.
+                    AnswerGesture.entries.mapNotNull { answer ->
+                        StreamingPackCopy.workLine(
+                            PreviewWork(
+                                language = "en",
+                                route = route,
+                                starter = PreviewStarter.PICK,
+                                step = PreviewStep(phase, 12_000_000L, 72_654_782L, reason = "a refusal."),
+                            ),
+                            answer = answer,
+                        )
+                    }
                 }
             }
 
@@ -712,28 +719,53 @@ class StreamingPackCopyTest {
     }
 
     @Test fun theAskBecomesAReceiptWhereTheRowHasNoTapToGive() {
-        // Review r3's H3-B3, carried onto the one observable. NeedsConfirmation is tappable BY
-        // PHASE, but the Settings row withholds the tap once the selection moves off this pack's
-        // language — and then "tap to answer" instructed a gesture the app had decided to refuse.
+        // Review r3's H3-B3 and (fix round 2) review r2's N1, on one parameter. AWAITING_ANSWER is
+        // tappable BY PHASE, but a SURFACE is what has a tap: the Settings row withholds its own
+        // once the selection moves off this pack's language, and the strip above the selector has
+        // no `onClick` at all and is pinned never to grow one. Three surface answers, three
+        // sentences, one fact under all three.
         val awaiting = work(PreviewRoute.PLAY_FETCH, PreviewPhase.AWAITING_ANSWER)
-        val asking = StreamingPackCopy.workLine(awaiting, tappable = true)
-        val telling = StreamingPackCopy.workLine(awaiting, tappable = false)
+        val asking = StreamingPackCopy.workLine(awaiting, answer = AnswerGesture.ON_THIS_SURFACE)
+        val telling = StreamingPackCopy.workLine(awaiting, answer = AnswerGesture.RE_PICK)
+        val stating = StreamingPackCopy.workLine(awaiting, answer = AnswerGesture.NONE)
         assertTrue("with a tap, it asks for the tap", asking?.contains("tap to answer") == true)
         assertTrue("without one, it must NOT ask for a tap", telling?.contains("tap") == false)
         assertTrue(
             "and it must say what unlocks it — the selection is the only key",
             telling?.contains("Pick that language again") == true,
         )
-        assertTrue("the reason is still stated", telling?.contains("confirmation") == true)
-        val everyOther = PreviewPhase.entries.filterNot { it == PreviewPhase.AWAITING_ANSWER }
+        // (fix round 2, review r2's N1) The third form is for a surface with NO gesture and no
+        // gesture its reader can perform on it: it states the fact and instructs nothing. Both
+        // other forms would be false there, and one of them shipped in fix round 1 — on a row
+        // pinned to have no tap, which is the defect CARD_ANSWER_PLAY was created for.
         assertEquals(
-            "every OTHER phase reads identically either way — this parameter buys exactly one " +
-                "sentence, and a caller that forgets it changes nothing else",
-            everyOther.map { StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, it), tappable = true) },
-            everyOther.map { StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, it), tappable = false) },
+            "the no-gesture form is the bare fact, and it is the SAME fact the other two open " +
+                "with — one Play state, one description of it",
+            "Google Play needs your confirmation before it fetches the preview model.", stating,
         )
+        assertTrue("it asks for no tap", stating?.contains("tap") == false)
+        assertTrue(
+            "and it instructs no re-pick either: on the surface this form exists for, the " +
+                "re-pick is INERT (the record's language is the selection)",
+            stating?.contains("Pick that language again") == false,
+        )
+        for (form in listOf(asking, telling, stating)) {
+            assertTrue("the reason is stated in every form: <<$form>>", form?.contains("confirmation") == true)
+        }
+        val everyOther = PreviewPhase.entries.filterNot { it == PreviewPhase.AWAITING_ANSWER }
+        for (answer in AnswerGesture.entries) {
+            assertEquals(
+                "every OTHER phase reads identically for <<$answer>> — this parameter buys " +
+                    "exactly one sentence, and a caller that forgets it changes nothing else",
+                everyOther.map {
+                    StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, it), answer = AnswerGesture.ON_THIS_SURFACE)
+                },
+                everyOther.map { StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, it), answer = answer) },
+            )
+        }
         assertEquals(
-            "and the default is the asking one, so the card reads as it did",
+            "and the default is the asking one, so the card — which draws CARD_ANSWER_PLAY — " +
+                "reads as it did",
             asking,
             StreamingPackCopy.workLine(awaiting),
         )
@@ -811,9 +843,9 @@ class StreamingPackCopyTest {
                 // The one sentence the work line has no phase for.
                 PreviewPhase.INSTALLED ->
                     assertEquals(StreamingPackCopy.selectorReady(en), line)
-                // Everything else is the ONE work line, verbatim, in the form the SELECTION
-                // chooses — here the record's language is the selected one, which is the case an
-                // AWAITING_ANSWER record exists in.
+                // Everything else is the ONE work line, verbatim, in the form this SURFACE can
+                // honestly render — here the record's language is the selected one, which is the
+                // case an AWAITING_ANSWER record exists in, and the strip has no gesture at all.
                 else -> assertEquals(
                     "$phase must be the work line itself, not a second wording of it",
                     StreamingPackCopy.workLine(
@@ -821,7 +853,7 @@ class StreamingPackCopyTest {
                             PreviewRoute.PLAY_FETCH, phase, 12_000_000L, 72_654_782L,
                             reason = "no room.",
                         ),
-                        tappable = true,
+                        answer = AnswerGesture.NONE,
                     ),
                     line,
                 )
@@ -872,38 +904,58 @@ class StreamingPackCopyTest {
         }
     }
 
-    @Test fun theAwaitingAnswerSentenceNamesARePickONLYWhereARePickWouldChangeSomething() {
-        // (fix round 1, review r1's B2a) `workLine`'s `tappable` chooses between *"— tap to
-        // answer"* and *"Pick that language again to answer"*, and the second is TRUE only where
-        // re-picking moves the selection. The Settings row computes it as
-        // `workLineTappable(work) && selectedPack == previewPack` for exactly that reason.
+    @Test fun theStripInstructsNoGestureItHasNotGotAndNoRePickThatWouldChangeNothing() {
+        // (fix round 2, review r2's N1) THE STRIP HAS NO GESTURE AT ALL — no `onClick`, no
+        // `clickable`, no `Button`, pinned to zero by
+        // `LivePreviewSelectorStripPinTest.theStripDecidesNothingAndActuatesNothing` — so its own
+        // answer to *"does this row have a tap"* is always false and can never be anything else.
         //
-        // The strip's first version passed `tappable = false` unconditionally and called the
-        // receipt form a virtue, which put the instruction in front of the user in the one case
-        // where it is INERT: re-picking the already-selected language writes the same String into
-        // the same flow and `Set.plus` returns an equal set, so nothing emits, nothing recomposes
-        // and `LaunchedEffect(previewPhase)` cannot re-fire. And on this strip that is not an
-        // edge case — an AWAITING_ANSWER record exists BECAUSE that language was picked.
+        // Fix round 1 fixed the wrong half: it stopped the strip instructing an INERT re-pick
+        // on-selection (right) by having it instruct a TAP instead (wrong, and the ordinary case
+        // on this surface — an AWAITING_ANSWER record exists BECAUSE that language was picked).
+        // That is the defect CARD_ANSWER_PLAY was created for, one card down: *"it left a user
+        // who back-pressed out of Play's dialog on a note reading 'tap to answer' with nothing to
+        // tap"*. And it is reachable with no gesture anywhere on the screen: with *"Show live
+        // words"* off, `PreviewAutoFetch.card` answers Card.NONE and takes the button with it,
+        // while this line is deliberately ungated because the transfer is real.
         val awaiting = work(PreviewRoute.PLAY_FETCH, PreviewPhase.AWAITING_ANSWER)
         val onSelection = strip(awaiting, selectedLanguage = "en")
-        assertTrue(
-            "<<$onSelection>>: the record's language IS the selection, so the honest sentence is " +
-                "the one that asks for a tap — Play's dialog is raised on entry and the card " +
-                "carries the same gesture",
-            onSelection?.contains("tap to answer") == true,
-        )
-        assertTrue(
-            "and it must NOT instruct a re-pick that would change nothing",
-            onSelection?.contains("Pick that language again") == false,
+        assertEquals(
+            "on-selection the line is the bare fact: no tap on this row, and a re-pick of the " +
+                "already-selected language emits nothing at all",
+            "Google Play needs your confirmation before it fetches the preview model.",
+            onSelection,
         )
         for (elsewhere in listOf("fr", "auto", null)) {
             val offSelection = strip(awaiting, selectedLanguage = elsewhere)
             assertTrue(
                 "selected=$elsewhere: the selection has moved off this pack, so re-picking it " +
-                    "really does move the selection, emit, and re-raise Play's dialog — and it " +
-                    "is the one control that unlocks this row",
+                    "really does move the selection, emit, and re-raise Play's dialog — and the " +
+                    "selector that does it is immediately below this strip",
                 offSelection?.contains("Pick that language again") == true,
             )
+        }
+        // The whole-surface claim, because one cell is what fix round 1 got wrong: NOTHING this
+        // strip can render asks for a tap, in any phase, at any selection, on or off. The strip
+        // is pinned to have no tap to give.
+        for (phase in PreviewPhase.entries) {
+            for (selected in listOf("en", "fr", "auto", null)) {
+                for (tier in listOf(true, false)) {
+                    for (switch in listOf(true, false)) {
+                        val line = strip(
+                            work(PreviewRoute.PLAY_FETCH, phase, 12_000_000L, 72_654_782L, reason = "no room."),
+                            selectedLanguage = selected,
+                            showLiveWords = switch,
+                            localTierInstalled = tier,
+                        )
+                        assertFalse(
+                            "$phase/selected=$selected/tier=$tier/switch=$switch <<$line>>: a " +
+                                "surface with no onClick may not instruct a tap",
+                            line?.contains("tap to answer") == true,
+                        )
+                    }
+                }
+            }
         }
     }
 

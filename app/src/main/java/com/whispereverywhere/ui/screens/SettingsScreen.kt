@@ -1138,7 +1138,20 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     val previewTappable = StreamingPackCopy.workLineTappable(previewWork) &&
         selectedPack == previewPack
     val previewWorkLine = previewWork?.let {
-        StreamingPackCopy.workLine(it, tappable = previewTappable)
+        StreamingPackCopy.workLine(
+            it,
+            // This row's own answer about ITSELF, from the one value its `onClick` below is also
+            // gated on: with the tap it asks for the tap, and without it the control that unlocks
+            // the row is the language picker — where re-picking this pack's language really does
+            // move the selection and re-raise Play's dialog. The third form
+            // ([StreamingPackCopy.AnswerGesture.NONE]) is not this row's: it belongs to a surface
+            // that has no gesture at all, which is the strip above the selector.
+            answer = if (previewTappable) {
+                StreamingPackCopy.AnswerGesture.ON_THIS_SURFACE
+            } else {
+                StreamingPackCopy.AnswerGesture.RE_PICK
+            },
+        )
     }
     // Keyed on the PHASE, not the record: a DOWNLOADING tick arrives several times a second for
     // the whole 73 MB, and state() does a Play getPackLocation plus five File reads ON THE

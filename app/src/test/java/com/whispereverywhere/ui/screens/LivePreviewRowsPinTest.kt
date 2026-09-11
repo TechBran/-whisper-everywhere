@@ -313,8 +313,16 @@ class LivePreviewRowsPinTest {
             1, liveLineCount(rows, "val previewTappable ="),
         )
         assertEquals(
-            "and the sentence is handed that same answer, never its own reading of the phase",
-            1, liveLineCount(rows, "workLine(it, tappable = previewTappable)"),
+            "and the sentence is handed that same answer, never its own reading of the phase — " +
+                "as of fix round 2 it is one of THREE surface answers (review r2's N1), so what " +
+                "is pinned is that this row's is derived from the hoisted value and from nothing " +
+                "else",
+            1, liveLineCount(rows, "answer = if (previewTappable) {"),
+        )
+        assertEquals(
+            "and that this row never claims the NO-GESTURE form, which belongs to the strip: " +
+                "this row HAS the tap whenever it says it has, and says RE_PICK otherwise",
+            0, liveLineCount(rows, "AnswerGesture.NONE"),
         )
         assertEquals(
             "NO tap survives the selection moving: the tap guard's second conjunct is the " +
