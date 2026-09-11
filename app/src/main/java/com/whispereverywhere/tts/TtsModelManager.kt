@@ -497,9 +497,13 @@ class TtsModelManager(private val context: Context) {
          * that is now false (the archive is fetched from Play, not pulled from a third party) and
          * it was already stale (the archive is 350 MB, the row said 365).
          *
-         * TODO(Task 6): the amendment gives Task 6 this row's final wording ("the voice row
-         * likewise" — the previewer's row says "included with the app" on Play builds). These two
-         * functions are where that edit lands; they are pure and route-keyed so it is one table.
+         * Task 6 (the 2026-09-10 amendment, *"the voice row likewise"*) finished the sentence:
+         * the two PLAY routes now say the archive is **included with the app**, not merely that
+         * Play is where it comes from. Naming the source was half the fix — a 350 MB row that
+         * does not say the bytes are already part of the install the user has reads like a
+         * second, optional purchase, and on a Play install the archive rides the `tts_kokoro`
+         * pack inside that same AAB. The fallback row keeps the download wording, because there
+         * it really is a third-party transfer of bytes this install does not carry.
          */
         fun installRowTitle(route: VoiceInstallRoute): String = when (route) {
             VoiceInstallRoute.None -> "Kokoro voice — installed"
@@ -513,14 +517,35 @@ class TtsModelManager(private val context: Context) {
             VoiceInstallRoute.None ->
                 "Speaks highlighted or copied text aloud, fully on-device."
             VoiceInstallRoute.FromPack ->
-                "Kokoro, already on this device: speaks highlighted text aloud, entirely " +
-                    "on-device"
+                "Kokoro, included with the app and already on this device: speaks highlighted " +
+                    "text aloud, entirely on-device"
             VoiceInstallRoute.Fetch ->
-                "Kokoro (${StreamingPackCatalog.sizeBadge(TAR_BYTES)} from Google Play): speaks " +
-                    "highlighted text aloud, entirely on-device"
+                "Kokoro (${StreamingPackCatalog.sizeBadge(TAR_BYTES)}), included with the app " +
+                    "and delivered by Google Play: speaks highlighted text aloud, entirely " +
+                    "on-device"
             VoiceInstallRoute.Download ->
                 "Kokoro (${StreamingPackCatalog.sizeBadge(TAR_BYTES)} download): speaks " +
                     "highlighted text aloud, entirely on-device"
+        }
+
+        /**
+         * The row's title while OUR OWN work is in flight — the verify+extract of a delivered
+         * pack, or the fallback download plus its extract. Task 6's half of the fix round's
+         * `TODO(Task 6)` on `SettingsScreen`: that screen used to carry an `if` choosing between
+         * "Installing the voice…" and "Downloading voice…", and an `if` in a Compose tree is a
+         * decision no JVM test can reach.
+         *
+         * Only [VoiceInstallRoute.Download] moves bytes over the network here — Play's own fetch
+         * narrates itself through [fetchLine] and never reaches this row — so it is the only
+         * route allowed to say "Downloading". Total so a route added later cannot inherit that
+         * claim by falling through.
+         */
+        fun installingRowTitle(route: VoiceInstallRoute): String = when (route) {
+            VoiceInstallRoute.Download -> "Downloading the voice…"
+            VoiceInstallRoute.FromPack,
+            VoiceInstallRoute.Fetch,
+            VoiceInstallRoute.None,
+            -> "Installing the voice…"
         }
 
         /**
@@ -534,14 +559,15 @@ class TtsModelManager(private val context: Context) {
          * `tts_kokoro` pack and nothing is downloaded from a third party at all. The number comes
          * from [StreamingPackCatalog.sizeBadge] so it cannot drift from [TAR_BYTES] again.
          *
-         * TODO(Task 6): the amendment gives Task 6 the voice's copy; this is where the
-         * onboarding/Home half of that edit lands, beside [installRowTitle]'s Settings half.
+         * Task 6 carried the amendment's wording here too, so the three surfaces cannot disagree
+         * about whose bytes these are: both Play routes say **included with the app**, and only
+         * the fallback says download.
          */
         fun voiceSourceClause(route: VoiceInstallRoute): String = when (route) {
             VoiceInstallRoute.None -> "already installed"
-            VoiceInstallRoute.FromPack -> "already on this device, nothing to fetch"
+            VoiceInstallRoute.FromPack -> "included with the app, already on this device"
             VoiceInstallRoute.Fetch ->
-                "${StreamingPackCatalog.sizeBadge(TAR_BYTES)} from Google Play"
+                "${StreamingPackCatalog.sizeBadge(TAR_BYTES)}, included with the app via Google Play"
             VoiceInstallRoute.Download -> "${StreamingPackCatalog.sizeBadge(TAR_BYTES)} download"
         }
 
@@ -575,11 +601,14 @@ class TtsModelManager(private val context: Context) {
          * ([notePlayFailure]), so the two features cannot disagree about which failures are the
          * install's own fault. Only the WORDS are ours.
          *
-         * TODO(Task 6): the amendment gives Task 6 the voice row's copy ("the voice row
-         * likewise"). These sentences, [fetchLine]'s, and the four `TtsDownloadException`
-         * messages in [installFromPack]/[download] want the same sweep — they live here until
-         * then because a pure, JVM-executed home beats a `Failed` carrying the other feature's
-         * copy, so the move is a relocation and not a re-decision.
+         * Task 6 took the amendment's *"the voice row likewise"* as the OFFER row's wording
+         * ([installRowTitle], [installRowSubtitle], [voiceSourceClause], [installingRowTitle])
+         * and deliberately left these refusal sentences, [fetchLine]'s and the four
+         * `TtsDownloadException` messages where they are. Gathering them into a `TtsCopy` object
+         * beside `StreamingPackCopy` is a RELOCATION, not a re-decision — every word would move
+         * unchanged — and it would move a dozen call sites that `TtsModelManagerTest` and
+         * `TtsPackShellPinTest` name by owner. A pure, JVM-executed home here already beats a
+         * `Failed` carrying the other feature's copy, which is the defect this seam exists for.
          *
          * @param downloadBytes Play's own `totalBytesToDownload`, used by the storage refusal to
          *        name a real number — 0 when Play never said, in which case none is invented.

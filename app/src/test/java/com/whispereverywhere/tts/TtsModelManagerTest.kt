@@ -325,6 +325,55 @@ class TtsModelManagerTest {
     }
 
     @Test
+    fun thePlayRoutesSayTheVoiceIsIncludedWithTheApp() {
+        // The 2026-09-10 amendment gives Task 6 this row's final wording — "the voice row
+        // likewise", beside the previewer's "included with the app on Play builds". Naming Play
+        // as the SOURCE (Task 2b) was only half of it: a 350 MB row that says where the bytes
+        // come from but not that they are already part of the app the user installed reads like
+        // a second, optional purchase. On a Play install the archive rides the `tts_kokoro` pack
+        // inside that same AAB.
+        for (route in listOf(VoiceInstallRoute.FromPack, VoiceInstallRoute.Fetch)) {
+            val subtitle = TtsModelManager.installRowSubtitle(route)
+            assertTrue(
+                "$route's Settings row must say the bytes are the app's own: $subtitle",
+                subtitle.contains("included with the app"),
+            )
+            val clause = TtsModelManager.voiceSourceClause(route)
+            assertTrue(
+                "and so must the onboarding/Home clause, or the three surfaces disagree: $clause",
+                clause.contains("included with the app"),
+            )
+        }
+        // And ONLY there. The fallback really is a third-party transfer of bytes that are NOT in
+        // this install — borrowing the phrase would make the one honest download row dishonest.
+        assertFalse(
+            TtsModelManager.installRowSubtitle(VoiceInstallRoute.Download).contains("included with the app"),
+        )
+        assertFalse(
+            TtsModelManager.voiceSourceClause(VoiceInstallRoute.Download).contains("included with the app"),
+        )
+    }
+
+    @Test
+    fun theInFlightRowNamesTheWorkItIsActuallyDoing() {
+        // The TODO(Task 6) the fix round left on SettingsScreen: the FromPack route verifies and
+        // extracts bytes Play already delivered, with no network at any point, and "Downloading
+        // voice…" over it is a small lie on the one route Task 2b exists to add. Pure and
+        // route-keyed so the screen holds no `if` of its own.
+        assertEquals(
+            "Downloading the voice…",
+            TtsModelManager.installingRowTitle(VoiceInstallRoute.Download),
+        )
+        for (route in listOf(VoiceInstallRoute.FromPack, VoiceInstallRoute.Fetch, VoiceInstallRoute.None)) {
+            assertEquals(
+                "$route moves no bytes over the network, so it cannot say it is downloading",
+                "Installing the voice…",
+                TtsModelManager.installingRowTitle(route),
+            )
+        }
+    }
+
+    @Test
     fun theRowsFetchLineIsTotalOverTheFetchMachineAndSilentOnlyAtRest() {
         val silent = listOf(
             NpuPackFetch.FetchState.Idle,

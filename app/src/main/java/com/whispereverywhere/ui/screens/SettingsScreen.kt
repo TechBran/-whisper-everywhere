@@ -579,15 +579,13 @@ fun SettingsScreen(
                     ttsDownloadStatus != null -> {
                         SettingsItem(
                             icon = Icons.Filled.CloudDownload,
-                            // (fix round 1, review nit 6) The FromPack route verifies and
-                            // extracts bytes Play already delivered, with no network at any
-                            // point — "Downloading voice…" over it is a small lie on the one
-                            // route this task exists to add. TODO(Task 6) owns the wording.
-                            title = if (voiceRoute == VoiceInstallRoute.FromPack) {
-                                "Installing the voice…"
-                            } else {
-                                "Downloading voice…"
-                            },
+                            // (Task 6) The FromPack route verifies and extracts bytes Play
+                            // already delivered, with no network at any point — "Downloading
+                            // voice…" over it is a small lie on the one route Task 2b exists to
+                            // add. The choice is the route table's now, not this screen's: an
+                            // `if` in a Compose tree is a decision no JVM test can reach.
+                            title = com.whispereverywhere.tts.TtsModelManager
+                                .installingRowTitle(voiceRoute),
                             subtitle = ttsDownloadStatus ?: "",
                         )
                     }
