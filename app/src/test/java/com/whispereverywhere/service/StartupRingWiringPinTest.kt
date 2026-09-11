@@ -287,8 +287,8 @@ class StartupRingWiringPinTest {
         assertTrue(playbackStop in 0 until flush)
         assertTrue("and the flush precedes the unconditional stop commit that cuts it", flush < stopCommit)
         assertEquals(
-            "two drainAll sites and only two — the stop path and the source switch, both on Main, " +
-                "both above the commit that cuts what they flushed",
+            "two drainAll sites and only two — the stop path, and the ONE handover flush both " +
+                "handover sites share; each on Main, each above the commit that cuts what it flushed",
             2,
             count("startupRing.drainAll"),
         )
@@ -308,23 +308,61 @@ class StartupRingWiringPinTest {
         // The flush above the boundary commit is the fix that keeps the audio AND the rule: the
         // pre-roll is mic audio, so it belongs to the segment the mic was recording, and the
         // commit immediately below cuts it there. It also leaves the ring EMPTY, so from the swap
-        // on both threads take the LIVE route and S2 adds no new mixing window at all — the one
-        // that remains is `switchSource`'s pre-existing, documented stop-then-join residue.
+        // on the new source's thread takes the LIVE route.
+        //
+        // ROUND 1, B1: the flush is a FUNCTION, because `switchSource` is not the only handover —
+        // `onMediaPlaybackStarted`'s consent-ask branch is its sibling for the no-token case and
+        // needs the identical three steps. Both call sites are pinned, here and in the row below.
         val body = memberBody("    private fun switchSource(to: com.whispereverywhere.audio.ActiveSource) {")
-        val flush = body.indexOf("startupRing.drainAll { pcm, _, _ -> sessionEngine.sendAudio(pcm) }")
+        val flush = body.indexOf("        flushStartupRingAtSourceHandover()")
         val boundary = body.indexOf("        transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }")
         assertTrue("switchSource must flush the ring", flush >= 0)
-        assertEquals(
-            "and say so under its own name, so a log can tell the two flushes apart",
-            1,
-            liveLines(body, "StartupRing.switchFlushLine(").size,
-        )
         assertTrue("switchSource must still cut the boundary", boundary >= 0)
         assertTrue(
             "the microphone's pre-roll is committed on the MIC side of the boundary, never " +
                 "replayed on the device-audio side",
             flush < boundary,
         )
+        // The flush says so under its own name, so a log can tell the two flushes apart — and it
+        // lives in ONE place: the declaration plus exactly the two handover call sites.
+        assertEquals(1, count("StartupRing.switchFlushLine("))
+        assertEquals(
+            "the handover flush is one function with two callers — found: " +
+                liveLines(text, "flushStartupRingAtSourceHandover("),
+            3,
+            liveLines(text, "flushStartupRingAtSourceHandover(").size,
+        )
+    }
+
+    @Test
+    fun theConsentAskHandoverIsSwitchSourcesSiblingAndFlushesTheRingTheSameWay() {
+        // ROUND 1, B1. `onMediaPlaybackStarted`'s consent-ask branch is the "media transcription
+        // cuts the mic" handover for the case where there is no projection token yet: same gate as
+        // `switchSource`, so it is reachable through the whole paced catch-up, and it STOPS THE
+        // MICROPHONE. After that stop nothing drains the ring — the paced drain is driven by live
+        // chunks alone — so a ring left standing here survives the 1-3 s consent wait, and
+        // `startPlaybackSource()`'s FIRST chunk then takes the DRAIN route and replays up to 6 s of
+        // room audio into the device-audio segment. Straight-line, not a race.
+        //
+        // The three steps, in this order, are what makes it safe, and all three are pinned:
+        // stop+join the mic, flush the ring it filled, cut the boundary.
+        val branch = memberBody("                } else if (consentBudget.mayAsk()) {")
+        val micStop = branch.indexOf("                    audioRecorder.stop()")
+        val flush = branch.indexOf("                    flushStartupRingAtSourceHandover()")
+        val boundary = branch.indexOf(
+            "                    transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }"
+        )
+        assertTrue("the consent-ask handover must stop the microphone", micStop >= 0)
+        assertTrue("...flush the ring the microphone filled", flush >= 0)
+        assertTrue("...and cut the boundary", boundary >= 0)
+        assertTrue("the flush runs behind the mic's stop+join, never ahead of it", micStop < flush)
+        assertTrue(
+            "and the microphone's pre-roll is cut on the MIC side of the boundary, never replayed " +
+                "on the device-audio side once consent lands",
+            flush < boundary,
+        )
+        // And the branch still asks: the flush may not have displaced the consent request.
+        assertEquals(1, liveLines(branch, "MediaProjectionGate.requestConsent(").size)
     }
 
     // ------------------------------------------------------------------------------- the haptic

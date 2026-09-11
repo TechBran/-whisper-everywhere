@@ -1402,10 +1402,21 @@ class FloatingBubbleService : Service(),
                 if (com.whispereverywhere.audio.MediaProjectionGate.hasProjection()) {
                     switchSource(to = com.whispereverywhere.audio.ActiveSource.PLAYBACK)
                 } else if (consentBudget.mayAsk()) {
-                    // Flush + stop the mic NOW (never mix room audio into a media session),
-                    // then ask; capture starts when consent lands.
-                    transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
+                    // Stop the mic NOW, flush what it captured, cut the boundary (never mix room
+                    // audio into a media session), then ask; capture starts when consent lands.
+                    //
+                    // 4.4.0 S2 — THIS BRANCH IS switchSource's SIBLING AND NEEDS switchSource's
+                    // FLUSH, on a straight-line path rather than a race. It is reachable through
+                    // the whole ~1.4-2.0 s paced catch-up (switchSource's gate and this one are the
+                    // same gate), and it STOPS the microphone: after that nothing drains the ring,
+                    // because the drain is driven by live chunks alone. So a ring left standing
+                    // here survives until consent lands, and startPlaybackSource()'s first chunk
+                    // then takes the DRAIN route and replays up to 6 s of ROOM AUDIO into the
+                    // device-audio segment. Same order as every other handover: stop+join, flush,
+                    // cut — see flushStartupRingAtSourceHandover().
                     audioRecorder.stop()
+                    flushStartupRingAtSourceHandover()
+                    transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
                     consentBudget.noteAsked()
                     android.util.Log.i("WE-DIAG", "projection consent: asked=${consentBudget.asked}/${com.whispereverywhere.audio.ProjectionConsentBudget.MAX_ASKS_PER_SESSION}")
                     com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
@@ -2512,6 +2523,38 @@ class FloatingBubbleService : Service(),
         }
     }
 
+    /**
+     * A SOURCE HANDOVER's flush of the startup ring (4.4.0 S2). Main thread only, and it has
+     * exactly two call sites — the two places a live session takes the microphone away from
+     * itself: [switchSource], and `onMediaPlaybackStarted`'s consent-ask branch, which is
+     * [switchSource]'s sibling for the case where there is no projection token yet.
+     *
+     * THE RULE IT CARRIES: whatever is still in the ring is the OLD source's audio, so it is fed
+     * and cut on the OLD source's side of the boundary. Leave a ring standing across a handover and
+     * the NEXT source's capture thread finds it non-empty, takes the DRAIN route, and replays up to
+     * 6 s of MICROPHONE audio into a device-audio segment — the owner's headline rule ("keep the
+     * microphone out of it so someone could transcribe a YouTube video without their actual spoken
+     * words being dictated") broken by a buffer. That is why this is a function and not two copies:
+     * the rule belongs to the handover, not to one of its branches.
+     *
+     * CALL IT AFTER THE OLD SOURCE IS STOPPED AND JOINED AND BEFORE THE BOUNDARY COMMIT — the same
+     * two-sided position `stopRecording`'s flush occupies, for the same two reasons. A capture
+     * thread still delivering would land old-source PCM past the cut and out of capture order (the
+     * ring's monitor keeps exactly-once, not order), and the commit is what puts this audio in the
+     * segment it belongs to. `sendAudio` ONLY: the CUT is the caller's commit, and the endpointer's
+     * native probe may not be driven from Main (VadProbeLifecycle's one shared direct buffer
+     * belongs to the capture thread).
+     */
+    private fun flushStartupRingAtSourceHandover() {
+        transcriptionEngine?.let { sessionEngine ->
+            val pendingMs = StartupRing.msOf(startupRing.byteSize())
+            val flushed = startupRing.drainAll { pcm, _, _ -> sessionEngine.sendAudio(pcm) }
+            if (flushed > 0) {
+                android.util.Log.i("WE-DIAG", StartupRing.switchFlushLine(flushed, pendingMs))
+            }
+        }
+    }
+
     /** Commit the pending segment, stop the current source, start the other. Main thread only. */
     private fun switchSource(to: com.whispereverywhere.audio.ActiveSource) {
         if (activeSource == to || currentState != BubbleState.RECORDING) return
@@ -2550,13 +2593,7 @@ class FloatingBubbleService : Service(),
         // cuts it there. It also leaves the ring EMPTY, so from the swap on every thread takes the
         // LIVE route — S2 therefore adds no new source-mixing window, and the one that remains is
         // this function's own pre-existing stop-then-join residue named above.
-        transcriptionEngine?.let { sessionEngine ->
-            val pendingMs = StartupRing.msOf(startupRing.byteSize())
-            val flushed = startupRing.drainAll { pcm, _, _ -> sessionEngine.sendAudio(pcm) }
-            if (flushed > 0) {
-                android.util.Log.i("WE-DIAG", StartupRing.switchFlushLine(flushed, pendingMs))
-            }
-        }
+        flushStartupRingAtSourceHandover()
         transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
         endpointer.reset()
         segmentCapPolicy.onCommit(System.currentTimeMillis())

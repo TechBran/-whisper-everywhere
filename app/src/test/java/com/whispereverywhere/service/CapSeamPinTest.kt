@@ -80,10 +80,13 @@ class CapSeamPinTest {
      * itself must not grow a `sendAudio` of its own, or there would be two ways into the engine
      * and only one of them ordered against the client-VAD gate.
      *
-     * The ONE other `sendAudio` in the service is `stopRecording`'s flush of a ring the paced
-     * drain had not caught up on when the user tapped stop; it is scoped, named and pinned by
-     * `StartupRingWiringPinTest`, and it is on a different receiver (`sessionEngine`), so the
-     * needle below cannot see it. A whole-file count of `.sendAudio(` therefore reads 2.
+     * The other `sendAudio`s in the service are the ring's two Main-side FLUSHES of a backlog the
+     * paced drain had not caught up on — `stopRecording`'s, and the one both source handovers share
+     * (`flushStartupRingAtSourceHandover`, added in round 1 for the consent-ask sibling). Each is
+     * scoped, named and pinned by `StartupRingWiringPinTest`, and each is on a different receiver
+     * (`sessionEngine`), so the needle below cannot see them. A whole-file count of `.sendAudio(`
+     * therefore reads 3 — and the count is asserted, because a number stated in prose and checked
+     * nowhere is how a fourth way into the engine arrives unnoticed.
      */
     @Test
     fun sendAudioIsUnconditionalAndFirst() {
@@ -112,6 +115,15 @@ class CapSeamPinTest {
             "onAudioChunk must reach the engine only through feedEngine",
             0,
             text.substring(callback, feed).split("sendAudio").size - 1,
+        )
+        // THE WHOLE-FILE CENSUS the KDoc states: feedEngine's one unconditional send, plus the
+        // ring's two Main-side flushes (the stop path, and the handover flush both handover sites
+        // share). A FOURTH site is a second way into the engine, ordered against nothing.
+        assertEquals(
+            "exactly three sendAudio sites in the service: feedEngine, the stop flush, the " +
+                "handover flush",
+            3,
+            text.split(".sendAudio(").size - 1,
         )
     }
 
