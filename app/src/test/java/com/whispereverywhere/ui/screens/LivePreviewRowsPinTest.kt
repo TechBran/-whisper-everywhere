@@ -197,6 +197,70 @@ class LivePreviewRowsPinTest {
         assertTrue("and the switch must be inside it", installedBranch in 0 until switch)
     }
 
+    // ------------------------------------------- a selection the previewer has no pack for
+
+    @Test
+    fun aSelectionWithNoPackIsToldTheTruthAndIsOfferedNothing() {
+        // (4.4.1 pass 3, ITEM 1 — review r2's nit 3.) The caveat row used to be gated on
+        // `selectedLanguage == "auto"`, so a user who picked French read "Get the English preview
+        // model", spent 73 MB, and was then told "Installed. Words appear on the bubble as you
+        // speak English" — which owner ruling 1 had already decided can never happen for them on
+        // any tier. The honest predicate is the CATALOGUE's answer for the selection.
+        assertEquals(
+            "`== \"auto\"` is not the question: a French picker has no pack either",
+            0, liveLineCount(rows, "selectedLanguage == \"auto\""),
+        )
+        assertEquals(
+            "the selection's own pack, resolved once, by the catalogue",
+            1, liveLineCount(rows, "StreamingPackCatalog.forLanguage(selectedLanguage)"),
+        )
+        assertEquals(
+            "and the two cases (Auto is a choice, a language with no row is a gap) are chosen " +
+                "by the copy's own pair, not by a sentence assembled here",
+            1, liveLineCount(rows, "StreamingPackCopy.noLiveWordsTitle("),
+        )
+        assertEquals(1, liveLineCount(rows, "StreamingPackCopy.noLiveWordsSubtitle("))
+        assertEquals(
+            "so the row names neither case itself",
+            0,
+            liveLineCount(rows, "StreamingPackCopy.AUTO_ROW_TITLE") +
+                liveLineCount(rows, "StreamingPackCopy.AUTO_NO_LIVE_WORDS"),
+        )
+        val caveat = offsetOfLive(rows, "StreamingPackCopy.noLiveWordsTitle(")
+        val gate = offsetOfLive(rows, "if (selectedPack == previewPack) {")
+        val offer = offsetOfLive(rows, "onClick = startPreviewInstall,")
+        assertTrue("the caveat must be in the section", caveat >= 0)
+        assertTrue(
+            "and every row that describes or offers THIS pack must be gated on the selection " +
+                "being the language it is for — offering a model the gate has already refused " +
+                "takes a user's storage for a feature they cannot have",
+            gate >= 0,
+        )
+        assertTrue("the caveat is FIRST: a caveat read after the offer changed nothing", caveat < gate)
+        assertTrue("and the offer is inside that gate", gate < offer)
+    }
+
+    @Test
+    fun theDeleteRowFollowsTheBYTESAndNotTheSelection() {
+        assertEquals(
+            "ONE delete site, wherever it sits", 1, liveLineCount(rows, "StreamingPackCopy.DELETE_TITLE"),
+        )
+        val lastOffer = offsetOfLive(rows, "onClick = startPreviewInstall,")
+        val guard = offsetOfLive(rows, "if (previewState.isInstalled) {")
+        val delete = offsetOfLive(rows, "StreamingPackCopy.DELETE_TITLE")
+        assertTrue("the offer branches must still be there", lastOffer >= 0)
+        assertTrue(
+            "the delete is about DISK, not about the selection: 73 MB installed for English has " +
+                "to stay reclaimable after the user picks French, so it sits OUTSIDE the " +
+                "selection gate — after the last offer branch — under its own bytes-are-here guard",
+            lastOffer < guard && guard < delete,
+        )
+        assertEquals(
+            "and the decision it records is still the PACK's language, which is what it deletes",
+            1, liveLineCount(rows, "setLivePreviewDeclined(previewPack.language, true)"),
+        )
+    }
+
     // ------------------------------------------------------------------ the language step
 
     @Test

@@ -110,7 +110,7 @@ object StreamingPackCopy {
     /** Rendered in the English row's subtitle slot on the language step when the pack is installed. */
     const val LANGUAGE_CHIP = "Live words on the bubble while you speak — preview model installed."
 
-    // ------------------------------------------------------------- what Auto costs, where it is set
+    // ------------------------------------------- what a selection with no pack costs, and where
 
     /**
      * The Settings row and the in-app picker's own version of the trade, for the user who is
@@ -126,6 +126,43 @@ object StreamingPackCopy {
 
     const val AUTO_NO_LIVE_WORDS =
         "On Auto-detect there are none at all: pick your transcription language to see words on the bubble as you speak. Your typed transcript is unchanged either way."
+
+    /**
+     * THE CAVEAT FOR A SELECTION THE PREVIEWER HAS NO PACK FOR, as two total functions over ONE
+     * input: [language] is the picked language's own word, or **null on Auto**, where no language
+     * was picked at all.
+     *
+     * (4.4.1 pass 3, ITEM 1.) [AUTO_NO_LIVE_WORDS] answered only the user standing on Auto, and
+     * the Settings rows gated it on `selectedLanguage == "auto"` — so a user who picked French was
+     * offered *"Get the English preview model"*, spent 73 MB, and was then told *"Installed. Words
+     * appear on the bubble as you speak English"*, which owner ruling 1 has already decided can
+     * never happen for them on ANY tier: the gate arms for the language they PICKED. The app was
+     * taking someone's storage for a feature it had already refused them. The honest predicate is
+     * the catalogue's ([StreamingPackCatalog.forLanguage] answering null), and this is the sentence
+     * that predicate needs.
+     *
+     * TWO sentences and not one, deliberately. Auto is a CHOICE, unmade in the picker directly
+     * above these rows; a language with no catalogue row is a GAP in the app, and no pick can close
+     * it today. They are different facts about the world, and one sentence covering both would
+     * either tell a French user to pick the language they have just picked or tell an Auto user to
+     * wait for something that is already here.
+     *
+     * Neither of them names English. Telling a French user which OTHER language has a model is one
+     * short step from offering it to them, which is the thing this pass exists to stop; the
+     * language step ([LANGUAGE_STEP_SENTENCE]) already says which language has one, at the one
+     * moment that is a choice being made. And naming no language keeps these two true on the day a
+     * second catalogue row lands.
+     */
+    fun noLiveWordsTitle(language: String?): String =
+        if (language == null) AUTO_ROW_TITLE else "Live words are not available in $language yet"
+
+    fun noLiveWordsSubtitle(language: String?): String =
+        if (language == null) {
+            AUTO_NO_LIVE_WORDS
+        } else {
+            "The bubble shows live words only for a language with a preview model, and there is " +
+                "none for $language yet. Your typed transcript in $language is unchanged."
+        }
 
     // ---------------------------------------------------------------- the offer, by source
 

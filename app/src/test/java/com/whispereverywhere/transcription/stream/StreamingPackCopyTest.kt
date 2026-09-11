@@ -69,6 +69,11 @@ class StreamingPackCopyTest {
             StreamingPackCopy.LANGUAGE_CHIP,
             StreamingPackCopy.AUTO_ROW_TITLE,
             StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+            // Rendered for a language the app has NO pack for, because that is the only way a
+            // user ever reads them (4.4.1 pass 3, ITEM 1). The null arm of the same two
+            // functions is AUTO_ROW_TITLE / AUTO_NO_LIVE_WORDS, already above.
+            StreamingPackCopy.noLiveWordsTitle(es),
+            StreamingPackCopy.noLiveWordsSubtitle(es),
             StreamingPackCopy.DELETE_TITLE,
             StreamingPackCopy.DELETE_SUBTITLE,
             StreamingPackCopy.PROGRESS_STARTING,
@@ -137,6 +142,14 @@ class StreamingPackCopyTest {
         assertEquals(
             "On Auto-detect there are none at all: pick your transcription language to see words on the bubble as you speak. Your typed transcript is unchanged either way.",
             StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+        )
+        assertEquals(
+            "Live words are not available in Spanish yet",
+            StreamingPackCopy.noLiveWordsTitle(es),
+        )
+        assertEquals(
+            "The bubble shows live words only for a language with a preview model, and there is none for Spanish yet. Your typed transcript in Spanish is unchanged.",
+            StreamingPackCopy.noLiveWordsSubtitle(es),
         )
         assertEquals("Live words on the bubble while you speak — preview model installed.", StreamingPackCopy.LANGUAGE_CHIP)
         assertEquals("Delete the preview model", StreamingPackCopy.DELETE_TITLE)
@@ -396,6 +409,53 @@ class StreamingPackCopyTest {
         assertTrue(
             "the language step says it BEFORE any row is offered, so it names what the pick buys",
             StreamingPackCopy.LANGUAGE_STEP_SENTENCE.startsWith("Live words on the bubble follow"),
+        )
+    }
+
+    @Test fun aSelectedLanguageWithNoPackIsToldTheTruthAndAutoKeepsItsOwnSentence() {
+        // (4.4.1 pass 3, ITEM 1 — review r2's nit 3.) Until this pass the only "no live words"
+        // sentence the app had was Auto's, and the Settings rows gated it on `== "auto"`. So a
+        // user who picked French was offered "Get the English preview model", spent 73 MB, and was
+        // then told "Installed. Words appear on the bubble as you speak English" — which owner
+        // ruling 1 has already decided can never happen for them on any tier. These two sentences
+        // are what the honest predicate (no catalogue row for the selection) says instead.
+        for (name in listOf(es, "French", "Chinese")) {
+            val title = StreamingPackCopy.noLiveWordsTitle(name)
+            val subtitle = StreamingPackCopy.noLiveWordsSubtitle(name)
+            assertTrue("<<$title>> must name the language it is about", title.contains(name))
+            assertTrue("<<$subtitle>> must name the language it is about", subtitle.contains(name))
+            // It must NOT sell the one model that does exist. Naming English here is one short
+            // step from offering it, which is the whole of this item — and it is also the literal
+            // that would become a lie the day a second catalogue row lands.
+            assertFalse("<<$title>> must not name English", title.contains(en))
+            assertFalse("<<$subtitle>> must not name English", subtitle.contains(en))
+            assertFalse("nor the badge: nothing here is for sale", subtitle.contains("73 MB"))
+            // ...and it must keep the typed transcript out of the trade, exactly as Auto's does:
+            // a language with no preview model still transcribes perfectly.
+            assertTrue(
+                "<<$subtitle>> must keep the typed transcript out of it",
+                subtitle.contains("typed transcript"),
+            )
+        }
+        // AUTO IS A CHOICE; A LANGUAGE WITH NO PACK IS A GAP. Two different facts about the
+        // world, so the null arm is Auto's own pair and not a language-shaped version of it.
+        assertEquals(StreamingPackCopy.AUTO_ROW_TITLE, StreamingPackCopy.noLiveWordsTitle(null))
+        assertEquals(
+            StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+            StreamingPackCopy.noLiveWordsSubtitle(null),
+        )
+        assertFalse(
+            "and the two are not the same sentence: Auto tells the user to pick, which is no " +
+                "help at all to someone who has already picked",
+            StreamingPackCopy.noLiveWordsSubtitle(es) == StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+        )
+        assertTrue(
+            "Auto's sentence is the one that asks for a pick",
+            StreamingPackCopy.AUTO_NO_LIVE_WORDS.contains("pick your transcription language"),
+        )
+        assertFalse(
+            "and the gap's sentence must not, because the pick has already been made",
+            StreamingPackCopy.noLiveWordsSubtitle(es).contains("pick"),
         )
     }
 

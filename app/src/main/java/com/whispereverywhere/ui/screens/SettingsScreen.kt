@@ -1076,6 +1076,9 @@ fun SettingsSection(
  *    only, since an undelivered on-demand pack still costs the user 73 MB: `StreamingPackCopy`
  *  - whether a tap does anything at all: `StreamingPackController.isBusy` +
  *    `StreamingPackCopy.fetchLineTappable`
+ *  - whether this user may be offered the pack at all: `StreamingPackCatalog.forLanguage` of
+ *    their SELECTION (4.4.1 pass 3, ITEM 1) — no language is offered a model that has already
+ *    been decided cannot arm for it, and the one it can never arm for is told so instead
  *
  * The one string the previewer has that this row does NOT render is
  * `StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE`: the canary's verdict lives on the previewer
@@ -1093,9 +1096,22 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // language differently; the fallback is the code, unreachable for a catalogue row.
     val previewLanguage = PreferencesManager.languageDisplayName(previewPack.language)
         ?: previewPack.language
-    // ...and whether the user has picked ANY language: on Auto the feature is silent by design
-    // (owner ruling 1, 2026-09-11), which has to be SAID here or it reads as broken.
+    // ...and WHICH language the user picked, because every row below is about a pack and a pack
+    // is per language (owner ruling 1, 2026-09-11: on Auto the feature is silent by design, which
+    // has to be SAID here or it reads as broken).
     val selectedLanguage by app.preferencesManager.selectedLanguage.collectAsState()
+    // (4.4.1 pass 3, ITEM 1) THE HONEST PREDICATE IS THE CATALOGUE'S, not `== "auto"`. A user who
+    // picked French has no pack either, and until this line they were offered "Get the English
+    // preview model", spent 73 MB, and were then told "Installed. Words appear on the bubble as
+    // you speak English" — which owner ruling 1 had already decided can never happen for them on
+    // ANY tier, because the gate arms for the language they PICKED. No language may be offered a
+    // model that has already been decided cannot arm for it.
+    val selectedPack = StreamingPackCatalog.forLanguage(selectedLanguage)
+    // The picked language's own word, or null on Auto — the same mapping `getLanguageForApi()`
+    // performs on this very preference (Auto is not a language), applied to the collected value so
+    // the row stays reactive. The copy answers both cases from this one input; no rule lives here.
+    val pickedLanguage = selectedLanguage.takeIf { it != "auto" }
+        ?.let { PreferencesManager.languageDisplayName(it) ?: it }
     var previewRefreshKey by remember { mutableStateOf(0) }
     // Set only while OUR OWN work runs (the verify+copy of a delivered pack, or the fallback
     // download); Play's own fetch narrates itself through the shell's StateFlow below.
@@ -1169,82 +1185,100 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
             is StreamingPackState.Repair -> Unit
         }
     }
-    // WHAT AUTO COSTS, first in the section and above every offer (owner ruling 1, 2026-09-11:
-    // *"if they leave it in auto, then you get no live streaming at all. And that will seem to be
-    // a very fair trade-off."*). FIRST for the language step's own reason — a caveat read after
-    // the offer is a caveat that changed nothing — and only on Auto, because with a language
-    // picked the rows below already name it.
-    if (selectedLanguage == "auto") {
+    // WHAT A SELECTION WITH NO PACK COSTS, first in the section and above every offer (owner
+    // ruling 1, 2026-09-11: *"if they leave it in auto, then you get no live streaming at all.
+    // And that will seem to be a very fair trade-off."*). FIRST for the language step's own
+    // reason — a caveat read after the offer is a caveat that changed nothing — and only where
+    // there is no pack for the selection, because with a pack the rows below name its language.
+    //
+    // (4.4.1 pass 3, ITEM 1) The copy answers the two cases apart: Auto is a CHOICE, unmade in
+    // the picker; a language the catalogue has no row for is a GAP in the app, and no pick closes
+    // it today. Telling a French user to pick a language would be no help at all.
+    if (selectedPack == null) {
         SettingsItem(
             icon = Icons.Filled.Subtitles,
-            title = StreamingPackCopy.AUTO_ROW_TITLE,
-            subtitle = StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+            title = StreamingPackCopy.noLiveWordsTitle(pickedLanguage),
+            subtitle = StreamingPackCopy.noLiveWordsSubtitle(pickedLanguage),
         )
     }
-    when {
-        previewState.isInstalled -> {
-            SettingsItem(
-                icon = Icons.Filled.Subtitles,
+    // THE ROWS THAT DESCRIBE OR OFFER THIS PACK, and only for the user whose selection it serves.
+    // `selectedPack == previewPack` rather than `!= null` so that the day a second catalogue row
+    // lands this section is SILENT for it rather than describing the English model under another
+    // language's name — the per-language LIST is the multilingual build's, parked by the brief.
+    if (selectedPack == previewPack) {
+        when {
+            previewState.isInstalled -> {
+                SettingsItem(
+                    icon = Icons.Filled.Subtitles,
+                    title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
+                    subtitle = StreamingPackCopy.settingsSubtitle(previewState, previewLanguage),
+                )
+                SettingsSwitchItem(
+                    icon = Icons.Filled.Subtitles,
+                    title = StreamingPackCopy.SWITCH_TITLE,
+                    checked = previewEnabled,
+                    onCheckedChange = { app.preferencesManager.localPreviewEnabled = it },
+                )
+            }
+            previewInstallStatus != null -> SettingsItem(
+                icon = Icons.Filled.CloudDownload,
+                title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
+                subtitle = previewInstallStatus ?: "",
+            )
+            previewFetchLine != null -> {
+                // Tappable only where a tap does something: the terminal retry, and the
+                // NeedsConfirmation that answers PLAY'S OWN dialog. Every other state is work in
+                // flight, and SettingsItem makes itself clickable the moment it is handed an
+                // onClick.
+                val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch)
+                val previewRowTap: () -> Unit = {
+                    val activity = context as? android.app.Activity
+                    if (previewFetch is
+                            NpuPackFetch.FetchState.NeedsConfirmation &&
+                        activity != null
+                    ) {
+                        StreamingPackController.confirm(activity)
+                    } else {
+                        startPreviewInstall()
+                    }
+                }
+                SettingsItem(
+                    icon = Icons.Filled.CloudDownload,
+                    title = StreamingPackCopy.featureTitle(previewLanguage),
+                    subtitle = previewFetchLine,
+                    onClick = if (previewTappable) previewRowTap else null,
+                )
+            }
+            else -> SettingsItem(
+                icon = Icons.Filled.CloudDownload,
                 title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
                 subtitle = StreamingPackCopy.settingsSubtitle(previewState, previewLanguage),
-            )
-            SettingsSwitchItem(
-                icon = Icons.Filled.Subtitles,
-                title = StreamingPackCopy.SWITCH_TITLE,
-                checked = previewEnabled,
-                onCheckedChange = { app.preferencesManager.localPreviewEnabled = it },
-            )
-            SettingsItem(
-                icon = Icons.Filled.Delete,
-                title = StreamingPackCopy.DELETE_TITLE,
-                subtitle = StreamingPackCopy.DELETE_SUBTITLE,
-                onClick = {
-                    // (4.4.1) A DELETE IS A DECISION, and it is recorded BEFORE the bytes go: the
-                    // 4.4.1 auto-fetch would otherwise put this model back on the next app open,
-                    // which is the one thing the owner's discovery ruling must not do. Written
-                    // first so a removal that failed partway still leaves the decision recorded.
-                    // (4.4.1 acquisition amendment) And it is recorded FOR THIS PACK'S LANGUAGE,
-                    // not globally: deleting one language's model says nothing about another's,
-                    // and the store is a set (owner ruling 2026-09-11, consequence 5).
-                    app.preferencesManager.setLivePreviewDeclined(previewPack.language, true)
-                    previewManager.delete(previewPack)
-                    previewRefreshKey++
-                },
+                onClick = startPreviewInstall,
             )
         }
-        previewInstallStatus != null -> SettingsItem(
-            icon = Icons.Filled.CloudDownload,
-            title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
-            subtitle = previewInstallStatus ?: "",
-        )
-        previewFetchLine != null -> {
-            // Tappable only where a tap does something: the terminal retry, and the
-            // NeedsConfirmation that answers PLAY'S OWN dialog. Every other state is work in
-            // flight, and SettingsItem makes itself clickable the moment it is handed an onClick.
-            val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch)
-            val previewRowTap: () -> Unit = {
-                val activity = context as? android.app.Activity
-                if (previewFetch is
-                        NpuPackFetch.FetchState.NeedsConfirmation &&
-                    activity != null
-                ) {
-                    StreamingPackController.confirm(activity)
-                } else {
-                    startPreviewInstall()
-                }
-            }
-            SettingsItem(
-                icon = Icons.Filled.CloudDownload,
-                title = StreamingPackCopy.featureTitle(previewLanguage),
-                subtitle = previewFetchLine,
-                onClick = if (previewTappable) previewRowTap else null,
-            )
-        }
-        else -> SettingsItem(
-            icon = Icons.Filled.CloudDownload,
-            title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
-            subtitle = StreamingPackCopy.settingsSubtitle(previewState, previewLanguage),
-            onClick = startPreviewInstall,
+    }
+    // THE DELETE FOLLOWS THE BYTES, not the selection (4.4.1 pass 3, ITEM 1) — so it lives
+    // OUTSIDE the gate above. 73 MB installed for English must stay reclaimable after the user
+    // picks French: a delete row that only appeared for the pack's own language would leave them
+    // with no way to get the storage back but to re-pick a language they do not want. It is also
+    // the one row a selection with no pack still needs.
+    if (previewState.isInstalled) {
+        SettingsItem(
+            icon = Icons.Filled.Delete,
+            title = StreamingPackCopy.DELETE_TITLE,
+            subtitle = StreamingPackCopy.DELETE_SUBTITLE,
+            onClick = {
+                // (4.4.1) A DELETE IS A DECISION, and it is recorded BEFORE the bytes go: the
+                // 4.4.1 auto-fetch would otherwise put this model back on the next app open,
+                // which is the one thing the owner's discovery ruling must not do. Written
+                // first so a removal that failed partway still leaves the decision recorded.
+                // (4.4.1 acquisition amendment) And it is recorded FOR THIS PACK'S LANGUAGE,
+                // not globally: deleting one language's model says nothing about another's,
+                // and the store is a set (owner ruling 2026-09-11, consequence 5).
+                app.preferencesManager.setLivePreviewDeclined(previewPack.language, true)
+                previewManager.delete(previewPack)
+                previewRefreshKey++
+            },
         )
     }
 }
