@@ -54,6 +54,7 @@ class ScriptedRecognizer(
     override fun result(stream: PreviewStream): PreviewResult {
         val s = stream as Stream
         if (s.decodes == 0) return PreviewResult.EMPTY
+        // NOTHING may remove from [streams]: this identifies the first stream STILL IN THE LIST.
         if (canaryText != null && s === streams.firstOrNull()) {
             return PreviewResult(canaryText, tokensOf(canaryText), timestampsOf(canaryText))
         }

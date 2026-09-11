@@ -23,7 +23,10 @@ class PreviewCanaryTest {
         val v = PreviewCanary.run(rec, clip)
         assertTrue(v is CanaryVerdict.Pass)
         assertEquals("pass", v.code)
-        assertEquals(23, (v as CanaryVerdict.Pass).outLen)
+        val pass = v as CanaryVerdict.Pass
+        assertEquals(23, pass.outLen)
+        // The verdict's own decode count, not the stream's: 1 + (48,960 − 7,200) / 5,120 = 9.
+        assertEquals(9, pass.decodes)
     }
 
     @Test fun emptyTextIsTheSmeSignatureAndFails() {
