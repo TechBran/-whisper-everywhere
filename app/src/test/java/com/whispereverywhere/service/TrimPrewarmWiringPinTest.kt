@@ -14,7 +14,8 @@ import java.io.File
  * What this class holds: `onTrimMemory` re-arms the prewarm inside its three-state guard and AFTER
  * both releases; the re-arm runs the SAME path the boot prewarm runs (`warmLocalEngine().prewarm()`,
  * no rebuild permission, never `prewarmModelSwitch`); it waits the boot prewarm's own 1,500 ms and
- * re-reads the state BELOW that suspension, with nothing suspending between the read and the call;
+ * re-reads the state BELOW that suspension, with nothing suspending between the read and the call,
+ * and the prewarm is CONDITIONAL on that gate and on the engine the trim actually released;
  * a second trim replaces the pending re-arm instead of stacking a second 342 MiB–1.02 GiB load; and
  * it emits exactly ONE diag line, carrying the decision's inputs.
  *
@@ -97,7 +98,14 @@ class TrimPrewarmWiringPinTest {
         // 1,500 ms is MATCHED, not invented: it is the delay the boot prewarm already takes before
         // the very same call. Pinned as a pair so a change to one is a visible change to both.
         indexOfOrFail(text, "private const val TRIM_REARM_DELAY_MS = 1_500L")
-        indexOfOrFail(text, "            delay(1500)\n")
+        // The boot prewarm's OWN delay, identified by the two lines it sits between rather than by
+        // "some line at twelve spaces reading delay(1500)" — the pair claim is about that site.
+        indexOfOrFail(
+            text,
+            "            refreshNpuTierOffer()\n" +
+                "            delay(1500)\n" +
+                "            warmLocalEngine().prewarm()\n",
+        )
         assertEquals(1, count(rearm, "delay(TRIM_REARM_DELAY_MS)"))
 
         // The gate is read BELOW the suspension (the model-switch collector's fix-round-2 rule): a
@@ -108,6 +116,21 @@ class TrimPrewarmWiringPinTest {
         val call = indexOfOrFail(rearm, "warmLocalEngine().prewarm()")
         assertTrue("the state is re-read after the wait", wait < gate)
         assertTrue("and the prewarm follows the gate", gate < call)
+
+        // AND THE PREWARM IS CONDITIONAL ON THE GATE. Computed-and-ordered is not conditional: with
+        // `if (rearm &&` deleted the two assertions above still pass, the policy's truth table still
+        // passes (the function is untouched), and the census next door still passes (the call is
+        // still live and still un-permissioned) — so the one behavioural decision S1 adds beyond a
+        // delay would be undefended by the class written to hold it. Pinned as the WHOLE statement
+        // on its own line at its own indent, which bites all three ways it can be lost: dropping
+        // `if (rearm)` (the "mid-session triggers are skipped, never deferred" doctrine thrown away,
+        // and a 342 MiB–1.02 GiB load fired during CONNECTING/RECORDING/FINALIZING), dropping the
+        // `localEngine != null` half (round-1 B1 — the process's FIRST engine built on the CPU
+        // backend for an npu user, because warmLocalEngine() BUILDS when the field is null and
+        // npuTierIds is empty until the first refresh lands), and commenting the line out (the
+        // leading newline plus the exact indent is what a `//` prefix breaks, so this class no
+        // longer leans on its neighbour's live-line census to notice that).
+        indexOfOrFail(rearm, "\n            if (rearm && localEngine != null) warmLocalEngine().prewarm()\n")
         val gateToCall = rearm.substring(gate, call)
         assertEquals("nothing suspends between the gate and the call", 0, count(gateToCall, "delay("))
         assertEquals("nothing hops dispatcher between the gate and the call", 0, count(gateToCall, "withContext"))
