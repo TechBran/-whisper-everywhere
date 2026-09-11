@@ -2535,6 +2535,28 @@ class FloatingBubbleService : Service(),
         // outcome is unobservable (Thread.join(ms) returns identically on termination and on
         // timeout), so the timing argument cannot be upgraded to a guarantee. Routed to final
         // review with the rest of the D-section residue.
+        // 4.4.0 S2 — THE RING IS FLUSHED ON THE OLD SOURCE'S SIDE OF THE BOUNDARY, and this is the
+        // one hazard the startup ring would otherwise hand the device-audio latch. This function
+        // requires RECORDING, and the paced catch-up spends ~1.4-2.0 s inside RECORDING, so media
+        // starting in that window swaps to playback capture WHILE THE RING STILL HOLDS MICROPHONE
+        // AUDIO — and the new capturer's thread, taking the DRAIN route, would replay that
+        // microphone pre-roll on the far side of the commit below, into the device-audio segment.
+        // That is the owner's headline rule ("keep the microphone out of it so someone could
+        // transcribe a YouTube video without their actual spoken words being dictated") broken by
+        // a 6 s buffer.
+        //
+        // Flushing here keeps the audio AND the rule: the pre-roll is the OLD source's audio, so
+        // it belongs to the segment the old source was recording, and the commit immediately below
+        // cuts it there. It also leaves the ring EMPTY, so from the swap on every thread takes the
+        // LIVE route — S2 therefore adds no new source-mixing window, and the one that remains is
+        // this function's own pre-existing stop-then-join residue named above.
+        transcriptionEngine?.let { sessionEngine ->
+            val pendingMs = StartupRing.msOf(startupRing.byteSize())
+            val flushed = startupRing.drainAll { pcm, _, _ -> sessionEngine.sendAudio(pcm) }
+            if (flushed > 0) {
+                android.util.Log.i("WE-DIAG", StartupRing.switchFlushLine(flushed, pendingMs))
+            }
+        }
         transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
         endpointer.reset()
         segmentCapPolicy.onCommit(System.currentTimeMillis())

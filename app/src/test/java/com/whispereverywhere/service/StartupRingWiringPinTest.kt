@@ -286,7 +286,45 @@ class StartupRingWiringPinTest {
         assertTrue("both capture sources have been stopped and joined first", recorderStop in 0 until flush)
         assertTrue(playbackStop in 0 until flush)
         assertTrue("and the flush precedes the unconditional stop commit that cuts it", flush < stopCommit)
-        assertEquals("exactly one drainAll in the service", 1, count("startupRing.drainAll"))
+        assertEquals(
+            "two drainAll sites and only two — the stop path and the source switch, both on Main, " +
+                "both above the commit that cuts what they flushed",
+            2,
+            count("startupRing.drainAll"),
+        )
+    }
+
+    @Test
+    fun aSourceSwitchMidCatchUpFlushesTheRingIntoTheSegmentTheAudioBELONGSTo() {
+        // THE ONE HAZARD S2 WOULD OTHERWISE ADD TO THE DEVICE-AUDIO LATCH. `switchSource` requires
+        // RECORDING, which the paced catch-up now spends ~1.4-2.0 s inside, so media starting in
+        // that window commits the boundary and swaps to playback capture WHILE THE RING STILL
+        // HOLDS MICROPHONE AUDIO — and the new capturer's thread would then replay that microphone
+        // pre-roll through the DRAIN route, on the far side of the boundary, into the device-audio
+        // segment. That is the owner's headline rule ("keep the microphone out of it so someone
+        // could transcribe a YouTube video without their actual spoken words being dictated")
+        // broken by a 6 s buffer.
+        //
+        // The flush above the boundary commit is the fix that keeps the audio AND the rule: the
+        // pre-roll is mic audio, so it belongs to the segment the mic was recording, and the
+        // commit immediately below cuts it there. It also leaves the ring EMPTY, so from the swap
+        // on both threads take the LIVE route and S2 adds no new mixing window at all — the one
+        // that remains is `switchSource`'s pre-existing, documented stop-then-join residue.
+        val body = memberBody("    private fun switchSource(to: com.whispereverywhere.audio.ActiveSource) {")
+        val flush = body.indexOf("startupRing.drainAll { pcm, _, _ -> sessionEngine.sendAudio(pcm) }")
+        val boundary = body.indexOf("        transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }")
+        assertTrue("switchSource must flush the ring", flush >= 0)
+        assertEquals(
+            "and say so under its own name, so a log can tell the two flushes apart",
+            1,
+            liveLines(body, "StartupRing.switchFlushLine(").size,
+        )
+        assertTrue("switchSource must still cut the boundary", boundary >= 0)
+        assertTrue(
+            "the microphone's pre-roll is committed on the MIC side of the boundary, never " +
+                "replayed on the device-audio side",
+            flush < boundary,
+        )
     }
 
     // ------------------------------------------------------------------------------- the haptic
@@ -330,5 +368,6 @@ class StartupRingWiringPinTest {
         assertEquals(1, count("StartupRing.drainLine("))
         assertEquals(1, count("StartupRing.overflowLine("))
         assertEquals(1, count("StartupRing.stopFlushLine("))
+        assertEquals(1, count("StartupRing.switchFlushLine("))
     }
 }

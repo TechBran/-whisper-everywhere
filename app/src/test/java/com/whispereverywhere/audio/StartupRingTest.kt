@@ -2,6 +2,7 @@ package com.whispereverywhere.audio
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -290,6 +291,16 @@ class StartupRingTest {
         assertEquals(
             "startup ring: stop flush chunks=46 ms=1472",
             StartupRing.stopFlushLine(chunks = 46, ms = 1_472L),
+        )
+        assertEquals(
+            "startup ring: switch flush chunks=46 ms=1472",
+            StartupRing.switchFlushLine(chunks = 46, ms = 1_472L),
+        )
+        assertNotEquals(
+            "the two flush sites must be distinguishable in a log: a reader chasing mic audio in " +
+                "a device-audio transcript needs to see WHICH flush it was",
+            StartupRing.stopFlushLine(chunks = 1, ms = 32L),
+            StartupRing.switchFlushLine(chunks = 1, ms = 32L),
         )
     }
 }

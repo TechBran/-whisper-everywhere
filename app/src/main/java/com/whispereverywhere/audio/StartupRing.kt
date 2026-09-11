@@ -221,6 +221,15 @@ class StartupRing(private val capacityBytes: Int = CAPACITY_BYTES) {
         /** The stop path's flush of a backlog the paced drain had not caught up on yet. */
         fun stopFlushLine(chunks: Int, ms: Long): String =
             "startup ring: stop flush chunks=$chunks ms=$ms"
+
+        /**
+         * The same flush at a SOURCE SWITCH, and a separate line because it answers a different
+         * question in the log: this audio is the OLD source's, committed on the old source's side
+         * of the boundary, and a reader chasing "why is there mic audio in a device-audio
+         * transcript?" needs to see that it was not.
+         */
+        fun switchFlushLine(chunks: Int, ms: Long): String =
+            "startup ring: switch flush chunks=$chunks ms=$ms"
     }
 }
 
