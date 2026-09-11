@@ -381,6 +381,69 @@ class PreviewAutoFetchTest {
         assertEquals(PreviewAutoFetch.Decision.NONE, open(localTierInstalled = false))
     }
 
+    /**
+     * THE TIER AXIS, OVER THE WHOLE PRODUCT OF BOTH DECISIONS AT ONCE (4.5.0 Task 4).
+     *
+     * The task's deliverable is an enumeration of every sentence the feature can render against
+     * {selection} × {packs installed} × {tier installed} × {cloud-only}, and two of its rows are
+     * *absent by construction* rather than gated: `Card.OFFER` (`cardOffer` → the three per-source
+     * subtitles, all of which carry `ADDITIVE`'s *"Words appear on the bubble as you talk"*) and
+     * `Card.INSTALLED` (*"Live words are on"*). The first is unreachable because [decide] refuses
+     * before it can answer OFFER; the second because `card` asks the tier on its own cell.
+     *
+     * Neither claim is visible to a test of either function alone: `card` will happily render
+     * OFFER for a `decision` handed to it, and `decide`'s refusal is four lines above the branch
+     * that would answer OFFER. So this walks the two TOGETHER, the way the one call site wires
+     * them, over the full 43,008-cell product — because *"the reviewer's first job is to attack
+     * the enumeration"*, and an ordering edit in [decide] (moving the `Downloadable` arm above
+     * the tier refusal, say) is exactly the one-line change that would put an untrue offer back
+     * on a cloud-only phone with nothing failing.
+     */
+    @Test fun aDeviceWithNoTierCanOnlyEverSeeSilenceOrItsOwnTransfer() {
+        var reachedWorking = false
+        var reachedNone = false
+        for (c in everyCell().filter { !it.localTierInstalled }) {
+            val decision = decide(c)
+            assertEquals(
+                "no tier means no spend, in every cell: $c",
+                PreviewAutoFetch.Decision.NONE,
+                decision,
+            )
+            for (armed in bools) for (busy in bools) {
+                val answer = PreviewAutoFetch.card(
+                    // The call site's own derivation: the pack is resolved FROM the selection,
+                    // so "has a pack for the selection" is the two agreeing.
+                    hasPackForSelection = c.lang.pack != null && c.lang.pack == c.lang.selected,
+                    installed = c.state.isInstalled,
+                    previewHasArmed = armed,
+                    localTierInstalled = false,
+                    userSaidNo = c.userSaidNo,
+                    showLiveWords = c.showLiveWords,
+                    workInFlight = busy,
+                    decision = decision,
+                )
+                assertTrue(
+                    "a phone that can never show a word may see only silence or the transfer " +
+                        "it started itself — never the offer's ADDITIVE promise and never " +
+                        "\"Live words are on\": armed=$armed inFlight=$busy $c gave $answer",
+                    answer == PreviewAutoFetch.Card.NONE ||
+                        answer == PreviewAutoFetch.Card.WORKING,
+                )
+                assertTrue(
+                    "and the only WORKING card is one the USER's own tap put in flight — the " +
+                        "decision can never produce one here: $c",
+                    answer != PreviewAutoFetch.Card.WORKING || busy,
+                )
+                if (answer == PreviewAutoFetch.Card.WORKING) reachedWorking = true
+                if (answer == PreviewAutoFetch.Card.NONE) reachedNone = true
+            }
+        }
+        // Both halves reachable, so neither assertion above is vacuous: the WORKING one is the
+        // cell `cardWorking`'s tier term exists for.
+        assertTrue("the working card must be reachable with no tier", reachedWorking)
+        assertTrue(reachedNone)
+    }
+
     @Test fun neverDuringASessionAndNeverWhileABatchJobRuns() {
         assertEquals(PreviewAutoFetch.Decision.NONE, open(sessionActive = true))
         assertEquals(PreviewAutoFetch.Decision.NONE, open(batchJobActive = true))
