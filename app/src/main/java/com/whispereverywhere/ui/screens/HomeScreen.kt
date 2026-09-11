@@ -1609,13 +1609,13 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
                                     StreamingPackCatalog.forLanguage(code)
                                         ?.takeIf { localTierInstalled }
                                         ?.let { pack ->
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = StreamingPackCopy.pickerRowBadge(pack.totalBytes),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = StreamingPackCopy.pickerRowBadge(pack.totalBytes),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                 }
                             },
                             onClick = {
