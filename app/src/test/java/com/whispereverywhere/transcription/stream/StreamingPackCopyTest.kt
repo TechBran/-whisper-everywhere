@@ -74,7 +74,10 @@ class StreamingPackCopyTest {
             // scan's contract is "everything the user can read, from every surface" — and this
             // is the surface most users will ever read about the previewer.
             StreamingPackCopy.CARD_TITLE,
-            StreamingPackCopy.cardWorking(en),
+            StreamingPackCopy.cardWorking(en, true),
+            // (4.5.0 Task 4) ...and its other half, which is the one card sentence a device that
+            // can never arm can read.
+            StreamingPackCopy.cardWorking(en, false),
             StreamingPackCopy.CARD_INSTALLED_TITLE,
             StreamingPackCopy.cardInstalled(en),
             StreamingPackCopy.cardLanguageNote(en),
@@ -345,7 +348,7 @@ class StreamingPackCopyTest {
             "The English preview model is arriving now; the typed transcript is unchanged. " +
                 "Live words follow your transcription language: English shows them, and " +
                 "Auto-detect shows none at all.",
-            StreamingPackCopy.cardWorking(en),
+            StreamingPackCopy.cardWorking(en, true),
         )
         assertEquals("Live words are on", StreamingPackCopy.CARD_INSTALLED_TITLE)
         assertEquals(
@@ -373,7 +376,7 @@ class StreamingPackCopyTest {
             StreamingPackState.Downloadable,
         )
         val rendered = listOf(
-            StreamingPackCopy.cardWorking(es),
+            StreamingPackCopy.cardWorking(es, true),
             StreamingPackCopy.cardInstalled(es),
             StreamingPackCopy.cardLanguageNote(es),
             StreamingPackCopy.featureTitle(es),
@@ -589,7 +592,7 @@ class StreamingPackCopyTest {
         // "must say that the typed transcript is unchanged (the additive promise)" — and, since
         // the acquisition amendment, that live words follow the language you picked rather than
         // "that it is English for now".
-        assertTrue(StreamingPackCopy.cardWorking(en).contains("typed transcript is unchanged"))
+        assertTrue(StreamingPackCopy.cardWorking(en, true).contains("typed transcript is unchanged"))
         assertTrue(StreamingPackCopy.cardInstalled(en).contains("typed transcript is unchanged"))
         for (state in listOf(
             StreamingPackState.PackDelivered,
@@ -608,7 +611,43 @@ class StreamingPackCopyTest {
         assertTrue(
             "the language caveat is ONE sentence used on every card state, so the trade cannot " +
                 "be stated two ways on two cards",
-            StreamingPackCopy.cardWorking(en).contains(StreamingPackCopy.cardLanguageNote(en)),
+            StreamingPackCopy.cardWorking(en, true).contains(StreamingPackCopy.cardLanguageNote(en)),
+        )
+        // (4.5.0 Task 4) ...AND ON A DEVICE THAT CAN NEVER ARM IT IS THE ONE HALF THAT WAS FALSE.
+        // WORKING is the one card state reachable with no on-device tier (`card` refuses the
+        // announcement on it, and `decide` refuses before it can answer OFFER), because
+        // `workInFlight` is a disjunct on purpose: hiding a transfer the user started would hide
+        // their own action from them (D17). So the arriving clause has to survive and the promise
+        // has to go.
+        val workingNoTier = StreamingPackCopy.cardWorking(en, false)
+        assertEquals(
+            "The English preview model is arriving now; the typed transcript is unchanged. " +
+                "Live words appear only while transcription runs on this device, and this " +
+                "device has no speech model.",
+            workingNoTier,
+        )
+        assertTrue(
+            "the transfer is still narrated, word for word as it is with a tier — a running " +
+                "73 MB is never hidden (ruling 3c)",
+            workingNoTier.startsWith(
+                "The English preview model is arriving now; the typed transcript is unchanged.",
+            ),
+        )
+        assertFalse(
+            "and the promise is gone: 'English shows them' cannot be said on a phone where " +
+                "every session is a cloud session",
+            workingNoTier.contains(StreamingPackCopy.cardLanguageNote(en)),
+        )
+        assertTrue(
+            "what replaces it is the SAME clause the section's caveat row and the delete row " +
+                "carry, so one fact has one spelling",
+            workingNoTier.contains(
+                "Live words appear only while transcription runs on this device, and this " +
+                    "device has no speech model.",
+            ) && StreamingPackCopy.NO_TIER_SUBTITLE.startsWith(
+                "Live words appear only while transcription runs on this device, and this " +
+                    "device has no speech model.",
+            ),
         )
         assertFalse(
             "and the announcement no longer INSTRUCTS: the pack only ever arrives for a language " +
@@ -621,7 +660,7 @@ class StreamingPackCopyTest {
     @Test fun theCardNeverAnnouncesAnInstallAsSomethingTheUserMustDo() {
         // The card exists because the Settings row was never found. Its working line must not
         // send the reader anywhere: there is nothing to do, which is the whole ruling.
-        val working = StreamingPackCopy.cardWorking(en).lowercase()
+        val working = StreamingPackCopy.cardWorking(en, true).lowercase()
         for (fragment in listOf("settings", "tap", "open the")) {
             assertFalse("<<$working>> contains '$fragment'", working.contains(fragment))
         }

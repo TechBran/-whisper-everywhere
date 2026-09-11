@@ -473,7 +473,11 @@ class LiveWordsCardPinTest {
         }
         for (needle in listOf(
             "StreamingPackCopy.CARD_TITLE",
-            "StreamingPackCopy.cardWorking(languageName)",
+            // (4.5.0 Task 4) ...and it is handed the DEVICE, because WORKING is the one card
+            // state a phone that can never arm can read and `cardLanguageNote`'s promise is
+            // false there. It is the screen's own `hasSpeechModel`, passed down like every other
+            // reader of it on this card, never a second read.
+            "StreamingPackCopy.cardWorking(languageName, localTierInstalled)",
             "StreamingPackCopy.CARD_INSTALLED_TITLE",
             "StreamingPackCopy.cardInstalled(languageName)",
             "StreamingPackCopy.CARD_DISMISS",

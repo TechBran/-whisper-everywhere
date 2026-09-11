@@ -1103,7 +1103,14 @@ private fun LiveWordsCard(
         PreviewAutoFetch.Card.NONE -> Unit
         PreviewAutoFetch.Card.WORKING -> LiveWordsNote(
             title = StreamingPackCopy.CARD_TITLE,
-            body = StreamingPackCopy.cardWorking(languageName),
+            // (4.5.0 Task 4) THE ONE CARD STATE A DEVICE THAT CAN NEVER ARM CAN READ, and the
+            // one sentence on it that was false there. `card` refuses the announcement on
+            // `!localTierInstalled` and `decide` refuses before it can answer OFFER, but WORKING
+            // is reached from `workInFlight` too — deliberately, because hiding a transfer the
+            // user started would hide their own action from them (D17). So the arriving clause
+            // stays and the note becomes the fact: `cardLanguageNote`'s *"English shows them"*
+            // cannot be said on a phone where every session is a cloud session.
+            body = StreamingPackCopy.cardWorking(languageName, localTierInstalled),
             // ONE line, from the one observable, whichever route is carrying the bytes — and
             // between the decision and the starter's first board write, the same dead-time line
             // the feature has always used for that gap.

@@ -488,10 +488,28 @@ object StreamingPackCopy {
      * It carries [cardLanguageNote] INLINE rather than in the note slot, because on this state
      * that slot holds the progress line — and this is the state review r1's nit 1 flagged for
      * naming the language only through the model's name.
+     *
+     * ### Why it asks about the tier, when it is the one card state that survives without one
+     *
+     * `PreviewAutoFetch.card` answers `Card.NONE` for the announcement on `!localTierInstalled`
+     * (4.4.1 pass 3's ITEM 3) and `Card.OFFER` is unreachable there because
+     * `PreviewAutoFetch.decide` refuses before it can answer OFFER — but WORKING is reached from
+     * `workInFlight` as well as from the decision, and that disjunct is deliberate: *"hiding its
+     * progress card would be hiding their own action from them"* (D17). So this is the one card
+     * a device that can never arm can read, and until 4.5.0 Task 4 its second half —
+     * [cardLanguageNote]'s *"English shows them"* — was simply false there while the first half
+     * was true. The arriving clause STAYS (a running 73 MB must never be hidden, ruling 3c) and
+     * the promise becomes the fact.
+     *
+     * The cell is narrow and it is real: the offer that starts this transfer is withdrawn on such
+     * a device (`LivePreviewRows`) and `decide` refuses it, so what remains is a fetch authorised
+     * while a tier was installed and the tier deleted from the Settings screen while the bytes
+     * were still moving. Narrow is not absent, and the alternative — `Card.NONE` — is the hiding
+     * D17 refused.
      */
-    fun cardWorking(language: String): String =
+    fun cardWorking(language: String, localTierInstalled: Boolean): String =
         "The $language preview model is arriving now; the typed transcript is unchanged. " +
-            cardLanguageNote(language)
+            if (localTierInstalled) cardLanguageNote(language) else NO_TIER
 
     /** The one-time announcement's headline, once the model has landed. */
     const val CARD_INSTALLED_TITLE = "Live words are on"
