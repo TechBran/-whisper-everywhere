@@ -4,25 +4,33 @@ package com.whispereverywhere.transcription.stream
 object PreviewText {
 
     /**
-     * Trim, and fold to lowercase where the pack's own vocabulary has no case to lose.
+     * Trim, and then do whatever [StreamingPack.caseFold] says — which is a two-answer decision
+     * carrying its own locale, never a census of the vocabulary.
      *
-     * **The fold is conditional now, and the locale is the pack's.** The shipping English model
-     * emits ALL CAPS (rung 1 §1.3: 495 uppercase-bearing pieces, and the only lowercase in its
-     * tokens.txt is the three specials), so folding is lossless and the strip must not shout —
-     * `emitsCase = false`, and this is byte-for-byte what 4.4.1 did. A pack whose vocabulary
-     * carries BOTH cases (ko, et, tr, every Kroko build) has case that means something: folding it
-     * paints `nba` over the `NBA` the model produced, and a German reader reads a lowercased noun
-     * as WRONG rather than as rough (qualification table §4.1).
+     * The shipping English model emits ALL CAPS (rung 1 §1.3: 495 uppercase-bearing pieces, and
+     * the only lowercase in its tokens.txt is the three specials no decode emits), so folding is
+     * lossless and the strip must not shout — `Fold(Locale.US)`, and this is byte-for-byte what
+     * 4.4.1 rendered. A pack whose case MEANS something is [CaseFold.Keep]: folding ko, et or a
+     * Kroko build paints `nba` over the `NBA` the model produced, a German reader reads a
+     * lowercased noun as WRONG rather than rough, and **`zh` must be `Keep` even though its
+     * vocabulary has no cased piece at all** — its acronyms arrive via byte fallback, which no
+     * count of the token file can see (qualification table §4.1).
      *
-     * `Locale.US` was chosen for English INPUT on purpose — it is the one spelling that can never
-     * produce a Turkish dotless `ı`. That reasoning is about the INPUT and does not transfer to
-     * Turkish OUTPUT, where folding `İ` under `Locale.US` is exactly the hazard the old comment
-     * named; so the locale comes off [StreamingPack.normalizeLocale] and a pack must not ship
-     * until that field is its own.
+     * **The locale is load-bearing on exactly one row, and it is a `Fold` row.** `Locale.US` was
+     * chosen for English INPUT on purpose — the one spelling that can never produce a Turkish
+     * dotless `ı` — and that reasoning is about the input and says nothing about Turkish OUTPUT,
+     * where `İ` under `Locale.US` is the hazard rather than the guard. Turkish is `Fold(tr)`, so
+     * the fold runs AND the locale decides; `String`'s own contract says it can decide nowhere
+     * else, because lowercasing is locale-sensitive for `tr`, `az` and `lt` only. Under the
+     * boolean this replaced, `tr` derived "cased" from its 34 uppercase pieces, the fold never ran
+     * on it, and the locale could not change one character on any row in the table.
      */
     fun normalize(raw: String, pack: StreamingPack): String {
         val trimmed = raw.trim()
-        return if (pack.emitsCase) trimmed else trimmed.lowercase(pack.normalizeLocale)
+        return when (val fold = pack.caseFold) {
+            is CaseFold.Fold -> trimmed.lowercase(fold.locale)
+            CaseFold.Keep -> trimmed
+        }
     }
 
     /**

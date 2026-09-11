@@ -31,10 +31,10 @@ class StreamingPackInstallTest {
         joiner = PackFile("joiner.onnx", joi.size.toLong(), sha(joi)),
         tokens = PackFile("tokens.txt", tok.size.toLong(), sha(tok)),
         modelType = "zipformer2", decodeChunkLen = 32, encoderT = 45,
-        emitsCase = false, emitsPunctuation = false, emitsDigits = false,
+        caseFold = CaseFold.Fold(java.util.Locale.US),
+        emitsPunctuation = false, emitsDigits = false,
         canaryAsset = StreamingPackCatalog.EN.canaryAsset,
         canaryRule = StreamingPackCatalog.EN.canaryRule,
-        normalizeLocale = java.util.Locale.US,
     )
 
     private fun stage(vararg overrides: Pair<String, ByteArray>): File {
@@ -58,10 +58,10 @@ class StreamingPackInstallTest {
         joiner = PackFile("joiner.onnx", joi.size.toLong(), sha(joi)),
         tokens = PackFile("tokens.txt", tok.size.toLong(), sha(tok)),
         modelType = "zipformer2", decodeChunkLen = 32, encoderT = 45,
-        emitsCase = false, emitsPunctuation = false, emitsDigits = false,
+        caseFold = CaseFold.Fold(java.util.Locale.US),
+        emitsPunctuation = false, emitsDigits = false,
         canaryAsset = StreamingPackCatalog.EN.canaryAsset,
         canaryRule = StreamingPackCatalog.EN.canaryRule,
-        normalizeLocale = java.util.Locale.US,
     )
 
     // ------------------------------------------------------------- the store is a SET, not a slot

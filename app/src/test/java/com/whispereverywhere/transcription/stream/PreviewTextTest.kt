@@ -8,8 +8,8 @@ class PreviewTextTest {
 
     private val en = StreamingPackCatalog.EN
 
-    /** A pack whose vocabulary carries both cases — ko, et, tr and every Kroko build. */
-    private val cased = en.copy(language = "xx", emitsCase = true)
+    /** A pack whose case means something — ko, et, zh and every Kroko build. */
+    private val cased = en.copy(language = "xx", caseFold = CaseFold.Keep)
 
     @Test fun normalizeTrimsAndLowercasesForASINGLECASEVocabulary() {
         // The shipping model emits ALL CAPS: its tokens.txt is 502 lines carrying 495
@@ -34,15 +34,53 @@ class PreviewTextTest {
     }
 
     @Test fun theFoldUsesThePacksOwnLocaleAndNotAlwaysUS() {
-        // The one row where this is load-bearing rather than cosmetic. Turkish `İ` (U+0130) folds
-        // to `i` under Locale.US and to a dotted `i̇` under `tr` — and `I` folds to `i` under US
-        // and to the dotless `ı` under `tr`. `Locale.US` was chosen for English INPUT on purpose
-        // ("never a Turkish dotless i"); that argument is about the input and says nothing about
-        // Turkish OUTPUT, where US is the hazard rather than the guard.
-        val tr = en.copy(language = "tr", normalizeLocale = Locale.forLanguageTag("tr"))
+        // The one row where the locale is load-bearing rather than cosmetic, pinned in the shape
+        // the catalogue will actually hold for it: the qualification table's tr row is
+        // `emitsCase = partial (448 lower / 34 upper)`, `emitsPunctuation = TRUE (18 pieces)`,
+        // `emitsDigits = false`, `normalizeLocale = tr — NOT Locale.US`. "partial" plus a
+        // load-bearing locale is one decision and it is Fold(tr): the fold RUNS, and the locale is
+        // what makes it safe.
+        //
+        // Both directions are wrong under US, and the values below are read out of this JDK rather
+        // than remembered (SpecialCasing.txt's `tr`/`az` rules): `I` folds to `i` under Locale.US
+        // and to the DOTLESS `ı` (U+0131) under `tr` — the wrong Turkish letter — while `İ`
+        // (U+0130) folds to `i` under `tr` and to `i` + COMBINING DOT ABOVE (U+0069 U+0307) under
+        // US, which is a stray mark on the strip. (4.4.1's comment here stated both of those
+        // backwards, which is what an unreachable branch buys you.) `Locale.US` was chosen for
+        // English INPUT on purpose ("never a Turkish dotless i"); that argument is about the input
+        // and says nothing about Turkish OUTPUT, where US is the hazard, not the guard.
+        //
+        // This test failed to be about Turkish at all while the fold was gated on a case census:
+        // 34 uppercase pieces and 448 lowercase ones derive "cased", the fold never runs, and the
+        // locale is never read. `en.copy(normalizeLocale = tr)` was a pack shape the catalogue
+        // could not hold for tr.
+        val tr = en.copy(
+            language = "tr",
+            caseFold = CaseFold.Fold(Locale.forLanguageTag("tr")),
+            emitsPunctuation = true,
+            emitsDigits = false,
+        )
         assertEquals("ısparta", PreviewText.normalize("ISPARTA", tr))
+        assertEquals("istanbul", PreviewText.normalize("İSTANBUL", tr))
         assertEquals("isparta", PreviewText.normalize("ISPARTA", en))
-        assertEquals(Locale.US, en.normalizeLocale)
+        assertEquals("i̇stanbul", PreviewText.normalize("İSTANBUL", en))
+        assertEquals(CaseFold.Fold(Locale.US), en.caseFold)
+    }
+
+    @Test fun aPackWhoseAcronymsArriveByByteFallbackKeepsThemEvenThoughItsVocabularyHasNoCase() {
+        // zh, and the reason the fold decision cannot be a census. Its tokens.txt is 1,426 single
+        // Han pieces with ZERO lowercase and ZERO uppercase, plus byte fallback <0x00>…<0xFF> — and
+        // byte fallback is how it writes Latin at all: 31 uppercase acronyms in 25,394 characters
+        // of its own published hypotheses (NBA/PPT/TV). The qualification table §4.1 marks that row
+        // "must not case-fold", which is CaseFold.Keep, and a `upper > 0 && lower > 0` census
+        // derives 0 && 0 = false ⇒ fold ⇒ `nba` where whisper types `NBA`, which is verbatim the
+        // harm the flag exists to prevent.
+        val zh = en.copy(language = "zh", caseFold = CaseFold.Keep)
+        val r = PreviewResult("NBA 直播", listOf(" NBA", " 直", "播"), floatArrayOf(0.32f, 0.64f, 0.96f))
+        assertEquals("NBA 直播", PreviewText.strip(r, zh))
+        assertEquals("NBA", PreviewText.normalize(" NBA ", zh))
+        // And the row it is contrasted with: English folds, and folds to the character.
+        assertEquals("nba", PreviewText.normalize(" NBA ", en))
     }
 
     // ------------------------------------------------------------- tokens, never text
@@ -66,9 +104,12 @@ class PreviewTextTest {
         // space is deleted from `result.text`. The tokens still carry them: SymbolTable rewrites a
         // leading ▁ to a space on the way out, and Korean's vocabulary is single characters with
         // ▁ standing alone as its own piece (id 3), so the space arrives as a token of its own.
+        // The real ko row (qualification table §4.1): all three flags TRUE. `emitsCase = TRUE` is
+        // CaseFold.Keep, which carries no locale — `ko` lowercasing is identical to US anyway, and
+        // a Keep row has no locale to get wrong.
         val ko = en.copy(
-            language = "ko", emitsCase = true, emitsPunctuation = true, emitsDigits = true,
-            normalizeLocale = Locale.forLanguageTag("ko"),
+            language = "ko", caseFold = CaseFold.Keep,
+            emitsPunctuation = true, emitsDigits = true,
         )
         val r = PreviewResult(
             "안녕하세요저는",   // what Convert() returns: the space is gone
@@ -83,7 +124,7 @@ class PreviewTextTest {
         // The worse half of §6(6): the space SURVIVES before an ASCII digit, because 0x33 is
         // neither CJK nor punctuation. So `text` is not even consistently unspaced — it is
         // arbitrarily spaced, which is harder to defend in copy than either extreme.
-        val ko = en.copy(language = "ko", emitsCase = true, emitsDigits = true)
+        val ko = en.copy(language = "ko", caseFold = CaseFold.Keep, emitsDigits = true)
         val r = PreviewResult(
             "회의시간을오후 3시로옮겨주세요",
             listOf("회", "의", " ", "시", "간", "을", " ", "오", "후", " ", "3", "시", "로", " ", "옮", "겨", " ", "주", "세", "요"),
@@ -104,7 +145,7 @@ class PreviewTextTest {
         // A short-timestamp result cannot be trimmed honestly. The whole result is returned — and
         // through `strip`, so a CJK pack does not get a token-spaced trim on one commit and a
         // space-deleted whole text on the next.
-        val ko = en.copy(language = "ko", emitsCase = true)
+        val ko = en.copy(language = "ko", caseFold = CaseFold.Keep)
         val r = PreviewResult("안녕저는", listOf("안", "녕", " ", "저", "는"), floatArrayOf(0.5f))
         assertEquals("안녕 저는", PreviewText.before(r, 0.1f, ko))
     }

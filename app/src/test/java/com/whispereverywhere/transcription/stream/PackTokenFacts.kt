@@ -3,26 +3,44 @@ package com.whispereverywhere.transcription.stream
 import java.io.File
 
 /**
- * The four copy flags on [StreamingPack], DERIVED from a pack's own `tokens.txt` rather than read
- * off a report — so that adding a language is a mechanical read and not a judgement call made once
- * and then copied forward wrong. (4.4.0's pinned comment claimed *"497 uppercase pieces, no
- * lowercase, no digits"*; the file says 495 uppercase-bearing, 3 lowercase-bearing and 2
- * digit-bearing, and 497 is the count of EMITTABLE pieces — a third number entirely. French has
- * identical counts, so that wording was one row away from being inherited.)
+ * The copy flags on [StreamingPack], DERIVED from a pack's own `tokens.txt` rather than read off a
+ * report — so that adding a language is a mechanical read and not a judgement call made once and
+ * then copied forward wrong. (4.4.0's pinned comment claimed *"497 uppercase pieces, no lowercase,
+ * no digits"*; the file says 495 uppercase-bearing, 3 lowercase-bearing and 2 digit-bearing, and
+ * 497 is the count of EMITTABLE pieces — a third number entirely. French has identical counts, so
+ * that wording was one row away from being inherited.)
  *
- * ### What "emittable" excludes, and why each exclusion is a fact and not a preference
+ * **[StreamingPack.emitsPunctuation] and [StreamingPack.emitsDigits] are derived; [CaseFold] is
+ * only SUGGESTED.** A `tokens.txt` cannot compute the case decision — English is 495 uppercase / 0
+ * lowercase and must fold, `zh` is 0 / 0 and must not — so what this object offers there is a
+ * one-directional sufficiency test ([Facts.foldIsProvablyLossless]) and the count it used to
+ * mistake for an answer, renamed to [Facts.vocabularyIsMixedCase].
  *
- *  - **The three specials** `<blk>`, `<sos/eos>`, `<unk>`. They are in every vocabulary and no
- *    decode emits them. They are also the ONLY lowercase in the shipping English file, so counting
- *    them would make the English pack "cased" and switch off a fold that is correct.
- *  - **Byte-fallback pieces** `<0xNN>`. Present in the Chinese vocabularies; they carry a hex
- *    digit each, which would make every such pack "emit digits" on a technicality.
- *  - **The `#N` placeholders.** icefall appends `#0` and `#1` after the 500 BPE pieces; they are
- *    the only digit-bearing pieces in English and in French, and nothing decodes to them.
- *  - **The word marker U+2581 is stripped before classifying**, never counted. sherpa's
- *    `SymbolTable` rewrites a leading `▁` to a SPACE on the way out (`symbol-table.cc:191-200`),
- *    so it is a word boundary, not a character the model emits — and English's vocabulary contains
- *    a bare `▁` piece, which would otherwise classify as "punctuation-only".
+ * ### What "emittable" excludes, and the FLAGS each exclusion is a fact for
+ *
+ * An exclusion is a fact about a flag, not about the file, so each one is scoped to the flags it
+ * answers. Getting that wrong is how a census returns a harmful value: see
+ * [Facts.foldIsProvablyLossless].
+ *
+ *  - **The three specials** `<blk>`, `<sos/eos>`, `<unk>` — a fact for **all** of them. They are in
+ *    every vocabulary and no decode emits them. They are also the ONLY lowercase in the shipping
+ *    English file, so counting them would make the English pack "cased" and switch off a fold that
+ *    is correct.
+ *  - **Byte-fallback pieces** `<0xNN>` — a fact for **digits and punctuation only**, and the WRONG
+ *    answer for case. They carry a hex digit each, which would make every such pack "emit digits"
+ *    on a technicality, and the qualification table's zh row marks both those flags false. But
+ *    byte fallback is how that model writes Latin at all: its own published hypotheses carry **31
+ *    uppercase acronyms in 25,394 characters** (NBA/PPT/TV), and the table marks that row *"must
+ *    not case-fold"*. So the case decision reads [Facts.hasByteFallback] rather than the emittable
+ *    case counts, which for zh are 0 and 0.
+ *  - **The `#N` placeholders** — a fact for **digits**. icefall appends `#0` and `#1` after the 500
+ *    BPE pieces; they are the only digit-bearing pieces in English and in French, and nothing
+ *    decodes to them.
+ *  - **The word marker U+2581 is stripped before classifying**, never counted — a fact for
+ *    **punctuation and case**. sherpa's `SymbolTable` rewrites a leading `▁` to a SPACE on the way
+ *    out (`symbol-table.cc:191-200`), so it is a word boundary, not a character the model emits —
+ *    and English's vocabulary contains a bare `▁` piece, which would otherwise classify as
+ *    "punctuation-only".
  *
  * ### The one judgement, stated so it can be argued with
  *
@@ -56,9 +74,43 @@ object PackTokenFacts {
         val lowercaseEmittable: Int,
         val digitsEmittable: Int,
         val punctuationOnly: List<String>,
+        val hasByteFallback: Boolean,
     ) {
-        /** Both cases present among the emittable pieces ⇒ folding would destroy meaning. */
-        val emitsCase: Boolean get() = uppercaseEmittable > 0 && lowercaseEmittable > 0
+        /**
+         * Both cases present among the emittable pieces. **This is EVIDENCE, not the decision** —
+         * it is named for what it counts because the value it used to be called (`emitsCase`) is a
+         * different question, and reading one as the other is how `tr` lost its locale and `zh`
+         * got folded. See [foldIsProvablyLossless].
+         */
+        val vocabularyIsMixedCase: Boolean get() = uppercaseEmittable > 0 && lowercaseEmittable > 0
+
+        /**
+         * Whether a `tokens.txt` alone PROVES that folding this pack loses nothing — the most a
+         * census can honestly say, and it says it **only in the safe direction**: `false` means
+         * "this file cannot prove it", never "folding is wrong".
+         *
+         * A fold is provably lossless when the vocabulary is single-case **and** carries no byte
+         * fallback. Both conjuncts earn their place on a shipped row:
+         *
+         *  - Single-case alone is not enough. **`zh` is 0 emittable uppercase / 0 lowercase** and
+         *    must not fold, because byte fallback writes its Latin acronyms and the census cannot
+         *    see them. A rule that read only the counts would return "safe to fold" for exactly the
+         *    row whose harm — `nba` where whisper types `NBA` — is the reason a flag exists.
+         *  - Mixed case alone is not the answer either, in the other direction: **English is 495
+         *    uppercase-bearing / 0 lowercase and MUST fold.** Its ALL CAPS is a property of the
+         *    LibriSpeech BPE, not a case distinction, which is why the answer is a fold decision on
+         *    the row rather than a count.
+         *
+         * Against the qualification table §4.1 this reproduces the ruling for **fourteen of the
+         * fifteen rows**: `Fold` for en/fr/de/ru/id/zh-en/pt(lyr), `Keep` for zh (byte fallback)
+         * and for ko/et/es/it/nl/pt(Kroko)/ja (mixed). **`tr` is the one row it does not** — 448
+         * lower / 34 upper is mixed, so this suggests `Keep`, and the table rules `Fold(tr)`
+         * anyway. That override is the only direction that can cost a character, so the row taking
+         * it carries the reason in writing and this property is deliberately not the thing the
+         * catalogue asserts equal.
+         */
+        val foldIsProvablyLossless: Boolean get() = !vocabularyIsMixedCase && !hasByteFallback
+
         val emitsDigits: Boolean get() = digitsEmittable > 0
         /** Every punctuation-only piece except the apostrophe — see this object's docblock. */
         val emitsPunctuation: Boolean get() = punctuationOnly.any { it != "'" }
@@ -92,6 +144,10 @@ object PackTokenFacts {
             lowercaseEmittable = emit.count { b -> b.any { it.isLowerCase() } },
             digitsEmittable = emit.count { b -> b.any { it in '0'..'9' } },
             punctuationOnly = emit.filter { b -> b.isNotEmpty() && b.none { it.isLetterOrDigit() } },
+            // Read off the WHOLE file, not the emittable set — byte fallback is excluded from
+            // `emittable` precisely so it cannot inflate the digit count, so the case decision has
+            // to ask the file directly or it would be asking a set defined to hide the answer.
+            hasByteFallback = pieces.any { BYTE_FALLBACK.matches(it) },
         )
     }
 }

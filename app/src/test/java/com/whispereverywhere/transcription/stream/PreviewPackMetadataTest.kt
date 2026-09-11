@@ -94,15 +94,45 @@ class PreviewPackMetadataTest {
     // ---------------------------------------------------------------- the copy flags
 
     @Test fun theCatalogRecordsTheFlagsTheCopyDerivesFrom() {
-        // The flag matrix's home (qualification table §4.1). English is the row where all three
-        // are false and the locale is the one chosen for English INPUT — which is exactly why the
-        // fields are not a free abstraction: `et` would be the FIRST row to set all three true, so
-        // every `true` branch gets written and tested on that row, and `tr` is the first row where
-        // the locale decides anything.
-        assertEquals(false, pack.emitsCase)
+        // The flag matrix's home (qualification table §4.1). English is the row that folds, in the
+        // locale chosen for English INPUT, with no punctuation and no digits — which is exactly why
+        // the fields are not a free abstraction: `et` would be the FIRST row to set both booleans
+        // true, `ko`/`zh` are the first `Keep` rows, and `tr` is the first row where the fold
+        // locale decides anything.
+        assertEquals(CaseFold.Fold(Locale.US), pack.caseFold)
         assertEquals(false, pack.emitsPunctuation)
         assertEquals(false, pack.emitsDigits)
-        assertEquals(Locale.US, pack.normalizeLocale)
+    }
+
+    @Test fun aKeepRowCannotCarryAFoldLocaleAndAFoldRowCannotFoldWithoutOne() {
+        // The structural half of the fix, and the reason `caseFold` is a type rather than a boolean
+        // plus a `normalizeLocale` field. Under the pair, the locale was read ONLY on the fold
+        // branch while `tr` derived "cased" from its 34 uppercase pieces — so the field could not
+        // change one character of output on any of the fifteen rows in the table, and the two KDoc
+        // sentences calling Turkish the row it was load-bearing on were both false. A locale that
+        // exists only inside `Fold` cannot be inert: a row either folds and says with what, or
+        // keeps and has no locale at all.
+        val probe = "ISPARTA İSTANBUL NBA"
+        for (p in StreamingPackCatalog.packs) {
+            when (val fold = p.caseFold) {
+                is CaseFold.Fold -> assertEquals(
+                    "${p.language}: the row's own locale is what the strip folds in",
+                    probe.lowercase(fold.locale),
+                    PreviewText.normalize(probe, p),
+                )
+                CaseFold.Keep -> assertEquals(
+                    "${p.language}: a Keep row emits the case the model produced",
+                    probe,
+                    PreviewText.normalize(probe, p),
+                )
+            }
+        }
+        // And the branch no catalogue row takes today, so the wiring is pinned in both directions
+        // before a second row lands: the SAME text, the SAME code, two rows, two answers.
+        val tr = StreamingPackCatalog.EN.copy(caseFold = CaseFold.Fold(Locale.forLanguageTag("tr")))
+        assertEquals("ısparta istanbul nba", PreviewText.normalize(probe, tr))
+        assertEquals("isparta i̇stanbul nba", PreviewText.normalize(probe, StreamingPackCatalog.EN))
+        assertEquals(probe, PreviewText.normalize(probe, StreamingPackCatalog.EN.copy(caseFold = CaseFold.Keep)))
     }
 
     @Test fun theRecordedFlagsAreWhatThePacksOwnTokensFileSays() {
@@ -124,10 +154,19 @@ class PreviewPackMetadataTest {
         assertEquals(0, facts.lowercaseEmittable)
         assertEquals(0, facts.digitsEmittable)
         assertEquals("one punctuation piece, the apostrophe", listOf("'"), facts.punctuationOnly)
-        // And the derivation agrees with what the catalogue claims.
-        assertEquals(pack.emitsCase, facts.emitsCase)
+        // And the derivation agrees with what the catalogue claims, for the two flags a token file
+        // can actually compute.
         assertEquals(pack.emitsPunctuation, facts.emitsPunctuation)
         assertEquals(pack.emitsDigits, facts.emitsDigits)
+        // The case decision is not one of them — a `tokens.txt` cannot compute it, because English
+        // is 495 uppercase / 0 lowercase and MUST fold while zh is 0 / 0 and must NOT. What the
+        // file can prove is SUFFICIENCY, one-directionally: single-case AND no byte fallback means
+        // folding this pack cannot lose a character. English satisfies both conjuncts, which is
+        // why this row takes the suggestion rather than overriding it.
+        assertEquals("no byte fallback: English BPE has no <0xNN> piece", false, facts.hasByteFallback)
+        assertEquals("single-case: 495 uppercase-bearing, 0 lowercase", false, facts.vocabularyIsMixedCase)
+        assertTrue("so the fold this row takes is PROVABLY lossless", facts.foldIsProvablyLossless)
+        assertTrue("and the row takes it", pack.caseFold is CaseFold.Fold)
     }
 
     /** The encoder under the pack module's payload directory, or null when it has not been placed. */

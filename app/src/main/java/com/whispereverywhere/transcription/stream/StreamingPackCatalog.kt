@@ -7,6 +7,59 @@ import java.util.Locale
 data class PackFile(val name: String, val bytes: Long, val sha256: String)
 
 /**
+ * What the strip does with the case the model emitted — the decision [PreviewText.normalize]
+ * branches on, and **the only place a fold locale exists**.
+ *
+ * ### Why this is a type and not the boolean it replaced
+ *
+ * The qualification table's `emitsCase` column (§4.1) carries FOUR values — `false`, `TRUE`,
+ * `partial` and `must not case-fold` — and none of them is "the emittable vocabulary has both
+ * cases". That census does not answer the question the strip asks, and two shipped rows prove it in
+ * opposite directions: **English is 495 uppercase-bearing / 0 lowercase and MUST fold** (its ALL
+ * CAPS is a property of the LibriSpeech BPE, not a case distinction anyone typed), while **`zh` is
+ * 0 / 0 and must NOT** — its acronyms arrive through byte fallback, and its own published
+ * hypotheses carry 31 uppercase Latin acronyms in 25,394 characters, so a fold paints `nba` where
+ * whisper types `NBA`. A boolean over the census returns the harmful answer for exactly the row
+ * whose harm motivated having a flag at all.
+ *
+ * So the four values collapse to two ANSWERS, and the locale rides with the one that uses it:
+ *
+ * | table value | rows | this type |
+ * |---|---|---|
+ * | `false` | en fr de ru id zh-en pt(lyr) | [Fold] `(Locale.US)` — single-case vocabulary, nothing to lose |
+ * | `partial` (448 lower / 34 upper) | tr | [Fold] `(tr)` — **the row the locale is for** |
+ * | `TRUE` | ko et es it nl pt(Kroko) ja | [Keep] — the case means something |
+ * | `must not case-fold` | zh | [Keep] — byte fallback emits Latin the census cannot see |
+ *
+ * A [Keep] row has no locale to get wrong, and a [Fold] row cannot fold without stating one. That
+ * is the whole point: under the boolean the locale was read only on the fold branch while `tr`
+ * derived `true` from its 34 uppercase pieces, so the field could not change one character on any
+ * of the fifteen rows.
+ *
+ * **`PackTokenFacts` derives this from a `tokens.txt` for fourteen of the fifteen** (see
+ * `PackTokenFacts.Facts.foldIsProvablyLossless`, which only ever suggests in the safe direction).
+ * `tr` is the one row where a human overrode the suggestion — the table rules [Fold] against a
+ * mixed census — and an override toward folding is the only direction that can cost a character,
+ * so the row that takes it owes a written reason beside it.
+ */
+sealed interface CaseFold {
+    /**
+     * Fold the strip to lowercase in THIS locale.
+     *
+     * `Locale.US` is right wherever the fold is cosmetic, and `java.lang.String`'s own contract is
+     * why "cosmetic" is checkable rather than a hope: lowercasing is locale-sensitive for **`tr`,
+     * `az` and `lt` only**. So `tr` is the single row in the table whose fold locale changes a
+     * character (`İ` → `i` under US, `i̇` under `tr`; `I` → `i` under US, the dotless `ı` under
+     * `tr`), which is the hazard [PreviewText.normalize]'s old comment named about English INPUT
+     * and got backwards for Turkish OUTPUT.
+     */
+    data class Fold(val locale: Locale) : CaseFold
+
+    /** Emit the case the model produced. Folding it would destroy output the user wanted. */
+    data object Keep : CaseFold
+}
+
+/**
  * A streaming-previewer model pack: four raw files, delivered EITHER by a Play asset pack or —
  * where there is no Play to talk to — from ONE immutable Hugging Face commit (spec §6; the
  * 2026-09-10 amendment). Never the release tarball (310 MB of fp32 + int8 + wavs under a 73 MB
@@ -45,13 +98,16 @@ data class PackFile(val name: String, val bytes: Long, val sha256: String)
  *   exports write `T = decodeChunkLen + 13` (32 → 45, 64 → 77, 128 → 141) and the `zipformer` v1
  *   exports write `T = decodeChunkLen + 7` (fr and zh-en are 32 → **39**), so it is READ off the
  *   file and asserted against it, never inferred.
- * @property emitsCase whether this model emits MEANINGFUL case — true when its emittable pieces
- *   carry both cases. **False here and for de/fr/ru/id/zh-en**, whose vocabularies are single-case
- *   (English is ALL CAPS: 495 uppercase-bearing pieces, and the only lowercase in the file is the
- *   three specials), so [PreviewText]'s fold is lossless. **True for ko, et, tr and every Kroko
- *   build**, where folding would paint `nba` over the `NBA` the model actually produced — and,
- *   worse for a German reader, would be read as WRONG rather than rough (qualification table §4.1,
- *   §4.2). It is the one flag the strip's own rules branch on; the other three are copy inputs.
+ * @property caseFold what the strip does with the case this model emitted, and the only place a
+ *   fold locale lives — see [CaseFold] for the four-values-to-two-answers table and for why a
+ *   boolean over the token census returns the HARMFUL answer for `zh`. `Fold(Locale.US)` here:
+ *   English's vocabulary is single-case (495 uppercase-bearing emittable pieces, and the only
+ *   lowercase in the file is the three specials no decode emits), so the fold is lossless and the
+ *   strip must not shout — byte-for-byte what 4.4.1 rendered. **`Keep` for ko/et/zh and every
+ *   Kroko build**, where folding paints `nba` over the `NBA` the model produced and a lowercased
+ *   German noun reads as WRONG rather than rough; **`Fold(tr)` for Turkish**, the one row whose
+ *   locale changes a character (qualification table §4.1, §4.2). It is the one flag the strip's
+ *   own rules branch on; the two below it are copy inputs.
  * @property emitsPunctuation whether the strip can carry `.` `?` `,` `!`. **False here**, and the
  *   judgement is deliberate: English has exactly ONE punctuation piece, the apostrophe at id 45,
  *   which is a word-internal joiner (`DON'T`) rather than punctuation, and the shipping sentence
@@ -70,11 +126,6 @@ data class PackFile(val name: String, val bytes: Long, val sha256: String)
  * @property canaryRule what a PASS means for this pack — see [PreviewCanaryRule], including what
  *   positional matching cannot express (zh and ko collapse the clip to one token and need a
  *   different rule, not a different alias list).
- * @property normalizeLocale the locale [PreviewText] folds with. `Locale.US` here **for English
- *   INPUT on purpose** — it is the only spelling that can never produce a Turkish dotless `ı` —
- *   and that reasoning does not survive contact with Turkish OUTPUT, which is the one row where
- *   this field is load-bearing rather than cosmetic (`İ` under `Locale.US` is exactly the hazard
- *   `PreviewText`'s own KDoc names). A pack must not ship until this field is its own.
  */
 data class StreamingPack(
     val language: String,
@@ -88,12 +139,11 @@ data class StreamingPack(
     val modelType: String,
     val decodeChunkLen: Int,
     val encoderT: Int,
-    val emitsCase: Boolean,
+    val caseFold: CaseFold,
     val emitsPunctuation: Boolean,
     val emitsDigits: Boolean,
     val canaryAsset: String,
     val canaryRule: PreviewCanaryRule,
-    val normalizeLocale: Locale,
 ) {
     val files: List<PackFile> get() = listOf(encoder, decoder, joiner, tokens)
     val totalBytes: Long get() = files.sumOf { it.bytes }
@@ -165,10 +215,14 @@ object StreamingPackCatalog {
         decodeChunkLen = 32,
         encoderT = 45,
         // Read line by line off this pack's own tokens.txt (PreviewPackMetadataTest re-derives all
-        // four wherever the payload is placed): 502 lines, 495 uppercase-bearing pieces, the only
-        // lowercase in the file is the three specials, one punctuation piece and it is the
-        // apostrophe at id 45, and the only digit-bearing pieces are the `#0`/`#1` placeholders.
-        emitsCase = false,
+        // three wherever the payload is placed): 502 lines, 495 uppercase-bearing pieces, the only
+        // lowercase in the file is the three specials, ZERO byte-fallback pieces, one punctuation
+        // piece and it is the apostrophe at id 45, and the only digit-bearing pieces are the
+        // `#0`/`#1` placeholders. Single-case with no byte fallback is the one shape a fold is
+        // PROVABLY lossless on, so this row takes the derivation's own suggestion rather than
+        // overriding it, and `Locale.US` here is cosmetic by String's own contract (tr/az/lt are
+        // the only locales it folds differently in).
+        caseFold = CaseFold.Fold(Locale.US),
         emitsPunctuation = false,
         emitsDigits = false,
         // The bundled digits clip and the digits rule. The alias sets, the 4-of-5 tolerance and
@@ -188,7 +242,6 @@ object StreamingPackCatalog {
             minMatches = 4,
             maxTokens = 20,
         ),
-        normalizeLocale = Locale.US,
     )
 
     val packs: List<StreamingPack> = listOf(EN)
