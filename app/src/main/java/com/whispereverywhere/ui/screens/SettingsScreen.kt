@@ -166,11 +166,17 @@ fun SettingsScreen(
     // is the shell's StateFlow, so a fetch that outlives this screen is still narrated on return.
     val voiceFetch by com.whispereverywhere.tts.TtsPackController.state.collectAsState()
     val voiceFetchLine = com.whispereverywhere.tts.TtsModelManager.fetchLine(voiceFetch)
-    val voiceRoute = remember(ttsRefreshKey, voiceFetch) {
+    // (fix round 1, review nit 2) Keyed on the fetch's STATUS WORD, not on the state itself: a
+    // Downloading tick arrives several times a second for the whole 350 MB, and state() does a
+    // Play getPackLocation plus two File reads ON THE COMPOSITION THREAD — while its answer
+    // cannot change until the status does. Same key for the effect below, which otherwise
+    // re-launched per tick to test one type.
+    val voiceStatusWord = com.whispereverywhere.npu.NpuPackFetch.statusWord(voiceFetch)
+    val voiceRoute = remember(ttsRefreshKey, voiceStatusWord) {
         com.whispereverywhere.tts.TtsModelManager.installRoute(ttsManager.state())
     }
     // A landed pack install has to re-read isInstalled(): the row is keyed on ttsRefreshKey.
-    LaunchedEffect(voiceFetch) {
+    LaunchedEffect(voiceStatusWord) {
         if (voiceFetch is com.whispereverywhere.npu.NpuPackFetch.FetchState.Installed) {
             ttsRefreshKey++
         }
@@ -573,7 +579,15 @@ fun SettingsScreen(
                     ttsDownloadStatus != null -> {
                         SettingsItem(
                             icon = Icons.Filled.CloudDownload,
-                            title = "Downloading voice…",
+                            // (fix round 1, review nit 6) The FromPack route verifies and
+                            // extracts bytes Play already delivered, with no network at any
+                            // point — "Downloading voice…" over it is a small lie on the one
+                            // route this task exists to add. TODO(Task 6) owns the wording.
+                            title = if (voiceRoute == VoiceInstallRoute.FromPack) {
+                                "Installing the voice…"
+                            } else {
+                                "Downloading voice…"
+                            },
                             subtitle = ttsDownloadStatus ?: "",
                         )
                     }
