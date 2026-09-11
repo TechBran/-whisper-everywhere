@@ -1269,7 +1269,7 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     //     is not. It is Play's state BEFORE Play has moved a single byte, in BOTH sub-cases:
     //     `NpuPackFetch.kt:183-184` maps `STATUS_WAITING_FOR_WIFI` and
     //     `STATUS_REQUIRES_USER_CONFIRMATION` onto it, and this file's own copy says so twice
-    //     (`SETTINGS_INSTALL_FETCH`: *"Play raises its own metered/size dialog BEFORE a transfer
+    //     (`settingsInstallFetch`: *"Play raises its own metered/size dialog BEFORE a transfer
     //     that size"*; `CARD_ANSWER_PLAY`: *"a cellular or size confirmation, or a wait for
     //     wifi"*). `PreviewPhase.AWAITING_ANSWER.inFlight` being true is a SINGLE-FLIGHT answer,
     //     not a bytes-have-moved one. So the tap that answers it is the tap that AUTHORISES the

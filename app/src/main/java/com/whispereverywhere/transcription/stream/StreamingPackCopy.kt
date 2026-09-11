@@ -301,7 +301,7 @@ object StreamingPackCopy {
      *
      * It says the SIZE and the CONNECTION as well as the source, because this is the row where a
      * tap costs the user 73 MB of their data. It does NOT borrow
-     * [SETTINGS_INSTALL_FROM_PACK]'s "included with the app": the pack is `on-demand`, so on this
+     * [settingsInstallFromPack]'s "included with the app": the pack is `on-demand`, so on this
      * row the bytes are not on the device yet (fix round 1, B1 — see the class KDoc).
      */
     fun settingsInstallFetch(sizeBytes: Long): String =
@@ -331,7 +331,7 @@ object StreamingPackCopy {
     /**
      * Repair by asking Play again. Still not a download from anyone else — and still a real
      * transfer of the whole pack, so it carries the size for the same reason
-     * [SETTINGS_INSTALL_FETCH] does.
+     * [settingsInstallFetch] does.
      */
     fun settingsRepairFetch(sizeBytes: Long): String =
         "$DAMAGED Get it again from Google Play (${StreamingPackCatalog.sizeBadge(sizeBytes)} over your connection) to restore live words."
@@ -542,7 +542,7 @@ object StreamingPackCopy {
      * The bytes in flight, in the words of the ROUTE that is carrying them.
      *
      * The verb is the amendment's provenance distinction, kept alive on the progress line: a Play
-     * fetch that said *"Downloading"* would contradict [SETTINGS_INSTALL_FETCH]'s *"never from a
+     * fetch that said *"Downloading"* would contradict [settingsInstallFetch]'s *"never from a
      * third party"* while those very bytes were moving, and [PreviewRoute.DIRECT_DOWNLOAD] is the
      * one route where a third party really is serving them ([installDownload] is its offer).
      *
@@ -553,7 +553,7 @@ object StreamingPackCopy {
      */
     private fun bytesMoving(work: PreviewWork): String {
         val verb = when (work.route) {
-            // Play, never a third party — SETTINGS_INSTALL_FETCH's own promise.
+            // Play, never a third party — settingsInstallFetch's own promise.
             PreviewRoute.PLAY_FETCH -> "Fetching the preview model"
             // Unreachable: a delivered pack moves no bytes over any connection, and its only
             // phase is the local copy. Answered anyway, so a route cannot fall through into the

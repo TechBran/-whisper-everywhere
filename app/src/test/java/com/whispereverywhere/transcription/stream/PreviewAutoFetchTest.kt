@@ -10,17 +10,18 @@ import org.junit.Test
  * installed-state × user-said-no × switch × local tier × STARTER × metered × session × batch ×
  * in-flight × tried-this-launch × backed-off, and every cell of the card's own five inputs.
  *
- * The cross product is walked in full (6 language pairs × 7 states × 2^10 = 43,008 cells for
- * the decision, 2^4 × 3 = 48 for the card) and each cell is checked against the rules stated
- * INDEPENDENTLY as a flat
- * conjunction — not against a copy of the implementation's `if` ladder, which would pass for any
+ * The cross product is walked in full (6 language pairs × 7 states × 2^10 = 43,008 cells for the
+ * decision, 2^4 × 3 = 48 for the card) and each cell is checked against the rules stated
+ * INDEPENDENTLY as a flat conjunction — not against a copy of the implementation's `if` ladder,
+ * which would pass for any
  * ordering of it. What that catches is precisely the bug an example-based test cannot: a refusal
  * answered in the wrong order (a metered check reached before the "the user said no" check, say,
  * so a deleted model comes back on wifi), and a state added to `StreamingPackState` later that
  * falls through into a silent 73 MB transfer.
  *
- * Then the four acceptance rows are named cells of their own (AF1–AF4), because a sheet row a
- * human will run on a device deserves to be readable as one assertion.
+ * Then the acceptance rows are named cells of their own (AF1–AF4, plus AF2b for ruling 3b's own
+ * row), because a sheet row a human will run on a device deserves to be readable as one
+ * assertion.
  */
 class PreviewAutoFetchTest {
 
@@ -398,7 +399,7 @@ class PreviewAutoFetchTest {
 
     @Test fun theThirdPartyDownloadIsNeverSilentOnAnyConnection() {
         // The fallback route's bytes come from the catalog's commit-pinned base, not from the
-        // app's own asset pack — and SETTINGS_INSTALL_FETCH promises the user "never from a third
+        // app's own asset pack — and settingsInstallFetch promises the user "never from a third
         // party", while installDownload() is the one sentence that admits one. A silent
         // fetch is exactly the case where that sentence is never read. So it OFFERS, on wifi as
         // well as on cellular, and the tap is the consent (review r1, B1).

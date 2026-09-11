@@ -677,7 +677,7 @@ class StreamingPackCopyTest {
     @Test fun theRouteChoosesTheVerbSoTheProvenancePromiseSurvivesTheProgressLine() {
         // The amendment's parenthetical — "it is fetched, not downloaded from a third party" — is
         // the whole reason the offer is a table. The PROGRESS line has to keep it: a Play fetch
-        // that said "Downloading" would contradict SETTINGS_INSTALL_FETCH's "never from a third
+        // that said "Downloading" would contradict settingsInstallFetch's "never from a third
         // party" while those very bytes were moving, and the fallback is the one route where a
         // third party really is serving them (installDownload is its sentence).
         val play = StreamingPackCopy.workLine(
