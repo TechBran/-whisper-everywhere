@@ -247,6 +247,33 @@ internal fun processingTimerRunsIn(state: FloatingBubbleService.BubbleState): Bo
         state == FloatingBubbleService.BubbleState.FINALIZING
 
 /**
+ * May the prewarm re-arm now, after `onTrimMemory` freed the native context? (4.4.0 startup
+ * amendment, Task S1. Pure and JVM-pinned — TrimPrewarmPolicyTest.)
+ *
+ * The bug this answers: the trim handler releases the context while the service is idle and
+ * NOTHING warms it again, so the next tap pays the full cold load — **4,107 ms** measured on
+ * npu-turbo (`docs/superpowers/research/2026-09-10-startup-cutoff-investigation.md` §3a), silently,
+ * because on the local tiers the recorder does not open until `onOpen` fires. A background overlay
+ * service holding 342 MiB to 1.02 GiB makes trims routine, which is exactly the *"every once in a
+ * while"* in the owner's report.
+ *
+ * The gate is the model-switch re-prewarm's own gate, not a new one: IDLE or ERROR, i.e. *"mid-session
+ * triggers are skipped, never deferred"*. Skipping costs nothing, because the thing that starts a
+ * session is the thing that loads the context — that session's `connect()` fills the slot this
+ * re-arm would have filled.
+ *
+ * The amendment's other two conditions are already respected, elsewhere, and re-deciding them here
+ * would be inventing policy rather than matching it: **a local tier selected** is
+ * [LocalWhisperEngine.prewarm]'s own first line (`installedModelPath() ?: return`), and neither
+ * existing prewarm trigger respects a metered/battery-saver constraint, so this one does not
+ * either. The trim LEVEL is not re-decided here: it belongs to the release guard in
+ * `onTrimMemory`, which is what makes a re-arm reachable at all.
+ */
+internal fun prewarmRearmsAfterTrim(state: FloatingBubbleService.BubbleState): Boolean =
+    state == FloatingBubbleService.BubbleState.IDLE ||
+        state == FloatingBubbleService.BubbleState.ERROR
+
+/**
  * Whether a WALL-CAP cut consumes the session's first-cap window (3.7, Workstream D — the
  * predicate only; the `else if` branch it sits under is unchanged).
  *
