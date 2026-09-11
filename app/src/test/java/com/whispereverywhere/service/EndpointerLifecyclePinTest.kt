@@ -90,13 +90,35 @@ class EndpointerLifecyclePinTest {
         )
     }
 
+    /**
+     * RE-SPECCED at 4.4.0 S2 round 1 (B2), deliberately and not renamed around: the needle used to
+     * be the OLD SOURCE'S STOP (`MIC -> audioRecorder.stop()`, searched forward from the commit),
+     * which stood in for "the source swap" only because that stop happened to sit below the reset.
+     * B2 moved the old source's stop+join ABOVE the ring flush — with the old capture thread still
+     * live, `StartupRing.drainSlice` releases its monitor before calling the sink, so Main's flush
+     * interleaved with it and landed old-source PCM past the boundary commit and past THIS VERY
+     * RESET, out of capture order — so the old needle now returns −1 and this row was a HARD FAIL
+     * BY DESIGN.
+     *
+     * **THE INVARIANT IS UNCHANGED**, which is why this is a re-spec: the streaming VAD's LSTM
+     * recurrence may not carry across an acoustic-source change (D9/D10 — "a CORRECTNESS
+     * requirement, not hygiene"), so the reset must precede the moment the NEW source can deliver
+     * a frame. That moment is `val started = when (to)`, and that is what the row anchors on now.
+     * It gains the half B2 established: the OLD source is stopped and joined BEFORE the commit, so
+     * the reset cannot be overtaken by the thread it is resetting for.
+     */
     @Test
     fun switchSourceResetsBeforeSwappingTheAcousticSource() {
         val commit = indexOfOrFail(
             "        transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }\n        endpointer.reset()"
         )
-        val stopOld = text.indexOf("            com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()", commit)
-        assertTrue("the reset must precede the source swap", stopOld > commit)
+        val newSource = text.indexOf("        val started = when (to) {", commit)
+        assertTrue("the reset must precede the source swap", newSource > commit)
+        val stopOld = text.indexOf("            com.whispereverywhere.audio.ActiveSource.MIC -> audioRecorder.stop()")
+        assertTrue(
+            "and the OLD source is stopped and joined before the commit the reset follows",
+            stopOld in 0 until commit,
+        )
     }
 
     /**

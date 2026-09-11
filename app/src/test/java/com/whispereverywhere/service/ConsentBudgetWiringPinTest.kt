@@ -69,8 +69,15 @@ class ConsentBudgetWiringPinTest {
         val askOffsets = liveOffsets(service, "MediaProjectionGate.requestConsent(")
         assertEquals("every ask is counted once", 2, notes.size)
         for (i in 0..1) assertTrue("noteAsked precedes ask $i", notes[i] < askOffsets[i])
-        val handover = memberBody(service, "    override fun onMediaPlaybackStarted(packageName: String, title: String?) {")
+        // 4.4.0 S2 round 1 (B3): the handover's body moved out of onMediaPlaybackStarted into
+        // handOverMicToDeviceAudio(), because it gained a second trigger (onOpen, for a playback
+        // start the CONNECTING window swallowed). The scope moved with it; the invariant did not,
+        // and it gained the clause that matters now there are two ways in — BOTH triggers reach the
+        // ask through this one budgeted branch.
+        val handover = memberBody(service, "    private fun handOverMicToDeviceAudio() {")
         assertEquals("the handover asks under the budget", 1, liveLines(handover, "consentBudget.mayAsk()").size)
+        assertEquals("and the ask lives in the handover, not in either trigger", 1,
+            liveLines(handover, "MediaProjectionGate.requestConsent(").size)
         val input = memberBody(service, "    private fun startAudioInput(): Result<Unit> {")
         assertEquals("startAudioInput hands the budget to the policy", 1,
             liveLines(input, "consentAvailable = consentBudget.mayAsk(),").size)
@@ -81,9 +88,13 @@ class ConsentBudgetWiringPinTest {
 
     @Test
     fun a_spent_budget_toasts_once_per_session_not_once_per_media_event() {
-        val handover = memberBody(service, "    override fun onMediaPlaybackStarted(packageName: String, title: String?) {")
+        // Same scope move as the row above (S2 round 1, B3): the spent-budget toast lives with the
+        // handover it belongs to, which is now its own member with two triggers.
+        val handover = memberBody(service, "    private fun handOverMicToDeviceAudio() {")
         assertEquals(1, liveLines(handover, "if (!consentExhaustedToastShown) {").size)
         assertEquals(1, liveLines(handover, "consentExhaustedToastShown = true").size)
+        assertEquals("once per session, whichever trigger got there first", 1,
+            liveLines(service, "consentExhaustedToastShown = true").size)
         val start = memberBody(service, "    private fun startRecording() {")
         assertEquals(1, liveLines(start, "consentExhaustedToastShown = false").size)
     }

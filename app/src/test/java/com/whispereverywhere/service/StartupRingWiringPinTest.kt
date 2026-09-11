@@ -371,11 +371,13 @@ class StartupRingWiringPinTest {
         //
         // The three steps, in this order, are what makes it safe, and all three are pinned:
         // stop+join the mic, flush the ring it filled, cut the boundary.
-        val branch = memberBody("                } else if (consentBudget.mayAsk()) {")
-        val micStop = branch.indexOf("                    audioRecorder.stop()")
-        val flush = branch.indexOf("                    flushStartupRingAtSourceHandover()")
+        // Round 1, B3 moved the whole handover into its own member (two triggers, one handover),
+        // so the branch sits two levels shallower than it did in B1 — the needles moved with it.
+        val branch = memberBody("        } else if (consentBudget.mayAsk()) {")
+        val micStop = branch.indexOf("            audioRecorder.stop()")
+        val flush = branch.indexOf("            flushStartupRingAtSourceHandover()")
         val boundary = branch.indexOf(
-            "                    transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }"
+            "            transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }"
         )
         assertTrue("the consent-ask handover must stop the microphone", micStop >= 0)
         assertTrue("...flush the ring the microphone filled", flush >= 0)

@@ -175,18 +175,107 @@ class DeviceAudioLatchPinTest {
         }
     }
 
+    /**
+     * RE-SPECCED at 4.4.0 S2 round 1 (B3), scope moved with the code and not renamed around it: the
+     * handover's body moved out of `onMediaPlaybackStarted` into `handOverMicToDeviceAudio()`,
+     * because it now has TWO triggers (see the row below) and one of them is `onOpen`. The
+     * invariant is the same one — the latch is ONE-WAY, and handing the MIC over TO device audio is
+     * what makes it reachable — and it gains the assertion the old shape could not make: the
+     * handover exists exactly once, and the media callback still reaches it.
+     */
     @Test
     fun a_session_that_starts_while_media_plays_still_hands_the_mic_over_to_the_stream() {
-        // The latch is one-way. Handing the MIC over TO device audio stays: that is the
-        // "media transcription cuts the mic" decision, and it is what makes the latch reachable.
-        val body = memberBody(
-            service,
-            "    override fun onMediaPlaybackStarted(packageName: String, title: String?) {",
-        )
+        val body = memberBody(service, "    private fun handOverMicToDeviceAudio() {")
         assertEquals(
             "the handover to PLAYBACK is intact",
             1,
             liveLines(body, "switchSource(to = com.whispereverywhere.audio.ActiveSource.PLAYBACK)").size,
+        )
+        assertEquals(
+            "and it is the service's only one",
+            1,
+            liveLines(service, "switchSource(to = com.whispereverywhere.audio.ActiveSource.PLAYBACK)").size,
+        )
+        val callback = memberBody(
+            service,
+            "    override fun onMediaPlaybackStarted(packageName: String, title: String?) {",
+        )
+        assertEquals(
+            "playback beginning during a live session still triggers it",
+            1,
+            liveLines(callback, "handOverMicToDeviceAudio()").size,
+        )
+    }
+
+    /**
+     * S2 ROUND 1, B3 — THE HANDOVER MUST SURVIVE THE CONNECT WINDOW, WHICH IS S2's OWN CREATION.
+     *
+     * Before S2 the source decision ran inside `onOpen` (after the model load), so a video started
+     * during the load was seen by `AudioSourcePolicy.decide(mediaPlaying = …)` itself and the
+     * session opened on device audio. S2 samples that decision at the TAP, which leaves
+     * `onMediaPlaybackStarted` as the only compensating trigger — and its gate is `RECORDING`,
+     * false for the entire CONNECTING window (4,107 ms on npu-turbo cold, up to 11,672 ms for the
+     * first ggml load in a process). `MediaSessionDetector.handlePlaybackStateChanged` is
+     * EDGE-triggered (`if (!isMediaPlaying || currentMediaPackage != packageName)`), so a
+     * notification the gate drops is the ONLY one that app sends while it keeps playing: the
+     * session would spend its whole life on the microphone, recording the room and the speaker
+     * bleed instead of the stream, with nothing in the log to say why.
+     *
+     * So the missed edge is latched and re-offered at readiness. Pinned because every part of it is
+     * silent when it breaks: a deleted latch, a latch never consumed, a latch consumed where the
+     * state gate still refuses it, or a latch that survives into the next session.
+     */
+    @Test
+    fun a_handover_missed_during_the_connect_window_is_latched_and_re_offered_at_readiness() {
+        val callback = memberBody(
+            service,
+            "    override fun onMediaPlaybackStarted(packageName: String, title: String?) {",
+        )
+        assertEquals(
+            "the CONNECTING window latches instead of dropping the edge",
+            1,
+            liveLines(callback, "pendingDeviceAudioHandover = true").size,
+        )
+        assertTrue(
+            "and it latches on CONNECTING, the one state where the mic is open and the gate shut",
+            callback.contains("currentState == BubbleState.CONNECTING"),
+        )
+        // Consumed in onOpen's Main body, BELOW the RECORDING flip — the handover's own gate is
+        // RECORDING, so consuming it any earlier would be a no-op that silently swallows the edge
+        // a second time.
+        val recording = service.indexOf("                    updateBubbleState(BubbleState.RECORDING)")
+        val consume = service.indexOf("                    if (pendingDeviceAudioHandover) {")
+        val handover = service.indexOf("                            handOverMicToDeviceAudio()")
+        assertTrue("onOpen must flip to RECORDING", recording >= 0)
+        assertTrue("onOpen must consume the latch", consume > recording)
+        assertTrue("...by calling the one handover", handover > consume)
+        // The level is re-read: a video that started and stopped during the load takes nothing.
+        assertTrue(
+            "the playing level is re-read at readiness, not trusted from the latch",
+            service.substring(consume, handover).contains("mediaDetector.isCurrentlyPlaying()"),
+        )
+        // The field's own initialiser plus exactly two writers of false — session open, and the
+        // consumption — so a latch can never outlive the session that set it, and can never fire
+        // twice.
+        assertEquals(3, liveLines(service, "pendingDeviceAudioHandover = false").size)
+        // The session-open write is in startRecording's own body, ABOVE connect(). Scoping to the
+        // member alone is not enough: the engine listener is an ANONYMOUS OBJECT declared inside
+        // startRecording, so onOpen's body — and the consumption in it — belongs to startRecording
+        // by indentation.
+        val start = memberBody(service, "    private fun startRecording() {")
+        val connect = start.indexOf("        engine.connect(lang, object : TranscriptionEngine.Listener {")
+        assertTrue("startRecording must still call connect", connect > 0)
+        assertEquals(
+            "a new session opens owing no handover",
+            1,
+            liveLines(start.substring(0, connect), "pendingDeviceAudioHandover = false").size,
+        )
+        // Two triggers, one handover: the media callback and onOpen, and nothing else.
+        assertEquals(
+            "the handover has exactly two callers plus its declaration — found: " +
+                liveLines(service, "handOverMicToDeviceAudio()"),
+            3,
+            liveLines(service, "handOverMicToDeviceAudio()").size,
         )
     }
 }

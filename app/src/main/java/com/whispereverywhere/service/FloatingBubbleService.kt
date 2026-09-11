@@ -770,6 +770,22 @@ class FloatingBubbleService : Service(),
      */
     @Volatile private var startupOverflowLogged = false
 
+    /**
+     * 4.4.0 S2, round 1 (B3): media began while the session was still CONNECTING, so the "media
+     * transcription cuts the mic" handover could not run — its gate is RECORDING. Main-thread only
+     * (the media callback and `onOpen`'s body are both `Dispatchers.Main` blocks); written at
+     * session open, at the missed edge, and the moment it is consumed.
+     *
+     * Why a latch rather than simply re-reading the detector at `onOpen`: `MediaSessionDetector` is
+     * EDGE-triggered, so the notification the state gate drops is the only one that app sends while
+     * it keeps playing — but an UNCONDITIONAL re-read at readiness would also re-put the
+     * device-audio question the tap already answered (a consent sheet still up from
+     * `startAudioInput`, a budget already spent). The latch records that a NEW start arrived inside
+     * the blind window; the playing LEVEL is re-read when it is consumed, so media that started and
+     * stopped during the load takes nothing.
+     */
+    private var pendingDeviceAudioHandover = false
+
     // Pin icon view reference (lateinit; populated in createBubbleView)
     private lateinit var pinIcon: ImageView
 
@@ -1394,43 +1410,88 @@ class FloatingBubbleService : Service(),
 
             // User decision: media transcription cuts the mic. If a mic recording is live when
             // playback begins (mic-button-first flow), hand over to the device stream.
-            if (currentState == BubbleState.RECORDING &&
-                activeSource == com.whispereverywhere.audio.ActiveSource.MIC &&
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                app.preferencesManager.isPreferDeviceAudio()
-            ) {
-                if (com.whispereverywhere.audio.MediaProjectionGate.hasProjection()) {
-                    switchSource(to = com.whispereverywhere.audio.ActiveSource.PLAYBACK)
-                } else if (consentBudget.mayAsk()) {
-                    // Stop the mic NOW, flush what it captured, cut the boundary (never mix room
-                    // audio into a media session), then ask; capture starts when consent lands.
-                    //
-                    // 4.4.0 S2 — THIS BRANCH IS switchSource's SIBLING AND NEEDS switchSource's
-                    // FLUSH, on a straight-line path rather than a race. It is reachable through
-                    // the whole ~1.4-2.0 s paced catch-up (switchSource's gate and this one are the
-                    // same gate), and it STOPS the microphone: after that nothing drains the ring,
-                    // because the drain is driven by live chunks alone. So a ring left standing
-                    // here survives until consent lands, and startPlaybackSource()'s first chunk
-                    // then takes the DRAIN route and replays up to 6 s of ROOM AUDIO into the
-                    // device-audio segment. Same order as every other handover: stop+join, flush,
-                    // cut — see flushStartupRingAtSourceHandover().
-                    audioRecorder.stop()
-                    flushStartupRingAtSourceHandover()
-                    transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
-                    consentBudget.noteAsked()
-                    android.util.Log.i("WE-DIAG", "projection consent: asked=${consentBudget.asked}/${com.whispereverywhere.audio.ProjectionConsentBudget.MAX_ASKS_PER_SESSION}")
-                    com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
-                    com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this@FloatingBubbleService)
-                    showToast("Allow screen capture to transcribe device audio")
-                } else {
-                    // 4.3.1 D: the budget is spent — the session is the microphone's. Say so ONCE;
-                    // the video resuming after every cancel would otherwise toast on every resume.
-                    if (!consentExhaustedToastShown) {
-                        consentExhaustedToastShown = true
-                        android.util.Log.i("WE-DIAG", "projection consent: budget spent -> microphone for this session")
-                        showToast("Using the microphone for this session — screen capture was declined")
-                    }
-                }
+            //
+            // 4.4.0 S2, round 1 (B3) — THE STATE GATE HAS A BLIND WINDOW NOW, AND THIS DETECTOR
+            // DOES NOT REPEAT ITSELF. Until S2 the source was decided inside onOpen, so a video
+            // started during the model load was seen by the DECISION itself
+            // (AudioSourcePolicy.decide's mediaPlaying) and the session simply opened on device
+            // audio. The decision is sampled at the TAP now, which leaves this callback as the only
+            // compensating trigger — and RECORDING is false for the whole CONNECTING window:
+            // 4,107 ms on npu-turbo cold, up to 11,672 ms for the first ggml load in a process
+            // (investigation §3a/§3b). MediaSessionDetector.handlePlaybackStateChanged is
+            // EDGE-triggered (`if (!isMediaPlaying || currentMediaPackage != packageName)`), so a
+            // notification dropped here is the only one that app will send while it keeps playing:
+            // the session would stay on the microphone for its whole life, recording the room and
+            // the speaker bleed instead of the stream, on the very flow this comment calls
+            // supported. So the edge is LATCHED and re-offered at readiness — see
+            // [pendingDeviceAudioHandover] and its consumption in onOpen.
+            if (currentState == BubbleState.RECORDING) {
+                handOverMicToDeviceAudio()
+            } else if (currentState == BubbleState.CONNECTING && consentBudget.asked == 0) {
+                // The budget clause is the one case a latch would be wrong: during CONNECTING an
+                // ask can only have come from the TAP's own decision (startAudioInput's
+                // RequestConsent branch), so the device-audio question is already in front of the
+                // user and stacking a second consent sheet over it at readiness would spend the
+                // 4.3.1 D budget on the same question. Cost, named: a NEW app starting playback
+                // during the connect of a session whose consent sheet is already up does not get a
+                // second handover offer.
+                pendingDeviceAudioHandover = true
+                android.util.Log.i("WE-DIAG", "media started during connect -> handover latched for readiness")
+            }
+        }
+    }
+
+    /**
+     * "MEDIA TRANSCRIPTION CUTS THE MIC" (owner decision) — the one handover the device-audio latch
+     * allows, in the one place both of its triggers reach. Main thread only.
+     *
+     * The triggers are the two moments the question can be put: [onMediaPlaybackStarted], when
+     * playback begins during a live session, and `onOpen`, for a start that arrived while the
+     * session was still CONNECTING and was latched there (4.4.0 S2, round 1 —
+     * [pendingDeviceAudioHandover]). The STATE gate belongs to the callers: the media callback
+     * requires RECORDING, and `onOpen` has just set it.
+     *
+     * Everything else is re-read HERE, in the callee, and that is the point of the shape: between a
+     * latch and readiness the source may already have become PLAYBACK (a consent grant landed
+     * meanwhile), or the preference may have changed, and a handover decided on a stale world is
+     * how the latch would become its own bug.
+     */
+    private fun handOverMicToDeviceAudio() {
+        if (activeSource != com.whispereverywhere.audio.ActiveSource.MIC ||
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            !app.preferencesManager.isPreferDeviceAudio()
+        ) {
+            return
+        }
+        if (com.whispereverywhere.audio.MediaProjectionGate.hasProjection()) {
+            switchSource(to = com.whispereverywhere.audio.ActiveSource.PLAYBACK)
+        } else if (consentBudget.mayAsk()) {
+            // Stop the mic NOW, flush what it captured, cut the boundary (never mix room audio
+            // into a media session), then ask; capture starts when consent lands.
+            //
+            // 4.4.0 S2 — THIS BRANCH IS switchSource's SIBLING AND NEEDS switchSource's FLUSH, on
+            // a straight-line path rather than a race. It is reachable through the whole
+            // ~1.4-2.0 s paced catch-up (switchSource's gate and this one are the same gate), and
+            // it STOPS the microphone: after that nothing drains the ring, because the drain is
+            // driven by live chunks alone. So a ring left standing here survives until consent
+            // lands, and startPlaybackSource()'s first chunk then takes the DRAIN route and
+            // replays up to 6 s of ROOM AUDIO into the device-audio segment. Same order as every
+            // other handover: stop+join, flush, cut — see flushStartupRingAtSourceHandover().
+            audioRecorder.stop()
+            flushStartupRingAtSourceHandover()
+            transcriptionEngine?.let { commitSegment(it, EndpointDiag.SWITCH) }
+            consentBudget.noteAsked()
+            android.util.Log.i("WE-DIAG", "projection consent: asked=${consentBudget.asked}/${com.whispereverywhere.audio.ProjectionConsentBudget.MAX_ASKS_PER_SESSION}")
+            com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
+            com.whispereverywhere.audio.MediaProjectionGate.requestConsent(this@FloatingBubbleService)
+            showToast("Allow screen capture to transcribe device audio")
+        } else {
+            // 4.3.1 D: the budget is spent — the session is the microphone's. Say so ONCE;
+            // the video resuming after every cancel would otherwise toast on every resume.
+            if (!consentExhaustedToastShown) {
+                consentExhaustedToastShown = true
+                android.util.Log.i("WE-DIAG", "projection consent: budget spent -> microphone for this session")
+                showToast("Using the microphone for this session — screen capture was declined")
             }
         }
     }
@@ -3163,6 +3224,8 @@ class FloatingBubbleService : Service(),
         engineReady = false
         startupOverflowLogged = false
         startupRing.clear()
+        // Round 1 (B3): and with no handover owed from a previous session's connect window.
+        pendingDeviceAudioHandover = false
         // Capture wins instantly over read-aloud (Track F exclusivity rule).
         com.whispereverywhere.audio.AudioArbiter.requestCapture()
         isSpeakingNow = false
@@ -3462,6 +3525,28 @@ class FloatingBubbleService : Service(),
                             // Waveform only; the VAD/commit runs per-chunk in the recorder callback.
                             waveformView.updateAmplitude(amp)
                             blobView.updateAmplitude(amp)
+                        }
+                    }
+                    // 4.4.0 S2, round 1 (B3) — THE HANDOVER THE CONNECT WINDOW SWALLOWED. Media
+                    // that began while this session was CONNECTING could not take the mic: the
+                    // "media transcription cuts the mic" gate requires RECORDING, and the detector
+                    // is edge-triggered, so that notification never comes again while the same app
+                    // plays. It was latched instead, and this is the first instant the gate can
+                    // pass it — the state became RECORDING three lines up, and the ring is still
+                    // whole, so the handover's flush cuts the microphone's pre-roll into the
+                    // MICROPHONE's own segment rather than replaying it past a boundary.
+                    //
+                    // The playing LEVEL is re-read rather than trusted from the latch: a video
+                    // started and stopped during the load is no reason to take the stream, and
+                    // reading it here is exactly what pre-S2 sampled at this point (the decision
+                    // itself ran inside this handler).
+                    if (pendingDeviceAudioHandover) {
+                        pendingDeviceAudioHandover = false
+                        if (mediaDetector.isCurrentlyPlaying()) {
+                            android.util.Log.i("WE-DIAG", "latched handover: media still playing at readiness")
+                            handOverMicToDeviceAudio()
+                        } else {
+                            android.util.Log.i("WE-DIAG", "latched handover: media stopped during connect -> staying on the mic")
                         }
                     }
                 }
