@@ -422,6 +422,24 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
+     * 4.4.0 — RULING ASSUMED (R3): the on-device word-for-word previewer is DEFAULT-ON and
+     * additive for a fixed-English user with the pack installed; the whisper step stays the
+     * mandatory one. The switch only matters once the pack exists — the PACK is the opt-in, and
+     * a second switch to find would leave the feature invisible to the users it was built for —
+     * and the gate (`localPreviewArms`) reads it per session, so turning it off restores 4.3.4's
+     * strip exactly. Reactive mirror for the Settings row.
+     */
+    private val _localPreviewEnabled = MutableStateFlow(prefs.getBoolean(KEY_LOCAL_PREVIEW_ENABLED, true))
+    val localPreviewEnabledFlow: StateFlow<Boolean> = _localPreviewEnabled.asStateFlow()
+
+    var localPreviewEnabled: Boolean
+        get() = _localPreviewEnabled.value
+        set(value) {
+            prefs.edit().putBoolean(KEY_LOCAL_PREVIEW_ENABLED, value).apply()
+            _localPreviewEnabled.value = value
+        }
+
+    /**
      * Which engine READS ALOUD. null = on-device Kokoro (the default and the shipped behaviour, the
      * regression contract). A [ProviderId] NAME selects a cloud voice with local Kokoro as the
      * one-way fallback — parallel to [sttProviderId]. Distinct from [ttsVoiceId], which stays the
@@ -514,6 +532,8 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_STT_LIVE_MODE = "stt_live_mode"
         /** Gemini's own live flag (4.3.4, default on); the shared key above never applies to Gemini. */
         private const val KEY_STT_LIVE_MODE_GEMINI = "stt_live_mode_gemini"
+        /** The previewer's switch (4.4.0, R3: default on). Read in exactly one place. */
+        private const val KEY_LOCAL_PREVIEW_ENABLED = "local_preview_enabled"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
 
         // Whisper API supported languages with display names

@@ -210,6 +210,31 @@ internal fun sessionLanguageFor(
     else selection
 
 /**
+ * Does this session get the on-device word-for-word previewer (4.4.0, spec §5)? Pure, pinned as
+ * a truth table by LocalPreviewGateTest; the ONE caller is the wrap site in startRecording, which
+ * logs every input on the `stream-gate:` line.
+ *
+ * RULING ASSUMED (R4): [sessionLanguage] is the RESOLVED local language —
+ * `sessionLanguageFor(installedScope, selection, LOCAL)` — so Auto on an ENGLISH-scope tier is
+ * "en" (arms) and Auto on a multilingual tier is null (whisper only; English partials over
+ * Spanish speech would be garbage). A flip to "Auto + pack ⇒ English regardless" accepts null
+ * here and nowhere else. RULING ASSUMED (R3): [userEnabled] defaults true in PreferencesManager.
+ *
+ * Cloud sessions (batch or live) keep today's strip; a running batch file job vetoes (two CPU
+ * consumers beside whisper's bursts is the research's §3.9 refusal); [previewReady] is the
+ * resident recognizer's `isWarm()` — false while it loads and forever after a failed canary.
+ */
+internal fun localPreviewArms(
+    sessionLanguage: String?,
+    packInstalled: Boolean,
+    isCloudSession: Boolean,
+    batchJobActive: Boolean,
+    userEnabled: Boolean,
+    previewReady: Boolean,
+): Boolean =
+    sessionLanguage == "en" && packInstalled && !isCloudSession && !batchJobActive && userEnabled && previewReady
+
+/**
  * The states whose elapsed ticker runs (3.6.0, Workstream E4). PROCESSING kept for the legacy
  * branch that has always owned the ticker UI; FINALIZING added so the stop-tap drain counts up
  * visibly alongside the "Finishing…" status line instead of an unchanging spinner. The ticker's
