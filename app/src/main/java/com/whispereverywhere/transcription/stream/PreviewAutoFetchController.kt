@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * PERFORMS the previewer's auto-fetch (4.4.1) — the actuator of [PreviewAutoFetch.Decision.FETCH]
@@ -42,8 +43,10 @@ import kotlinx.coroutines.launch
  *    `StreamingPackController.isBusy()` — so a fetch the SETTINGS ROW started is never doubled by
  *    an auto-fetch, and vice versa. Two installs write the same staging paths (the import
  *    controller's N4 lesson).
- *  - **The latch belongs to the AUTO path only.** A tap is consent and may be repeated; the
- *    *"once per launch at most"* rule is about the silent fetch.
+ *  - **The latch belongs to the AUTO path only, and to one LANGUAGE at a time.** A tap is consent
+ *    and may be repeated; the *"once per launch at most"* rule is about the silent fetch of ONE
+ *    pack, and a second language selected in the same launch is a new decision rather than a
+ *    repeat of an old one (owner rulings 2026-09-11).
  *  - **Every failure records the back-off, and a cancellation is not a failure.** One write site,
  *    reached from our own two routes' `catch` and from Play's terminal `Failed` — the loop this
  *    closes is a user reopening the app on a bad connection all afternoon. A
@@ -67,14 +70,23 @@ object PreviewAutoFetchController {
     private val _line = MutableStateFlow<String?>(null)
     val line: StateFlow<String?> = _line.asStateFlow()
 
-    /** Set by the AUTO path, never by a tap, and never cleared: "once per launch at most". */
-    @Volatile
-    private var autoAttempted = false
+    /**
+     * The languages the AUTO path has already tried this launch — never a tap's, never cleared:
+     * *"once per launch at most"*.
+     *
+     * PER LANGUAGE since 4.4.1's acquisition amendment (owner rulings 2026-09-11). The loop the
+     * latch exists to stop is a re-fetch of ONE pack; a user who picks a second language in the
+     * same launch has made a NEW decision — *"when you change your language and the model's not
+     * installed, it should just automatically download right there on the spot"* — and a global
+     * latch would answer that with the offer card instead. A concurrent set because
+     * [attemptedThisLaunch] is read from composition while [start] writes it under its monitor.
+     */
+    private val autoAttempted: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     @Volatile
     private var job: Job? = null
 
-    fun attemptedThisLaunch(): Boolean = autoAttempted
+    fun attemptedThisLaunch(pack: StreamingPack): Boolean = pack.language in autoAttempted
 
     /**
      * Whether a fetch or install of this pack is in flight ANYWHERE — ours, or one the Settings
@@ -100,10 +112,8 @@ object PreviewAutoFetchController {
         auto: Boolean,
     ): Boolean = synchronized(this) {
         if (busy()) return false
-        if (auto) {
-            if (autoAttempted) return false
-            autoAttempted = true
-        }
+        // Test and set in one step, so two auto attempts for the same language cannot both pass.
+        if (auto && !autoAttempted.add(pack.language)) return false
         when (StreamingPackInstall.sourceOf(state)) {
             StreamingPackState.PackFetchable -> askPlay(app, pack, auto)
             StreamingPackState.PackDelivered -> landDeliveredPack(app, pack, auto)

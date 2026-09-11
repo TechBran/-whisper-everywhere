@@ -855,14 +855,27 @@ private fun LiveWordsCard(
     resumeTick: Int,
     localTierInstalled: Boolean,
 ) {
-    val pack = StreamingPackCatalog.EN
-    // THE SELECTED LANGUAGE, and the acquisition amendment's whole point (owner rulings
-    // 2026-09-11): the pack that may arrive is the one for the language the user picked, so no
-    // language nobody picked is ever fetched for — and Auto, which arms nothing, fetches nothing.
-    // A StateFlow, so this ONE read is also the collector: it replays the value already in place
-    // when the app comes to the foreground (the top-up) and conflates equal values, so a change
-    // made in the picker below arrives once and a recomposition re-fires nothing.
+    // THE ONE COLLECTOR (owner rulings 2026-09-11). The language selection funnels through one
+    // writer — PreferencesManager.setSelectedLanguage, called from the dropdown below and from
+    // onboarding's Continue and nowhere else — so ONE collector on its StateFlow serves all three
+    // moments the rulings name:
+    //
+    //  - the picker's change, seen the instant it is written (ruling 2);
+    //  - onboarding's Continue, seen when this screen first composes after it (ruling 2);
+    //  - and the value ALREADY in place when the app comes to the foreground, because a StateFlow
+    //    replays its current value to a new collector — which is the top-up for every user whose
+    //    language was set before this update and who will therefore never re-select it.
+    //
+    // It cannot re-fire on an unchanged value: a StateFlow conflates equal values, so a
+    // recomposition or a return to this screen re-emits nothing, and the decision's own
+    // already-tried-this-launch and in-flight guards answer anything that slips past that.
+    // Nothing is collected in the data layer and nothing is fetched at either selection site: a
+    // SharedPreferences writer called from a click handler has no business owning a download.
     val selectedLanguage by app.preferencesManager.selectedLanguage.collectAsState()
+    // ...and the pack is the CATALOGUE's answer for that language — null on Auto and on every
+    // language with no row, which is how "no selected language, no live words" costs no predicate
+    // of its own: with no pack there is no state to read, no card to show and nothing to fetch.
+    val pack = StreamingPackCatalog.forLanguage(selectedLanguage)
     val previewFetch by StreamingPackController.state.collectAsState()
     val ourLine by PreviewAutoFetchController.line.collectAsState()
     val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
@@ -871,10 +884,12 @@ private fun LiveWordsCard(
     // so a delete made in Settings is seen here without depending on the NavHost having disposed
     // this screen (review r1, nit 4). A stale read here errs toward re-fetching, which is the
     // direction AF3 and AF4 are about.
-    // ...and it is read FOR THIS PACK'S LANGUAGE (4.4.1 acquisition amendment): a user who
-    // deleted the Spanish model has declined Spanish, not live words.
-    var saidNo by remember(resumeTick, pack.language) {
-        mutableStateOf(app.preferencesManager.livePreviewDeclined(pack.language))
+    // ...and it is read FOR THE SELECTED LANGUAGE (4.4.1 acquisition amendment): a user who
+    // deleted the Spanish model has declined Spanish, not live words. The selected code is the
+    // same code the pack above was resolved from, so the flag the X writes, the flag this reads
+    // and the pack the decision is about cannot name three different languages.
+    var saidNo by remember(resumeTick, selectedLanguage) {
+        mutableStateOf(app.preferencesManager.livePreviewDeclined(selectedLanguage))
     }
     // (CONTROLLER RULING 2026-09-11, CHANGE 4) Has the user already SEEN live words? Written by
     // the gate's own call site the first time the previewer arms, so it can become true while
@@ -892,10 +907,11 @@ private fun LiveWordsCard(
     // HomeScreen's own pattern for exactly this shape of read is produceState + Dispatchers.IO
     // (the keystore and installedModel snapshots above). Keyed as the remembers were: the resume
     // tick, the status WORD — never the progress line, which ticks several times a second for the
-    // whole 73 MB — and whether our own work is running.
+    // whole 73 MB — and whether our own work is running; plus the SELECTED LANGUAGE, because a
+    // different language is a different pack and therefore a different state to read.
     @Suppress("ProduceStateDoesNotAssignValue")
     val packStateSnapshot by produceState<StreamingPackState?>(
-        null, resumeTick, statusWord, working,
+        null, resumeTick, selectedLanguage, statusWord, working,
     ) {
         // CLEARED FIRST (CONTROLLER RULING 2026-09-11, CHANGE 3 — review r2's nit 2). produceState
         // keeps its PREVIOUS value across a key change, and our own install's
@@ -906,7 +922,9 @@ private fun LiveWordsCard(
         // sends that frame down the not-yet-known branch below — NONE, i.e. nothing said — until
         // the new state lands, which is the first of the two fixes the nit named.
         value = null
-        value = withContext(Dispatchers.IO) { app.streamingPackManager.state(pack) }
+        // No pack for this language (Auto, or a language with no row) is no state at all, so the
+        // not-yet-known branch is also the AUTO branch: nothing decided, nothing said.
+        value = pack?.let { withContext(Dispatchers.IO) { app.streamingPackManager.state(it) } }
     }
     @Suppress("ProduceStateDoesNotAssignValue")
     val unmeteredSnapshot by produceState<Boolean?>(null, resumeTick) {
@@ -924,7 +942,7 @@ private fun LiveWordsCard(
     } else {
         PreviewAutoFetch.decide(
             selectedLanguage = selectedLanguage,
-            packLanguage = pack.language,
+            packLanguage = pack?.language,
             state = packState,
             userSaidNo = saidNo,
             showLiveWords = showLiveWords,
@@ -933,20 +951,27 @@ private fun LiveWordsCard(
             sessionActive = AudioArbiter.isCapturing(),
             batchJobActive = BatchJobController.active != null,
             packWorkInFlight = PreviewAutoFetchController.busy(),
-            attemptedThisLaunch = PreviewAutoFetchController.attemptedThisLaunch(),
+            // Per language: the latch stops a loop on ONE pack, and a user who picks a second
+            // language in the same launch has made a new decision, not repeated an old one.
+            attemptedThisLaunch = pack != null &&
+                PreviewAutoFetchController.attemptedThisLaunch(pack),
             backedOff = PreviewAutoFetch.backedOff(
                 lastFailureAtMs = app.preferencesManager.livePreviewAutoFetchFailedAt,
                 nowMs = System.currentTimeMillis(),
             ),
         )
     }
-    // THE FOREGROUND HOOK, and the whole of it: it performs the decision above and tests nothing
-    // of its own. Keyed on the resume tick, so every return to the foreground asks again, and on
-    // the answer, so the effect cannot fire under a stale one. The `?.let` is the snapshot's
-    // null-unwrap, not a second condition: a FETCH is only ever answered over a read state.
-    LaunchedEffect(resumeTick, decision) {
+    // THE COLLECTOR'S ONE ACTUATION, and the whole of it: it performs the decision above and
+    // tests nothing of its own. Keyed on the resume tick, so every return to the foreground asks
+    // again; on the SELECTED LANGUAGE, so picking one asks on the spot (ruling 2); and on the
+    // answer, so the effect cannot fire under a stale one. Both `?.let`s are the snapshots'
+    // null-unwraps, not second conditions: a FETCH is only ever answered over a pack that matches
+    // the selected language and a state that has been read.
+    LaunchedEffect(resumeTick, selectedLanguage, decision) {
         if (decision == PreviewAutoFetch.Decision.FETCH) {
-            packState?.let { PreviewAutoFetchController.start(app, pack, it, auto = true) }
+            pack?.let { p ->
+                packState?.let { PreviewAutoFetchController.start(app, p, it, auto = true) }
+            }
         }
     }
     // Play's own consent dialog, once per ENTRY into NeedsConfirmation — the missing-voice row's
@@ -970,7 +995,7 @@ private fun LiveWordsCard(
     // lets 73 MB finish landing is not a no (CONTROLLER RULING 2026-09-11, CHANGE 2). The cancel
     // is a no-op when nothing is in flight, so the offer and the announcement cost nothing.
     val dismiss: () -> Unit = {
-        app.preferencesManager.setLivePreviewDeclined(pack.language, true)
+        app.preferencesManager.setLivePreviewDeclined(selectedLanguage, true)
         saidNo = true
         PreviewAutoFetchController.cancel()
     }
@@ -1007,20 +1032,23 @@ private fun LiveWordsCard(
             onAction = answerPlay,
             onDismiss = dismiss,
         )
-        // The OFFER is only ever answered over a read state, so this `?.let` unwraps the
-        // snapshot rather than deciding anything — and it is the same snapshot the words and the
-        // tap's route are taken from, which is what keeps them from naming different sources.
-        PreviewAutoFetch.Card.OFFER -> packState?.let { offered ->
-            LiveWordsNote(
-                title = StreamingPackCopy.CARD_TITLE,
-                // The SAME per-source table the Settings row reads, so this card cannot promise
-                // a route the tap will not take.
-                body = StreamingPackCopy.cardOffer(offered),
-                note = StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
-                action = StreamingPackCopy.cardAction(offered),
-                onAction = { PreviewAutoFetchController.start(app, pack, offered, auto = false) },
-                onDismiss = dismiss,
-            )
+        // The OFFER is only ever answered over a matched pack and a read state, so these two
+        // `?.let`s unwrap the snapshots rather than deciding anything — and the words, the route
+        // and the tap all come from that one pair, which is what keeps them from naming different
+        // sources or different languages.
+        PreviewAutoFetch.Card.OFFER -> pack?.let { p ->
+            packState?.let { offered ->
+                LiveWordsNote(
+                    title = StreamingPackCopy.CARD_TITLE,
+                    // The SAME per-source table the Settings row reads, so this card cannot
+                    // promise a route the tap will not take.
+                    body = StreamingPackCopy.cardOffer(offered),
+                    note = StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
+                    action = StreamingPackCopy.cardAction(offered),
+                    onAction = { PreviewAutoFetchController.start(app, p, offered, auto = false) },
+                    onDismiss = dismiss,
+                )
+            }
         }
         PreviewAutoFetch.Card.INSTALLED -> LiveWordsNote(
             title = StreamingPackCopy.CARD_INSTALLED_TITLE,

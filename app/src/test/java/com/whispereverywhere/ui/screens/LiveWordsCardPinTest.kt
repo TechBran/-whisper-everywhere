@@ -176,6 +176,119 @@ class LiveWordsCardPinTest {
         )
     }
 
+    // ------------------------------------------------------------------ the ONE collector
+
+    @Test fun theCollectorIsTheSelectedLanguagesOwnStateFlowAndThereIsOnlyOne() {
+        // Owner rulings 2026-09-11. The language selection funnels through ONE writer, so one
+        // collector on its StateFlow serves the picker's change, onboarding's Continue and the
+        // value already in place at foreground — the last of which is the whole top-up, because
+        // a user whose language was set before this update never re-selects it.
+        assertEquals(
+            1, liveLineCount(card, "app.preferencesManager.selectedLanguage.collectAsState()"),
+        )
+        assertEquals(
+            "the RAW picker code, not getLanguageForApi()'s null-for-auto: the rule is one " +
+                "comparison against a pack's own language, and \"auto\" refuses by being no " +
+                "pack's language",
+            0, liveLineCount(card, "getLanguageForApi"),
+        )
+        for (needle in listOf(".collect {", ".collect(", "while (true)")) {
+            assertEquals(
+                "<<$needle>>: a second collector is a second chance to start the same fetch, and " +
+                    "a hand-rolled one loses the conflation that makes an unchanged value a no-op",
+                0, liveLineCount(card, needle),
+            )
+        }
+        assertEquals(
+            "the collector READS the selection and never writes it — a card that set the " +
+                "language would be choosing for the user",
+            0, liveLineCount(card, "setSelectedLanguage"),
+        )
+    }
+
+    @Test fun thePackIsTheCatalogsAnswerForTheSelectedLanguageAndNeverTheEnglishRow() {
+        assertEquals(
+            "one lookup, and it is the catalogue's: null for Auto and for every language with no " +
+                "row, which is how \"no selected language, no live words\" costs no predicate",
+            1, liveLineCount(card, "StreamingPackCatalog.forLanguage(selectedLanguage)"),
+        )
+        assertEquals(
+            "and the English row is NOT named here any more — that literal is exactly what the " +
+                "amendment removes, and a card pinned to it would fetch English for a Chinese " +
+                "user's phone",
+            0, liveLineCount(card, "StreamingPackCatalog.EN"),
+        )
+        assertEquals(
+            "the decision is told which language the state it was handed belongs to",
+            1, liveLineCount(card, "packLanguage = pack?.language"),
+        )
+        assertEquals(
+            "and the same selected code keys the flag the X writes, so the pack, the flag and " +
+                "the decision cannot name three different languages",
+            1, liveLineCount(card, "selectedLanguage = selectedLanguage"),
+        )
+    }
+
+    @Test fun aSelectionAsksAgainAndAnUnchangedValueAsksNothing() {
+        assertEquals(
+            "the actuation is keyed on the selection, so picking a language asks ON THE SPOT " +
+                "(ruling 2) rather than at the next foreground",
+            1, liveLineCount(card, "LaunchedEffect(resumeTick, selectedLanguage, decision)"),
+        )
+        assertEquals(
+            "and so is the pack-state read, because a different language is a different pack",
+            1, liveLineCount(card, "null, resumeTick, selectedLanguage, statusWord, working,"),
+        )
+        assertEquals(
+            "the once-per-launch latch is asked PER LANGUAGE: a global one would answer a " +
+                "second language's first selection with the offer card",
+            1, liveLineCount(card, "PreviewAutoFetchController.attemptedThisLaunch(pack)"),
+        )
+    }
+
+    @Test fun neitherSelectionSiteFetchesAnythingOfItsOwn() {
+        // The amendment's own rule: *"do NOT put pack fetching inside setSelectedLanguage — it is
+        // a SharedPreferences writer called from Compose click handlers and has no business
+        // owning a download"*, and by the same argument neither does a click handler. Both sites
+        // write the ONE pref and the collector does the rest.
+        val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
+        assertEquals(
+            "the in-app picker's one write",
+            1, liveLineCount(picker, "setSelectedLanguage(code)"),
+        )
+        for (needle in listOf(
+            "PreviewAutoFetchController",
+            "PreviewAutoFetch.decide(",
+            "StreamingPackController.start(",
+            "streamingPackManager",
+        )) {
+            assertEquals(
+                "<<$needle>> in the language picker: the selection writes a preference, and the " +
+                    "collector is what turns that into an arrival",
+                0, liveLineCount(picker, needle),
+            )
+        }
+        val onboarding =
+            source("src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt")
+        assertEquals(
+            "onboarding's Continue writes the same one pref",
+            1, liveLineCount(onboarding, ".preferencesManager.setSelectedLanguage(picked)"),
+        )
+        for (needle in listOf(
+            "PreviewAutoFetchController",
+            "PreviewAutoFetch.decide(",
+            "StreamingPackController.start(",
+            "StreamingPackCopy.cardOffer(",
+        )) {
+            assertEquals(
+                "<<$needle>> in the onboarding flow: the pack arrives on Home, where the card " +
+                    "that reports it lives — not beside the 190 MB speech model the user is " +
+                    "already waiting for",
+                0, liveLineCount(onboarding, needle),
+            )
+        }
+    }
+
     @Test fun theMeteredReadingIsTheMonitorsOneCallMadeOncePerForeground() {
         assertEquals(
             1, liveLineCount(card, "ConnectivityMonitor(context).isUnmetered()"),
@@ -202,9 +315,9 @@ class LiveWordsCardPinTest {
         assertTrue("the read must exist", read >= 0)
         assertTrue("and be inside the keyed producer", produced in 0..read)
         assertEquals(
-            "keyed on the resume tick, the status WORD and our own work — never on the progress " +
-                "line, which ticks several times a second for the whole 73 MB",
-            1, liveLineCount(card, "null, resumeTick, statusWord, working,"),
+            "keyed on the resume tick, the selected language, the status WORD and our own work " +
+                "— never on the progress line, which ticks several times a second for 73 MB",
+            1, liveLineCount(card, "null, resumeTick, selectedLanguage, statusWord, working,"),
         )
         assertEquals(
             1, liveLineCount(card, "NpuPackFetch.statusWord("),
@@ -322,13 +435,14 @@ class LiveWordsCardPinTest {
         assertEquals(
             "one write, and it carries the language: dismissing the Spanish card says nothing " +
                 "about English (owner ruling 2026-09-11, consequence 5)",
-            1, liveLineCount(card, "setLivePreviewDeclined(pack.language, true)"),
+            1, liveLineCount(card, "setLivePreviewDeclined(selectedLanguage, true)"),
         )
         assertEquals(
             "read once into a local mirror, the house convention for plain-var prefs in " +
                 "composition (cloudNoteDismissed is the precedent and the same card shape) — and " +
-                "for the SAME language it writes, or the X would hide a card it never silenced",
-            1, liveLineCount(card, "app.preferencesManager.livePreviewDeclined(pack.language)"),
+                "for the SAME code it writes, which is also the code the pack was resolved from, " +
+                "so the X cannot hide a card it never silenced",
+            1, liveLineCount(card, "app.preferencesManager.livePreviewDeclined(selectedLanguage)"),
         )
     }
 
@@ -455,11 +569,17 @@ class LiveWordsCardPinTest {
         )
         assertEquals(
             "the once-per-launch latch is set in the AUTO path only — a tap is consent and may " +
-                "be repeated",
-            1, liveLineCount(actuator, "autoAttempted = true"),
+                "be repeated — and it is tested and set in ONE step, keyed by LANGUAGE, so two " +
+                "auto attempts for one pack cannot both pass and a second language's first " +
+                "selection is not refused by the first language's attempt",
+            1, liveLineCount(actuator, "if (auto && !autoAttempted.add(pack.language)) return false"),
         )
-        val latch = offsetOfLive(actuator, "autoAttempted = true")
+        val latch = offsetOfLive(actuator, "autoAttempted.add(pack.language)")
         assertTrue("and it is set before the work starts", latch in 0 until routed)
+        assertEquals(
+            "no global latch survives beside it: a Boolean here silences every other language",
+            0, liveLineCount(actuator, "autoAttempted = true"),
+        )
     }
 
     @Test fun eachOfTheThreeRoutesIsActuatedExactlyOnce() {
