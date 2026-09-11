@@ -1,0 +1,206 @@
+package com.whispereverywhere.transcription.stream
+
+import com.whispereverywhere.npu.NpuPackFetch
+
+/**
+ * Every user-facing string of the previewer (spec §9, as amended on 2026-09-10) — pure,
+ * Compose-free, pinned verbatim by `StreamingPackCopyTest` and scanned for the app's banned
+ * speed words. "Live" is the app's own word for the surface (`CLOUD_LIVE`); no sentence promises
+ * a latency. The size badge is the catalog's ([StreamingPackCatalog.sizeBadge] → "73 MB"), never
+ * a retyped number.
+ *
+ * ### Why the install sentence is a TABLE and not one constant
+ *
+ * The spec wrote one `SETTINGS_INSTALL` ("Download a 73 MB English preview model…") because the
+ * previewer was going to be a Hugging Face download on every build. The 2026-09-10 amendment
+ * moved it onto Play Asset Delivery and ruled the copy with it: *"the previewer's install row
+ * says 'included with the app' on Play builds (it is fetched, not downloaded from a third
+ * party); the fallback wording only on non-Play builds."* On a Play install those 73 MB ride the
+ * `preview_en` pack inside the AAB the user already installed — a row promising a download is
+ * false there, and it is false in the direction that matters (a data-cost claim).
+ *
+ * So the row's words are keyed by [StreamingPackState], the state machine that already knows
+ * which source THIS install has ([StreamingPackInstall.resolve]) — no second discriminator, no
+ * `BuildConfig.DEBUG` read up here, and no way for the row to name a source the action will not
+ * use. The spec's sentence survives as the [StreamingPackState.Downloadable] row, which is the
+ * only row where a third-party download is what actually happens.
+ *
+ * The voice's own table is `TtsModelManager.installRowTitle`/`installRowSubtitle`, amended the
+ * same morning for the same reason. They are siblings rather than one table because the SENTENCE
+ * differs — this one promises the typed transcript is untouched, that one says what a voice
+ * does — while the ROUTING question they ask is the same one, answered once, in
+ * [StreamingPackInstall.resolve].
+ */
+object StreamingPackCopy {
+
+    private val BADGE = StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)
+
+    /**
+     * The one promise that matters, spelled ONCE and carried by every install sentence: the
+     * previewer is ADDITIVE (spec §10). Whatever route the bytes take, the typed transcript is
+     * still whisper's, word for word.
+     */
+    private const val ADDITIVE =
+        "Words appear on the bubble as you talk; the typed transcript is still the speech model's."
+
+    // ---------------------------------------------------------------- the state-free strings
+
+    /** The row's name once the model is installed, and the feature's name everywhere else. */
+    const val SETTINGS_TITLE = "Live words while you speak (English)"
+
+    const val SWITCH_TITLE = "Show live words"
+
+    const val DELETE_TITLE = "Delete the preview model"
+
+    val SETTINGS_INSTALLED =
+        "Installed ($BADGE). Words appear on the bubble as you speak English; the typed transcript is unchanged."
+
+    /**
+     * RULING ASSUMED (R1): the canary is the only SME guard; this is what the row says after it
+     * fails.
+     *
+     * NOT RENDERED BY THIS TASK, and deliberately so: the verdict lives on the previewer instance
+     * the service builds (`StreamingPreviewEngine.disabled`), and Task 7 owns both that wiring
+     * and the only reader of it. The sentence is pinned here now so the words are decided in the
+     * one place the feature's copy is reviewed, rather than invented at the wiring site.
+     */
+    const val SETTINGS_DISABLED_ON_DEVICE =
+        "Live words are off on this device: the preview model did not pass its start-up check. Your transcripts are unaffected."
+
+    const val LANGUAGE_STEP_SENTENCE =
+        "Live words on the bubble are English-only for now; other languages show a progress line while each sentence is transcribed."
+
+    /** Rendered in the English row's subtitle slot on the language step when the pack is installed. */
+    const val LANGUAGE_CHIP = "Live words on the bubble while you speak — preview model installed."
+
+    // ---------------------------------------------------------------- the offer, by source
+
+    /** Play delivered the pack: verify + copy into `filesDir`, no network at any point. */
+    val SETTINGS_INSTALL_FROM_PACK =
+        "Included with the app ($BADGE) and already on this device — nothing to fetch. $ADDITIVE"
+
+    /** Play can serve this install: the ordinary on-demand fetch, and still not a third party. */
+    val SETTINGS_INSTALL_FETCH =
+        "Included with the app ($BADGE), delivered by Google Play when you ask for it. $ADDITIVE"
+
+    /**
+     * The NON-PLAY row, and the spec's original sentence verbatim. Reached only where
+     * [StreamingPackInstall.playCanDeliver] is false — a debug build, a sideload, or a refusal
+     * Play has already named as this install's own fault — which is exactly where a download
+     * from the commit-pinned Hugging Face base is what the tap does.
+     */
+    val SETTINGS_INSTALL_DOWNLOAD = "Download a $BADGE English preview model. $ADDITIVE"
+
+    // ---------------------------------------------------------------- the damaged install
+
+    private const val DAMAGED = "The preview model is damaged."
+
+    /** Repair on a non-Play install: the same fallback the first install would have used. */
+    const val SETTINGS_REPAIR = "$DAMAGED Download it again to restore live words."
+
+    /** Repair from the delivered pack — the bytes are already here, so nothing is fetched. */
+    const val SETTINGS_REPAIR_FROM_PACK =
+        "$DAMAGED Install it again from the copy included with the app to restore live words."
+
+    /** Repair by asking Play again. Still not a download from anyone else. */
+    const val SETTINGS_REPAIR_FETCH = "$DAMAGED Get it again from Google Play to restore live words."
+
+    // ---------------------------------------------------------------- the row
+
+    /**
+     * The row's title: the ACTION's own name, so the row names the source it will actually use.
+     * Total over [StreamingPackState] — a state added to that machine must be answered here
+     * rather than fall through a wildcard into an offer to download.
+     *
+     * A [StreamingPackState.Repair] reads the same whatever would repair it: the user is
+     * repairing, not choosing, and the subtitle already says what the repair will cost.
+     */
+    fun settingsTitle(state: StreamingPackState): String = when (state) {
+        StreamingPackState.Installed -> SETTINGS_TITLE
+        StreamingPackState.PackDelivered -> "Install the English preview model"
+        StreamingPackState.PackFetchable -> "Get the English preview model"
+        StreamingPackState.Downloadable -> "Download the English preview model"
+        is StreamingPackState.Repair -> "Repair the English preview model"
+    }
+
+    /** The row's subtitle, by the same table. See the class KDoc for why it is a table. */
+    fun settingsSubtitle(state: StreamingPackState): String = when (state) {
+        StreamingPackState.Installed -> SETTINGS_INSTALLED
+        StreamingPackState.PackDelivered -> SETTINGS_INSTALL_FROM_PACK
+        StreamingPackState.PackFetchable -> SETTINGS_INSTALL_FETCH
+        StreamingPackState.Downloadable -> SETTINGS_INSTALL_DOWNLOAD
+        is StreamingPackState.Repair -> when (state.via) {
+            StreamingPackState.PackDelivered -> SETTINGS_REPAIR_FROM_PACK
+            StreamingPackState.PackFetchable -> SETTINGS_REPAIR_FETCH
+            // A Repair's `via` is the source a FIRST install would have taken, so it is never
+            // Installed and never another Repair (StreamingPackInstall.resolve builds it from
+            // the three source states only). Downloadable is the remaining one, and the
+            // fallback sentence is the safe answer for anything a later state adds.
+            else -> SETTINGS_REPAIR
+        }
+    }
+
+    // ---------------------------------------------------------------- the Play fetch in flight
+
+    /**
+     * What the row shows while [StreamingPackController] is working, or after it has stopped —
+     * null at rest, where the row goes back to its own offer.
+     *
+     * A [NpuPackFetch.FetchState.Failed] is shown VERBATIM: the shell has already re-told every
+     * refusal in this feature's words ([StreamingPackInstall.deliveryRefusal] /
+     * [StreamingPackInstall.fetchRefusal]), so re-wording it here would be a second copy of the
+     * copy — and the first one is the one that knows Play's error code.
+     *
+     * The voice's twin is `TtsModelManager.fetchLine`; the two differ only in the noun, which is
+     * the whole reason they are separate (a row that called the preview model "the voice" is the
+     * bug this feature's own sentences exist to prevent).
+     */
+    fun fetchLine(state: NpuPackFetch.FetchState): String? = when (state) {
+        is NpuPackFetch.FetchState.Idle,
+        is NpuPackFetch.FetchState.Installed,
+        is NpuPackFetch.FetchState.Cancelled,
+        -> null
+        is NpuPackFetch.FetchState.Pending -> "Asking Google Play for the preview model…"
+        is NpuPackFetch.FetchState.Downloading ->
+            if (state.total > 0L) {
+                "Fetching the preview model: ${state.soFar / 1_000_000} of " +
+                    "${state.total / 1_000_000} MB"
+            } else {
+                "Fetching the preview model…"
+            }
+        is NpuPackFetch.FetchState.Transferring ->
+            "Google Play is moving the preview model into place…"
+        is NpuPackFetch.FetchState.Verifying -> "Verifying and installing…"
+        is NpuPackFetch.FetchState.NeedsConfirmation ->
+            "Google Play needs your confirmation before it fetches the preview model — tap to answer."
+        is NpuPackFetch.FetchState.Failed -> state.reason
+    }
+
+    /**
+     * Whether a TAP on the row showing [fetchLine] does anything — `TtsModelManager`'s B1 lesson,
+     * inherited rather than re-learned: the row renders a line for every state a fetch passes
+     * through, `SettingsItem` makes itself clickable the moment it is handed an `onClick`, and a
+     * tap during the copy+hash would otherwise re-enter the row's one action and start a SECOND
+     * install into the same temp dir.
+     *
+     * The retry the branch exists for is the TERMINAL one; the one in-flight state that stays
+     * tappable is [NpuPackFetch.FetchState.NeedsConfirmation], where the tap re-shows PLAY'S OWN
+     * dialog and starts no install of ours. Total over the machine, with the three at-rest states
+     * spelled out even though they render no line: a state added there must be answered rather
+     * than fall through a wildcard into "tappable, mid-install".
+     */
+    fun fetchLineTappable(state: NpuPackFetch.FetchState): Boolean = when (state) {
+        is NpuPackFetch.FetchState.Failed,
+        is NpuPackFetch.FetchState.NeedsConfirmation,
+        -> true
+        is NpuPackFetch.FetchState.Pending,
+        is NpuPackFetch.FetchState.Downloading,
+        is NpuPackFetch.FetchState.Transferring,
+        is NpuPackFetch.FetchState.Verifying,
+        -> false
+        is NpuPackFetch.FetchState.Idle,
+        is NpuPackFetch.FetchState.Installed,
+        is NpuPackFetch.FetchState.Cancelled,
+        -> false
+    }
+}
