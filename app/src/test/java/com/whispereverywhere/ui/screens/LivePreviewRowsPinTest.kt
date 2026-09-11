@@ -246,7 +246,15 @@ class LivePreviewRowsPinTest {
             "ONE delete site, wherever it sits", 1, liveLineCount(rows, "StreamingPackCopy.DELETE_TITLE"),
         )
         val lastOffer = offsetOfLive(rows, "onClick = startPreviewInstall,")
-        val guard = offsetOfLive(rows, "if (previewState.isInstalled) {")
+        // (fix round 1, H-B2) THE GUARD IS THE BYTES AND NOT THE VERDICT. `isInstalled` is
+        // `this is Installed` only, and `Repair` — marker gone after a load failure, or a file
+        // gone short — is the one state where the bytes are on disk and that property is false.
+        // With the repair row inside the selection gate, `isInstalled` alone left a damaged
+        // install's 73 MB with no reclaim path in the app for a selection with no pack.
+        val guard = offsetOfLive(
+            rows,
+            "if (previewState.isInstalled || previewState is StreamingPackState.Repair) {",
+        )
         val delete = offsetOfLive(rows, "StreamingPackCopy.DELETE_TITLE")
         assertTrue("the offer branches must still be there", lastOffer >= 0)
         assertTrue(
@@ -254,6 +262,12 @@ class LivePreviewRowsPinTest {
                 "to stay reclaimable after the user picks French, so it sits OUTSIDE the " +
                 "selection gate — after the last offer branch — under its own bytes-are-here guard",
             lastOffer < guard && guard < delete,
+        )
+        assertEquals(
+            "and that guard answers for the DAMAGED install too — `markCorrupt` removes the " +
+                "marker and leaves the bytes, so a delete keyed on the verdict strands them",
+            1,
+            liveLineCount(rows, "previewState is StreamingPackState.Repair) {"),
         )
         assertEquals(
             "and the decision it records is still the PACK's language, which is what it deletes",

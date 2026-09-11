@@ -1262,7 +1262,15 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // picks French: a delete row that only appeared for the pack's own language would leave them
     // with no way to get the storage back but to re-pick a language they do not want. It is also
     // the one row a selection with no pack still needs.
-    if (previewState.isInstalled) {
+    //
+    // (fix round 1, H-B2) AND `Repair` IS BYTES. `isInstalled` is `this is Installed` only
+    // (`StreamingPackInstall.kt:29`), and `Repair` is exactly the state where up to 73 MB is
+    // sitting under `filesDir` with the verdict withdrawn: `markCorrupt` deletes only the marker
+    // ("the bytes stay", its own KDoc) and the previewer's `onLoadFailure` calls it on any device
+    // where the sherpa load throws. With the repair row now inside the selection gate above, a
+    // user whose load failed once and who then picks French or Auto had NO row anywhere in the
+    // app that reclaims those bytes. `delete` clears the install dir either way.
+    if (previewState.isInstalled || previewState is StreamingPackState.Repair) {
         SettingsItem(
             icon = Icons.Filled.Delete,
             title = StreamingPackCopy.DELETE_TITLE,
