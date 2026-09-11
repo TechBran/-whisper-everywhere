@@ -388,41 +388,86 @@ class PreviewAutoFetchTest {
         hasPackForSelection: Boolean = true,
         installed: Boolean = false,
         previewHasArmed: Boolean = false,
+        localTierInstalled: Boolean = true,
         userSaidNo: Boolean = false,
         showLiveWords: Boolean = true,
         workInFlight: Boolean = false,
         decision: PreviewAutoFetch.Decision = PreviewAutoFetch.Decision.NONE,
     ) = PreviewAutoFetch.card(
-        hasPackForSelection, installed, previewHasArmed, userSaidNo, showLiveWords,
-        workInFlight, decision,
+        hasPackForSelection, installed, previewHasArmed, localTierInstalled, userSaidNo,
+        showLiveWords, workInFlight, decision,
     )
 
-    @Test fun theCardMappingIsTotalOverItsSevenInputs() {
+    @Test fun theCardMappingIsTotalOverItsEightInputs() {
         var cells = 0
-        for (has in bools) for (installed in bools) for (armed in bools) for (no in bools) {
-            for (sw in bools) for (busy in bools) for (d in PreviewAutoFetch.Decision.entries) {
-                cells++
-                val expected = when {
-                    !has -> PreviewAutoFetch.Card.NONE
-                    no -> PreviewAutoFetch.Card.NONE
-                    !sw -> PreviewAutoFetch.Card.NONE
-                    installed ->
-                        if (armed) PreviewAutoFetch.Card.NONE else PreviewAutoFetch.Card.INSTALLED
-                    busy || d == PreviewAutoFetch.Decision.FETCH -> PreviewAutoFetch.Card.WORKING
-                    d == PreviewAutoFetch.Decision.OFFER -> PreviewAutoFetch.Card.OFFER
-                    else -> PreviewAutoFetch.Card.NONE
+        for (has in bools) for (installed in bools) for (armed in bools) for (tier in bools) {
+            for (no in bools) for (sw in bools) for (busy in bools) {
+                for (d in PreviewAutoFetch.Decision.entries) {
+                    cells++
+                    val expected = when {
+                        !has -> PreviewAutoFetch.Card.NONE
+                        no -> PreviewAutoFetch.Card.NONE
+                        !sw -> PreviewAutoFetch.Card.NONE
+                        installed ->
+                            if (armed || !tier) PreviewAutoFetch.Card.NONE
+                            else PreviewAutoFetch.Card.INSTALLED
+                        busy || d == PreviewAutoFetch.Decision.FETCH ->
+                            PreviewAutoFetch.Card.WORKING
+                        d == PreviewAutoFetch.Decision.OFFER -> PreviewAutoFetch.Card.OFFER
+                        else -> PreviewAutoFetch.Card.NONE
+                    }
+                    assertEquals(
+                        "hasPack=$has installed=$installed armed=$armed tier=$tier saidNo=$no " +
+                            "switch=$sw inFlight=$busy decision=$d",
+                        expected,
+                        // Positionally, and deliberately: the helper above has defaults, and a
+                        // default is a value this walk must supply rather than inherit.
+                        PreviewAutoFetch.card(has, installed, armed, tier, no, sw, busy, d),
+                    )
                 }
-                assertEquals(
-                    "hasPack=$has installed=$installed armed=$armed saidNo=$no switch=$sw " +
-                        "inFlight=$busy decision=$d",
-                    expected,
-                    // Positionally, and deliberately: the helper above has defaults, and a
-                    // default is a value this walk must supply rather than inherit.
-                    PreviewAutoFetch.card(has, installed, armed, no, sw, busy, d),
-                )
             }
         }
-        assertEquals("the full product of the card's inputs", 192, cells)
+        assertEquals("the full product of the card's inputs", 384, cells)
+    }
+
+    @Test fun theAnnouncementIsSilentForAUserWhosePreviewerCanNeverArm() {
+        // (4.4.1 pass 3, ITEM 3 — review r1's nit 2.) "Live words are on" is false, permanently,
+        // for a user with the pack and NO on-device whisper tier: every session of theirs is a
+        // cloud session, `localPreviewArms` refuses on `!isCloudSession`, and nothing will ever
+        // write `livePreviewArmedOnce` — so `previewHasArmed` could not retire it either. `decide`
+        // already reads this input and would never have FETCHED the pack for them, but the pack
+        // can be there anyway: the Settings row installs on demand, and a 4.4.0 user may have had
+        // it before they went cloud-only.
+        assertEquals(
+            "the model is installed and the previewer has never armed — but it never can",
+            PreviewAutoFetch.Card.NONE,
+            card(installed = true, previewHasArmed = false, localTierInstalled = false),
+        )
+        assertEquals(
+            "and with a tier, the same cell is the announcement it always was",
+            PreviewAutoFetch.Card.INSTALLED,
+            card(installed = true, previewHasArmed = false, localTierInstalled = true),
+        )
+        // It silences the ANNOUNCEMENT and nothing else. `workInFlight` spans the Settings row's
+        // own fetch, so a cloud-only user who taps "Get the English preview model" and returns to
+        // Home is watching a transfer THEY started: hiding its progress would hide their own
+        // action from them, and the X would be the only thing left to press.
+        assertEquals(
+            "a transfer they started still narrates itself",
+            PreviewAutoFetch.Card.WORKING,
+            card(localTierInstalled = false, workInFlight = true),
+        )
+        // ...and it can never invent a card either: `decide` answers NONE without a tier, so the
+        // OFFER and the silent FETCH are already out of reach for them.
+        assertEquals(
+            PreviewAutoFetch.Card.NONE,
+            card(localTierInstalled = false, decision = PreviewAutoFetch.Decision.NONE),
+        )
+        assertEquals(
+            "the no is still the no",
+            PreviewAutoFetch.Card.NONE,
+            card(installed = true, localTierInstalled = false, userSaidNo = true),
+        )
     }
 
     @Test fun aLanguageWithNoPackSaysNothingEvenWhileAnotherLanguagesFetchIsRunning() {

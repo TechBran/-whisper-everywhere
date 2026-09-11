@@ -272,6 +272,23 @@ object PreviewAutoFetch {
      * have seen this" is not "I do not want this", it is not per language, and it is written by
      * the arm path rather than by a gesture.
      *
+     * ### Why the ANNOUNCEMENT asks about the local tier (4.4.1 pass 3, ITEM 3)
+     *
+     * `Card.INSTALLED` says *"Live words are on"* — and for a user with the pack but NO on-device
+     * whisper tier that is simply false, permanently: every session of theirs is a cloud session,
+     * `localPreviewArms` refuses on `!isCloudSession`, and the previewer can never arm. [decide]
+     * already reads [localTierInstalled] and would never have FETCHED the pack for them, but the
+     * pack can be there anyway — the Settings row installs on demand, and a 4.4.0 user may have
+     * had it before they went cloud-only. [previewHasArmed] cannot retire the announcement for
+     * them either, because the thing that writes it can never happen. So the announcement asks the
+     * same question the acquisition side asks, and says nothing rather than something false
+     * (review r1's nit 2).
+     *
+     * It is answered on the announcement's cell and NOT at the top of the `when`, deliberately:
+     * [workInFlight] spans the Settings row's own fetch, so a cloud-only user who taps *"Get the
+     * English preview model"* and returns to Home is watching a transfer THEY started, and
+     * hiding its progress card would be hiding their own action from them.
+     *
      * @param hasPackForSelection the selected language has a catalogue row
      *        (`StreamingPackCatalog.forLanguage(selected) != null`) — the same fact [decide] reads
      *        as [packLanguage] being non-null and equal to [selectedLanguage].
@@ -280,6 +297,9 @@ object PreviewAutoFetch {
      *        install (`PreferencesManager.livePreviewArmedOnce`, written from the gate's own call
      *        site). Silences the announcement and nothing else — it is not a "no", so it must
      *        never suppress the offer or the working card.
+     * @param localTierInstalled the same input [decide] reads: an on-device whisper tier exists.
+     *        Without one the previewer can never arm, so the announcement would be permanently
+     *        false. Silences the announcement and nothing else, for the reason above.
      * @param userSaidNo the same persisted flag [decide] reads.
      * @param showLiveWords the same switch [decide] reads (`PreferencesManager.localPreviewEnabled`).
      * @param workInFlight a fetch or install is running: `StreamingPackInstall.fetchInFlight` of
@@ -291,6 +311,7 @@ object PreviewAutoFetch {
         hasPackForSelection: Boolean,
         installed: Boolean,
         previewHasArmed: Boolean,
+        localTierInstalled: Boolean,
         userSaidNo: Boolean,
         showLiveWords: Boolean,
         workInFlight: Boolean,
@@ -299,7 +320,10 @@ object PreviewAutoFetch {
         !hasPackForSelection -> Card.NONE
         userSaidNo -> Card.NONE
         !showLiveWords -> Card.NONE
-        installed -> if (previewHasArmed) Card.NONE else Card.INSTALLED
+        // The announcement, and its two silences: the user has already seen live words, or they
+        // never can — with no on-device tier every session is a cloud session and the gate refuses
+        // on `!isCloudSession`, so "Live words are on" would be permanently false (ITEM 3).
+        installed -> if (previewHasArmed || !localTierInstalled) Card.NONE else Card.INSTALLED
         workInFlight || decision == Decision.FETCH -> Card.WORKING
         decision == Decision.OFFER -> Card.OFFER
         else -> Card.NONE

@@ -523,6 +523,26 @@ class LiveWordsCardPinTest {
         )
     }
 
+    @Test fun theAnnouncementAndTheFetchAskTheSameQuestionAboutTheLocalTier() {
+        // (4.4.1 pass 3, ITEM 3 — review r1's nit 2.) "Live words are on" is permanently false
+        // for a user with the pack and no on-device tier. The card must ask the question the
+        // decision already asks, from the SAME value, or the two disagree about who the feature
+        // is for — and the hook is the only place that value is read on this screen.
+        assertEquals(
+            "the decision reads it, and so does the card: ONE value, read once, spent twice",
+            2, liveLineCount(card, "localTierInstalled = localTierInstalled,"),
+        )
+        assertEquals(
+            "and it is the screen's own input, never re-derived here from a model list",
+            1, liveLineCount(card, "localTierInstalled: Boolean,"),
+        )
+        val decided = offsetOfLive(card, "PreviewAutoFetch.decide(")
+        val mapped = offsetOfLive(card, "PreviewAutoFetch.card(")
+        val first = offsetOfLive(card, "localTierInstalled = localTierInstalled,")
+        assertTrue("the decision comes first", decided in 0 until mapped)
+        assertTrue("and its copy of the input is the one inside it", first in decided until mapped)
+    }
+
     @Test fun theCellularConsentIsPlaysOwnDialogNeverAReAskOfOurs() {
         assertEquals(
             "this card can start a 73 MB Play fetch, and Play raises its own dialog for a " +

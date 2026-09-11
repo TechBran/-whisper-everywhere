@@ -1018,6 +1018,12 @@ private fun LiveWordsCard(
             // for a real session the user has watched them appear, and the X stays free to mean
             // "no" rather than "I have read this" (CONTROLLER RULING 2026-09-11, CHANGE 4).
             previewHasArmed = hasArmed,
+            // (4.4.1 pass 3, ITEM 3) ...and the other way the announcement can be false: with no
+            // on-device tier every session is a cloud session, the gate refuses on
+            // `!isCloudSession`, and "Live words are on" is permanently untrue — which
+            // `previewHasArmed` could never retire, because nothing would ever write it. The same
+            // input the decision reads, so the card and the fetch agree about who this is for.
+            localTierInstalled = localTierInstalled,
             userSaidNo = saidNo,
             // The switch silences the card as well as the fetch: with it off there is no true
             // sentence left for this card to spell, least of all "Live words are on" over an
