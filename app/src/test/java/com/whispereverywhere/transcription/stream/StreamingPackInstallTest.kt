@@ -31,6 +31,8 @@ class StreamingPackInstallTest {
         joiner = PackFile("joiner.onnx", joi.size.toLong(), sha(joi)),
         tokens = PackFile("tokens.txt", tok.size.toLong(), sha(tok)),
         modelType = "zipformer2", decodeChunkLen = 32, encoderT = 45,
+        emitsCase = false, emitsPunctuation = false, emitsDigits = false,
+        normalizeLocale = java.util.Locale.US,
     )
 
     private fun stage(vararg overrides: Pair<String, ByteArray>): File {
@@ -54,6 +56,8 @@ class StreamingPackInstallTest {
         joiner = PackFile("joiner.onnx", joi.size.toLong(), sha(joi)),
         tokens = PackFile("tokens.txt", tok.size.toLong(), sha(tok)),
         modelType = "zipformer2", decodeChunkLen = 32, encoderT = 45,
+        emitsCase = false, emitsPunctuation = false, emitsDigits = false,
+        normalizeLocale = java.util.Locale.US,
     )
 
     // ------------------------------------------------------------- the store is a SET, not a slot

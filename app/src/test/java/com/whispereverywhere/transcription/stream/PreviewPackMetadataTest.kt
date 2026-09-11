@@ -5,6 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
+import java.util.Locale
 
 /**
  * The three catalogue fields that are facts about a FILE rather than decisions — `decode_chunk_len`
@@ -90,14 +91,55 @@ class PreviewPackMetadataTest {
         }
     }
 
+    // ---------------------------------------------------------------- the copy flags
+
+    @Test fun theCatalogRecordsTheFlagsTheCopyDerivesFrom() {
+        // The flag matrix's home (qualification table §4.1). English is the row where all three
+        // are false and the locale is the one chosen for English INPUT — which is exactly why the
+        // fields are not a free abstraction: `et` would be the FIRST row to set all three true, so
+        // every `true` branch gets written and tested on that row, and `tr` is the first row where
+        // the locale decides anything.
+        assertEquals(false, pack.emitsCase)
+        assertEquals(false, pack.emitsPunctuation)
+        assertEquals(false, pack.emitsDigits)
+        assertEquals(Locale.US, pack.normalizeLocale)
+    }
+
+    @Test fun theRecordedFlagsAreWhatThePacksOwnTokensFileSays() {
+        val tokens = payloadFile(pack.tokens.name, pack.tokens.bytes)
+        assumeTrue("the pack payload is absent from a clean clone", tokens != null)
+        val facts = PackTokenFacts.of(tokens!!)
+        // The census, line by line — and the correction to 4.4.0's pinned comment, which said
+        // "497 uppercase pieces, no lowercase, no digits" and was wrong three times over. 497 is
+        // the EMITTABLE count; the uppercase-bearing count is 495; there are 3 lowercase-bearing
+        // pieces and 2 digit-bearing ones, and every one of those five is a piece no decode emits.
+        assertEquals(502, facts.lines)
+        assertEquals(495, facts.uppercaseInFile)
+        assertEquals(3, facts.lowercaseInFile)
+        assertEquals(2, facts.digitsInFile)
+        // And the set the flags are actually about: the three lowercase pieces are the specials
+        // and the two digit-bearing ones are the placeholders, so NOTHING emittable carries either.
+        assertEquals(497, facts.emittable)
+        assertEquals(495, facts.uppercaseEmittable)
+        assertEquals(0, facts.lowercaseEmittable)
+        assertEquals(0, facts.digitsEmittable)
+        assertEquals("one punctuation piece, the apostrophe", listOf("'"), facts.punctuationOnly)
+        // And the derivation agrees with what the catalogue claims.
+        assertEquals(pack.emitsCase, facts.emitsCase)
+        assertEquals(pack.emitsPunctuation, facts.emitsPunctuation)
+        assertEquals(pack.emitsDigits, facts.emitsDigits)
+    }
+
     /** The encoder under the pack module's payload directory, or null when it has not been placed. */
-    private fun payloadEncoder(): File? {
+    private fun payloadEncoder(): File? = payloadFile(pack.encoder.name, pack.encoder.bytes)
+
+    /** One payload file at its pinned byte count, or null — the payload is a BUILD artifact. */
+    private fun payloadFile(name: String, bytes: Long): File? {
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
-        val relative = "${StreamingPackCatalog.PACK_EN}/src/main/assets/" +
-            "${StreamingPackCatalog.PACK_EN}/${pack.encoder.name}"
+        val relative = "${StreamingPackCatalog.PACK_EN}/src/main/assets/${StreamingPackCatalog.PACK_EN}/$name"
         while (dir != null) {
             val candidate = File(dir, relative)
-            if (candidate.isFile && candidate.length() == pack.encoder.bytes) return candidate
+            if (candidate.isFile && candidate.length() == bytes) return candidate
             dir = dir.parentFile
         }
         return null

@@ -1,5 +1,7 @@
 package com.whispereverywhere.transcription.stream
 
+import java.util.Locale
+
 /** One pinned file of a streaming pack: its name at the commit, its EXACT byte count, its sha256. */
 data class PackFile(val name: String, val bytes: Long, val sha256: String)
 
@@ -42,6 +44,28 @@ data class PackFile(val name: String, val bytes: Long, val sha256: String)
  *   exports write `T = decodeChunkLen + 13` (32 → 45, 64 → 77, 128 → 141) and the `zipformer` v1
  *   exports write `T = decodeChunkLen + 7` (fr and zh-en are 32 → **39**), so it is READ off the
  *   file and asserted against it, never inferred.
+ * @property emitsCase whether this model emits MEANINGFUL case — true when its emittable pieces
+ *   carry both cases. **False here and for de/fr/ru/id/zh-en**, whose vocabularies are single-case
+ *   (English is ALL CAPS: 495 uppercase-bearing pieces, and the only lowercase in the file is the
+ *   three specials), so [PreviewText]'s fold is lossless. **True for ko, et, tr and every Kroko
+ *   build**, where folding would paint `nba` over the `NBA` the model actually produced — and,
+ *   worse for a German reader, would be read as WRONG rather than rough (qualification table §4.1,
+ *   §4.2). It is the one flag the strip's own rules branch on; the other three are copy inputs.
+ * @property emitsPunctuation whether the strip can carry `.` `?` `,` `!`. **False here**, and the
+ *   judgement is deliberate: English has exactly ONE punctuation piece, the apostrophe at id 45,
+ *   which is a word-internal joiner (`DON'T`) rather than punctuation, and the shipping sentence
+ *   already lives with it. **True for ko (32 pieces), et (23) and tr (18)** — where the strip will
+ *   show marks the English strip never does, which is a fact about what the user SEES and so a
+ *   sentence has to say it.
+ * @property emitsDigits whether a numeral can appear on the strip. **False here**: the only
+ *   digit-bearing pieces are `#0` and `#1`, the two placeholder slots icefall appends after the
+ *   500 BPE pieces, which no decode emits. **True for ko (10 standalone digits), et (9), nl (all
+ *   ten) and — by exactly one token — the bilingual zh-en row (`2` at id 4883).**
+ * @property normalizeLocale the locale [PreviewText] folds with. `Locale.US` here **for English
+ *   INPUT on purpose** — it is the only spelling that can never produce a Turkish dotless `ı` —
+ *   and that reasoning does not survive contact with Turkish OUTPUT, which is the one row where
+ *   this field is load-bearing rather than cosmetic (`İ` under `Locale.US` is exactly the hazard
+ *   `PreviewText`'s own KDoc names). A pack must not ship until this field is its own.
  */
 data class StreamingPack(
     val language: String,
@@ -55,6 +79,10 @@ data class StreamingPack(
     val modelType: String,
     val decodeChunkLen: Int,
     val encoderT: Int,
+    val emitsCase: Boolean,
+    val emitsPunctuation: Boolean,
+    val emitsDigits: Boolean,
+    val normalizeLocale: Locale,
 ) {
     val files: List<PackFile> get() = listOf(encoder, decoder, joiner, tokens)
     val totalBytes: Long get() = files.sumOf { it.bytes }
@@ -80,10 +108,21 @@ data class StreamingPack(
 }
 
 /**
- * The packs the previewer can run. One row today: `streaming-zipformer-en-2023-06-26` (66 M,
- * int8, Apache-2.0, LibriSpeech), the four files re-hashed on the PC (rung 1 §1.2) and on the
- * Tab (rung 3 §1.2, §7). A second language is a second row whose licence cell is green first
- * (research §2.5) — no per-language cards, no chooser change.
+ * The packs the previewer can run. One row today: `streaming-zipformer-en-2023-06-26`
+ * (**72,654,782 B — badged "73 MB"**, int8, Apache-2.0, LibriSpeech), the four files re-hashed on
+ * the PC (rung 1 §1.2) and on the Tab (rung 3 §1.2, §7). A second language is a second row whose
+ * licence cell is green first (research §2.5) — no per-language cards, no chooser change.
+ *
+ * (The "66 M" this docblock used to claim was the research doc's estimate and is wrong by 7 MB;
+ * the verified sum of the four `PackFile` byte counts is 72,654,782 and every sentence the user
+ * reads derives its badge from that sum through [sizeBadge]. A release tarball is a third number
+ * again — 310,414,022 B of fp32 + int8 + wavs — and is never any pack's size.)
+ *
+ * **A row is not the same size as another row** — fr is 128 MB, de 71, ru 29, the bilingual zh-en
+ * 50 — and `StreamingPackCopy.BADGE` is still a class-init `val` over THIS row's `totalBytes`,
+ * carried by seven sentences. That is a copy defect the moment a second row lands, and it is
+ * Task 3's (ruling 3d, *"use the pack's OWN size, never a fixed number"*), not this object's:
+ * [sizeBadge] already takes bytes, so the fix is at the call sites.
  *
  * The byte counts and digests here are the ONE census: `tools/build_asset_packs.py preview`
  * places the pack payload against the same literals, `verifyPreviewPack` gates every bundle
@@ -114,6 +153,14 @@ object StreamingPackCatalog {
         modelType = "zipformer2",
         decodeChunkLen = 32,
         encoderT = 45,
+        // Read line by line off this pack's own tokens.txt (PreviewPackMetadataTest re-derives all
+        // four wherever the payload is placed): 502 lines, 495 uppercase-bearing pieces, the only
+        // lowercase in the file is the three specials, one punctuation piece and it is the
+        // apostrophe at id 45, and the only digit-bearing pieces are the `#0`/`#1` placeholders.
+        emitsCase = false,
+        emitsPunctuation = false,
+        emitsDigits = false,
+        normalizeLocale = Locale.US,
     )
 
     val packs: List<StreamingPack> = listOf(EN)

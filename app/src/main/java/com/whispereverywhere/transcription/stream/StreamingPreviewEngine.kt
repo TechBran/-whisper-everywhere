@@ -315,7 +315,7 @@ class StreamingPreviewEngine(
 
     private fun emitIfChanged(rec: PreviewRecognizer, s: PreviewStream) {
         val text = try {
-            PreviewText.normalize(rec.result(s).text)
+            PreviewText.normalize(rec.result(s).text, pack())
         } catch (t: Throwable) {
             onDecodeFailure(rec, t)
             return
@@ -340,12 +340,23 @@ class StreamingPreviewEngine(
     }
 
     /**
+     * The resident pack — the source of every per-pack rule the loop applies: the commit pad and
+     * the strip's own text rules (its fold, its locale).
+     *
+     * Non-null wherever it is read: [loadedPack] and [recognizer] are assigned together under the
+     * canary's Pass and cleared together, and every reader here runs under a non-null recognizer.
+     * The fallback is the shipping row rather than a throw because an English text rule on a state
+     * that cannot occur is cheaper than a blank strip — but it is a fallback, not a default, and
+     * nothing should ever observe it.
+     */
+    private fun pack(): StreamingPack = loadedPack ?: StreamingPackCatalog.EN
+
+    /**
      * The resident pack's pad, and the ONE spelling of it: the zeros [freeze] feeds and the number
      * the `stream-timing:` line prints must be the same value, or the line reports a pad the
-     * stream never received. Falls back to the measured 500 only when no pack is resident, which
-     * is a state neither caller can reach ([freeze] runs under a non-null recognizer).
+     * stream never received.
      */
-    private fun padMs(): Long = loadedPack?.padMs ?: StreamingPreviewTuning.MEASURED_PAD_MS
+    private fun padMs(): Long = pack().padMs
 
     /** Derived from [padMs] and never from the pack a second time: one number, two uses. */
     private fun padSamples(): Int = (padMs() * StreamingPreviewTuning.SAMPLE_RATE / 1000L).toInt()
@@ -355,7 +366,7 @@ class StreamingPreviewEngine(
         s.inputFinished()
         while (rec.isReady(s)) timedDecode(rec, s)
         val r = rec.result(s)
-        if (retainMs > 0L) PreviewText.before(r, cutSeconds(retainMs)) else PreviewText.normalize(r.text)
+        if (retainMs > 0L) PreviewText.before(r, cutSeconds(retainMs), pack()) else PreviewText.normalize(r.text, pack())
     } catch (t: Throwable) {
         noteFailure(rec, t)
         ""
