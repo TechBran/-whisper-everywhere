@@ -70,7 +70,7 @@ class PreviewTeeEngineTest {
         val commits = mutableListOf<Pair<Long, Long>>()
         var frozenText = "frozen"
         var closed = false
-        /** The real onFrozen lands PAD_MS + a drain + a decode after the cut; hold it to model that. */
+        /** The real onFrozen lands the pack's pad + a drain + a decode after the cut; hold it to model that. */
         var deferFreeze = false
         private var held: (() -> Unit)? = null
         override fun open(onPartial: (String) -> Unit) { this.onPartial = onPartial; order += "preview.open" }
@@ -183,7 +183,7 @@ class PreviewTeeEngineTest {
         // review B1 — the production order on a SKIPPED segment, not a race: local.commit on
         // evidence under EndpointerTuning.MIN_SPEECH_EVIDENCE_MS (192 ms, EndpointerTuning.kt:197)
         // resolves EmptyExpected off its executor within ~1 ms (LocalWhisperEngine.kt:375-382),
-        // while onFrozen returns only after PAD_MS + drain + decode
+        // while onFrozen returns only after the pack's pad + drain + decode
         // (StreamingPreviewEngine.kt:166-205). The previewer's Zipformer has no VAD, so its text
         // for that segment can be real words — words whisper has declared it will never type.
         connected()

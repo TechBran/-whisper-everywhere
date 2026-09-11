@@ -73,7 +73,7 @@ class PreviewComposerTest {
     @Test fun aFreezeForAnAlreadyResolvedSeqStoresNothing() {
         // On a segment under EndpointerTuning.MIN_SPEECH_EVIDENCE_MS whisper does not decode at
         // all: it resolves EmptyExpected within ~1 ms of the cut (LocalWhisperEngine.kt:375-382),
-        // while onFrozen comes back only after PAD_MS + drain + decode
+        // while onFrozen comes back only after the pack's pad + drain + decode
         // (StreamingPreviewEngine.kt:166-205). So THIS is the normal order, not a race — and
         // stored unconditionally the late freeze would lead the strip with words whisper has
         // declared it will never type until some LATER seq resolves.
