@@ -300,6 +300,30 @@ class LocalPreviewWiringPinTest {
             0,
             count(text, "onLoadFailure = { streamingPreviewPack"),
         )
+        // (4.5.0 Task 3 fix round 2, review r2's N2) THE SECOND HOOK, and it is a different
+        // event: `onLoadFailure` is a load that threw, `onDisabled` is the language going OFF for
+        // the rest of the process — a failed canary, a missing clip or three decode throws leave
+        // the bytes valid and `state()` answering `Installed`, so `markCorrupt` is wrong for them
+        // and this is the only signal that exists. Without this line the verdict stays on a
+        // private field of this class and the strip above the language selector goes on promising
+        // *"words appear on the bubble whenever you pick it"* for a language no word can come
+        // from until the app restarts.
+        assertEquals(
+            "the verdict is published for the pack the ENGINE named, exactly as the hook above is",
+            1,
+            count(text, "onDisabled = { wentOff ->"),
+        )
+        assertEquals(
+            "into the one register both selection surfaces read",
+            1,
+            count(text, "PreviewDisabled.note(wentOff.language)"),
+        )
+        assertEquals(
+            "and never off the field Main moves when the SELECTION changes — the stale-pack " +
+                "defect, one hook over",
+            0,
+            count(text, "onDisabled = { streamingPreviewPack"),
+        )
         assertEquals("the field is written in exactly that one place", 1, count(text, "streamingPreviewPack = "))
     }
 

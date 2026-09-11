@@ -54,7 +54,9 @@ import com.whispereverywhere.transcription.stream.StreamingPackCopy
  * `Card.NONE`, each earned by a review round). So the facts arrive as PARAMETERS — which is the
  * opposite of a second read of state, and is what keeps every rule about them in the pure
  * function that owns the words (`StreamingPackCopy.selectorLine`). This component still decides
- * nothing; it passes three facts and a board record through and draws the answer.
+ * nothing; it passes four facts and a board record through and draws the answer. The fourth
+ * arrived in fix round 2 (review r2's N2): the previewer's own per-process verdict, which had no
+ * reader outside the engine at all, so the READY receipt survived the pack becoming unusable.
  *
  * ### Why a row PER LANGUAGE, and why it renders nothing at all most of the time
  *
@@ -81,12 +83,19 @@ import com.whispereverywhere.transcription.stream.StreamingPackCopy
  *        so the READY receipt is a promise the feature cannot keep.
  * @param localTierInstalled an on-device whisper tier exists. Without one every session is a
  *        cloud session and the previewer can never arm, however installed the pack is.
+ * @param disabledLanguages the languages whose previewer this PROCESS has taken off
+ *        (`PreviewDisabled`, written by the engine's own verdict — a load that threw, a failed
+ *        canary, three decode throws). The bytes stay installed and the Settings row is still
+ *        right to call them installed; what is false is only *"words appear whenever you pick
+ *        it"*, and until fix round 2 that was the one fact this strip could not ask about
+ *        (review r2's N2).
  */
 @Composable
 fun LivePreviewSelectorStrip(
     selectedLanguage: String?,
     showLiveWords: Boolean,
     localTierInstalled: Boolean,
+    disabledLanguages: Set<String>,
     modifier: Modifier = Modifier,
 ) {
     val board by PreviewWorkboard.work.collectAsState()
@@ -95,9 +104,10 @@ fun LivePreviewSelectorStrip(
     // code-to-word the card and the Settings row read, so three surfaces cannot name one language
     // three ways — and the fallback is the code itself, unreachable for a catalogue row.
     //
-    // The three facts go through UNJUDGED: which sentence they select, and whether there is a
-    // true one at all, is `selectorLine`'s to answer, because a conjunction written here is a
-    // rule no test can reach (`PreviewAutoFetch.card`'s own founding reason).
+    // The facts go through UNJUDGED — the membership test on `disabledLanguages` included, which
+    // is why the SET is handed over and not a Boolean: which sentence they select, and whether
+    // there is a true one at all, is `selectorLine`'s to answer, because a conjunction written
+    // here is a rule no test can reach (`PreviewAutoFetch.card`'s own founding reason).
     val rows = board.values.mapNotNull { work ->
         val language = PreferencesManager.languageDisplayName(work.language) ?: work.language
         StreamingPackCopy.selectorLine(
@@ -106,6 +116,7 @@ fun LivePreviewSelectorStrip(
             selectedLanguage = selectedLanguage,
             showLiveWords = showLiveWords,
             localTierInstalled = localTierInstalled,
+            disabledLanguages = disabledLanguages,
         )?.let { line ->
             StreamingPackCopy.featureTitle(language) to line
         }

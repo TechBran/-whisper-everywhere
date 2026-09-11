@@ -71,6 +71,19 @@ class StreamingPreviewEngine(
      * closes over the pack it was asked for; nothing else can be stale.
      */
     private val onLoadFailure: (StreamingPack) -> Unit = {},
+    /**
+     * The pack whose previewer has just been taken OFF for the rest of this process — handed over
+     * for the same reason [onLoadFailure] is, and it is NOT the same event: a failed canary and a
+     * three-strike session disable a language while the load never threw and the bytes on disk
+     * stay valid, so `markCorrupt` is wrong for them and this is the only signal there is.
+     *
+     * It exists because the verdict had no reader outside this class (4.5.0 Task 3 review r2's
+     * N2): this engine is a private field of the service, and the strip above the language
+     * selector promises *"words appear on the bubble whenever you pick it"* off a terminal board
+     * record. The service publishes it into [PreviewDisabled], which both selection surfaces
+     * read. Called from [disable], the ONE writer of the set, so no failure path can forget it.
+     */
+    private val onDisabled: (StreamingPack) -> Unit = {},
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "stream-preview").apply { isDaemon = true }
     },
@@ -187,7 +200,13 @@ class StreamingPreviewEngine(
      * only from the three-strike path after a release has already cleared the identity.
      */
     private fun disable(pack: StreamingPack?) {
-        if (pack != null) disabledLangs = disabledLangs + pack.language
+        if (pack != null) {
+            disabledLangs = disabledLangs + pack.language
+            // ...and the one hand-over, from the one writer: a surface cannot read this object
+            // (4.5.0 Task 3 review r2's N2). Last, so the set and the flag are already settled if
+            // the hook reads anything back.
+            onDisabled(pack)
+        }
         off = true
     }
 

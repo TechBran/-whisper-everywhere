@@ -580,29 +580,43 @@ object PreviewWorkboard {
     }
 
     /**
-     * RETIRE ONE LANGUAGE'S RECORD BECAUSE THE USER HAS CONTRADICTED IT — [forget]'s production
-     * door, and the answer to *"how does a terminal record ever stop being read?"* (4.5.0 Task 3
-     * review r1, B2).
+     * RETIRE ONE LANGUAGE'S RECORD BECAUSE THE ARRIVAL IT IS THE RECEIPT FOR IS NO LONGER THE
+     * CASE — [forget]'s production door, and the answer to *"how does a terminal record ever stop
+     * being read?"* (4.5.0 Task 3 review r1, B2).
      *
      * Keeping terminal entries is deliberate, and until this build it meant keeping them FOREVER:
      * [forget] had no production caller at all. That was safe only while nothing rendered a
      * present-tense sentence off one — `StreamingPackCopy.workLine` answers null for both
      * terminal-and-quiet phases. Ruling 3c's strip is the first surface that does
      * (`selectorReady`: *"English is ready: words appear on the bubble whenever you pick it"*),
-     * and exactly two gestures make that receipt false about the world. Both are the user saying
-     * the opposite of what the record says, which is why they RETIRE it rather than being
-     * conditions the sentence has to ask about:
+     * so it is the first for which a record has to be able to stop being true.
      *
-     *  - **the model is DELETED** (`StreamingPackManager.delete`) — the arrival this record is
-     *    the receipt for has been undone, and 73 MB is no longer on the device.
-     *  - **the user says the PERMANENT NO** (Home's X, through
-     *    [PreviewAutoFetchController.cancel]) — `PreviewAutoFetch.card` has always answered
-     *    `Card.NONE` on `userSaidNo`, and the strip is the same claim on a second surface.
+     * ### THE AXIS, because a LIST of things that have gone wrong is how a fourth round happens
      *
-     * The REVERSIBLE facts are deliberately NOT here: the *"Show live words"* switch and the
-     * on-device tier are terms in the sentence ([StreamingPackCopy.selectorLine]) because they
-     * can come back, and a receipt destroyed by a switch the user flips twice would be a receipt
-     * they cannot get back.
+     * Fix round 1 split the facts on *"can the user un-say it"*, which put the two gestures here
+     * and the two switchable facts in the sentence — and then had no box at all for the two facts
+     * **nobody says** (review r2's N2). The axis that has a box for every fact is not about who
+     * said it but about WHICH CLAIM it falsifies:
+     *
+     *  - **it means the arrival did not happen, or no longer has** → the record goes, HERE. There
+     *    is nothing left for any surface to have a sentence about, and the fact reaches this door
+     *    from the one place that performs it.
+     *      - the model is DELETED (`StreamingPackManager.delete`) — the 73 MB is gone;
+     *      - the verdict is WITHDRAWN (`StreamingPackManager.markCorrupt`, review r2's N2) —
+     *        `isInstalled` answers false, `state()` is `Repair`, and the app's own answer to
+     *        *"is this pack installed"* is now no;
+     *      - the user says the PERMANENT NO (Home's X, through
+     *        [PreviewAutoFetchController.cancel]) — `PreviewAutoFetch.card` has always answered
+     *        `Card.NONE` on `userSaidNo`, and the strip is the same claim on a second surface.
+     *  - **the arrival stands but no word can appear** → a TERM in the sentence
+     *    ([StreamingPackCopy.selectorLine]), because the record is still an honest receipt and
+     *    only the PROMISE is false. The *"Show live words"* switch, the on-device tier, and the
+     *    previewer's own per-language verdict for this process ([PreviewDisabled] — a failed
+     *    canary leaves the bytes valid and the Settings row right to call them installed). A
+     *    receipt destroyed by a switch the user flips twice would be a receipt they cannot get
+     *    back, and the pack would still be installed.
+     *
+     * A new fact goes wherever it answers that question, and nowhere else.
      *
      * **IN-FLIGHT WORK IS LEFT ALONE, and that is the rule rather than a precaution.**
      * `PreviewAutoFetchController.busy()` reads this board, so dropping a RUNNING record would

@@ -688,4 +688,43 @@ class StreamingPackShellPinTest {
         val retires = offsetOfLive(body, "PreviewWorkboard.retire(pack.language)")
         assertTrue("the bytes must go first", removes in 0 until retires)
     }
+
+    /**
+     * (4.5.0 Task 3 fix round 2, review r2's N2) AND THE WITHDRAWN VERDICT IS THE SAME FACT AS A
+     * DELETE, for every surface that reads the board: after `markCorrupt` this app does not
+     * consider the pack installed (`isInstalled` is `this is Installed` only, and `state()`
+     * answers `Repair`), so the receipt for its arrival describes something that is no longer the
+     * case. It is the one path to that which NOBODY performs — the previewer's load threw during
+     * a dictation, `onLoadFailure` landed here — and it left the strip above the language
+     * selector the only surface in the app still saying *"English is ready: words appear on the
+     * bubble whenever you pick it"*, while Home's card had gone silent on `Repair` and the
+     * Settings row was correctly offering the repair.
+     *
+     * The last assertion is the one that stops a fourth round: EVERY door in this class that
+     * changes whether a pack is installed retires the record, counted rather than listed, so a
+     * new one cannot be added without answering the question.
+     */
+    @Test
+    fun theWITHDRAWNVerdictRetiresTheRecordToo_andEveryDoorThatChangesTheInstallDoes() {
+        val body = scopeOf(manager, "fun markCorrupt(pack: StreamingPack) {", "\n    /**")
+        assertEquals(
+            "one retire, in the one production withdrawer",
+            1, liveLineCount(body, "PreviewWorkboard.retire(pack.language)"),
+        )
+        assertEquals(
+            "and it is RETIRE, never forget: a repair fetch already in flight keeps its progress " +
+                "row, because `retire` leaves a RUNNING record alone",
+            0, liveLineCount(body, "PreviewWorkboard.forget("),
+        )
+        val withdraws = offsetOfLive(body, "StreamingPackInstall.markCorrupt(root(), pack)")
+        val retires = offsetOfLive(body, "PreviewWorkboard.retire(pack.language)")
+        assertTrue("the marker must go first, as in delete", withdraws in 0 until retires)
+        assertEquals(
+            "EVERY door in this class that changes whether a pack is installed retires the " +
+                "board's record: two of them today, and a third cannot be added silently",
+            liveLineCount(manager, "StreamingPackInstall.delete(root(), pack)") +
+                liveLineCount(manager, "StreamingPackInstall.markCorrupt(root(), pack)"),
+            liveLineCount(manager, "PreviewWorkboard.retire(pack.language)"),
+        )
+    }
 }

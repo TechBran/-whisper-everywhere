@@ -79,7 +79,26 @@ class StreamingPackManager(private val context: Context) {
         StreamingPackCatalog.packs.filterTo(mutableListOf()) { isInstalled(it) }
             .mapTo(mutableSetOf()) { it.language }
     fun installedDir(pack: StreamingPack): File? = if (isInstalled(pack)) installDir(pack) else null
-    fun markCorrupt(pack: StreamingPack) = StreamingPackInstall.markCorrupt(root(), pack)
+    /**
+     * Withdraw this pack's verdict: the marker goes, **the bytes stay**, [isInstalled] answers
+     * false and [state] becomes `Repair`, which is the row that offers to put it back
+     * ([StreamingPackInstall.markCorrupt]). Called by the previewer's `onLoadFailure` for the pack
+     * whose load actually threw.
+     *
+     * ...AND THE BOARD'S RECORD OF THE ARRIVAL GOES WITH IT (4.5.0 Task 3 review r2's N2), for
+     * exactly [delete]'s reason and through the same door: after this call the app does not
+     * consider the pack installed, so a receipt for its arrival is a receipt for something that is
+     * no longer the case. This is the one path that makes it false with NOBODY having said
+     * anything — the previewer failed to load during a dictation, this ran, Home's card went
+     * silent on `Repair` and the Settings row correctly offered the repair, while the strip above
+     * the language selector went on promising *"English is ready: words appear on the bubble
+     * whenever you pick it"*. [PreviewWorkboard.retire] leaves a RUNNING record alone, so a
+     * transfer in flight keeps its progress row.
+     */
+    fun markCorrupt(pack: StreamingPack) {
+        StreamingPackInstall.markCorrupt(root(), pack)
+        PreviewWorkboard.retire(pack.language)
+    }
 
     /**
      * The DELIVERED pack's directory, or null when Play has not delivered it (or there is no Play

@@ -49,8 +49,10 @@ class StreamingPreviewEngineTest {
         factory: PreviewRecognizerFactory = ScriptedFactory(rec),
         capacity: Int = StreamingPreviewTuning.QUEUE_CAPACITY,
         onLoadFailure: (StreamingPack) -> Unit = {},
+        onDisabled: (StreamingPack) -> Unit = {},
     ) = StreamingPreviewEngine(
-        factory = factory, canaryClip = { clip }, onLoadFailure = onLoadFailure, executor = executor,
+        factory = factory, canaryClip = { clip }, onLoadFailure = onLoadFailure,
+        onDisabled = onDisabled, executor = executor,
         clock = { now }, nanoClock = { 0L }, queueCapacity = capacity, log = { logs += it }, enterExecutorThread = {},
     )
 
@@ -347,6 +349,49 @@ class StreamingPreviewEngineTest {
     }
 
     // ------------------------------------------------------------- failure and lifecycle
+
+    @Test fun everyWayALanguageGoesOffHandsThatPackToTheSurfacesThatPromisedItsWords() {
+        // (4.5.0 Task 3 fix round 2, review r2's N2) The verdict lived on this object and nothing
+        // outside it could read it — the engine is a private field of the service — while the
+        // strip above the language selector promises *"words appear on the bubble whenever you
+        // pick it"* off a terminal board record. So `disable`, the ONE writer of the set, hands
+        // the pack over; the service publishes it into `PreviewDisabled`.
+        //
+        // It is NOT `onLoadFailure`: three of the four causes below leave the bytes on disk valid
+        // and `state()` answering `Installed`, so `markCorrupt` would be wrong for them — and
+        // there is no other signal at all.
+        val loadThrew = mutableListOf<StreamingPack>()
+        engine(null, factory = ScriptedFactory(null, throwAtLoad = true), onDisabled = { loadThrew += it })
+            .warm(dir, pack)
+        assertEquals("a load that threw", listOf(pack), loadThrew)
+
+        val canaryFailed = mutableListOf<StreamingPack>()
+        engine(ScriptedRecognizer(listOf("HELLO"), canaryText = ""), onDisabled = { canaryFailed += it })
+            .warm(dir, pack)
+        assertEquals("a canary that failed, with the bytes intact", listOf(pack), canaryFailed)
+
+        val noClip = mutableListOf<StreamingPack>()
+        engine(ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY), clip = null, onDisabled = { noClip += it })
+            .warm(dir, pack)
+        assertEquals("a missing canary clip", listOf(pack), noClip)
+
+        val struckOut = mutableListOf<StreamingPack>()
+        val rec = ScriptedRecognizer(listOf("A"), failDecodesFrom = 10, canaryText = CANARY)
+        val e = engine(rec, onDisabled = { struckOut += it })
+        e.warm(dir, pack)
+        e.open { emitted += it }
+        feedMs(e, 1_600)
+        assertEquals(
+            "and three decode throws in one session — the pack named BEFORE the identity is " +
+                "cleared, so the language is known",
+            listOf(pack), struckOut,
+        )
+
+        val untouched = mutableListOf<StreamingPack>()
+        val fine = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
+        engine(fine, onDisabled = { untouched += it }).warm(dir, pack)
+        assertEquals("a pack that loads and passes hands over nothing", emptyList<StreamingPack>(), untouched)
+    }
 
     @Test fun threeConsecutiveDecodeFailuresDisableThePreviewerAndBlankTheStrip() {
         val rec = ScriptedRecognizer(listOf("A"), failDecodesFrom = 10, canaryText = CANARY)   // the canary's 9 decodes pass

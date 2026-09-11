@@ -649,21 +649,32 @@ object StreamingPackCopy {
      * one is false on the other. The first version of this function asked nothing, and its READY
      * receipt therefore outlived the switch going off and a device that can never arm.
      *
-     * Those two facts are terms HERE, and not gestures that retire the record, because they are
-     * REVERSIBLE: the switch comes back on, and a tier can be installed. The two IRREVERSIBLE
-     * contradictions — the model deleted, the permanent no — retire the record itself
-     * ([PreviewWorkboard.retire]), because after either of them there is no arrival left for any
+     * Those facts are terms HERE, and not events that retire the record, because the ARRIVAL
+     * still happened and the pack is still installed: only the promise is false. The facts that
+     * mean the arrival is no longer the case — the model deleted, the verdict withdrawn by
+     * `markCorrupt`, the permanent no — retire the record itself ([PreviewWorkboard.retire],
+     * where the axis is stated), because after any of them there is no arrival left for any
      * surface to have a sentence about.
      *
-     * **And the pair is not a guess about which facts matter: they are `localPreviewArms`' own
-     * standing terms.** That gate is `sessionLanguage in installedPackLanguages && !isCloudSession
+     * **And the terms are not a guess about which facts matter: they are `localPreviewArms`' own
+     * STANDING terms.** That gate is `sessionLanguage in installedPackLanguages && !isCloudSession
      * && !batchJobActive && userEnabled && previewReady`. `userEnabled` is [showLiveWords],
      * `!isCloudSession` is [localTierInstalled] at setup level, `installedPackLanguages` is what
-     * the delete takes away (and with it the record), and the remaining two are momentary rather
-     * than standing — *"whenever you pick it"* is a promise about the next session, not about a
-     * batch job that is running now. There is deliberately no `userSaidNo` term, because the gate
-     * has none either: a user who declined and then installed from the Settings row really does
-     * get live words, and the card's silence there is about not nagging rather than about truth.
+     * the delete and the withdrawn verdict take away (and with them the record), and
+     * `batchJobActive` is momentary rather than standing — *"whenever you pick it"* is a promise
+     * about the next session, not about a batch job running now.
+     *
+     * `previewReady` is the one that is BOTH, and reading it as momentary is the hole review r2's
+     * N2 found: it is the engine's `isWarmFor(pack)`, which is false while a model loads — a
+     * moment — and false **for the rest of the process** once that language has been disabled by a
+     * load that threw, a failed canary, a missing clip or three decode throws. That second half
+     * never comes back, so it is a standing term, and [disabledLanguages] is it. Without it the
+     * receipt outlived a pack the previewer had taken out from under it, with the bytes still
+     * installed and nothing anywhere saying so.
+     *
+     * There is deliberately no `userSaidNo` term, because the gate has none either: a user who
+     * declined and then installed from the Settings row really does get live words, and the card's
+     * silence there is about not nagging rather than about truth.
      *
      * ### Why the SELECTION is an input, and what it buys
      *
@@ -706,6 +717,12 @@ object StreamingPackCopy {
      * @param localTierInstalled an on-device whisper tier exists — the same input, for the same
      *        reason: without one `localPreviewArms` refuses on `!isCloudSession` and no word can
      *        ever reach the bubble, however installed the pack is.
+     * @param disabledLanguages the languages whose previewer THIS PROCESS has taken off
+     *        ([PreviewDisabled], written by the engine's own `disable`) — **not** the user's
+     *        switch, which is [showLiveWords]. A SET rather than a Boolean for
+     *        `installedPackLanguages`' reason: the strip renders a row per language, and one
+     *        language going off says nothing about another's. Compared against
+     *        [PreviewWork.language] rather than [language], because the verdict is keyed by code.
      */
     fun selectorLine(
         work: PreviewWork,
@@ -713,15 +730,20 @@ object StreamingPackCopy {
         selectedLanguage: String?,
         showLiveWords: Boolean,
         localTierInstalled: Boolean,
+        disabledLanguages: Set<String>,
     ): String? = when (work.phase) {
         // The one sentence the work line has no phase for, and the one the ruling asks for by
         // name. The board keeps a terminal record, so this is the receipt for an arrival THIS
         // PROCESS made — not a badge on every installed pack, which is the Settings row's job and
         // the language step's chip's. It is a PROMISE about the future ("words appear... whenever
-        // you pick it"), so it is made only where the two reversible facts it depends on hold;
-        // the irreversible ones have already taken the record away.
+        // you pick it"), so it is made only where every standing fact it depends on holds; the
+        // facts that mean the arrival is no longer the case have already taken the record away.
         PreviewPhase.INSTALLED ->
-            if (showLiveWords && localTierInstalled) selectorReady(language) else null
+            if (showLiveWords && localTierInstalled && work.language !in disabledLanguages) {
+                selectorReady(language)
+            } else {
+                null
+            }
         // The user's own no. The strip is about arrivals; a withdrawn one is not one, and the
         // dismissal was itself the receipt.
         PreviewPhase.CANCELLED -> null

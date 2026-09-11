@@ -43,6 +43,7 @@ import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.service.resolveSttProvider
 import com.whispereverywhere.transcription.stream.PreviewAutoFetch
 import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
+import com.whispereverywhere.transcription.stream.PreviewDisabled
 import com.whispereverywhere.transcription.stream.PreviewPhase
 import com.whispereverywhere.transcription.stream.PreviewPicks
 import com.whispereverywhere.transcription.stream.PreviewTrigger
@@ -1413,6 +1414,14 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
     // with "Show live words" off, no word reaches the bubble and the strip's READY receipt is a
     // promise the feature cannot keep (4.4.1 review r1's B2, on the card; review r1's B2 here).
     val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
+    // (4.5.0 Task 3 fix round 2, review r2's N2) ...and WHICH LANGUAGES THE PREVIEWER HAS TAKEN
+    // OFF for this process — the engine's own verdict, published by the service because the
+    // engine is its private field and no surface could read it. COLLECTED rather than remembered:
+    // it is written from the previewer's executor during a dictation, while this card may be
+    // composed, and a stale read here is the READY receipt outliving the pack it promises words
+    // from. No disk is touched — a failed canary leaves 73 MB installed and valid, which is
+    // exactly why `state()` cannot answer this question.
+    val previewDisabled by PreviewDisabled.languages.collectAsState()
     var expanded by remember { mutableStateOf(false) }
 
     // Find the display name for the current selection — through the one owner of code-to-word
@@ -1492,15 +1501,17 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
             // it happening. The strip reads the ONE observable and this card reads nothing: no
             // decision, no board, no actuator here — the selection still writes one preference.
             //
-            // The three facts it is TOLD are the three its sentences depend on (fix round 1,
-            // review r1's B2): the selection, so *"Pick that language again to answer"* renders
-            // only where re-picking would change something; the switch and the tier, so the READY
-            // receipt is not a promise this device cannot keep. Every rule about them lives in
-            // `StreamingPackCopy.selectorLine` — none of them is judged here.
+            // The four facts it is TOLD are the four its sentences depend on (fix round 1, review
+            // r1's B2; fix round 2, review r2's N2): the selection, so *"Pick that language again
+            // to answer"* renders only where re-picking would change something; the switch, the
+            // tier and the previewer's own per-process verdict, so the READY receipt is not a
+            // promise this device, this user's switch or this process can no longer keep. Every
+            // rule about them lives in `StreamingPackCopy.selectorLine` — none is judged here.
             LivePreviewSelectorStrip(
                 selectedLanguage = selectedLanguage,
                 showLiveWords = showLiveWords,
                 localTierInstalled = localTierInstalled,
+                disabledLanguages = previewDisabled,
             )
 
             // Dropdown menu

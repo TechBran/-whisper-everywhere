@@ -3211,6 +3211,17 @@ class FloatingBubbleService : Service(),
             // loading marked B corrupt for A's failure — deleting a healthy marker and leaving the
             // broken pack installed). The engine's own load task is the only place that knows.
             onLoadFailure = { failed -> app.streamingPackManager.markCorrupt(failed) },
+            // (4.5.0 Task 3 fix round 2, review r2's N2) ...and the language the engine has taken
+            // OFF for the rest of this process, which is NOT the same event as a load that threw:
+            // a failed canary and a three-strike session leave 73 MB of valid bytes installed, so
+            // `markCorrupt` would be wrong and `state()` goes on answering `Installed`. Published
+            // because the verdict lived on this private field and no surface could read it, while
+            // the strip above the language selector promises *"words appear on the bubble
+            // whenever you pick it"*. Same hand-over discipline as the hook above: the pack the
+            // ENGINE named, never a field this class may have moved since.
+            onDisabled = { wentOff ->
+                com.whispereverywhere.transcription.stream.PreviewDisabled.note(wentOff.language)
+            },
         ).also { streamingPreview = it }
         streamingPreviewPack = pack
         engine.warm(dir, pack)

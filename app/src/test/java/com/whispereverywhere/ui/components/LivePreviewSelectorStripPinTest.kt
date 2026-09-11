@@ -293,13 +293,23 @@ class LivePreviewSelectorStripPinTest {
         // handed. A conjunction here — `if (showLiveWords && localTierInstalled)` — would be a
         // rule no JVM test can reach on a Compose file, which is `PreviewAutoFetch.card`'s own
         // founding reason. They go into the pure function whole, and it answers null.
-        for (rule in listOf("if (showLiveWords", "&& localTierInstalled", "if (localTierInstalled")) {
+        for (rule in listOf(
+            "if (showLiveWords", "&& localTierInstalled", "if (localTierInstalled",
+            // (fix round 2, review r2's N2) The membership test is a rule too, which is why the
+            // SET is handed over whole and not a Boolean the strip computed.
+            "in disabledLanguages", "isOff(",
+        )) {
             assertEquals(
                 "<<$rule>> on the strip: which sentence is true is selectorLine's answer",
                 0, liveLineCount(strip, rule),
             )
         }
-        for (fact in listOf("selectedLanguage = selectedLanguage", "showLiveWords = showLiveWords", "localTierInstalled = localTierInstalled")) {
+        for (fact in listOf(
+            "selectedLanguage = selectedLanguage",
+            "showLiveWords = showLiveWords",
+            "localTierInstalled = localTierInstalled",
+            "disabledLanguages = disabledLanguages",
+        )) {
             assertEquals(
                 "<<$fact>>: handed through by name, so a call site cannot pass one of them in " +
                     "another's place",
@@ -313,11 +323,15 @@ class LivePreviewSelectorStripPinTest {
         )
     }
 
-    @Test fun bothSitesHandTheStripTheThreeFactsAndNeitherOfThemFakesOne() {
+    @Test fun bothSitesHandTheStripTheFourFactsAndNeitherOfThemFakesOne() {
         // (fix round 1, review r1's B2) The defect was not a sentence, it was a component built to
         // hold nothing that had three unstated assumptions. The facts now arrive from the call
         // site, and the edit this pin catches is the cheap one: a `true` literal to make it
         // compile, which restores the promise the switch and the tier had already withdrawn.
+        //
+        // (fix round 2, review r2's N2) The fourth is the previewer's own per-process verdict,
+        // and `emptySet()` is its version of that cheap edit — a literal that compiles and says
+        // "nothing has gone off", which is the assumption the receipt used to carry.
         val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
         val step = scopeOf(onboarding, "private fun LanguageStep(", "private fun LanguageRow(")
         for ((site, scope) in listOf("picker" to picker, "onboarding step" to step)) {
@@ -325,6 +339,7 @@ class LivePreviewSelectorStripPinTest {
                 "showLiveWords = true",
                 "localTierInstalled = true",
                 "selectedLanguage = \"",
+                "disabledLanguages = emptySet()",
             )) {
                 assertEquals(
                     "$site: <<$literal>> is the assumption coming back as a constant",
@@ -352,6 +367,26 @@ class LivePreviewSelectorStripPinTest {
         )
         assertEquals(1, liveLineCount(step, "showLiveWords = liveWordsSwitchOn,"))
         assertEquals(1, liveLineCount(step, "localTierInstalled = liveTierInstalled,"))
+        // (fix round 2, review r2's N2) The verdict is COLLECTED at both sites, never remembered:
+        // it is written from the previewer's executor thread during a dictation, while either
+        // surface may be composed, and a `remember` is precisely the stale read that let the
+        // READY receipt outlive the pack it promises words from.
+        assertEquals(
+            "the picker collects the one register the engine's verdict is published into",
+            1, liveLineCount(picker, "PreviewDisabled.languages.collectAsState()"),
+        )
+        assertEquals(1, liveLineCount(picker, "disabledLanguages = previewDisabled,"))
+        assertEquals(
+            "and so does the onboarding flow, at flow level beside the tier and the switch",
+            1, liveLineCount(onboarding, "PreviewDisabled.languages.collectAsState()"),
+        )
+        assertEquals(1, liveLineCount(step, "disabledLanguages = liveDisabledLanguages,"))
+        for ((site, scope) in listOf("picker" to picker, "onboarding" to onboarding)) {
+            assertEquals(
+                "$site: the verdict is a COLLECTOR, not a remembered read",
+                0, liveLineCount(scope, "remember { PreviewDisabled"),
+            )
+        }
     }
 
     @Test fun theStripDrawsNothingWhenThereIsNothingToSay() {

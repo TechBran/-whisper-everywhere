@@ -818,12 +818,14 @@ class StreamingPackCopyTest {
         selectedLanguage: String? = "en",
         showLiveWords: Boolean = true,
         localTierInstalled: Boolean = true,
+        disabledLanguages: Set<String> = emptySet(),
     ): String? = StreamingPackCopy.selectorLine(
         work = work,
         language = language,
         selectedLanguage = selectedLanguage,
         showLiveWords = showLiveWords,
         localTierInstalled = localTierInstalled,
+        disabledLanguages = disabledLanguages,
     )
 
     @Test fun theSelectorStripSaysWhatIsArrivingForEveryPhaseThatIsArriving() {
@@ -889,16 +891,45 @@ class StreamingPackCopyTest {
             strip(installed, localTierInstalled = false),
         )
         assertNull(strip(installed, showLiveWords = false, localTierInstalled = false))
-        // ...and the two facts silence ONLY the promise. A transfer that is actually happening is
-        // narrated whoever started it and whatever the device can arm: hiding a running 73 MB
-        // from the user is the silent spend ruling 3c exists to close.
+        // (fix round 2, review r2's N2) ...AND THE PREVIEWER'S OWN VERDICT, which is the fact
+        // NOBODY says. `StreamingPreviewEngine.disable` takes a language off for the rest of the
+        // process on a load that threw, a failed canary, a missing clip or three decode throws —
+        // and the bytes stay installed and valid, so `state()` answers `Installed` and the
+        // Settings row is right to call it installed. The only false claim is this promise, and
+        // until now the strip was the one surface still making it.
+        assertNull(
+            "English is OFF for this process: no word can appear until the app restarts, so " +
+                "\"words appear on the bubble whenever you pick it\" is false — with the pack " +
+                "still on disk and nothing else in the app saying so",
+            strip(installed, disabledLanguages = setOf("en")),
+        )
+        assertEquals(
+            "and it is PER LANGUAGE, like the engine's own set: another language going off says " +
+                "nothing about this one",
+            StreamingPackCopy.selectorReady(en),
+            strip(installed, disabledLanguages = setOf("fr", "de")),
+        )
+        assertNull(
+            "the verdict is read off the RECORD's language, never the selection's — the record " +
+                "outlives the selection and each row is about its own pack",
+            strip(installed, selectedLanguage = "fr", disabledLanguages = setOf("en")),
+        )
+        // ...and the three facts silence ONLY the promise. A transfer that is actually happening
+        // is narrated whoever started it and whatever the device can arm: hiding a running 73 MB
+        // from the user is the silent spend ruling 3c exists to close. A repair fetch for a
+        // language this process has disabled is exactly that case — the bytes are moving.
         for (phase in PreviewPhase.entries) {
             if (phase == PreviewPhase.INSTALLED || phase == PreviewPhase.CANCELLED) continue
             val running = work(PreviewRoute.PLAY_FETCH, phase, 12_000_000L, 72_654_782L, reason = "no room.")
             assertEquals(
                 "$phase: an in-flight line is a fact, not a promise",
                 strip(running),
-                strip(running, showLiveWords = false, localTierInstalled = false),
+                strip(
+                    running,
+                    showLiveWords = false,
+                    localTierInstalled = false,
+                    disabledLanguages = setOf("en"),
+                ),
             )
             assertNotNull("$phase must still say something", strip(running, showLiveWords = false))
         }
