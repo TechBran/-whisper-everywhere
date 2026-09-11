@@ -1241,19 +1241,33 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // pack's language mid-transfer must not hide it: `previewInstallStatus` is remembered in a
     // composable that stays composed and `StreamingPackController.state` is global, so the 73 MB
     // keeps going either way — and Home renders nothing at all for a selection with no pack
-    // (`hasPackForSelection` false ⇒ Card.NONE). Gated on the selection, a Play fetch parked in
-    // NeedsConfirmation therefore had its *"tap to answer"* — the one gesture the r1 B3 fix exists
-    // to provide — unreachable, and the transfer invisible everywhere in the app, with no system
-    // notification on either Play route. That is the same hiding of the user's own action D17
+    // (`hasPackForSelection` false ⇒ Card.NONE). Gated on the selection, a running 73 MB was
+    // therefore invisible everywhere in the app, with no system notification on either Play
+    // route — it is the VISIBILITY, and only the visibility, that these rows are out here for;
+    // fix round 2 (H2-B1) withdrew the tap. That is the same hiding of the user's own action D17
     // refused on the card ("hiding its progress card would hide their own action from them and
     // leave the X as the only thing to press"). An un-tappable progress row naming the model they
     // asked for is a receipt, not a sale.
     //
-    // The one tap that does NOT survive the selection moving is the TERMINAL RETRY: a fresh 73 MB
-    // for a language the gate has already refused is exactly the offer the section above stopped
-    // making. A Failed row still SAYS what happened; it simply cannot restart until the language
-    // is picked back. Play's own confirmation still answers, because that is the transfer already
-    // in flight.
+    // WHAT SURVIVES IS THE SENTENCE; NO TAP DOES (fix round 2, H2-B1). `fetchLineTappable` is
+    // true for exactly two states and BOTH of them spend the 73 MB rather than watch it:
+    //   - `Failed` — the terminal retry is a fresh 73 MB for a language the gate has already
+    //     refused, which is exactly the offer the section above stopped making;
+    //   - `NeedsConfirmation` — which fix round 1 read as "the transfer already in flight" and
+    //     is not. It is Play's state BEFORE Play has moved a single byte, in BOTH sub-cases:
+    //     `NpuPackFetch.kt:183-184` maps `STATUS_WAITING_FOR_WIFI` and
+    //     `STATUS_REQUIRES_USER_CONFIRMATION` onto it, and this file's own copy says so twice
+    //     (`SETTINGS_INSTALL_FETCH`: *"Play raises its own metered/size dialog BEFORE a transfer
+    //     that size"*; `CARD_ANSWER_PLAY`: *"a cellular or size confirmation, or a wait for
+    //     wifi"*). `StreamingPackInstall.fetchInFlight` counting it as in-flight is a
+    //     SINGLE-FLIGHT answer, not a bytes-have-moved one. So the tap that answers it is the tap
+    //     that AUTHORISES the 73 MB — over cellular in the wifi-wait case.
+    // Off-selection that is 73 MB of data and 73 MB of storage for a recognizer
+    // `localPreviewArms` refuses on its first conjunct: the very spend this pass exists to stop,
+    // one state over from where fix round 1 drew the line. Nothing is lost by closing it — an
+    // unanswered Play fetch parks harmlessly, the row keeps SAYING what is happening (which is
+    // the receipt this whole block exists to provide), and picking the language back makes the
+    // tap live again.
     if (!previewState.isInstalled) {
         if (previewInstallStatus != null) {
             SettingsItem(
@@ -1262,15 +1276,13 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
                 subtitle = previewInstallStatus ?: "",
             )
         } else if (previewFetchLine != null) {
-            // Tappable only where a tap does something: the terminal retry, and the
-            // NeedsConfirmation that answers PLAY'S OWN dialog. Every other state is work in
-            // flight, and SettingsItem makes itself clickable the moment it is handed an
-            // onClick.
+            // Tappable only where a tap does something — the terminal retry, and the
+            // NeedsConfirmation that answers PLAY'S OWN dialog — AND only while the selection is
+            // still the language this pack serves, because both of those taps spend the 73 MB
+            // (see above). Every other state is work in flight, and SettingsItem makes itself
+            // clickable the moment it is handed an onClick.
             val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch) &&
-                (
-                    selectedPack == previewPack ||
-                        previewFetch is NpuPackFetch.FetchState.NeedsConfirmation
-                )
+                selectedPack == previewPack
             val previewRowTap: () -> Unit = {
                 val activity = context as? android.app.Activity
                 if (previewFetch is

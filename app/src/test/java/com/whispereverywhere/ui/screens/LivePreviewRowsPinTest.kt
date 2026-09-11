@@ -242,11 +242,15 @@ class LivePreviewRowsPinTest {
 
     @Test
     fun workAlreadyInFlightKeepsItsSurfaceWhereverTheSelectionGoes() {
-        // (fix round 1, H-B3.) The progress row and the Play row describe a transfer the USER
-        // STARTED, not an offer. Inside the selection gate, a language change mid-transfer hid a
-        // running 73 MB everywhere in the app — Home renders nothing for a selection with no pack
-        // — and took Play's *"tap to answer"* with it, which is the one gesture the r1 B3 fix
-        // exists to provide. So they sit OUTSIDE the gate, under their own not-installed guard.
+        // (fix round 1, H-B3; fix round 2, H2-B1.) The progress row and the Play row describe a
+        // transfer the USER STARTED, not an offer. Inside the selection gate, a language change
+        // mid-transfer hid a running 73 MB everywhere in the app — Home renders nothing for a
+        // selection with no pack, and neither Play route raises a system notification. So they
+        // sit OUTSIDE the gate, under their own not-installed guard. What survives off-selection
+        // is the SENTENCE and not the TAP: `fetchLineTappable`'s two states are `Failed` (a fresh
+        // 73 MB) and `NeedsConfirmation`, which is Play's state BEFORE it has moved a byte
+        // (`NpuPackFetch.kt:183-184` maps WAITING_FOR_WIFI and REQUIRES_USER_CONFIRMATION onto
+        // it), so answering it AUTHORISES the 73 MB. Both are the spend this pass exists to stop.
         val gate = offsetOfLive(rows, "if (selectedPack == previewPack) {")
         val offer = offsetOfLive(rows, "onClick = startPreviewInstall,")
         val inFlight = offsetOfLive(rows, "if (!previewState.isInstalled) {")
@@ -265,15 +269,22 @@ class LivePreviewRowsPinTest {
                 "must never appear over work already running",
             1, liveLineCount(rows, "previewInstallStatus != null || previewFetchLine != null -> Unit"),
         )
+        val tapGuard = scopeOf(rows, "val previewTappable =", "val previewRowTap")
         assertEquals(
-            "the terminal RETRY is the one tap that does not survive the selection moving — a " +
-                "fresh 73 MB for a language the gate has already refused is the offer this " +
-                "section stopped making",
-            1, liveLineCount(rows, "selectedPack == previewPack ||"),
+            "NO tap survives the selection moving: the tap guard's second conjunct is the " +
+                "selection itself, and it is the WHOLE of the second conjunct",
+            1, liveLineCount(tapGuard, "selectedPack == previewPack"),
         )
         assertEquals(
-            "while PLAY'S OWN confirmation still answers, because that is the transfer in flight",
-            1, liveLineCount(rows, "previewFetch is NpuPackFetch.FetchState.NeedsConfirmation"),
+            "and it is not an OR with anything — a NeedsConfirmation disjunct here is the tap " +
+                "that AUTHORISES a fresh 73 MB for a language the gate has already refused " +
+                "(fix round 2, H2-B1), not a receipt for bytes already moving",
+            0, liveLineCount(tapGuard, "||"),
+        )
+        assertEquals(
+            "so NeedsConfirmation is named ONCE in the section — inside the tap, which routes it " +
+                "to PLAY'S own dialog — and never as a reason the tap is alive off-selection",
+            1, liveLineCount(rows, "NeedsConfirmation"),
         )
     }
 
