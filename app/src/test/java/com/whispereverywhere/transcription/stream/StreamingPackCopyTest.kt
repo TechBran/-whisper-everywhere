@@ -74,6 +74,10 @@ class StreamingPackCopyTest {
             StreamingPackCopy.cardLanguageNote(en),
             StreamingPackCopy.CARD_DISMISS,
             StreamingPackCopy.CARD_ANSWER_PLAY,
+            // (4.5.0 Task 3c) The strip above the language selector. Its running phases delegate
+            // to `workLine` (already in the scan below), so what joins here is the one sentence
+            // of its own — the READY receipt.
+            StreamingPackCopy.selectorReady(en),
         ) + everyState.map { StreamingPackCopy.settingsTitle(it, en) } +
             everyState.map { StreamingPackCopy.settingsSubtitle(it, en) } +
             everyState.map { StreamingPackCopy.cardOffer(it, en) } +
@@ -760,6 +764,118 @@ class StreamingPackCopyTest {
             "and NO work is no tap: the row that is not narrating anything is the row that is " +
                 "offering the install, and that is a different onClick",
             StreamingPackCopy.workLineTappable(null),
+        )
+    }
+
+    // --------------------------------- above the language selector (4.5.0 Task 3c)
+
+    @Test fun theSelectorStripSaysWhatIsArrivingForEveryPhaseThatIsArriving() {
+        // Ruling 3c: *"incorporate the status for that model being downloaded right there above
+        // the language selector … and know that their language is ready for selection."* The
+        // strip's title names the language (`featureTitle`, the same head the Settings in-flight
+        // row uses), so this line is the PHASE and the bytes — delegated to the one work line
+        // rather than re-worded, because a parallel table of Play's phases is how two surfaces
+        // come to describe one transfer differently.
+        for (phase in PreviewPhase.entries) {
+            val line = StreamingPackCopy.selectorLine(
+                work(PreviewRoute.PLAY_FETCH, phase, 12_000_000L, 72_654_782L, reason = "no room."),
+                en,
+            )
+            when (phase) {
+                // The user's own no — the dismissal was its own receipt.
+                PreviewPhase.CANCELLED -> assertNull("$phase must be silent here", line)
+                // The one sentence the work line has no phase for.
+                PreviewPhase.INSTALLED ->
+                    assertEquals(StreamingPackCopy.selectorReady(en), line)
+                // Everything else is the ONE work line, in its receipt form, verbatim.
+                else -> assertEquals(
+                    "$phase must be the work line itself, not a second wording of it",
+                    StreamingPackCopy.workLine(
+                        work(
+                            PreviewRoute.PLAY_FETCH, phase, 12_000_000L, 72_654_782L,
+                            reason = "no room.",
+                        ),
+                        tappable = false,
+                    ),
+                    line,
+                )
+            }
+        }
+        assertEquals(
+            "and the bytes reach it, through the catalog's one rounding rule",
+            "Fetching the preview model: 12 of 73 MB",
+            StreamingPackCopy.selectorLine(
+                work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING, 12_000_000L, 72_654_782L),
+                en,
+            ),
+        )
+    }
+
+    @Test fun theStripAsksForNoTapBecauseItHasNoneAndPointsAtTheSelectorInstead() {
+        // `workLine`'s `tappable` parameter buys exactly one sentence, and this is the surface it
+        // was written for: AWAITING_ANSWER's receipt form ends "Pick that language again to
+        // answer", and the selector immediately below the strip is that gesture. Review r3's
+        // H3-B3 defect was a sentence naming a gesture the app had decided to refuse; here the
+        // named gesture is the one control on screen.
+        val line = StreamingPackCopy.selectorLine(
+            work(PreviewRoute.PLAY_FETCH, PreviewPhase.AWAITING_ANSWER),
+            en,
+        )
+        assertTrue("<<$line>> must not ask for a tap", line?.contains("tap") == false)
+        assertTrue(
+            "and must name the selection, which is what the strip sits above",
+            line?.contains("Pick that language again") == true,
+        )
+    }
+
+    @Test fun aFailedArrivalStaysOnTheStripBecauseNothingElseWouldSayIt() {
+        // Under 3b the user CAUSED this transfer by picking, and under 3a a metered connection has
+        // no offer card anywhere — so if the strip went silent on a failure the pick would have
+        // spent their data and reported nothing. The refusal is rendered VERBATIM, for the work
+        // line's own reason: the shell has already re-told it in this feature's words.
+        assertEquals(
+            "There is not enough room for the preview model.",
+            StreamingPackCopy.selectorLine(
+                work(
+                    PreviewRoute.PLAY_FETCH, PreviewPhase.FAILED,
+                    reason = "There is not enough room for the preview model.",
+                ),
+                en,
+            ),
+        )
+    }
+
+    @Test fun theReadySentenceConfirmsRatherThanInstructsAndNamesItsLanguage() {
+        assertEquals(
+            "English is ready: words appear on the bubble whenever you pick it, and the typed " +
+                "transcript is unchanged.",
+            StreamingPackCopy.selectorReady(en),
+        )
+        assertEquals(
+            "Spanish is ready: words appear on the bubble whenever you pick it, and the typed " +
+                "transcript is unchanged.",
+            StreamingPackCopy.selectorReady(es),
+        )
+        assertTrue(
+            "it says the language is READY, which is the ruling's own word for the end of this " +
+                "strip's job",
+            StreamingPackCopy.selectorReady(en).contains("ready"),
+        )
+        assertFalse(
+            "and it does not INSTRUCT: the pack only ever arrives for a language the user has " +
+                "already picked, so \"pick English\" would tell them to do what they just did " +
+                "(cardInstalled's own rule)",
+            StreamingPackCopy.selectorReady(en).startsWith("Pick "),
+        )
+        assertTrue(
+            "\"whenever you pick it\" is true for the user transcribing in it now AND for one " +
+                "who has since moved on — which is reachable, because the record outlives the " +
+                "selection",
+            StreamingPackCopy.selectorReady(en).contains("whenever you pick it"),
+        )
+        assertTrue(
+            "and it keeps the additive promise, like every other sentence in this object",
+            StreamingPackCopy.selectorReady(en).contains("typed transcript is unchanged"),
         )
     }
 

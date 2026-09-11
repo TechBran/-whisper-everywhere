@@ -51,6 +51,7 @@ import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
 import com.whispereverywhere.transcription.stream.StreamingPackCopy
 import com.whispereverywhere.transcription.stream.StreamingPackState
+import com.whispereverywhere.ui.components.LivePreviewSelectorStrip
 import com.whispereverywhere.tts.TtsModelManager
 import com.whispereverywhere.tts.TtsPackController
 import com.whispereverywhere.tts.TtsVoices
@@ -1443,6 +1444,15 @@ fun LanguageSelectionCard() {
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            // (4.5.0 Task 3c) THE PROGRESS LIVES ABOVE THE SELECTOR — owner ruling, 2026-09-11:
+            // *"you can incorporate the status for that model being downloaded right there above
+            // the language selector. That way users can see the progress right away and know that
+            // their language is ready for selection."* It is the honest half of ruling 3b: a pick
+            // now spends the user's data on any connection, so the place they picked has to show
+            // it happening. The strip reads the ONE observable and this card reads nothing: no
+            // decision, no board, no actuator here — the selection still writes one preference.
+            LivePreviewSelectorStrip()
 
             // Dropdown menu
             ExposedDropdownMenuBox(

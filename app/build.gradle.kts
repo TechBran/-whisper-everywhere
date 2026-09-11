@@ -575,6 +575,14 @@ tasks.withType<Test>().configureEach {
         // files, so without this entry the one edit each pin exists to catch is the one that
         // never re-runs it.
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewAutoFetchController.kt",
+        // (4.5.0 Task 3c) The progress strip above the LANGUAGE SELECTOR, by this list's stated
+        // rule. `LivePreviewSelectorStripPinTest`'s pins over it are ORDER and ZERO/ONE-count
+        // claims on a Compose file — the strip ABOVE the dropdown and above the onboarding rows,
+        // one board collector, no decision, no tap, no sentence of its own. A strip that drifted
+        // BELOW the control that caused the spend renders every correct sentence and is still the
+        // silent spend ruling 3c closes, and that edit is layout-shaped: without this entry it
+        // would leave testDebugUnitTest UP-TO-DATE and every pin green against the old file.
+        "src/main/java/com/whispereverywhere/ui/components/LivePreviewSelectorStrip.kt",
         // (4.5.0) The previewer's sherpa ADAPTER — the one file in the app that imports
         // com.k2fsa, whose static init loads libsherpa-onnx-jni.so, so no JVM test may reference
         // it and SherpaPreviewLoaderPinTest pins it as source. What that pin protects is a single

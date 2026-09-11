@@ -498,6 +498,77 @@ object StreamingPackCopy {
         }
     }
 
+    // ------------------------------------- above the LANGUAGE SELECTOR (4.5.0 Task 3c)
+
+    /**
+     * WHAT THE STRIP ABOVE THE LANGUAGE SELECTOR SAYS about one language's arrival, or null where
+     * it says nothing — owner ruling 3c, 2026-09-11:
+     *
+     * > *"And you can incorporate the status for that model being downloaded right there above the
+     * > language selector. That way users can see the progress right away and know that their
+     * > language is ready for selection."*
+     *
+     * It is the honest half of ruling 3b: a selection spends the user's data at once, so the place
+     * they picked is the place that has to show them it happening. This retires AF5's
+     * Home-not-onboarding compromise — the progress no longer hides on Home's card.
+     *
+     * ### Why this is a DELEGATION and not a second table
+     *
+     * [workLine] already has a sentence for every running phase, and the language is named by the
+     * row's own title ([featureTitle]) exactly as the Settings in-flight row names it. A parallel
+     * table of *"the English preview model is…"* sentences would be a second wording of Play's
+     * phases held to the same rules by a second test, which is how *"included with the app"* came
+     * to sit over an undelivered pack (fix round 1's B1, on the row). So this function adds exactly
+     * the one sentence [workLine] has no phase for — the READY receipt — and answers the rest by
+     * asking it.
+     *
+     * `tappable = false` because this strip has no tap. That is not a compromise: the sentence it
+     * selects for [PreviewPhase.AWAITING_ANSWER] is the receipt form, *"Pick that language again
+     * to answer"*, and the control it names is the selector immediately below. It is the one place
+     * in the app where that sentence points at something the reader can see.
+     *
+     * @param work the board's record for ONE language. The strip renders a row per record, so two
+     *        arrivals are two rows rather than one overwriting the other.
+     * @param language that record's own language as the picker spells it — never the SELECTED
+     *        one. A transfer keeps its surface when the selection moves off it (the Settings row's
+     *        H-B3), so the row has to name the pack it is about.
+     */
+    fun selectorLine(work: PreviewWork, language: String): String? = when (work.phase) {
+        // The one sentence the work line has no phase for, and the one the ruling asks for by
+        // name. The board keeps a terminal record, so this is the receipt for an arrival THIS
+        // PROCESS made — not a badge on every installed pack, which is the Settings row's job and
+        // the language step's chip's.
+        PreviewPhase.INSTALLED -> selectorReady(language)
+        // The user's own no. The strip is about arrivals; a withdrawn one is not one, and the
+        // dismissal was itself the receipt.
+        PreviewPhase.CANCELLED -> null
+        PreviewPhase.ASKING,
+        PreviewPhase.AWAITING_ANSWER,
+        PreviewPhase.DOWNLOADING,
+        PreviewPhase.TRANSFERRING,
+        PreviewPhase.INSTALLING,
+        PreviewPhase.ABANDONED,
+        // A FAILED stays on the strip, and it has to: under ruling 3b the user CAUSED this
+        // transfer by picking, and on a metered connection there is no card anywhere else in the
+        // app that would tell them it did not arrive (3a deleted it).
+        PreviewPhase.FAILED,
+        -> workLine(work, tappable = false)
+    }
+
+    /**
+     * *"...and know that their language is ready for selection"* — the ruling's own words for the
+     * end of the strip's job.
+     *
+     * It CONFIRMS rather than instructs, for [cardInstalled]'s reason: the pack only ever arrives
+     * for a language the user has already picked, so *"pick English"* would tell them to do the
+     * thing they just did. *"whenever you pick it"* is true both for the user who is transcribing
+     * in this language right now and for one who has since moved to another — which is reachable,
+     * because the record outlives the selection.
+     */
+    fun selectorReady(language: String): String =
+        "$language is ready: words appear on the bubble whenever you pick it, and the typed " +
+            "transcript is unchanged."
+
     /**
      * Whether a TAP on the row showing [workLine] does anything — `TtsModelManager`'s B1 lesson,
      * inherited rather than re-learned: the row renders a line for every phase, `SettingsItem`

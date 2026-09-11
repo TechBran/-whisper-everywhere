@@ -616,6 +616,14 @@ private fun LanguageStep(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(Modifier.height(16.dp))
+    // (4.5.0 Task 3c) THE SAME PROGRESS STRIP THE IN-APP PICKER SHOWS, above the rows that are
+    // this step's selector — the ruling names the PLACEMENT, not the screen, and one component at
+    // both sites is one fewer chance for a surface to fall behind the observable. It is silent by
+    // construction here today: the ENGINES step comes after this one, so no on-device tier exists
+    // while these rows are on screen and `PreviewAutoFetch.decide` refuses without one. The pick
+    // made here is recorded by the selection's one writer and honoured on Home, where the tier
+    // is. See the component's own KDoc.
+    com.whispereverywhere.ui.components.LivePreviewSelectorStrip()
     val deviceCode = OnboardingLogic.deviceLanguageCode(languageTag)
     OnboardingLogic.languageRows(languageTag).forEach { (code, displayName) ->
         LanguageRow(
