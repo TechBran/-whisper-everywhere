@@ -1071,8 +1071,8 @@ fun SettingsSection(
  *
  *  - which source this install has: `StreamingPackManager.state` → `StreamingPackInstall.resolve`
  *  - which of the four actuators the one action uses: `StreamingPackInstall.sourceOf`
- *  - every word, including the amendment's "included with the app" on the two Play routes:
- *    `StreamingPackCopy`
+ *  - every word, including the amendment's "included with the app" — on the DELIVERED route
+ *    only, since an undelivered on-demand pack still costs the user 73 MB: `StreamingPackCopy`
  *  - whether a tap does anything at all: `StreamingPackController.isBusy` +
  *    `StreamingPackCopy.fetchLineTappable`
  *

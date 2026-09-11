@@ -299,10 +299,13 @@ fun HomeScreen(
             }
             if (!hasTtsVoice) {
                 // (4.4.0, Task 2b fix round 1, B2) The row names the SOURCE this device installs
-                // from — "350 MB from Google Play" on a Play build, where the archive rides the
-                // tts_kokoro pack and nothing is pulled from a third party. It said "about 365
-                // MB" on every build before, which was wrong about the size and, on the flow most
-                // users take, about the source. Re-read on the same resume tick as hasTtsVoice.
+                // from — "350 MB fetched from Google Play" on a Play build, where the archive
+                // comes from our own on-demand tts_kokoro pack and not from a third party. It
+                // does not say "included with the app" on that route, because the pack is
+                // on-demand and the fetch really does spend the user's data (Task 6, B1). It
+                // said "about 365 MB" on every build before, which was wrong about the size
+                // and, on the flow most users take, about the source. Re-read on the same
+                // resume tick as hasTtsVoice.
                 val voiceClause = remember(resumeTick) {
                     TtsModelManager.voiceSourceClause(
                         TtsModelManager.installRoute(ttsModelManager.state())

@@ -712,9 +712,11 @@ private fun EnginesStep(
     val speech by vm.speechState.collectAsState()
     val voice by vm.voiceState.collectAsState()
     // (4.4.0, Task 2b fix round 1, B2) The voice's SOURCE-and-size clause, from the one pure
-    // route-keyed table every voice surface reads: "350 MB from Google Play" on a Play build,
-    // where the archive rides the tts_kokoro pack and nothing is pulled from a third party. Both
-    // phases of this step used to say "about 365 MB" and "downloads", wrong on both halves. Held
+    // route-keyed table every voice surface reads: "350 MB fetched from Google Play" on a Play
+    // build, where the archive comes from our own on-demand tts_kokoro pack and not from a third
+    // party — it does not claim to be "included with the app" there, because an on-demand pack
+    // is not in the install until Play delivers it (Task 6, B1). Both phases of this step used
+    // to say "about 365 MB" and "downloads", wrong on both halves. Held
     // for the step in a remember — it reads Play's delivery state and the disk — and the answer
     // does not depend on the tier pick, so the choose phase may quote it too.
     val voiceClause = remember { vm.voiceSourceClause() }

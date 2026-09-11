@@ -15,9 +15,22 @@ import com.whispereverywhere.npu.NpuPackFetch
  * previewer was going to be a Hugging Face download on every build. The 2026-09-10 amendment
  * moved it onto Play Asset Delivery and ruled the copy with it: *"the previewer's install row
  * says 'included with the app' on Play builds (it is fetched, not downloaded from a third
- * party); the fallback wording only on non-Play builds."* On a Play install those 73 MB ride the
- * `preview_en` pack inside the AAB the user already installed — a row promising a download is
- * false there, and it is false in the direction that matters (a data-cost claim).
+ * party); the fallback wording only on non-Play builds."* That parenthetical is about
+ * PROVENANCE: the bytes are the app's own, published in the same AAB, and no third party ever
+ * serves them. Naming Play and the size says that, and a row promising a Hugging Face download
+ * on a Play build would be false in the direction that matters (a data-cost claim).
+ *
+ * ### Why only ONE of the two Play rows says "included with the app" (fix round 1, B1)
+ *
+ * `preview_en` is `deliveryType.set("on-demand")` (`preview_en/build.gradle.kts:35`), so those
+ * 73 MB ride the AAB we UPLOADED — not the install the user HAS. Until Play has delivered the
+ * pack, a tap starts a real 73 MB transfer over the user's own connection, which is precisely
+ * why this row must answer [NpuPackFetch.FetchState.NeedsConfirmation] at all (Play raises its
+ * own metered/size dialog before a transfer that size). So "included with the app" belongs to
+ * [StreamingPackState.PackDelivered], where the bytes really are on the device; the
+ * [StreamingPackState.PackFetchable] row keeps the provenance clause but drops the cost claim
+ * and names the size, Play, and the connection instead. The split the state machine already
+ * draws is the split the copy draws.
  *
  * So the row's words are keyed by [StreamingPackState], the state machine that already knows
  * which source THIS install has ([StreamingPackInstall.resolve]) — no second discriminator, no
@@ -82,9 +95,17 @@ object StreamingPackCopy {
     val SETTINGS_INSTALL_FROM_PACK =
         "Included with the app ($BADGE) and already on this device — nothing to fetch. $ADDITIVE"
 
-    /** Play can serve this install: the ordinary on-demand fetch, and still not a third party. */
+    /**
+     * Play can serve this install: the ordinary on-demand fetch, and still not a third party.
+     *
+     * It says the SIZE and the CONNECTION as well as the source, because this is the row where a
+     * tap costs the user 73 MB of their data. It does NOT borrow
+     * [SETTINGS_INSTALL_FROM_PACK]'s "included with the app": the pack is `on-demand`, so on this
+     * row the bytes are not on the device yet (fix round 1, B1 — see the class KDoc).
+     */
     val SETTINGS_INSTALL_FETCH =
-        "Included with the app ($BADGE), delivered by Google Play when you ask for it. $ADDITIVE"
+        "The app's own $BADGE model, fetched from Google Play over your connection when you ask " +
+            "for it — never from a third party. $ADDITIVE"
 
     /**
      * The NON-PLAY row, and the spec's original sentence verbatim. Reached only where
@@ -105,8 +126,13 @@ object StreamingPackCopy {
     const val SETTINGS_REPAIR_FROM_PACK =
         "$DAMAGED Install it again from the copy included with the app to restore live words."
 
-    /** Repair by asking Play again. Still not a download from anyone else. */
-    const val SETTINGS_REPAIR_FETCH = "$DAMAGED Get it again from Google Play to restore live words."
+    /**
+     * Repair by asking Play again. Still not a download from anyone else — and still a real
+     * transfer of the whole pack, so it carries the size for the same reason
+     * [SETTINGS_INSTALL_FETCH] does.
+     */
+    val SETTINGS_REPAIR_FETCH =
+        "$DAMAGED Get it again from Google Play ($BADGE over your connection) to restore live words."
 
     // ---------------------------------------------------------------- the row
 

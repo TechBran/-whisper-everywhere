@@ -82,7 +82,7 @@ class StreamingPackCopyTest {
             StreamingPackCopy.SETTINGS_INSTALL_FROM_PACK,
         )
         assertEquals(
-            "Included with the app (73 MB), delivered by Google Play when you ask for it. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
+            "The app's own 73 MB model, fetched from Google Play over your connection when you ask for it — never from a third party. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
             StreamingPackCopy.SETTINGS_INSTALL_FETCH,
         )
         assertEquals(
@@ -98,7 +98,7 @@ class StreamingPackCopyTest {
             StreamingPackCopy.SETTINGS_REPAIR_FROM_PACK,
         )
         assertEquals(
-            "The preview model is damaged. Get it again from Google Play to restore live words.",
+            "The preview model is damaged. Get it again from Google Play (73 MB over your connection) to restore live words.",
             StreamingPackCopy.SETTINGS_REPAIR_FETCH,
         )
         assertEquals(
@@ -147,17 +147,16 @@ class StreamingPackCopyTest {
 
     // ------------------------------------------------------------------ the amendment's own rule
 
-    @Test fun thePlayRoutesSayIncludedWithTheAppAndPromiseNoThirdPartyDownload() {
+    @Test fun thePlayRoutesPromiseNoThirdPartyDownload_andOnlyTheDeliveredOneSaysItIsAlreadyHere() {
         // The amendment, verbatim: "the previewer's install row says 'included with the app' on
-        // Play builds (it is fetched, not downloaded from a third party)". On a Play install the
-        // 73 MB rides the `preview_en` asset pack inside the AAB the user already installed —
-        // telling them they are about to download it from somewhere is simply false.
+        // Play builds (it is fetched, not downloaded from a third party)". Its parenthetical is
+        // about PROVENANCE, and naming Play is what keeps it: no Play row may offer a
+        // third-party download.
         for (state in listOf(StreamingPackState.PackDelivered, StreamingPackState.PackFetchable)) {
             val sub = StreamingPackCopy.settingsSubtitle(state)
-            assertTrue("$state must say where the bytes really come from: $sub", sub.contains("Included with the app"))
             assertFalse(
-                "and must promise no download: on a Play install there is no third-party " +
-                    "transfer at all, which is the whole point of the amendment: $sub",
+                "and must promise no third-party download: on a Play route the bytes are the " +
+                    "app's own, which is the whole point of the amendment: $sub",
                 sub.lowercase().contains("download"),
             )
             assertFalse(
@@ -165,6 +164,34 @@ class StreamingPackCopyTest {
                 StreamingPackCopy.settingsTitle(state).lowercase().contains("download"),
             )
         }
+        // Fix round 1, B1. Provenance is NOT a licence to claim the bytes are already paid for.
+        // `preview_en` is deliveryType "on-demand" (preview_en/build.gradle.kts:35), so on
+        // PackFetchable the pack rides the AAB we UPLOADED, not the install the user HAS: the
+        // tap starts a real 73 MB transfer, which is exactly why this row has to answer
+        // NeedsConfirmation. Only the DELIVERED row may say the bytes came with the app.
+        val delivered = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackDelivered)
+        assertTrue("the delivered row is the one that really is already here: $delivered", delivered.contains("Included with the app"))
+        assertTrue(delivered.contains("already on this device"))
+        val fetchable = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackFetchable)
+        assertFalse(
+            "an on-demand pack that has not been delivered is NOT included with the install the " +
+                "user has, and saying so hides 73 MB of their data: $fetchable",
+            fetchable.lowercase().contains("included with the app"),
+        )
+        assertFalse("nor is it already on the device: $fetchable", fetchable.contains("already on this device"))
+        assertTrue("it names Play: $fetchable", fetchable.contains("Google Play"))
+        assertTrue(
+            "the size the tap will cost, from the one badge formatter: $fetchable",
+            fetchable.contains(StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)),
+        )
+        assertTrue("and that it travels over the user's own connection: $fetchable", fetchable.contains("your connection"))
+        // The repair that re-fetches costs the same 73 MB and says so too.
+        val repairFetch = StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(StreamingPackState.PackFetchable))
+        assertTrue(repairFetch.contains("Google Play"))
+        assertTrue(
+            "a repair that re-fetches the whole pack is not free either: $repairFetch",
+            repairFetch.contains(StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)),
+        )
     }
 
     @Test fun theFallbackWordingAppearsOnTheNonPlayRowAndNowhereElse() {

@@ -497,13 +497,17 @@ class TtsModelManager(private val context: Context) {
          * that is now false (the archive is fetched from Play, not pulled from a third party) and
          * it was already stale (the archive is 350 MB, the row said 365).
          *
-         * Task 6 (the 2026-09-10 amendment, *"the voice row likewise"*) finished the sentence:
-         * the two PLAY routes now say the archive is **included with the app**, not merely that
-         * Play is where it comes from. Naming the source was half the fix — a 350 MB row that
-         * does not say the bytes are already part of the install the user has reads like a
-         * second, optional purchase, and on a Play install the archive rides the `tts_kokoro`
-         * pack inside that same AAB. The fallback row keeps the download wording, because there
-         * it really is a third-party transfer of bytes this install does not carry.
+         * Task 6 (the 2026-09-10 amendment, *"the voice row likewise"*) finished the sentence,
+         * and its fix round 1 (B1) drew the line inside it. [VoiceInstallRoute.FromPack] says
+         * the archive is **included with the app**, because there it really is on the device.
+         * [VoiceInstallRoute.Fetch] must NOT: `tts_kokoro` is `deliveryType = "on-demand"`
+         * (`tts_kokoro/build.gradle.kts:47`), so the archive rides the AAB we UPLOADED, not the
+         * install the user HAS, and a tap here starts a real 350 MB transfer over their own
+         * connection — which is why this row has to answer Play's `NeedsConfirmation` at all.
+         * That row names the size, Play, and the connection instead; the amendment's point is
+         * PROVENANCE (the bytes are the app's own, never a third party's) and naming Play keeps
+         * it. The fallback row keeps the download wording, because there it really is a
+         * third-party transfer of bytes this install does not carry.
          */
         fun installRowTitle(route: VoiceInstallRoute): String = when (route) {
             VoiceInstallRoute.None -> "Kokoro voice — installed"
@@ -520,9 +524,9 @@ class TtsModelManager(private val context: Context) {
                 "Kokoro, included with the app and already on this device: speaks highlighted " +
                     "text aloud, entirely on-device"
             VoiceInstallRoute.Fetch ->
-                "Kokoro (${StreamingPackCatalog.sizeBadge(TAR_BYTES)}), included with the app " +
-                    "and delivered by Google Play: speaks highlighted text aloud, entirely " +
-                    "on-device"
+                "Kokoro (${StreamingPackCatalog.sizeBadge(TAR_BYTES)}), the app's own voice, " +
+                    "fetched from Google Play over your connection: speaks highlighted text " +
+                    "aloud, entirely on-device"
             VoiceInstallRoute.Download ->
                 "Kokoro (${StreamingPackCatalog.sizeBadge(TAR_BYTES)} download): speaks " +
                     "highlighted text aloud, entirely on-device"
@@ -560,14 +564,16 @@ class TtsModelManager(private val context: Context) {
          * from [StreamingPackCatalog.sizeBadge] so it cannot drift from [TAR_BYTES] again.
          *
          * Task 6 carried the amendment's wording here too, so the three surfaces cannot disagree
-         * about whose bytes these are: both Play routes say **included with the app**, and only
-         * the fallback says download.
+         * about whose bytes these are — and its fix round 1 (B1) drew the same line here as in
+         * [installRowSubtitle]: only the DELIVERED route says **included with the app**, because
+         * only there is the archive on the device. The fetch route names the size and Play, the
+         * two facts a user about to spend 350 MB needs; only the fallback says download.
          */
         fun voiceSourceClause(route: VoiceInstallRoute): String = when (route) {
             VoiceInstallRoute.None -> "already installed"
             VoiceInstallRoute.FromPack -> "included with the app, already on this device"
             VoiceInstallRoute.Fetch ->
-                "${StreamingPackCatalog.sizeBadge(TAR_BYTES)}, included with the app via Google Play"
+                "${StreamingPackCatalog.sizeBadge(TAR_BYTES)} fetched from Google Play"
             VoiceInstallRoute.Download -> "${StreamingPackCatalog.sizeBadge(TAR_BYTES)} download"
         }
 

@@ -285,7 +285,7 @@ class StreamingPackInstallTest {
 
     @Test fun theFallbackIsOfferedExactlyWherePlayCannotDeliver() {
         // The single discriminator: a debug build, a sideload, or an install Play has already
-        // refused by name. Everywhere else the model is "included with the app" and fetched.
+        // refused by name. Everywhere else the model is the app's own pack, delivered or fetched.
         assertEquals(
             StreamingPackState.Downloadable,
             StreamingPackInstall.resolve(

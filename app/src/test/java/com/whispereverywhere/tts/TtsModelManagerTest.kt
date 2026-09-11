@@ -325,27 +325,47 @@ class TtsModelManagerTest {
     }
 
     @Test
-    fun thePlayRoutesSayTheVoiceIsIncludedWithTheApp() {
+    fun onlyTheDeliveredRouteSaysTheVoiceIsIncludedWithTheApp() {
         // The 2026-09-10 amendment gives Task 6 this row's final wording — "the voice row
-        // likewise", beside the previewer's "included with the app on Play builds". Naming Play
-        // as the SOURCE (Task 2b) was only half of it: a 350 MB row that says where the bytes
-        // come from but not that they are already part of the app the user installed reads like
-        // a second, optional purchase. On a Play install the archive rides the `tts_kokoro` pack
-        // inside that same AAB.
-        for (route in listOf(VoiceInstallRoute.FromPack, VoiceInstallRoute.Fetch)) {
-            val subtitle = TtsModelManager.installRowSubtitle(route)
-            assertTrue(
-                "$route's Settings row must say the bytes are the app's own: $subtitle",
-                subtitle.contains("included with the app"),
+        // likewise", beside the previewer's "included with the app on Play builds" — and Task
+        // 6's fix round 1 (B1) draws the line inside it. The DELIVERED route may say it: the
+        // archive is on the device and the install costs no network at all.
+        val delivered = TtsModelManager.installRowSubtitle(VoiceInstallRoute.FromPack)
+        assertTrue(
+            "the delivered row's bytes really are the app's own AND already here: $delivered",
+            delivered.contains("included with the app"),
+        )
+        assertTrue(delivered.contains("already on this device"))
+        assertTrue(
+            "and so must the onboarding/Home clause, or the three surfaces disagree",
+            TtsModelManager.voiceSourceClause(VoiceInstallRoute.FromPack).contains("included with the app"),
+        )
+        // The FETCH route may NOT: `tts_kokoro` is deliveryType "on-demand"
+        // (tts_kokoro/build.gradle.kts:47), so the archive rides the AAB we UPLOADED, not the
+        // install the user HAS. Saying "included with the app" there tells them 350 MB of their
+        // data is already spent at the moment the tap is about to spend it — which is why this
+        // row has to answer Play's NeedsConfirmation dialog at all.
+        for (text in listOf(
+            TtsModelManager.installRowSubtitle(VoiceInstallRoute.Fetch),
+            TtsModelManager.voiceSourceClause(VoiceInstallRoute.Fetch),
+        )) {
+            assertFalse(
+                "an undelivered on-demand pack is not part of this install: $text",
+                text.lowercase().contains("included with the app"),
             )
-            val clause = TtsModelManager.voiceSourceClause(route)
+            assertFalse("nor is it already here: $text", text.contains("already on this device"))
+            assertTrue("it names the source, which is the amendment's point: $text", text.contains("Google Play"))
             assertTrue(
-                "and so must the onboarding/Home clause, or the three surfaces disagree: $clause",
-                clause.contains("included with the app"),
+                "and the size the tap will cost, from the one badge formatter: $text",
+                text.contains(StreamingPackCatalog.sizeBadge(TtsModelManager.TAR_BYTES)),
             )
         }
-        // And ONLY there. The fallback really is a third-party transfer of bytes that are NOT in
-        // this install — borrowing the phrase would make the one honest download row dishonest.
+        assertTrue(
+            "the Settings row, which has room for it, also says whose connection pays",
+            TtsModelManager.installRowSubtitle(VoiceInstallRoute.Fetch).contains("over your connection"),
+        )
+        // And the fallback really is a third-party transfer of bytes that are NOT in this
+        // install — borrowing the phrase would make the one honest download row dishonest.
         assertFalse(
             TtsModelManager.installRowSubtitle(VoiceInstallRoute.Download).contains("included with the app"),
         )
