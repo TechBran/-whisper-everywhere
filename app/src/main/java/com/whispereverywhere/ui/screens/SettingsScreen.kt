@@ -1177,6 +1177,11 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
                 title = StreamingPackCopy.DELETE_TITLE,
                 subtitle = StreamingPackCopy.DELETE_SUBTITLE,
                 onClick = {
+                    // (4.4.1) A DELETE IS A DECISION, and it is recorded BEFORE the bytes go: the
+                    // 4.4.1 auto-fetch would otherwise put this model back on the next app open,
+                    // which is the one thing the owner's discovery ruling must not do. Written
+                    // first so a removal that failed partway still leaves the decision recorded.
+                    app.preferencesManager.livePreviewDeclined = true
                     previewManager.delete(previewPack)
                     previewRefreshKey++
                 },

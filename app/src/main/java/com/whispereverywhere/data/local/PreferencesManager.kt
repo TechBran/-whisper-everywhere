@@ -440,6 +440,49 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
+     * 4.4.1 — THE USER SAID NO. Set by Home's live-words card X and by the Settings row's DELETE,
+     * never unset in-app; read by [com.whispereverywhere.transcription.stream.PreviewAutoFetch],
+     * which treats it as absolute.
+     *
+     * The owner's discovery ruling makes the previewer's 73 MB arrive unasked, and the one thing
+     * that must never do is undo a decision the user already made. A DELETE is such a decision —
+     * the user freed the space on purpose — so it writes this flag, and the auto-fetch is over
+     * for good on that install. The MANUAL path is untouched: the Settings row still installs on
+     * a tap, which is the only way back and the only way that asks.
+     *
+     * ONE flag for both gestures on purpose. Dismissing the card and deleting the model are the
+     * same sentence from the user ("not this"), and the third gesture the flag also ends — the
+     * one-time "Live words are on" announcement — cannot disagree with it: that card only exists
+     * while the model IS installed, where an auto-fetch has nothing left to do. Two flags would be
+     * two chances for these three surfaces to drift apart.
+     *
+     * NOT a StateFlow: the card reads it once per composition into a local mirror, the house
+     * convention for plain-var prefs read in composition ([cloudNoteDismissed] is the precedent
+     * and the same card shape).
+     */
+    var livePreviewDeclined: Boolean
+        get() = prefs.getBoolean(KEY_LIVE_PREVIEW_DECLINED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_LIVE_PREVIEW_DECLINED, value).apply()
+        }
+
+    /**
+     * 4.4.1 — WHEN THE LAST AUTO-FETCH FAILED, as `System.currentTimeMillis()`; 0 = never, which
+     * is what an absent pref reads as and what
+     * [com.whispereverywhere.transcription.stream.PreviewAutoFetch.backedOff] treats as "no
+     * back-off".
+     *
+     * The once-per-launch latch is in memory and dies with the process, so without this a user
+     * reopening the app on a bad connection would pay for a failing 73 MB transfer once per
+     * process start, all afternoon. Persisted rather than in-memory for exactly that reason.
+     */
+    var livePreviewAutoFetchFailedAt: Long
+        get() = prefs.getLong(KEY_LIVE_PREVIEW_AUTOFETCH_FAILED_AT, 0L)
+        set(value) {
+            prefs.edit().putLong(KEY_LIVE_PREVIEW_AUTOFETCH_FAILED_AT, value).apply()
+        }
+
+    /**
      * Which engine READS ALOUD. null = on-device Kokoro (the default and the shipped behaviour, the
      * regression contract). A [ProviderId] NAME selects a cloud voice with local Kokoro as the
      * one-way fallback — parallel to [sttProviderId]. Distinct from [ttsVoiceId], which stays the
@@ -534,6 +577,8 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_STT_LIVE_MODE_GEMINI = "stt_live_mode_gemini"
         /** The previewer's switch (4.4.0, R3: default on). Read in exactly one place. */
         private const val KEY_LOCAL_PREVIEW_ENABLED = "local_preview_enabled"
+        private const val KEY_LIVE_PREVIEW_DECLINED = "live_preview_declined"
+        private const val KEY_LIVE_PREVIEW_AUTOFETCH_FAILED_AT = "live_preview_autofetch_failed_at"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
 
         // Whisper API supported languages with display names

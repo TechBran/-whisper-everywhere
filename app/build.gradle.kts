@@ -560,6 +560,13 @@ tasks.withType<Test>().configureEach {
         // behavioural test — there is no JVM path through `StatFs` — and it is the difference
         // between a refusal that costs nothing and ~146 MB of dead bytes on a full device.
         "src/main/java/com/whispereverywhere/transcription/stream/StreamingPackManager.kt",
+        // (4.4.1) The connectivity monitor, for the narrowest reason on this list: its new
+        // isUnmetered() is the ONE predicate the auto-fetch's consent rule hangs on, and no JVM
+        // test can call it (ConnectivityManager). LivePreviewDeclinedPinTest pins the capability
+        // it reads and — the part that matters — that no network, no capabilities and a throwing
+        // service all default to METERED. Every one of those mutations is a one-token edit that
+        // compiles clean and changes nothing any other test observes.
+        "src/main/java/com/whispereverywhere/net/ConnectivityMonitor.kt",
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a
