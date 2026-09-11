@@ -1117,7 +1117,13 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // download); Play's own fetch narrates itself through the shell's StateFlow below.
     var previewInstallStatus by remember { mutableStateOf<String?>(null) }
     val previewFetch by StreamingPackController.state.collectAsState()
-    val previewFetchLine = StreamingPackCopy.fetchLine(previewFetch)
+    // ONE answer to "does this row have a tap right now", computed here and consumed twice: by
+    // the sentence (so NeedsConfirmation cannot say "tap to answer" where there is no tap — review
+    // r3 H3-B3) and by the row's own onClick below. Hoisted rather than duplicated, because two
+    // spellings of this condition is exactly how the sentence and the gesture came to disagree.
+    val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch) &&
+        selectedPack == previewPack
+    val previewFetchLine = StreamingPackCopy.fetchLine(previewFetch, tappable = previewTappable)
     // Keyed on the STATUS WORD, not the state: a Downloading tick arrives several times a second
     // for the whole 73 MB, and state() does a Play getPackLocation plus five File reads ON THE
     // COMPOSITION THREAD while its answer cannot change until the status does (the voice row's
@@ -1276,13 +1282,12 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
                 subtitle = previewInstallStatus ?: "",
             )
         } else if (previewFetchLine != null) {
-            // Tappable only where a tap does something — the terminal retry, and the
-            // NeedsConfirmation that answers PLAY'S OWN dialog — AND only while the selection is
-            // still the language this pack serves, because both of those taps spend the 73 MB
-            // (see above). Every other state is work in flight, and SettingsItem makes itself
-            // clickable the moment it is handed an onClick.
-            val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch) &&
-                selectedPack == previewPack
+            // `previewTappable` is decided ONCE, up beside previewFetchLine, and says: a tap does
+            // something only on the terminal retry and on the NeedsConfirmation that answers
+            // PLAY'S OWN dialog, AND only while the selection is still the language this pack
+            // serves, because both of those taps spend the 73 MB (see above). Every other state is
+            // work in flight. SettingsItem makes itself clickable the moment it is handed an
+            // onClick, so the flag gates the onClick and the sentence together.
             val previewRowTap: () -> Unit = {
                 val activity = context as? android.app.Activity
                 if (previewFetch is

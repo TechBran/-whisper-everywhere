@@ -378,7 +378,18 @@ object StreamingPackCopy {
      * the whole reason they are separate (a row that called the preview model "the voice" is the
      * bug this feature's own sentences exist to prevent).
      */
-    fun fetchLine(state: NpuPackFetch.FetchState): String? = when (state) {
+    /**
+     * [tappable] is the caller's OWN answer to "does this row have an onClick right now", not
+     * [fetchLineTappable]'s answer to "does this state deserve one" — the two differ, and review
+     * r3 (H3-B3) is what the difference costs. `NeedsConfirmation` says *tap to answer* because
+     * a tap opens Play's dialog; but the Settings row withholds that tap once the selection has
+     * moved off this pack's language (`previewTappable` there is ANDed with `selectedPack ==
+     * previewPack`), and then the sentence instructs a gesture the app has decided to refuse,
+     * with no ripple and no feedback when it is performed. Off-selection the line must be a
+     * RECEIPT, and it must name the one thing that unlocks it, because nothing else on screen
+     * does. Defaulted true so the card and every other caller read exactly as before.
+     */
+    fun fetchLine(state: NpuPackFetch.FetchState, tappable: Boolean = true): String? = when (state) {
         is NpuPackFetch.FetchState.Idle,
         is NpuPackFetch.FetchState.Installed,
         is NpuPackFetch.FetchState.Cancelled,
@@ -395,7 +406,12 @@ object StreamingPackCopy {
             "Google Play is moving the preview model into place…"
         is NpuPackFetch.FetchState.Verifying -> PROGRESS_INSTALLING
         is NpuPackFetch.FetchState.NeedsConfirmation ->
-            "Google Play needs your confirmation before it fetches the preview model — tap to answer."
+            if (tappable) {
+                "Google Play needs your confirmation before it fetches the preview model — tap to answer."
+            } else {
+                "Google Play needs your confirmation before it fetches the preview model. " +
+                    "Pick that language again to answer."
+            }
         is NpuPackFetch.FetchState.Failed -> state.reason
     }
 

@@ -72,7 +72,11 @@ class LivePreviewRowsPinTest {
         val a = text.indexOf(from)
         assertTrue("cannot find `$from`", a >= 0)
         val b = text.indexOf(to, a + from.length)
-        return if (b < 0) text.substring(a) else text.substring(a, b)
+        // Both ends must be FOUND. A missing `to` used to fall back to "the rest of the file",
+        // which silently widens every assertion made against the scope instead of failing loudly
+        // (review r3, nits) — renaming the closing anchor must break this test, not weaken it.
+        assertTrue("cannot find `$to` after `$from`", b >= 0)
+        return text.substring(a, b)
     }
 
     private val settings: String by lazy {
@@ -269,7 +273,20 @@ class LivePreviewRowsPinTest {
                 "must never appear over work already running",
             1, liveLineCount(rows, "previewInstallStatus != null || previewFetchLine != null -> Unit"),
         )
-        val tapGuard = scopeOf(rows, "val previewTappable =", "val previewRowTap")
+        // The guard is decided ONCE, beside the sentence it also gates (H3-B3), so the scope ends
+        // at previewFetchLine rather than at the row's tap. Both markers are asserted present by
+        // scopeOf now — r3's nit: a `to` marker that silently misses widens the scope to the rest
+        // of the file, where `||` appears, and the next two assertions would pass by accident.
+        val tapGuard = scopeOf(rows, "val previewTappable =", "val previewFetchLine")
+        assertEquals(
+            "the tappable answer is spelled ONCE — a second spelling is how the sentence and the " +
+                "gesture came to disagree in the first place",
+            1, liveLineCount(rows, "val previewTappable ="),
+        )
+        assertEquals(
+            "and the sentence is handed that same answer, never its own reading of the state",
+            1, liveLineCount(rows, "fetchLine(previewFetch, tappable = previewTappable)"),
+        )
         assertEquals(
             "NO tap survives the selection moving: the tap guard's second conjunct is the " +
                 "selection itself, and it is the WHOLE of the second conjunct",

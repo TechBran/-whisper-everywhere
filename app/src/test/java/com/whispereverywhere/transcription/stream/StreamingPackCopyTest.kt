@@ -482,6 +482,40 @@ class StreamingPackCopyTest {
         )
     }
 
+    @Test fun theAskBecomesAReceiptWhereTheRowHasNoTapToGive() {
+        // Review r3, H3-B3. NeedsConfirmation is tappable BY STATE, but the Settings row withholds
+        // the tap once the selection moves off this pack's language — and then "tap to answer"
+        // instructed a gesture the app had decided to refuse, with no ripple and no feedback when
+        // it was performed. Off-selection the line must be a receipt, and must name the one thing
+        // that unlocks it, because Home renders no card for a selection with no pack, so there is
+        // no other surface anywhere in the app that says so.
+        val everyOtherState = everyFetchState.filter { it !is NpuPackFetch.FetchState.NeedsConfirmation }
+        val asking = StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.NeedsConfirmation, tappable = true)
+        val telling = StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.NeedsConfirmation, tappable = false)
+        assertTrue("with a tap, it asks for the tap", asking?.contains("tap to answer") == true)
+        assertTrue("without one, it must NOT ask for a tap", telling?.contains("tap") == false)
+        assertTrue(
+            "and it must say what unlocks it — the selection is the only key, and nothing else " +
+                "on screen names it",
+            telling?.contains("Pick that language again") == true,
+        )
+        assertTrue(
+            "the reason is still stated: the user is owed why nothing is moving",
+            telling?.contains("confirmation") == true,
+        )
+        assertEquals(
+            "every OTHER state reads identically either way — this parameter buys exactly one " +
+                "sentence, and a caller that forgets it changes nothing else",
+            everyOtherState.map { StreamingPackCopy.fetchLine(it, tappable = true) },
+            everyOtherState.map { StreamingPackCopy.fetchLine(it, tappable = false) },
+        )
+        assertEquals(
+            "and the default is the asking one, so the card and every existing caller are untouched",
+            asking,
+            StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.NeedsConfirmation),
+        )
+    }
+
     @Test fun theOneInFlightStateThatAsksForAGestureHasOneToOffer() {
         // Review r1, B3: fetchLine(NeedsConfirmation) ends in "tap to answer", and the working
         // card had no action at all — so the sentence named a gesture that did not exist, on the
