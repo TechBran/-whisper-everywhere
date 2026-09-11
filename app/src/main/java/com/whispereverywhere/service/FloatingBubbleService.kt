@@ -3646,6 +3646,24 @@ class FloatingBubbleService : Service(),
      * above and this load both queue on the engine's single native executor, so the load cannot
      * overtake the release, and if a `connect()` has already refilled the slot this no-ops.
      *
+     * **And only when there is an engine to re-arm** (`localEngine != null`) — a correctness guard,
+     * not a micro-optimisation. [warmLocalEngine] does not look an engine up: when the field is null
+     * it BUILDS one, and it picks the backend from [npuTierIds], which is `emptySet()` until the
+     * first [refreshNpuTierOffer] lands. A trim in the service's first seconds is not exotic —
+     * `TRIM_MEMORY_UI_HIDDEN` is 20, so merely leaving the app right after starting the bubble
+     * clears the release guard's `>= TRIM_MEMORY_RUNNING_LOW` (10) — and an unguarded re-arm fires
+     * at `T_trim + 1500` while the boot prewarm fires at `refresh + 1500`, so it wins whenever the
+     * trim beats the refresh. It would then build an npu-turbo user's FIRST engine on
+     * `WhisperNativeBackend`, record `localEngineNpuTierId = null`, burn a ggml load immediately
+     * after a memory trim, and hand the next session's [resolveTranscriptionEngine] a teardown plus
+     * the 4,107 ms NPU load INSIDE `CONNECTING` — the exact cost this function exists to remove,
+     * with a spurious `NpuDiag.tierRebuild` line in the log the A/B sheet reads as its instrument.
+     * Null also says it exactly: `localEngine?.releaseContext()` above released nothing, so there is
+     * nothing to re-arm and the boot prewarm is still coming. The guard is the fix, NOT a second
+     * [refreshNpuTierOffer] here — a trim changes neither the installed set nor the device's
+     * capability, and the refresh that decides this process's first build is the boot one, placed
+     * adjacently above it for this very reason.
+     *
      * **The wait is the boot prewarm's own 1,500 ms** ([TRIM_REARM_DELAY_MS]) — matched rather than
      * invented, which is the amendment's instruction — and it buys two things here. A trim arrives
      * as a storm (RUNNING_LOW, then RUNNING_CRITICAL, then BACKGROUND), and cancelling the pending
@@ -3662,9 +3680,12 @@ class FloatingBubbleService : Service(),
      * deferred: its own `connect()` loads the context this would have loaded.
      *
      * No `RejectedExecutionException` guard, unlike the model-switch collector: this is the boot
-     * prewarm's call, which has none either, and the only shutdown of that executor is `onDestroy`,
-     * which cancels `serviceScope` BEFORE it touches the engine — on this same (Main) thread, so
-     * the two cannot interleave.
+     * prewarm's call, which has none either, and this body can never hold a reference to a
+     * shut-down engine. TWO shutdowns of that executor exist, not one. `onDestroy` cancels
+     * `serviceScope` BEFORE it touches the engine, on this same (Main) thread, so those cannot
+     * interleave; and a rebuild's `cached.shutdown()` inside [warmLocalEngine] is likewise
+     * Main-confined and replaces `localEngine` synchronously within one Main run, so the field this
+     * body reads is never the shut-down one.
      */
     private fun rearmPrewarmAfterTrim(level: Int) {
         trimRearmJob?.cancel()
@@ -3672,7 +3693,7 @@ class FloatingBubbleService : Service(),
             delay(TRIM_REARM_DELAY_MS)
             val rearm = prewarmRearmsAfterTrim(currentState)
             android.util.Log.i("WE-DIAG", "trim re-prewarm: level=$level state=$currentState rearm=$rearm")
-            if (rearm) warmLocalEngine().prewarm()
+            if (rearm && localEngine != null) warmLocalEngine().prewarm()
         }
     }
 

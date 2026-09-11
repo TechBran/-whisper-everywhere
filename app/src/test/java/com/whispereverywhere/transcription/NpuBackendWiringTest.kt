@@ -643,6 +643,17 @@ class NpuBackendWiringTest {
             5,
             liveOffsets(service, "warmLocalEngine(").size,
         )
+        assertEquals(
+            "and the fourth caller is safe because it cannot BUILD. It is the only one with " +
+                "neither the refresh adjacently above it nor allowRebuild to correct a stale " +
+                "answer later, so it is gated on the engine the trim actually released: null " +
+                "localEngine means warmLocalEngine() would construct one, choosing its backend " +
+                "from an npuTierIds that is still emptySet() until the first refresh lands — the " +
+                "CPU-backed first engine, and the rebuild paid for it, that the adjacency " +
+                "assertion above exists to prevent.",
+            1,
+            liveOffsets(service, "if (rearm && localEngine != null) warmLocalEngine().prewarm()").size,
+        )
         // THE ORDER, and it is the invariant rather than the presence: a permission check that runs
         // after shutdown() has already run is not a check. Every statement survives the swap.
         val warm = memberBody(
