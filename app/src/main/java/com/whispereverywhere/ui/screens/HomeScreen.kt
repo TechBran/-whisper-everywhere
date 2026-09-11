@@ -883,6 +883,15 @@ private fun LiveWordsCard(
     val packStateSnapshot by produceState<StreamingPackState?>(
         null, resumeTick, statusWord, working,
     ) {
+        // CLEARED FIRST (CONTROLLER RULING 2026-09-11, CHANGE 3 — review r2's nit 2). produceState
+        // keeps its PREVIOUS value across a key change, and our own install's
+        // `finally { _line.value = null }` flips `working`, which re-keys this producer. In that
+        // window the old snapshot still read PackDelivered/Downloadable with busy() false and the
+        // launch's attempt spent, so `decide` answered OFFER and the card rendered "Install the
+        // English preview model" over a model that had just finished installing. Clearing it
+        // sends that frame down the not-yet-known branch below — NONE, i.e. nothing said — until
+        // the new state lands, which is the first of the two fixes the nit named.
+        value = null
         value = withContext(Dispatchers.IO) { app.streamingPackManager.state(pack) }
     }
     @Suppress("ProduceStateDoesNotAssignValue")

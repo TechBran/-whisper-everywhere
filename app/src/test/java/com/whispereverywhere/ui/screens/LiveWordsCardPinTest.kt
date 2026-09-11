@@ -240,6 +240,35 @@ class LiveWordsCardPinTest {
         )
     }
 
+    @Test fun aReRunningProducerHoldsTheCardSilentRatherThanShowingAStaleOffer() {
+        // CONTROLLER RULING 2026-09-11, CHANGE 3 (review r2's nit 2, itself a consequence of B4).
+        // `produceState` keeps its PREVIOUS value across a key change, and our own install's
+        // `finally { _line.value = null }` flips `working` — which re-keys this producer. In that
+        // window the snapshot still read PackDelivered/Downloadable while busy() was false and
+        // attemptedThisLaunch was true, so `decide` answered OFFER and the card rendered
+        // "Install / Download the English preview model" over a model that had just finished
+        // installing. Brief and self-correcting, and still a false sentence.
+        //
+        // The fix is the first of the two the nit named: clear the snapshot, so the frame the
+        // producer is re-running in takes the not-yet-known branch (Decision.NONE / Card.NONE)
+        // and the card says nothing at all until the new state lands.
+        val cleared = offsetOfLive(card, "value = null")
+        val read = offsetOfLive(card, "streamingPackManager.state(")
+        assertTrue("the snapshot must be cleared while the producer re-runs", cleared >= 0)
+        assertTrue(
+            "and cleared BEFORE the read it is waiting for — after it, it would blank the card " +
+                "every time instead of only while the answer is unknown",
+            cleared in 0 until read,
+        )
+        assertEquals(
+            "exactly once: the metered snapshot deliberately keeps its previous value, because a " +
+                "stale Boolean there cannot spell a false sentence — it only decides whether the " +
+                "offer or the silent fetch is reached, and the not-yet-known guard covers the " +
+                "first frame",
+            1, liveLineCount(card, "value = null"),
+        )
+    }
+
     // ------------------------------------------------------------------ the card's words
 
     @Test fun theCardSpellsNoSentenceOfItsOwn() {
