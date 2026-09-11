@@ -524,6 +524,28 @@ class TtsModelManager(private val context: Context) {
         }
 
         /**
+         * The SOURCE-AND-SIZE clause the two NON-Settings voice surfaces put inside their own
+         * sentence — onboarding's engines card ("Speaks text aloud on-device (…)") and Home's
+         * missing-engine row ("Reading text aloud needs it — …"). Same four-way table as
+         * [installRowSubtitle], reduced to the clause those two sentences have room for.
+         *
+         * Both said "about 365 MB" on every build before Task 2b's fix round: 15 MB wrong about
+         * the size, and wrong about the SOURCE on every Play install, where the archive rides the
+         * `tts_kokoro` pack and nothing is downloaded from a third party at all. The number comes
+         * from [StreamingPackCatalog.sizeBadge] so it cannot drift from [TAR_BYTES] again.
+         *
+         * TODO(Task 6): the amendment gives Task 6 the voice's copy; this is where the
+         * onboarding/Home half of that edit lands, beside [installRowTitle]'s Settings half.
+         */
+        fun voiceSourceClause(route: VoiceInstallRoute): String = when (route) {
+            VoiceInstallRoute.None -> "already installed"
+            VoiceInstallRoute.FromPack -> "already on this device, nothing to fetch"
+            VoiceInstallRoute.Fetch ->
+                "${StreamingPackCatalog.sizeBadge(TAR_BYTES)} from Google Play"
+            VoiceInstallRoute.Download -> "${StreamingPackCatalog.sizeBadge(TAR_BYTES)} download"
+        }
+
+        /**
          * The ONE voice sentence that promises anything, and it is promised exactly where
          * [StreamingPackInstall.playRefusedThisInstall] latches: by the time a row renders this,
          * `playCanDeliver()` has gone false and [state] has already moved to

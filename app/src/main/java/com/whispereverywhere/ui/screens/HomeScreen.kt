@@ -32,11 +32,13 @@ import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.provider.ProviderCatalog
 import com.whispereverywhere.service.FloatingBubbleService
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.service.resolveSttProvider
 import com.whispereverywhere.tts.TtsModelManager
+import com.whispereverywhere.tts.TtsPackController
 import com.whispereverywhere.tts.TtsVoices
 import com.whispereverywhere.tts.resolveTtsProvider
 import com.whispereverywhere.ui.theme.*
@@ -90,7 +92,10 @@ fun HomeScreen(
     var hasSpeechModel by remember { mutableStateOf(app.whisperModelManager.installedModel() != null) }
     // The read-aloud voice's installed state is purely on-disk (marker file + model.onnx) — same
     // cheap existence checks as installedModel(), refreshed on the same ON_RESUME tick.
-    val ttsModelManager = remember { TtsModelManager(context) }
+    // (4.4.0, Task 2b fix round 1, B2) The APPLICATION's manager, not a per-composition one: the
+    // Play-refusal latch that decides whether this row's install asks Play or downloads directly
+    // lives on that instance, and TtsPackController flips it there.
+    val ttsModelManager = app.ttsModelManager
     var hasTtsVoice by remember { mutableStateOf(ttsModelManager.isInstalled()) }
 
     // Bumped on ON_RESUME so the off-main keystore/disk snapshots below re-read when the user comes
@@ -293,9 +298,28 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
             if (!hasTtsVoice) {
+                // (4.4.0, Task 2b fix round 1, B2) The row names the SOURCE this device installs
+                // from — "350 MB from Google Play" on a Play build, where the archive rides the
+                // tts_kokoro pack and nothing is pulled from a third party. It said "about 365
+                // MB" on every build before, which was wrong about the size and, on the flow most
+                // users take, about the source. Re-read on the same resume tick as hasTtsVoice.
+                val voiceClause = remember(resumeTick) {
+                    TtsModelManager.voiceSourceClause(
+                        TtsModelManager.installRoute(ttsModelManager.state())
+                    )
+                }
+                // Play's own consent dialog, once per ENTRY into NeedsConfirmation — the flow
+                // screen's own rule, and needed here for the same reason: this row can start the
+                // 350 MB Play fetch, and Play raises its dialog for a download that size.
+                val voiceFetch by TtsPackController.state.collectAsState()
+                LaunchedEffect(voiceFetch) {
+                    if (voiceFetch is NpuPackFetch.FetchState.NeedsConfirmation) {
+                        (context as? android.app.Activity)?.let { TtsPackController.confirm(it) }
+                    }
+                }
                 MissingEngineRow(
                     title = "Read-aloud voice not installed",
-                    detail = "Reading text aloud needs it — about 365 MB",
+                    detail = "Reading text aloud needs it — $voiceClause",
                     state = voiceSetup,
                     onDownload = { setupVm.ensureVoice() },
                 )

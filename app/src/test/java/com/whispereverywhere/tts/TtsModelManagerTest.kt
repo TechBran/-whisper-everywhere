@@ -365,6 +365,41 @@ class TtsModelManagerTest {
     }
 
     @Test
+    fun theOnboardingAndHomeRowsNameTheSourceTheyWillActuallyUseToo() {
+        // Fix round 1, B2. Both non-Settings surfaces said "about 365 MB" on every build: 15 MB
+        // wrong, and wrong about the source wherever Play delivers the pack. They now read the
+        // same route-keyed table the Settings row does, so no two surfaces can disagree about
+        // where this device's voice comes from.
+        val fetch = TtsModelManager.voiceSourceClause(VoiceInstallRoute.Fetch)
+        assertTrue("the Play route says whose bytes these are: $fetch", fetch.contains("Google Play"))
+        assertFalse(
+            "and promises no download: on a Play install there is no third-party transfer at " +
+                "all, which is the whole point of routing these surfaces: $fetch",
+            fetch.contains("download"),
+        )
+        val download = TtsModelManager.voiceSourceClause(VoiceInstallRoute.Download)
+        assertTrue("the fallback is honest about being one: $download", download.contains("download"))
+        val fromPack = TtsModelManager.voiceSourceClause(VoiceInstallRoute.FromPack)
+        assertFalse("delivered bytes are not fetched again: $fromPack", fromPack.contains("MB"))
+        for (route in VoiceInstallRoute.entries) {
+            val clause = TtsModelManager.voiceSourceClause(route)
+            assertTrue("every route has a clause", clause.isNotBlank())
+            assertFalse(
+                "and none of them carries the stale 365: the archive is " +
+                    "${TtsModelManager.TAR_BYTES} bytes and the badge is computed from it",
+                clause.contains("365"),
+            )
+        }
+        for (route in listOf(VoiceInstallRoute.Fetch, VoiceInstallRoute.Download)) {
+            assertTrue(
+                "a size the user is asked to accept comes from the one badge formatter",
+                TtsModelManager.voiceSourceClause(route)
+                    .contains(StreamingPackCatalog.sizeBadge(TtsModelManager.TAR_BYTES)),
+            )
+        }
+    }
+
+    @Test
     fun theInFlightVoiceRowOffersNoTapThatCouldDuplicateTheInstall() {
         // Fix round 1, B1. The row renders fetchLine for every state a fetch passes through, so
         // "the row has a line" is NOT "the row has something to do". A tap while the delivered

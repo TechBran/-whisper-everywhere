@@ -9,6 +9,8 @@ import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.model.WhisperModelManager
 import com.whispereverywhere.npu.NpuPackController
 import com.whispereverywhere.tts.TtsModelManager
+import com.whispereverywhere.tts.TtsPackController
+import com.whispereverywhere.tts.VoiceInstallRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,13 +30,14 @@ import kotlinx.coroutines.launch
  * which stays the manual per-tier picker behind Home's setup banner.
  *
  * MUST be scoped to the ACTIVITY (`viewModel(viewModelStoreOwner = activity)`), not the onboarding
- * destination: the voice bundle is ~365 MB and the user is explicitly allowed to continue to the
- * cloud-keys step — or finish onboarding entirely — while it is still downloading or extracting. A
+ * destination: the voice archive is ~350 MB and the user is explicitly allowed to continue to the
+ * cloud-keys step — or finish onboarding entirely — while it is still arriving or extracting. A
  * destination-scoped ViewModel dies with its back-stack entry and would cancel the extract
  * mid-archive; activity scope survives every in-app navigation. (If the user force-leaves the app
- * mid-extract, Settings' manual "Download the read-aloud voice" remains the retry path — the
- * on-disk `.installed` marker only appears after a COMPLETE extract, so a torn one re-downloads
- * rather than half-working.)
+ * mid-extract, the Settings voice row remains the retry path — the on-disk `.installed` marker
+ * only appears after a COMPLETE extract, so a torn one re-installs rather than half-working. A
+ * Play fetch survives even that: it is Play's own download, and [TtsPackController] is
+ * process-scoped.)
  *
  * Idempotence: [beginAutoSetup] is called from the engines step's single confirm action — never
  * before the pick has been persisted — and does nothing when already running or already
@@ -53,7 +56,14 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
 
     private val appInstance: WhisperEverywhereApp = getApplication()
     private val whisperManager: WhisperModelManager get() = appInstance.whisperModelManager
-    private val ttsManager by lazy { TtsModelManager(appInstance) }
+
+    /**
+     * The APPLICATION's voice manager (4.4.0, Task 2b fix round 1, B2), not a private one: its
+     * Play-refusal latch is what moves this card from "ask Play" to "download directly", and
+     * [TtsPackController] flips that latch on the instance it reads off the Application. A
+     * `TtsModelManager(appInstance)` of our own would watch a different object refuse.
+     */
+    private val ttsManager: TtsModelManager get() = appInstance.ttsModelManager
     private val prefs get() = appInstance.preferencesManager
 
     private val _speechState = MutableStateFlow<EngineState>(EngineState.Pending)
@@ -198,13 +208,96 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Make the on-device read-aloud voice exist, if it is not already. Same contract as [ensureSpeech]. */
+    /**
+     * Make the on-device read-aloud voice exist, if it is not already. Same contract as
+     * [ensureSpeech] — and since 4.4.0's amendment (Task 2b fix round 1, B2) the same SHAPE: the
+     * SOURCE is [TtsModelManager.installRoute]'s answer, never "the download".
+     *
+     * This is the AUTOMATIC voice install — the engines step's one confirm reaches it through
+     * [beginAutoSetup], and Home's missing-voice row reaches it too — so it is the install most
+     * users ever perform. Leaving it on `ttsManager.download` would have kept the rolling
+     * `tts-models` GitHub tag as the real voice source on every build, Play installs included:
+     * the 2026-09-08 incident (a re-upload under that tag broke every fresh voice install for two
+     * days) would reproduce verbatim for exactly the population it hit, and a device where Play
+     * had already delivered `tts_kokoro` would pull the 350 MB a second time and need ~840 MB
+     * transient instead of ~490 MB with the delivered pack sitting unread.
+     */
     fun ensureVoice() {
         if (_voiceState.value is EngineState.Working) return // Ready can be stale; disk decides
         if (ttsManager.isInstalled()) {
             _voiceState.value = EngineState.Ready
             return
         }
+        when (voiceRoute()) {
+            VoiceInstallRoute.None -> _voiceState.value = EngineState.Ready
+            VoiceInstallRoute.FromPack -> installVoiceFromPack()
+            VoiceInstallRoute.Fetch -> fetchVoicePack()
+            VoiceInstallRoute.Download -> downloadVoice()
+        }
+    }
+
+    /**
+     * WHERE THIS DEVICE'S VOICE COMES FROM — the one pure, total routing function the Settings row
+     * reads, asked from one place here so this surface and that one cannot disagree. Reads Play's
+     * delivery state and the disk, so it is asked per tap (or per phase), never per frame.
+     */
+    private fun voiceRoute(): VoiceInstallRoute =
+        TtsModelManager.installRoute(ttsManager.state())
+
+    /**
+     * [VoiceInstallRoute.FromPack]: Play has already delivered the archive, so this is a verify +
+     * extract + atomic swap with no network at any point. The give-back to Play is the manager's,
+     * strictly after the land.
+     */
+    private fun installVoiceFromPack() {
+        _voiceState.value = EngineState.Working(INDETERMINATE, EXTRACTING)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                ttsManager.installFromPack(
+                    onProgress = { _, _ -> },
+                    onExtracting = { _voiceState.value = EngineState.Working(INDETERMINATE, EXTRACTING) },
+                )
+                _voiceState.value = EngineState.Ready
+            } catch (e: Exception) {
+                _voiceState.value = EngineState.Failed(e.message ?: "Voice install failed")
+            }
+        }
+    }
+
+    /**
+     * [VoiceInstallRoute.Fetch]: ask PLAY, exactly as [ensureGatedSpeech] asks for a gated tier's
+     * pack — one shell, one state machine, one pure mapping onto the card
+     * ([OnboardingLogic.engineStateForFetch]), collected to the first terminal state so a later
+     * fetch cannot keep writing this card.
+     *
+     * No attach refusal is needed here, unlike the speech pack's: there is ONE voice pack, so a
+     * refused `start` can only mean this same fetch is already in flight (the Settings row's, or
+     * this card's own on a re-entry) and attaching to it is exactly right. The shell performs the
+     * verify + extract itself on delivery, and publishes `Installed` only after it lands — which
+     * is why `Ready` here is as true as the download path's.
+     *
+     * Play's own consent dialog is the FLOW SCREEN's job, as it is for the speech pack: this
+     * ViewModel never talks to an Activity, and there is no re-ask of ours anywhere.
+     */
+    private fun fetchVoicePack() {
+        // Published before start() so the Working guard holds from this instant — the same
+        // double-tap discipline as the speech routes' first Working write.
+        _voiceState.value = EngineState.Working(INDETERMINATE, OnboardingLogic.FETCH_PREPARING)
+        TtsPackController.start(appInstance)
+        viewModelScope.launch {
+            TtsPackController.state
+                .map(OnboardingLogic::engineStateForFetch)
+                .onEach { _voiceState.value = it }
+                .first { it is EngineState.Ready || it is EngineState.Failed }
+        }
+    }
+
+    /**
+     * [VoiceInstallRoute.Download]: the release-pinned GitHub archive — the NON-Play fallback
+     * only (a debug build, a sideload, or an install Play refused by name), which is the whole
+     * point of routing rather than always downloading.
+     */
+    private fun downloadVoice() {
         _voiceState.value = EngineState.Working(0, DOWNLOADING)
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -222,6 +315,14 @@ class OnboardingSetupViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /**
+     * The size-and-source clause the engines step puts under "Read-aloud voice" — the same pure
+     * table Home's row and the Settings row read, so no surface can promise a download on a build
+     * that fetches from Play. Reads Play's delivery state and the disk, so the caller holds it in
+     * a `remember` for the phase rather than re-asking per recomposition.
+     */
+    fun voiceSourceClause(): String = TtsModelManager.voiceSourceClause(voiceRoute())
 
     companion object {
         const val INDETERMINATE = -1

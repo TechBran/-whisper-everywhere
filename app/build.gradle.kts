@@ -439,6 +439,15 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
+        // (4.4.0, Task 2b fix round 1, B2) HomeScreen.kt joins by the list's stated rule —
+        // membership follows what the tests READ. TtsPackShellPinTest now pins Home's
+        // missing-voice row as source: that it reads the Application's TtsModelManager (a
+        // private one carries a private Play-refusal latch), that it raises Play's own
+        // confirmation dialog for the voice fetch it can start, and that it quotes no
+        // hand-written archive size. Every one of those mutations is Compose-shaped or
+        // comment-shaped, so without this entry the edit each pin exists to catch is the one
+        // that never re-runs it.
+        "src/main/java/com/whispereverywhere/ui/screens/HomeScreen.kt",
         // (4.2 F6) OnboardingSetupViewModel.kt joins by the list's stated rule — membership
         // follows what the tests READ. ChooserSteerWiringPinTest now source-pins the gated
         // fetch branch (ensureSpeech hands gated tiers to NpuPackController, mirrors its state

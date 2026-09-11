@@ -1073,17 +1073,29 @@ class ChooserSteerWiringPinTest {
                 ),
             ),
         )
+        // (4.4.0, Task 2b fix round 1, B2) TWO pack routes in this file now, not one: the gated
+        // speech tier's and the read-aloud VOICE's — `TtsPackController` publishes the same
+        // `NpuPackFetch.FetchState` machine, so the voice card mirrors it through the same pure
+        // mapping and stops at the same terminal predicate. The counts are re-specced to 2 and
+        // the CLAIM is held by the zero-count under them: what these pins forbid is a THIRD
+        // spelling — a hand-rolled read of a fetch state anywhere in this ViewModel.
         assertEquals(
-            "every fetch state reaches the card through the ONE pure mapping — no second " +
+            "every fetch state reaches a card through the ONE pure mapping — no second " +
                 "translation can drift from the tested table",
-            1,
+            2,
             count(setupVm, ".map(OnboardingLogic::engineStateForFetch)"),
         )
         assertEquals(
-            "the collector stops at the first terminal state, so a later fetch for another " +
-                "tier is never mirrored onto this card",
-            1,
+            "each collector stops at the first terminal state, so a later fetch (another " +
+                "tier's, or the voice's) is never mirrored onto the card it does not belong to",
+            2,
             count(setupVm, ".first { it is EngineState.Ready || it is EngineState.Failed }"),
+        )
+        assertEquals(
+            "and NO route reads a fetch state by hand: this ViewModel never names that type at " +
+                "all, which is what makes the mapping above the only translation there is",
+            0,
+            liveLineCount(setupVm, "NpuPackFetch.FetchState"),
         )
         // Play's own >200 MB cellular dialog: shown once per ENTRY into NeedsConfirmation
         // (LaunchedEffect keyed on the state VALUE), and no custom re-ask exists anywhere —

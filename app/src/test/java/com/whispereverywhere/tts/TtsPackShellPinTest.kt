@@ -89,6 +89,19 @@ class TtsPackShellPinTest {
         source("src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt")
     }
 
+    /** The other two voice-install surfaces (fix round 1, B2): onboarding's and Home's. */
+    private val onboardingVm: String by lazy {
+        source("src/main/java/com/whispereverywhere/ui/onboarding/OnboardingSetupViewModel.kt")
+    }
+
+    private val onboardingFlow: String by lazy {
+        source("src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt")
+    }
+
+    private val home: String by lazy {
+        source("src/main/java/com/whispereverywhere/ui/screens/HomeScreen.kt")
+    }
+
     // ------------------------------------------------------------------ the fetch
 
     @Test
@@ -271,6 +284,92 @@ class TtsPackShellPinTest {
             "used by both rows, and by nothing else",
             2, liveLineCount(settings, "startVoiceInstall()"),
         )
+    }
+
+    // ------------------------------------------------------ the OTHER two install surfaces (B2)
+
+    @Test
+    fun everyVoiceInstallSurfaceRoutesThroughTheOneRouteFunction() {
+        // Fix round 1, B2. The amendment's stated purpose is that "the GitHub download stays as
+        // the non-Play fallback only … a voice update becomes a deliberate new AAB". That is a
+        // claim about the APP, not about one row: onboarding's engines step is the AUTOMATIC
+        // voice install (beginAutoSetup) and Home's missing-engine row is the other manual one,
+        // and while either called ttsManager.download unconditionally a re-upload of the rolling
+        // tts-models tag would reproduce the 2026-09-08 outage for the population it actually
+        // hit, and a device Play had already delivered tts_kokoro to would pull the 350 MB again.
+        assertEquals(
+            "onboarding decides nothing of its own: the route is the ONE pure function's answer",
+            1, liveLineCount(onboardingVm, "TtsModelManager.installRoute("),
+        )
+        for ((arm, actuator) in listOf(
+            "VoiceInstallRoute.None" to "_voiceState.value = EngineState.Ready",
+            "VoiceInstallRoute.FromPack" to "installVoiceFromPack()",
+            "VoiceInstallRoute.Fetch" to "fetchVoicePack()",
+            "VoiceInstallRoute.Download" to "downloadVoice()",
+        )) {
+            assertEquals(
+                "and answers $arm exactly once, wired to ITS OWN actuator — a Fetch arm that " +
+                    "called the download instead is this blocker back with every count green",
+                1, liveLineCount(onboardingVm, "$arm -> $actuator"),
+            )
+        }
+        assertEquals(
+            "the Fetch arm asks PLAY through the same shell the row uses",
+            1, liveLineCount(onboardingVm, "TtsPackController.start("),
+        )
+        assertEquals(
+            "the FromPack arm installs the delivered archive, with no network at any point",
+            1, liveLineCount(onboardingVm, "ttsManager.installFromPack("),
+        )
+        assertEquals(
+            "and the third-party download survives as exactly ONE call site here as well",
+            1, liveLineCount(onboardingVm, "ttsManager.download("),
+        )
+        val ensure = scopeOf(onboardingVm, "fun ensureVoice()", "private fun voiceRoute()")
+        assertEquals(
+            "and it is NOT in ensureVoice itself: an unconditional download there is the whole " +
+                "defect, and it is the surface a fresh install reaches without being asked",
+            0, liveLineCount(ensure, "ttsManager.download("),
+        )
+        assertEquals(
+            "the route is what ensureVoice dispatches on",
+            1, liveLineCount(ensure, "when (voiceRoute()) {"),
+        )
+        // ONE MANAGER, or the latch that moves these surfaces to the download is invisible here.
+        assertEquals(
+            "onboarding reads the Application's manager",
+            1, liveLineCount(onboardingVm, "appInstance.ttsModelManager"),
+        )
+        assertEquals(
+            "and constructs none of its own — a private instance carries a private playRefused, " +
+                "so a refusal Play named on the shell's instance would never reach this card",
+            0, liveLineCount(onboardingVm, "TtsModelManager(appInstance)"),
+        )
+        assertEquals("Home reads it too", 1, liveLineCount(home, "app.ttsModelManager"))
+        assertEquals(0, liveLineCount(home, "TtsModelManager(context)"))
+        // Play's own consent dialog reaches the voice fetch on both surfaces that can start one:
+        // 350 MB is over the cellular threshold, and a card waiting on a dialog nobody raised is
+        // a wedge no Retry can clear (the Working guard refuses re-entry).
+        assertEquals(
+            "the engines step raises Play's dialog for the VOICE pack as well as the speech pack",
+            1, liveLineCount(onboardingFlow, "TtsPackController.confirm("),
+        )
+        assertEquals(
+            "and so does Home, the other surface whose row can start the fetch",
+            1, liveLineCount(home, "TtsPackController.confirm("),
+        )
+        // And the copy: the size these two surfaces quote is the route-keyed clause, not a
+        // literal that was already 15 MB stale and named the wrong source on a Play build.
+        for (surface in listOf("onboarding" to onboardingFlow, "Home" to home)) {
+            assertEquals(
+                "${surface.first} must not carry a hand-written voice size",
+                0, liveLineCount(surface.second, "365 MB"),
+            )
+            assertEquals(
+                "${surface.first} takes the clause from the one pure table",
+                1, liveLineCount(surface.second, "voiceSourceClause("),
+            )
+        }
     }
 
     @Test

@@ -39,6 +39,7 @@ import com.whispereverywhere.npu.NpuPackController
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.service.MediaNotificationListener
 import com.whispereverywhere.service.WhisperAccessibilityService
+import com.whispereverywhere.tts.TtsPackController
 import com.whispereverywhere.ui.onboarding.AccessibilityAvailabilityProbe
 import com.whispereverywhere.ui.onboarding.OnboardingLogic
 import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
@@ -88,7 +89,7 @@ fun OnboardingFlowScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // ACTIVITY-scoped on purpose: the ~365 MB voice download must survive both step changes and
+    // ACTIVITY-scoped on purpose: the ~350 MB voice install must survive both step changes and
     // the navigation to the cloud-keys screen. See OnboardingSetupViewModel's class doc.
     val setupVm: OnboardingSetupViewModel =
         viewModel(viewModelStoreOwner = context as ComponentActivity)
@@ -684,12 +685,19 @@ private fun EnginesStep(
 ) {
     val speech by vm.speechState.collectAsState()
     val voice by vm.voiceState.collectAsState()
+    // (4.4.0, Task 2b fix round 1, B2) The voice's SOURCE-and-size clause, from the one pure
+    // route-keyed table every voice surface reads: "350 MB from Google Play" on a Play build,
+    // where the archive rides the tts_kokoro pack and nothing is pulled from a third party. Both
+    // phases of this step used to say "about 365 MB" and "downloads", wrong on both halves. Held
+    // for the step in a remember — it reads Play's delivery state and the disk — and the answer
+    // does not depend on the tier pick, so the choose phase may quote it too.
+    val voiceClause = remember { vm.voiceSourceClause() }
 
     if (speech is EngineState.Pending) {
         // ---- choose phase: nothing downloads until the user has made an informed pick.
         Text(
             "Pick your speech model — dictation runs on your phone, and audio never has to " +
-                "leave it. The read-aloud voice (about 365 MB) downloads alongside whichever " +
+                "leave it. The read-aloud voice ($voiceClause) arrives alongside whichever " +
                 "model you choose.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -797,6 +805,24 @@ private fun EnginesStep(
                 }
             }
         }
+        // (4.4.0, Task 2b fix round 1, B2) The VOICE's pack fetch needs Play's dialog for the
+        // same reason and on the same once-per-ENTRY key rule — 350 MB is over the cellular
+        // consent threshold, and a wifi-wait raises it too. Without this the voice card would
+        // sit on "Waiting for your OK in the Google Play dialog" with no dialog to answer, and
+        // the Working guard refuses the Retry that might have cleared it.
+        //
+        // Deliberately the gated block's shape rather than a shared raise site: Play's
+        // confirmation is ONE dialog for every pack it is holding, so if a gated tier is waiting
+        // on it too, whichever of the two effects raises it first covers both — and a raise
+        // while that dialog is up is refused by Play (showConfirmationDialog returns false),
+        // after which this effect re-fires on the voice's next state.
+        val voiceContext = LocalContext.current
+        val voiceFetch by TtsPackController.state.collectAsState()
+        LaunchedEffect(voiceFetch) {
+            if (voiceFetch is NpuPackFetch.FetchState.NeedsConfirmation) {
+                TtsPackController.confirm(voiceContext as ComponentActivity)
+            }
+        }
         Text(
             "Downloading your engines — nothing to press. Both stay on your phone; audio " +
                 "never has to leave it.",
@@ -829,7 +855,7 @@ private fun EnginesStep(
         Spacer(Modifier.height(12.dp))
         EngineRow(
             title = "Read-aloud voice",
-            subtitle = "Speaks text aloud on-device (about 365 MB)",
+            subtitle = "Speaks text aloud on-device ($voiceClause)",
             state = voice,
             onRetry = { vm.ensureVoice() },
         )
