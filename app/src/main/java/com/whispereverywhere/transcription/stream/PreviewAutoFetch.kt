@@ -40,7 +40,7 @@ package com.whispereverywhere.transcription.stream
  * already refused by name. The ruling authorized fetching *"that pack from the assets"* — the
  * app's own asset pack — and the app's own copy draws exactly this line:
  * `StreamingPackCopy.SETTINGS_INSTALL_FETCH` promises *"never from a third party"*, and
- * `SETTINGS_INSTALL_DOWNLOAD` is the one sentence that admits one. A silent fetch is the case
+ * `StreamingPackCopy.installDownload` is the one sentence that admits one. A silent fetch is the case
  * where the user never reads that sentence, because no card precedes the transfer. So this route
  * answers OFFER whatever the network reads: the card shows the download's own sentence, and one
  * tap is the consent. Nothing else about it changes — the tap takes the same route the Settings

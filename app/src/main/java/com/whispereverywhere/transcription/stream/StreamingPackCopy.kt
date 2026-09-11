@@ -211,7 +211,7 @@ object StreamingPackCopy {
     // ---------------------------------------------------------------- Home's card (4.4.1)
 
     /**
-     * The discovery card's own name for the feature. The Settings row's [SETTINGS_TITLE] is a ROW
+     * The discovery card's own name for the feature. The Settings row's [featureTitle] is a ROW
      * NAME — it answers "what is this row" for someone already reading a settings list — and this
      * card exists precisely because that list was never opened (owner, 2026-09-11: *"That way the
      * users don't have to discover the setting at all"*). So the headline names the surface the

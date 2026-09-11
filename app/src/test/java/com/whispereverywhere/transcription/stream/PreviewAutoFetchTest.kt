@@ -299,7 +299,7 @@ class PreviewAutoFetchTest {
     @Test fun theThirdPartyDownloadIsNeverSilentOnAnyConnection() {
         // The fallback route's bytes come from the catalog's commit-pinned base, not from the
         // app's own asset pack — and SETTINGS_INSTALL_FETCH promises the user "never from a third
-        // party", while SETTINGS_INSTALL_DOWNLOAD is the one sentence that admits one. A silent
+        // party", while installDownload() is the one sentence that admits one. A silent
         // fetch is exactly the case where that sentence is never read. So it OFFERS, on wifi as
         // well as on cellular, and the tap is the consent (review r1, B1).
         assertEquals(
