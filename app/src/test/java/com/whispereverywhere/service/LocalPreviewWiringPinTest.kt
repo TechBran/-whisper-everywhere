@@ -12,7 +12,8 @@ import java.io.File
  *
  * What this class holds: the tee is constructed at ONE site, AFTER the session language resolves
  * and BEFORE `connect`, and `transcriptionEngine` is re-pointed at it (every later reader — the
- * capture callback, the commit funnel, the stop path — reads that field); the session flag is
+ * capture callback, the commit funnel, the stop path — reads that field); the gate is handed the
+ * user's SELECTION and never whisper's `.en` pin of it (4.4.1, owner ruling 1); the session flag is
  * assigned the GATE's answer and never a constant; the resident previewer is released on trim and
  * on destroy and nowhere else; it is warmed beside the local prewarm; the arbiter counts
  * CONNECTING as capturing; and the service never imports the AAR — `SherpaPreviewRecognizer` is
@@ -64,7 +65,7 @@ class LocalPreviewWiringPinTest {
         val wrap = indexOfOrFail(startRecording, "PreviewTeeEngine(requireNotNull(preview), baseEngine)")
         val repoint = indexOfOrFail(startRecording, ".also { transcriptionEngine = it }")
         val connect = indexOfOrFail(startRecording, "        engine.connect(lang, object : TranscriptionEngine.Listener {")
-        assertTrue("the gate reads the RESOLVED language", lang < gate)
+        assertTrue("whisper's language resolves above the gate", lang < gate)
         assertTrue("the flag is set from the gate", gate < flag)
         assertTrue("the tee is built after the flag", flag < wrap)
         assertTrue("and transcriptionEngine is re-pointed at it, so the capture callback, the funnel and the stop path all see the tee", wrap < repoint)
@@ -72,6 +73,39 @@ class LocalPreviewWiringPinTest {
         assertEquals("ONE wrap site", 1, count(text, "PreviewTeeEngine(requireNotNull(preview), baseEngine)"))
         assertEquals("ONE gate call", 1, count(text, "= localPreviewArms(\n"))
         assertEquals("the base engine is resolved exactly as before, under a new name", 1, count(text, "val baseEngine: TranscriptionEngine = resolveTranscriptionEngine()"))
+    }
+
+    @Test
+    fun theGateReadsTheUsersSELECTIONAndNeverWhispersEnglishPin() {
+        // (4.4.1, owner ruling 1 — the fix for review B1.) `sessionLanguageFor` pins an
+        // ENGLISH-scope tier to "en" whatever the user picked, so feeding the gate `lang` armed
+        // live words for every Auto user on eco/pro — while the card, the picker, Settings and
+        // onboarding all say Auto shows none at all, and while the acquisition side (which reads
+        // the selection) never fetches that pack for them. ONE read of the pick, spent twice:
+        // resolved for whisper, raw for the previewer.
+        assertEquals(
+            "the pick is read once, in this function",
+            1,
+            count(startRecording, "        val selection = app.preferencesManager.getLanguageForApi()\n"),
+        )
+        assertEquals("and nowhere else in the service", 1, count(text, "app.preferencesManager.getLanguageForApi()"))
+        assertEquals(
+            "whisper resolves from that same read",
+            1,
+            count(startRecording, "            selection = selection,\n"),
+        )
+        assertEquals("the previewer's language IS the pick", 1, count(startRecording, "        val previewLanguage = selection\n"))
+        assertEquals(
+            "the gate's language argument is that pick",
+            1,
+            count(startRecording, "            sessionLanguage = previewLanguage,\n"),
+        )
+        assertEquals("never whisper's resolved pin", 0, count(text, "sessionLanguage = lang"))
+        assertEquals(
+            "and the gate line logs the gate's own input, so a refusal is one grep",
+            1,
+            count(startRecording, "                previewLanguage, packInstalled,"),
+        )
     }
 
     @Test

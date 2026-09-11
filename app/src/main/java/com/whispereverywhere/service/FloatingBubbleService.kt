@@ -202,6 +202,10 @@ internal enum class TranscribingEngine { LOCAL, CLOUD }
  * transcriber, or a cloud session's local mirror — keeps the "en" pin. Mirror and cloud language
  * therefore diverge deliberately inside one fallback session; the mirror's language is mapped
  * through this function again by `FallbackTranscriptionEngine`'s `mirrorLanguage` hook.
+ *
+ * (4.4.1) The PREVIEWER does not take this pin at all — [localPreviewArms] reads the user's
+ * selection directly, because the owner's per-language ruling makes Auto show no live words
+ * whatever whisper happens to type. This function stays whisper's, and only whisper's.
  */
 internal fun sessionLanguageFor(
     installedScope: com.whispereverywhere.model.ModelScope?,
@@ -216,11 +220,16 @@ internal fun sessionLanguageFor(
  * a truth table by LocalPreviewGateTest; the ONE caller is the wrap site in startRecording, which
  * logs every input on the `stream-gate:` line.
  *
- * RULING ASSUMED (R4): [sessionLanguage] is the RESOLVED local language —
- * `sessionLanguageFor(installedScope, selection, LOCAL)` — so Auto on an ENGLISH-scope tier is
- * "en" (arms) and Auto on a multilingual tier is null (whisper only; English partials over
- * Spanish speech would be garbage). A flip to "Auto + pack ⇒ English regardless" accepts null
- * here and nowhere else. RULING ASSUMED (R3): [userEnabled] defaults true in PreferencesManager.
+ * OWNER RULING 2026-09-11, which RETIRES 4.4.0's assumed R4: [sessionLanguage] is the user's OWN
+ * selection — `getLanguageForApi()`, null on Auto — and NOT whisper's resolved local language.
+ * *"Now if they leave it in auto, then you get no live streaming at all. And that will seem to be
+ * a very fair trade-off."* Under R4 the call site fed `sessionLanguageFor(scope, selection, LOCAL)`,
+ * whose ENGLISH-scope pin turns Auto into "en" on the `.en` tiers (eco, pro) — so Auto armed for
+ * the default selection on the majority local tier, which is the one route by which 4.4.1's copy
+ * ("Auto-detect shows none at all") could have been false, and for a pack the acquisition side —
+ * which reads the SELECTION — would never have fetched for those users. Whisper's own resolution
+ * is untouched: an Auto session on eco still TYPES English, it just shows no live words.
+ * RULING ASSUMED (R3): [userEnabled] defaults true in PreferencesManager.
  *
  * Cloud sessions (batch or live) keep today's strip; a running batch file job vetoes (two CPU
  * consumers beside whisper's bursts is the research's §3.9 refusal); [previewReady] is the
@@ -3451,15 +3460,19 @@ class FloatingBubbleService : Service(),
         // and its English-only local MIRROR is re-pinned to "en" through the fallback's
         // mirrorLanguage hook, wired in resolveTranscriptionEngine.
         val installedModel = app.whisperModelManager.installedModel()
+        // The user's own pick, read ONCE and then spent twice with deliberately different
+        // meanings: whisper transcribes in the RESOLVED language below (the `.en` pin), and the
+        // previewer's gate reads this RAW value (4.4.1 — see `previewLanguage` at the wrap site).
+        val selection = app.preferencesManager.getLanguageForApi()
         val lang = sessionLanguageFor(
             installedScope = installedModel?.scope,
-            selection = app.preferencesManager.getLanguageForApi(),
+            selection = selection,
             engine = if (cloudWrapper != null) TranscribingEngine.CLOUD else TranscribingEngine.LOCAL,
         )
         android.util.Log.i("WE-DIAG", "connect lang resolved=$lang (modelScope=${installedModel?.scope} cloud=${cloudWrapper != null})")
 
         // 4.4.0: THE ONE WRAP SITE (spec §4.1 step 2, §5). After the language resolved, before
-        // connect: the gate reads the RESOLVED local language (R4), the pack, the session kind
+        // connect: the gate reads the SELECTED language (4.4.1, below), the pack, the session kind
         // (cloudWrapper != null IS the right predicate here — cloud batch and live keep today's
         // strip), a running batch job, the switch (R3) and the resident previewer's readiness
         // (false while loading; false forever after a failed canary — R1). When it arms, the
@@ -3467,6 +3480,20 @@ class FloatingBubbleService : Service(),
         // capture callback, the commit funnel and the stop path all drive the tee. The strip
         // rules read sessionHasLocalPreview (Task 1's second input) — assigned the gate's answer,
         // never a constant. Every input is logged, so a "why no words?" is one grep.
+        //
+        // (4.4.1 acquisition amendment, owner ruling 1: *"if they leave it in auto, then you get
+        // no live streaming at all"*) THE PREVIEWER'S LANGUAGE IS THE USER'S OWN SELECTION — null
+        // on Auto — and NOT whisper's `lang`. The two diverge on exactly one tier shape:
+        // sessionLanguageFor pins an ENGLISH-scope tier (eco, pro — the `.en` weights) to "en"
+        // whatever the user picked, because those weights can neither auto-detect nor transcribe
+        // anything else. Handing that pin to the previewer armed live words for every Auto user on
+        // a `.en` tier — the default selection on the majority local tier — while this release's
+        // copy tells them on the card, in the picker, in Settings and at onboarding that Auto
+        // shows none at all, and while the acquisition side (which reads the SELECTION) would
+        // never fetch that pack for them. One pick keyed two ways is a product contradicting
+        // itself, so the previewer reads the selection and whisper's own resolution is untouched:
+        // an Auto session on eco still TYPES English, it just shows no live words.
+        val previewLanguage = selection
         val previewPack = com.whispereverywhere.transcription.stream.StreamingPackCatalog.EN
         // (4.4.1 acquisition amendment) WHICH previewer packs are on disk, read ONCE for the gate
         // and the warm-up below: the gate's language term is now "is this session's language one
@@ -3482,22 +3509,25 @@ class FloatingBubbleService : Service(),
         val preview = if (packInstalled && userEnabled) warmStreamingPreview() else streamingPreview
         val previewReady = preview?.isWarm() == true
         val previewArmed = localPreviewArms(
-            sessionLanguage = lang,
+            sessionLanguage = previewLanguage,
             installedPackLanguages = installedPreviewLanguages,
             isCloudSession = cloudWrapper != null,
             batchJobActive = BatchJobController.active != null,
             userEnabled = userEnabled,
             previewReady = previewReady,
         )
-        // `pack=` on this line keeps its 4.4.0 meaning — the ENGLISH pack is on disk — because
-        // that is what the warm-up above gates on and what a log read against older captures
-        // compares to. With a non-English `lang=` the gate's own language term is false while
-        // this reads 1; `lang=` is the field that says why. When the language list lands, both
-        // this field and warmStreamingPreview() become the SESSION language's pack together.
+        // `lang=` on this line is the PREVIEWER's language — the user's selection, `auto` when
+        // there is none — and not whisper's resolved pin, which the `connect lang resolved=` line
+        // above carries: this line exists to explain the gate's own answer, so it logs the gate's
+        // own input. `pack=` keeps its 4.4.0 meaning — the ENGLISH pack is on disk — because that
+        // is what the warm-up above gates on and what a log read against older captures compares
+        // to. With a non-English `lang=` the gate's own language term is false while this reads 1;
+        // `lang=` is the field that says why. When the language list lands, both this field and
+        // warmStreamingPreview() become the SESSION language's pack together.
         android.util.Log.i(
             "WE-DIAG",
             com.whispereverywhere.transcription.stream.StreamDiag.gateLine(
-                lang, packInstalled, cloudWrapper != null, BatchJobController.active != null,
+                previewLanguage, packInstalled, cloudWrapper != null, BatchJobController.active != null,
                 userEnabled, previewReady, previewArmed,
             ),
         )

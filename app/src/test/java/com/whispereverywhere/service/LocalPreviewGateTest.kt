@@ -9,11 +9,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The previewer's gate (spec §5), as a truth table — and its composition with
- * [sessionLanguageFor], because RULING ASSUMED (R4) is a statement about the RESOLVED language:
- * Auto = whisper only on multilingual tiers; Auto on `pro` = English, which `sessionLanguageFor`
- * already answers (FloatingBubbleService.kt:203-209). A flip to "Auto + pack ⇒ English partials
- * regardless" is one accepted value (`null`) in the gate and one row here.
+ * The previewer's gate (spec §5), as a truth table — and its DIVERGENCE from [sessionLanguageFor],
+ * because the gate's language is the user's own selection while whisper's is that selection
+ * resolved through the `.en` pin. 4.4.0's assumed R4 said the gate took the RESOLVED value, which
+ * made Auto arm on an ENGLISH-scope tier; owner ruling 2026-09-11 retires that (see below), so the
+ * rows here compose the two functions to hold them apart rather than together.
  *
  * ### The language term is the CATALOGUE's, since 4.4.1's acquisition amendment
  *
@@ -24,6 +24,15 @@ import org.junit.Test
  * only ever answer with catalogue rows), so the gate asks the question once and no row can be
  * invented here. NO OTHER TERM CHANGED: the owner tested this gate and found it correct, so the
  * cloud, batch, switch and readiness vetoes read exactly as they did.
+ *
+ * ### And the language it is handed is the SELECTION (owner ruling 1, 2026-09-11)
+ *
+ * *"Now if they leave it in auto, then you get no live streaming at all. And that will seem to be
+ * a very fair trade-off."* The pack arrives for a language the user PICKED, so the gate must ask
+ * about the same value the acquisition side asks about — not whisper's `.en` resolution of it,
+ * which would arm Auto for eco/pro users while every surface of this release tells them Auto
+ * shows none at all. The wrap site's argument is pinned by `LocalPreviewWiringPinTest`; the rows
+ * below pin what the two functions answer, and that they answer different things.
  */
 class LocalPreviewGateTest {
 
@@ -67,10 +76,9 @@ class LocalPreviewGateTest {
 
     @Test fun autoArmsNothingWithEveryPackInTheWorldInstalled() {
         // Owner ruling 2026-09-11: *"Now if they leave it in auto, then you get no live streaming
-        // at all. And that will seem to be a very fair trade-off."* A session with no resolved
-        // language has no pack to choose, whatever is on disk. (An ENGLISH-scope whisper tier is
-        // the one case where Auto still reaches the gate AS "en" — sessionLanguageFor resolves it
-        // before the gate sees it, which is R4 and is deliberately unchanged; see the row below.)
+        // at all. And that will seem to be a very fair trade-off."* A session with no SELECTED
+        // language has no pack to choose, whatever is on disk and whatever tier is installed —
+        // the `.en` tiers included, which is what the two rows below hold apart.
         assertFalse(arms(null, packs = everyPack))
         assertFalse(
             "and the raw picker code never reaches the gate unresolved — but if it did, no " +
@@ -97,30 +105,40 @@ class LocalPreviewGateTest {
         assertFalse("nor the other way round", arms("en", packs = setOf("es")))
     }
 
-    @Test fun autoOnAnEnglishOnlyTierResolvesToEnglishAndArms() {
-        // R4's second half: `pro` (small.en) already forces "en" for the local engine.
-        val lang = sessionLanguageFor(ModelScope.ENGLISH, null, TranscribingEngine.LOCAL)
-        assertEquals("en", lang)
-        assertTrue(arms(lang))
+    @Test fun autoOnAnEnglishOnlyTierArmsNothing_becauseTheGateReadsTheSELECTION() {
+        // R4's second half, RETIRED by owner ruling 1 (2026-09-11). `pro` (small.en) and `eco`
+        // (base.en) do still force "en" FOR WHISPER — that is unchanged, and it is why the typed
+        // transcript is English there — but the previewer is handed the user's pick, and Auto
+        // picks nothing. This is the population the ruling was written about: the default
+        // selection on the default local tier, for whom the acquisition side fetches nothing
+        // either, so the copy's "Auto-detect shows none at all" is true for them too.
+        assertEquals("en", sessionLanguageFor(ModelScope.ENGLISH, null, TranscribingEngine.LOCAL))
+        assertFalse("Auto selects nothing, so there is no language whose pack could arm", arms(null))
+        assertFalse(arms(null, packs = everyPack))
     }
 
-    @Test fun autoOnAMultilingualTierIsWhisperOnly() {
-        // R4's first half: English partials over Spanish speech would be garbage. Byte-identical
-        // to 4.3.4 for every Auto + multi / npu / npu-turbo session.
-        val lang = sessionLanguageFor(ModelScope.MULTILINGUAL, null, TranscribingEngine.LOCAL)
-        assertNull(lang)
-        assertFalse(arms(lang))
+    @Test fun autoIsWhisperOnlyOnEveryTier() {
+        // R4's first half, now the whole rule. Byte-identical to 4.3.4 for every Auto + multi /
+        // npu / npu-turbo session (English partials over Spanish speech would be garbage), and
+        // newly true for Auto + eco / pro by the row above.
+        assertNull(sessionLanguageFor(ModelScope.MULTILINGUAL, null, TranscribingEngine.LOCAL))
+        assertFalse(arms(null))
     }
 
     @Test fun aNonEnglishPickNeverArms() {
+        // Only English has a pack today, and the gate reads the pick — so whisper's own
+        // resolution of that pick is not consulted here at all.
         assertFalse(arms("es"))
-        assertFalse(arms(sessionLanguageFor(ModelScope.MULTILINGUAL, "es", TranscribingEngine.LOCAL)))
-        assertFalse(arms(sessionLanguageFor(null, "fr", TranscribingEngine.LOCAL)))
+        assertFalse(arms("fr"))
     }
 
-    @Test fun aSpanishPickOnAnEnglishOnlyTierArms_becauseWhisperTypesEnglishThere() {
-        // The scope override wins for the local engine; the preview matches the typed language.
-        assertTrue(arms(sessionLanguageFor(ModelScope.ENGLISH, "es", TranscribingEngine.LOCAL)))
+    @Test fun aSpanishPickOnAnEnglishOnlyTierShowsNoLiveWords_thoughWhisperStillTypesEnglish() {
+        // The scope override wins for whisper and ONLY for whisper. The user picked Spanish, no
+        // Spanish pack exists and no card ever offered them one, so live words stay off rather
+        // than running an English model under a Spanish pick — which is also what
+        // `cardLanguageNote` promises: live words follow your TRANSCRIPTION LANGUAGE.
+        assertEquals("en", sessionLanguageFor(ModelScope.ENGLISH, "es", TranscribingEngine.LOCAL))
+        assertFalse("the English pack on disk is not the Spanish pick's pack", arms("es"))
     }
 
     @Test fun everyOtherInputIsAVeto() {
