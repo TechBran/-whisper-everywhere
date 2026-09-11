@@ -35,8 +35,37 @@ class PreviewAutoFetchTest {
         StreamingPackState.Repair(StreamingPackState.Downloadable),
     )
 
-    /** One cell of the cross product, named so a failure says which of the 3,584 broke. */
+    /**
+     * The LANGUAGE half of the product (owner rulings 2026-09-11, consequence 2): the code the
+     * user has selected, and the language of the pack whose [StreamingPackState] was read. They
+     * are two inputs rather than one because the question the decision has to answer is not "is a
+     * pack missing" but *"does the SELECTED language have a pack, and is THAT pack the one
+     * missing?"* — and a decision that could only compare a pack to itself could not refuse the
+     * case this input exists for: a user who only ever dictates in Chinese being pushed 73 MB of
+     * English they can never use.
+     */
+    private data class Lang(val selected: String, val pack: String?)
+
+    private val everyLangPair = listOf(
+        // The ordinary case, and the only one reachable today.
+        Lang("en", "en"),
+        // A second language, once its pack module exists.
+        Lang("es", "es"),
+        // AUTO: the fair trade the owner named — no selected language, no pack to choose, no live
+        // words, and therefore nothing to fetch.
+        Lang("auto", null),
+        // A selected language the catalogue has no row for.
+        Lang("zh", null),
+        // ...and the two MISMATCHES, which the call site cannot construct (it resolves the pack
+        // FROM the selection) and which the decision must still refuse, because a decision that
+        // trusts its caller to have matched them is not a gate.
+        Lang("auto", "en"),
+        Lang("zh", "en"),
+    )
+
+    /** One cell of the cross product, named so a failure says which of the 21,504 broke. */
     private data class Cell(
+        val lang: Lang,
         val state: StreamingPackState,
         val userSaidNo: Boolean,
         val showLiveWords: Boolean,
@@ -50,11 +79,11 @@ class PreviewAutoFetchTest {
     )
 
     private fun everyCell(): List<Cell> = buildList {
-        for (state in everyState) {
+        for (lang in everyLangPair) for (state in everyState) {
             for (no in bools) for (sw in bools) for (tier in bools) for (un in bools) {
                 for (sess in bools) for (batch in bools) for (busy in bools) {
                     for (tried in bools) for (back in bools) {
-                        add(Cell(state, no, sw, tier, un, sess, batch, busy, tried, back))
+                        add(Cell(lang, state, no, sw, tier, un, sess, batch, busy, tried, back))
                     }
                 }
             }
@@ -62,6 +91,8 @@ class PreviewAutoFetchTest {
     }
 
     private fun decide(c: Cell): PreviewAutoFetch.Decision = PreviewAutoFetch.decide(
+        selectedLanguage = c.lang.selected,
+        packLanguage = c.lang.pack,
         state = c.state,
         userSaidNo = c.userSaidNo,
         showLiveWords = c.showLiveWords,
@@ -78,11 +109,15 @@ class PreviewAutoFetchTest {
 
     @Test fun theDecisionIsTheStatedRuleInEveryCellOfItsInputs() {
         val cells = everyCell()
-        assertEquals("the walk must be the full cross product", 7 * 512, cells.size)
+        assertEquals("the walk must be the full cross product", 6 * 7 * 512, cells.size)
         for (c in cells) {
             // The rules, spelled independently of the implementation's ordering.
             val nothingToDo = c.state.isInstalled || c.state is StreamingPackState.Repair
-            val refused = c.userSaidNo || !c.showLiveWords || !c.localTierInstalled
+            // The pack must be the one for the language the user actually picked. Stated as its
+            // own clause, so the walk still checks an independently written rule.
+            val wrongLanguage = c.lang.pack == null || c.lang.pack != c.lang.selected
+            val refused = wrongLanguage ||
+                c.userSaidNo || !c.showLiveWords || !c.localTierInstalled
             val notNow = c.sessionActive || c.batchJobActive || c.packWorkInFlight
             // A third party's bytes are never moved silently, whatever the network reads.
             val thirdParty = c.state == StreamingPackState.Downloadable
@@ -104,6 +139,11 @@ class PreviewAutoFetchTest {
         // claim that no combination anywhere in the product sneaks past all of them.
         for (c in everyCell()) {
             if (decide(c) != PreviewAutoFetch.Decision.FETCH) continue
+            assertEquals(
+                "$c: the pack fetched is the SELECTED language's, and no other — a 73 MB model " +
+                    "for a language nobody picked is a download the user can never use",
+                c.lang.selected, c.lang.pack,
+            )
             assertFalse("$c: an installed pack is never re-fetched", c.state.isInstalled)
             assertFalse("$c: a damaged install is never silently re-fetched", c.state is StreamingPackState.Repair)
             assertFalse("$c: a delete or a dismissal is never undone", c.userSaidNo)
@@ -133,7 +173,8 @@ class PreviewAutoFetchTest {
         // "The user said no" and "the feature is switched off" must produce no card at all.
         for (c in everyCell()) {
             val d = decide(c)
-            if (c.userSaidNo || !c.showLiveWords || !c.localTierInstalled ||
+            if (c.lang.pack == null || c.lang.pack != c.lang.selected ||
+                c.userSaidNo || !c.showLiveWords || !c.localTierInstalled ||
                 c.sessionActive || c.batchJobActive || c.packWorkInFlight ||
                 c.state.isInstalled || c.state is StreamingPackState.Repair
             ) {
@@ -147,6 +188,7 @@ class PreviewAutoFetchTest {
     // ------------------------------------------------------------------ the individual rules
 
     private fun open(
+        lang: Lang = Lang("en", "en"),
         state: StreamingPackState = StreamingPackState.PackFetchable,
         userSaidNo: Boolean = false,
         showLiveWords: Boolean = true,
@@ -159,10 +201,46 @@ class PreviewAutoFetchTest {
         backedOff: Boolean = false,
     ) = decide(
         Cell(
-            state, userSaidNo, showLiveWords, localTierInstalled, unmetered,
+            lang, state, userSaidNo, showLiveWords, localTierInstalled, unmetered,
             sessionActive, batchJobActive, packWorkInFlight, attemptedThisLaunch, backedOff,
         )
     )
+
+    @Test fun autoFetchesNothingBecauseAutoArmsNothing() {
+        // Owner ruling 2026-09-11: *"Now if they leave it in auto, then you get no live streaming
+        // at all. And that will seem to be a very fair trade-off."* No selected language means no
+        // pack to choose, so there is nothing to fetch and nothing to say — and the card is
+        // silent too, because a card with no pack behind it has no offer to make.
+        assertEquals(PreviewAutoFetch.Decision.NONE, open(lang = Lang("auto", null)))
+        assertEquals(
+            "not even with a pack sitting undelivered on the device",
+            PreviewAutoFetch.Decision.NONE,
+            open(lang = Lang("auto", null), state = StreamingPackState.PackDelivered),
+        )
+    }
+
+    @Test fun aSelectedLanguageWithNoPackOfItsOwnIsNeverFetchedFor() {
+        // Only English has a pack today, so this is every other language in the picker: no row in
+        // the catalogue, nothing to fetch, and no card. The multilingual build adds rows; it does
+        // not change this rule.
+        assertEquals(PreviewAutoFetch.Decision.NONE, open(lang = Lang("zh", null)))
+    }
+
+    @Test fun anotherLanguagesPackIsNeverPushedToSomeoneWhoDidNotPickIt() {
+        // The reason this input exists, in the amendment's own words: without it *"a user who
+        // only ever dictates in Chinese gets 73 MB of English model pushed to their phone on
+        // wifi — a download they can never use"*. Unreachable from the one call site, which
+        // resolves the pack FROM the selection; refused here anyway, because a gate that trusts
+        // its caller to have matched them is not a gate.
+        assertEquals(PreviewAutoFetch.Decision.NONE, open(lang = Lang("zh", "en")))
+        assertEquals(PreviewAutoFetch.Decision.NONE, open(lang = Lang("auto", "en")))
+    }
+
+    @Test fun aSecondLanguagesOwnPackFetchesOnItsOwnTerms() {
+        // The machinery is not English-shaped: a row whose language the user has selected fetches
+        // exactly as English does, which is what makes languages additive rather than a rewrite.
+        assertEquals(PreviewAutoFetch.Decision.FETCH, open(lang = Lang("es", "es")))
+    }
 
     @Test fun anInstalledPackIsNeverFetchedAgain() {
         assertEquals(PreviewAutoFetch.Decision.NONE, open(state = StreamingPackState.Installed))

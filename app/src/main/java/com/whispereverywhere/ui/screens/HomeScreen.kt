@@ -856,6 +856,13 @@ private fun LiveWordsCard(
     localTierInstalled: Boolean,
 ) {
     val pack = StreamingPackCatalog.EN
+    // THE SELECTED LANGUAGE, and the acquisition amendment's whole point (owner rulings
+    // 2026-09-11): the pack that may arrive is the one for the language the user picked, so no
+    // language nobody picked is ever fetched for — and Auto, which arms nothing, fetches nothing.
+    // A StateFlow, so this ONE read is also the collector: it replays the value already in place
+    // when the app comes to the foreground (the top-up) and conflates equal values, so a change
+    // made in the picker below arrives once and a recomposition re-fires nothing.
+    val selectedLanguage by app.preferencesManager.selectedLanguage.collectAsState()
     val previewFetch by StreamingPackController.state.collectAsState()
     val ourLine by PreviewAutoFetchController.line.collectAsState()
     val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
@@ -916,6 +923,8 @@ private fun LiveWordsCard(
         PreviewAutoFetch.Decision.NONE
     } else {
         PreviewAutoFetch.decide(
+            selectedLanguage = selectedLanguage,
+            packLanguage = pack.language,
             state = packState,
             userSaidNo = saidNo,
             showLiveWords = showLiveWords,

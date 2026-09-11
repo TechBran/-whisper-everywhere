@@ -57,16 +57,26 @@ package com.whispereverywhere.transcription.stream
  *
  * ### What it does NOT re-decide
  *
- * `localPreviewArms` (FloatingBubbleService.kt:229) stays untouched — the owner tests on Auto
- * deliberately and found the English gate correct once explained. The INPUTS this decision shares
- * with that gate are read from the same places and never re-derived here: the switch
+ * `localPreviewArms` (FloatingBubbleService.kt) keeps its own shape — the owner tests on Auto
+ * deliberately and found the gate correct once explained; 4.4.1's acquisition amendment only
+ * generalises its English literal into a catalogue lookup. The INPUTS this decision shares with
+ * that gate are read from the same places and never re-derived here: the switch
  * (`PreferencesManager.localPreviewEnabled`), a running batch job (`BatchJobController.active`),
- * and the pack's own installed state (through [StreamingPackState]). Two it deliberately does not
- * borrow: the session LANGUAGE (a pack that is not installed cannot arm in any language, and the
- * card is where the "pick English" sentence belongs) and `previewReady` (the recognizer cannot be
- * warm before the model exists). [localTierInstalled] is the SETUP-level reading of that gate's
- * `isCloudSession`: with no on-device tier installed every session is a cloud session, so the
- * previewer could never arm and 73 MB would buy the user nothing.
+ * and the pack's own installed state (through [StreamingPackState]). One it deliberately does not
+ * borrow: `previewReady` (the recognizer cannot be warm before the model exists).
+ * [localTierInstalled] is the SETUP-level reading of that gate's `isCloudSession`: with no
+ * on-device tier installed every session is a cloud session, so the previewer could never arm and
+ * 73 MB would buy the user nothing.
+ *
+ * ### The LANGUAGE is an input, as of the acquisition amendment (owner rulings 2026-09-11)
+ *
+ * *"for each language and we make it explicit that users just have to select their language. Now
+ * if they leave it in auto, then you get no live streaming at all."* So the pack that may arrive
+ * is the SELECTED language's and no other ([selectedLanguage] × [packLanguage]) — which makes
+ * Auto fetch nothing by construction, and makes a Chinese-only user's phone safe from 73 MB of an
+ * English model they can never use. The gate's language term and this decision's are deliberately
+ * NOT the same reading: the gate asks about a session's RESOLVED language, this asks what the
+ * user picked, and only the second one can be a reason to spend their data.
  */
 object PreviewAutoFetch {
 
@@ -131,6 +141,19 @@ object PreviewAutoFetch {
      * The refusals are answered before the routes, and in this order, because each of them is a
      * reason the fetch would be WRONG rather than merely early:
      *
+     * @param selectedLanguage `PreferencesManager.selectedLanguage` — the RAW picker code, with
+     *        `"auto"` as itself rather than mapped to null. No pack's language is `"auto"`, so
+     *        Auto refuses here by construction, which is the owner's *"if they leave it in auto,
+     *        then you get no live streaming at all"* (2026-09-11): no selected language, no pack
+     *        to choose, nothing to fetch.
+     * @param packLanguage the language of the pack [state] was read for
+     *        ([StreamingPackCatalog.forLanguage]'s answer for [selectedLanguage], null when the
+     *        catalogue has no row). The two are compared rather than assumed equal because the
+     *        question is not "is a pack missing" but *"does the selected language have a pack, and
+     *        is THAT pack the one missing?"* — and the case that answers is a user who only ever
+     *        dictates in Chinese being pushed 73 MB of English they can never use. The one call
+     *        site derives one from the other, so a mismatch is unreachable there; a gate that
+     *        trusts its caller to have matched them is not a gate.
      * @param state `StreamingPackManager.state(pack)` — the one triage
      *        ([StreamingPackInstall.resolve]) that already knows which source this install has.
      * @param userSaidNo the persisted decision (`PreferencesManager.livePreviewDeclined`): the
@@ -160,6 +183,8 @@ object PreviewAutoFetch {
      * @param backedOff [backedOff] of the persisted failure stamp.
      */
     fun decide(
+        selectedLanguage: String,
+        packLanguage: String?,
         state: StreamingPackState,
         userSaidNo: Boolean,
         showLiveWords: Boolean,
@@ -171,6 +196,10 @@ object PreviewAutoFetch {
         attemptedThisLaunch: Boolean,
         backedOff: Boolean,
     ): Decision {
+        // THE PACK MUST BE THE SELECTED LANGUAGE'S. Answered first because every input below it
+        // is about a pack this user has no use for otherwise. `"auto"` refuses here by
+        // construction — no pack's language is "auto" — which is the fair trade the owner named.
+        if (packLanguage == null || packLanguage != selectedLanguage) return Decision.NONE
         // Nothing to arrive, and nothing to say: the recognizer already opens this install.
         if (state.isInstalled) return Decision.NONE
         // A damaged install is the user's call, never a silent re-fetch. See the class KDoc.
