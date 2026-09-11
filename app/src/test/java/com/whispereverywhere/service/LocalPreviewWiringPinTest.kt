@@ -90,8 +90,9 @@ class LocalPreviewWiringPinTest {
             count(startRecording, "        val selection = app.preferencesManager.getLanguageForApi()\n"),
         )
         assertEquals(
-            "read in exactly two places in the service: here, and the boot warm's own lookup (CHANGE 5)",
-            2,
+            "read in exactly three places in the service: here, the boot warm's own lookup " +
+                "(CHANGE 5), and the release-on-selection-change collector's (pass 3, ITEM 2)",
+            3,
             count(text, "app.preferencesManager.getLanguageForApi()"),
         )
         assertEquals(
@@ -147,13 +148,72 @@ class LocalPreviewWiringPinTest {
     }
 
     @Test
-    fun theResidentPreviewerIsReleasedOnTrimAndOnDestroyAndNowhereElse() {
+    fun theResidentPreviewerIsReleasedOnTrimOnDestroyAndOnASelectionWithNoPack_andNowhereElse() {
         // The service OWNS the previewer (spec §4.1 step 10, §7.4): the tee borrows it per session.
         val trimLocal = indexOfOrFail(onTrim, "localEngine?.releaseContext()")
         val trimPreview = indexOfOrFail(onTrim, "streamingPreview?.release()")
         assertTrue("released under the same three-state guard, after the local context", trimLocal < trimPreview)
         indexOfOrFail(onDestroy, "        streamingPreview?.release()\n        streamingPreview = null\n")
-        assertEquals("two release sites: trim and destroy", 2, count(text, "streamingPreview?.release()"))
+        assertEquals(
+            "THREE release sites: trim, destroy, and the selection moving away from the resident " +
+                "pack's language (4.4.1 pass 3, ITEM 2). A fourth is a recognizer freed under a " +
+                "session that borrowed it",
+            3, count(text, "streamingPreview?.release()"),
+        )
+    }
+
+    @Test
+    fun theResidentPreviewerIsHandedBackWhenTheSelectionMovesAwayFromItsPack() {
+        // (4.4.1 pass 3, ITEM 2 — review r2's nit 2.) CHANGE 5 stopped the boot WARM for a user
+        // on Auto, but nothing released a RESIDENT engine when the selection moved away from an
+        // installed pack language: a user who dictated in English and then switched to Auto kept
+        // the recognizer and its +169 MB until onTrimMemory or onDestroy. One site, one
+        // condition, and the condition is the warm gate's own answer — LocalPreviewGateTest
+        // holds the two together, so this pins only the wiring.
+        val collector = indexOfOrFail(
+            text,
+            "            app.preferencesManager.selectedLanguage.drop(1).collect {\n",
+        )
+        assertEquals(
+            "ONE collector on the selection in the service, and it is this one",
+            1, count(text, "app.preferencesManager.selectedLanguage"),
+        )
+        assertEquals(
+            "drop(1): the prewarm above has just asked the same question of the value already " +
+                "in place and warmed nothing for it",
+            1, count(text, "selectedLanguage.drop(1)"),
+        )
+        val guard = indexOfOrFail(
+            text,
+            "                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) return@collect\n",
+        )
+        val condition = indexOfOrFail(text, "                val keep = withContext(Dispatchers.IO) {\n")
+        val release = text.indexOf("                streamingPreview?.release()\n")
+        assertTrue("the mid-session skip comes FIRST: the tee BORROWS this recognizer", collector < guard)
+        assertTrue("then the condition", guard < condition)
+        assertTrue("and only then the release", condition in 0 until release)
+        assertEquals(
+            "the condition is previewPackToWarm's own answer, never a second language " +
+                "comparison — a release that disagreed with the warm would thrash the load",
+            1, count(text, "                if (keep != null) return@collect\n"),
+        )
+        assertEquals(
+            "the census is off Main: installedLanguages() is a marker read plus four byte " +
+                "counts per catalogue row",
+            1, count(text, "val keep = withContext(Dispatchers.IO) {"),
+        )
+        assertEquals(
+            "and `streamingPreviewPack` is deliberately NOT cleared — that is the onTrimMemory " +
+                "shape, so re-picking the language reloads through warmStreamingPreview's `==` " +
+                "branch instead of releasing an already-released engine first",
+            1, count(text, "streamingPreviewPack = "),
+        )
+        assertEquals(
+            "the pick is read through the one seam, now in three places: the wrap site, the boot " +
+                "warm's lookup, and this collector's",
+            3,
+            count(text, "app.preferencesManager.getLanguageForApi()"),
+        )
     }
 
     @Test
@@ -175,7 +235,10 @@ class LocalPreviewWiringPinTest {
         // buys is measured: 802-860 ms and +169 MB RSS never spent on a recognizer the gate
         // refuses on its first conjunct.
         assertEquals("the decision is declared once, beside the gate", 1, count(text, "internal fun previewPackToWarm(\n"))
-        assertEquals("the boot prewarm asks it", 1, count(text, "            previewPackToWarm(\n"))
+        // Anchored on the newline, so the indent is EXACT: the release collector (pass 3, ITEM 2)
+        // asks the same function from deeper inside a coroutine, and an unanchored needle would
+        // count that too and turn this pin into "at least one warm site".
+        assertEquals("the boot prewarm asks it", 1, count(text, "\n            previewPackToWarm(\n"))
         assertEquals("and it hands the answer straight over", 1, count(text, "            )?.let { warmStreamingPreview(it) }\n"))
         val wrapSite = indexOfOrFail(startRecording, "        val packToWarm = previewPackToWarm(\n")
         val warmCall = indexOfOrFail(

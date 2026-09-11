@@ -211,6 +211,39 @@ class LocalPreviewGateTest {
         assertEquals("en", warms("en", packs = everyPack)?.language)
     }
 
+    @Test fun aSelectionWithNothingToWARMIsASelectionWithNothingToKEEP() {
+        // (4.4.1 pass 3, ITEM 2 — review r2's nit 2.) CHANGE 5 stopped the boot warm for a user
+        // on Auto, so nothing is LOADED for them at boot; but nothing released a RESIDENT engine
+        // when the selection moved away from an installed pack language, so a user who dictated
+        // in English and then switched to Auto kept the recognizer and its +169 MB until
+        // onTrimMemory or onDestroy. CHANGE 5's words were met and its purpose was not.
+        //
+        // The release condition is this gate's own answer and nothing new: nothing to warm for
+        // the new selection is nothing that should stay resident for it. The expectations are
+        // written out rather than derived, so a change to the warm gate has to be agreed here.
+        val expectRelease = listOf(
+            null to true,       // Auto — the case the nit is about, and the owner's own habit
+            "auto" to true,     // the raw picker code, if it ever reached here
+            "es" to true,       // a language picked with no pack of its own
+            "zh" to true,
+            "en" to false,      // the resident pack's own language: keep it, and warm() no-ops
+        )
+        for ((lang, release) in expectRelease) {
+            assertEquals(
+                "lang=$lang with the English pack installed",
+                release,
+                warms(lang) == null,
+            )
+        }
+        assertTrue("the switch going off is the same answer", warms("en", enabled = false) == null)
+        assertTrue("nothing on disk is nothing to keep", warms("en", packs = emptySet()) == null)
+        // The COMPLEMENT is `warmStreamingPreview`'s own release (`streamingPreviewPack != pack`):
+        // that one frees the old recognizer when the new selection has a DIFFERENT pack, this one
+        // frees it when the new selection has NONE. Between them a language change can never
+        // leave the wrong model — or an unused one — in memory.
+        assertEquals(StreamingPackCatalog.EN, warms("en", packs = everyPack))
+    }
+
     // ------------------------------------------------------------------ R3, the switch's default
 
     /**

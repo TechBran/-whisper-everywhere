@@ -282,6 +282,12 @@ internal fun localPreviewArms(
  * the NEXT local one, and refusing to load during one would cost that session its live words.
  * The gate's `previewReady` has no meaning here either — it is the answer this call produces.
  *
+ * **(4.4.1 pass 3, ITEM 2) It is also the RELEASE condition.** A null answer means there is
+ * nothing to warm for this selection — and therefore nothing that should stay resident for it, so
+ * the selection collector in `onCreate` frees the recognizer on exactly this null. One function,
+ * asked by both warm sites and by the release, is what keeps a release from ever disagreeing with
+ * a warm and thrashing the 802-860 ms load between them.
+ *
  * @return the pack to hand `StreamingPreviewEngine.warm`, or null to warm nothing at all. Never a
  *   pack for a language that is not [previewLanguage]: the catalogue is asked for that language
  *   and no other, so a warm can never load a model the gate will refuse.
@@ -597,8 +603,9 @@ class FloatingBubbleService : Service(),
     // 4.4.0: THE RESIDENT PREVIEWER (spec §4.1 step 1, §7.4) — the sherpa recognizer and its own
     // executor, Main-confined like localEngine. Built lazily by warmStreamingPreview() when the
     // SELECTED language's pack is installed and the switch is on (4.4.1, CHANGE 5); released on
-    // onTrimMemory (outside a session) and onDestroy; BORROWED per session by PreviewTeeEngine,
-    // never owned by it.
+    // onTrimMemory (outside a session), on onDestroy, and — 4.4.1 pass 3, ITEM 2 — when the
+    // selection moves to a language there is nothing to warm for; BORROWED per session by
+    // PreviewTeeEngine, never owned by it, which is why every release site skips mid-session.
     private var streamingPreview: com.whispereverywhere.transcription.stream.StreamingPreviewEngine? = null
 
     // (4.4.1, CHANGE 5) WHICH pack the resident previewer above holds — ONE PACK PER PROCESS, the
@@ -1010,6 +1017,49 @@ class FloatingBubbleService : Service(),
                 installedPackLanguages = app.streamingPackManager.installedLanguages(),
                 userEnabled = app.preferencesManager.localPreviewEnabled,
             )?.let { warmStreamingPreview(it) }
+        }
+
+        // (4.4.1 pass 3, ITEM 2) THE OTHER HALF OF CHANGE 5: the +169 MB comes back when the
+        // selection moves AWAY from an installed pack language. CHANGE 5 stopped the boot warm
+        // for a user on Auto, so nothing is LOADED for them at boot — but nothing released a
+        // RESIDENT engine, so a user who dictated in English and then switched to Auto kept the
+        // recognizer until `onTrimMemory` or `onDestroy` (review r2, nit 2). CHANGE 5's words
+        // were met; its purpose was not.
+        //
+        // ONE site, ONE condition, and the condition is the warm gate's OWN ANSWER: nothing to
+        // warm for the new selection is nothing that should stay resident for it. It is the exact
+        // COMPLEMENT of `warmStreamingPreview`'s release — that one frees the old recognizer when
+        // the new selection has a DIFFERENT pack, this one frees it when the new selection has
+        // NONE — so between them a language change can never leave the wrong model, or an unused
+        // one, in memory. `streamingPreviewPack` is deliberately left pointing at what the engine
+        // last held: that is exactly the `onTrimMemory` shape, so re-picking that language reloads
+        // through the `==` branch instead of releasing an already-released engine first.
+        //
+        // `drop(1)` skips the replay of the value already in place — the prewarm above has just
+        // asked the same question of it and warmed nothing. Mid-session triggers are SKIPPED
+        // rather than deferred, like the model-switch collector's below and for a stronger
+        // reason: the session's `PreviewTeeEngine` BORROWS this recognizer, so freeing it under a
+        // live session would leave the strip up with nothing left to draw on it. The next trim,
+        // or the next selection change, hands the memory back instead. The disk census is off
+        // Main because it is a marker read plus four exact byte counts per catalogue row.
+        serviceScope.launch(Dispatchers.Main) {
+            app.preferencesManager.selectedLanguage.drop(1).collect {
+                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) return@collect
+                if (streamingPreview == null) return@collect
+                val keep = withContext(Dispatchers.IO) {
+                    previewPackToWarm(
+                        previewLanguage = app.preferencesManager.getLanguageForApi(),
+                        installedPackLanguages = app.streamingPackManager.installedLanguages(),
+                        userEnabled = app.preferencesManager.localPreviewEnabled,
+                    )
+                }
+                if (keep != null) return@collect
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "stream-warm: the selection has no pack to warm — resident previewer released",
+                )
+                streamingPreview?.release()
+            }
         }
 
         // Re-prewarm on model switch OR first install (3.6.0, Workstream E1). TWO triggers, ONE
