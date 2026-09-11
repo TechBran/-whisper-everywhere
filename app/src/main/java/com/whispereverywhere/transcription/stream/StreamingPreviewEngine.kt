@@ -47,15 +47,22 @@ interface LocalPreview {
  * already reported, and counting it makes `audio=`, `rtf=` and `firstPartialMs=` fiction on
  * every cap-cut segment — which is what a long read is almost entirely made of.
  *
- * **The canary** (spec §7.2) runs inside [warm], once per load; a failure or a missing clip
- * DISABLES the previewer for the life of the process — nothing is persisted.
+ * **The canary** (spec §7.2) runs inside [warm], once per load, on the PACK's own clip; a failure
+ * or a missing clip disables the previewer for THAT LANGUAGE for the life of the process —
+ * nothing is persisted, and no other language is affected.
  *
  * **Never inside `NativeComputeGate`**: that is a whole-call whisper lock; wrapping this loop in
  * it would stop it being streaming.
  */
 class StreamingPreviewEngine(
     private val factory: PreviewRecognizerFactory,
-    private val canaryClip: () -> FloatArray?,
+    /**
+     * The clip THIS pack's canary transcribes ([StreamingPack.canaryAsset]). Per-pack because the
+     * English digits clip cannot pass for a non-English model, and a non-pass is indistinguishable
+     * from the SME signature the canary exists to catch — so a shared clip would refuse every
+     * non-English pack for a reason the log would report as corruption.
+     */
+    private val canaryClip: (StreamingPack) -> FloatArray?,
     /**
      * The pack whose LOAD threw, handed over rather than looked up. 4.4.0's hook took no argument
      * and the service read a field for it — a field Main writes when the SELECTION moves, so with
@@ -76,9 +83,36 @@ class StreamingPreviewEngine(
     },
 ) : LocalPreview {
 
-    /** True once a load failed, the canary failed, no clip existed, or decodes kept throwing. Process-scoped. */
-    @Volatile var disabled: Boolean = false
-        private set
+    /**
+     * The languages whose previewer is OFF for the life of this process — a load that threw, a
+     * canary that failed, a missing clip, or three consecutive decode throws in one session.
+     *
+     * **Per-pack, not per-process, and that was a real defect rather than a tidiness.** A single
+     * flag meant a failed ENGLISH canary refused a later FRENCH load in the same process: the
+     * clip is the English one, it cannot pass for a French model, so with a shared flag the first
+     * non-English user would lose live words in every language until they restarted the app —
+     * behind `SETTINGS_DISABLED_ON_DEVICE`, a sentence the 4.4.0 acceptance sheet records as
+     * rendered NOWHERE (qualification table §6(3)).
+     *
+     * Keyed by LANGUAGE because that is the question every other surface asks — "can live words
+     * run for the language the user picked" — and because a pack row changing within a language
+     * (the recorded Russian upgrade, say) only happens across an app update, which is a new
+     * process anyway. Nothing is persisted; it self-heals on restart.
+     *
+     * Copy-on-write under the executor, `@Volatile` for [isDisabled]'s callers on Main.
+     */
+    @Volatile private var disabledLangs: Set<String> = emptySet()
+
+    /** [disabledLangs], for a surface that wants to say which language went off. Never mutated by a reader. */
+    val disabledLanguages: Set<String> get() = disabledLangs
+
+    /**
+     * The RESIDENT pack's verdict, hoisted out of [disabledLangs] for the capture thread: the
+     * 32 ms `sendAudio` path must not walk a set, and the commit path wants one answer that cannot
+     * change between its two reads. Maintained by [disable] and cleared when a load begins for a
+     * pack that is not disabled — the only two events that can change it.
+     */
+    @Volatile private var off = false
 
     @Volatile private var warm = false
 
@@ -128,10 +162,38 @@ class StreamingPreviewEngine(
     private var consecutiveFailures = 0
     private var priorityApplied = false
 
-    fun isWarm(): Boolean = warm && !disabled
+    /** Is the RESIDENT recognizer usable? The question every caller that holds no pack can ask. */
+    fun isWarm(): Boolean = warm && !off
 
     /**
-     * Load + canary on the executor, for THIS pack. A no-op once disabled.
+     * Is the resident recognizer usable AND is it [pack]'s?
+     *
+     * The gate's question, and it needs both halves now that the engine can hold a different
+     * language than the one being asked about: [isWarm] alone would answer "yes, ready" for a
+     * French recognizer during an English session and let the tee borrow it.
+     */
+    fun isWarmFor(pack: StreamingPack): Boolean = isWarm() && loadedPack == pack
+
+    /** Is this pack's previewer off for the rest of this process? */
+    fun isDisabled(pack: StreamingPack): Boolean = pack.language in disabledLangs
+
+    /**
+     * Take a language off for the rest of this process, and hoist the verdict if it is the one the
+     * loop is running on. The ONE writer of both, so the set and the fast-path flag cannot
+     * disagree — the shape three review rounds of Task 1 retired one layer up.
+     *
+     * A null pack means "nothing is resident and something still failed": the flag goes up (there
+     * is nothing usable to feed) and no language is recorded, because none can be named. Reachable
+     * only from the three-strike path after a release has already cleared the identity.
+     */
+    private fun disable(pack: StreamingPack?) {
+        if (pack != null) disabledLangs = disabledLangs + pack.language
+        off = true
+    }
+
+    /**
+     * Load + canary on the executor, for THIS pack. A no-op once THIS pack is disabled — another
+     * pack's verdict is not this one's.
      *
      * **Idempotent on the PACK, not on the engine — that is the fix.** 4.4.0 returned early on
      * `recognizer != null` and never looked at which pack the resident recognizer was for, so
@@ -145,20 +207,23 @@ class StreamingPreviewEngine(
      * and no window exists where the engine holds A while claiming B.
      */
     fun warm(packDir: File, pack: StreamingPack) {
-        if (disabled) return
+        if (isDisabled(pack)) return
         executor.execute {
             applyPriorityOnce()
-            if (disabled) return@execute
+            if (isDisabled(pack)) return@execute
             // The resident recognizer already IS this pack's: nothing to do, and nothing to free.
             if (recognizer != null && loadedPack == pack) return@execute
             // A different pack. Free the old model before the new one allocates — 802-860 ms and
             // ~169 MB per load, and two resident recognizers is a shape nothing here allows.
             if (recognizer != null) releaseResident()
+            // This pack is not disabled (checked twice above, on both sides of the post), so the
+            // hoisted verdict belongs to it now — a previous pack's `off` must not follow it in.
+            off = false
             val t0 = nanoClock()
             val rec = try {
                 factory.load(packDir, pack, StreamingPreviewTuning.NUM_THREADS)
             } catch (t: Throwable) {
-                disabled = true
+                disable(pack)
                 log(StreamDiag.openLine(factory.sherpaVersion(), factory.ortVersion(), StreamingPreviewTuning.NUM_THREADS, msSince(t0), "skipped", 0L, 0, "fail"))
                 onLoadFailure(pack)
                 return@execute
@@ -166,7 +231,7 @@ class StreamingPreviewEngine(
             val loadMs = msSince(t0)
             val t1 = nanoClock()
             val verdict = try {
-                PreviewCanary.run(rec, canaryClip(), pack)
+                PreviewCanary.run(rec, canaryClip(pack), pack)
             } catch (t: Throwable) {
                 CanaryVerdict.Fail(0, 0)
             }
@@ -182,7 +247,9 @@ class StreamingPreviewEngine(
                 warm = true
             } else {
                 runCatching { rec.release() }
-                disabled = true
+                // A Fail or a missing clip takes THIS language off, and no other: the clip is the
+                // pack's, so a verdict rendered on it says nothing about a different model.
+                disable(pack)
             }
         }
     }
@@ -202,7 +269,7 @@ class StreamingPreviewEngine(
 
     /** CAPTURE THREAD, every 32 ms: a ring write and an offer, then return. Never blocks, never decodes. */
     override fun sendAudio(pcm: ByteArray) {
-        if (disabled || onPartial == null) return
+        if (off || onPartial == null) return
         ring.write(pcm)
         if (queue.offer(pcm)) executor.execute(::drain) else shedThisSegment = true
     }
@@ -219,7 +286,7 @@ class StreamingPreviewEngine(
             // Read BEFORE the freeze: the freeze's own third strike drops the resident pack, and
             // the line must report the pad the stream actually received, not the fallback.
             val padMs = padMs()
-            val frozen = if (open == null || disabled) "" else freeze(rec, open, retainMs)
+            val frozen = if (open == null || off) "" else freeze(rec, open, retainMs)
             // audio= is the NEW audio this segment carried, never the tail the previous commit
             // re-fed (that is [streamBytes]) — otherwise rtf='s denominator is inflated and
             // firstPartialMs reads 0 on every cap-cut segment, the shape a long read is made of.
@@ -235,7 +302,7 @@ class StreamingPreviewEngine(
             )
             onFrozen(seq, frozen)
             open?.let { runCatching { it.release() } }
-            stream = if (disabled) null else rec.createStream()
+            stream = if (off) null else rec.createStream()
             resetSegment()
             val fresh = stream ?: return@execute
             if (retainMs > 0L) {
@@ -279,7 +346,7 @@ class StreamingPreviewEngine(
      * a trim take the load path rather than the identity short-circuit: the pack is no longer
      * resident, so it is no longer the pack `warm` can skip for.
      *
-     * NOT a verdict — `disabled` is untouched, by the same rule [release] has always followed.
+     * NOT a verdict — the disabled set is untouched, by the same rule [release] has always followed.
      */
     private fun releaseResident() {
         stream?.let { runCatching { it.release() } }
@@ -426,7 +493,7 @@ class StreamingPreviewEngine(
         stream?.let { runCatching { it.release() } }
         stream = null
         noteFailure(rec, t)
-        if (!disabled) {
+        if (!off) {
             stream = rec.createStream()
             streamBytes = 0L   // the fresh stream's timeline starts here; the dead one's cut is not ours
             lastEmitted = ""
@@ -438,14 +505,16 @@ class StreamingPreviewEngine(
         consecutiveFailures++
         log("stream-preview: decode threw (${t.javaClass.simpleName}) failures=$consecutiveFailures")
         if (consecutiveFailures >= StreamingPreviewTuning.MAX_CONSECUTIVE_FAILURES) {
-            disabled = true
+            // Three throws in one session take the RESIDENT pack off, and the resident pack is
+            // the only one this loop has been decoding.
+            disable(loadedPack)
             warm = false
             stream?.let { runCatching { it.release() } }
             stream = null
             runCatching { rec.release() }
             recognizer = null
             // The identity goes with the recognizer — a later warm of this same pack must take the
-            // load path, not the "already resident" short-circuit, and find `disabled` instead.
+            // load path, not the "already resident" short-circuit, and find the verdict instead.
             loadedPack = null
             queue.clear()
             emit("")

@@ -75,7 +75,7 @@ class StreamingPreviewEngineTest {
         e.warm(dir, pack)
         assertEquals(2, factory.lastThreads)
         assertTrue(e.isWarm())
-        assertFalse(e.disabled)
+        assertFalse(e.isDisabled(pack))
         assertEquals(
             "stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=0 canary=pass canaryMs=0 outLen=23 load=ok",
             logs.single(),
@@ -91,7 +91,8 @@ class StreamingPreviewEngineTest {
         val factory = ScriptedFactory(rec)
         val e = engine(rec, factory = factory)
         e.warm(dir, pack)
-        assertTrue(e.disabled)
+        assertTrue(e.isDisabled(pack))
+        assertEquals(setOf("en"), e.disabledLanguages)
         assertFalse(e.isWarm())
         assertTrue(rec.released)
         assertTrue(logs.single().contains(" canary=fail canaryMs=0 outLen=0 load=ok"))
@@ -103,7 +104,7 @@ class StreamingPreviewEngineTest {
         val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
         val e = engine(rec, clip = null)
         e.warm(dir, pack)
-        assertTrue(e.disabled)
+        assertTrue(e.isDisabled(pack))
         assertTrue(logs.single().contains(" canary=none canaryMs=0 outLen=0 load=ok"))
     }
 
@@ -112,7 +113,8 @@ class StreamingPreviewEngineTest {
         val other = pack.copy(language = "xx", dirName = "xx-test", packName = "preview_xx")
         val e = engine(null, factory = ScriptedFactory(null, throwAtLoad = true), onLoadFailure = { corrupt += it })
         e.warm(dir, other)
-        assertTrue(e.disabled)
+        assertTrue(e.isDisabled(other))
+        assertFalse("and English, which was never asked for, is untouched", e.isDisabled(pack))
         // The pack this call was made with — not the engine's last one, and not a field some other
         // thread may have moved since. 4.4.0's hook took no argument and the service read
         // `streamingPreviewPack`, which Main writes when the SELECTION moves: a switch to B during
@@ -154,6 +156,53 @@ class StreamingPreviewEngineTest {
         e.commit(0L, 0L) { _, _ -> }
         assertEquals("bonjour", emitted.last())
         assertTrue(logs.last().contains(" padMs=500 "))
+    }
+
+    // ------------------------------------------------------- per-pack verdicts (T2, defect 4)
+
+    @Test fun aFailedEnglishCanaryDoesNotRefuseAFrenchLoadInTheSameProcess() {
+        // The defect: `disabled` was one flag for the process, and the canary CLIP is English's.
+        // A non-English model fed "one two three four five" matches none of the five positions —
+        // which is exactly the SME signature the canary exists to catch — so the first French user
+        // lost live words in EVERY language until they restarted the app, behind a sentence the
+        // 4.4.0 sheet records as rendered nowhere.
+        val enRec = ScriptedRecognizer(listOf("HELLO"), canaryText = "")            // English fails
+        val frRec = ScriptedRecognizer(listOf("BONJOUR"), canaryText = CANARY)      // French passes
+        val factory = ScriptedFactory(enRec, next = frRec)
+        val fr = pack.copy(language = "fr", dirName = "fr-2023-04-14", packName = "preview_fr", modelType = "zipformer", encoderT = 39)
+        val e = engine(enRec, factory = factory)
+
+        e.warm(dir, pack)
+        assertTrue(e.isDisabled(pack))
+        assertFalse(e.isWarm())
+
+        e.warm(dir, fr)
+        assertEquals("French loads anyway", 2, factory.loads)
+        assertFalse(e.isDisabled(fr))
+        assertTrue("and it is warm — for French", e.isWarm())
+        assertTrue(e.isWarmFor(fr))
+        assertFalse("but never for the language whose verdict went against it", e.isWarmFor(pack))
+
+        e.warm(dir, pack)
+        assertEquals("and English stays off for the rest of the process", 2, factory.loads)
+        assertEquals(setOf("en"), e.disabledLanguages)
+    }
+
+    @Test fun theCanaryIsFedTHISPacksClipAndNotOneSharedClip() {
+        // The other half of the same defect: one clip for every pack is a verdict on English
+        // rendered against a French model. The engine asks per pack; nothing here decides WHICH
+        // clip (the pack names it), only that the pack is the one asked.
+        val asked = mutableListOf<String>()
+        val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
+        val e = StreamingPreviewEngine(
+            factory = ScriptedFactory(rec),
+            canaryClip = { p -> asked += p.canaryAsset; FloatArray(40_960) },
+            executor = SameThreadExecutorService(), clock = { now }, nanoClock = { 0L },
+            log = { logs += it }, enterExecutorThread = {},
+        )
+        val fr = pack.copy(language = "fr", canaryAsset = "canary_fr.wav")
+        e.warm(dir, fr)
+        assertEquals(listOf("canary_fr.wav"), asked)
     }
 
     @Test fun aReleasedEngineReloadsTheSamePackRatherThanShortCircuitingOnIt() {
@@ -303,7 +352,7 @@ class StreamingPreviewEngineTest {
         val rec = ScriptedRecognizer(listOf("A"), failDecodesFrom = 10, canaryText = CANARY)   // the canary's 9 decodes pass
         val e = warmOpen(rec)
         feedMs(e, 1_600)   // three fresh streams × 15 chunks to reach their first (throwing) decode
-        assertTrue(e.disabled)
+        assertTrue(e.isDisabled(pack))
         assertFalse(e.isWarm())
         assertTrue(rec.released)
         assertEquals("", emitted.last())
@@ -324,7 +373,7 @@ class StreamingPreviewEngineTest {
             e.close()
         }
         assertEquals(3, logs.count { it.startsWith("stream-preview: decode threw") })
-        assertFalse("a session boundary clears the three-strike count (spec §7.1)", e.disabled)
+        assertFalse("a session boundary clears the three-strike count (spec §7.1)", e.isDisabled(pack))
         assertTrue("and the previewer is still warm for the next session", e.isWarm())
     }
 
@@ -341,7 +390,7 @@ class StreamingPreviewEngineTest {
         e.release()
         assertTrue(rec.released)
         assertFalse(e.isWarm())
-        assertFalse("release is not a verdict", e.disabled)
+        assertFalse("release is not a verdict", e.isDisabled(pack))
     }
 
     @Test fun aCommitBeforeWarmFreezesBlank() {

@@ -140,10 +140,13 @@ object StreamingPackCopy {
      * RULING ASSUMED (R1): the canary is the only SME guard; this is what the row says after it
      * fails.
      *
-     * NOT RENDERED BY THIS TASK, and deliberately so: the verdict lives on the previewer instance
-     * the service builds (`StreamingPreviewEngine.disabled`), and Task 7 owns both that wiring
-     * and the only reader of it. The sentence is pinned here now so the words are decided in the
-     * one place the feature's copy is reviewed, rather than invented at the wiring site.
+     * NOT RENDERED ANYWHERE, still — the 4.4.0 acceptance sheet records that, and 4.5.0 T2 did
+     * not change it. The verdict lives on the previewer instance the service builds
+     * (`StreamingPreviewEngine.isDisabled(pack)` / `disabledLanguages`, per-LANGUAGE since
+     * defect 4), and nothing reads it. The sentence is pinned here so the words are decided in
+     * the one place the feature's copy is reviewed rather than invented at a wiring site — but
+     * note that it now says "on this device" about a per-language fact, so whoever renders it
+     * owes it the language, exactly as every other sentence in this object takes one.
      */
     const val SETTINGS_DISABLED_ON_DEVICE =
         "Live words are off on this device: the preview model did not pass its start-up check. Your transcripts are unaffected."

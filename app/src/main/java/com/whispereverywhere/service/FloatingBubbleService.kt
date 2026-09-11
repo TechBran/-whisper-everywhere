@@ -233,7 +233,9 @@ internal fun sessionLanguageFor(
  *
  * Cloud sessions (batch or live) keep today's strip; a running batch file job vetoes (two CPU
  * consumers beside whisper's bursts is the research's §3.9 refusal); [previewReady] is the
- * resident recognizer's `isWarm()` — false while it loads and forever after a failed canary.
+ * resident recognizer's `isWarmFor(thisPack)` — false while it loads, false when the resident
+ * recognizer is a DIFFERENT language's, and false for the rest of the process after this pack's
+ * canary fails (4.5.0 T2, defect 4: another pack's failed canary is not this one's verdict).
  *
  * ### 4.4.1's one change to this predicate: the English literal is gone
  *
@@ -1064,7 +1066,7 @@ class FloatingBubbleService : Service(),
                 // The check at the top of this block was taken before the census hopped to IO and
                 // back, so by here it is stale: across that window the user can re-pick the
                 // pack's language AND start a session, which finds the pack installed and
-                // isWarm() true, arms, and lets PreviewTeeEngine BORROW this recognizer — and the
+                // isWarmFor() true, arms, and lets PreviewTeeEngine BORROW this recognizer — and the
                 // stale body would then free it under that live session, leaving the strip up with
                 // nothing left to draw on. This read is what makes the release below safe, and it
                 // is safe *because* nothing between it and the release suspends: currentState is
@@ -3162,12 +3164,15 @@ class FloatingBubbleService : Service(),
     /**
      * 4.4.0: build (once) and warm the resident previewer — load + canary on its own executor —
      * for [pack]; null when that pack is not installed after all (the gate then says pack=0).
-     * Idempotent: a warm engine's warm() is a no-op, a RELEASED one (onTrimMemory) reloads on the
-     * next call — spec §4.1 step 10 — and a disabled one never reloads in this process (§7.2,
-     * `disabled` survives release()). Called from the prewarm coroutine at service start and
-     * again at the wrap site; the latter arms NEXT session, not this one, because warm() is
-     * asynchronous and the gate reads isWarm() now — a session started under a second after the
-     * service came up is exactly today's session, by design.
+     * Idempotent ON THE PACK (4.5.0 T2, defect 1): warming the pack the engine already holds is
+     * a no-op, warming a DIFFERENT one releases the old recognizer inside the engine and loads
+     * the new one, a RELEASED engine (onTrimMemory) reloads on the next call — spec §4.1 step 10
+     * — and a pack whose verdict went against it never reloads in this process, while every
+     * OTHER language still can (§7.2; the verdict survives release() and is now per-language).
+     * Called from the prewarm coroutine at service start and again at the wrap site; the latter
+     * arms NEXT session, not this one, because warm() is asynchronous and the gate reads
+     * isWarmFor() now — a session started under a second after the service came up is exactly
+     * today's session, by design.
      *
      * **(4.4.1, CHANGE 5) WHICH pack is the caller's decision, and [previewPackToWarm] is the one
      * that makes it** — the same lookup the gate takes, so this never loads a model the gate will
@@ -3194,7 +3199,11 @@ class FloatingBubbleService : Service(),
         if (resident != null && streamingPreviewPack != pack) resident.release()
         val engine = resident ?: com.whispereverywhere.transcription.stream.StreamingPreviewEngine(
             factory = com.whispereverywhere.transcription.stream.SherpaPreviewRecognizerFactory(),
-            canaryClip = { com.whispereverywhere.transcription.CanaryAudio.samples() },
+            // The clip is the PACK's (4.5.0 T2, defect 4): the English digits clip cannot pass for
+            // a non-English model, and a non-pass reads exactly like the corruption signature the
+            // canary exists to catch — so a shared clip would refuse every non-English pack and
+            // report it as a failure. One WAV per language in main assets, 81,998 B each.
+            canaryClip = { p -> com.whispereverywhere.transcription.CanaryAudio.samples(p.canaryAsset) },
             // The pack whose load actually failed, HANDED OVER by the engine. Neither a closure
             // over `pack` (the engine is built once and outlives any one language, so that would
             // mark ENGLISH corrupt for a Spanish failure) nor a read of `streamingPreviewPack`
@@ -3660,7 +3669,13 @@ class FloatingBubbleService : Service(),
             userEnabled = userEnabled,
         )
         val preview = if (packToWarm != null) warmStreamingPreview(packToWarm) else streamingPreview
-        val previewReady = preview?.isWarm() == true
+        // (4.5.0 T2, defect 4) `isWarmFor`, not `isWarm`: the engine's verdict and its recognizer
+        // are per-PACK now, so "is the previewer ready" has to name the pack it is ready FOR.
+        // `isWarm()` alone would answer yes for a French recognizer during an English session —
+        // the tee would then borrow the wrong language's model. The armed answer below is
+        // unchanged today either way: a null `packToWarm` means the selection has no installed
+        // pack or the switch is off, and `localPreviewArms` refuses on those same terms.
+        val previewReady = packToWarm != null && preview?.isWarmFor(packToWarm) == true
         val previewArmed = localPreviewArms(
             sessionLanguage = previewLanguage,
             installedPackLanguages = installedPreviewLanguages,

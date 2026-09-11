@@ -1087,8 +1087,9 @@ fun SettingsSection(
  *
  * The one string the previewer has that this row does NOT render is
  * `StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE`: the canary's verdict lives on the previewer
- * instance the service builds (`StreamingPreviewEngine.disabled`), and Task 7 owns both that
- * wiring and its only reader. `LivePreviewRowsPinTest` pins the rest as source.
+ * instance the service builds (`StreamingPreviewEngine.isDisabled(pack)`, per-LANGUAGE since
+ * 4.5.0 T2 defect 4) and nothing reads it — so a pack that failed its start-up check still reads
+ * as installed and armable here. `LivePreviewRowsPinTest` pins the rest as source.
  */
 @Composable
 private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {

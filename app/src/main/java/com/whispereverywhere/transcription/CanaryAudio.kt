@@ -31,21 +31,30 @@ object CanaryAudio {
      * garbage to whisper and would trigger a false CPU latch, so any deviation in channels,
      * sample rate, or bit depth returns null with no verdict recorded.
      */
-    fun samples(): FloatArray? = runCatching {
-        val bytes = WhisperEverywhereApp.getInstance().assets.open(ASSET).use { it.readBytes() }
+    fun samples(): FloatArray? = samples(ASSET)
+
+    /**
+     * The same read for a NAMED clip — the streaming previewer's canary is per PACK
+     * (`StreamingPack.canaryAsset`), because the English digits clip cannot pass for a non-English
+     * model and a non-pass there is indistinguishable from the corruption signature the canary
+     * exists to catch. Every guarantee above holds unchanged: a missing, unreadable or
+     * wrongly-formatted clip is **no verdict**, never a failure.
+     */
+    fun samples(asset: String): FloatArray? = runCatching {
+        val bytes = WhisperEverywhereApp.getInstance().assets.open(asset).use { it.readBytes() }
         if (!formatIsValid(bytes)) {
-            Log.w(TAG, "gpu-canary: asset unreadable or wrong format — no verdict possible")
+            Log.w(TAG, "canary: $asset unreadable or wrong format — no verdict possible")
             return null
         }
         val pcm = dataChunk(bytes)
         if (pcm.isEmpty()) {
-            Log.w(TAG, "gpu-canary: asset unreadable or wrong format — no verdict possible")
+            Log.w(TAG, "canary: $asset unreadable or wrong format — no verdict possible")
             null
         } else {
             AudioMath.pcm16ToFloat(pcm)
         }
     }.onFailure {
-        Log.w(TAG, "CanaryAudio: $ASSET unreadable — no canary verdict can be recorded", it)
+        Log.w(TAG, "CanaryAudio: $asset unreadable — no canary verdict can be recorded", it)
     }.getOrNull()
 
     /**

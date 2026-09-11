@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription.stream
 
+import com.whispereverywhere.transcription.GpuCanaryPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,10 +9,15 @@ import org.junit.Test
 /**
  * The load-time canary — RULING ASSUMED (R1): the ONLY guard against the FEAT_SME silent
  * miscompute (sherpa-onnx #3845: EMPTY text for the whole stream on SM8850 + ORT 1.27.0;
- * #3791: `"MY WOMAN"` for a five-word clip on an M4). The verdict rule is
- * `GpuCanaryPolicy.canaryPasses`, unchanged: it already fails empty, fails garbage (fewer than
- * 4 of 5 positions), fails a runaway, and passes the measured `ONE TWO THREE FOUR FIVE`
+ * #3791: `"MY WOMAN"` for a five-word clip on an M4). The rule fails empty, fails garbage (fewer
+ * than 4 of 5 positions), fails a runaway, and passes the measured `ONE TWO THREE FOUR FIVE`
  * (rung 3 §4: exact in 8 of 8 runs).
+ *
+ * (4.5.0 T2, defect 4) The clip and the rule are the PACK's, because the English digits clip
+ * cannot pass for a non-English model and a non-pass reads exactly like the corruption signature
+ * this exists to catch. The English rule is `GpuCanaryPolicy`'s values RESTATED — that object's
+ * verdict is a persisted whisper-GPU latch and must not gain a second caller who can move it — and
+ * the two are held equal here both structurally and behaviourally.
  */
 class PreviewCanaryTest {
 
@@ -91,11 +97,50 @@ class PreviewCanaryTest {
         assertTrue(rec.streams.single().released)
     }
 
-    @Test fun theVerdictRuleIsTheGpuCanarys() {
-        assertTrue(PreviewCanary.passes("ONE TWO THREE FOUR FIVE"))
-        assertTrue(PreviewCanary.passes("one two three four five"))
-        assertFalse(PreviewCanary.passes(""))
-        assertFalse(PreviewCanary.passes("   "))
-        assertFalse(PreviewCanary.passes("MY WOMAN"))
+    @Test fun theEnglishRuleRESTATESTheGpuCanarysValuesRatherThanBorrowingThem() {
+        // GpuCanaryPolicy's verdict is a PERSISTED per-(app version, model, device) CPU latch, so
+        // it must not acquire a second caller who can move it. The English pack therefore carries
+        // its own copy of the values — and these two assertions are what make "a copy" safe: a
+        // change on either side is a red test rather than a silent re-scoring of the other.
+        assertEquals(GpuCanaryPolicy.EXPECTED_TOKENS, pack.canaryRule.expected)
+        assertEquals(GpuCanaryPolicy.MIN_MATCHES, pack.canaryRule.minMatches)
+        assertEquals(20, pack.canaryRule.maxTokens)
+    }
+
+    @Test fun theTwoRulesAGREEOnEveryShapeTheGpuCanarysOwnTestsPin() {
+        // Behavioural equality, not structural: the same texts through both scorers. The battery
+        // is GpuCanaryPolicyTest's own cases, including the 20/21-token boundary (which is the
+        // only way to check maxTokens against a private constant) and the `12345` decomposition.
+        val battery = listOf(
+            "ONE TWO THREE FOUR FIVE", "one two three four five", " One two three four five.",
+            "1, 2, 3, 4, 5.", "one 2 three 4 five", "12345.", "11111",
+            "two three four five", "three four five", "", "   ", "MY WOMAN",
+            "шшш ののの ¿¿¿ qwx zzz",
+            List(20) { "one" }.joinToString(" "), List(21) { "one" }.joinToString(" "),
+        )
+        for (text in battery) {
+            assertEquals(
+                "the previewer's rule and the GPU canary's disagree on: '$text'",
+                GpuCanaryPolicy.canaryPasses(text),
+                PreviewCanary.passes(text, pack.canaryRule),
+            )
+        }
+    }
+
+    @Test fun aPacksOwnRuleIsWhatScoresItsOwnClip() {
+        // The route: a pack whose clip says "un deux trois quatre cinq" scores against ITS
+        // positions, and the English text that passes above fails there. (No such pack exists in
+        // this build — the point is that the verdict is the pack's, not the object's.)
+        val french = PreviewCanaryRule(
+            expected = listOf(setOf("un"), setOf("deux"), setOf("trois"), setOf("quatre"), setOf("cinq")),
+            minMatches = 4,
+            maxTokens = 20,
+        )
+        assertTrue(PreviewCanary.passes("UN DEUX TROIS QUATRE CINQ", french))
+        assertFalse(
+            "and the English clip's text is not a pass for it — which is exactly why one shared " +
+                "clip would have refused every non-English pack as corrupt",
+            PreviewCanary.passes("ONE TWO THREE FOUR FIVE", french),
+        )
     }
 }

@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription.stream
 
+import com.whispereverywhere.transcription.CanaryAudio
 import java.util.Locale
 
 /** One pinned file of a streaming pack: its name at the commit, its EXACT byte count, its sha256. */
@@ -61,6 +62,14 @@ data class PackFile(val name: String, val bytes: Long, val sha256: String)
  *   digit-bearing pieces are `#0` and `#1`, the two placeholder slots icefall appends after the
  *   500 BPE pieces, which no decode emits. **True for ko (10 standalone digits), et (9), nl (all
  *   ten) and — by exactly one token — the bilingual zh-en row (`2` at id 4883).**
+ * @property canaryAsset the clip in main assets this pack's load-time canary transcribes. **The
+ *   English digits clip cannot pass for a non-English model** — a French recognizer fed "one two
+ *   three four five" answers something matching none of the five positions, which is
+ *   indistinguishable from the SME silent-miscompute signature the canary exists to catch — so the
+ *   clip is the pack's. Recorded cost: one WAV per language, **81,998 B** (the English one's size).
+ * @property canaryRule what a PASS means for this pack — see [PreviewCanaryRule], including what
+ *   positional matching cannot express (zh and ko collapse the clip to one token and need a
+ *   different rule, not a different alias list).
  * @property normalizeLocale the locale [PreviewText] folds with. `Locale.US` here **for English
  *   INPUT on purpose** — it is the only spelling that can never produce a Turkish dotless `ı` —
  *   and that reasoning does not survive contact with Turkish OUTPUT, which is the one row where
@@ -82,6 +91,8 @@ data class StreamingPack(
     val emitsCase: Boolean,
     val emitsPunctuation: Boolean,
     val emitsDigits: Boolean,
+    val canaryAsset: String,
+    val canaryRule: PreviewCanaryRule,
     val normalizeLocale: Locale,
 ) {
     val files: List<PackFile> get() = listOf(encoder, decoder, joiner, tokens)
@@ -160,6 +171,23 @@ object StreamingPackCatalog {
         emitsCase = false,
         emitsPunctuation = false,
         emitsDigits = false,
+        // The bundled digits clip and the digits rule. The alias sets, the 4-of-5 tolerance and
+        // the 20-token runaway ceiling are `GpuCanaryPolicy`'s own values, RESTATED rather than
+        // referenced: that object's verdict is a persisted whisper-GPU latch and must not acquire
+        // a second caller who can move it. PreviewCanaryTest holds the two ANSWERS equal, so a
+        // change to either side is a red test instead of a silent re-scoring of the other.
+        canaryAsset = CanaryAudio.ASSET,
+        canaryRule = PreviewCanaryRule(
+            expected = listOf(
+                setOf("one", "1"),
+                setOf("two", "2"),
+                setOf("three", "3"),
+                setOf("four", "4"),
+                setOf("five", "5"),
+            ),
+            minMatches = 4,
+            maxTokens = 20,
+        ),
         normalizeLocale = Locale.US,
     )
 
