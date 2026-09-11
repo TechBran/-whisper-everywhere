@@ -276,7 +276,8 @@ class LivePreviewRowsPinTest {
     @Test fun aDeviceThatCanNeverArmIsOfferedNothingAndToldTheOneTrueThing() {
         // (4.5.0 Task 4) 4.4.1 pass 3's ITEM 1 rule, one axis over: **no DEVICE may be offered a
         // model that has already been decided cannot arm on it.** With no on-device speech model
-        // every session is a cloud session and `localPreviewArms` refuses on `!isCloudSession` —
+        // nothing transcribes on this device at all — the session dies at connect, which is
+        // `PreviewUnreachable`'s KDoc and NOT the previewer's gate (it has no tier term) —
         // and every sentence in the described/offered branch promises words: the installed row's
         // subtitle (*"Words appear on the bubble as you speak English"*), all three offer
         // subtitles (they carry `ADDITIVE` verbatim) and all three repair subtitles (*"to restore
@@ -461,9 +462,10 @@ class LivePreviewRowsPinTest {
         )
         // (4.5.0 Task 4) ...AND SO IS THE DEVICE. With no on-device speech model the case was
         // LIVE and the row read *"Frees 73 MB. Live words stop"* on a phone where no word has
-        // ever appeared — `localPreviewArms` refuses on `!isCloudSession` and every session is a
-        // cloud session. It is the third arming fact this row can be wrong about and the only one
-        // whose remedy is not on this screen.
+        // ever appeared — nothing transcribes there at all, the session dying at connect
+        // (`PreviewUnreachable`'s KDoc, and not the previewer's gate, which has no tier term).
+        // It is the third arming fact this row can be wrong about and the only one whose remedy
+        // is not on this screen.
         assertEquals(
             "the DEVICE is a term of the derivation — and of the caveat row above it, which are " +
                 "the section's TWO readers of the one fact it is handed",

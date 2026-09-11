@@ -376,8 +376,9 @@ class PreviewAutoFetchTest {
     }
 
     @Test fun aCloudOnlySetupIsNeverSent73MbItCannotUse() {
-        // No on-device tier => every session is a cloud session => localPreviewArms can never
-        // arm, whatever the language or the pack.
+        // No on-device speech model => nothing transcribes on this device at all (the session
+        // dies at connect; `PreviewUnreachable`'s KDoc, and NOT `localPreviewArms`, which has no
+        // tier term) => 73 MB buys nothing, whatever the language or the pack.
         assertEquals(PreviewAutoFetch.Decision.NONE, open(localTierInstalled = false))
     }
 

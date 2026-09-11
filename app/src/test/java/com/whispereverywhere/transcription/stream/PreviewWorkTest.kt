@@ -630,8 +630,10 @@ class PreviewWorkTest {
      *    the delete row — immediately under the OFF switch — read *"Frees 73 MB. Live words
      *    stop"*. Nothing stopped. (Fixed in Task 1's fix round 1.)
      *  - **no on-device speech model**, English selected, the switch on, the pack installed.
-     *    `of` answered LIVE and the row read the same sentence, on a device where
-     *    `localPreviewArms` refuses on `!isCloudSession` and no word has ever appeared. (Task 4.)
+     *    `of` answered LIVE and the row read the same sentence, on a device where nothing
+     *    transcribes at all and no word has ever appeared — the session dies at connect, which is
+     *    the mechanism `PreviewUnreachable`'s KDoc states and NOT the previewer's gate, which has
+     *    no tier term. (Task 4, corrected in its fix round 1.)
      */
     @Test fun theSixCasesAreTheSixFactsTheRowCanBeLookingAt() {
         assertEquals(
@@ -662,7 +664,8 @@ class PreviewWorkTest {
         )
         assertEquals(
             "THE SECOND CELL THAT SHIPPED UNTRUE (4.5.0 Task 4): everything this screen can see " +
-                "is armable and no word can ever appear, because every session is a cloud session",
+                "is armable and no word can ever appear, because nothing transcribes on this " +
+                "device at all",
             PreviewDeleteCase.OFF_TIER,
             PreviewDeleteCase.of(StreamingPackState.Installed, true, true, false, null),
         )

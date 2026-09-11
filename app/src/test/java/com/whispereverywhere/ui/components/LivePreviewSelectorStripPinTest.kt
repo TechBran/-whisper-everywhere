@@ -181,8 +181,9 @@ class LivePreviewSelectorStripPinTest {
 
     @Test fun aDeviceThatCanNeverArmIsSoldNothingInThePickerAndToldOnce() {
         // (4.5.0 Task 4) The three previewer sentences on this card, and the cells they may be
-        // read in. With no on-device speech model `localPreviewArms` refuses on `!isCloudSession`
-        // and `PreviewAutoFetch.decide` refuses on `!localTierInstalled`, so:
+        // read in. With no on-device speech model nothing transcribes on this device at all (the
+        // session dies at connect — `PreviewUnreachable`'s KDoc, not the previewer's gate) and
+        // `PreviewAutoFetch.decide` refuses on `!localTierInstalled`, so:
         //
         //  - `PICKER_DEAL` — *"that model IS DOWNLOADED and becomes your preview model — words
         //    appear on the bubble as you speak"* — is false in BOTH halves. It was the

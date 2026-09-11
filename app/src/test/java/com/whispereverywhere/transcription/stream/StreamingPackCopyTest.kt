@@ -637,7 +637,7 @@ class StreamingPackCopyTest {
         )
         assertFalse(
             "and the promise is gone: 'English shows them' cannot be said on a phone where " +
-                "every session is a cloud session",
+                "nothing transcribes on-device at all",
             workingNoTier.contains(StreamingPackCopy.cardLanguageNote(en)),
         )
         assertTrue(
@@ -1031,9 +1031,10 @@ class StreamingPackCopyTest {
             strip(installed, showLiveWords = false),
         )
         assertNull(
-            "no on-device TIER: every session is a cloud session, `localPreviewArms` refuses on " +
-                "!isCloudSession, and the promise is permanently untrue however installed the " +
-                "pack is (4.4.1 pass 3's ITEM 3, the card's own reason)",
+            "no on-device TIER: nothing transcribes on this device at all, so the promise is " +
+                "permanently untrue however installed the pack is (4.4.1 pass 3's ITEM 3, the " +
+                "card's own reason; the mechanism is PreviewUnreachable's KDoc and it is not " +
+                "the previewer's gate, which has no tier term)",
             strip(installed, localTierInstalled = false),
         )
         assertNull(strip(installed, showLiveWords = false, localTierInstalled = false))
