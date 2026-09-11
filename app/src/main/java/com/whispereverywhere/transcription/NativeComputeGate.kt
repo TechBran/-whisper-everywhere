@@ -29,6 +29,11 @@ import kotlin.concurrent.withLock
  * Fair ordering ([ReentrantLock] fairness) so a steady stream of batch chunks cannot starve a
  * waiting bubble segment indefinitely. Reentrant so a single native call that re-enters the backend
  * (it does not today, but the contract stays safe) cannot self-deadlock.
+ *
+ * **The 4.4.0 streaming previewer runs sherpa-onnx OUTSIDE this gate, deliberately**
+ * (`transcription/stream/StreamingPreviewEngine`). The gate is a whole-call whisper lock; wrapping
+ * a 32 ms decode loop in it would serialise the previewer behind every whisper burst and stop it
+ * being streaming. sherpa's ORT sessions share nothing with whisper's contexts. Do not "fix" this.
  */
 object NativeComputeGate {
     private val lock = ReentrantLock(/* fair = */ true)

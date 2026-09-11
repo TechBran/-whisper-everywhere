@@ -513,7 +513,14 @@ class NpuBackendWiringTest {
             1,
             count(service, "app.offeredNpuTierIds()"),
         )
-        listOf("npuCapableDevice", "isInstalled(").forEach { half ->
+        // The disk half is spelled with its RECEIVER (4.4.0): the ban is on re-deriving THIS
+        // gate, and `whisperModelManager.isInstalled(` is the only call that could. A bare
+        // `isInstalled(` also matched two unrelated managers — the streaming previewer's pack
+        // (`streamingPackManager.isInstalled(pack)`, the 4.4.0 wrap site) and the TTS voice's —
+        // so it failed for a reason that had nothing to do with the npu tier offer. Narrowed,
+        // not dropped: every spelling that could ask whisper's own "is this tier on disk?"
+        // question still names this manager.
+        listOf("npuCapableDevice", "whisperModelManager.isInstalled(").forEach { half ->
             assertEquals(
                 "`$half` must appear NOWHERE in this file: it is half of a gate that already " +
                     "exists, and a service that composes its own answer is a third opinion",

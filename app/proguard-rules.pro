@@ -73,6 +73,10 @@
 # The native side reflectively reads the config classes' fields and calls the specialized
 # Function1 bridge on callbacks. R8 renaming them aborts OfflineTts.newFromFile (SIGABRT
 # proven on-device, release-only, 2026-07-18). Keep the whole API surface.
+# 4.4.0: the streaming previewer (OnlineRecognizer / OnlineStream / VersionInfo, reached only
+# through transcription/stream/SherpaPreviewRecognizer.kt) rides this SAME rule. Never narrow it
+# to the TTS classes: a narrowed keep is a GetFieldID SIGABRT at OnlineRecognizer.newFromFile in
+# release builds, invisible on debug (research §5.5 item 8).
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -keepclassmembers class * implements kotlin.jvm.functions.Function1 {
     public java.lang.Integer invoke(float[]);

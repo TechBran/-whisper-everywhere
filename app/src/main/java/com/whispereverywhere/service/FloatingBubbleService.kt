@@ -498,6 +498,12 @@ class FloatingBubbleService : Service(),
     // provider choice produced.
     private var localEngine: LocalWhisperEngine? = null
 
+    // 4.4.0: THE RESIDENT PREVIEWER (spec §4.1 step 1, §7.4) — the sherpa recognizer and its own
+    // executor, Main-confined like localEngine. Built lazily by warmStreamingPreview() when the
+    // English pack is installed and the switch is on; released on onTrimMemory (outside a session)
+    // and onDestroy; BORROWED per session by PreviewTeeEngine, never owned by it.
+    private var streamingPreview: com.whispereverywhere.transcription.stream.StreamingPreviewEngine? = null
+
     // WHICH npu-class tier [localEngine] was built on, or null for the shared CPU backend
     // (4.0 Q9 as a Boolean; a tier ID since 4.1 L8). It cannot be asked of the engine — `backend`
     // is a private val there — and it is what makes "the cached engine is still the right one" a
@@ -820,7 +826,8 @@ class FloatingBubbleService : Service(),
         // a capture session to finish gracefully (same path as a stop tap). The speech side is
         // registered by TtsController when its engine is first created.
         com.whispereverywhere.audio.AudioArbiter.isCapturing = {
-            currentState == BubbleState.RECORDING || currentState == BubbleState.FINALIZING
+            currentState == BubbleState.RECORDING || currentState == BubbleState.FINALIZING ||
+                currentState == BubbleState.CONNECTING
         }
         com.whispereverywhere.audio.AudioArbiter.stopCaptureGracefully = {
             serviceScope.launch(Dispatchers.Main) {
@@ -843,6 +850,9 @@ class FloatingBubbleService : Service(),
             refreshNpuTierOffer()
             delay(1500)
             warmLocalEngine().prewarm()
+            // 4.4.0: the previewer's ~0.8 s load and its canary (spec §7.2), off the session's
+            // critical path; the pack check is inside. RULING ASSUMED (R3): the switch defaults on.
+            if (app.preferencesManager.localPreviewEnabled) warmStreamingPreview()
         }
 
         // Re-prewarm on model switch OR first install (3.6.0, Workstream E1). TWO triggers, ONE
@@ -1201,6 +1211,8 @@ class FloatingBubbleService : Service(),
         transcriptionEngine = null
         localEngine?.shutdown()
         localEngine = null
+        streamingPreview?.release()
+        streamingPreview = null
         httpTransport = null
         liveWsFactory = null
         // Shut the reconnect scheduler's daemon executor down BEFORE nulling the field, or the
@@ -2608,6 +2620,28 @@ class FloatingBubbleService : Service(),
     }
 
     /**
+     * 4.4.0: build (once) and warm the resident previewer — load + canary on its own executor —
+     * when the English pack is installed; null when it is not (the gate then says pack=0).
+     * Idempotent: a warm engine's warm() is a no-op, a RELEASED one (onTrimMemory) reloads on the
+     * next call — spec §4.1 step 10 — and a disabled one never reloads in this process (§7.2,
+     * `disabled` survives release()). Called from the prewarm coroutine at service start and
+     * again at the wrap site; the latter arms NEXT session, not this one, because warm() is
+     * asynchronous and the gate reads isWarm() now — a session started under a second after the
+     * service came up is exactly today's session, by design.
+     */
+    private fun warmStreamingPreview(): com.whispereverywhere.transcription.stream.StreamingPreviewEngine? {
+        val pack = com.whispereverywhere.transcription.stream.StreamingPackCatalog.EN
+        val dir = app.streamingPackManager.installedDir(pack) ?: return null
+        val engine = streamingPreview ?: com.whispereverywhere.transcription.stream.StreamingPreviewEngine(
+            factory = com.whispereverywhere.transcription.stream.SherpaPreviewRecognizerFactory(),
+            canaryClip = { com.whispereverywhere.transcription.CanaryAudio.samples() },
+            onLoadFailure = { app.streamingPackManager.markCorrupt(pack) },
+        ).also { streamingPreview = it }
+        engine.warm(dir, pack)
+        return engine
+    }
+
+    /**
      * Re-reads [WhisperEverywhereApp.offeredNpuTierIds] into [npuTierIds], off Main.
      *
      * **The dispatcher hop is the point.** That gate forces the memoised capability probe, which
@@ -2957,7 +2991,7 @@ class FloatingBubbleService : Service(),
         // Reuse a single engine across sessions so the native model context is loaded once and
         // reused (spec: "loaded once and reused"); it is released only on memory pressure
         // (onTrimMemory) or on service destroy (onDestroy), not at the end of each recording.
-        val engine: TranscriptionEngine = resolveTranscriptionEngine()
+        val baseEngine: TranscriptionEngine = resolveTranscriptionEngine()
 
         // Honest CONNECTING (3.6.0, Workstream E3): a cold local engine is about to pay the ~7 s
         // model load inside CONNECTING — name the wait. The engine itself reports which branch
@@ -3000,6 +3034,48 @@ class FloatingBubbleService : Service(),
             engine = if (cloudWrapper != null) TranscribingEngine.CLOUD else TranscribingEngine.LOCAL,
         )
         android.util.Log.i("WE-DIAG", "connect lang resolved=$lang (modelScope=${installedModel?.scope} cloud=${cloudWrapper != null})")
+
+        // 4.4.0: THE ONE WRAP SITE (spec §4.1 step 2, §5). After the language resolved, before
+        // connect: the gate reads the RESOLVED local language (R4), the pack, the session kind
+        // (cloudWrapper != null IS the right predicate here — cloud batch and live keep today's
+        // strip), a running batch job, the switch (R3) and the resident previewer's readiness
+        // (false while loading; false forever after a failed canary — R1). When it arms, the
+        // session engine becomes the tee and transcriptionEngine is RE-POINTED at it, so the
+        // capture callback, the commit funnel and the stop path all drive the tee. The strip
+        // rules read sessionHasLocalPreview (Task 1's second input) — assigned the gate's answer,
+        // never a constant. Every input is logged, so a "why no words?" is one grep.
+        val previewPack = com.whispereverywhere.transcription.stream.StreamingPackCatalog.EN
+        val packInstalled = app.streamingPackManager.isInstalled(previewPack)
+        val userEnabled = app.preferencesManager.localPreviewEnabled
+        // warmStreamingPreview() unconditionally when the pack and the switch allow it, not
+        // `streamingPreview ?: warm…`: after an onTrimMemory the field still holds the engine
+        // with its recognizer freed, and only a second warm() reloads it. Spec §4.1 step 10 —
+        // "the next eligible session re-warms" — is that call. It is a no-op when the engine is
+        // already warm or permanently disabled, so the cost here is one executor post.
+        val preview = if (packInstalled && userEnabled) warmStreamingPreview() else streamingPreview
+        val previewReady = preview?.isWarm() == true
+        val previewArmed = localPreviewArms(
+            sessionLanguage = lang,
+            packInstalled = packInstalled,
+            isCloudSession = cloudWrapper != null,
+            batchJobActive = BatchJobController.active != null,
+            userEnabled = userEnabled,
+            previewReady = previewReady,
+        )
+        android.util.Log.i(
+            "WE-DIAG",
+            com.whispereverywhere.transcription.stream.StreamDiag.gateLine(
+                lang, packInstalled, cloudWrapper != null, BatchJobController.active != null,
+                userEnabled, previewReady, previewArmed,
+            ),
+        )
+        sessionHasLocalPreview = previewArmed
+        val engine: TranscriptionEngine = if (previewArmed) {
+            com.whispereverywhere.transcription.stream.PreviewTeeEngine(requireNotNull(preview), baseEngine)
+                .also { transcriptionEngine = it }
+        } else {
+            baseEngine
+        }
 
         engine.connect(lang, object : TranscriptionEngine.Listener {
             override fun onOpen() {
@@ -3501,6 +3577,9 @@ class FloatingBubbleService : Service(),
             // recording yet `transcriptionEngine` is still null — so releasing through that field
             // would ignore memory pressure in exactly the idle state where it matters most.
             localEngine?.releaseContext()
+            // 4.4.0 (spec §4.1 step 10, §7.4): the previewer's +170 MB goes back under the same
+            // three-state guard. Not a verdict — the next eligible session re-warms it.
+            streamingPreview?.release()
         }
     }
 

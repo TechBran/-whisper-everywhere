@@ -13,7 +13,7 @@ package com.whispereverywhere.audio
  */
 object AudioArbiter {
 
-    /** RECORDING or FINALIZING — a transcript is still being produced. */
+    /** CONNECTING, RECORDING or FINALIZING — a session is being set up, or a transcript is still being produced (4.4.0: CONNECTING joined, spec §7.1). */
     @Volatile var isCapturing: () -> Boolean = { false }
 
     /** Ask the live capture session to finish normally (same path as a stop tap). */
