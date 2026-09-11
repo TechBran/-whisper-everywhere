@@ -84,10 +84,12 @@ class PreviewAutoFetchTest {
             val nothingToDo = c.state.isInstalled || c.state is StreamingPackState.Repair
             val refused = c.userSaidNo || !c.showLiveWords || !c.localTierInstalled
             val notNow = c.sessionActive || c.batchJobActive || c.packWorkInFlight
-            val spendsData = c.state == StreamingPackState.PackFetchable ||
-                c.state == StreamingPackState.Downloadable
+            // A third party's bytes are never moved silently, whatever the network reads.
+            val thirdParty = c.state == StreamingPackState.Downloadable
+            val spendsData = c.state == StreamingPackState.PackFetchable
             val expected = when {
                 nothingToDo || refused || notNow -> PreviewAutoFetch.Decision.NONE
+                thirdParty -> PreviewAutoFetch.Decision.OFFER
                 spendsData && !c.unmetered -> PreviewAutoFetch.Decision.OFFER
                 c.attemptedThisLaunch || c.backedOff -> PreviewAutoFetch.Decision.OFFER
                 else -> PreviewAutoFetch.Decision.FETCH
@@ -116,6 +118,12 @@ class PreviewAutoFetchTest {
                 "$c: a transfer over the user's own connection needs an UNMETERED one — the " +
                     "CONTROLLER RULING; a delivered pack spends nothing and is exempt",
                 c.unmetered || c.state == StreamingPackState.PackDelivered,
+            )
+            assertTrue(
+                "$c: and a silent fetch is never a THIRD PARTY's bytes — the app's own asset " +
+                    "pack (Play's fetch, or a delivered pack's local install) or nothing",
+                c.state == StreamingPackState.PackFetchable ||
+                    c.state == StreamingPackState.PackDelivered,
             )
         }
     }
@@ -206,9 +214,25 @@ class PreviewAutoFetchTest {
     }
 
     @Test fun anUnmeteredConnectionFetchesSilently() {
-        // AF1, the ruling's own case.
+        // AF1, the ruling's own case: the app's own asset pack, from Google Play.
         assertEquals(PreviewAutoFetch.Decision.FETCH, open(state = StreamingPackState.PackFetchable))
-        assertEquals(PreviewAutoFetch.Decision.FETCH, open(state = StreamingPackState.Downloadable))
+    }
+
+    @Test fun theThirdPartyDownloadIsNeverSilentOnAnyConnection() {
+        // The fallback route's bytes come from the catalog's commit-pinned base, not from the
+        // app's own asset pack — and SETTINGS_INSTALL_FETCH promises the user "never from a third
+        // party", while SETTINGS_INSTALL_DOWNLOAD is the one sentence that admits one. A silent
+        // fetch is exactly the case where that sentence is never read. So it OFFERS, on wifi as
+        // well as on cellular, and the tap is the consent (review r1, B1).
+        assertEquals(
+            "on an unmetered connection too",
+            PreviewAutoFetch.Decision.OFFER,
+            open(state = StreamingPackState.Downloadable, unmetered = true),
+        )
+        assertEquals(
+            PreviewAutoFetch.Decision.OFFER,
+            open(state = StreamingPackState.Downloadable, unmetered = false),
+        )
     }
 
     @Test fun aMeteredConnectionOffersInsteadOfSpendingTheUsersData() {

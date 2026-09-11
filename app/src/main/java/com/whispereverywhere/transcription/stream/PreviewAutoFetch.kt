@@ -32,6 +32,20 @@ package com.whispereverywhere.transcription.stream
  * of the brief's *"Installed/PackDelivered/in-flight never re-fetch"*: a delivered pack never
  * FETCHES, it installs.
  *
+ * ### Why [StreamingPackState.Downloadable] is never silent, on any connection (review r1, B1)
+ *
+ * That route is the non-Play fallback, and its bytes come from the catalog's commit-pinned base
+ * at Hugging Face (`StreamingPackCatalog.EN.baseUrl`) — a THIRD PARTY. It is reached on every
+ * install Play cannot serve: a debug build, a sideload of the public repo, or a release Play has
+ * already refused by name. The ruling authorized fetching *"that pack from the assets"* — the
+ * app's own asset pack — and the app's own copy draws exactly this line:
+ * `StreamingPackCopy.SETTINGS_INSTALL_FETCH` promises *"never from a third party"*, and
+ * `SETTINGS_INSTALL_DOWNLOAD` is the one sentence that admits one. A silent fetch is the case
+ * where the user never reads that sentence, because no card precedes the transfer. So this route
+ * answers OFFER whatever the network reads: the card shows the download's own sentence, and one
+ * tap is the consent. Nothing else about it changes — the tap takes the same route the Settings
+ * row takes, and AF1's subject (the Play routes) is untouched.
+ *
  * ### Why a [StreamingPackState.Repair] is never auto-anything
  *
  * A Repair means bytes are present under `filesDir` and the verdict was withdrawn — a load
@@ -168,9 +182,12 @@ object PreviewAutoFetch {
             // Play has already put these bytes on the device: the install is a local verify +
             // copy and no connection is touched, so metering cannot apply to it.
             StreamingPackState.PackDelivered -> false
-            // 73 MB over the user's own connection, from Play or from the commit-pinned base.
+            // 73 MB of the APP'S OWN asset pack, from Google Play, over the user's connection.
             StreamingPackState.PackFetchable -> true
-            StreamingPackState.Downloadable -> true
+            // 73 MB from a THIRD PARTY (the catalog's commit-pinned base), which this app never
+            // moves unasked however cheap the connection: OFFER, and the card carries the
+            // download's own sentence for the user to answer. See the class KDoc.
+            StreamingPackState.Downloadable -> return Decision.OFFER
             // Both answered above; spelled so this `when` is total over the machine rather than
             // wildcarding a future state into a silent transfer.
             StreamingPackState.Installed -> return Decision.NONE
