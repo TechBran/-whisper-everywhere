@@ -168,6 +168,28 @@ class StreamingPreviewEngineTest {
         assertEquals("hello there friend", emitted.last())
     }
 
+    @Test fun theRefedTailIsTheStreamsAudioNotTheNextSegmentsAudioOrFirstPartial() {
+        // (review B1) The tail has to be in the CUT's timeline — cutSeconds measures against it —
+        // but it is audio the line just logged already reported, so it is not this segment's.
+        val rec = ScriptedRecognizer(listOf("A", "A B", "A B C", "A B C D"), canaryText = CANARY)
+        val e = warmOpen(rec)
+        feedMs(e, 2_048)
+        e.commit(seq = 1L, retainMs = 800L) { _, _ -> }
+        assertEquals(
+            "stream-timing: seq=1 audio=2048 decodes=7 decodeMs=0 p50us=0 p99us=0 rtf=0.000 partials=4 firstPartialMs=480 padMs=500 shed=0 retract=0",
+            logs.last(),
+        )
+        assertEquals("the re-fed tail's echo still reaches the strip", "a b", emitted.last())
+        feedMs(e, 1_024)
+        e.commit(seq = 2L, retainMs = 0L) { _, _ -> }
+        // 1,024 ms of NEW audio (not 1,824), two partials of its own (not three), and the lag of
+        // the first of those (not the 0 the echo would have written) — the sheet's rtf and Z1 row.
+        assertEquals(
+            "stream-timing: seq=2 audio=1024 decodes=6 decodeMs=0 p50us=0 p99us=0 rtf=0.000 partials=2 firstPartialMs=320 padMs=500 shed=0 retract=0",
+            logs.last(),
+        )
+    }
+
     @Test fun queueOverflowShedsTheChunkAndSaysSoOnTheTimingLine() {
         val rec = ScriptedRecognizer(listOf("A"), canaryText = CANARY)
         val exec = ManualExecutor()
@@ -214,6 +236,24 @@ class StreamingPreviewEngineTest {
         assertTrue(rec.released)
         assertEquals("", emitted.last())
         assertEquals(3, logs.count { it.startsWith("stream-preview: decode threw") })
+    }
+
+    @Test fun threeThrowsSpreadOverThreeSessionsDoNotDisableThePreviewer() {
+        // (review B2) The count carries across the SEGMENTS of one session — a model throwing once
+        // per segment must still disable — but a new session is a new verdict. Any session whose
+        // last decode threw ends at a non-zero count (a stop mid-sentence is that shape), so
+        // without the boundary three ordinary sessions would switch the feature off for the process.
+        val rec = ScriptedRecognizer(listOf("A"), failDecodesFrom = 10, canaryText = CANARY)   // the canary's 9 pass
+        val e = engine(rec)
+        e.warm(dir, pack)
+        repeat(3) {
+            e.open { emitted += it }
+            feedMs(e, 480)   // 15 chunks = 7,680 samples: exactly one decode in this session, and it throws
+            e.close()
+        }
+        assertEquals(3, logs.count { it.startsWith("stream-preview: decode threw") })
+        assertFalse("a session boundary clears the three-strike count (spec §7.1)", e.disabled)
+        assertTrue("and the previewer is still warm for the next session", e.isWarm())
     }
 
     @Test fun closeReleasesTheStreamButNotTheRecognizer_releaseReleasesBoth() {
