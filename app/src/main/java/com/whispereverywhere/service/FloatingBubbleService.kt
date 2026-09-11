@@ -1461,6 +1461,14 @@ class FloatingBubbleService : Service(),
             Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
             !app.preferencesManager.isPreferDeviceAudio()
         ) {
+            // ROUND 2 (round-1 review, nit 6): SAY SO. Both triggers log a handover on the line
+            // that calls this, and `onOpen`'s says "media still playing at readiness" BEFORE the
+            // call — so a latch consumed into a no-op here (the source is already PLAYBACK because
+            // a consent grant landed during the load, or the preference was turned off mid-load,
+            // or pre-Q) otherwise reads in the log as a handover that happened. State only; when
+            // neither number below explains it, the preference is the reason.
+            android.util.Log.i("WE-DIAG",
+                "handover declined at re-read: source=$activeSource sdk=${Build.VERSION.SDK_INT}")
             return
         }
         if (com.whispereverywhere.audio.MediaProjectionGate.hasProjection()) {

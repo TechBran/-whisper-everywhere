@@ -64,20 +64,26 @@ class EndpointerLifecyclePinTest {
      * `endpointer.onSessionStart(...)`, a documented strict superset of `reset()`, so re-adding a
      * reset there would be redundant AND would double the `probeReset` inside one session open.
      *
-     * The count is taken on the LF-form `"endpointer.reset()\n"`, deliberately. TWO comments in
-     * FloatingBubbleService quote the call verbatim — D9's mandatory read-before-reset note in the
-     * cap branch ("…are both read BEFORE endpointer.reset(), which clears them.") and this task's
-     * REPLACE note at onOpen ("This REPLACES the endpointer.reset() that used to open…") — and
-     * neither copy ends its line, so the BARE needle reads TWO high.
+     * The count is taken on the LF-form `"endpointer.reset()\n"`, deliberately, because SEVERAL
+     * comments in FloatingBubbleService quote the call verbatim mid-line — D9's mandatory
+     * read-before-reset note in the cap branch ("…are both read BEFORE endpointer.reset(), which
+     * clears them."), the REPLACE note at onOpen ("This REPLACES the endpointer.reset() that used
+     * to open…"), the class KDoc's offer-clearing sentence, `switchSource`'s S2 round-1 ordering
+     * note, and the silent-stream fallback's "no fourth site to justify" — so the BARE needle reads
+     * that many HIGH.
      *
-     * That is not an off-by-one worth patching with a bigger constant. The bare count was 5 before
-     * this task (4 calls + 1 comment) and is 5 after it (3 calls + 2 comments), so a bare-count
-     * census would have stayed GREEN straight through the REPLACE while an entire reset site was
-     * deleted — pinning nothing, which is the one thing a census must not do. Fix the TEST, never
-     * the comments: they are load-bearing prose, and D9's in particular is what states the
-     * read-before-reset ordering the cap branch depends on. Indentation-anchoring does NOT work as
-     * an alternative either — that comment shares the cap cut's 16-space indent, and the three real
-     * calls sit at 16 / 8 / 8.
+     * HOW MANY comment copies there are is not stated here on purpose, and this paragraph used to
+     * state it and went stale twice (4.4.0 S2 added two more). The load-bearing fact is the one
+     * below, which does not drift: at the D9/D10 REPLACE the BARE count read 5 both BEFORE (4 calls
+     * + 1 comment) and AFTER (3 calls + 2 comments), so a bare-count census would have stayed GREEN
+     * straight through it while an entire reset site was deleted — pinning nothing, which is the one
+     * thing a census must not do. The LF form counts CALLS only and cannot be moved by prose at all,
+     * which is why no number in this KDoc has to be maintained.
+     *
+     * Fix the TEST, never the comments: they are load-bearing prose, and D9's in particular is what
+     * states the read-before-reset ordering the cap branch depends on. Indentation-anchoring does
+     * NOT work as an alternative either — that comment shares the cap cut's 16-space indent, and
+     * the three real calls sit at 16 / 8 / 8.
      */
     @Test
     fun thereAreExactlyThreeServiceSideResetSites() {
