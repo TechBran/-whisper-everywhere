@@ -1000,6 +1000,10 @@ private fun LiveWordsCard(
     // the user just refused. Then it abandons the arrival it was pressed on, because a "no" that
     // lets 73 MB finish landing is not a no (CONTROLLER RULING 2026-09-11, CHANGE 2). The cancel
     // is a no-op when nothing is in flight, so the offer and the announcement cost nothing.
+    // What "abandons" means differs by route, and `PreviewAutoFetchController.cancel`'s KDoc says
+    // which (4.4.1 pass 3, ITEM 4): a DELIVERED pack's local verify+copy is not
+    // cancellation-cooperative and finishes, so that install lands — costing no data, and the
+    // flag written above still silences the card and the auto-fetch for good.
     val dismiss: () -> Unit = {
         app.preferencesManager.setLivePreviewDeclined(selectedLanguage, true)
         saidNo = true

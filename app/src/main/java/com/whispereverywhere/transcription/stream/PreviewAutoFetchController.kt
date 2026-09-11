@@ -140,9 +140,36 @@ object PreviewAutoFetchController {
      *
      * It cancels a fetch the SETTINGS ROW started too, and deliberately: [busy] spans both
      * starters, so that work is exactly what the card is rendering as WORKING, and the X is
-     * pressed on a card describing the transfer that is running. Partial bytes are discarded and
-     * nothing is installed; a delivered-but-uninstalled pack stays with Play, so the Settings row
-     * still installs on demand at no further cost.
+     * pressed on a card describing the transfer that is running.
+     *
+     * ### WHAT IT ACTUALLY DOES, ROUTE BY ROUTE (4.4.1 pass 3, ITEM 4 — review r1's nit 1)
+     *
+     * The earlier sentence here — *"partial bytes are discarded and nothing is installed"* — was
+     * true of the route the ruling had in mind and not of the one most users are on. What each
+     * route really does, read at the code rather than assumed:
+     *
+     *  - **[StreamingPackState.PackFetchable]** — `StreamingPackController.cancel()` asks PLAY to
+     *    cancel the pack download and publishes `Cancelled`; the watcher job goes with it. Nothing
+     *    of ours is installed, and the partial transfer is Play's own to keep or discard. A pack
+     *    Play has ALREADY delivered stays delivered, so the Settings row can still install it with
+     *    no further transfer.
+     *  - **[StreamingPackState.PackDelivered]** — `installFromPack` is **not**
+     *    cancellation-cooperative: between `withContext(Dispatchers.IO)`'s entry and its return
+     *    there is no suspension point (`StreamingPackInstall.verify` and `install` are blocking
+     *    and `onProgress` is a plain lambda), so a dismiss during it lets the verify + copy FINISH
+     *    and the marker land. The model ends up INSTALLED. Nothing of the user's data was spent —
+     *    Play had already put those bytes on the device and that route touches no network — and
+     *    the declined flag, written before this call, keeps the card and the auto-fetch silent
+     *    afterwards; Settings then shows the installed rows and its delete.
+     *  - **[StreamingPackState.Downloadable]** — the poll loop's `delay` IS a suspension point, so
+     *    the cancel is seen within one poll, but the bytes are deliberately KEPT: `fetchOne`'s
+     *    `catch` sets `keepRow = true` so the `DownloadManager` row is not removed
+     *    (`StreamingPackManager.kt`), and the staging dir is emptied only on failure or success.
+     *    So that transfer CONTINUES in `DownloadManager` after the X, nothing is installed, and
+     *    the next attempt's `removeStaleDownloads` clears the row before re-fetching. This is
+     *    inherited `TtsModelManager` behaviour and the one route where the X does not stop the
+     *    data cost — reachable only where Play cannot serve the install (a debug build, a
+     *    sideload, a refusal Play named).
      *
      * A cancellation is NOT a failure: [ours] rethrows `CancellationException` untouched, so no
      * back-off stamp is written and the model stays one tap away.
