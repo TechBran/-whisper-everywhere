@@ -32,13 +32,19 @@ class ConnectivityMonitor(private val context: Context) {
      * `NET_CAPABILITY_NOT_METERED`, not `isActiveNetworkMetered()`: the capability is the reading
      * Play's own asset-delivery consent uses, it does not invert the sense, and one spelling of a
      * consent question is one more than this app needs to be able to disagree with itself about.
-     * VALIDATED is deliberately NOT required here — a captive portal is a reason a transfer
-     * fails, not a reason to spend a user's cellular allowance, and the transfer's own failure
-     * path (the back-off) is what answers it.
+     *
+     * AND VALIDATED, by the CONTROLLER RULING of 2026-09-11 (CHANGE 1, answering the auto-fetch
+     * round's own C6). A captive-portal wifi — a hotel, an airport, a coffee shop — reports
+     * NOT_METERED while every request fails. Reading that as "spend freely" starts a transfer
+     * that cannot finish, and the 24 h back-off that failure writes then withholds the model for
+     * a DAY after the user reaches a network that would have worked. The cost of requiring
+     * VALIDATED is that an unvalidated wifi shows the card's tap instead of fetching silently —
+     * a correct wait. The cost of not requiring it was a day of silence.
      */
     fun isUnmetered(): Boolean = runCatching {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }.getOrDefault(false)
 }

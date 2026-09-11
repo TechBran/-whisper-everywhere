@@ -142,8 +142,10 @@ object PreviewAutoFetch {
      *        would be 73 MB for a surface that will not draw.
      * @param localTierInstalled an on-device whisper tier exists. See the class KDoc: without one
      *        every session is a cloud session and the previewer can never arm.
-     * @param unmetered the platform's own NOT_METERED reading (`ConnectivityMonitor.isUnmetered`,
-     *        false when there is no active network at all). The CONTROLLER RULING's one predicate.
+     * @param unmetered the platform's own NOT_METERED *and* VALIDATED reading
+     *        (`ConnectivityMonitor.isUnmetered`, false when there is no active network at all and
+     *        false on a captive portal — CONTROLLER RULING 2026-09-11, CHANGE 1). The CONTROLLER
+     *        RULING's one predicate.
      * @param sessionActive a dictation session is being set up, recording, or finishing
      *        (`AudioArbiter.isCapturing` — the house's single owner of that question). A 73 MB
      *        transfer and a sha256 of it beside a live transcription is the same CPU contention

@@ -199,6 +199,24 @@ class LivePreviewDeclinedPinTest {
         )
     }
 
+    @Test fun theMeteredReadingAlsoRequiresAValidatedNetwork() {
+        // CONTROLLER RULING 2026-09-11, CHANGE 1 (the auto-fetch round's C6). A captive-portal
+        // wifi — a hotel, an airport, a coffee shop — reports NOT_METERED while every request
+        // fails. Without VALIDATED the auto-fetch starts there, fails, and the 24 h back-off then
+        // withholds the model for a DAY after the user reaches a network that would have worked.
+        // One `&&` turns a day-long silent failure into a correct wait.
+        val scope = scopeOf(connectivity, "fun isUnmetered()", "\n}")
+        assertEquals(
+            "the same capability hasValidatedNetwork above it requires, for the same reason",
+            1, liveLineCount(scope, "NetworkCapabilities.NET_CAPABILITY_VALIDATED"),
+        )
+        assertEquals(
+            "and it is an AND with the metering read, not a second branch that could answer " +
+                "unmetered on its own",
+            1, liveLineCount(scope, "caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) &&"),
+        )
+    }
+
     @Test fun noNetworkAtAllReadsAsMeteredSoNothingStartsOnAPhoneThatCannotFinishIt() {
         val scope = scopeOf(connectivity, "fun isUnmetered()", "\n}")
         assertEquals(
