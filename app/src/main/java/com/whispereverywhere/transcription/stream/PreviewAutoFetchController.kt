@@ -177,11 +177,15 @@ object PreviewAutoFetchController {
      * behaviour cannot drift apart — *"make the BEHAVIOUR match the table"*. What the answer means
      * at each route, read at the code rather than assumed:
      *
-     *  - **[PreviewRoute.PLAY_FETCH] — the bytes stop.** `StreamingPackController.cancel()` asks
-     *    PLAY to cancel the pack download and publishes `Cancelled`, which reaches the board
-     *    through that shell's one note site; the watcher job goes with it. Nothing of ours is
-     *    installed, and the partial transfer is Play's own to keep or discard. A pack Play has
-     *    ALREADY delivered stays delivered, so a later install costs no transfer at all.
+     *  - **[PreviewRoute.PLAY_FETCH] — the bytes stop, while they are still moving.**
+     *    `StreamingPackController.cancel()` LATCHES the pack as abandoned, asks PLAY to cancel the
+     *    pack download and publishes `Cancelled`, which reaches the board through that shell's one
+     *    note site; the watcher job goes with it. The latch is what makes the "no" a no rather
+     *    than a request: a `COMPLETED` that beat the cancel is neither narrated nor installed, and
+     *    the pack counts as busy until Play has finished with it, so no surface offers a second
+     *    73 MB over a delivery Play is still making. Nothing of ours is installed, and the partial
+     *    transfer is Play's own to keep or discard. A pack Play has ALREADY delivered stays
+     *    delivered, so a later install costs no transfer at all.
      *  - **[PreviewRoute.DIRECT_DOWNLOAD] — the bytes stop, as of 4.5.0.** The poll loop's `delay`
      *    IS a suspension point, so the cancel is seen within one poll, and
      *    `StreamingPackManager.fetchOne` now removes the `DownloadManager` row on every exit while
@@ -199,8 +203,11 @@ object PreviewAutoFetchController {
      *    the card and the auto-fetch silent afterwards, and Settings then shows the installed rows
      *    and its delete.
      *
-     * The last point is true of EVERY route once the work reaches [PreviewPhase.INSTALLING], which
-     * is why the phase term crosses the table rather than sitting inside one row of it.
+     * The last point is true of EVERY route once the work reaches [PreviewPhase.TRANSFERRING] or
+     * [PreviewPhase.INSTALLING] — bytes already on the device, by Play's move or by ours — which
+     * is why the phase term crosses the table rather than sitting inside one row of it. A
+     * `TRANSFERRING` cancel therefore takes the same honest refusal as `DELIVERED_PACK`'s, on the
+     * primary Play route (fix round 1, review r1's B1a).
      *
      * A cancellation is NOT a failure: [ours] rethrows `CancellationException` untouched, so no
      * back-off stamp is written and the model stays one tap away.

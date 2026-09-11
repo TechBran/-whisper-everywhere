@@ -182,6 +182,13 @@ class PreviewWorkTest {
                     "lets the marker land — the UI must not offer one",
                 work(route, PreviewPhase.INSTALLING).cancellable,
             )
+            assertFalse(
+                "$route at TRANSFERRING: the bytes are already ON THE DEVICE and Play is moving " +
+                    "them into its own storage, so AssetPackManager.cancel has no download left " +
+                    "to cancel — DELIVERED_PACK's own reason, arriving on another route (fix " +
+                    "round 1, review r1's B1a)",
+                work(route, PreviewPhase.TRANSFERRING).cancellable,
+            )
             for (phase in listOf(
                 PreviewPhase.INSTALLED,
                 PreviewPhase.FAILED,
@@ -195,14 +202,14 @@ class PreviewWorkTest {
         }
     }
 
-    @Test fun everyPhaseBeforeTheCopyIsCancellableOnTheTwoRoutesThatCanStop() {
-        val beforeTheCopy = listOf(
+    @Test fun everyPhaseWhoseBytesAreStillMovingIsCancellableOnTheTwoRoutesThatCanStop() {
+        // TRANSFERRING is NOT one of them — see theCopyPhaseIsCancellableOnNoRouteAndNothingTerminalIsEither.
+        val stillMoving = listOf(
             PreviewPhase.ASKING,
             PreviewPhase.AWAITING_ANSWER,
             PreviewPhase.DOWNLOADING,
-            PreviewPhase.TRANSFERRING,
         )
-        for (phase in beforeTheCopy) {
+        for (phase in stillMoving) {
             assertTrue(
                 "PLAY_FETCH at $phase",
                 work(PreviewRoute.PLAY_FETCH, phase).cancellable,
@@ -217,6 +224,45 @@ class PreviewWorkTest {
                 work(PreviewRoute.DELIVERED_PACK, phase).cancellable,
             )
         }
+    }
+
+    /**
+     * THE TABLE CANNOT ANSWER THE SAME FACT TWO WAYS (fix round 1, review r1's B1a).
+     *
+     * `PreviewRoute.DELIVERED_PACK.stopsBeforeTheCopy` is false for one stated reason — *"Play
+     * has already put those bytes on the device"* — and `TRANSFERRING` is that same fact on the
+     * PLAY_FETCH route: Play's `STATUS_TRANSFERRING`, after the download and before `COMPLETED`,
+     * a phase every delivery passes through. Until this round the table said `true` there, so
+     * `AssetPackManager.cancel` was offered with no download left to cancel and the brief's
+     * *"make the BEHAVIOUR match the table"* was discharged against nothing.
+     *
+     * Stated as a grid so the classification is TOTAL: every phase, on every route, is either a
+     * cancel the route can honour or a stated refusal.
+     */
+    @Test fun onlyThePhasesWhoseBytesAreStillMovingAreEverCancellableAnywhere() {
+        val stillMoving = setOf(
+            PreviewPhase.ASKING,
+            PreviewPhase.AWAITING_ANSWER,
+            PreviewPhase.DOWNLOADING,
+        )
+        for (route in PreviewRoute.entries) {
+            for (phase in PreviewPhase.entries) {
+                assertEquals(
+                    "$route at $phase: a cancel is offered exactly where the bytes are still " +
+                        "moving AND the route can stop them",
+                    phase in stillMoving && route.stopsBeforeTheCopy,
+                    work(route, phase).cancellable,
+                )
+            }
+        }
+        assertEquals(
+            "and the phases whose bytes are already on the device are exactly the two the " +
+                "record refuses on every route — TRANSFERRING (Play's move) and INSTALLING (ours)",
+            setOf(PreviewPhase.TRANSFERRING, PreviewPhase.INSTALLING),
+            PreviewPhase.entries
+                .filter { it.inFlight && it !in stillMoving }
+                .toSet(),
+        )
     }
 
     @Test fun inFlightIsEveryTransportPhaseAndNoTerminalOne() {

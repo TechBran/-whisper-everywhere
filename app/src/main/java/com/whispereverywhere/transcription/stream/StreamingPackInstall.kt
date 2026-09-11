@@ -280,6 +280,48 @@ object StreamingPackInstall {
     }
 
     /**
+     * THE ABANDONED LATCH'S RELEASE CONDITION (4.5.0 Task 1, fix round 1 — review r1's B1):
+     * whether PLAY still holds a delivery for this pack, so that a cancelled fetch stays busy
+     * until Play itself has finished with it.
+     *
+     * `StreamingPackController.cancel()` publishes a terminal `Cancelled` at once — *"from the
+     * user's point of view the fetch they cancelled is over the moment they say so"* — but Play
+     * is not necessarily done: at 99 % of `DOWNLOADING` it can complete before it processes the
+     * cancel. So the shell latches the pack as abandoned and asks THIS predicate of every state
+     * that still arrives for it. While the answer is true the pack is refused a second `fetch`
+     * (the latch is a term of `isBusy()`), and no state is published or installed — without
+     * that, `Cancelled` is not `fetchInFlight`, `busy()` goes false the instant the X is pressed,
+     * and the Settings row offers a second 73 MB over a delivery Play has not finished (H3-B2,
+     * reopened through the cancel path).
+     *
+     * It differs from [fetchInFlight] in exactly ONE cell, and the two questions are different:
+     * that one asks *"may a second `fetch` be issued?"* and answers no over OUR verify + copy;
+     * this asks *"is Play still working on this pack?"* and answers no at `COMPLETED` —
+     * [NpuPackFetch.FetchState.Verifying] — because a delivered pack is Play's work finished. A
+     * later install of it is the [PreviewRoute.DELIVERED_PACK] route and costs no transfer, so
+     * there is nothing left to protect.
+     *
+     * Total over the machine for [fetchInFlight]'s reason: a state added later that fell through
+     * a wildcard into "Play is done" would re-open the defect silently.
+     */
+    fun playStillHoldsTheDelivery(state: NpuPackFetch.FetchState): Boolean = when (state) {
+        is NpuPackFetch.FetchState.Pending,
+        is NpuPackFetch.FetchState.Downloading,
+        is NpuPackFetch.FetchState.Transferring,
+        is NpuPackFetch.FetchState.NeedsConfirmation,
+        -> true
+        // COMPLETED, mapped to Verifying: the bytes are on the device and Play's delivery is
+        // over. The abandoned pack is simply never installed — it stays with Play for a costless
+        // later install, which is exactly what the cancel's KDoc already promises.
+        is NpuPackFetch.FetchState.Verifying,
+        is NpuPackFetch.FetchState.Idle,
+        is NpuPackFetch.FetchState.Installed,
+        is NpuPackFetch.FetchState.Failed,
+        is NpuPackFetch.FetchState.Cancelled,
+        -> false
+    }
+
+    /**
      * THE discriminator, and the only one: whether Google Play may be asked for this pack at all.
      * A debug build carries no asset packs — they exist only in an AAB install, which is exactly
      * why the amendment keeps the commit-pinned download alive for "the probe and dev sideloads"

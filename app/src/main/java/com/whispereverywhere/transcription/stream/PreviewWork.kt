@@ -32,10 +32,12 @@ enum class PreviewStarter {
  * included — or the UI must not offer a cancel on the route where it cannot"*. [
  * stopsBeforeTheCopy] is that table, and the two halves of the rule are both discharged here:
  *
- *  - **[PLAY_FETCH] — STOPS.** `StreamingPackController.cancel()` asks Play to cancel the pack
- *    download through `AssetPackManager.cancel` and publishes `Cancelled`. Nothing of ours is
- *    installed; a pack Play has ALREADY delivered stays delivered, so a later install costs no
- *    transfer.
+ *  - **[PLAY_FETCH] — STOPS, while the bytes are still MOVING.** `StreamingPackController
+ *    .cancel()` asks Play to cancel the pack download through `AssetPackManager.cancel`, LATCHES
+ *    the pack as abandoned so a delivery that lands anyway neither narrates nor installs, and
+ *    publishes `Cancelled`. Nothing of ours is installed; a pack Play has ALREADY delivered stays
+ *    delivered, so a later install costs no transfer. **It stops nothing at
+ *    [PreviewPhase.TRANSFERRING]** — see the phase term below.
  *  - **[DIRECT_DOWNLOAD] — STOPS, as of 4.5.0.** The poll loop's `delay` is a suspension point,
  *    so the cancel is seen within one poll, AND `StreamingPackManager.fetchOne` now removes the
  *    `DownloadManager` row on every exit. 4.4.1 set `keepRow = true` on a `CancellationException`
@@ -50,6 +52,20 @@ enum class PreviewStarter {
  *    why the honest answer is to offer no cancel rather than to publish a `Cancelled` that
  *    describes nothing.
  *
+ * ### TWO PHASE TERMS CROSS EVERY ROW OF IT (fix round 1, review r1's B1a)
+ *
+ * A route can only stop bytes that are still moving, so the table is a conjunction and not an
+ * answer on its own — [PreviewWork.cancellable] is the conjunction, and it is false for EVERY
+ * route at two phases:
+ *
+ *  - **[PreviewPhase.TRANSFERRING]** — Play's `STATUS_TRANSFERRING`, AFTER the download and
+ *    BEFORE `COMPLETED`, a phase every asset-pack delivery passes through. The bytes are already
+ *    on the device and Play is moving them into the app's pack storage, so `AssetPackManager
+ *    .cancel` has no download left to cancel. That is word for word the fact [DELIVERED_PACK]
+ *    gives as its reason: *"Play has already put those bytes on the device"*. Until 4.5.0's fix
+ *    round the table answered the SAME fact `false` on one route and `true` on another.
+ *  - **[PreviewPhase.INSTALLING]** — our own verify + copy, which has no suspension point left.
+ *
  * A fourth route must answer this table before it can be observed, which is the whole point of a
  * total `when` here rather than a Boolean on the record.
  */
@@ -63,7 +79,11 @@ enum class PreviewRoute {
     /** The commit-pinned Hugging Face base — a debug build, a sideload, or a refusal Play named. */
     DIRECT_DOWNLOAD;
 
-    /** Whether a cancel stops this route's bytes BEFORE the verify + copy. See the class KDoc. */
+    /**
+     * Whether a cancel can stop this route's bytes AT ALL, while they are still moving. WHEN they
+     * are still moving is the phase term's answer, not this one — see the class KDoc's two
+     * crossing phases, and [PreviewWork.cancellable] for the conjunction that is the whole table.
+     */
     val stopsBeforeTheCopy: Boolean
         get() = when (this) {
             PLAY_FETCH -> true
@@ -110,7 +130,16 @@ enum class PreviewPhase {
      *  [PreviewWork.total]. */
     DOWNLOADING,
 
-    /** Play is moving the delivered pack into the app's own pack storage. Brief, but real. */
+    /**
+     * Play is moving the delivered pack into the app's own pack storage — its
+     * `STATUS_TRANSFERRING`, AFTER the download and BEFORE `COMPLETED`. Brief, but real, and a
+     * phase every delivery passes through.
+     *
+     * THE SECOND PHASE NO ROUTE CAN CANCEL (fix round 1, review r1's B1a). The bytes are already
+     * on the device, so there is no download left for `AssetPackManager.cancel` to stop — the
+     * same fact [PreviewRoute.DELIVERED_PACK] is built on, arriving here on another route.
+     * [PreviewWork.cancellable] is therefore false for every route while it lasts.
+     */
     TRANSFERRING,
 
     /**
@@ -220,19 +249,21 @@ data class PreviewWork(
      * Whether a cancel would actually stop THIS work — the conjunction of the two facts that
      * decide it, and the only answer any surface may offer a cancel from.
      *
-     * The phase term comes first because it is the one that crosses every route: once the bytes
-     * are in [PreviewPhase.INSTALLING] the verify + copy has no suspension point left and it
-     * lands, whatever route delivered it. The route term is [PreviewRoute.stopsBeforeTheCopy],
-     * whose KDoc is the table.
+     * The phase term comes first because it is the one that crosses every route — TWO phases do
+     * (fix round 1, review r1's B1a), for the one reason: **a route can only stop bytes that are
+     * still MOVING.** At [PreviewPhase.TRANSFERRING] the download is over and Play is moving the
+     * delivered pack into its own storage, so `AssetPackManager.cancel` has no download left to
+     * cancel — [PreviewRoute.DELIVERED_PACK]'s own fact, arriving on another route. At
+     * [PreviewPhase.INSTALLING] our verify + copy has no suspension point left and it lands. The
+     * route term is [PreviewRoute.stopsBeforeTheCopy], whose KDoc is the table.
      */
     val cancellable: Boolean
         get() = when (phase) {
             PreviewPhase.ASKING,
             PreviewPhase.AWAITING_ANSWER,
             PreviewPhase.DOWNLOADING,
-            PreviewPhase.TRANSFERRING,
             -> route.stopsBeforeTheCopy
-            PreviewPhase.INSTALLING -> false
+            PreviewPhase.TRANSFERRING, PreviewPhase.INSTALLING -> false
             PreviewPhase.INSTALLED, PreviewPhase.FAILED, PreviewPhase.CANCELLED -> false
         }
 

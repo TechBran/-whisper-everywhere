@@ -431,6 +431,100 @@ class StreamingPackShellPinTest {
     }
 
     /**
+     * THE CANCEL IS A LATCH, NOT A REQUEST (4.5.0 Task 1, fix round 1 — review r1's B1).
+     *
+     * 4.5.0's first cut published a terminal `Cancelled` and cleared nothing: `activePack` stayed
+     * set, the listener stayed registered, and no *"this pack was abandoned"* fact existed
+     * anywhere. So a `COMPLETED` that beat the cancel still ran the install and 73 MB landed
+     * AFTER the X had written the permanent no — *installed AND declined* — while `Cancelled` is
+     * not [StreamingPackInstall.fetchInFlight], so `isBusy()` went false the instant the X was
+     * pressed and the Settings row offered a second 73 MB over a delivery Play had not finished.
+     *
+     * Nothing here is reachable from a JVM test — the listener, `AssetPackManager.cancel` and
+     * `AssetPackState` are all Play — and the DECISION is the pure, executed
+     * [StreamingPackInstall.playStillHoldsTheDelivery]. What is pinnable, and what would rot
+     * silently, is that the latch is SET before Play is asked, CONSULTED before the publish and
+     * before the install, and RELEASED only by that pure predicate.
+     */
+    @Test
+    fun theCancelLatchesThePackSoADeliveryThatLandsAnywayNeitherNarratesNorInstalls() {
+        val cancel = scopeOf(controller, "fun cancel() {", "fun confirm(")
+        assertEquals(
+            "the cancel records the abandoned pack — one write, and it is the latch",
+            1,
+            liveLineCount(cancel, "abandonedPackName = packName"),
+        )
+        val latched = offsetOfLive(cancel, "abandonedPackName = packName")
+        val asked = offsetOfLive(cancel, "manager?.cancel(listOf(packName))")
+        val published =
+            offsetOfLive(cancel, "publish(packName, pack.language, NpuPackFetch.FetchState.Cancelled)")
+        assertTrue(
+            "the latch ($latched) is set BEFORE Play is asked ($asked): the listener runs on the " +
+                "main thread and a state that raced the ask must land on the latched side of it",
+            latched in 0 until asked,
+        )
+        assertTrue(
+            "and before the row is told it is over ($published) — the same ordering the declined " +
+                "flag has on the card, for the same reason",
+            latched in 0 until published,
+        )
+        assertEquals(
+            "activePack is NOT cleared by the cancel: the listener filters on its name, so " +
+                "clearing it would make the latch unreleasable and leave the feature busy for " +
+                "the life of the process",
+            0,
+            liveLineCount(cancel, "activePack = null"),
+        )
+        // The listener side: consulted before anything is published or installed, released only
+        // by the pure predicate.
+        val onPackState = scopeOf(controller, "private fun onPackState(", "private fun latchRefusal(")
+        assertEquals(
+            "one abandoned check in the listener",
+            1,
+            liveLineCount(onPackState, "if (packName == abandonedPackName) {"),
+        )
+        assertEquals(
+            "and one release, by the pure predicate rather than a status re-read here",
+            1,
+            liveLineCount(
+                onPackState,
+                "if (!StreamingPackInstall.playStillHoldsTheDelivery(next)) abandonedPackName = null",
+            ),
+        )
+        val checked = offsetOfLive(onPackState, "if (packName == abandonedPackName) {")
+        val shown = offsetOfLive(onPackState, "publish(packName, pack.language, shown)")
+        val began =
+            offsetOfLive(onPackState, "if (next is NpuPackFetch.FetchState.Verifying) beginInstall(")
+        assertTrue(
+            "the abandoned check ($checked) precedes the publish ($shown): a DOWNLOADING tick " +
+                "must not put a dismissed row back on screen",
+            checked in 0 until shown,
+        )
+        assertTrue(
+            "and precedes beginInstall ($began): a COMPLETED that beat the cancel must not land " +
+                "73 MB behind a permanent no",
+            checked in 0 until began,
+        )
+        // The fallback latch stays ABOVE it, though: a refusal Play NAMES is a fact about the
+        // install and not about the attempt, so a dismissed pack still teaches playCanDeliver().
+        val refused = offsetOfLive(onPackState, "if (next is NpuPackFetch.FetchState.Failed) latchRefusal(")
+        assertTrue(
+            "the error-code latch ($refused) precedes the abandoned check ($checked), or a " +
+                "sideload that the user dismissed once repeats a Play fetch Play has refused",
+            refused in 0 until checked,
+        )
+        // And the latch is a term of the single-flight predicate, or the Settings row falls
+        // through `previewWorkLine != null -> Unit` into its OFFER row and starts a second fetch
+        // over a delivery Play has not finished (H3-B2, reopened through the cancel path).
+        val isBusy = scopeOf(controller, "fun isBusy(): Boolean", "fun start(")
+        assertEquals(
+            "the abandoned pack counts as busy until Play is done with it",
+            1,
+            liveLineCount(isBusy, "abandonedPackName != null"),
+        )
+    }
+
+    /**
      * The previewer narrates itself and borrows no NPU line. `NpuDiagTest` pins the `pack:`
      * family at exactly one emitter each inside `NpuPackController.kt`; a `NpuDiag.packLine` from
      * here would put a previewer fetch under a tier's name in the run-book — and the previewer

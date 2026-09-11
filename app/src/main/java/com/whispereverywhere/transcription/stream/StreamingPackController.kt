@@ -109,13 +109,46 @@ object StreamingPackController {
     @Volatile
     private var activePack: StreamingPack? = null
 
+    /**
+     * THE ABANDONED LATCH (4.5.0 Task 1, fix round 1 — review r1's B1): the pack name a [cancel]
+     * has given up on, held until PLAY itself has finished with that pack
+     * ([StreamingPackInstall.playStillHoldsTheDelivery] over the states that keep arriving).
+     *
+     * 4.5.0's first cut published a terminal `Cancelled` and cleared nothing, so the cancel was a
+     * REQUEST and not a latch, with three consequences that are all the absence of this one fact:
+     *
+     *  - [onPackState] guarded only on [activePack] and the name, so a post-cancel `COMPLETED`
+     *    still ran [beginInstall] and the 73 MB landed AFTER the X had written the permanent no —
+     *    *installed AND declined*, the failure mode this feature's own comments name twice;
+     *  - the same listener re-published Play's progress onto the board, resurrecting a row the
+     *    user had dismissed;
+     *  - and `Cancelled` is not [StreamingPackInstall.fetchInFlight], so [isBusy] went false the
+     *    instant the X was pressed and the Settings row offered a second 73 MB over a delivery
+     *    Play had not finished (H3-B2, reopened through the cancel path).
+     *
+     * **[activePack] is deliberately NOT cleared by the cancel**: the listener filters on its
+     * name, so clearing it would make this latch unreleasable and leave the feature busy for the
+     * life of the process. The give-back path needs nothing here either — the manager only hands
+     * a pack back after a LANDED install, and an abandoned pack is never installed.
+     */
+    @Volatile
+    private var abandonedPackName: String? = null
+
     /** The last progress percentage a `stream-pack:` line carried; negative = none this phase. */
     @Volatile
     private var lastLoggedPct: Int = -1
 
-    /** True while a fetch or its install is in flight — the single-flight guard's predicate. */
+    /**
+     * True while a fetch or its install is in flight — the single-flight guard's predicate.
+     *
+     * An ABANDONED pack counts as in flight until Play has finished with it, because a second
+     * `fetch` over a delivery Play is still making is exactly the defect this shell's cancel used
+     * to re-open. See [abandonedPackName].
+     */
     fun isBusy(): Boolean =
-        StreamingPackInstall.fetchInFlight(_state.value) || job?.isActive == true
+        StreamingPackInstall.fetchInFlight(_state.value) ||
+            job?.isActive == true ||
+            abandonedPackName != null
 
     /**
      * Start (or re-attach to) the fetch of [pack]'s Play pack. Single-flight: a call while one is
@@ -178,25 +211,43 @@ object StreamingPackController {
     }
 
     /**
-     * Abandon the fetch: Play's download is cancelled through the manager, the install coroutine
-     * (if any) is cancelled, and the row reads Cancelled at once — from the user's point of view
-     * the fetch they cancelled is over the moment they say so. Nothing was installed, and a
-     * delivered-but-uninstalled pack stays with Play for a costless retry.
+     * Abandon the fetch: the pack is LATCHED as abandoned, Play's download is cancelled through
+     * the manager, the install coroutine (if any) is cancelled, and the row reads Cancelled at
+     * once — from the user's point of view the fetch they cancelled is over the moment they say
+     * so. Nothing was installed, and a delivered-but-uninstalled pack stays with Play for a
+     * costless retry.
+     *
+     * ### IT IS A LATCH, NOT A REQUEST (fix round 1, review r1's B1)
+     *
+     * The user's "no" and "Play has stopped talking" are two different facts, and 4.5.0's first
+     * cut recorded only the first. [abandonedPackName] is the second: set BEFORE Play is asked
+     * (the listener runs on the main thread, and a state that raced the ask must land on the
+     * latched side of it), consulted by [onPackState] before it publishes anything and before
+     * [beginInstall], and released only when
+     * [StreamingPackInstall.playStillHoldsTheDelivery] says Play has finished with the pack. So a
+     * delivery that completes anyway does not install, does not narrate, and does not let a
+     * second 73 MB be offered over it.
      *
      * WHETHER it may be called at all is [PreviewWork.cancellable]'s answer, decided by
      * [PreviewAutoFetchController.cancel] — this object holds no route table of its own, and it
-     * is only ever reached for [PreviewRoute.PLAY_FETCH].
+     * is only ever reached for [PreviewRoute.PLAY_FETCH] at a phase where Play still has a
+     * download to cancel ([PreviewPhase.TRANSFERRING] is not one of them). Every such phase is
+     * one Play is actively working on, which is what makes the release reachable: the next
+     * `AssetPackState` for the pack — its own CANCELED, or the COMPLETED that beat the cancel —
+     * is the one that clears the latch.
      */
     fun cancel() {
         val pack = activePack
         val packName = pack?.packName
-        if (packName != null) runCatching { manager?.cancel(listOf(packName)) }
-        job?.cancel()
-        if (pack != null && packName != null) {
-            publish(packName, pack.language, NpuPackFetch.FetchState.Cancelled)
-        } else {
+        if (pack == null || packName == null) {
+            // Nothing was ever asked for on this shell, so there is nothing to latch.
             _state.value = NpuPackFetch.FetchState.Cancelled
+            return
         }
+        abandonedPackName = packName
+        runCatching { manager?.cancel(listOf(packName)) }
+        job?.cancel()
+        publish(packName, pack.language, NpuPackFetch.FetchState.Cancelled)
     }
 
     /** Show PLAY'S OWN confirmation dialog for [NpuPackFetch.FetchState.NeedsConfirmation] —
@@ -219,7 +270,21 @@ object StreamingPackController {
             packState.bytesDownloaded(),
             packState.totalBytesToDownload(),
         )
+        // THE FALLBACK LATCH IS ABOVE THE ABANDONED CHECK, and deliberately: a refusal Play NAMES
+        // is a durable fact about this INSTALL, not about this attempt, so a pack the user
+        // dismissed still teaches `playCanDeliver()` what Play has refused. Without that, the next
+        // attempt repeats a Play fetch Play has already refused by name.
         if (next is NpuPackFetch.FetchState.Failed) latchRefusal(packState.errorCode())
+        // THE ABANDONED PACK IS NOT NARRATED AND NOT INSTALLED (fix round 1, review r1's B1).
+        // The X wrote the permanent no; a COMPLETED that beat the cancel must not land 73 MB
+        // behind it, and a DOWNLOADING tick must not put the dismissed row back on screen. The
+        // latch is held until PLAY is done with the pack — which is what keeps isBusy() true over
+        // a delivery Play is still making, so the Settings row cannot offer a second 73 MB on top
+        // of it — and it is released HERE because this listener is the only thing that learns it.
+        if (packName == abandonedPackName) {
+            if (!StreamingPackInstall.playStillHoldsTheDelivery(next)) abandonedPackName = null
+            return
+        }
         // The MAPPING is NpuPackFetch's; the WORDS on this card are the previewer's own. That
         // table's failure sentences send the user to 'Import model pair…' — the NPU chooser's
         // ggml SAF importer, which is not on this row and cannot read these four ONNX files — so

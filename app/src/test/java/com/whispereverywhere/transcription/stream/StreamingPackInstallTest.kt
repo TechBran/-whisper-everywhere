@@ -523,6 +523,63 @@ class StreamingPackInstallTest {
         }
     }
 
+    /**
+     * THE ABANDONED LATCH'S RELEASE CONDITION, total over the machine (4.5.0 Task 1, fix round 1
+     * — review r1's B1).
+     *
+     * A cancel publishes a terminal `Cancelled` at once, which is right for the user and wrong
+     * for Play: at 99 % of DOWNLOADING Play can complete the delivery before it processes the
+     * cancel. So the shell latches the pack as abandoned and asks this of every state that still
+     * arrives — refusing a second `fetch`, and refusing to install or narrate, while the answer
+     * is true. It differs from [StreamingPackInstall.fetchInFlight] in exactly one cell, and that
+     * cell is the point of the function.
+     */
+    @Test fun playStillHoldsTheDeliveryEverywhereItIsStillWorkingAndNowhereElse() {
+        val playsWork = listOf<com.whispereverywhere.npu.NpuPackFetch.FetchState>(
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Pending,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Downloading(1L, 2L),
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Transferring,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.NeedsConfirmation,
+        )
+        val playIsDone = listOf<com.whispereverywhere.npu.NpuPackFetch.FetchState>(
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Verifying(0L, 2L),
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Idle,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Installed,
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Failed("any reason at all"),
+            com.whispereverywhere.npu.NpuPackFetch.FetchState.Cancelled,
+        )
+        for (s in playsWork) {
+            assertTrue(
+                "$s: Play is still making this delivery, so a cancelled pack stays busy — a " +
+                    "second fetch over it is H3-B2 reopened through the cancel path",
+                StreamingPackInstall.playStillHoldsTheDelivery(s),
+            )
+        }
+        for (s in playIsDone) {
+            assertFalse(
+                "$s: Play has finished with the pack, so the latch releases and the feature is " +
+                    "usable again",
+                StreamingPackInstall.playStillHoldsTheDelivery(s),
+            )
+        }
+        val verifying = com.whispereverywhere.npu.NpuPackFetch.FetchState.Verifying(0L, 2L)
+        assertTrue(
+            "the ONE cell the two predicates differ in: COMPLETED (mapped to Verifying) is OUR " +
+                "copy, so no second fetch may be issued — but Play's delivery is over, and an " +
+                "abandoned delivered pack is simply never installed",
+            StreamingPackInstall.fetchInFlight(verifying) &&
+                !StreamingPackInstall.playStillHoldsTheDelivery(verifying),
+        )
+        for (s in playsWork + playIsDone) {
+            if (s is com.whispereverywhere.npu.NpuPackFetch.FetchState.Verifying) continue
+            assertEquals(
+                "$s: the two predicates agree everywhere else",
+                StreamingPackInstall.fetchInFlight(s),
+                StreamingPackInstall.playStillHoldsTheDelivery(s),
+            )
+        }
+    }
+
     @Test fun aRefusalPlayNamedAsThisInstallsOwnFaultTurnsOffTheFetchOffer() {
         // REUSED, not forked: the sideload family is `NpuPackFetch`'s own — the four codes whose
         // reason carries `OnboardingLogic.SIDELOAD_MARKER` — so the previewer and the NPU tiers
