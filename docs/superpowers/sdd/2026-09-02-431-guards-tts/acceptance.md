@@ -464,3 +464,224 @@ K3. **Live by default.** With the Gemini key entered and nothing else touched, a
     (words streaming) without flipping any switch; the switch on the Gemini row is ON and turning it
     OFF falls back to batch.
     `[ ] PASS  [ ] FAIL`
+
+## Z — 4.4.0: the word-for-word previewer, the four packs, and the startup ring
+
+**READ THIS FIRST — THE BUILD.** Every row below judges **4.4.0 / versionCode 90**, the
+controller's identity commit. The branch that produced this section still reads **89 / 4.3.4**
+(`app/build.gradle.kts:53-54`) because the identity bump is not the implementer's, and 89 is
+already spent on the internal track — so an AAB built from the branch commit cannot be uploaded at
+all. **If the About screen says 4.3.4, you are on the wrong build and §Z is void.** (The amendment
+moved 4.4.0 off the plan's 89 for exactly this reason:
+`docs/superpowers/plans/2026-09-10-streaming-previewer-amendment-pad.md`, "Identity".)
+
+**WHAT CHANGED, so the rows are readable.** Three things ride this build:
+
+1. **The previewer.** A sherpa-onnx streaming Zipformer (English, 73 MB) runs on the CPU *beside*
+   whisper as a **tee**: the same PCM goes to whisper first and then to the previewer, and the
+   previewer paints lowercase unpunctuated words on the bubble strip while you talk. It **never
+   commits**. The typed transcript is still whisper's, word for word — that is the one promise
+   every sentence of the copy carries (`StreamingPackCopy.kt:56-57`).
+2. **Four asset packs instead of two.** `npu_turbo`, `npu_small`, and now `preview_en` (the
+   previewer's four ONNX files) and `tts_kokoro` (the read-aloud voice's 350 MB archive, carried
+   as-is). The two new packs are on-demand and **not** device-targeted — one variant, every device
+   (`app/build.gradle.kts:237-248`). This is what closes the 2026-09-08 voice incident
+   structurally: the bytes ride the AAB, so a voice update becomes a deliberate release instead of
+   an upstream re-upload breaking every fresh install (§K1 is its predecessor row).
+3. **The startup ring.** The recorder now opens **at the tap**, before the engine's `connect()`,
+   and the audio spoken during the model load goes into a bounded 6 s ring that is replayed —
+   paced, in order, exactly once — the moment the engine is ready (`StartupRing.kt:191`,
+   `:212`). This is the owner's own report: *"if I tap the transcribe button and start speaking
+   right away, sometimes the first … couple seconds of what I say gets cut off."*
+
+**RULINGS ASSUMED by the build** (spec §0): R1 canary-only + release note · R2 label displaced ·
+R3 default-on (`PreferencesManager.kt:432` — `localPreviewEnabled` defaults **true**) · R4 Auto =
+whisper only on multilingual tiers · R5 4.4.0 (versionCode **90**, per the amendment, not the
+plan's 89) · R6 streaming first. Mark any you rule otherwise.
+
+### What the track build can and cannot show — READ BEFORE GREPPING ANYTHING
+
+**Every diagnostic line this feature emits is gone on the track build.** `stream-open:`,
+`stream-gate:`, `stream-timing:`, `stream-pack:`, `startup ring:` and `trim re-prewarm:` are all
+Kotlin `android.util.Log` calls, and `proguard-rules.pro:85-96`'s `-assumenosideeffects` block
+strips **every** `android.util.Log` call from release. The plan's Task 8 sheet was written as a
+sequence of greps; on a Play-signed track build **none of them will ever hit**, exactly as §A-§F
+found empirically for 4.3.1. Native `__android_log_print` (whisper's `decode:` line) is untouched
+by R8 and survives.
+
+So each row below states its **eye** criterion first and names the grep only as the corroboration
+you get on a debug build. One row is genuinely not executable on the track build:
+
+| row | on the track build |
+|---|---|
+| Z1, Z2, Z4-Z10 | fully by eye — "words appear / do not appear on the strip" and "the typed text is 4.3.4's" need no log |
+| Z3 | by eye for the lag, plus `dumpsys battery` / `dumpsys power` for the thermal read (adb-side, unaffected by R8). The `rtf=` and `shed=` numbers are lost — judge "the strip never falls further behind" instead |
+| Z11 | **NOT EXECUTABLE.** The canary's verdict reaches the user through no surface at all: `StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE` is defined but rendered nowhere, and `SettingsScreen.kt:1079-1082` says so in as many words. On the track build a canary failure is indistinguishable from "the feature is off" — no words, no explanation. Run Z11 on a **debug build**, or accept Z1 as the only canary evidence and read the gap in "Known limitations" below |
+| Z12, Z13 | fully by eye — the row's own TITLE is the evidence (see the rows) |
+| S1-S3 | fully by eye; S3 is judged by **feel** (two distinguishable haptics) |
+
+If you want the grep evidence on the phone instead, preserving `WE-DIAG` in release is one line in
+`proguard-rules.pro` — the same offer §A-§F made, with the same cost (those lines then exist in the
+build you promote; they carry no transcript content, so the cost is posture, not privacy).
+
+Capture anyway, for the native `decode:` lines and for crashes, in **PowerShell**:
+`C:\Users\bastr\AppData\Local\Android\Sdk\platform-tools\adb.exe logcat -s WE-DIAG WE-TTS *>> C:\Users\bastr\.androidbuild\capture-440.txt`
+(append, never clear; leave it running for the whole session).
+
+### Before Z1 — the setup, on BOTH the Fold6 and the Tab
+
+Settings → Engines & voices. **The previewer's row will NOT say "Download".** On a Play install it
+reads one of two things, and both are a PASS:
+
+- **"Install the English preview model"** — Play has already delivered the pack; the subtitle says
+  *"Included with the app (73 MB) and already on this device — nothing to fetch."* The tap verifies
+  and copies, with **no network at any point**.
+- **"Get the English preview model"** — the ordinary on-demand fetch; the subtitle names the size,
+  Play and your connection, and Play may raise its own confirmation dialog for a transfer that
+  size.
+
+Then turn **"Show live words"** ON (it is on by default) and confirm the row's title becomes
+**"Live words while you speak (English)"** once installed. The titles are
+`StreamingPackCopy.kt:147-153`; the sentences `:95-116`.
+
+Do the same for the voice: **"Install the read-aloud voice"** or **"Get the read-aloud voice"**
+(`TtsModelManager.kt:512-517`). Language: **English picked**, not Auto, on both devices.
+
+**The one word that FAILS the setup is "Download"** on either row. Both packs are delivered through
+Play on a track build; a row offering a third-party download means the app decided Play cannot
+serve this install, which is the whole amendment undone. Report it and stop — Z12 and Z13 are that
+row, and the rest of §Z would be measuring the fallback path.
+
+Z1. **Words appear while speaking.** Three configurations: Fold6 on `pro`; Fold6 on `npu-turbo`
+    with English picked; Tab on `multi` with English picked. Dictate five ordinary sentences each.
+    EXPECTED: lowercase, unpunctuated words on the strip roughly half a second behind your voice,
+    the first word about 1.2-1.5 s after you start. FAIL: no words at all in a configuration whose
+    row says installed and whose switch is ON. Debug-build corroboration: `stream-gate: lang=en
+    pack=1 cloud=0 batch=0 enabled=1 ready=1 -> preview=1` once at session start
+    (`StreamDiag.kt:24-29`), and one `stream-timing: seq=N … padMs=500 shed=0 retract=0` per
+    sentence — any `retract>0` on clean speech or any `shed=1` is a FAIL you can only see there.
+    `[ ] PASS  [ ] FAIL`
+Z2. **The typed result is 4.3.4's.** Read the same five sentences as TYPED text, not as strip text.
+    EXPECTED: cased, punctuated, numerals — exactly what 4.3.4 typed for the same audio. Record
+    4.3.4's text for two of them beforehand so this is a comparison and not a memory. FAIL: any
+    difference in the typed text. This is the row the whole tee exists to keep green.
+    `[ ] PASS  [ ] FAIL`
+Z3. **A five-minute read** (Tab on `multi`, English picked). Read a printed page for five minutes.
+    EXPECTED: the strip never falls *further* behind than it was in the first sentence — a backlog
+    that grows is the failure, not a constant half-second lag. `dumpsys battery` before and after:
+    temperature moves **< 3.0 °C**; `dumpsys power | grep -i thermal` status stays 0. This is the
+    streamer-beside-whisper thermal read rung 3 never ran. FAIL: a lag that grows; a thermal step.
+    `[ ] PASS  [ ] FAIL`
+Z4. **Auto on `multi` / `npu-turbo` is byte-identical to 4.3.4.** Language Auto, dictate two
+    sentences. EXPECTED: the "Transcribing…" line, **no words on the strip**, and the same typed
+    text as 4.3.4. The gate is `sessionLanguage == "en"` over the RESOLVED language
+    (`FloatingBubbleService.kt:229-237`), and Auto resolves to nothing before the first decode.
+    FAIL: any words on the strip. `[ ] PASS  [ ] FAIL`
+Z5. **Spanish picked on `multi`.** Dictate two Spanish sentences. EXPECTED: no live words, and the
+    onboarding language step explains why — open it once and read it: *"Live words on the bubble
+    are English-only for now; other languages show a progress line while each sentence is
+    transcribed."* (`StreamingPackCopy.kt:86-87`). FAIL: English words painted over Spanish speech.
+    `[ ] PASS  [ ] FAIL`
+Z6. **A device-audio session on edited video** (YouTube, English). EXPECTED: words streaming; the
+    4.4 flatline cut still fires on the digital silence an edit leaves; and the typed text is
+    whisper's. A boundary word the strip got wrong is EXPECTED here (rung 1 §6) — what must not
+    happen is that word reaching the typed text. FAIL: a lost cut (a 15 s stretch with no commit);
+    a sentence typed twice. `[ ] PASS  [ ] FAIL`
+Z7. **Source switch mid-utterance.** Speak into the mic, switch to device audio mid-sentence, keep
+    speaking. EXPECTED: the switch cuts the segment, words continue on the fresh stream, and no
+    word is typed twice or dropped. This is the seam the ring newly touches — the flush runs behind
+    the old source's stop+join (`FloatingBubbleService.kt:2709-2714`). FAIL: a duplicated or
+    missing word across the switch. `[ ] PASS  [ ] FAIL`
+Z8. **Read-aloud during CONNECTING and during RECORDING.** Copy a paragraph, then tap the mic and
+    the speaker lobe at once (CONNECTING), and again mid-session. EXPECTED: both refused — no
+    Kokoro playback — and no stutter on the strip. FAIL: audio overlap.
+    `[ ] PASS  [ ] FAIL`
+Z9. **A batch file job while dictating.** Start a file transcription, then tap the mic. EXPECTED: a
+    plain 4.3.4 session — **no words on the strip** — and the batch job completing. The previewer
+    yields the CPU to the batch decoder by refusing to arm at all. FAIL: contention, a crash, or
+    words on the strip. Debug corroboration: `stream-gate: … batch=1 … -> preview=0`.
+    `[ ] PASS  [ ] FAIL`
+Z10. **Stop mid-sentence.** Stop while a word is on the strip. EXPECTED: the tail arrives in the
+    typed text, the strip shows "Finishing transcript…" and then comes down with the session, and
+    nothing is left parked on screen afterwards. FAIL: a lost tail; a strip left occupying the
+    screen after the session ends. `[ ] PASS  [ ] FAIL`
+Z11. **The canary, both devices, at service start.** NOT EXECUTABLE ON THE TRACK BUILD — see the
+    table above. On a **debug** build, grep once per service start on BOTH devices:
+    `stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=<n> canary=pass
+    canaryMs=<n> outLen=<n> load=ok` (`StreamDiag.kt:13-14`). FAIL: `canary=fail`, `canary=none`
+    or `load=fail` on either device — report the whole line. On the track build, mark **N/A** and
+    read Z1 instead: words appearing IS the canary passing, and words absent with the row installed
+    and the switch on is a canary failure you cannot distinguish from anything else.
+    `[ ] PASS  [ ] FAIL  [ ] N/A (track build)`
+Z12. **The voice installs from the pack** — the 2026-09-08 incident's row, and the reason the
+    archive moved into the AAB. In Engines & voices, remove the local voice if it is installed,
+    then install it again on THIS build. EXPECTED: the row's title is "Install the read-aloud
+    voice" or "Get the read-aloud voice" (never "Download"); the verify + extract completes; a
+    read-aloud plays. If the row said "Install", it completed with **no network transfer at all** —
+    the bytes were already on the device. FAIL: *"Voice archive failed integrity verification"*
+    returns; or the row offers a download on a Play install.
+    `[ ] PASS  [ ] FAIL`
+Z13. **The previewer model fetches from the pack.** Same test for the previewer's row: install it
+    from the state the device is actually in. EXPECTED: "Install the English preview model" (no
+    network) or "Get the English preview model" (Play fetches it, possibly after its own
+    confirmation dialog for 73 MB); then "Verifying and installing…"; then the row becomes "Live
+    words while you speak (English)" and Z1 works. FAIL: a "Download the English preview model"
+    row; a Play refusal the row does not explain; or a fetch that completes and leaves the row
+    still offering to install. `[ ] PASS  [ ] FAIL`
+
+### The startup ring — S1-S3 (the 2026-09-10 startup amendment)
+
+These three come from a separate owner report and a separate amendment
+(`docs/superpowers/plans/2026-09-10-startup-ring-amendment.md`), folded in here because they ride
+the same build and the same four-pack bundle. They are **independent of the previewer**: run them
+with "Show live words" either way.
+
+S1. **Tap and speak immediately.** On a warm app, tap the mic and start talking with no pause at
+    all. EXPECTED: every word arrives, including the first one. Then **background the app for a few
+    minutes** (long enough for Android to trim it — the report's *"every once in a while"*) and
+    repeat. EXPECTED: still every word. This is the row the report was filed about: before this
+    build the trim handler released the model and nothing warmed it again, so the next tap paid a
+    full cold load — 4,107 ms measured on npu-turbo — with the recorder not yet open. FAIL: a
+    missing first word or clause in either half. Debug corroboration: `trim re-prewarm: level=<n>
+    state=<s> rearm=true` after the trim (`FloatingBubbleService.kt:4211`).
+    `[ ] PASS  [ ] FAIL`
+S2. **Every local tier, and device audio.** Repeat S1 on each local tier the device offers (Fold6:
+    `pro` and `npu-turbo`; Tab: `multi`), and once on device audio — start a video, then tap.
+    EXPECTED: nothing lost on any of them, and the transcript's FIRST chunk is a whole clause, not
+    a fragment starting mid-word. The ring holds 6 s (`StartupRing.kt:191`) against a 4,107 ms
+    measured worst case, so there is about 1.9 s of margin: if an engine ever takes longer than 6 s
+    to become ready, the OLDEST audio is dropped by design and the first words really are gone —
+    report the tier and the delay rather than marking a plain FAIL. `[ ] PASS  [ ] FAIL`
+S3. **The two cues say two different things.** There are now two haptics and you must be able to
+    tell them apart by feel: a **short 20 ms acknowledgement at the tap** ("got it, you are being
+    recorded") and the ordinary **50 ms "listening" cue at true readiness** ("the engine has your
+    words") — `FloatingBubbleService.kt:4719` and `:4736`. EXPECTED: on a cold npu-turbo load the
+    gap between them is a few seconds, and **every word spoken in that gap still arrives**. FAIL:
+    the "listening" cue fires before the engine is ready (i.e. immediately, on a cold load); or the
+    two cues are indistinguishable; or words spoken between them are lost.
+    `[ ] PASS  [ ] FAIL`
+
+### Known limitations of §Z, stated rather than discovered later
+
+- **The canary has no user-visible voice.** `StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE`
+  ("Live words are off on this device: the preview model did not pass its start-up check. Your
+  transcripts are unaffected.") is defined, pinned by its test, and rendered by nothing —
+  `SettingsScreen.kt:1079-1082` records that the previewer's row deliberately does not render it
+  and that the wiring belongs to the reader of `StreamingPreviewEngine.disabled`. Consequence: on a
+  release build a device where the canary fails shows a row that says the model is installed, a
+  switch that says live words are on, and no live words, with nothing explaining why. Z11 is
+  N/A there for the same reason. This is a gap in the R1 ruling's user-facing half, not a defect in
+  the guard itself — the guard works, it just cannot speak.
+- **R1's release note ships with the promotion**, unchanged: *"On some 2026 flagships the live-words
+  preview may stay blank; the typed transcript is unaffected."*
+- **Promote when Z1, Z2, Z4, Z12, Z13 and S1 pass on both devices.** Z1/Z2/Z4 are the previewer's
+  own contract (words appear; the typed text is unchanged; Auto is untouched), Z12/Z13 are the
+  four-pack delivery the amendment exists for, and S1 is the report that pulled the ring into this
+  build. Z11 is N/A on the track build by construction, so it cannot be a gate there.
+- **If a gate row fails, the rollback is per-row and proportionate.** The previewer is additive and
+  its own switch turns it off ("Show live words", default true at `PreferencesManager.kt:432`), so
+  a Z1/Z3 failure is a preference default flip rather than a revert. Z12/Z13 are the pack wiring
+  and have a working fallback on non-Play builds, so a failure there is diagnosable without
+  touching the engine. S1-S3 are the one part of this build that changed the capture seam: a
+  failure there is a revert of the ring, not a tuning change, and it must be reported with the tier
+  and the tap-to-cue delay.
