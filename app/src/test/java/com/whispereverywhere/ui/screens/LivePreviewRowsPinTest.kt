@@ -535,12 +535,23 @@ class LivePreviewRowsPinTest {
         )
         assertEquals(
             "the chip claims an INSTALLED model — offering it on a device with no pack is a " +
-                "promise the first session would break — and (4.5.0 Task 4) it claims LIVE " +
-                "WORDS, which a device with no on-device speech model can never show whatever " +
-                "is installed. The tier term costs a first-run reader nothing (`livePackInstalled` " +
-                "is already false on a fresh install); what it catches is the RE-ENTERED flow, " +
-                "which `firstRunStartDestination` routes to on exactly that missing tier.",
-            1, liveLineCount(step, "code == \"en\" && livePackInstalled && liveTierInstalled ->"),
+                "promise the first session would break",
+            1, liveLineCount(step, "code == \"en\" && livePackInstalled ->"),
+        )
+        // (4.5.0 Task 4) AND IT MUST NOT GROW A TIER TERM, which is the one surface in the
+        // feature where that is so. `firstRunStartDestination`'s sole rule is
+        // `installedModel() == null`, and it is the ONLY route into this flow — so every reader
+        // of this step has no tier, and the mandatory ENGINES step after it has no completable
+        // path without one. A tier term here would render this chip nowhere, ever: dead copy, the
+        // smell this repo already cites against `SETTINGS_DISABLED_ON_DEVICE`. Pinned so the
+        // sweep that correctly gated Home and Settings cannot be "finished" onto this step.
+        assertEquals(
+            "no tier term on the onboarding chip — it would make the sentence unreachable",
+            0, liveLineCount(step, "liveTierInstalled ->"),
+        )
+        assertEquals(
+            "nor on the step's own trade sentence, for the same reason",
+            1, liveLineCount(step, "StreamingPackCopy.LANGUAGE_STEP_SENTENCE,"),
         )
         assertEquals(
             "and the pack is read ONCE, at flow level, like the language tag beside it: a read " +

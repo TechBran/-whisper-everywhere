@@ -674,17 +674,17 @@ private fun LanguageStep(
                 // Only where the model is actually on the device: the chip claims an INSTALLED
                 // model, and offering it without one is a promise the first session would break.
                 //
-                // (4.5.0 Task 4) ...AND ONLY WHERE A WORD COULD ARRIVE. The chip says *"Live
-                // words on the bubble while you speak — preview model installed"*, and with no
-                // on-device speech model `localPreviewArms` refuses on `!isCloudSession` and no
-                // word ever does. It costs this step's first-run reader nothing: the pack is
-                // never installed on a fresh install, so `livePackInstalled` already withholds
-                // the chip from everyone standing here before the ENGINES step. What the tier
-                // term adds is the RE-ENTERED flow — a user who deleted their tier and is sent
-                // back through onboarding (`firstRunStartDestination` routes on exactly that) —
-                // where the pack IS installed and the chip was the one sentence on this screen
-                // that promised words.
-                code == "en" && livePackInstalled && liveTierInstalled ->
+                // (4.5.0 Task 4) AND IT DELIBERATELY DOES **NOT** ASK THE TIER, which is the one
+                // place in the feature where that is the right answer. This step is reached only
+                // from `firstRunStartDestination`, whose sole rule is `installedModel() == null`
+                // — and the ENGINES step that follows is mandatory with no completable path
+                // without a tier (see this flow's KDoc). So at this step the tier is not merely
+                // undetermined: it is absent for EVERY reader and guaranteed to arrive before any
+                // of them reaches Home. A tier term here would make [StreamingPackCopy
+                // .LANGUAGE_CHIP] dead copy — rendered nowhere, ever — which is the smell this
+                // repo already cites against `SETTINGS_DISABLED_ON_DEVICE`. The same argument
+                // covers `LANGUAGE_STEP_SENTENCE` above, which is why it is untouched too.
+                code == "en" && livePackInstalled ->
                     com.whispereverywhere.transcription.stream.StreamingPackCopy.LANGUAGE_CHIP
                 else -> null
             },
