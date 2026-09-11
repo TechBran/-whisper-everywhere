@@ -43,10 +43,11 @@ import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.service.resolveSttProvider
 import com.whispereverywhere.transcription.stream.PreviewAutoFetch
 import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
+import com.whispereverywhere.transcription.stream.PreviewPhase
+import com.whispereverywhere.transcription.stream.PreviewWorkboard
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
 import com.whispereverywhere.transcription.stream.StreamingPackCopy
-import com.whispereverywhere.transcription.stream.StreamingPackInstall
 import com.whispereverywhere.transcription.stream.StreamingPackState
 import com.whispereverywhere.tts.TtsModelManager
 import com.whispereverywhere.tts.TtsPackController
@@ -834,6 +835,8 @@ private fun CloudKeyNoteCard(
  *  - what the card therefore shows: [PreviewAutoFetch.card], over that same answer
  *  - which source this install has: `StreamingPackManager.state` → `StreamingPackInstall.resolve`
  *  - which route the fetch takes: [PreviewAutoFetchController], through the one pure reduction
+ *  - what is RUNNING, on which route, and whether the X can stop it: [PreviewWorkboard] — the one
+ *    observable (4.5.0 Task 1), which this card reads instead of the pair it used to
  *  - every word, including the delivered-vs-fetch distinction: [StreamingPackCopy]
  *
  * It mirrors the Settings row (`LivePreviewRows`) where they overlap — the Application's manager,
@@ -882,8 +885,12 @@ private fun LiveWordsCard(
     // (StreamingPackCopyTest holds that) — and is a readable word rather than a crash if a later
     // catalogue row arrives before its picker entry.
     val languageName = PreferencesManager.languageDisplayName(selectedLanguage) ?: selectedLanguage
-    val previewFetch by StreamingPackController.state.collectAsState()
-    val ourLine by PreviewAutoFetchController.line.collectAsState()
+    // (4.5.0 Task 1) THE ONE OBSERVABLE, and the only thing this card reads about work in flight.
+    // It replaces the pair — `StreamingPackController.state` for Play's own fetch and
+    // `PreviewAutoFetchController.line` for ours — that made "is work running?" two questions,
+    // only one of which the Settings row collected.
+    val previewWorkboard by PreviewWorkboard.work.collectAsState()
+    val previewWork = pack?.let { previewWorkboard[it.language] }
     val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
     // Read into a local mirror — the house convention for plain-var prefs read in composition,
     // and the cloud-key note's own shape for the same gesture — and re-read on each foreground,
@@ -902,8 +909,10 @@ private fun LiveWordsCard(
     // this screen is in the background — hence the resume key, the same one `saidNo` uses. It
     // retires the announcement and nothing else.
     val hasArmed = remember(resumeTick) { app.preferencesManager.livePreviewArmedOnce }
-    val statusWord = NpuPackFetch.statusWord(previewFetch)
-    val working = ourLine != null
+    // ONE phase and ONE predicate where 4.4.1 had a status word plus a non-null line: the record
+    // covers Play's fetch and our own install alike, so neither can be running unseen here.
+    val previewPhase = previewWork?.phase
+    val working = previewWork?.inFlight == true
     // BOTH SYSTEM READS OFF THE COMPOSITION THREAD, on the app's start destination (review r1,
     // B4): state() is nine File stats plus a Play getPackLocation through PlayPacks.assetsPath,
     // and isUnmetered() is a getSystemService plus a getNetworkCapabilities. The Settings row's
@@ -912,21 +921,23 @@ private fun LiveWordsCard(
     // who dismissed the card, one with no local tier — for an answer that is then discarded.
     // HomeScreen's own pattern for exactly this shape of read is produceState + Dispatchers.IO
     // (the keystore and installedModel snapshots above). Keyed as the remembers were: the resume
-    // tick, the status WORD — never the progress line, which ticks several times a second for the
-    // whole 73 MB — and whether our own work is running; plus the SELECTED LANGUAGE, because a
-    // different language is a different pack and therefore a different state to read.
+    // tick, and the PHASE — never the bytes, which tick several times a second for the whole
+    // 73 MB, and never the record itself for the same reason; plus the SELECTED LANGUAGE, because
+    // a different language is a different pack and therefore a different state to read. One key
+    // where 4.4.1 needed two (a status word and "is our own line non-null"), because one
+    // observable covers both.
     @Suppress("ProduceStateDoesNotAssignValue")
     val packStateSnapshot by produceState<StreamingPackState?>(
-        null, resumeTick, selectedLanguage, statusWord, working,
+        null, resumeTick, selectedLanguage, previewPhase,
     ) {
         // CLEARED FIRST (CONTROLLER RULING 2026-09-11, CHANGE 3 — review r2's nit 2). produceState
-        // keeps its PREVIOUS value across a key change, and our own install's
-        // `finally { _line.value = null }` flips `working`, which re-keys this producer. In that
-        // window the old snapshot still read PackDelivered/Downloadable with busy() false and the
-        // launch's attempt spent, so `decide` answered OFFER and the card rendered "Install the
-        // English preview model" over a model that had just finished installing. Clearing it
-        // sends that frame down the not-yet-known branch below — NONE, i.e. nothing said — until
-        // the new state lands, which is the first of the two fixes the nit named.
+        // keeps its PREVIOUS value across a key change, and our own install's terminal phase
+        // re-keys this producer. In that window the old snapshot still read
+        // PackDelivered/Downloadable with busy() false and the launch's attempt spent, so
+        // `decide` answered OFFER and the card rendered "Install the English preview model" over
+        // a model that had just finished installing. Clearing it sends that frame down the
+        // not-yet-known branch below — NONE, i.e. nothing said — until the new state lands, which
+        // is the first of the two fixes the nit named.
         value = null
         // No pack for this language (Auto, or a language with no row) is no state at all, so the
         // not-yet-known branch is also the AUTO branch: nothing decided, nothing said.
@@ -980,10 +991,10 @@ private fun LiveWordsCard(
             }
         }
     }
-    // Play's own consent dialog, once per ENTRY into NeedsConfirmation — the missing-voice row's
+    // Play's own consent dialog, once per ENTRY into AWAITING_ANSWER — the missing-voice row's
     // rule above, needed here for the same reason: this card can start a 73 MB Play fetch, and
     // Play raises its own dialog for a transfer that size. Never a re-ask of ours.
-    val playAwaitsAnAnswer = previewFetch is NpuPackFetch.FetchState.NeedsConfirmation
+    val playAwaitsAnAnswer = previewPhase == PreviewPhase.AWAITING_ANSWER
     // ...and the SAME gesture, offered on the card. Raising it once per entry is right (a dialog
     // re-raised on every recomposition is unusable), but it left a user who back-pressed out of
     // Play's dialog on a note reading "tap to answer" with nothing to tap but the permanent-no X
@@ -992,22 +1003,26 @@ private fun LiveWordsCard(
     val answerPlay: () -> Unit = {
         (context as? android.app.Activity)?.let { StreamingPackController.confirm(it) }
     }
-    LaunchedEffect(previewFetch) {
+    LaunchedEffect(previewPhase) {
         if (playAwaitsAnAnswer) answerPlay()
     }
     // The X is the PERMANENT no, so it records the decision FIRST — the delete row's own rule,
     // for the same reason: a cancellation that threw must not leave a device that re-fetches what
     // the user just refused. Then it abandons the arrival it was pressed on, because a "no" that
-    // lets 73 MB finish landing is not a no (CONTROLLER RULING 2026-09-11, CHANGE 2). The cancel
-    // is a no-op when nothing is in flight, so the offer and the announcement cost nothing.
-    // What "abandons" means differs by route, and `PreviewAutoFetchController.cancel`'s KDoc says
-    // which (4.4.1 pass 3, ITEM 4): a DELIVERED pack's local verify+copy is not
-    // cancellation-cooperative and finishes, so that install lands — costing no data, and the
-    // flag written above still silences the card and the auto-fetch for good.
+    // lets 73 MB finish landing is not a no (CONTROLLER RULING 2026-09-11, CHANGE 2).
+    //
+    // (4.5.0 Task 1) FOR THIS LANGUAGE, and only if that language's work can actually be stopped.
+    // The cancel is keyed by the same code the flag above is written for, so the X on one
+    // language's card can no longer abandon another language's transfer; and the route table it
+    // consults (`PreviewRoute.stopsBeforeTheCopy`, plus the phase term) is what makes "cancel"
+    // mean one thing. On the DELIVERED route it means nothing can be stopped — Play has already
+    // put those bytes on the device and the local copy is not cancellation-cooperative — so that
+    // install lands, costing no data, while the flag written above still silences the card and
+    // the auto-fetch for good. The X stays a DISMISS on every state, which is what it is labelled.
     val dismiss: () -> Unit = {
         app.preferencesManager.setLivePreviewDeclined(selectedLanguage, true)
         saidNo = true
-        PreviewAutoFetchController.cancel()
+        PreviewAutoFetchController.cancel(selectedLanguage)
     }
     when (
         PreviewAutoFetch.card(
@@ -1033,7 +1048,10 @@ private fun LiveWordsCard(
             // sentence left for this card to spell, least of all "Live words are on" over an
             // install that landed before it was turned off (review r1, B2).
             showLiveWords = showLiveWords,
-            workInFlight = working || StreamingPackInstall.fetchInFlight(previewFetch),
+            // ONE predicate over the ONE observable: it already spans Play's fetch and our own
+            // install, so the disjunction 4.4.1 needed here is gone — and with it the chance of
+            // one half being read and the other forgotten.
+            workInFlight = working,
             decision = decision,
         )
     ) {
@@ -1041,10 +1059,10 @@ private fun LiveWordsCard(
         PreviewAutoFetch.Card.WORKING -> LiveWordsNote(
             title = StreamingPackCopy.CARD_TITLE,
             body = StreamingPackCopy.cardWorking(languageName),
-            // Ours if we are the ones working; Play's own line otherwise; and between the
-            // decision and the shell's first publish, the same dead-time line the row uses.
-            note = ourLine
-                ?: StreamingPackCopy.fetchLine(previewFetch)
+            // ONE line, from the one observable, whichever route is carrying the bytes — and
+            // between the decision and the starter's first board write, the same dead-time line
+            // the feature has always used for that gap.
+            note = previewWork?.let { StreamingPackCopy.workLine(it) }
                 ?: StreamingPackCopy.PROGRESS_STARTING,
             // The one in-flight state whose note asks for a gesture gets the gesture; every
             // other one is work with nothing to ask, and a button on those would re-enter the

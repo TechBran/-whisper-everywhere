@@ -72,16 +72,14 @@ object StreamingPackCopy {
 
     const val DELETE_TITLE = "Delete the preview model"
 
-    /** What deleting costs and — the promise again — what it does not cost. */
-    val DELETE_SUBTITLE = "Frees $BADGE. Live words stop; the typed transcript is unchanged."
-
     /**
      * WHAT DELETING COSTS, for each of the four facts the row can be looking at
      * ([PreviewDeleteCase]) — and the promise again, on all four.
      *
      * ### Why this is four sentences and not one (4.5.0 Task 1)
      *
-     * [DELETE_SUBTITLE] was rendered across all four, and three of them made it false:
+     * 4.4.1's one `DELETE_SUBTITLE` — *"Frees 73 MB. Live words stop; the typed transcript is
+     * unchanged."* — was rendered across all four, and three of them made it false:
      *
      *  - the model is installed for a language the user is NOT transcribing (they picked another,
      *    or Auto) — live words are already off, so *"Live words stop"* stops nothing. The row is
@@ -90,7 +88,7 @@ object StreamingPackCopy {
      *    row's placement exists for;
      *  - the install is a `StreamingPackState.Repair` — `markCorrupt` removed the marker and left
      *    the bytes, so again live words are already off;
-     *  - **a write is in flight**, where *"Frees $BADGE"* frees nothing at all: `delete` clears
+     *  - **a write is in flight**, where *"Frees …"* frees nothing at all: `delete` clears
      *    the install dir under a verify + copy that is not cancellation-cooperative, so the copy
      *    finishes, the marker lands, and the user gets *"Installed"* from pressing *"Frees"* —
      *    with the declined flag written (review r3's H3-B1). The row renders this sentence with
@@ -378,9 +376,15 @@ object StreamingPackCopy {
     fun cardAction(state: StreamingPackState, language: String): String =
         settingsTitle(state, language)
 
-    // ---------------------------------------------------------------- our own work in flight
+    // ---------------------------------------------------------------- work in flight
 
-    /** Between the tap and the first byte — [StreamingPackManager.download]'s own dead time. */
+    /**
+     * Between the DECISION and the starter's first board write — the one frame in which Home's
+     * card knows work is about to begin and [PreviewWorkboard] has no record of it yet
+     * (`decision == FETCH` re-renders the card before the `LaunchedEffect` calls
+     * `PreviewAutoFetchController.start`). Every other gap this used to cover is closed: the
+     * starters write the board synchronously.
+     */
     const val PROGRESS_STARTING = "Starting…"
 
     /**
@@ -392,102 +396,10 @@ object StreamingPackCopy {
     const val PROGRESS_INSTALLING = "Verifying and installing…"
 
     /**
-     * The fallback download's progress. Invents no denominator when the total is unknown, and
-     * rounds both halves through the catalog's one rule, so the line cannot end at "72 of 72 MB"
-     * under a row that has just promised 73.
-     */
-    fun downloadProgress(soFar: Long, total: Long): String =
-        if (total > 0L) {
-            "${StreamingPackCatalog.megabytes(soFar)} of ${StreamingPackCatalog.sizeBadge(total)}"
-        } else {
-            "Downloading…"
-        }
-
-    /**
      * The last-resort failure sentence: every refusal the manager raises carries its own words
      * ([StreamingPackException]), so this is only reached by a throwable that named nothing.
      */
     const val INSTALL_FAILED = "The preview model could not be installed."
-
-    // ---------------------------------------------------------------- the Play fetch in flight
-
-    /**
-     * What the row shows while [StreamingPackController] is working, or after it has stopped —
-     * null at rest, where the row goes back to its own offer.
-     *
-     * A [NpuPackFetch.FetchState.Failed] is shown VERBATIM: the shell has already re-told every
-     * refusal in this feature's words ([StreamingPackInstall.deliveryRefusal] /
-     * [StreamingPackInstall.fetchRefusal]), so re-wording it here would be a second copy of the
-     * copy — and the first one is the one that knows Play's error code.
-     *
-     * The voice's twin is `TtsModelManager.fetchLine`; the two differ only in the noun, which is
-     * the whole reason they are separate (a row that called the preview model "the voice" is the
-     * bug this feature's own sentences exist to prevent).
-     */
-    /**
-     * [tappable] is the caller's OWN answer to "does this row have an onClick right now", not
-     * [fetchLineTappable]'s answer to "does this state deserve one" — the two differ, and review
-     * r3 (H3-B3) is what the difference costs. `NeedsConfirmation` says *tap to answer* because
-     * a tap opens Play's dialog; but the Settings row withholds that tap once the selection has
-     * moved off this pack's language (`previewTappable` there is ANDed with `selectedPack ==
-     * previewPack`), and then the sentence instructs a gesture the app has decided to refuse,
-     * with no ripple and no feedback when it is performed. Off-selection the line must be a
-     * RECEIPT, and it must name the one thing that unlocks it, because nothing else on screen
-     * does. Defaulted true so the card and every other caller read exactly as before.
-     */
-    fun fetchLine(state: NpuPackFetch.FetchState, tappable: Boolean = true): String? = when (state) {
-        is NpuPackFetch.FetchState.Idle,
-        is NpuPackFetch.FetchState.Installed,
-        is NpuPackFetch.FetchState.Cancelled,
-        -> null
-        is NpuPackFetch.FetchState.Pending -> "Asking Google Play for the preview model…"
-        is NpuPackFetch.FetchState.Downloading ->
-            if (state.total > 0L) {
-                "Fetching the preview model: ${state.soFar / 1_000_000} of " +
-                    "${state.total / 1_000_000} MB"
-            } else {
-                "Fetching the preview model…"
-            }
-        is NpuPackFetch.FetchState.Transferring ->
-            "Google Play is moving the preview model into place…"
-        is NpuPackFetch.FetchState.Verifying -> PROGRESS_INSTALLING
-        is NpuPackFetch.FetchState.NeedsConfirmation ->
-            if (tappable) {
-                "Google Play needs your confirmation before it fetches the preview model — tap to answer."
-            } else {
-                "Google Play needs your confirmation before it fetches the preview model. " +
-                    "Pick that language again to answer."
-            }
-        is NpuPackFetch.FetchState.Failed -> state.reason
-    }
-
-    /**
-     * Whether a TAP on the row showing [fetchLine] does anything — `TtsModelManager`'s B1 lesson,
-     * inherited rather than re-learned: the row renders a line for every state a fetch passes
-     * through, `SettingsItem` makes itself clickable the moment it is handed an `onClick`, and a
-     * tap during the copy+hash would otherwise re-enter the row's one action and start a SECOND
-     * install into the same temp dir.
-     *
-     * The retry the branch exists for is the TERMINAL one; the one in-flight state that stays
-     * tappable is [NpuPackFetch.FetchState.NeedsConfirmation], where the tap re-shows PLAY'S OWN
-     * dialog and starts no install of ours. Total over the machine, with the three at-rest states
-     * spelled out even though they render no line: a state added there must be answered rather
-     * than fall through a wildcard into "tappable, mid-install".
-     */
-    fun fetchLineTappable(state: NpuPackFetch.FetchState): Boolean = when (state) {
-        is NpuPackFetch.FetchState.Failed,
-        is NpuPackFetch.FetchState.NeedsConfirmation,
-        -> true
-        is NpuPackFetch.FetchState.Pending,
-        is NpuPackFetch.FetchState.Downloading,
-        is NpuPackFetch.FetchState.Transferring,
-        is NpuPackFetch.FetchState.Verifying,
-        -> false
-        is NpuPackFetch.FetchState.Idle,
-        is NpuPackFetch.FetchState.Installed,
-        is NpuPackFetch.FetchState.Cancelled,
-        -> false
-    }
 
     // ------------------------------------------- the ONE observable's own line (4.5.0 Task 1)
 

@@ -2,23 +2,35 @@ package com.whispereverywhere.transcription.stream
 
 import android.util.Log
 import com.whispereverywhere.WhisperEverywhereApp
-import com.whispereverywhere.npu.NpuPackFetch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * PERFORMS the previewer's auto-fetch (4.4.1) — the actuator of [PreviewAutoFetch.Decision.FETCH]
- * and of the offer card's tap, and the holder of the two pieces of state neither a pure function
- * nor a Compose tree can hold: the once-per-launch latch, and OUR OWN work's progress line.
+ * PERFORMS the previewer's acquisition (4.4.1; the ONE actuator since 4.5.0) — the actuator of
+ * [PreviewAutoFetch.Decision.FETCH], of the offer card's tap AND of the Settings row's tap, and
+ * the holder of the one piece of state neither a pure function nor a Compose tree can hold: the
+ * once-per-launch latch.
+ *
+ * ### THE ONE ACTUATOR (4.5.0 Task 1, review r3's H3-B2)
+ *
+ * Until 4.5.0 the Settings row had an actuator of its own — a `when` over the route inside the
+ * composable, running in a `rememberCoroutineScope()`, guarded only by
+ * `StreamingPackController.isBusy()` and never by [busy]. Two consequences, both shipped:
+ *
+ *  - it OFFERED, and STARTED, a second 73 MB over work this object was already doing, because its
+ *    guard could not see our two routes at all;
+ *  - and its scope died with the screen, so leaving Settings mid-download cancelled the transfer
+ *    while `fetchOne`'s `keepRow = true` left the `DownloadManager` row running.
+ *
+ * Both surfaces now call [start]. The guard is [busy] for all three starters, and the work is on
+ * this object's process-scoped scope whoever began it.
  *
  * ### What it does and does not decide
  *
@@ -37,12 +49,15 @@ import java.util.concurrent.ConcurrentHashMap
  * launch-scoped latch inside the object `StreamingPackShellPinTest` pins as a pure relay of
  * `NpuPackFetch`'s decisions, and would give that file a second reason to exist.
  *
- * ### The three orders it owns
+ * ### The four orders it owns
  *
  *  - **Single flight first.** [busy] is answered before the route, and it includes
- *    `StreamingPackController.isBusy()` — so a fetch the SETTINGS ROW started is never doubled by
- *    an auto-fetch, and vice versa. Two installs write the same staging paths (the import
- *    controller's N4 lesson).
+ *    `StreamingPackController.isBusy()` — so no two of the three starters can double one 73 MB.
+ *    Two installs write the same staging paths (the import controller's N4 lesson).
+ *  - **THE BOARD IS BEGUN BY THE STARTER, and narrated after** (4.5.0 Task 1). Each route calls
+ *    `PreviewWorkboard.begin` with its own [PreviewRoute] and [starterOf]'s answer before its
+ *    first byte, and `note`s every step after — so no surface ever sees a phase for work with no
+ *    owner, and both surfaces see work whichever starter began it.
  *  - **The latch belongs to the AUTO path only, and to one LANGUAGE at a time.** A tap is consent
  *    and may be repeated; the *"once per launch at most"* rule is about the silent fetch of ONE
  *    pack, and a second language selected in the same launch is a new decision rather than a
@@ -59,16 +74,6 @@ object PreviewAutoFetchController {
      *  Compose tree that started it, and a `SupervisorJob` keeps one failure from poisoning the
      *  scope for the next attempt. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    /**
-     * OUR OWN work's progress line — the verify+copy of a delivered pack, or the fallback
-     * download — and null at rest. Play's own fetch narrates itself through
-     * [StreamingPackController.state], which the card renders through [StreamingPackCopy.fetchLine];
-     * this is the Settings row's `previewInstallStatus`, moved to process scope because an
-     * auto-fetch must survive the user leaving the dashboard.
-     */
-    private val _line = MutableStateFlow<String?>(null)
-    val line: StateFlow<String?> = _line.asStateFlow()
 
     /**
      * The languages the AUTO path has already tried this launch — never a tap's, never cleared:
@@ -89,21 +94,47 @@ object PreviewAutoFetchController {
     fun attemptedThisLaunch(pack: StreamingPack): Boolean = pack.language in autoAttempted
 
     /**
-     * Whether a fetch or install of this pack is in flight ANYWHERE — ours, or one the Settings
-     * row started through [StreamingPackController]. Both the decision's `packWorkInFlight` and
-     * this object's own guard read it, so the card and the actuator agree about what is running.
+     * Whether a fetch or install is in flight ANYWHERE — ours, or one [StreamingPackController]
+     * is holding. Both the decision's `packWorkInFlight` and this object's own guard read it, so
+     * every surface and the actuator agree about what is running.
+     *
+     * **GLOBAL, not per language, and deliberately** (4.5.0 Task 1). [PreviewWorkboard] is keyed
+     * by language so two arrivals can be SEEN separately; letting two arrivals RUN is a different
+     * decision, and this build does not take it: [StreamingPackController] holds one
+     * `AssetPackManager`, one `activePack` and one listener filter, so two concurrent Play fetches
+     * would need that shell re-keyed too. While the actuator's capacity is one, the DECISION's
+     * `packWorkInFlight` must be this same global answer — a per-language reading there would let
+     * [PreviewAutoFetch.decide] answer FETCH for a second pack that [start] then refuses, and the
+     * card would sit on a progress line for work that never began.
      */
     fun busy(): Boolean = job?.isActive == true || StreamingPackController.isBusy()
 
     /**
-     * Start the arrival of [pack] by whichever route [state] names. Returns false when nothing was
-     * started: work already in flight, the launch's auto attempt already spent, or a state with no
-     * install action (an [StreamingPackState.Installed] pack; a [StreamingPackState.Repair] cannot
-     * reach here, because [PreviewAutoFetch.decide] answers NONE for one and the card therefore
-     * offers no tap).
+     * WHO is asking, as the board records it.
+     *
+     * The asymmetry this exists to carry is the 2026-09-11 acquisition rulings': an unasked
+     * background transfer waits for wifi, and a transfer the user just caused by picking a
+     * language happens at once, **because the pick IS the consent**. A surface that cannot tell
+     * the two apart cannot state that deal honestly, and the copy is downstream of this.
+     */
+    private fun starterOf(auto: Boolean): PreviewStarter =
+        if (auto) PreviewStarter.TOP_UP else PreviewStarter.PICK
+
+    /**
+     * Start the arrival of [pack] by whichever route [state] names — for ALL THREE STARTERS since
+     * 4.5.0: the foreground hook's silent top-up, Home's offer card, and the Settings row.
+     * Returns false when nothing was started: work already in flight, the launch's auto attempt
+     * already spent, or a state with no install action (an [StreamingPackState.Installed] pack).
+     *
+     * A [StreamingPackState.Repair] DOES reach here as of 4.5.0 — it is the Settings row's repair
+     * offer, which `decide` refuses for the auto path and Home's card therefore never taps — and
+     * it is answered by the reduction, not by the `when`: [StreamingPackInstall.sourceOf] strips
+     * every Repair wrapper first, so a repair takes the route a first install would have taken.
+     * The `is Repair` arm below is totality, and unreachable for that reason.
      *
      * @param auto true for the foreground hook's silent fetch — the only caller the once-per-launch
-     *        latch applies to.
+     *        latch applies to, and the only one recorded as a [PreviewStarter.TOP_UP]. A tap from
+     *        either surface is a [PreviewStarter.PICK]: consent, repeatable, latch-exempt.
      */
     fun start(
         app: WhisperEverywhereApp,
@@ -119,7 +150,10 @@ object PreviewAutoFetchController {
             StreamingPackState.PackDelivered -> landDeliveredPack(app, pack, auto)
             StreamingPackState.Downloadable -> downloadFallback(app, pack, auto)
             // Nothing to start. Spelled rather than wildcarded so a state added to the machine is
-            // answered here instead of falling into the third-party download below.
+            // answered here instead of falling into the third-party download below. `sourceOf`
+            // strips every Repair wrapper, so that arm is totality and nothing else — a repair
+            // takes the route a first install would have taken, which is what lets a delivered
+            // pack repair a half install without touching the network.
             StreamingPackState.Installed -> return false
             is StreamingPackState.Repair -> return false
         }
@@ -127,57 +161,69 @@ object PreviewAutoFetchController {
     }
 
     /**
-     * ABANDON the arrival, whichever route is carrying it — the card's X, by the CONTROLLER
-     * RULING of 2026-09-11 (CHANGE 2, answering the auto-fetch round's own C4). That X is the
-     * same gesture that writes the permanent no, and a "no" that lets 73 MB finish landing is not
-     * a no.
+     * ABANDON the arrival of [language]'s pack — the card's X, by the CONTROLLER RULING of
+     * 2026-09-11 (CHANGE 2, answering the auto-fetch round's own C4). That X is the same gesture
+     * that writes the permanent no, and a "no" that lets 73 MB finish landing is not a no.
      *
-     * THE GUARD IS FIRST, and it is [busy] — the same predicate [start] refuses on, so "there is
-     * something to cancel" and "there is something to refuse to start" cannot disagree. The two
-     * card states with nothing in flight (the offer, the installed announcement) therefore
-     * publish no `Cancelled` into the fetch shell's StateFlow and do not move the Settings row's
-     * own line for a transfer that was never running.
+     * ### ONE CANCEL, ONE MEANING (4.5.0 Task 1)
      *
-     * It cancels a fetch the SETTINGS ROW started too, and deliberately: [busy] spans both
-     * starters, so that work is exactly what the card is rendering as WORKING, and the X is
-     * pressed on a card describing the transfer that is running.
+     * THE GUARD IS [PreviewWork.cancellable], read from the one observable for the ONE PACK this
+     * gesture is about. It replaces 4.4.1's `if (!busy()) return`, which was global and therefore
+     * wrong in both directions: the X on one language's card could abandon another language's
+     * transfer, and it fired on routes where a cancel stops nothing.
      *
-     * ### WHAT IT ACTUALLY DOES, ROUTE BY ROUTE (4.4.1 pass 3, ITEM 4 — review r1's nit 1)
+     * The route half of that answer is [PreviewRoute.stopsBeforeTheCopy]'s table and the phase
+     * half is [PreviewPhase.INSTALLING]'s; this method only ACTS on it, so the table and the
+     * behaviour cannot drift apart — *"make the BEHAVIOUR match the table"*. What the answer means
+     * at each route, read at the code rather than assumed:
      *
-     * The earlier sentence here — *"partial bytes are discarded and nothing is installed"* — was
-     * true of the route the ruling had in mind and not of the one most users are on. What each
-     * route really does, read at the code rather than assumed:
+     *  - **[PreviewRoute.PLAY_FETCH] — the bytes stop.** `StreamingPackController.cancel()` asks
+     *    PLAY to cancel the pack download and publishes `Cancelled`, which reaches the board
+     *    through that shell's one note site; the watcher job goes with it. Nothing of ours is
+     *    installed, and the partial transfer is Play's own to keep or discard. A pack Play has
+     *    ALREADY delivered stays delivered, so a later install costs no transfer at all.
+     *  - **[PreviewRoute.DIRECT_DOWNLOAD] — the bytes stop, as of 4.5.0.** The poll loop's `delay`
+     *    IS a suspension point, so the cancel is seen within one poll, and
+     *    `StreamingPackManager.fetchOne` now removes the `DownloadManager` row on every exit while
+     *    `download` sweeps what it had staged. 4.4.1 kept the row (`keepRow = true`) and left that
+     *    transfer running behind a UI that said it had stopped, while `delete()` removed the same
+     *    row — review r1's H1.
+     *  - **[PreviewRoute.DELIVERED_PACK] — REFUSED, and the UI offers no cancel.** There is no
+     *    transfer to stop: Play has already put those bytes on the device and the route's only
+     *    phase is a local verify + copy that spends none of the user's data. It is also not
+     *    cancellation-cooperative — no suspension point between `withContext(Dispatchers.IO)`'s
+     *    entry and its return (`StreamingPackInstall.verify` and `install` are blocking and
+     *    `onProgress` is a plain lambda) — so the copy FINISHES and the marker lands whatever
+     *    anyone presses. Saying so and doing nothing is the honest answer; publishing a `Cancelled`
+     *    that describes nothing is not. The declined flag the X writes BEFORE this call still keeps
+     *    the card and the auto-fetch silent afterwards, and Settings then shows the installed rows
+     *    and its delete.
      *
-     *  - **[StreamingPackState.PackFetchable]** — `StreamingPackController.cancel()` asks PLAY to
-     *    cancel the pack download and publishes `Cancelled`; the watcher job goes with it. Nothing
-     *    of ours is installed, and the partial transfer is Play's own to keep or discard. A pack
-     *    Play has ALREADY delivered stays delivered, so the Settings row can still install it with
-     *    no further transfer.
-     *  - **[StreamingPackState.PackDelivered]** — `installFromPack` is **not**
-     *    cancellation-cooperative: between `withContext(Dispatchers.IO)`'s entry and its return
-     *    there is no suspension point (`StreamingPackInstall.verify` and `install` are blocking
-     *    and `onProgress` is a plain lambda), so a dismiss during it lets the verify + copy FINISH
-     *    and the marker land. The model ends up INSTALLED. Nothing of the user's data was spent —
-     *    Play had already put those bytes on the device and that route touches no network — and
-     *    the declined flag, written before this call, keeps the card and the auto-fetch silent
-     *    afterwards; Settings then shows the installed rows and its delete.
-     *  - **[StreamingPackState.Downloadable]** — the poll loop's `delay` IS a suspension point, so
-     *    the cancel is seen within one poll, but the bytes are deliberately KEPT: `fetchOne`'s
-     *    `catch` sets `keepRow = true` so the `DownloadManager` row is not removed
-     *    (`StreamingPackManager.kt`), and the staging dir is emptied only on failure or success.
-     *    So that transfer CONTINUES in `DownloadManager` after the X, nothing is installed, and
-     *    the next attempt's `removeStaleDownloads` clears the row before re-fetching. This is
-     *    inherited `TtsModelManager` behaviour and the one route where the X does not stop the
-     *    data cost — reachable only where Play cannot serve the install (a debug build, a
-     *    sideload, a refusal Play named).
+     * The last point is true of EVERY route once the work reaches [PreviewPhase.INSTALLING], which
+     * is why the phase term crosses the table rather than sitting inside one row of it.
      *
      * A cancellation is NOT a failure: [ours] rethrows `CancellationException` untouched, so no
      * back-off stamp is written and the model stays one tap away.
      */
-    fun cancel() {
-        if (!busy()) return
-        job?.cancel()
-        StreamingPackController.cancel()
+    fun cancel(language: String) {
+        val work = PreviewWorkboard.of(language) ?: return
+        if (!work.cancellable) {
+            // Said out loud rather than swallowed: "the X did nothing" is the one outcome a
+            // support log has to be able to explain.
+            log(route = "dismiss", auto = false, outcome = "uncancellable")
+            return
+        }
+        when (work.route) {
+            PreviewRoute.PLAY_FETCH -> {
+                StreamingPackController.cancel()
+                job?.cancel()
+            }
+            PreviewRoute.DIRECT_DOWNLOAD -> job?.cancel()
+            // Unreachable: `cancellable` is false for every phase of this route and the guard
+            // above has already returned. Spelled so a route added to the table is answered here
+            // rather than silently taking Play's branch and cancelling someone else's fetch.
+            PreviewRoute.DELIVERED_PACK -> return
+        }
         log(route = "dismiss", auto = false, outcome = "cancelled")
     }
 
@@ -192,15 +238,20 @@ object PreviewAutoFetchController {
      * `Pending` synchronously, so a flow still reading Idle has not begun.
      */
     private fun askPlay(app: WhisperEverywhereApp, pack: StreamingPack, auto: Boolean) {
-        StreamingPackController.start(app, pack)
+        StreamingPackController.start(app, pack, starterOf(auto))
         job = scope.launch {
-            val terminal = StreamingPackController.state.first {
-                it !is NpuPackFetch.FetchState.Idle && !StreamingPackInstall.fetchInFlight(it)
-            }
-            if (terminal is NpuPackFetch.FetchState.Failed) {
+            // The terminal test is the BOARD's own in-flight predicate — the same one the card,
+            // the row and the delete guard read — so "this attempt is over" cannot mean two
+            // things. `start` has already written the entry synchronously (ASKING, or FAILED for
+            // a build with no pack module), so a null here would mean the board was never
+            // written: a bug, not a state to wait on.
+            val terminal = PreviewWorkboard.work
+                .map { it[pack.language] }
+                .first { it != null && !it.inFlight }!!
+            if (terminal.phase == PreviewPhase.FAILED) {
                 noteFailure(app, route = "play", auto = auto, kind = "refused")
             } else {
-                log(route = "play", auto = auto, outcome = NpuPackFetch.statusWord(terminal))
+                log(route = "play", auto = auto, outcome = terminal.phase.name.lowercase())
             }
         }
     }
@@ -208,8 +259,16 @@ object PreviewAutoFetchController {
     /** Play already delivered the 73 MB: verify + copy into `filesDir`, no network at any point. */
     private fun landDeliveredPack(app: WhisperEverywhereApp, pack: StreamingPack, auto: Boolean) {
         job = scope.launch {
-            _line.value = StreamingPackCopy.PROGRESS_INSTALLING
-            ours(app, route = "pack", auto = auto) {
+            PreviewWorkboard.begin(
+                pack.language,
+                PreviewRoute.DELIVERED_PACK,
+                starterOf(auto),
+                // The route has exactly ONE phase: the bytes are here, and what is left is the
+                // copy. It is also the phase no cancel can stop, which is why the route's own
+                // `stopsBeforeTheCopy` is false.
+                PreviewStep(PreviewPhase.INSTALLING),
+            )
+            ours(app, pack, route = "pack", auto = auto) {
                 app.streamingPackManager.installFromPack(pack) { _, _ -> }
             }
         }
@@ -218,35 +277,72 @@ object PreviewAutoFetchController {
     /** The non-Play fallback — a debug build, a sideload, or an install Play refused by name. */
     private fun downloadFallback(app: WhisperEverywhereApp, pack: StreamingPack, auto: Boolean) {
         job = scope.launch {
-            _line.value = StreamingPackCopy.PROGRESS_STARTING
-            ours(app, route = "download", auto = auto) {
+            PreviewWorkboard.begin(
+                pack.language,
+                PreviewRoute.DIRECT_DOWNLOAD,
+                starterOf(auto),
+                // No denominator yet: `download` gates free space and clears stale rows before
+                // the first byte, and the line says "Downloading the preview model…" until it can
+                // say a number rather than inventing one.
+                PreviewStep(PreviewPhase.DOWNLOADING),
+            )
+            ours(app, pack, route = "download", auto = auto) {
                 app.streamingPackManager.download(pack) { soFar, total ->
-                    _line.value = StreamingPackCopy.downloadProgress(soFar, total)
+                    // `download` reports the CUMULATIVE staged bytes and calls this one last time
+                    // at the total, immediately before the sha256 + copy — which is the same work
+                    // the pack route calls INSTALLING. Saying so is what keeps the line off
+                    // "73 of 73 MB" for the whole hash of 72,654,782 B.
+                    PreviewWorkboard.note(
+                        pack.language,
+                        if (total > 0L && soFar >= total) {
+                            PreviewStep(PreviewPhase.INSTALLING)
+                        } else {
+                            PreviewStep(PreviewPhase.DOWNLOADING, soFar, total)
+                        },
+                    )
                 }
             }
         }
     }
 
     /**
-     * The two routes WE run, wrapped once: the failure goes to the back-off, the cancellation goes
-     * nowhere, and the line is cleared whatever happened — a stale "Verifying and installing…"
-     * over a finished install is a lie the card cannot dismiss.
+     * The two routes WE run, wrapped once: every outcome reaches the ONE observable, the failure
+     * also goes to the back-off, and the cancellation goes nowhere else.
+     *
+     * 4.4.1 cleared its progress line in a `finally` instead, on the rule that *"a stale
+     * 'Verifying and installing…' over a finished install is a lie the card cannot dismiss"* —
+     * which is still true, and is now served by writing the TERMINAL phase rather than by
+     * erasing the record: `workLine` is null for INSTALLED and CANCELLED, so the row goes quiet
+     * either way, and a FAILED keeps the sentence the user needs. That is what lets the Settings
+     * row show a refusal at all; it used to be a Toast, gone by the time the user looked.
      */
     private suspend fun ours(
         app: WhisperEverywhereApp,
+        pack: StreamingPack,
         route: String,
         auto: Boolean,
         work: suspend () -> Unit,
     ) {
         try {
             work()
+            PreviewWorkboard.note(pack.language, PreviewStep(PreviewPhase.INSTALLED))
             log(route = route, auto = auto, outcome = "installed")
         } catch (cancelled: CancellationException) {
+            PreviewWorkboard.note(pack.language, PreviewStep(PreviewPhase.CANCELLED))
             throw cancelled
         } catch (t: Throwable) {
+            // The manager's refusals carry their own sentence (`StreamingPackException`: the
+            // storage gate, a size or hash mismatch); anything else gets the copy object's one
+            // last-resort line rather than an exception type shown to a user.
+            PreviewWorkboard.note(
+                pack.language,
+                PreviewStep(
+                    PreviewPhase.FAILED,
+                    reason = (t as? StreamingPackException)?.message
+                        ?: StreamingPackCopy.INSTALL_FAILED,
+                ),
+            )
             noteFailure(app, route = route, auto = auto, kind = t.javaClass.simpleName)
-        } finally {
-            _line.value = null
         }
     }
 

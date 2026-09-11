@@ -237,7 +237,7 @@ class LiveWordsCardPinTest {
         )
         assertEquals(
             "and so is the pack-state read, because a different language is a different pack",
-            1, liveLineCount(card, "null, resumeTick, selectedLanguage, statusWord, working,"),
+            1, liveLineCount(card, "null, resumeTick, selectedLanguage, previewPhase,"),
         )
         assertEquals(
             "the once-per-launch latch is asked PER LANGUAGE: a global one would answer a " +
@@ -315,12 +315,19 @@ class LiveWordsCardPinTest {
         assertTrue("the read must exist", read >= 0)
         assertTrue("and be inside the keyed producer", produced in 0..read)
         assertEquals(
-            "keyed on the resume tick, the selected language, the status WORD and our own work " +
-                "— never on the progress line, which ticks several times a second for 73 MB",
-            1, liveLineCount(card, "null, resumeTick, selectedLanguage, statusWord, working,"),
+            "keyed on the resume tick, the selected language and the PHASE — never on the bytes, " +
+                "which tick several times a second for 73 MB, and never on the record itself for " +
+                "the same reason. ONE key where 4.4.1 needed two (4.5.0 Task 1), because one " +
+                "observable covers Play's fetch and our own install alike",
+            1, liveLineCount(card, "null, resumeTick, selectedLanguage, previewPhase,"),
         )
         assertEquals(
-            1, liveLineCount(card, "NpuPackFetch.statusWord("),
+            "and the phase is read from the one observable, once",
+            1, liveLineCount(card, "previewWork?.phase"),
+        )
+        assertEquals(
+            "no status word of Play's own machine survives on this card",
+            0, liveLineCount(card, "NpuPackFetch.statusWord("),
         )
     }
 
@@ -430,19 +437,30 @@ class LiveWordsCardPinTest {
         )
     }
 
-    @Test fun theProgressLineIsTheFeaturesOwnAndNotASecondNarration() {
+    @Test fun theProgressLineIsTheONEObservablesAndNotASecondNarration() {
+        // (4.5.0 Task 1) The card used to read a PAIR — `PreviewAutoFetchController.line` for our
+        // two routes and `StreamingPackController.state` for Play's fetch — and the Settings row
+        // collected only one of them. That is the two-variable answer three review rounds proved
+        // wrong; both surfaces now read one record per pack.
         assertEquals(
-            "our own work's line, published by the actuator",
-            1, liveLineCount(card, "PreviewAutoFetchController.line"),
+            "one collector, and it is the board's",
+            1, liveLineCount(card, "PreviewWorkboard.work.collectAsState()"),
         )
         assertEquals(
-            "and Play's own fetch narrates itself through the one pure mapping",
-            1, liveLineCount(card, "StreamingPackCopy.fetchLine("),
+            "one line, whichever route is carrying the bytes",
+            1, liveLineCount(card, "StreamingPackCopy.workLine("),
         )
         assertEquals(
-            "whether that fetch counts as work in flight is the pure predicate, not a " +
-                "hand-rolled list of states",
-            1, liveLineCount(card, "StreamingPackInstall.fetchInFlight("),
+            "and neither half of the old pair survives here",
+            0,
+            liveLineCount(card, "PreviewAutoFetchController.line") +
+                liveLineCount(card, "StreamingPackController.state") +
+                liveLineCount(card, "StreamingPackInstall.fetchInFlight("),
+        )
+        assertEquals(
+            "whether work is running is the record's own predicate, not a disjunction assembled " +
+                "here out of two half-answers",
+            1, liveLineCount(card, "previewWork?.inFlight == true"),
         )
     }
 
@@ -469,10 +487,15 @@ class LiveWordsCardPinTest {
         // their mind about their own data.
         assertEquals(
             "one cancel, and it is the actuator's — the card owns no route and no transfer",
-            1, liveLineCount(card, "PreviewAutoFetchController.cancel()"),
+            1, liveLineCount(card, "PreviewAutoFetchController.cancel(selectedLanguage)"),
+        )
+        assertEquals(
+            "and it is keyed by the SAME language the declined flag is written for, so the X on " +
+                "one language's card can no longer abandon another language's transfer (4.5.0)",
+            1, liveLineCount(card, "setLivePreviewDeclined(selectedLanguage, true)"),
         )
         val recorded = offsetOfLive(card, "setLivePreviewDeclined(")
-        val cancelled = offsetOfLive(card, "PreviewAutoFetchController.cancel()")
+        val cancelled = offsetOfLive(card, "PreviewAutoFetchController.cancel(selectedLanguage)")
         assertTrue("the dismissal must record the no", recorded >= 0)
         assertTrue(
             "and record it BEFORE it cancels: a cancellation that threw would otherwise leave a " +
@@ -481,22 +504,38 @@ class LiveWordsCardPinTest {
         )
     }
 
-    @Test fun theActuatorsCancelIsGuardedAndSpansBothStarters() {
-        assertEquals(1, liveLineCount(actuator, "fun cancel()"))
-        val guard = offsetOfLive(actuator, "if (!busy()) return")
-        val ours = offsetOfLive(actuator, "job?.cancel()")
-        val plays = offsetOfLive(actuator, "StreamingPackController.cancel()")
-        assertTrue("our own work is cancelled", ours >= 0)
-        assertTrue(
-            "and so is Play's, because busy() spans both starters and the card shows whichever " +
-                "one is running as its WORKING state",
-            plays >= 0,
+    @Test fun theActuatorsCancelIsGuardedByTheOneObservableAndActsPerRoute() {
+        // (4.5.0 Task 1) ONE CANCEL, ONE MEANING. 4.4.1 guarded on `busy()` — global, so the X on
+        // one language's card could abandon another language's transfer — and then cancelled BOTH
+        // paths unconditionally, on every route, including the delivered pack where nothing can be
+        // stopped and a published `Cancelled` describes nothing. The guard is now the record's own
+        // `cancellable`, whose table is `PreviewRoute.stopsBeforeTheCopy`'s KDoc.
+        assertEquals(1, liveLineCount(actuator, "fun cancel(language: String)"))
+        assertEquals(
+            "the guard is the one observable's, for the ONE pack this gesture is about",
+            1, liveLineCount(actuator, "if (!work.cancellable) {"),
         )
+        assertEquals(
+            "and the global one is gone",
+            0, liveLineCount(actuator, "if (!busy()) return"),
+        )
+        val looked = offsetOfLive(actuator, "val work = PreviewWorkboard.of(language) ?: return")
+        val guard = offsetOfLive(actuator, "if (!work.cancellable) {")
+        val routed = offsetOfLive(actuator, "when (work.route) {")
+        val ours = offsetOfLive(actuator, "PreviewRoute.DIRECT_DOWNLOAD -> job?.cancel()")
+        val plays = offsetOfLive(actuator, "StreamingPackController.cancel()")
+        assertTrue("the record is looked up first", looked in 0 until guard)
         assertTrue(
-            "nothing in flight is nothing to cancel: without this guard the offer card's X and " +
-                "the announcement's X would publish a Cancelled into the fetch shell's flow and " +
-                "move the Settings row's own line for no reason",
-            guard in 0 until minOf(ours, plays),
+            "the guard answers BEFORE any route is acted on: a cancel that stops nothing must " +
+                "not publish one that says it did",
+            guard in 0 until routed,
+        )
+        assertTrue("the fallback download is ours to stop", ours > routed)
+        assertTrue("and Play's fetch is Play's", plays > routed)
+        assertEquals(
+            "the route that cannot be stopped is answered EXPLICITLY, so a fourth route cannot " +
+                "fall through into Play's branch and cancel someone else's fetch",
+            1, liveLineCount(actuator, "PreviewRoute.DELIVERED_PACK -> return"),
         )
         assertEquals(
             "one cancel of each, so no second path can abandon half the work",
@@ -550,8 +589,12 @@ class LiveWordsCardPinTest {
             1, liveLineCount(card, "StreamingPackController.confirm("),
         )
         assertEquals(
-            "read once, so the raise and the card's action cannot disagree about the state",
-            1, liveLineCount(card, "NpuPackFetch.FetchState.NeedsConfirmation"),
+            "read once, so the raise and the card's action cannot disagree about the phase",
+            1, liveLineCount(card, "PreviewPhase.AWAITING_ANSWER"),
+        )
+        assertEquals(
+            "and it is the BOARD's phase, not a second reading of Play's own machine (4.5.0)",
+            0, liveLineCount(card, "NpuPackFetch.FetchState.NeedsConfirmation"),
         )
     }
 
@@ -634,9 +677,16 @@ class LiveWordsCardPinTest {
             1, liveLineCount(actuator, "livePreviewAutoFetchFailedAt ="),
         )
         assertEquals(
-            "Play's own terminal failure reaches it through the pure in-flight predicate, not a " +
-                "hand-rolled list of terminal states",
-            1, liveLineCount(actuator, "StreamingPackInstall.fetchInFlight("),
+            "Play's own terminal failure reaches it through the ONE observable's in-flight " +
+                "predicate — the same one the card, the row and the delete guard read — never a " +
+                "hand-rolled list of terminal states (4.5.0 Task 1)",
+            1, liveLineCount(actuator, "it != null && !it.inFlight"),
+        )
+        assertEquals(
+            "and no second reading of Play's own machine survives here",
+            0,
+            liveLineCount(actuator, "StreamingPackInstall.fetchInFlight(") +
+                liveLineCount(actuator, "StreamingPackController.state"),
         )
         assertEquals(
             "and a cancellation is rethrown, never recorded as a failure: a user who cancelled " +
@@ -660,7 +710,34 @@ class LiveWordsCardPinTest {
         assertEquals(1, liveLineCount(actuator, "route="))
         assertEquals(1, liveLineCount(actuator, "outcome="))
         assertEquals(0, liveLineCount(actuator, "onDelta"))
-        assertEquals(0, liveLineCount(actuator, ".message"))
         assertEquals(0, liveLineCount(actuator, "absolutePath"))
+        // The emitter's own body is where the ban has to hold, and it holds by construction:
+        // three named parameters and a format string with nothing else in it.
+        val emitter = scopeOf(actuator, "private fun log(", "\n}")
+        for (needle in listOf(".message", "absolutePath", "reason")) {
+            assertEquals(
+                "<<$needle>> must not reach the one emission site",
+                0, liveLineCount(emitter, needle),
+            )
+        }
+        assertTrue(
+            "and the line is the three fields and nothing more",
+            actuator.contains(
+                "\"stream-auto: route=\$route auto=\${if (auto) 1 else 0} outcome=\$outcome\"",
+            ),
+        )
+        // (4.5.0 Task 1) The ONE `.message` read in this file goes to the BOARD, not to a log:
+        // `StreamingPackException`'s message IS this feature's user-facing refusal (the storage
+        // gate, a size or hash mismatch), and the Settings row renders it. 4.4.1 showed it in a
+        // Toast that was gone by the time the user looked.
+        assertEquals(
+            1, liveLineCount(actuator, "(t as? StreamingPackException)?.message"),
+        )
+        val messageRead = offsetOfLive(actuator, "(t as? StreamingPackException)?.message")
+        val boardWrite = offsetOfLive(actuator, "PreviewPhase.FAILED,")
+        assertTrue(
+            "and it is read INSIDE the failed board write, so it cannot drift onto a log line",
+            boardWrite in 0 until messageRead,
+        )
     }
 }

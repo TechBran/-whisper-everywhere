@@ -247,14 +247,14 @@ class LivePreviewDeclinedPinTest {
         )
     }
 
-    @Test fun theSettingsRowsOwnBehaviourIsOtherwiseUntouched() {
+    @Test fun theSettingsRowGrowsNoDecisionOfItsOwn() {
         // "The Settings rows STAY exactly as they are — they are the manual path and the owner
-        // likes them." The one line above is the whole of 4.4.1's edit to them: the row must not
-        // grow an auto-fetch, a card, or a second opinion about metering.
+        // likes them." What that protects is the DECISION: the row must not grow an auto-fetch, a
+        // card, or a second opinion about metering. A tap on it is always the user asking, and
+        // nothing on it may decide to spend their data for them.
         for (needle in listOf(
             "PreviewAutoFetch.decide(",
             "PreviewAutoFetch.card(",
-            "PreviewAutoFetchController.",
             "isUnmetered(",
         )) {
             assertEquals(
@@ -262,6 +262,27 @@ class LivePreviewDeclinedPinTest {
                 0, liveLineCount(settings, needle),
             )
         }
+        // (4.5.0 Task 1, review r3's H3-B2) The ACTUATOR is now shared, and that is the fix
+        // rather than a violation of the rule above. The row held its own route `when` in a
+        // `rememberCoroutineScope()`, guarded only on `StreamingPackController.isBusy()` — which
+        // could not see `PreviewAutoFetchController`'s two routes — so it offered and STARTED a
+        // second 73 MB over work already running. One actuator, one guard spanning all three
+        // starters. What the row hands it is still the user's own tap:
+        assertEquals(
+            "exactly one actuation from the manual path, and it is the one actuator",
+            1, liveLineCount(settings, "PreviewAutoFetchController.start("),
+        )
+        assertEquals(
+            "declared a PICK, never an unasked top-up: the once-per-launch latch is the auto " +
+                "path's alone, and a tap is consent that may be repeated",
+            1, liveLineCount(settings, "auto = false"),
+        )
+        assertEquals(
+            "and the row starts nothing else and cancels nothing — the X is the card's gesture",
+            0,
+            liveLineCount(settings, "PreviewAutoFetchController.cancel(") +
+                liveLineCount(settings, "PreviewAutoFetchController.busy("),
+        )
     }
 
     // ------------------------------------------------------------------ the metered reading

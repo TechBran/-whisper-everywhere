@@ -197,7 +197,7 @@ class StreamingPackShellPinTest {
         )
         val install = offsetOfLive(controller, ".installFromPack(")
         val installed =
-            offsetOfLive(controller, "publish(packName, NpuPackFetch.FetchState.Installed)")
+            offsetOfLive(controller, "publish(packName, pack.language, NpuPackFetch.FetchState.Installed)")
         assertTrue(
             "installFromPack ($install) must precede the Installed publication ($installed)",
             install in 0 until installed,
@@ -365,13 +365,69 @@ class StreamingPackShellPinTest {
         assertEquals(
             "the publish funnel takes the re-told state",
             1,
-            liveLineCount(controller, "publish(packName, shown)"),
+            liveLineCount(controller, "publish(packName, pack.language, shown)"),
         )
         assertEquals(
             "and never the raw mapping, whose Failed carries the NPU table's sentence",
             0,
-            liveLineCount(controller, "publish(packName, next)"),
+            liveLineCount(controller, "publish(packName, pack.language, next)"),
         )
+    }
+
+    /**
+     * THE ONE OBSERVABLE IS WRITTEN HERE, AND ONLY HERE (4.5.0 Task 1).
+     *
+     * This shell is one of the three starters of a 73 MB transfer, and until 4.5.0 the only way a
+     * surface could see it was `StreamingPackController.state` — a second public flow of the same
+     * fetch, which Settings collected and Home did not. Both surfaces now read
+     * [PreviewWorkboard]; these pins are what keep the write on the funnel every state already
+     * passes through, rather than sprinkled at the interesting call sites where one arm would be
+     * missed and a running fetch would go unobserved again.
+     *
+     * The route and the STARTER are set once, by [StreamingPackController.start], because that
+     * call is the only place either is known. The phase is never interpreted here: the mapping is
+     * [PreviewStep.of], pure and total over the fetch machine.
+     */
+    @Test
+    fun theBoardIsBegunByTheStarterAndNarratedOnlyFromThePublishFunnel() {
+        assertEquals(
+            "the route and who asked are recorded ONCE, where they are known",
+            1,
+            liveLineCount(controller, "PreviewWorkboard.begin("),
+        )
+        assertEquals(
+            "and the phase is narrated from the one funnel every state already passes through",
+            1,
+            liveLineCount(controller, "PreviewWorkboard.note("),
+        )
+        assertEquals(
+            "the shell interprets no phase of its own — the mapping is pure and JVM-tested",
+            1,
+            liveLineCount(controller, "PreviewStep.of("),
+        )
+        val begun = offsetOfLive(controller, "PreviewWorkboard.begin(")
+        val fetch = offsetOfLive(controller, ".fetch(listOf(")
+        assertTrue(
+            "begun ($begun) BEFORE the fetch ($fetch): a row that appears after the first byte " +
+                "is a row that cannot describe the refusal of a build with no pack module, which " +
+                "returns before the fetch is ever issued",
+            begun in 0 until fetch,
+        )
+        assertEquals(
+            "and NO second public flow of this fetch survives: that is the two-variable answer " +
+                "three review rounds proved wrong",
+            0,
+            liveLineCount(controller, "val state: StateFlow"),
+        )
+        assertEquals(
+            "the board write is NOT behind the log throttle — one line per 10 % is right for a " +
+                "run-book and wrong for a progress bar",
+            1,
+            liveLineCount(controller, "NpuPackFetch.shouldLogProgress("),
+        )
+        val noted = offsetOfLive(controller, "PreviewWorkboard.note(")
+        val throttled = offsetOfLive(controller, "NpuPackFetch.shouldLogProgress(")
+        assertTrue("the note comes first, so no `return` can skip it", noted in 0 until throttled)
     }
 
     /**

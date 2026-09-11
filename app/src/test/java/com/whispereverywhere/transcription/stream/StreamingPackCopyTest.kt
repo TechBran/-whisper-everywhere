@@ -1,6 +1,5 @@
 package com.whispereverywhere.transcription.stream
 
-import com.whispereverywhere.npu.NpuPackFetch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -28,19 +27,6 @@ class StreamingPackCopyTest {
         StreamingPackState.Repair(StreamingPackState.PackDelivered),
         StreamingPackState.Repair(StreamingPackState.PackFetchable),
         StreamingPackState.Repair(StreamingPackState.Downloadable),
-    )
-
-    private val everyFetchState = listOf(
-        NpuPackFetch.FetchState.Idle,
-        NpuPackFetch.FetchState.Pending,
-        NpuPackFetch.FetchState.Downloading(1_000_000L, 72_654_782L),
-        NpuPackFetch.FetchState.Downloading(0L, 0L),
-        NpuPackFetch.FetchState.Transferring,
-        NpuPackFetch.FetchState.Verifying(0L, 72_654_782L),
-        NpuPackFetch.FetchState.NeedsConfirmation,
-        NpuPackFetch.FetchState.Installed,
-        NpuPackFetch.FetchState.Cancelled,
-        NpuPackFetch.FetchState.Failed("the shell's own re-told refusal."),
     )
 
     /**
@@ -75,12 +61,9 @@ class StreamingPackCopyTest {
             StreamingPackCopy.noLiveWordsTitle(es),
             StreamingPackCopy.noLiveWordsSubtitle(es),
             StreamingPackCopy.DELETE_TITLE,
-            StreamingPackCopy.DELETE_SUBTITLE,
             StreamingPackCopy.PROGRESS_STARTING,
             StreamingPackCopy.PROGRESS_INSTALLING,
             StreamingPackCopy.INSTALL_FAILED,
-            StreamingPackCopy.downloadProgress(1_000_000L, 72_654_782L),
-            StreamingPackCopy.downloadProgress(0L, 0L),
             // 4.4.1: Home's card, the discovery surface. Its words join the scan because the
             // scan's contract is "everything the user can read, from every surface" — and this
             // is the surface most users will ever read about the previewer.
@@ -95,7 +78,6 @@ class StreamingPackCopyTest {
             everyState.map { StreamingPackCopy.settingsSubtitle(it, en) } +
             everyState.map { StreamingPackCopy.cardOffer(it, en) } +
             everyState.map { StreamingPackCopy.cardAction(it, en) } +
-            everyFetchState.mapNotNull { StreamingPackCopy.fetchLine(it) } +
             // (4.5.0 Task 1) The one observable's own sentences, from every route and every
             // phase, and the delete row's four. The scan's contract is "everything the user can
             // read, from every surface", and after this task these are the words BOTH surfaces
@@ -324,26 +306,9 @@ class StreamingPackCopyTest {
 
     // ------------------------------------------------------------------ our own work in flight
 
-    @Test fun theRowNarratesOurOwnInstallWithoutInventingADenominator() {
+    @Test fun theTwoStandingSentencesOfWorkInFlightArePinned() {
         assertEquals("Starting…", StreamingPackCopy.PROGRESS_STARTING)
         assertEquals("Verifying and installing…", StreamingPackCopy.PROGRESS_INSTALLING)
-        assertEquals(
-            "12 of 73 MB",
-            StreamingPackCopy.downloadProgress(12_000_000L, StreamingPackCatalog.EN.totalBytes),
-        )
-        assertEquals(
-            "and the two halves round the same way, so the line can finish where the badge says",
-            "73 of 73 MB",
-            StreamingPackCopy.downloadProgress(
-                StreamingPackCatalog.EN.totalBytes,
-                StreamingPackCatalog.EN.totalBytes,
-            ),
-        )
-        assertFalse(
-            "an unknown total invents no denominator, exactly as the fetch line does not",
-            StreamingPackCopy.downloadProgress(0L, 0L).contains("of 0"),
-        )
-        assertTrue(StreamingPackCopy.downloadProgress(0L, 0L).isNotBlank())
         assertEquals(
             "the failure the row falls back to when the exception carried no sentence of its own",
             "The preview model could not be installed.",
@@ -501,71 +466,6 @@ class StreamingPackCopyTest {
         )
     }
 
-    @Test fun theAskBecomesAReceiptWhereTheRowHasNoTapToGive() {
-        // Review r3, H3-B3. NeedsConfirmation is tappable BY STATE, but the Settings row withholds
-        // the tap once the selection moves off this pack's language — and then "tap to answer"
-        // instructed a gesture the app had decided to refuse, with no ripple and no feedback when
-        // it was performed. Off-selection the line must be a receipt, and must name the one thing
-        // that unlocks it, because Home renders no card for a selection with no pack, so there is
-        // no other surface anywhere in the app that says so.
-        val everyOtherState = everyFetchState.filter { it !is NpuPackFetch.FetchState.NeedsConfirmation }
-        val asking = StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.NeedsConfirmation, tappable = true)
-        val telling = StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.NeedsConfirmation, tappable = false)
-        assertTrue("with a tap, it asks for the tap", asking?.contains("tap to answer") == true)
-        assertTrue("without one, it must NOT ask for a tap", telling?.contains("tap") == false)
-        assertTrue(
-            "and it must say what unlocks it — the selection is the only key, and nothing else " +
-                "on screen names it",
-            telling?.contains("Pick that language again") == true,
-        )
-        assertTrue(
-            "the reason is still stated: the user is owed why nothing is moving",
-            telling?.contains("confirmation") == true,
-        )
-        assertEquals(
-            "every OTHER state reads identically either way — this parameter buys exactly one " +
-                "sentence, and a caller that forgets it changes nothing else",
-            everyOtherState.map { StreamingPackCopy.fetchLine(it, tappable = true) },
-            everyOtherState.map { StreamingPackCopy.fetchLine(it, tappable = false) },
-        )
-        assertEquals(
-            "and the default is the asking one, so the card and every existing caller are untouched",
-            asking,
-            StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.NeedsConfirmation),
-        )
-    }
-
-    @Test fun theOneInFlightStateThatAsksForAGestureHasOneToOffer() {
-        // Review r1, B3: fetchLine(NeedsConfirmation) ends in "tap to answer", and the working
-        // card had no action at all — so the sentence named a gesture that did not exist, on the
-        // metered tap-to-fetch path, with the permanent-no X as the only thing left to press.
-        // The pure half of the fix: that state is the one in-flight state the row calls tappable,
-        // and it is the one the card labels.
-        assertTrue(
-            "the state that asks is the state that is tappable",
-            StreamingPackCopy.fetchLineTappable(NpuPackFetch.FetchState.NeedsConfirmation),
-        )
-        assertTrue(
-            "and its line is the one that asks for the tap",
-            StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.NeedsConfirmation)
-                ?.contains("tap to answer") == true,
-        )
-        assertTrue(
-            "the label names Play, because the dialog and the decision in it are Play's",
-            StreamingPackCopy.CARD_ANSWER_PLAY.contains("Google Play"),
-        )
-        // Every other in-flight state is work with nothing to ask, and carries no action: a
-        // button on those would re-enter the fetch mid-transfer (the row's own B1 lesson).
-        for (state in listOf(
-            NpuPackFetch.FetchState.Pending,
-            NpuPackFetch.FetchState.Downloading(1_000_000L, 72_654_782L),
-            NpuPackFetch.FetchState.Transferring,
-            NpuPackFetch.FetchState.Verifying(0L, 72_654_782L),
-        )) {
-            assertFalse("$state asks for nothing", StreamingPackCopy.fetchLineTappable(state))
-        }
-    }
-
     @Test fun theCardsOfferIsTheSAMEPerSourceTableTheRowUses() {
         // The 4.4.1 brief's rule: "Copy must be true per the delivered-vs-fetch distinction
         // StreamingPackCopy already makes". The strongest form of that is not a second set of
@@ -626,18 +526,6 @@ class StreamingPackCopyTest {
         for (fragment in listOf("settings", "tap", "open the")) {
             assertFalse("<<$working>> contains '$fragment'", working.contains(fragment))
         }
-    }
-
-    @Test fun theDeleteRowSaysWhatIsLostAndWhatIsNot() {
-        assertEquals(
-            "Frees 73 MB. Live words stop; the typed transcript is unchanged.",
-            StreamingPackCopy.DELETE_SUBTITLE,
-        )
-        assertTrue(
-            "the figure is the catalog's, like every other number on this row",
-            StreamingPackCopy.DELETE_SUBTITLE
-                .contains(StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)),
-        )
     }
 
     // ------------------------------------------- the delete row's FOUR cases (4.5.0 Task 1)
@@ -784,7 +672,7 @@ class StreamingPackCopyTest {
         }
     }
 
-    @Test fun theAskBecomesAReceiptWhereTheRowHasNoTapToGive_onTheObservable() {
+    @Test fun theAskBecomesAReceiptWhereTheRowHasNoTapToGive() {
         // Review r3's H3-B3, carried onto the one observable. NeedsConfirmation is tappable BY
         // PHASE, but the Settings row withholds the tap once the selection moves off this pack's
         // language — and then "tap to answer" instructed a gesture the app had decided to refuse.
@@ -812,7 +700,7 @@ class StreamingPackCopyTest {
         )
     }
 
-    @Test fun onlyTheTerminalRetryAndPlaysOwnDialogAreTappable_onTheObservable() {
+    @Test fun onlyTheTerminalRetryAndPlaysOwnDialogAreTappable() {
         // TtsModelManager.fetchLineTappable's B1 lesson, inherited rather than re-learned: the row
         // renders a line for every phase and SettingsItem makes itself clickable the moment it is
         // handed an onClick, so a tap during the copy+hash used to start a SECOND install into
@@ -860,55 +748,4 @@ class StreamingPackCopyTest {
         starter = PreviewStarter.PICK,
         step = PreviewStep(phase, soFar, total, reason),
     )
-
-    // ------------------------------------------------------------------ the fetch's own line
-
-    @Test fun theFetchLineIsTotalOverTheFetchMachineAndSilentOnlyAtRest() {
-        val silent = listOf(
-            NpuPackFetch.FetchState.Idle,
-            NpuPackFetch.FetchState.Installed,
-            NpuPackFetch.FetchState.Cancelled,
-        )
-        for (state in silent) {
-            assertNull(
-                "at rest the row goes back to its own offer — a stale 'fetching…' line under an " +
-                    "installed preview model is a lie the user cannot dismiss",
-                StreamingPackCopy.fetchLine(state),
-            )
-        }
-        val speaking = everyFetchState.filterNot { it in silent }
-        for (state in speaking) {
-            assertTrue("$state must narrate itself", !StreamingPackCopy.fetchLine(state).isNullOrBlank())
-        }
-        assertEquals(
-            "a Failed shows the refusal VERBATIM — StreamingPackController has already re-told " +
-                "it in this feature's words, so re-wording it here would be a second copy of the copy",
-            "the shell's own re-told refusal.",
-            StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.Failed("the shell's own re-told refusal.")),
-        )
-        assertFalse(
-            "and an unknown total invents no denominator",
-            StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.Downloading(0L, 0L))!!.contains("of 0"),
-        )
-    }
-
-    @Test fun onlyTheTerminalRetryAndPlaysOwnDialogAreTappable() {
-        // TtsModelManager.fetchLineTappable's B1 lesson, which this row inherits verbatim: the
-        // in-flight row renders a line for every state and SettingsItem makes itself clickable
-        // the moment it is handed an onClick, so a tap during the copy+hash used to start a
-        // SECOND installFromPack into the same temp dir.
-        assertTrue(StreamingPackCopy.fetchLineTappable(NpuPackFetch.FetchState.Failed("x")))
-        assertTrue(StreamingPackCopy.fetchLineTappable(NpuPackFetch.FetchState.NeedsConfirmation))
-        for (state in listOf(
-            NpuPackFetch.FetchState.Idle,
-            NpuPackFetch.FetchState.Pending,
-            NpuPackFetch.FetchState.Downloading(1L, 2L),
-            NpuPackFetch.FetchState.Transferring,
-            NpuPackFetch.FetchState.Verifying(1L, 2L),
-            NpuPackFetch.FetchState.Installed,
-            NpuPackFetch.FetchState.Cancelled,
-        )) {
-            assertFalse("$state: a tap here can only duplicate work in flight", StreamingPackCopy.fetchLineTappable(state))
-        }
-    }
 }

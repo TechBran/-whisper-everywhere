@@ -16,8 +16,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -87,12 +85,15 @@ object StreamingPackController {
      *  scope for the next. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * PRIVATE since 4.5.0 (Task 1). This object's own machine is how it decides what to do next —
+     * the single-flight predicate, the install that follows a delivery — and it is no longer what
+     * any SURFACE reads: the one thing both surfaces read is [PreviewWorkboard], which [publish]
+     * writes. A second public flow of the same fetch is exactly how "is work running?" came to
+     * have two answers, one of which Settings collected and Home did not.
+     */
     private val _state =
         MutableStateFlow<NpuPackFetch.FetchState>(NpuPackFetch.FetchState.Idle)
-
-    /** What the Settings row renders while a fetch is in flight. Survives recreation because
-     *  this object does; Play's own download survives the PROCESS. */
-    val state: StateFlow<NpuPackFetch.FetchState> = _state.asStateFlow()
 
     @Volatile
     private var job: Job? = null
@@ -103,8 +104,10 @@ object StreamingPackController {
     @Volatile
     private var appContext: Context? = null
 
+    /** The pack this shell is currently fetching — the PACK and not just its name, because every
+     *  board write is keyed by its language (4.5.0 Task 1). */
     @Volatile
-    private var activePackName: String? = null
+    private var activePack: StreamingPack? = null
 
     /** The last progress percentage a `stream-pack:` line carried; negative = none this phase. */
     @Volatile
@@ -121,25 +124,43 @@ object StreamingPackController {
      * A row with no pack module ([StreamingPack.packName] null) is refused loudly rather than
      * silently: the caller's own state machine offered the fetch, so a missing module is a bug in
      * the catalog, not a user situation.
+     *
+     * @param starter WHO asked — an unasked top-up or the user's own pick. It is recorded on the
+     *        board here and nowhere else, because this call is the only place that knows.
      */
-    fun start(context: Context, pack: StreamingPack): Boolean = synchronized(this) {
+    fun start(context: Context, pack: StreamingPack, starter: PreviewStarter): Boolean = synchronized(this) {
         if (isBusy()) return false
         val packName = pack.packName
+        val noPackModule =
+            "This build has no Google Play pack for the ${pack.language} preview model."
+        // THE BOARD IS BEGUN BY THE STARTER (4.5.0 Task 1), before a byte moves and before any
+        // refusal: the route and who asked are facts only this call knows, so `begin` is the one
+        // place they are ever set. The no-pack refusal is begun TERMINAL rather than skipped, so
+        // the row that shows it renders from the same one observable as everything else instead
+        // of from a `Failed` nobody is collecting.
+        PreviewWorkboard.begin(
+            pack.language,
+            PreviewRoute.PLAY_FETCH,
+            starter,
+            if (packName == null) {
+                PreviewStep(PreviewPhase.FAILED, reason = noPackModule)
+            } else {
+                PreviewStep(PreviewPhase.ASKING)
+            },
+        )
         if (packName == null) {
-            _state.value = NpuPackFetch.FetchState.Failed(
-                "This build has no Google Play pack for the ${pack.language} preview model."
-            )
+            _state.value = NpuPackFetch.FetchState.Failed(noPackModule)
             return false
         }
         val appCtx = context.applicationContext
         appContext = appCtx
-        activePackName = packName
+        activePack = pack
         lastLoggedPct = -1
         val mgr = manager ?: PlayPacks.managerFor(appCtx).also {
             it.registerListener(listener)
             manager = it
         }
-        publish(packName, NpuPackFetch.FetchState.Pending)
+        publish(packName, pack.language, NpuPackFetch.FetchState.Pending)
         mgr.fetch(listOf(packName)).addOnFailureListener { failure ->
             // The Task can fail before any AssetPackState exists — a sideloaded install fails
             // HERE, which is the one failure that must reach the latch, or the fallback the
@@ -149,6 +170,7 @@ object StreamingPackController {
             latchRefusal(code)
             publish(
                 packName,
+                pack.language,
                 NpuPackFetch.FetchState.Failed(StreamingPackInstall.fetchRefusal(code)),
             )
         }
@@ -160,13 +182,18 @@ object StreamingPackController {
      * (if any) is cancelled, and the row reads Cancelled at once — from the user's point of view
      * the fetch they cancelled is over the moment they say so. Nothing was installed, and a
      * delivered-but-uninstalled pack stays with Play for a costless retry.
+     *
+     * WHETHER it may be called at all is [PreviewWork.cancellable]'s answer, decided by
+     * [PreviewAutoFetchController.cancel] — this object holds no route table of its own, and it
+     * is only ever reached for [PreviewRoute.PLAY_FETCH].
      */
     fun cancel() {
-        val packName = activePackName
+        val pack = activePack
+        val packName = pack?.packName
         if (packName != null) runCatching { manager?.cancel(listOf(packName)) }
         job?.cancel()
-        if (packName != null) {
-            publish(packName, NpuPackFetch.FetchState.Cancelled)
+        if (pack != null && packName != null) {
+            publish(packName, pack.language, NpuPackFetch.FetchState.Cancelled)
         } else {
             _state.value = NpuPackFetch.FetchState.Cancelled
         }
@@ -181,7 +208,8 @@ object StreamingPackController {
     private val listener = AssetPackStateUpdateListener { packState -> onPackState(packState) }
 
     private fun onPackState(packState: AssetPackState) {
-        val packName = activePackName ?: return
+        val pack = activePack ?: return
+        val packName = pack.packName ?: return
         if (packState.name() != packName) return
         // EVERY AssetPackState goes through the one pure mapping — no status is interpreted here,
         // which is what keeps the shell too boring to be wrong.
@@ -207,9 +235,9 @@ object StreamingPackController {
         } else {
             next
         }
-        publish(packName, shown)
+        publish(packName, pack.language, shown)
         // COMPLETED means DELIVERED: verify + land is where OUR work begins.
-        if (next is NpuPackFetch.FetchState.Verifying) beginInstall(pack = packOf(packName), packName = packName)
+        if (next is NpuPackFetch.FetchState.Verifying) beginInstall(pack = pack, packName = packName)
     }
 
     /**
@@ -224,8 +252,7 @@ object StreamingPackController {
 
     /** Launch the install exactly once per delivery, joining a cancelled predecessor first —
      *  the import controller's N4 lesson: two installs write the same staging paths. */
-    private fun beginInstall(pack: StreamingPack?, packName: String) {
-        if (pack == null) return
+    private fun beginInstall(pack: StreamingPack, packName: String) {
         synchronized(this) {
             if (job?.isActive == true) return
             val previous = job
@@ -240,9 +267,9 @@ object StreamingPackController {
         val packs = packManager() ?: return
         try {
             packs.installFromPack(pack) { soFar, total ->
-                publish(packName, NpuPackFetch.FetchState.Verifying(soFar, total))
+                publish(packName, pack.language, NpuPackFetch.FetchState.Verifying(soFar, total))
             }
-            publish(packName, NpuPackFetch.FetchState.Installed)
+            publish(packName, pack.language, NpuPackFetch.FetchState.Installed)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (t: Throwable) {
@@ -252,19 +279,26 @@ object StreamingPackController {
             // a landed install, so the retry costs nothing and Play redelivers from disk.
             val reason = (t as? StreamingPackException)?.message
                 ?: "The preview model could not be installed (${t.javaClass.simpleName})."
-            publish(packName, NpuPackFetch.FetchState.Failed(reason))
+            publish(packName, pack.language, NpuPackFetch.FetchState.Failed(reason))
         }
     }
 
     /**
-     * Publish a state and narrate it: one `stream-pack:` line per STATUS TRANSITION, plus at most
-     * one per 10 % of progress — the throttle's decision is [NpuPackFetch.shouldLogProgress],
-     * pure and tested, with exactly this one call site. Numbers, codes and a pack name only; a
-     * pack name is not transcript content.
+     * Publish a state, PUT IT ON THE ONE OBSERVABLE, and narrate it: one `stream-pack:` line per
+     * STATUS TRANSITION, plus at most one per 10 % of progress — the throttle's decision is
+     * [NpuPackFetch.shouldLogProgress], pure and tested, with exactly this one call site.
+     * Numbers, codes and a pack name only; a pack name is not transcript content.
+     *
+     * The board write is the shell's ONLY one after [start]'s `begin`, and it interprets nothing:
+     * the phase and the bytes are [PreviewStep.of]'s answer, pure and total over the fetch
+     * machine. The throttle deliberately does NOT gate it — the log is for a human reading a
+     * run-book and can be sampled, while a progress bar that moved once per 10 % would be a worse
+     * bar than the one this replaces.
      */
-    private fun publish(packName: String, next: NpuPackFetch.FetchState) {
+    private fun publish(packName: String, language: String, next: NpuPackFetch.FetchState) {
         val previousWord = NpuPackFetch.statusWord(_state.value)
         _state.value = next
+        PreviewWorkboard.note(language, PreviewStep.of(next))
         val word = NpuPackFetch.statusWord(next)
         val soFar: Long
         val total: Long
@@ -287,9 +321,6 @@ object StreamingPackController {
             "stream-pack: pack=$packName status=$word soFar=$soFar total=$total",
         )
     }
-
-    private fun packOf(packName: String): StreamingPack? =
-        StreamingPackCatalog.packs.firstOrNull { it.packName == packName }
 
     private fun packManager(): StreamingPackManager? =
         (appContext as? WhisperEverywhereApp)?.streamingPackManager

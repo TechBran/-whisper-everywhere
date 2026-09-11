@@ -28,14 +28,15 @@ import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.model.ModelMigration
 import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.WhisperCatalog
-import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.WhisperAccessibilityService
+import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
+import com.whispereverywhere.transcription.stream.PreviewDeleteCase
+import com.whispereverywhere.transcription.stream.PreviewPhase
+import com.whispereverywhere.transcription.stream.PreviewWorkboard
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
 import com.whispereverywhere.transcription.stream.StreamingPackCopy
-import com.whispereverywhere.transcription.stream.StreamingPackInstall
-import com.whispereverywhere.transcription.stream.StreamingPackState
 import com.whispereverywhere.tts.VoiceInstallRoute
 import com.whispereverywhere.tts.cloud.CloudVoice
 import com.whispereverywhere.tts.cloud.GeminiTtsVoices
@@ -1071,11 +1072,15 @@ fun SettingsSection(
  * every DECISION is pure and lives elsewhere, so this composable only wires them:
  *
  *  - which source this install has: `StreamingPackManager.state` → `StreamingPackInstall.resolve`
- *  - which of the four actuators the one action uses: `StreamingPackInstall.sourceOf`
+ *  - what is RUNNING, and on which route, and whether it can be stopped: `PreviewWorkboard` —
+ *    the one observable (4.5.0 Task 1). This row reads nothing else about work in flight, and
+ *    it no longer owns an actuator: the tap goes to `PreviewAutoFetchController.start`, the same
+ *    object Home's card uses, whose guard spans all three starters (review r3's H3-B2)
  *  - every word, including the amendment's "included with the app" — on the DELIVERED route
  *    only, since an undelivered on-demand pack still costs the user 73 MB: `StreamingPackCopy`
- *  - whether a tap does anything at all: `StreamingPackController.isBusy` +
- *    `StreamingPackCopy.fetchLineTappable`
+ *  - whether a tap does anything at all: `StreamingPackCopy.workLineTappable`
+ *  - which of the four facts the delete row is looking at, and therefore which of the four true
+ *    sentences it renders: `PreviewDeleteCase.of` → `StreamingPackCopy.deleteSubtitle`
  *  - whether this user may be offered the pack at all: `StreamingPackCatalog.forLanguage` of
  *    their SELECTION (4.4.1 pass 3, ITEM 1) — no language is offered a model that has already
  *    been decided cannot arm for it, and the one it can never arm for is told so instead
@@ -1087,7 +1092,9 @@ fun SettingsSection(
  */
 @Composable
 private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
-    val previewScope = rememberCoroutineScope()
+    // NO `rememberCoroutineScope()` here as of 4.5.0 (Task 1): this row owned an install that ran
+    // on a scope cancelled by leaving the screen, and a 73 MB transfer must outlive the Compose
+    // tree that started it. `PreviewAutoFetchController`'s process scope is the one that does.
     val previewManager = app.streamingPackManager
     val previewPack = StreamingPackCatalog.EN
     // (4.4.1 acquisition amendment) The previewer's copy is parameterised by language, and this
@@ -1113,83 +1120,56 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     val pickedLanguage = selectedLanguage.takeIf { it != "auto" }
         ?.let { PreferencesManager.languageDisplayName(it) ?: it }
     var previewRefreshKey by remember { mutableStateOf(0) }
-    // Set only while OUR OWN work runs (the verify+copy of a delivered pack, or the fallback
-    // download); Play's own fetch narrates itself through the shell's StateFlow below.
-    var previewInstallStatus by remember { mutableStateOf<String?>(null) }
-    val previewFetch by StreamingPackController.state.collectAsState()
+    // (4.5.0 Task 1) THE ONE OBSERVABLE, and the ONLY thing this row reads about work in flight.
+    // It replaces the TWO values three review rounds proved cannot answer "is work running?":
+    // this composable's own `previewInstallStatus`, which Home could not see, and
+    // `StreamingPackController.state`, which knew nothing about our two routes. Every blocker of
+    // those rounds was a consequence of that gap — a second 73 MB started over work already
+    // running (H3-B2), a delete row drawn over a live write (H3-B1), and a fetch begun on Home
+    // that this row could not mention at all.
+    val previewWorkboard by PreviewWorkboard.work.collectAsState()
+    val previewWork = previewWorkboard[previewPack.language]
     // ONE answer to "does this row have a tap right now", computed here and consumed twice: by
-    // the sentence (so NeedsConfirmation cannot say "tap to answer" where there is no tap — review
+    // the sentence (so AWAITING_ANSWER cannot say "tap to answer" where there is no tap — review
     // r3 H3-B3) and by the row's own onClick below. Hoisted rather than duplicated, because two
     // spellings of this condition is exactly how the sentence and the gesture came to disagree.
-    val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch) &&
+    val previewTappable = StreamingPackCopy.workLineTappable(previewWork) &&
         selectedPack == previewPack
-    val previewFetchLine = StreamingPackCopy.fetchLine(previewFetch, tappable = previewTappable)
-    // Keyed on the STATUS WORD, not the state: a Downloading tick arrives several times a second
-    // for the whole 73 MB, and state() does a Play getPackLocation plus five File reads ON THE
-    // COMPOSITION THREAD while its answer cannot change until the status does (the voice row's
+    val previewWorkLine = previewWork?.let {
+        StreamingPackCopy.workLine(it, tappable = previewTappable)
+    }
+    // Keyed on the PHASE, not the record: a DOWNLOADING tick arrives several times a second for
+    // the whole 73 MB, and state() does a Play getPackLocation plus five File reads ON THE
+    // COMPOSITION THREAD while its answer cannot change until the phase does (the voice row's
     // review nit 2, which this row would otherwise repeat).
-    val previewStatusWord = NpuPackFetch.statusWord(previewFetch)
-    val previewState = remember(previewRefreshKey, previewStatusWord) {
+    val previewPhase = previewWork?.phase
+    val previewState = remember(previewRefreshKey, previewPhase) {
         previewManager.state(previewPack)
     }
     val previewEnabled by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
-    // A landed pack install has to re-read the state: the rows are keyed on previewRefreshKey.
-    LaunchedEffect(previewStatusWord) {
-        if (previewFetch is NpuPackFetch.FetchState.Installed) {
+    // Any TERMINAL phase has to re-read the state: the rows are keyed on previewRefreshKey, and
+    // an install that landed, a download that failed halfway and a cancel all change what is on
+    // disk. 4.4.1 re-read on Installed alone, so a failed install left the row describing the
+    // state from before it.
+    LaunchedEffect(previewPhase) {
+        if (previewPhase != null && !previewPhase.inFlight) {
             previewRefreshKey++
         }
     }
-    // THE ROW'S ONE ACTION, spelled once and shared by the offer row and the in-flight row's
-    // retry — it has to be shared, because after a Play refusal the fallback latch has already
-    // moved the state to Downloadable, and a "Retry" that always re-asked Play would keep
-    // failing under a sentence promising the direct download instead.
-    val startPreviewInstall: () -> Unit = start@{
-        // Read at TAP time, not composition time, so no row can be left permanently dead by a
-        // state change that scheduled no recomposition.
-        if (StreamingPackController.isBusy()) return@start
-        when (StreamingPackInstall.sourceOf(previewState)) {
-            StreamingPackState.Installed -> Unit
-            StreamingPackState.PackFetchable -> {
-                StreamingPackController.start(context, previewPack)
-            }
-            StreamingPackState.PackDelivered -> {
-                previewInstallStatus = StreamingPackCopy.PROGRESS_INSTALLING
-                previewScope.launch {
-                    runCatching {
-                        previewManager.installFromPack(previewPack) { _, _ -> }
-                    }.onFailure {
-                        android.widget.Toast.makeText(
-                            context,
-                            it.message ?: StreamingPackCopy.INSTALL_FAILED,
-                            android.widget.Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                    previewInstallStatus = null
-                    previewRefreshKey++
-                }
-            }
-            StreamingPackState.Downloadable -> {
-                previewInstallStatus = StreamingPackCopy.PROGRESS_STARTING
-                previewScope.launch {
-                    runCatching {
-                        previewManager.download(previewPack) { soFar, total ->
-                            previewInstallStatus =
-                                StreamingPackCopy.downloadProgress(soFar, total)
-                        }
-                    }.onFailure {
-                        android.widget.Toast.makeText(
-                            context,
-                            it.message ?: StreamingPackCopy.INSTALL_FAILED,
-                            android.widget.Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                    previewInstallStatus = null
-                    previewRefreshKey++
-                }
-            }
-            // sourceOf never returns one; a `when` that is total is what keeps it that way.
-            is StreamingPackState.Repair -> Unit
-        }
+    // THE ROW'S ONE ACTION, and as of 4.5.0 it is the FEATURE'S one actuator (Task 1, review r3's
+    // H3-B2). This row used to hold a route `when` of its own, run it in `rememberCoroutineScope()`
+    // and guard it on `StreamingPackController.isBusy()` — which could not see
+    // `PreviewAutoFetchController`'s two routes at all, so the row offered and STARTED a second
+    // 73 MB over work the controller was already doing. Its scope also died with the screen, so
+    // leaving Settings mid-download cancelled the transfer while the DownloadManager row kept
+    // going. One actuator answers both: the guard is `busy()` for all three starters, the route
+    // reduction happens once inside it, and the work is on a process-scoped scope whoever began it.
+    //
+    // `auto = false` because a tap is a PICK, not an unasked top-up: it is exempt from the
+    // once-per-launch latch (a tap is consent and may be repeated) and it is recorded on the board
+    // as the user's own, which is what lets the copy state the deal honestly.
+    val startPreviewInstall: () -> Unit = {
+        PreviewAutoFetchController.start(app, previewPack, previewState, auto = false)
     }
     // WHAT A SELECTION WITH NO PACK COSTS, first in the section and above every offer (owner
     // ruling 1, 2026-09-11: *"if they leave it in auto, then you get no live streaming at all.
@@ -1230,10 +1210,11 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
                     onCheckedChange = { app.preferencesManager.localPreviewEnabled = it },
                 )
             }
-            // Both in-flight rows render BELOW instead, for every selection — and not here, so
-            // that the two can never both draw and the offer can never appear over work that is
-            // already running.
-            previewInstallStatus != null || previewFetchLine != null -> Unit
+            // The in-flight row renders BELOW instead, for every selection — and not here, so
+            // the offer can never appear over work that is already running. ONE condition now
+            // that there is one observable: 4.4.1 needed two, and Settings collected only one of
+            // the two things that could be running.
+            previewWorkLine != null -> Unit
             else -> SettingsItem(
                 icon = Icons.Filled.CloudDownload,
                 title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
@@ -1242,70 +1223,63 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
             )
         }
     }
-    // WORK IN FLIGHT KEEPS ITS SURFACE WHEREVER THE SELECTION GOES (fix round 1, H-B3). Both rows
-    // below describe a transfer the user THEMSELVES started, so a selection that moves off this
-    // pack's language mid-transfer must not hide it: `previewInstallStatus` is remembered in a
-    // composable that stays composed and `StreamingPackController.state` is global, so the 73 MB
-    // keeps going either way — and Home renders nothing at all for a selection with no pack
+    // WORK IN FLIGHT KEEPS ITS SURFACE WHEREVER THE SELECTION GOES (fix round 1, H-B3). This row
+    // describes a transfer the user THEMSELVES started, so a selection that moves off this pack's
+    // language mid-transfer must not hide it: the board is process-scoped, so the 73 MB keeps
+    // going either way — and Home renders nothing at all for a selection with no pack
     // (`hasPackForSelection` false ⇒ Card.NONE). Gated on the selection, a running 73 MB was
     // therefore invisible everywhere in the app, with no system notification on either Play
-    // route — it is the VISIBILITY, and only the visibility, that these rows are out here for;
+    // route — it is the VISIBILITY, and only the visibility, that this row is out here for;
     // fix round 2 (H2-B1) withdrew the tap. That is the same hiding of the user's own action D17
     // refused on the card ("hiding its progress card would hide their own action from them and
     // leave the X as the only thing to press"). An un-tappable progress row naming the model they
     // asked for is a receipt, not a sale.
     //
-    // WHAT SURVIVES IS THE SENTENCE; NO TAP DOES (fix round 2, H2-B1). `fetchLineTappable` is
-    // true for exactly two states and BOTH of them spend the 73 MB rather than watch it:
-    //   - `Failed` — the terminal retry is a fresh 73 MB for a language the gate has already
+    // (4.5.0 Task 1) ONE ROW WHERE THERE WERE TWO, because there is one observable. The pair
+    // existed only because Play's fetch and our install narrated themselves through different
+    // values; a user could not tell which of them was running, and Settings could not see a fetch
+    // Home had begun at all.
+    //
+    // WHAT SURVIVES IS THE SENTENCE; NO TAP DOES (fix round 2, H2-B1). `workLineTappable` is true
+    // for exactly two phases and BOTH of them spend the 73 MB rather than watch it:
+    //   - `FAILED` — the terminal retry is a fresh 73 MB for a language the gate has already
     //     refused, which is exactly the offer the section above stopped making;
-    //   - `NeedsConfirmation` — which fix round 1 read as "the transfer already in flight" and
+    //   - `AWAITING_ANSWER` — which fix round 1 read as "the transfer already in flight" and
     //     is not. It is Play's state BEFORE Play has moved a single byte, in BOTH sub-cases:
     //     `NpuPackFetch.kt:183-184` maps `STATUS_WAITING_FOR_WIFI` and
     //     `STATUS_REQUIRES_USER_CONFIRMATION` onto it, and this file's own copy says so twice
     //     (`SETTINGS_INSTALL_FETCH`: *"Play raises its own metered/size dialog BEFORE a transfer
     //     that size"*; `CARD_ANSWER_PLAY`: *"a cellular or size confirmation, or a wait for
-    //     wifi"*). `StreamingPackInstall.fetchInFlight` counting it as in-flight is a
-    //     SINGLE-FLIGHT answer, not a bytes-have-moved one. So the tap that answers it is the tap
-    //     that AUTHORISES the 73 MB — over cellular in the wifi-wait case.
+    //     wifi"*). `PreviewPhase.AWAITING_ANSWER.inFlight` being true is a SINGLE-FLIGHT answer,
+    //     not a bytes-have-moved one. So the tap that answers it is the tap that AUTHORISES the
+    //     73 MB — over cellular in the wifi-wait case.
     // Off-selection that is 73 MB of data and 73 MB of storage for a recognizer
     // `localPreviewArms` refuses on its first conjunct: the very spend this pass exists to stop,
     // one state over from where fix round 1 drew the line. Nothing is lost by closing it — an
     // unanswered Play fetch parks harmlessly, the row keeps SAYING what is happening (which is
     // the receipt this whole block exists to provide), and picking the language back makes the
     // tap live again.
-    if (!previewState.isInstalled) {
-        if (previewInstallStatus != null) {
-            SettingsItem(
-                icon = Icons.Filled.CloudDownload,
-                title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
-                subtitle = previewInstallStatus ?: "",
-            )
-        } else if (previewFetchLine != null) {
-            // `previewTappable` is decided ONCE, up beside previewFetchLine, and says: a tap does
-            // something only on the terminal retry and on the NeedsConfirmation that answers
-            // PLAY'S OWN dialog, AND only while the selection is still the language this pack
-            // serves, because both of those taps spend the 73 MB (see above). Every other state is
-            // work in flight. SettingsItem makes itself clickable the moment it is handed an
-            // onClick, so the flag gates the onClick and the sentence together.
-            val previewRowTap: () -> Unit = {
-                val activity = context as? android.app.Activity
-                if (previewFetch is
-                        NpuPackFetch.FetchState.NeedsConfirmation &&
-                    activity != null
-                ) {
-                    StreamingPackController.confirm(activity)
-                } else {
-                    startPreviewInstall()
-                }
+    if (!previewState.isInstalled && previewWorkLine != null) {
+        // `previewTappable` is decided ONCE, up beside previewWorkLine, and says: a tap does
+        // something only on the terminal retry and on the AWAITING_ANSWER that answers PLAY'S OWN
+        // dialog, AND only while the selection is still the language this pack serves, because
+        // both of those taps spend the 73 MB (see above). Every other phase is work in flight.
+        // SettingsItem makes itself clickable the moment it is handed an onClick, so the flag
+        // gates the onClick and the sentence together.
+        val previewRowTap: () -> Unit = {
+            val activity = context as? android.app.Activity
+            if (previewPhase == PreviewPhase.AWAITING_ANSWER && activity != null) {
+                StreamingPackController.confirm(activity)
+            } else {
+                startPreviewInstall()
             }
-            SettingsItem(
-                icon = Icons.Filled.CloudDownload,
-                title = StreamingPackCopy.featureTitle(previewLanguage),
-                subtitle = previewFetchLine,
-                onClick = if (previewTappable) previewRowTap else null,
-            )
         }
+        SettingsItem(
+            icon = Icons.Filled.CloudDownload,
+            title = StreamingPackCopy.featureTitle(previewLanguage),
+            subtitle = previewWorkLine,
+            onClick = if (previewTappable) previewRowTap else null,
+        )
     }
     // THE DELETE FOLLOWS THE BYTES, not the selection (4.4.1 pass 3, ITEM 1) — so it lives
     // OUTSIDE the gate above. 73 MB installed for English must stay reclaimable after the user
@@ -1321,39 +1295,57 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // user whose load failed once and who then picks French or Auto had NO row anywhere in the
     // app that reclaims those bytes. `delete` clears the install dir either way.
     //
-    // (fix round 2, H2-B2) AND THE BYTES HAVE TO BE SETTLED. `previewState` is
-    // `remember(previewRefreshKey, previewStatusWord)` and OUR OWN install changes neither key
-    // while it runs, so through a repair install the state stays `Repair` — which, with the line
-    // above, newly rendered this row BESIDE our running copy. That combination cannot keep this
-    // row's promise: the `onClick` has no busy guard (unlike `startPreviewInstall`), `delete`
-    // clears the install dir under the copy, and `installFromPack` is NOT
-    // cancellation-cooperative (ITEM 4's finding — no suspension point between
-    // `withContext(Dispatchers.IO)`'s entry and its return), so the copy finishes, `install`
-    // re-creates the directory and the marker lands. The user would press *"Frees 73 MB. Live
-    // words stop"* and get *"Installed (73 MB)"* — with the declined flag written, so Home never
-    // mentions it again. (On the `Downloadable` sibling `delete`'s `removeStaleDownloads` kills
-    // the live DownloadManager row instead, failing the install the user actually wanted.)
-    // `previewInstallStatus == null` withdraws the row for exactly the seconds our copy is
-    // running and for no other state: every reclaim path above is at rest by construction.
-    if (
-        (previewState.isInstalled || previewState is StreamingPackState.Repair) &&
-        previewInstallStatus == null
-    ) {
+    // (fix round 2, H2-B2; 4.5.0 Task 1, review r3's H3-B1) AND THE BYTES HAVE TO BE SETTLED.
+    // `previewState` is `remember(previewRefreshKey, previewPhase)` and OUR OWN install changes
+    // neither key while it runs, so through a repair install the state stays `Repair` — which,
+    // with the line above, rendered this row BESIDE our running copy. That combination cannot
+    // keep the row's promise: the `onClick` has no busy guard, `delete` clears the install dir
+    // under the copy, and `installFromPack` is NOT cancellation-cooperative (ITEM 4's finding —
+    // no suspension point between `withContext(Dispatchers.IO)`'s entry and its return), so the
+    // copy finishes, `install` re-creates the directory and the marker lands. The user would
+    // press *"Frees 73 MB. Live words stop"* and get *"Installed (73 MB)"* — with the declined
+    // flag written, so Home never mentions it again. (On the `Downloadable` sibling `delete`'s
+    // `removeStaleDownloads` kills the live DownloadManager row instead, failing the install the
+    // user actually wanted.)
+    //
+    // 4.4.1 withdrew the row on `previewInstallStatus == null` — this composable's own `var`,
+    // which knew nothing about the two routes `PreviewAutoFetchController` runs or about a fetch
+    // Home had started, so the race it closed was one third of the race. THE CASE IS NOW DERIVED
+    // FROM THE ONE OBSERVABLE, which sees all three starters, and the row renders in all four
+    // cases with a sentence that is true in each — including the write, where the tap is withdrawn
+    // rather than the row. An un-tappable row saying what is happening is this feature's own
+    // answer everywhere else (the progress row above is exactly that); a row that vanishes for
+    // the seconds a copy runs leaves the reader wondering where their reclaim went.
+    PreviewDeleteCase.of(
+        state = previewState,
+        selectedForThisPack = selectedPack == previewPack,
+        work = previewWork,
+    )?.let { deleteCase ->
         SettingsItem(
             icon = Icons.Filled.Delete,
             title = StreamingPackCopy.DELETE_TITLE,
-            subtitle = StreamingPackCopy.DELETE_SUBTITLE,
-            onClick = {
-                // (4.4.1) A DELETE IS A DECISION, and it is recorded BEFORE the bytes go: the
-                // 4.4.1 auto-fetch would otherwise put this model back on the next app open,
-                // which is the one thing the owner's discovery ruling must not do. Written
-                // first so a removal that failed partway still leaves the decision recorded.
-                // (4.4.1 acquisition amendment) And it is recorded FOR THIS PACK'S LANGUAGE,
-                // not globally: deleting one language's model says nothing about another's,
-                // and the store is a set (owner ruling 2026-09-11, consequence 5).
-                app.preferencesManager.setLivePreviewDeclined(previewPack.language, true)
-                previewManager.delete(previewPack)
-                previewRefreshKey++
+            subtitle = StreamingPackCopy.deleteSubtitle(
+                deleteCase,
+                previewLanguage,
+                previewPack.totalBytes,
+            ),
+            // THE WRITE IS THE ONE CASE WITH NO TAP. Everything else this row can be looking at
+            // is at rest by construction, and `delete` on a settled install cannot race anything.
+            onClick = if (deleteCase == PreviewDeleteCase.WORKING) {
+                null
+            } else {
+                {
+                    // (4.4.1) A DELETE IS A DECISION, and it is recorded BEFORE the bytes go: the
+                    // 4.4.1 auto-fetch would otherwise put this model back on the next app open,
+                    // which is the one thing the owner's discovery ruling must not do. Written
+                    // first so a removal that failed partway still leaves the decision recorded.
+                    // (4.4.1 acquisition amendment) And it is recorded FOR THIS PACK'S LANGUAGE,
+                    // not globally: deleting one language's model says nothing about another's,
+                    // and the store is a set (owner ruling 2026-09-11, consequence 5).
+                    app.preferencesManager.setLivePreviewDeclined(previewPack.language, true)
+                    previewManager.delete(previewPack)
+                    previewRefreshKey++
+                }
             },
         )
     }

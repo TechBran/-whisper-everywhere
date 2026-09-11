@@ -124,12 +124,36 @@ class LivePreviewRowsPinTest {
     // ------------------------------------------------------------------ the row's one action
 
     @Test
-    fun theRouteIsDecidedOnceByThePureReduction_neverInTheComposeTree() {
+    fun theRowOwnsNoActuatorAtAllAndRoutesNothingInTheComposeTree() {
+        // (4.5.0 Task 1, review r3's H3-B2.) This row used to hold a route `when` of its own, run
+        // it in `rememberCoroutineScope()` and guard it on `StreamingPackController.isBusy()` —
+        // which could not see `PreviewAutoFetchController`'s two routes, so the row offered and
+        // STARTED a second 73 MB over work the controller was already doing. The strongest form
+        // of that fix is not a wider guard here: it is NO actuator here. One `start`, whose guard
+        // spans all three starters, on a process scope that outlives this screen.
         assertEquals(
-            "ONE routing decision, and it is the pure one: a second `when` over " +
-                "StreamingPackState in a composable is a branch no JVM test can reach, and the " +
-                "one that falls through goes to the third-party download",
-            1, liveLineCount(rows, "StreamingPackInstall.sourceOf("),
+            "ZERO routing decisions in the tree — the reduction happens once, inside the one " +
+                "actuator, where a JVM test can reach it",
+            0, liveLineCount(rows, "StreamingPackInstall.sourceOf("),
+        )
+        assertEquals(
+            "and no install of its own on any route",
+            0,
+            liveLineCount(rows, "installFromPack(") + liveLineCount(rows, ".download("),
+        )
+        assertEquals(
+            "one actuation, and it is the same object Home's card uses",
+            1, liveLineCount(rows, "PreviewAutoFetchController.start("),
+        )
+        assertEquals(
+            "a tap is a PICK, never an unasked top-up: it is exempt from the once-per-launch " +
+                "latch and recorded on the board as the user's own",
+            1, liveLineCount(rows, "auto = false"),
+        )
+        assertEquals(
+            "no scope that dies with the screen: leaving Settings mid-download used to cancel " +
+                "the transfer while the DownloadManager row kept going",
+            0, liveLineCount(rows, "rememberCoroutineScope("),
         )
         assertEquals(
             "the state itself is read through the manager's own triage, not re-derived here",
@@ -142,25 +166,28 @@ class LivePreviewRowsPinTest {
     }
 
     @Test
-    fun theTapIsRefusedWhileTheShellIsWorking_andTheGuardComesFirst() {
+    fun theRowReadsTheONEObservableAndNothingElseAboutWorkInFlight() {
+        // The defect, in one assertion each. 4.4.1 answered "is work running?" from TWO
+        // composition-local values — this composable's own `previewInstallStatus`, which Home
+        // could not see, and `StreamingPackController.state`, which knew nothing about the two
+        // routes the actuator runs. Every blocker of rounds 1-3 was a consequence of that gap.
         assertEquals(
-            "the one action refuses while the fetch shell is working — TtsPackShellPinTest's " +
-                "own pin, for the defect this row would otherwise repeat",
-            1, liveLineCount(rows, "StreamingPackController.isBusy()) return@start"),
+            "one collector, and it is the board's",
+            1, liveLineCount(rows, "PreviewWorkboard.work.collectAsState()"),
         )
-        val refused = offsetOfLive(rows, "StreamingPackController.isBusy()) return@start")
-        val routed = offsetOfLive(rows, "when (StreamingPackInstall.sourceOf(")
-        assertTrue("the refusal must be IN the action", refused >= 0)
-        assertTrue(
-            "and it must be a GUARD: read at TAP time and answered before the route is acted " +
-                "on, never a composition-time flag the row could be left dead by",
-            refused in 0 until routed,
+        assertEquals(
+            "the row's own progress var is GONE — it is the half Home could never see",
+            0, liveLineCount(settings, "previewInstallStatus"),
+        )
+        assertEquals(
+            "and so is the second flow of Play's fetch: the shell's machine is private now",
+            0, liveLineCount(rows, "StreamingPackController.state"),
         )
         assertEquals(
             "the in-flight row is tappable only where a tap does something — the terminal retry " +
                 "and Play's own dialog. Without this the ~73 MB copy+hash takes a second tap " +
-                "straight back into installFromPack, into the same temp dir",
-            1, liveLineCount(rows, "StreamingPackCopy.fetchLineTappable("),
+                "straight back into the install, into the same temp dir",
+            1, liveLineCount(rows, "StreamingPackCopy.workLineTappable("),
         )
         assertEquals(
             "and the cellular/size consent is PLAY'S own dialog, never a re-ask of ours",
@@ -233,6 +260,7 @@ class LivePreviewRowsPinTest {
         val caveat = offsetOfLive(rows, "StreamingPackCopy.noLiveWordsTitle(")
         val gate = offsetOfLive(rows, "if (selectedPack == previewPack) {")
         val offer = offsetOfLive(rows, "onClick = startPreviewInstall,")
+        assertTrue("the offer branch must still be there", offer >= 0)
         assertTrue("the caveat must be in the section", caveat >= 0)
         assertTrue(
             "and every row that describes or offers THIS pack must be gated on the selection " +
@@ -246,46 +274,47 @@ class LivePreviewRowsPinTest {
 
     @Test
     fun workAlreadyInFlightKeepsItsSurfaceWhereverTheSelectionGoes() {
-        // (fix round 1, H-B3; fix round 2, H2-B1.) The progress row and the Play row describe a
-        // transfer the USER STARTED, not an offer. Inside the selection gate, a language change
-        // mid-transfer hid a running 73 MB everywhere in the app — Home renders nothing for a
-        // selection with no pack, and neither Play route raises a system notification. So they
-        // sit OUTSIDE the gate, under their own not-installed guard. What survives off-selection
-        // is the SENTENCE and not the TAP: `fetchLineTappable`'s two states are `Failed` (a fresh
-        // 73 MB) and `NeedsConfirmation`, which is Play's state BEFORE it has moved a byte
-        // (`NpuPackFetch.kt:183-184` maps WAITING_FOR_WIFI and REQUIRES_USER_CONFIRMATION onto
-        // it), so answering it AUTHORISES the 73 MB. Both are the spend this pass exists to stop.
+        // (fix round 1, H-B3; fix round 2, H2-B1.) The progress row describes a transfer the USER
+        // STARTED, not an offer. Inside the selection gate, a language change mid-transfer hid a
+        // running 73 MB everywhere in the app — Home renders nothing for a selection with no pack,
+        // and neither Play route raises a system notification. So it sits OUTSIDE the gate, under
+        // its own not-installed guard. What survives off-selection is the SENTENCE and not the
+        // TAP: `workLineTappable`'s two phases are `FAILED` (a fresh 73 MB) and `AWAITING_ANSWER`,
+        // which is Play's state BEFORE it has moved a byte (`NpuPackFetch.kt:183-184` maps
+        // WAITING_FOR_WIFI and REQUIRES_USER_CONFIRMATION onto it), so answering it AUTHORISES
+        // the 73 MB. Both are the spend this pass exists to stop.
+        //
+        // (4.5.0 Task 1) ONE row where there were two, because there is one observable: the pair
+        // existed only because Play's fetch and our install narrated through different values.
         val gate = offsetOfLive(rows, "if (selectedPack == previewPack) {")
         val offer = offsetOfLive(rows, "onClick = startPreviewInstall,")
-        val inFlight = offsetOfLive(rows, "if (!previewState.isInstalled) {")
-        val ourProgress = offsetOfLive(rows, "subtitle = previewInstallStatus ?: \"\",")
-        val playLine = offsetOfLive(rows, "subtitle = previewFetchLine,")
+        val inFlight = offsetOfLive(rows, "if (!previewState.isInstalled && previewWorkLine != null) {")
+        val workRow = offsetOfLive(rows, "subtitle = previewWorkLine,")
         assertTrue("the selection gate must still be there", gate >= 0)
         assertTrue(
-            "and the two in-flight rows must sit after it, under their own bytes-not-yet guard, " +
-                "so a selection with no pack still sees the transfer it started",
+            "and the in-flight row must sit after it, under its own bytes-not-yet guard, so a " +
+                "selection with no pack still sees the transfer it started",
             offer in 0 until inFlight,
         )
-        assertTrue("ours first", inFlight in 0 until ourProgress)
-        assertTrue("then Play's", ourProgress < playLine)
+        assertTrue("and it renders the one line", inFlight in 0 until workRow)
         assertEquals(
-            "and the gate renders NEITHER of them: the two must never both draw, and the offer " +
-                "must never appear over work already running",
-            1, liveLineCount(rows, "previewInstallStatus != null || previewFetchLine != null -> Unit"),
+            "the gate renders it NOT AT ALL: the offer must never appear over work already " +
+                "running, and ONE condition answers that now",
+            1, liveLineCount(rows, "previewWorkLine != null -> Unit"),
         )
         // The guard is decided ONCE, beside the sentence it also gates (H3-B3), so the scope ends
-        // at previewFetchLine rather than at the row's tap. Both markers are asserted present by
+        // at previewWorkLine rather than at the row's tap. Both markers are asserted present by
         // scopeOf now — r3's nit: a `to` marker that silently misses widens the scope to the rest
         // of the file, where `||` appears, and the next two assertions would pass by accident.
-        val tapGuard = scopeOf(rows, "val previewTappable =", "val previewFetchLine")
+        val tapGuard = scopeOf(rows, "val previewTappable =", "val previewWorkLine")
         assertEquals(
             "the tappable answer is spelled ONCE — a second spelling is how the sentence and the " +
                 "gesture came to disagree in the first place",
             1, liveLineCount(rows, "val previewTappable ="),
         )
         assertEquals(
-            "and the sentence is handed that same answer, never its own reading of the state",
-            1, liveLineCount(rows, "fetchLine(previewFetch, tappable = previewTappable)"),
+            "and the sentence is handed that same answer, never its own reading of the phase",
+            1, liveLineCount(rows, "workLine(it, tappable = previewTappable)"),
         )
         assertEquals(
             "NO tap survives the selection moving: the tap guard's second conjunct is the " +
@@ -293,15 +322,15 @@ class LivePreviewRowsPinTest {
             1, liveLineCount(tapGuard, "selectedPack == previewPack"),
         )
         assertEquals(
-            "and it is not an OR with anything — a NeedsConfirmation disjunct here is the tap " +
+            "and it is not an OR with anything — an AWAITING_ANSWER disjunct here is the tap " +
                 "that AUTHORISES a fresh 73 MB for a language the gate has already refused " +
                 "(fix round 2, H2-B1), not a receipt for bytes already moving",
             0, liveLineCount(tapGuard, "||"),
         )
         assertEquals(
-            "so NeedsConfirmation is named ONCE in the section — inside the tap, which routes it " +
+            "so AWAITING_ANSWER is named ONCE in the section — inside the tap, which routes it " +
                 "to PLAY'S own dialog — and never as a reason the tap is alive off-selection",
-            1, liveLineCount(rows, "NeedsConfirmation"),
+            1, liveLineCount(rows, "PreviewPhase.AWAITING_ANSWER"),
         )
     }
 
@@ -311,46 +340,59 @@ class LivePreviewRowsPinTest {
             "ONE delete site, wherever it sits", 1, liveLineCount(rows, "StreamingPackCopy.DELETE_TITLE"),
         )
         val lastOffer = offsetOfLive(rows, "onClick = startPreviewInstall,")
-        // (fix round 1, H-B2) THE GUARD IS THE BYTES AND NOT THE VERDICT. `isInstalled` is
-        // `this is Installed` only, and `Repair` — marker gone after a load failure, or a file
-        // gone short — is the one state where the bytes are on disk and that property is false.
-        // With the repair row inside the selection gate, `isInstalled` alone left a damaged
+        // (fix round 1, H-B2; 4.5.0 Task 1) THE GUARD IS THE BYTES AND NOT THE VERDICT, and it is
+        // now DERIVED rather than assembled here: `PreviewDeleteCase.of` answers null where there
+        // is nothing under `filesDir` to free, and `isInstalled` is `this is Installed` only, so
+        // a `Repair` — marker gone after a load failure, or a file gone short — has to be its own
+        // case. With the repair row inside the selection gate, `isInstalled` alone left a damaged
         // install's 73 MB with no reclaim path in the app for a selection with no pack.
-        val guard = offsetOfLive(
-            rows,
-            "(previewState.isInstalled || previewState is StreamingPackState.Repair) &&",
-        )
+        val guard = offsetOfLive(rows, "PreviewDeleteCase.of(")
         val delete = offsetOfLive(rows, "StreamingPackCopy.DELETE_TITLE")
         assertTrue("the offer branches must still be there", lastOffer >= 0)
         assertTrue(
             "the delete is about DISK, not about the selection: 73 MB installed for English has " +
                 "to stay reclaimable after the user picks French, so it sits OUTSIDE the " +
-                "selection gate — after the last offer branch — under its own bytes-are-here guard",
+                "selection gate — after the last offer branch — under its own derived case",
             lastOffer < guard && guard < delete,
         )
         assertEquals(
-            "and that guard answers for the DAMAGED install too — `markCorrupt` removes the " +
-                "marker and leaves the bytes, so a delete keyed on the verdict strands them",
-            1,
-            liveLineCount(rows, "previewState is StreamingPackState.Repair)"),
+            "ONE derivation, and it is the pure one: a `when` over the state plus the selection " +
+                "plus what is running, assembled in a composable, is a rule no JVM test can reach",
+            1, liveLineCount(rows, "PreviewDeleteCase.of("),
         )
-        // (fix round 2, H2-B2) ...but only while the bytes are SETTLED. `previewState` is
-        // remembered on keys our own install does not change, so through a repair install it
-        // stays `Repair` and this row rendered beside the running copy. `delete` clears the
-        // install dir under a copy that is not cancellation-cooperative, so the copy lands
-        // anyway: *"Frees 73 MB"* frees nothing and the pack ends up installed AND declined.
         assertEquals(
-            "the delete row must not render over OUR OWN running install — the one window in " +
-                "which it cannot keep its promise",
-            1, liveLineCount(rows, "previewInstallStatus == null"),
+            "and the sentence is the case's own — 4.4.1 rendered ONE across all four facts, and " +
+                "three of them made it false",
+            1, liveLineCount(rows, "StreamingPackCopy.deleteSubtitle("),
         )
-        val settled = offsetOfLive(rows, "previewInstallStatus == null")
+        assertEquals(
+            "the size is the PACK's own bytes, never a literal: English is 73 MB, German 71 MB " +
+                "and French 128 MB",
+            1, liveLineCount(rows, "previewPack.totalBytes"),
+        )
+        // (fix round 2, H2-B2; review r3's H3-B1) ...and the row cannot render OVER A WRITE.
+        // `previewState` is remembered on keys our own install does not change, so through a
+        // repair install it stays `Repair` and this row drew beside the running copy. `delete`
+        // clears the install dir under a copy that is not cancellation-cooperative, so the copy
+        // lands anyway: *"Frees 73 MB"* frees nothing and the pack ends up installed AND declined.
+        // 4.4.1 withdrew the row on this composable's own `var`, which saw one of three starters.
+        assertEquals(
+            "the work answer comes from the ONE observable, which sees all three starters",
+            1, liveLineCount(rows, "work = previewWork,"),
+        )
+        assertEquals(
+            "and the WRITE is the one case with no tap — the row stays, saying what is true, " +
+                "which is this feature's answer for every other in-flight row",
+            1, liveLineCount(rows, "if (deleteCase == PreviewDeleteCase.WORKING) {"),
+        )
+        val noTap = offsetOfLive(rows, "if (deleteCase == PreviewDeleteCase.WORKING) {")
+        val recorded = offsetOfLive(rows, "setLivePreviewDeclined(previewPack.language, true)")
         assertTrue(
-            "and that conjunct belongs to the DELETE's guard, not to some earlier row",
-            guard < settled && settled < delete,
+            "and that branch gates the onClick, not something earlier",
+            delete < noTap && noTap < recorded,
         )
         assertEquals(
-            "and the decision it records is still the PACK's language, which is what it deletes",
+            "the decision it records is still the PACK's language, which is what it deletes",
             1, liveLineCount(rows, "setLivePreviewDeclined(previewPack.language, true)"),
         )
     }

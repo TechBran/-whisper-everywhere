@@ -302,8 +302,10 @@ object PreviewAutoFetch {
      *        false. Silences the announcement and nothing else, for the reason above.
      * @param userSaidNo the same persisted flag [decide] reads.
      * @param showLiveWords the same switch [decide] reads (`PreferencesManager.localPreviewEnabled`).
-     * @param workInFlight a fetch or install is running: `StreamingPackInstall.fetchInFlight` of
-     *        the Play shell's state, or our own progress line being non-null.
+     * @param workInFlight a fetch or install of THIS pack is running — one read of the one
+     *        observable (`PreviewWorkboard.of(language)?.inFlight`, 4.5.0 Task 1). It was a
+     *        disjunction of `StreamingPackInstall.fetchInFlight` over the Play shell's state and
+     *        "our own progress line is non-null", which is the pair Task 1 retires.
      * @param decision [decide]'s answer for this same moment — passed in rather than recomputed,
      *        so the card and the hook can never disagree about what is about to happen.
      */
