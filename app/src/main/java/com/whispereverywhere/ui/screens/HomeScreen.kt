@@ -51,11 +51,11 @@ import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
 import com.whispereverywhere.transcription.stream.StreamingPackCopy
 import com.whispereverywhere.transcription.stream.StreamingPackState
-import com.whispereverywhere.ui.components.LivePreviewSelectorStrip
 import com.whispereverywhere.tts.TtsModelManager
 import com.whispereverywhere.tts.TtsPackController
 import com.whispereverywhere.tts.TtsVoices
 import com.whispereverywhere.tts.resolveTtsProvider
+import com.whispereverywhere.ui.components.LivePreviewSelectorStrip
 import com.whispereverywhere.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

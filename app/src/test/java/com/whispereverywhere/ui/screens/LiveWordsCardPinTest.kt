@@ -331,8 +331,12 @@ class LiveWordsCardPinTest {
         val published = offsetOfLive(prefs, "_selectedLanguage.value = languageCode")
         assertTrue("the note must exist", noted >= 0)
         assertTrue(
-            "and be written BEFORE the flow that recomposes the card reading both — a note after " +
-                "it is a frame late, and the pick would be read as an unasked top-up",
+            "and be written BEFORE the flow, for DETERMINISM and not for correctness (review " +
+                "r1's nit 1, which caught this pin's old justification being false in both " +
+                "halves): a re-pick of the already-selected language makes the selection flow " +
+                "emit nothing at all, and a new language writes both on one thread before any " +
+                "recomposition runs. One fixed order is one fewer thing to reason about; it is " +
+                "NOT the case that a note placed after would be read as a top-up",
             noted in 0 until published,
         )
         for (needle in listOf(

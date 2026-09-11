@@ -180,9 +180,15 @@ class PreferencesManager(private val context: Context) {
      * and the decision that turns a pick into an arrival is where it always was
      * (`PreviewAutoFetch.decide`, from Home's card).
      *
-     * The pick is noted BEFORE the flow is written, and the order is load-bearing: the flow write
-     * is what recomposes the card that reads both, so a note after it would be a frame late and
-     * the pick would be read as a top-up.
+     * The pick is noted BEFORE the flow is written, and the order is DETERMINISM rather than
+     * correctness (review r1's nit 1 — the first version of this comment claimed it was
+     * load-bearing, and the claim was false in both halves). For a re-pick of the language
+     * already selected the selection flow does not emit AT ALL (`MutableStateFlow` conflates
+     * equal values) and `PreviewPicks` is the only emitter; for a new language both writes happen
+     * on the same thread before any recomposition runs, so a collector cannot see one without
+     * eventually seeing the other. `LiveWordsCardPinTest` pins the order anyway, because one
+     * fixed order is one fewer thing to reason about — but the reason is not that a note placed
+     * after the flow write would be read as a top-up.
      */
     fun setSelectedLanguage(languageCode: String) {
         prefs.edit().putString(KEY_SELECTED_LANGUAGE, languageCode).apply()
