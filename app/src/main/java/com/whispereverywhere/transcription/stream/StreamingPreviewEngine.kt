@@ -30,8 +30,9 @@ interface LocalPreview {
  * offer schedules one [drain] on the executor; an overflow DROPS the chunk and marks the segment
  * `shed` — the capture thread never blocks and never decodes (it already carries the inline
  * Silero probe). [drain] polls the queue empty, converts, `acceptWaveform`s, decodes while
- * `isReady` (T = 45 frames for the first decode, then every 320 ms — rung 3 §7), reads the
- * cumulative text, lowercases it, and emits it when it CHANGED and the [DeltaThrottle] allows
+ * `isReady` (`T` frames for the first decode, then every [StreamingPack.cadenceMs] — rung 3 §7),
+ * builds the strip from the result's TOKENS (never its `text`, whose spacing the AAR has already
+ * rewritten — [PreviewText.strip]), and emits it when it CHANGED and the [DeltaThrottle] allows
  * (at 320 ms the 150 ms throttle never bites; it thins only the commit-time burst, and the
  * freeze bypasses it).
  *
@@ -315,7 +316,7 @@ class StreamingPreviewEngine(
 
     private fun emitIfChanged(rec: PreviewRecognizer, s: PreviewStream) {
         val text = try {
-            PreviewText.normalize(rec.result(s).text, pack())
+            PreviewText.strip(rec.result(s), pack())
         } catch (t: Throwable) {
             onDecodeFailure(rec, t)
             return
@@ -366,7 +367,9 @@ class StreamingPreviewEngine(
         s.inputFinished()
         while (rec.isReady(s)) timedDecode(rec, s)
         val r = rec.result(s)
-        if (retainMs > 0L) PreviewText.before(r, cutSeconds(retainMs), pack()) else PreviewText.normalize(r.text, pack())
+        // Both arms build from TOKENS: the trim always did, and the untrimmed arm used to render
+        // `r.text`, whose spacing the AAR has already rewritten. One pack, one spacing.
+        if (retainMs > 0L) PreviewText.before(r, cutSeconds(retainMs), pack()) else PreviewText.strip(r, pack())
     } catch (t: Throwable) {
         noteFailure(rec, t)
         ""
