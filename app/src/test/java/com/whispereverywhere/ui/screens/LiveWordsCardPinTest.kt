@@ -274,7 +274,40 @@ class LiveWordsCardPinTest {
             1, liveLineCount(card, "StreamingPackController.confirm("),
         )
         assertEquals(
+            "read once, so the raise and the card's action cannot disagree about the state",
             1, liveLineCount(card, "NpuPackFetch.FetchState.NeedsConfirmation"),
+        )
+    }
+
+    @Test fun theWorkingCardIsNeverADeadEndUnderASentenceAskingForATap() {
+        // Review r1, B3: fetchLine(NeedsConfirmation) ends in "tap to answer", the dialog is
+        // raised once per ENTRY into that state, and the card had action = null — so a user who
+        // back-pressed out of Play's dialog was parked on an instruction naming a gesture the
+        // card did not have, with the permanent-no X as the only thing left to press. The same
+        // gesture, reached from both places: one lambda, used by the effect and by the action.
+        assertEquals(
+            "the answer is one lambda, so the button and the effect raise the same dialog",
+            1, liveLineCount(card, "val answerPlay: () -> Unit"),
+        )
+        assertEquals(
+            "the effect raises it once per entry into the state...",
+            1, liveLineCount(card, "if (playAwaitsAnAnswer) answerPlay()"),
+        )
+        assertEquals(
+            "...and the working card offers it for as long as Play is still waiting",
+            1,
+            liveLineCount(
+                card,
+                "action = if (playAwaitsAnAnswer) StreamingPackCopy.CARD_ANSWER_PLAY else null",
+            ),
+        )
+        assertEquals(
+            "wired, not decorative — the working card's onAction is that same answer",
+            1, liveLineCount(card, "onAction = answerPlay"),
+        )
+        assertEquals(
+            "and the label is StreamingPackCopy's, like every other word on this card",
+            1, liveLineCount(card, "StreamingPackCopy.CARD_ANSWER_PLAY"),
         )
     }
 

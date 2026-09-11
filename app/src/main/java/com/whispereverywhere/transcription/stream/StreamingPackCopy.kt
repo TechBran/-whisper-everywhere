@@ -207,6 +207,22 @@ object StreamingPackCopy {
     const val CARD_DISMISS = "Dismiss"
 
     /**
+     * The working card's one action, and the only gesture that card can ever need: Google Play is
+     * holding its own dialog (a cellular or size confirmation, or a wait for wifi — both
+     * `STATUS_REQUIRES_USER_CONFIRMATION` and `STATUS_WAITING_FOR_WIFI` arrive as
+     * [NpuPackFetch.FetchState.NeedsConfirmation]), and [fetchLine] says so, ending in *"tap to
+     * answer"*.
+     *
+     * Without this button that sentence named a gesture the card did not have (review r1, B3):
+     * the dialog is raised once per ENTRY into that state, so a user who backed out of it was
+     * parked on an instruction with only the X left — and the X is the permanent no. The Settings
+     * row solved the same thing with [fetchLineTappable] plus a tap that re-shows PLAY'S OWN
+     * dialog; this is that tap, with a label, because a card's action is a button. It names Play
+     * because the dialog is Play's and the decision in it is Play's.
+     */
+    const val CARD_ANSWER_PLAY = "Answer Google Play"
+
+    /**
      * The offer card's body: the SAME per-source table the Settings row reads, by delegation
      * rather than by a second set of sentences held to the same rule by a second test. A card
      * with its own wording is how "included with the app" ends up over an undelivered on-demand

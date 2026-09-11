@@ -898,10 +898,17 @@ private fun LiveWordsCard(
     // Play's own consent dialog, once per ENTRY into NeedsConfirmation — the missing-voice row's
     // rule above, needed here for the same reason: this card can start a 73 MB Play fetch, and
     // Play raises its own dialog for a transfer that size. Never a re-ask of ours.
+    val playAwaitsAnAnswer = previewFetch is NpuPackFetch.FetchState.NeedsConfirmation
+    // ...and the SAME gesture, offered on the card. Raising it once per entry is right (a dialog
+    // re-raised on every recomposition is unusable), but it left a user who back-pressed out of
+    // Play's dialog on a note reading "tap to answer" with nothing to tap but the permanent-no X
+    // — the metered path's own state. The Settings row's fetchLineTappable + previewRowTap
+    // lesson, inherited rather than re-learned (review r1, B3).
+    val answerPlay: () -> Unit = {
+        (context as? android.app.Activity)?.let { StreamingPackController.confirm(it) }
+    }
     LaunchedEffect(previewFetch) {
-        if (previewFetch is NpuPackFetch.FetchState.NeedsConfirmation) {
-            (context as? android.app.Activity)?.let { StreamingPackController.confirm(it) }
-        }
+        if (playAwaitsAnAnswer) answerPlay()
     }
     val dismiss: () -> Unit = {
         app.preferencesManager.livePreviewDeclined = true
@@ -928,8 +935,11 @@ private fun LiveWordsCard(
             note = ourLine
                 ?: StreamingPackCopy.fetchLine(previewFetch)
                 ?: StreamingPackCopy.PROGRESS_STARTING,
-            action = null,
-            onAction = {},
+            // The one in-flight state whose note asks for a gesture gets the gesture; every
+            // other one is work with nothing to ask, and a button on those would re-enter the
+            // fetch mid-transfer (the row's own B1 lesson).
+            action = if (playAwaitsAnAnswer) StreamingPackCopy.CARD_ANSWER_PLAY else null,
+            onAction = answerPlay,
             onDismiss = dismiss,
         )
         PreviewAutoFetch.Card.OFFER -> LiveWordsNote(

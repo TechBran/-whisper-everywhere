@@ -73,6 +73,7 @@ class StreamingPackCopyTest {
             StreamingPackCopy.CARD_INSTALLED_TITLE,
             StreamingPackCopy.CARD_INSTALLED,
             StreamingPackCopy.CARD_DISMISS,
+            StreamingPackCopy.CARD_ANSWER_PLAY,
         ) + everyState.map { StreamingPackCopy.settingsTitle(it) } +
             everyState.map { StreamingPackCopy.settingsSubtitle(it) } +
             everyState.map { StreamingPackCopy.cardOffer(it) } +
@@ -313,6 +314,38 @@ class StreamingPackCopyTest {
             StreamingPackCopy.CARD_INSTALLED,
         )
         assertEquals("Dismiss", StreamingPackCopy.CARD_DISMISS)
+        assertEquals("Answer Google Play", StreamingPackCopy.CARD_ANSWER_PLAY)
+    }
+
+    @Test fun theOneInFlightStateThatAsksForAGestureHasOneToOffer() {
+        // Review r1, B3: fetchLine(NeedsConfirmation) ends in "tap to answer", and the working
+        // card had no action at all — so the sentence named a gesture that did not exist, on the
+        // metered tap-to-fetch path, with the permanent-no X as the only thing left to press.
+        // The pure half of the fix: that state is the one in-flight state the row calls tappable,
+        // and it is the one the card labels.
+        assertTrue(
+            "the state that asks is the state that is tappable",
+            StreamingPackCopy.fetchLineTappable(NpuPackFetch.FetchState.NeedsConfirmation),
+        )
+        assertTrue(
+            "and its line is the one that asks for the tap",
+            StreamingPackCopy.fetchLine(NpuPackFetch.FetchState.NeedsConfirmation)
+                ?.contains("tap to answer") == true,
+        )
+        assertTrue(
+            "the label names Play, because the dialog and the decision in it are Play's",
+            StreamingPackCopy.CARD_ANSWER_PLAY.contains("Google Play"),
+        )
+        // Every other in-flight state is work with nothing to ask, and carries no action: a
+        // button on those would re-enter the fetch mid-transfer (the row's own B1 lesson).
+        for (state in listOf(
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.FetchState.Downloading(1_000_000L, 72_654_782L),
+            NpuPackFetch.FetchState.Transferring,
+            NpuPackFetch.FetchState.Verifying(0L, 72_654_782L),
+        )) {
+            assertFalse("$state asks for nothing", StreamingPackCopy.fetchLineTappable(state))
+        }
     }
 
     @Test fun theCardsOfferIsTheSAMEPerSourceTableTheRowUses() {
