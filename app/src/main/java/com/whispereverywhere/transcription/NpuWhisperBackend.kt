@@ -259,10 +259,21 @@ class NpuWhisperBackend(
      * context is next because it is ~64 KB and its failure is a clean "tier unavailable" **before**
      * 358 MB of NPU assets have been touched; the vocabulary follows for the same reason (563 KB,
      * and a decoder that failed to construct does not exist, so there is nothing to run degraded);
-     * `nativeInit` — the expensive, ~342 MiB, ~525 ms one — is last. Every failure before it costs
-     * nothing.
+     * `nativeInit` — the expensive one — is last. Every failure before it costs nothing.
      *
-     * Must not run on Main: `nativeInit` reads 342 MB from disk and deserialises it.
+     * **How expensive, measured on the shipped tier** (4.4.0 startup amendment S2; the old
+     * "~342 MiB, ~525 ms" here and at stage (6) was a 127 MB encoder-only SPIKE figure and
+     * understated it about eightfold): `nativeInit` alone is **~2,480 ms** and this whole function
+     * end to end, `dlopen` through "session armed", is **4,107 ms** cold on npu-turbo —
+     * `C:/Users/bastr/.androidbuild/capture-yt-84-flatline-0903-1936.txt`, 19:29:48.854 ->
+     * 52.961, broken down at stage (6) and in
+     * `docs/superpowers/research/2026-09-10-startup-cutoff-investigation.md` §3a. Resident:
+     * ~342 MiB for the `npu` pair, ~1.02 GiB for `npu-turbo`'s.
+     *
+     * Must not run on Main: `nativeInit` reads 342 MB (npu) to 1.02 GB (npu-turbo) from disk and
+     * deserialises it. And not, any more, inside the capture seam's critical path either — 4.1 s
+     * is why 4.4.0 buffers the audio spoken during it rather than losing it
+     * (`audio/StartupRing.kt`).
      *
      * @param modelPath the encoder context binary.
      * @param companionPath the decoder context binary. Null is a refusal, not an omission.
@@ -415,7 +426,32 @@ class NpuWhisperBackend(
                     "into filesDir — the FastRPC loader would find no DSP-side skel to open"
             )
 
-            // (6) 342 MiB and ~525 ms. runCatching, not try/catch on a named type: libqnnasr.so is
+            // (6) THE EXPENSIVE STAGE, and its cost is now MEASURED ON THE SHIPPED TIER rather
+            // than estimated from the spike (4.4.0 startup amendment S2). It used to read
+            // "342 MiB and ~525 ms"; the ~525 ms was the 127 MB ENCODER-ONLY spike harness
+            // (docs/superpowers/research/2026-08-28-npu-spike-g1-results.md:19), not the shipped
+            // pair, and it understated this stage by roughly FIVE and the whole load by roughly
+            // EIGHT. The real numbers, from an unmodified shipped app on the Fold6
+            // (C:/Users/bastr/.androidbuild/capture-yt-84-flatline-0903-1936.txt,
+            // 19:29:48.854 -> 52.961, whisper_large_v3_turbo_quantized_* on HTP_QTI_AISW):
+            //
+            //   nativeInit ALONE (this stage):            ~2,480 ms
+            //     backendCreate 1 ms, deviceCreate 172 ms, encoder blob read 674 ms (775,831,552 B
+            //     @ ~1,151 MB/s), encoder contextCreateFromBinary 1,234 ms, decoder blob read
+            //     234 ms (295,854,080 B), decoder contextCreateFromBinary 71 ms, bind/quant/
+            //     alias-guard/epoch ~93 ms
+            //   load() END TO END, dlopen -> "session armed":  4,107 ms
+            //     the balance is stage (2)'s mel-only context + the 563 KB vocabulary + asset
+            //     staging, which the same capture times at 1,592 ms
+            //
+            // Resident cost: ~342 MiB is the `npu` pair; `npu-turbo`'s two context binaries are
+            // 740 MB + 282 MB = ~1.02 GiB, which is why onTrimMemory frees this at all.
+            //
+            // THE NUMBER IS LOAD-BEARING, not decoration: it is the stated reason this stage is
+            // ordered LAST, and at 4.1 s it is also the entire reason 4.4.0 needed a startup ring
+            // — the capture seam could not keep waiting on it (audio/StartupRing.kt).
+            //
+            // runCatching, not try/catch on a named type: libqnnasr.so is
             // absent by design on builds where the proprietary QNN headers could not be fetched, and
             // the FIRST touch throws UnsatisfiedLinkError while every touch after it throws
             // ExceptionInInitializerError / NoClassDefFoundError, because the <clinit> has already

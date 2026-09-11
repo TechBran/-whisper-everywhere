@@ -64,8 +64,17 @@ object QnnAsrNative {
      * and shape along with the binary-info, graph-info and tensor struct versions it read them
      * through.
      *
-     * Costs ~342 MiB of resident memory and (spike-measured, encoder) ~525 ms of cold load; the
-     * decoder's cost is first measured on device at Q10a. Never call this from Main.
+     * **Cost, MEASURED on the shipped pair** (4.4.0 startup amendment S2 — this line used to carry
+     * the spike harness's encoder-only "~525 ms", which understated it about fivefold, and the
+     * decoder's cost was a written-down open question): **~2,480 ms** cold on npu-turbo, of which
+     * `deviceCreate` 172 ms, the encoder blob read 674 ms, its `contextCreateFromBinary` 1,234 ms,
+     * the decoder blob read 234 ms, its `contextCreateFromBinary` 71 ms, and ~93 ms of bind /
+     * quant / alias-guard / epoch. Source: `C:/Users/bastr/.androidbuild/
+     * capture-yt-84-flatline-0903-1936.txt`, 19:29:48.854 -> 52.961, unmodified shipped app on the
+     * Fold6; broken out in `docs/superpowers/research/
+     * 2026-09-10-startup-cutoff-investigation.md` §3a and at `NpuWhisperBackend.load` stage (6).
+     * Resident: ~342 MiB for the `npu` pair (127 MB + 215 MB above), ~1.02 GiB for `npu-turbo`'s
+     * (740 MB + 282 MB). Never call this from Main.
      *
      * It also does everything else the session needs, exactly once:
      *  - runs the **cross-KV alias guard** (C7) before anything binds — the 24 `k/v_cache_cross_N`
