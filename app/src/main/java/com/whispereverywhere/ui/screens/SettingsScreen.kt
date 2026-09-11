@@ -648,7 +648,19 @@ fun SettingsScreen(
             // mechanism and nothing else, and a switch for the bubble's text under a heading
             // about speaking text aloud is a heading that misleads.
             SettingsSection(title = "Live words") {
-                LivePreviewRows(app = app, context = context)
+                // (4.5.0 Task 4) THE DEVICE AXIS, read from the value THIS SCREEN already has
+                // rather than taken again inside: `installedModel` is the same
+                // `modelRefreshKey`-keyed read the model rows and the *"Delete <tier>"* dialog
+                // above are drawn from, so the previewer's section cannot disagree with the
+                // section that took the tier away — and it answers in the same frame the delete
+                // does. Without an on-device tier every session is a cloud session,
+                // `localPreviewArms` refuses on `!isCloudSession`, and no pack, pick or switch
+                // can put a word on the bubble.
+                LivePreviewRows(
+                    app = app,
+                    context = context,
+                    localTierInstalled = installedModel != null,
+                )
             }
 
             // Cloud providers (Release C1): bring-your-own-key credential management. No audio
@@ -1093,7 +1105,11 @@ fun SettingsSection(
  * as installed and armable here. `LivePreviewRowsPinTest` pins the rest as source.
  */
 @Composable
-private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
+private fun LivePreviewRows(
+    app: WhisperEverywhereApp,
+    context: Context,
+    localTierInstalled: Boolean,
+) {
     // NO `rememberCoroutineScope()` here as of 4.5.0 (Task 1): this row owned an install that ran
     // on a scope cancelled by leaving the screen, and a 73 MB transfer must outlive the Compose
     // tree that started it. `PreviewAutoFetchController`'s process scope is the one that does.
@@ -1359,10 +1375,20 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // it and `PreviewAutoFetch.card` returns Card.NONE on it because "every sentence this card
     // can spell is false while the switch is off". `previewEnabled` is the same value the switch
     // above is drawn from, so the two rows cannot disagree.
+    //
+    // (4.5.0 Task 4) ...AND THE DEVICE IS THE THIRD ARMING FACT, the one whose remedy is NOT on
+    // this row. With no on-device speech model every session is a cloud session,
+    // `localPreviewArms` refuses on `!isCloudSession`, and the case was LIVE — *"Frees 73 MB.
+    // Live words stop"* — on a device where no word has ever appeared. Reachable in one gesture
+    // from THIS screen: the *"Delete <tier>"* dialog three sections up clears `selectedModelId`
+    // and says so in its own words. The value is the same `installedModel` that dialog is drawn
+    // from and it is keyed on the same `modelRefreshKey`, so this section answers the moment the
+    // tier goes rather than on the next resume.
     PreviewDeleteCase.of(
         state = previewState,
         selectedForThisPack = selectedPack == previewPack,
         showLiveWords = previewEnabled,
+        localTierInstalled = localTierInstalled,
         work = previewWork,
     )?.let { deleteCase ->
         SettingsItem(

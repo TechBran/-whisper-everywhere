@@ -384,6 +384,7 @@ class PreviewWorkTest {
                 StreamingPackState.Repair(StreamingPackState.PackFetchable),
                 selectedForThisPack = true,
                 showLiveWords = true,
+                localTierInstalled = true,
                 work = work(PreviewRoute.PLAY_FETCH, PreviewPhase.ABANDONED),
             ),
         )
@@ -540,19 +541,24 @@ class PreviewWorkTest {
         )) {
             for (selected in listOf(true, false)) {
                 for (switch in listOf(true, false)) {
-                    assertNull(
-                        "$state has nothing under filesDir to free, so the row promises nothing",
-                        PreviewDeleteCase.of(state, selected, switch, null),
-                    )
-                    assertNull(
-                        "and a FIRST install in flight is still nothing to free",
-                        PreviewDeleteCase.of(
-                            state,
-                            selected,
-                            switch,
-                            work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING),
-                        ),
-                    )
+                    // (4.5.0 Task 4) ...and with or without an on-device tier: no bytes on disk
+                    // is no row, whatever this device could do with them.
+                    for (tier in listOf(true, false)) {
+                        assertNull(
+                            "$state has nothing under filesDir to free, so the row promises nothing",
+                            PreviewDeleteCase.of(state, selected, switch, tier, null),
+                        )
+                        assertNull(
+                            "and a FIRST install in flight is still nothing to free",
+                            PreviewDeleteCase.of(
+                                state,
+                                selected,
+                                switch,
+                                tier,
+                                work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING),
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -573,11 +579,18 @@ class PreviewWorkTest {
         )) {
             for (selected in listOf(true, false)) {
                 for (switch in listOf(true, false)) {
-                    assertEquals(
-                        "$state, selected=$selected, switch=$switch",
-                        PreviewDeleteCase.WORKING,
-                        PreviewDeleteCase.of(state, selected, switch, writing),
-                    )
+                    // (4.5.0 Task 4) THE WRITE OUTRANKS THE DEVICE AXIS TOO. Reachable: a fetch
+                    // authorised while a tier was installed, and the tier deleted from this same
+                    // screen while the 73 MB is still moving. *"Nothing to free yet"* is the true
+                    // sentence there and the one with no tap, which is what makes it the top of
+                    // the order rather than the most specific.
+                    for (tier in listOf(true, false)) {
+                        assertEquals(
+                            "$state, selected=$selected, switch=$switch, tier=$tier",
+                            PreviewDeleteCase.WORKING,
+                            PreviewDeleteCase.of(state, selected, switch, tier, writing),
+                        )
+                    }
                 }
             }
         }
@@ -586,6 +599,7 @@ class PreviewWorkTest {
             PreviewDeleteCase.LIVE,
             PreviewDeleteCase.of(
                 StreamingPackState.Installed,
+                true,
                 true,
                 true,
                 work(PreviewRoute.DELIVERED_PACK, PreviewPhase.INSTALLED),
@@ -600,45 +614,57 @@ class PreviewWorkTest {
                 StreamingPackState.Installed,
                 true,
                 true,
+                true,
                 work(PreviewRoute.PLAY_FETCH, PreviewPhase.ABANDONED),
             ),
         )
     }
 
     /**
-     * THE FIVE CASES, over {installed} x {selected} x {switch} — the grid review r1's B2 showed
-     * no test could reach, because the switch was not an input to anything under test.
+     * THE SIX CASES, over {installed} x {selected} x {switch} x {tier} — the grid review r1's B2
+     * showed no test could reach (the switch was not an input to anything under test), plus the
+     * DEVICE axis Task 1 left open by name.
      *
-     * The cell that shipped untrue: *"Show live words"* OFF, English selected, the pack
-     * installed. `of` answered LIVE and the delete row — immediately under the OFF switch — read
-     * *"Frees 73 MB. Live words stop; the typed transcript is unchanged."* Nothing stopped.
+     * The two cells that shipped untrue:
+     *  - *"Show live words"* OFF, English selected, the pack installed. `of` answered LIVE and
+     *    the delete row — immediately under the OFF switch — read *"Frees 73 MB. Live words
+     *    stop"*. Nothing stopped. (Fixed in Task 1's fix round 1.)
+     *  - **no on-device speech model**, English selected, the switch on, the pack installed.
+     *    `of` answered LIVE and the row read the same sentence, on a device where
+     *    `localPreviewArms` refuses on `!isCloudSession` and no word has ever appeared. (Task 4.)
      */
-    @Test fun theFiveCasesAreTheFiveFactsTheRowCanBeLookingAt() {
+    @Test fun theSixCasesAreTheSixFactsTheRowCanBeLookingAt() {
         assertEquals(
-            "installed, the picked language's pack, AND the switch on: live words are showing " +
-                "today, so deleting really does stop them",
+            "installed, the picked language's pack, the switch on, AND a tier this session " +
+                "could run on: live words are showing today, so deleting really does stop them",
             PreviewDeleteCase.LIVE,
-            PreviewDeleteCase.of(StreamingPackState.Installed, true, true, null),
+            PreviewDeleteCase.of(StreamingPackState.Installed, true, true, true, null),
         )
         assertEquals(
             "THE CELL THAT SHIPPED UNTRUE (review r1's B2): the switch this same section draws " +
                 "one row above is OFF, so nothing stops — no device, tier or connection " +
                 "requirement, and one tap away on the default surface",
             PreviewDeleteCase.OFF_SWITCH,
-            PreviewDeleteCase.of(StreamingPackState.Installed, true, false, null),
+            PreviewDeleteCase.of(StreamingPackState.Installed, true, false, true, null),
         )
         assertEquals(
             "installed for a language the user is NOT transcribing (they picked another, or " +
                 "Auto): the bytes buy nothing today, so 'Live words stop' is false",
             PreviewDeleteCase.OFF_SELECTION,
-            PreviewDeleteCase.of(StreamingPackState.Installed, false, true, null),
+            PreviewDeleteCase.of(StreamingPackState.Installed, false, true, true, null),
         )
         assertEquals(
             "and with BOTH off the switch is named, not the selection: both sentences are true " +
                 "there, and the switch is the one the user can see and the one tap that would " +
                 "change the answer — the same precedence PreviewAutoFetch.card takes",
             PreviewDeleteCase.OFF_SWITCH,
-            PreviewDeleteCase.of(StreamingPackState.Installed, false, false, null),
+            PreviewDeleteCase.of(StreamingPackState.Installed, false, false, true, null),
+        )
+        assertEquals(
+            "THE SECOND CELL THAT SHIPPED UNTRUE (4.5.0 Task 4): everything this screen can see " +
+                "is armable and no word can ever appear, because every session is a cloud session",
+            PreviewDeleteCase.OFF_TIER,
+            PreviewDeleteCase.of(StreamingPackState.Installed, true, true, false, null),
         )
         for (via in listOf(
             StreamingPackState.PackDelivered,
@@ -652,28 +678,97 @@ class PreviewWorkTest {
                             "to 73 MB with live words already off — whatever the selection and " +
                             "the switch are, and the repair is the more actionable fact",
                         PreviewDeleteCase.DAMAGED,
-                        PreviewDeleteCase.of(StreamingPackState.Repair(via), selected, switch, null),
+                        PreviewDeleteCase.of(
+                            StreamingPackState.Repair(via), selected, switch, true, null,
+                        ),
                     )
                 }
             }
         }
         assertEquals(
-            "and the five cases are five, so a sixth fact cannot arrive without a sentence",
-            5,
+            "and the six cases are six, so a seventh fact cannot arrive without a sentence",
+            6,
             PreviewDeleteCase.entries.size,
         )
         // No cell of the grid is unanswered, and only the one that is actually armable is LIVE.
         for (selected in listOf(true, false)) {
             for (switch in listOf(true, false)) {
-                assertEquals(
-                    "installed, selected=$selected, switch=$switch: LIVE is the ONE cell where " +
-                        "'Live words stop' is a true consequence",
-                    selected && switch,
-                    PreviewDeleteCase.of(StreamingPackState.Installed, selected, switch, null) ==
-                        PreviewDeleteCase.LIVE,
-                )
+                for (tier in listOf(true, false)) {
+                    assertEquals(
+                        "installed, selected=$selected, switch=$switch, tier=$tier: LIVE is the " +
+                            "ONE cell where 'Live words stop' is a true consequence",
+                        selected && switch && tier,
+                        PreviewDeleteCase.of(
+                            StreamingPackState.Installed, selected, switch, tier, null,
+                        ) == PreviewDeleteCase.LIVE,
+                    )
+                }
             }
         }
+    }
+
+    /**
+     * THE PRECEDENCE THE DEVICE AXIS TAKES, and why it is not merely "most specific wins".
+     *
+     * `OFF_SWITCH`, `OFF_SELECTION` and `DAMAGED` are all still TRUE with no tier — words are
+     * off, and deleting stops nothing — so this order decides only which REASON is named. Each of
+     * those three names a fact whose remedy is a control on THIS screen (the switch one row up,
+     * the picker on Home, the repair row above), and on this device none of those three gestures
+     * would change the answer. `DAMAGED` loses its rank by its own stated reason: it outranks the
+     * switch because *"the repair is the more actionable fact"*, and `LivePreviewRows` withdraws
+     * the whole offer/repair branch on a device that can never arm, so there is nothing more
+     * actionable about it.
+     *
+     * **A fact no gesture can change outranks a fact a gesture would** — `PreviewUnreachable`'s
+     * rule, which is the same rule fix round 1 ran the OTHER way when it put the switch above the
+     * selection.
+     */
+    @Test fun theDeviceThatCanNeverArmOutranksEveryReasonAScreenControlWouldChange() {
+        for (state in listOf(
+            StreamingPackState.Installed,
+            StreamingPackState.Repair(StreamingPackState.PackDelivered),
+            StreamingPackState.Repair(StreamingPackState.PackFetchable),
+            StreamingPackState.Repair(StreamingPackState.Downloadable),
+        )) {
+            for (selected in listOf(true, false)) {
+                for (switch in listOf(true, false)) {
+                    assertEquals(
+                        "$state, selected=$selected, switch=$switch, no tier",
+                        PreviewDeleteCase.OFF_TIER,
+                        PreviewDeleteCase.of(state, selected, switch, false, null),
+                    )
+                }
+            }
+        }
+        // ...and it is not the top of the order: a write that can still land outranks it, because
+        // *"Frees 73 MB"* is the claim that would be false there and the row has no tap.
+        assertEquals(
+            PreviewDeleteCase.WORKING,
+            PreviewDeleteCase.of(
+                StreamingPackState.Installed,
+                true,
+                true,
+                false,
+                work(PreviewRoute.DELIVERED_PACK, PreviewPhase.INSTALLING),
+            ),
+        )
+        // The tier is the ONLY input that changes this row's case on every one of the four
+        // {selected} x {switch} cells at once — which is what makes it an axis rather than a
+        // fifth reason on the same list.
+        assertEquals(
+            setOf(PreviewDeleteCase.OFF_TIER),
+            buildSet {
+                for (selected in listOf(true, false)) {
+                    for (switch in listOf(true, false)) {
+                        add(
+                            PreviewDeleteCase.of(
+                                StreamingPackState.Installed, selected, switch, false, null,
+                            ),
+                        )
+                    }
+                }
+            },
+        )
     }
 
     // ------------------------------------------------- the CAUSE, and its two answers (Task 3b)

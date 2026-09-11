@@ -420,18 +420,30 @@ data class PreviewWork(
 }
 
 /**
- * WHAT THE DELETE ROW IS ACTUALLY LOOKING AT. FIVE facts, and `StreamingPackCopy.deleteSubtitle`
+ * WHAT THE DELETE ROW IS ACTUALLY LOOKING AT. SIX facts, and `StreamingPackCopy.deleteSubtitle`
  * has a true sentence for each — because 4.4.1 rendered ONE sentence (*"Frees 73 MB. Live words
  * stop; the typed transcript is unchanged."*) across all of them, and it is the largest untrue
  * sentence the feature renders.
  *
  * The fifth arrived in fix round 1 (review r1's B2): [LIVE] asserted *"Live words stop"* without
  * asking the switch immediately above it, so the screen contradicted itself in two adjacent rows.
+ * The sixth is 4.5.0 Task 4's: [LIVE] also asserted it on a device where no session can ever run
+ * the previewer, which is the one cell Task 1 explicitly left open (*"`PreviewDeleteCase.of`
+ * deliberately takes no tier or cloud-only term… that is Task 4's enumeration and its ruling"*).
  */
 enum class PreviewDeleteCase {
-    /** Installed, it is the PICKED language's pack, AND *"Show live words"* is on: live words
-     *  really are showing, so deleting really does stop them. */
+    /** Installed, it is the PICKED language's pack, *"Show live words"* is on, AND this device
+     *  can run an on-device session at all: live words really are showing, so deleting really
+     *  does stop them. */
     LIVE,
+
+    /**
+     * No on-device speech model, so `localPreviewArms` refuses on `!isCloudSession` and nothing
+     * this row's reader can do to the switch or the selection would put a word on the bubble
+     * (4.5.0 Task 4). Deleting frees the bytes and stops nothing, and this is the reason to say —
+     * because it is the one the user cannot reach from this screen's own controls.
+     */
+    OFF_TIER,
 
     /** Installed and armable, but *"Show live words"* is switched OFF — the switch this same
      *  section draws one row above. Deleting frees the bytes; *"live words stop"* would be false,
@@ -469,8 +481,16 @@ enum class PreviewDeleteCase {
          *     dir under a verify + copy that is not cancellation-cooperative, so the copy lands
          *     anyway and the pack ends up installed AND declined. The work answer is read from the
          *     board, which sees all three starters; 4.4.1's guard read one composable's own `var`.
-         *  3. **Damaged before selected.** A damaged install's live words are off for everyone,
-         *     switch or no switch, and the repair is the more actionable fact.
+         *  3. **THE DEVICE BEFORE EVERY REASON A GESTURE WOULD CHANGE** (4.5.0 Task 4). With no
+         *     on-device speech model, `OFF_SWITCH` and `OFF_SELECTION` are both still TRUE —
+         *     words are off, and deleting stops nothing — but each of them names a reason that is
+         *     not the operative one, and each points at a control on this very screen that would
+         *     not change the answer. `DAMAGED` loses its rank here too, and for its own stated
+         *     reason: it outranks the switch because *"the repair is the more actionable fact"*,
+         *     and on this device the repair is not offered at all (`LivePreviewRows` withdraws
+         *     the whole offer/repair branch), so there is nothing more actionable about it. The
+         *     rule this order follows is `PreviewUnreachable`'s: **a fact no gesture can change
+         *     outranks a fact a gesture would.**
          *  4. **THE SWITCH BEFORE THE SELECTION** (fix round 1, review r1's B2). Both say *"live
          *     words are already off"* and both are true when both are false, so the order only
          *     decides which REASON the sentence names — and the switch is the one the user can
@@ -478,8 +498,15 @@ enum class PreviewDeleteCase {
          *  5. Then the selection decides whether deleting stops anything.
          *
          * @param selectedForThisPack the user's picked language is the one this pack serves —
-         *        `StreamingPackCatalog.forLanguage(selected) == pack`. NOT a tier or cloud-only
-         *        term: whether a device can arm at all is Task 4's axis and deliberately absent here.
+         *        `StreamingPackCatalog.forLanguage(selected) == pack`.
+         * @param localTierInstalled an on-device whisper tier exists — the DEVICE axis (4.5.0
+         *        Task 4), and the same input `PreviewAutoFetch.decide`, `PreviewAutoFetch.card`,
+         *        `StreamingPackCopy.selectorLine` and [PreviewUnreachable] read. Task 1 left this
+         *        term out by name and said why: *"`LIVE` means 'installed and it is the picked
+         *        language's pack' and can still be false on a cloud-only device with no local
+         *        tier. That is Task 4's."* It is the third arming fact this row can be wrong
+         *        about, after the switch and the selection, and the only one whose remedy is not
+         *        on this screen.
          * @param showLiveWords the *"Show live words"* switch — `PreferencesManager
          *        .localPreviewEnabled`, drawn by this very section one row above the delete. It is
          *        a first-class ARMING term everywhere else in the feature (`localPreviewArms`
@@ -491,11 +518,13 @@ enum class PreviewDeleteCase {
             state: StreamingPackState,
             selectedForThisPack: Boolean,
             showLiveWords: Boolean,
+            localTierInstalled: Boolean,
             work: PreviewWork?,
         ): PreviewDeleteCase? {
             val bytesOnDisk = state.isInstalled || state is StreamingPackState.Repair
             if (!bytesOnDisk) return null
             if (work?.writeCanStillLand == true) return WORKING
+            if (!localTierInstalled) return OFF_TIER
             if (state is StreamingPackState.Repair) return DAMAGED
             if (!showLiveWords) return OFF_SWITCH
             return if (selectedForThisPack) LIVE else OFF_SELECTION

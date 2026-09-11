@@ -627,9 +627,9 @@ class StreamingPackCopyTest {
         }
     }
 
-    // ------------------------------------------- the delete row's FIVE cases (4.5.0 Task 1)
+    // ------------------------------- the delete row's SIX cases (4.5.0 Task 1, Task 4)
 
-    @Test fun theDeleteRowHasATrueSentenceForEachOfItsFiveCases() {
+    @Test fun theDeleteRowHasATrueSentenceForEachOfItsSixCases() {
         // 4.4.1 rendered ONE sentence across every fact the row can be looking at, and four of
         // them made it false: the model is installed for a language the user is NOT transcribing
         // (so "live words stop" is already untrue), the SWITCH is off (same — review r1's B2),
@@ -661,6 +661,27 @@ class StreamingPackCopyTest {
                 "typed transcript is unchanged.",
             StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.DAMAGED, en, bytes),
         )
+        // (4.5.0 Task 4) The sixth: the reason this screen's own controls cannot reach.
+        assertEquals(
+            "Frees 73 MB. Live words appear only while transcription runs on this device, and " +
+                "this device has no speech model. Deleting the English model stops nothing; " +
+                "the typed transcript is unchanged.",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.OFF_TIER, en, bytes),
+        )
+        assertTrue(
+            "and it is the SAME clause the section's caveat row and Home's working card carry, " +
+                "so one fact has one spelling across three surfaces",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.OFF_TIER, en, bytes).contains(
+                "Live words appear only while transcription runs on this device, and this " +
+                    "device has no speech model.",
+            ),
+        )
+        assertFalse(
+            "it does NOT borrow the other two's 'already off' opening: that implies a state " +
+                "this screen could turn back on, and the remedy is a speech-model download",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.OFF_TIER, en, bytes)
+                .contains("already off"),
+        )
         assertEquals(
             "Nothing to free yet: the English model is being written right now. Deleting " +
                 "becomes available when it finishes; the typed transcript is unchanged either way.",
@@ -674,6 +695,7 @@ class StreamingPackCopyTest {
             PreviewDeleteCase.OFF_SWITCH,
             PreviewDeleteCase.OFF_SELECTION,
             PreviewDeleteCase.DAMAGED,
+            PreviewDeleteCase.OFF_TIER,
         )) {
             val line = StreamingPackCopy.deleteSubtitle(case, en, bytes)
             assertTrue("$case names the size it frees: $line", line.startsWith("Frees 73 MB."))
@@ -700,13 +722,14 @@ class StreamingPackCopyTest {
                 line.contains("typed transcript is unchanged"),
             )
         }
-        // Four of the five are ABOUT a particular language's model, and say so; LIVE is about
+        // Five of the six are ABOUT a particular language's model, and say so; LIVE is about
         // the pack the user is actually transcribing in, where the rows around it already name it.
         for (case in listOf(
             PreviewDeleteCase.OFF_SWITCH,
             PreviewDeleteCase.OFF_SELECTION,
             PreviewDeleteCase.DAMAGED,
             PreviewDeleteCase.WORKING,
+            PreviewDeleteCase.OFF_TIER,
         )) {
             assertTrue(
                 "$case names the language it is about, so the day a second row lands it cannot " +

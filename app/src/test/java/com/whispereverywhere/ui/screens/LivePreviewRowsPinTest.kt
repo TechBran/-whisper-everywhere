@@ -406,6 +406,27 @@ class LivePreviewRowsPinTest {
                 "adjacent rows come to disagree about whether words are showing",
             1, liveLineCount(rows, "checked = previewEnabled,"),
         )
+        // (4.5.0 Task 4) ...AND SO IS THE DEVICE. With no on-device speech model the case was
+        // LIVE and the row read *"Frees 73 MB. Live words stop"* on a phone where no word has
+        // ever appeared — `localPreviewArms` refuses on `!isCloudSession` and every session is a
+        // cloud session. It is the third arming fact this row can be wrong about and the only one
+        // whose remedy is not on this screen.
+        assertEquals(
+            "the DEVICE is a term of the derivation",
+            1, liveLineCount(rows, "localTierInstalled = localTierInstalled,"),
+        )
+        assertEquals(
+            "and the section is TOLD it, never re-reading the tier itself: this is the same " +
+                "`modelRefreshKey`-keyed value the model rows and the 'Delete <tier>' dialog " +
+                "above are drawn from, so the two sections cannot disagree about whether the " +
+                "tier the user just deleted is gone",
+            0,
+            liveLineCount(rows, "whisperModelManager") + liveLineCount(rows, "installedModel("),
+        )
+        assertEquals(
+            "handed down from the ONE read, at the one call site",
+            1, liveLineCount(settings, "localTierInstalled = installedModel != null,"),
+        )
         assertEquals(
             "and the WRITE is the one case with no tap — the row stays, saying what is true, " +
                 "which is this feature's answer for every other in-flight row",

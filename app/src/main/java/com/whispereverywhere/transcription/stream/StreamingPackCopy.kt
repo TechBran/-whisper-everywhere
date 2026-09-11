@@ -82,13 +82,13 @@ object StreamingPackCopy {
     const val DELETE_TITLE = "Delete the preview model"
 
     /**
-     * WHAT DELETING COSTS, for each of the FIVE facts the row can be looking at
-     * ([PreviewDeleteCase]) — and the promise again, on all five.
+     * WHAT DELETING COSTS, for each of the SIX facts the row can be looking at
+     * ([PreviewDeleteCase]) — and the promise again, on all six.
      *
-     * ### Why this is five sentences and not one (4.5.0 Task 1, fix round 1)
+     * ### Why this is six sentences and not one (4.5.0 Task 1, fix round 1; Task 4)
      *
      * 4.4.1's one `DELETE_SUBTITLE` — *"Frees 73 MB. Live words stop; the typed transcript is
-     * unchanged."* — was rendered across all of them, and four made it false:
+     * unchanged."* — was rendered across all of them, and five made it false:
      *
      *  - the model is installed for a language the user is NOT transcribing (they picked another,
      *    or Auto) — live words are already off, so *"Live words stop"* stops nothing. The row is
@@ -104,14 +104,19 @@ object StreamingPackCopy {
      *    this subtitle was the one sentence that did not ask;
      *  - the install is a `StreamingPackState.Repair` — `markCorrupt` removed the marker and left
      *    the bytes, so again live words are already off;
+     *  - **there is no on-device speech model** (4.5.0 Task 4) — every session is a cloud session,
+     *    `localPreviewArms` refuses on `!isCloudSession`, and no pick, switch or repair on this
+     *    screen can change it. Reachable in one gesture from this very screen: the *"Delete
+     *    <tier>"* dialog three sections up clears `selectedModelId` and says *"On-device
+     *    transcription will stop working until you download a model again"*;
      *  - **a write is in flight**, where *"Frees …"* frees nothing at all: `delete` clears
      *    the install dir under a verify + copy that is not cancellation-cooperative, so the copy
      *    finishes, the marker lands, and the user gets *"Installed"* from pressing *"Frees"* —
      *    with the declined flag written (review r3's H3-B1). The row renders this sentence with
      *    NO tap; it is a receipt, the way every other in-flight row in this feature is.
      *
-     * @param language the PACK's language, as the picker spells it. Four of the five sentences
-     *        name it, because four of them are about a model that is not the one in use; the day
+     * @param language the PACK's language, as the picker spells it. Five of the six sentences
+     *        name it, because five of them are about a model that is not the one in use; the day
      *        a second catalogue row lands, a sentence that named none would describe one pack
      *        under another's name.
      * @param sizeBytes the PACK's own byte count, rounded through [StreamingPackCatalog.sizeBadge]
@@ -131,6 +136,14 @@ object StreamingPackCopy {
             PreviewDeleteCase.OFF_SWITCH ->
                 "Frees $badge. Live words are already off: '$SWITCH_TITLE' is switched off. " +
                     "Deleting the $language model stops nothing; the typed transcript is unchanged."
+            // (4.5.0 Task 4) The DEVICE axis, in the shared clause the section's own caveat row
+            // and Home's working card use, so one fact has one spelling. It deliberately does not
+            // borrow the other two's *"Live words are already off:"* opening: this sentence states
+            // the RULE, and "already off" would imply a state that could turn back on from this
+            // screen. It cannot — the remedy is a speech-model download, three sections up.
+            PreviewDeleteCase.OFF_TIER ->
+                "Frees $badge. $NO_TIER Deleting the $language model stops nothing; the typed " +
+                    "transcript is unchanged."
             PreviewDeleteCase.OFF_SELECTION ->
                 "Frees $badge. Live words are already off: they appear only while $language is " +
                     "the language you pick. The typed transcript is unchanged."
