@@ -109,31 +109,6 @@ object StreamingPackController {
     @Volatile
     private var activePack: StreamingPack? = null
 
-    /**
-     * THE ABANDONED LATCH (4.5.0 Task 1, fix round 1 — review r1's B1): the pack name a [cancel]
-     * has given up on, held until PLAY itself has finished with that pack
-     * ([StreamingPackInstall.playStillHoldsTheDelivery] over the states that keep arriving).
-     *
-     * 4.5.0's first cut published a terminal `Cancelled` and cleared nothing, so the cancel was a
-     * REQUEST and not a latch, with three consequences that are all the absence of this one fact:
-     *
-     *  - [onPackState] guarded only on [activePack] and the name, so a post-cancel `COMPLETED`
-     *    still ran [beginInstall] and the 73 MB landed AFTER the X had written the permanent no —
-     *    *installed AND declined*, the failure mode this feature's own comments name twice;
-     *  - the same listener re-published Play's progress onto the board, resurrecting a row the
-     *    user had dismissed;
-     *  - and `Cancelled` is not [StreamingPackInstall.fetchInFlight], so [isBusy] went false the
-     *    instant the X was pressed and the Settings row offered a second 73 MB over a delivery
-     *    Play had not finished (H3-B2, reopened through the cancel path).
-     *
-     * **[activePack] is deliberately NOT cleared by the cancel**: the listener filters on its
-     * name, so clearing it would make this latch unreleasable and leave the feature busy for the
-     * life of the process. The give-back path needs nothing here either — the manager only hands
-     * a pack back after a LANDED install, and an abandoned pack is never installed.
-     */
-    @Volatile
-    private var abandonedPackName: String? = null
-
     /** The last progress percentage a `stream-pack:` line carried; negative = none this phase. */
     @Volatile
     private var lastLoggedPct: Int = -1
@@ -143,12 +118,45 @@ object StreamingPackController {
      *
      * An ABANDONED pack counts as in flight until Play has finished with it, because a second
      * `fetch` over a delivery Play is still making is exactly the defect this shell's cancel used
-     * to re-open. See [abandonedPackName].
+     * to re-open. That term is read from THE ONE OBSERVABLE — see [abandoned].
      */
     fun isBusy(): Boolean =
         StreamingPackInstall.fetchInFlight(_state.value) ||
             job?.isActive == true ||
-            abandonedPackName != null
+            abandonedButUnconfirmed()
+
+    /**
+     * THE ABANDON IS ON THE BOARD, NOT IN THIS OBJECT (4.5.0 Task 1, fix round 2 — review r2's
+     * B1a): whether [pack] has been given up on by a [cancel] and PLAY has not confirmed it yet.
+     * ONE fact, in the one place both surfaces already read, so [isBusy] and the rows cannot
+     * answer it differently.
+     *
+     * Fix round 1 held this in a private `abandonedPackName` field AND published a terminal
+     * `CANCELLED` onto the board — which is Task 1's own defect one level up, a second answer to
+     * *"is work running"* that the actuator read and the surfaces could not. Three consequences,
+     * all shipped in that round:
+     *
+     *  - Settings saw NO work line (`workLine` is null for `CANCELLED`), fell through its
+     *    in-flight arm into the OFFER row, and drew *"Get the English preview model — 73 MB"*
+     *    with a live tap that `PreviewAutoFetchController.start` then refused on `busy()` with
+     *    no transfer, no Toast, no line and no state change;
+     *  - `PreviewAutoFetch.decide`'s `packWorkInFlight` is that same global `busy()`, so a user
+     *    who cancelled one language and then picked another got `Decision.NONE`, `Card.NONE` and
+     *    no row anywhere in the app, silently;
+     *  - and the field's single clear site sat inside a callback this app does not own, with
+     *    nothing pinning that it was reachable (review r2's B2).
+     *
+     * [PreviewPhase.ABANDONED] answers all three: `inFlight` true, so no second transfer may
+     * start and both surfaces keep a row; `cancellable` and `dismissable` false, so no control
+     * is offered over it; a sentence of its own; and [release] as its one release.
+     */
+    private fun abandoned(pack: StreamingPack): Boolean =
+        PreviewWorkboard.of(pack.language)?.phase == PreviewPhase.ABANDONED
+
+    /** [abandoned] for whichever pack this shell last worked on — [isBusy]'s own term. Null
+     *  [activePack] means [release] has already ended this shell's interest in it. */
+    private fun abandonedButUnconfirmed(): Boolean =
+        activePack?.let { abandoned(it) } == true
 
     /**
      * Start (or re-attach to) the fetch of [pack]'s Play pack. Single-flight: a call while one is
@@ -211,43 +219,69 @@ object StreamingPackController {
     }
 
     /**
-     * Abandon the fetch: the pack is LATCHED as abandoned, Play's download is cancelled through
-     * the manager, the install coroutine (if any) is cancelled, and the row reads Cancelled at
-     * once — from the user's point of view the fetch they cancelled is over the moment they say
-     * so. Nothing was installed, and a delivered-but-uninstalled pack stays with Play for a
-     * costless retry.
+     * Abandon the fetch: the pack is noted ABANDONED on the one observable, Play's download is
+     * cancelled through the manager, and the install coroutine (if any) is cancelled. Nothing was
+     * installed, and a delivered-but-uninstalled pack stays with Play for a costless retry.
      *
-     * ### IT IS A LATCH, NOT A REQUEST (fix round 1, review r1's B1)
+     * ### IT IS A LATCH, NOT A REQUEST (fix round 1, review r1's B1) — AND THE LATCH IS A PHASE
      *
      * The user's "no" and "Play has stopped talking" are two different facts, and 4.5.0's first
-     * cut recorded only the first. [abandonedPackName] is the second: set BEFORE Play is asked
-     * (the listener runs on the main thread, and a state that raced the ask must land on the
-     * latched side of it), consulted by [onPackState] before it publishes anything and before
-     * [beginInstall], and released only when
-     * [StreamingPackInstall.playStillHoldsTheDelivery] says Play has finished with the pack. So a
-     * delivery that completes anyway does not install, does not narrate, and does not let a
-     * second 73 MB be offered over it.
+     * cut recorded only the first. [PreviewPhase.ABANDONED] is the second, and it is on the BOARD
+     * rather than in a field of this object (fix round 2, review r2's B1a — see [abandoned]):
+     * written BEFORE Play is asked, because the listener runs on the main thread and a state that
+     * raced the ask must land on the abandoned side of it; consulted by [onPackState] before it
+     * publishes anything and before [beginInstall]; and cleared only by [release]. So a delivery
+     * that completes anyway does not install, does not narrate, and does not let a second 73 MB
+     * be offered over it — and every surface can SEE that, because it is the phase they render
+     * from.
+     *
+     * The shell's own machine goes to `Cancelled` in the same call: from the user's point of view
+     * the fetch they cancelled is over the moment they say so, and [isBusy] then rests on the
+     * board's phase alone rather than on two independently-expiring facts.
      *
      * WHETHER it may be called at all is [PreviewWork.cancellable]'s answer, decided by
-     * [PreviewAutoFetchController.cancel] — this object holds no route table of its own, and it
-     * is only ever reached for [PreviewRoute.PLAY_FETCH] at a phase where Play still has a
-     * download to cancel ([PreviewPhase.TRANSFERRING] is not one of them). Every such phase is
-     * one Play is actively working on, which is what makes the release reachable: the next
-     * `AssetPackState` for the pack — its own CANCELED, or the COMPLETED that beat the cancel —
-     * is the one that clears the latch.
+     * [PreviewAutoFetchController.cancel] — this object holds no route table of its own.
      */
     fun cancel() {
         val pack = activePack
         val packName = pack?.packName
         if (pack == null || packName == null) {
-            // Nothing was ever asked for on this shell, so there is nothing to latch.
+            // Nothing was ever asked for on this shell, so there is nothing to abandon.
             _state.value = NpuPackFetch.FetchState.Cancelled
             return
         }
-        abandonedPackName = packName
+        publish(
+            packName,
+            pack.language,
+            NpuPackFetch.FetchState.Cancelled,
+            // THE ONE PLACE THE BOARD IS TOLD SOMETHING PLAY DID NOT SAY, and the only step that
+            // is not `PreviewStep.of`'s: no status Play reports means "the user changed their
+            // mind". It is written before the ask below, so a state that races it is abandoned.
+            step = PreviewStep(PreviewPhase.ABANDONED),
+        )
         runCatching { manager?.cancel(listOf(packName)) }
         job?.cancel()
-        publish(packName, pack.language, NpuPackFetch.FetchState.Cancelled)
+    }
+
+    /**
+     * THE RELEASE, AND THE ONLY ONE: this shell is finished with an abandoned [pack], so the
+     * board goes terminal and [isBusy] goes false.
+     *
+     * [activePack] is cleared here rather than by [cancel] — the listener filters on its name, so
+     * clearing it at the cancel would leave a delivery Play is still making unobserved and
+     * unreleasable. Clearing it HERE is the point: after the release a late `AssetPackState` for
+     * that pack narrates nothing and installs nothing, which is what keeps the permanent no the X
+     * wrote from being contradicted by a 73 MB that lands later.
+     *
+     * Idempotent and guarded on the pack it was asked about, so a release for a pack a later
+     * [start] has replaced cannot free the wrong one.
+     */
+    private fun release(pack: StreamingPack, packName: String) {
+        synchronized(this) {
+            if (activePack !== pack || !abandoned(pack)) return
+            activePack = null
+            publish(packName, pack.language, NpuPackFetch.FetchState.Cancelled)
+        }
     }
 
     /** Show PLAY'S OWN confirmation dialog for [NpuPackFetch.FetchState.NeedsConfirmation] —
@@ -278,11 +312,11 @@ object StreamingPackController {
         // THE ABANDONED PACK IS NOT NARRATED AND NOT INSTALLED (fix round 1, review r1's B1).
         // The X wrote the permanent no; a COMPLETED that beat the cancel must not land 73 MB
         // behind it, and a DOWNLOADING tick must not put the dismissed row back on screen. The
-        // latch is held until PLAY is done with the pack — which is what keeps isBusy() true over
+        // phase is held until PLAY is done with the pack — which is what keeps isBusy() true over
         // a delivery Play is still making, so the Settings row cannot offer a second 73 MB on top
-        // of it — and it is released HERE because this listener is the only thing that learns it.
-        if (packName == abandonedPackName) {
-            if (!StreamingPackInstall.playStillHoldsTheDelivery(next)) abandonedPackName = null
+        // of it — and this is where Play's own answer to the cancel arrives.
+        if (abandoned(pack)) {
+            if (!StreamingPackInstall.playStillHoldsTheDelivery(next)) release(pack, packName)
             return
         }
         // The MAPPING is NpuPackFetch's; the WORDS on this card are the previewer's own. That
@@ -359,11 +393,21 @@ object StreamingPackController {
      * machine. The throttle deliberately does NOT gate it — the log is for a human reading a
      * run-book and can be sampled, while a progress bar that moved once per 10 % would be a worse
      * bar than the one this replaces.
+     *
+     * @param step the board's own reading, defaulted to the pure mapping of [next]. [cancel] is
+     *        the ONE caller that overrides it, with [PreviewPhase.ABANDONED]: the machine is over
+     *        the moment the user says so, and the BOARD is not over until Play has answered. Both
+     *        move in one call, so the two cannot expire independently.
      */
-    private fun publish(packName: String, language: String, next: NpuPackFetch.FetchState) {
+    private fun publish(
+        packName: String,
+        language: String,
+        next: NpuPackFetch.FetchState,
+        step: PreviewStep = PreviewStep.of(next),
+    ) {
         val previousWord = NpuPackFetch.statusWord(_state.value)
         _state.value = next
-        PreviewWorkboard.note(language, PreviewStep.of(next))
+        PreviewWorkboard.note(language, step)
         val word = NpuPackFetch.statusWord(next)
         val soFar: Long
         val total: Long

@@ -1214,6 +1214,15 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
             // the offer can never appear over work that is already running. ONE condition now
             // that there is one observable: 4.4.1 needed two, and Settings collected only one of
             // the two things that could be running.
+            //
+            // (fix round 2, review r2's B1a) AND A CANCEL PLAY HAS NOT ANSWERED IS ONE OF THE
+            // THINGS THAT ARE RUNNING. Fix round 1 published a terminal CANCELLED here and held
+            // the abandonment in a private field of the fetch shell, so this row saw no line,
+            // fell into the `else ->` OFFER below, and drew a live 73 MB tap that
+            // `PreviewAutoFetchController.start` then refused on `busy()` in complete silence.
+            // `PreviewPhase.ABANDONED` is that fact on the board, so this arm withdraws the
+            // offer for exactly as long as the actuator would refuse it — no second read, and no
+            // guard of this row's own.
             previewWorkLine != null -> Unit
             else -> SettingsItem(
                 icon = Icons.Filled.CloudDownload,
@@ -1311,7 +1320,7 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // 4.4.1 withdrew the row on `previewInstallStatus == null` — this composable's own `var`,
     // which knew nothing about the two routes `PreviewAutoFetchController` runs or about a fetch
     // Home had started, so the race it closed was one third of the race. THE CASE IS NOW DERIVED
-    // FROM THE ONE OBSERVABLE, which sees all three starters, and the row renders in all four
+    // FROM THE ONE OBSERVABLE, which sees all three starters, and the row renders in all five
     // cases with a sentence that is true in each — including the write, where the tap is withdrawn
     // rather than the row. An un-tappable row saying what is happening is this feature's own
     // answer everywhere else (the progress row above is exactly that); a row that vanishes for

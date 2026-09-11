@@ -648,6 +648,21 @@ class StreamingPackCopyTest {
             StreamingPackCopy.INSTALL_FAILED,
             StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, PreviewPhase.FAILED)),
         )
+        // (fix round 2, review r2's B1a) THE ABANDON HAS A SENTENCE, and that is the whole point
+        // of it being a phase: with a null here the Settings row saw no work line, fell into its
+        // OFFER arm and drew a live 73 MB tap that the actuator then refused in silence.
+        assertEquals(
+            "Cancelling the preview model…",
+            StreamingPackCopy.workLine(work(PreviewRoute.PLAY_FETCH, PreviewPhase.ABANDONED)),
+        )
+        assertEquals(
+            "and it is route-NEUTRAL, because no bytes are moving in either direction: the " +
+                "provenance verb belongs to the two phases that are carrying them",
+            1,
+            PreviewRoute.entries
+                .map { StreamingPackCopy.workLine(work(it, PreviewPhase.ABANDONED)) }
+                .distinct().size,
+        )
     }
 
     @Test fun theRouteChoosesTheVerbSoTheProvenancePromiseSurvivesTheProgressLine() {
@@ -730,6 +745,9 @@ class StreamingPackCopyTest {
             PreviewPhase.DOWNLOADING,
             PreviewPhase.TRANSFERRING,
             PreviewPhase.INSTALLING,
+            // A cancel already accepted: a tap would re-enter the install the user has just
+            // refused, which is the opposite of what the row is a receipt for (fix round 2).
+            PreviewPhase.ABANDONED,
             PreviewPhase.INSTALLED,
             PreviewPhase.CANCELLED,
         )) {

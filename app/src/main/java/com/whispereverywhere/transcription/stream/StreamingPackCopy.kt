@@ -454,6 +454,11 @@ object StreamingPackCopy {
         PreviewPhase.DOWNLOADING -> bytesMoving(work)
         PreviewPhase.TRANSFERRING -> "Google Play is moving the preview model into place…"
         PreviewPhase.INSTALLING -> PROGRESS_INSTALLING
+        // The user's own no, waiting on the store's answer (4.5.0 Task 1, fix round 2). It is a
+        // sentence rather than a null for the reason the phase exists: with nothing on the line,
+        // Settings fell into its OFFER row and drew a 73 MB tap that the actuator then refused in
+        // silence. No provenance verb — no bytes are moving in either direction.
+        PreviewPhase.ABANDONED -> "Cancelling the preview model…"
         PreviewPhase.INSTALLED, PreviewPhase.CANCELLED -> null
         PreviewPhase.FAILED -> work.reason ?: INSTALL_FAILED
     }
@@ -509,6 +514,9 @@ object StreamingPackCopy {
         PreviewPhase.TRANSFERRING,
         PreviewPhase.INSTALLING,
         -> false
+        // A cancel already accepted: the row is a receipt for the user's own no, and a tap here
+        // would re-enter the install they have just refused.
+        PreviewPhase.ABANDONED -> false
         PreviewPhase.INSTALLED, PreviewPhase.CANCELLED -> false
         null -> false
     }

@@ -431,7 +431,8 @@ class StreamingPackShellPinTest {
     }
 
     /**
-     * THE CANCEL IS A LATCH, NOT A REQUEST (4.5.0 Task 1, fix round 1 — review r1's B1).
+     * THE CANCEL IS A LATCH, NOT A REQUEST — AND THE LATCH IS A PHASE OF THE ONE OBSERVABLE
+     * (4.5.0 Task 1: fix round 1's review r1 B1, then fix round 2's review r2 B1a).
      *
      * 4.5.0's first cut published a terminal `Cancelled` and cleared nothing: `activePack` stayed
      * set, the listener stayed registered, and no *"this pack was abandoned"* fact existed
@@ -440,38 +441,49 @@ class StreamingPackShellPinTest {
      * not [StreamingPackInstall.fetchInFlight], so `isBusy()` went false the instant the X was
      * pressed and the Settings row offered a second 73 MB over a delivery Play had not finished.
      *
+     * Fix round 1 answered that with a PRIVATE FIELD, which re-created Task 1's own defect one
+     * level up: the fact the actuator read (`isBusy()`) and the fact the two surfaces read (the
+     * board) were different things, so Settings saw no work line, fell through its in-flight arm
+     * into the OFFER row, and drew a live 73 MB tap that `PreviewAutoFetchController.start` then
+     * refused on `busy()` in silence. The abandon is therefore [PreviewPhase.ABANDONED] on
+     * [PreviewWorkboard] — ONE fact, in the one place both surfaces already read — and `isBusy()`
+     * reads it from there, so the actuator and the rows agree by construction.
+     *
      * Nothing here is reachable from a JVM test — the listener, `AssetPackManager.cancel` and
-     * `AssetPackState` are all Play — and the DECISION is the pure, executed
-     * [StreamingPackInstall.playStillHoldsTheDelivery]. What is pinnable, and what would rot
-     * silently, is that the latch is SET before Play is asked, CONSULTED before the publish and
-     * before the install, and RELEASED only by that pure predicate.
+     * `AssetPackState` are all Play — and the DECISIONS are pure and executed elsewhere
+     * ([StreamingPackInstall.playStillHoldsTheDelivery], [PreviewWork.cancellable],
+     * [PreviewWork.dismissable]). What is pinnable, and what would rot silently, is that the
+     * abandon is WRITTEN before Play is asked, CONSULTED before the publish and before the
+     * install, and RELEASED in one place.
      */
     @Test
-    fun theCancelLatchesThePackSoADeliveryThatLandsAnywayNeitherNarratesNorInstalls() {
-        val cancel = scopeOf(controller, "fun cancel() {", "fun confirm(")
+    fun theCancelLatchesThePackOnTheOneObservableSoBothSurfacesSeeTheSameNo() {
+        val cancel = scopeOf(controller, "fun cancel() {", "private fun release(")
         assertEquals(
-            "the cancel records the abandoned pack — one write, and it is the latch",
+            "the cancel notes the abandoned pack on the BOARD — and it is the ONE step this " +
+                "shell does not take from the pure mapping, because no status Play reports means " +
+                "'the user changed their mind'",
             1,
-            liveLineCount(cancel, "abandonedPackName = packName"),
+            liveLineCount(cancel, "step = PreviewStep(PreviewPhase.ABANDONED)"),
         )
-        val latched = offsetOfLive(cancel, "abandonedPackName = packName")
+        assertEquals(
+            "and NO private field of this object records it any more: a second answer to 'is " +
+                "work running', which the actuator reads and the surfaces cannot, is the defect " +
+                "Task 1 exists to retire",
+            0,
+            liveLineCount(controller, "abandonedPackName"),
+        )
+        val latched = offsetOfLive(cancel, "step = PreviewStep(PreviewPhase.ABANDONED)")
         val asked = offsetOfLive(cancel, "manager?.cancel(listOf(packName))")
-        val published =
-            offsetOfLive(cancel, "publish(packName, pack.language, NpuPackFetch.FetchState.Cancelled)")
         assertTrue(
-            "the latch ($latched) is set BEFORE Play is asked ($asked): the listener runs on the " +
-                "main thread and a state that raced the ask must land on the latched side of it",
+            "the abandon ($latched) is written BEFORE Play is asked ($asked): the listener runs " +
+                "on the main thread and a state that raced the ask must land on the abandoned " +
+                "side of it",
             latched in 0 until asked,
-        )
-        assertTrue(
-            "and before the row is told it is over ($published) — the same ordering the declined " +
-                "flag has on the card, for the same reason",
-            latched in 0 until published,
         )
         assertEquals(
             "activePack is NOT cleared by the cancel: the listener filters on its name, so " +
-                "clearing it would make the latch unreleasable and leave the feature busy for " +
-                "the life of the process",
+                "clearing it here would leave a delivery Play is still making unobserved",
             0,
             liveLineCount(cancel, "activePack = null"),
         )
@@ -479,19 +491,19 @@ class StreamingPackShellPinTest {
         // by the pure predicate.
         val onPackState = scopeOf(controller, "private fun onPackState(", "private fun latchRefusal(")
         assertEquals(
-            "one abandoned check in the listener",
+            "one abandoned check in the listener, and it asks the BOARD",
             1,
-            liveLineCount(onPackState, "if (packName == abandonedPackName) {"),
+            liveLineCount(onPackState, "if (abandoned(pack)) {"),
         )
         assertEquals(
             "and one release, by the pure predicate rather than a status re-read here",
             1,
             liveLineCount(
                 onPackState,
-                "if (!StreamingPackInstall.playStillHoldsTheDelivery(next)) abandonedPackName = null",
+                "if (!StreamingPackInstall.playStillHoldsTheDelivery(next)) release(pack, packName)",
             ),
         )
-        val checked = offsetOfLive(onPackState, "if (packName == abandonedPackName) {")
+        val checked = offsetOfLive(onPackState, "if (abandoned(pack)) {")
         val shown = offsetOfLive(onPackState, "publish(packName, pack.language, shown)")
         val began =
             offsetOfLive(onPackState, "if (next is NpuPackFetch.FetchState.Verifying) beginInstall(")
@@ -513,14 +525,23 @@ class StreamingPackShellPinTest {
                 "sideload that the user dismissed once repeats a Play fetch Play has refused",
             refused in 0 until checked,
         )
-        // And the latch is a term of the single-flight predicate, or the Settings row falls
+        // And the abandon is a term of the single-flight predicate, or the Settings row falls
         // through `previewWorkLine != null -> Unit` into its OFFER row and starts a second fetch
         // over a delivery Play has not finished (H3-B2, reopened through the cancel path).
-        val isBusy = scopeOf(controller, "fun isBusy(): Boolean", "fun start(")
+        val isBusy = scopeOf(controller, "fun isBusy(): Boolean", "private fun abandoned(")
         assertEquals(
             "the abandoned pack counts as busy until Play is done with it",
             1,
-            liveLineCount(isBusy, "abandonedPackName != null"),
+            liveLineCount(isBusy, "abandonedButUnconfirmed()"),
+        )
+        assertEquals(
+            "and that term IS the board's own phase — one read, so busy() and the row cannot " +
+                "disagree about whether this feature is doing something",
+            1,
+            liveLineCount(
+                controller,
+                "PreviewWorkboard.of(pack.language)?.phase == PreviewPhase.ABANDONED",
+            ),
         )
     }
 

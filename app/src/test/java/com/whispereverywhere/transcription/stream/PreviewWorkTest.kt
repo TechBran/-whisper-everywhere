@@ -189,6 +189,12 @@ class PreviewWorkTest {
                     "round 1, review r1's B1a)",
                 work(route, PreviewPhase.TRANSFERRING).cancellable,
             )
+            assertFalse(
+                "$route at ABANDONED: the cancel has already been accepted and the store has " +
+                    "not answered it — there is nothing left for a second press to ask for " +
+                    "(fix round 2, review r2's B1a)",
+                work(route, PreviewPhase.ABANDONED).cancellable,
+            )
             for (phase in listOf(
                 PreviewPhase.INSTALLED,
                 PreviewPhase.FAILED,
@@ -202,14 +208,17 @@ class PreviewWorkTest {
         }
     }
 
-    @Test fun everyPhaseWhoseBytesAreStillMovingIsCancellableOnTheTwoRoutesThatCanStop() {
+    @Test fun everyArrivalNotYetDeliveredIsCancellableOnTheTwoRoutesThatCanStop() {
         // TRANSFERRING is NOT one of them — see theCopyPhaseIsCancellableOnNoRouteAndNothingTerminalIsEither.
-        val stillMoving = listOf(
+        // ASKING and AWAITING_ANSWER ARE, and they are why the rule is "not yet delivered" and
+        // not "the bytes are moving": no byte has moved at either, and Play still holds a fetch
+        // it can drop (fix round 2, review r2's nit 1).
+        val notYetDelivered = listOf(
             PreviewPhase.ASKING,
             PreviewPhase.AWAITING_ANSWER,
             PreviewPhase.DOWNLOADING,
         )
-        for (phase in stillMoving) {
+        for (phase in notYetDelivered) {
             assertTrue(
                 "PLAY_FETCH at $phase",
                 work(PreviewRoute.PLAY_FETCH, phase).cancellable,
@@ -236,11 +245,16 @@ class PreviewWorkTest {
      * `AssetPackManager.cancel` was offered with no download left to cancel and the brief's
      * *"make the BEHAVIOUR match the table"* was discharged against nothing.
      *
+     * The CRITERION is *"this arrival has not yet delivered its bytes"*, not *"the bytes are
+     * still moving"* (fix round 2, review r2's nit 1): the second is false at `ASKING` and
+     * `AWAITING_ANSWER`, which are cancellable, and a rule the file does not follow is how the
+     * table came to answer one fact two ways in the first place.
+     *
      * Stated as a grid so the classification is TOTAL: every phase, on every route, is either a
      * cancel the route can honour or a stated refusal.
      */
-    @Test fun onlyThePhasesWhoseBytesAreStillMovingAreEverCancellableAnywhere() {
-        val stillMoving = setOf(
+    @Test fun onlyTheArrivalsNotYetDeliveredAreEverCancellableAnywhere() {
+        val notYetDelivered = setOf(
             PreviewPhase.ASKING,
             PreviewPhase.AWAITING_ANSWER,
             PreviewPhase.DOWNLOADING,
@@ -248,20 +262,130 @@ class PreviewWorkTest {
         for (route in PreviewRoute.entries) {
             for (phase in PreviewPhase.entries) {
                 assertEquals(
-                    "$route at $phase: a cancel is offered exactly where the bytes are still " +
-                        "moving AND the route can stop them",
-                    phase in stillMoving && route.stopsBeforeTheCopy,
+                    "$route at $phase: a cancel is offered exactly where the arrival has not " +
+                        "yet delivered its bytes AND the route can stop it",
+                    phase in notYetDelivered && route.stopsBeforeTheCopy,
                     work(route, phase).cancellable,
                 )
             }
         }
         assertEquals(
-            "and the phases whose bytes are already on the device are exactly the two the " +
-                "record refuses on every route — TRANSFERRING (Play's move) and INSTALLING (ours)",
-            setOf(PreviewPhase.TRANSFERRING, PreviewPhase.INSTALLING),
+            "and the in-flight phases the record refuses on EVERY route are exactly three: " +
+                "TRANSFERRING (Play's move, bytes already on the device), INSTALLING (ours) and " +
+                "ABANDONED (a cancel already accepted, waiting on the store)",
+            setOf(
+                PreviewPhase.TRANSFERRING,
+                PreviewPhase.INSTALLING,
+                PreviewPhase.ABANDONED,
+            ),
             PreviewPhase.entries
-                .filter { it.inFlight && it !in stillMoving }
+                .filter { it.inFlight && it !in notYetDelivered }
                 .toSet(),
+        )
+    }
+
+    /**
+     * THE CONTROL IS ENABLED BY THE RECORD OR IT IS NOT OFFERED (fix round 2, review r2's B1c).
+     *
+     * Home's X is ONE gesture with TWO halves — the permanent no
+     * (`PreferencesManager.setLivePreviewDeclined`) and the abandon — and only the second is
+     * refusable. Fix round 1 made `TRANSFERRING` and `INSTALLING` uncancellable on every route
+     * and left the X live there, so pressing it wrote the declined flag, the card vanished
+     * (`card`'s `userSaidNo` outranks `workInFlight`), the install landed anyway and
+     * `localPreviewArms` — which has no declined term — armed live words for the user who had
+     * just refused them. *Installed AND declined*, from the only control on the screen.
+     *
+     * So `dismissable` is the answer both the X and this test read: no work, finished work, or
+     * work that can still be stopped.
+     */
+    @Test fun theDismissIsOfferedExactlyWhereTheAbandonHalfOfItWouldHappen() {
+        for (route in PreviewRoute.entries) {
+            for (phase in PreviewPhase.entries) {
+                val record = work(route, phase)
+                assertEquals(
+                    "$route at $phase: the X may be offered only where the gesture's abandon " +
+                        "half would actually happen — or where there is nothing in flight for " +
+                        "the no to contradict",
+                    !record.inFlight || record.cancellable,
+                    record.dismissable,
+                )
+            }
+        }
+        assertFalse(
+            "the two phases fix round 1 moved OUT of cancellable are exactly where the X used " +
+                "to invert the user's answer: INSTALLING is a streamed sha256 of 72,654,782 B " +
+                "plus a copy, a window of many seconds and not a race",
+            work(PreviewRoute.PLAY_FETCH, PreviewPhase.INSTALLING).dismissable,
+        )
+        assertFalse(
+            "TRANSFERRING is the other one: the bytes are on the device and Play is moving them " +
+                "into its own storage",
+            work(PreviewRoute.PLAY_FETCH, PreviewPhase.TRANSFERRING).dismissable,
+        )
+        assertFalse(
+            "a cancel already accepted has nothing left to accept",
+            work(PreviewRoute.PLAY_FETCH, PreviewPhase.ABANDONED).dismissable,
+        )
+        assertFalse(
+            "and a DELIVERED pack's local copy is unstoppable on its own route, so the X goes " +
+                "there too — the declined flag it wrote was the half that survived",
+            work(PreviewRoute.DELIVERED_PACK, PreviewPhase.INSTALLING).dismissable,
+        )
+        assertTrue(
+            "work that CAN still be stopped keeps its X, because there both halves of the " +
+                "gesture take effect",
+            work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING).dismissable,
+        )
+        for (phase in listOf(
+            PreviewPhase.INSTALLED,
+            PreviewPhase.FAILED,
+            PreviewPhase.CANCELLED,
+        )) {
+            assertTrue(
+                "$phase is over, so the X is a plain dismiss again — which is what lets the " +
+                    "announcement that follows an unstoppable install carry a working no",
+                work(PreviewRoute.DELIVERED_PACK, phase).dismissable,
+            )
+        }
+    }
+
+    /**
+     * THE ABANDON IS IN FLIGHT, AND NOTHING OF OURS CAN STILL LAND UNDER IT (fix round 2, review
+     * r2's B1a) — the one phase where those two answers differ, which is why the delete row asks
+     * `writeCanStillLand` and the single-flight guard asks `inFlight`.
+     */
+    @Test fun theAbandonedPhaseIsBusyButNoLongerWriting() {
+        assertTrue(
+            "Play may still be delivering, so no second transfer may start over it — and that " +
+                "term is what StreamingPackController.isBusy() now reads from this board " +
+                "instead of from a private field of its own",
+            PreviewPhase.ABANDONED.inFlight,
+        )
+        assertFalse(
+            "but the install that would follow a delivery is cancelled and a delivery that " +
+                "lands anyway is suppressed, so a delete races nothing",
+            work(PreviewRoute.PLAY_FETCH, PreviewPhase.ABANDONED).writeCanStillLand,
+        )
+        assertEquals(
+            "ABANDONED is the ONLY phase where the two answers differ: everywhere else 'work " +
+                "is running' and 'a write can still land' are the same fact",
+            setOf(PreviewPhase.ABANDONED),
+            PreviewPhase.entries
+                .filter { phase ->
+                    phase.inFlight != work(PreviewRoute.PLAY_FETCH, phase).writeCanStillLand
+                }
+                .toSet(),
+        )
+        assertEquals(
+            "so the delete row promises the bytes back there rather than claiming the model is " +
+                "'being written right now', which would be false",
+            PreviewDeleteCase.DAMAGED,
+            PreviewDeleteCase.of(
+                StreamingPackState.Repair(StreamingPackState.PackFetchable),
+                selectedForThisPack = true,
+                showLiveWords = true,
+                work = work(PreviewRoute.PLAY_FETCH, PreviewPhase.ABANDONED),
+            ),
         )
     }
 
@@ -272,6 +396,9 @@ class PreviewWorkTest {
             PreviewPhase.DOWNLOADING,
             PreviewPhase.TRANSFERRING,
             PreviewPhase.INSTALLING,
+            // The user's no, not yet answered by Play: work is NOT over, because a second
+            // transfer must not start over a delivery Play may still be making (fix round 2).
+            PreviewPhase.ABANDONED,
         )) {
             assertTrue("$phase is work running", phase.inFlight)
         }
@@ -420,6 +547,18 @@ class PreviewWorkTest {
                 true,
                 true,
                 work(PreviewRoute.DELIVERED_PACK, PreviewPhase.INSTALLED),
+            ),
+        )
+        assertEquals(
+            "nor is an ABANDONED entry, which is in flight but writing nothing (fix round 2): " +
+                "the install that would follow a delivery is cancelled, so the row can promise " +
+                "the bytes back instead of claiming a write that is not happening",
+            PreviewDeleteCase.LIVE,
+            PreviewDeleteCase.of(
+                StreamingPackState.Installed,
+                true,
+                true,
+                work(PreviewRoute.PLAY_FETCH, PreviewPhase.ABANDONED),
             ),
         )
     }

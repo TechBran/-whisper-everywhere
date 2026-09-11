@@ -504,6 +504,53 @@ class LiveWordsCardPinTest {
         )
     }
 
+    /**
+     * THE X IS OFFERED ONLY WHERE THE RECORD SAYS THE ABANDON WOULD HAPPEN (4.5.0 Task 1, fix
+     * round 2 — review r2's B1c).
+     *
+     * The dismissal is ONE gesture with TWO halves and only the second is refusable: `cancel`
+     * returns on `!work.cancellable`, while the permanent no above it is written
+     * unconditionally. Fix round 1 made `TRANSFERRING` and `INSTALLING` uncancellable on every
+     * route and left the X live there, so pressing it during a Play install — a streamed sha256
+     * of 72,654,782 B plus a copy — wrote the declined flag, hid this card (`card`'s `userSaidNo`
+     * outranks `workInFlight`), let the install land, and then armed live words anyway, because
+     * `localPreviewArms` has no declined term. *Installed AND declined*, from the only control on
+     * the screen.
+     *
+     * The brief's second half is *"or the UI must not offer a cancel on the route where it
+     * cannot"* — a property of the UI, so it is pinned on the UI: the gesture the card hands its
+     * layout is derived from the one observable, and the layout draws no X when it is withdrawn.
+     */
+    @Test fun theDismissIsWithdrawnWhereTheRecordSaysItCannotBeHonoured() {
+        assertEquals(
+            "the X is DERIVED from the one observable, not handed over unconditionally",
+            1,
+            liveLineCount(card, "if (previewWork?.dismissable == false) null else dismiss"),
+        )
+        assertEquals(
+            "and every card state takes that derived value — all three, so none of them can " +
+                "keep a live X over an install nothing can stop",
+            3,
+            liveLineCount(card, "onDismiss = dismissWhereItWouldMeanSomething"),
+        )
+        assertEquals(
+            "no state is handed the raw gesture any more",
+            0,
+            liveLineCount(card, "onDismiss = dismiss,"),
+        )
+        assertEquals(
+            "the layout accepts the withdrawal — a nullable gesture is the whole of it",
+            1,
+            liveLineCount(home, "onDismiss: (() -> Unit)?,"),
+        )
+        assertEquals(
+            "and DRAWS no X when it is withdrawn: an IconButton over a null gesture would be a " +
+                "dead control, which is the same defect as the offer row that started this round",
+            1,
+            liveLineCount(home, "if (onDismiss != null) {"),
+        )
+    }
+
     @Test fun theActuatorsCancelIsGuardedByTheOneObservableAndActsPerRoute() {
         // (4.5.0 Task 1) ONE CANCEL, ONE MEANING. 4.4.1 guarded on `busy()` — global, so the X on
         // one language's card could abandon another language's transfer — and then cancelled BOTH

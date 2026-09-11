@@ -1024,6 +1024,25 @@ private fun LiveWordsCard(
         saidNo = true
         PreviewAutoFetchController.cancel(selectedLanguage)
     }
+    // ...AND IT IS OFFERED ONLY WHERE THE RECORD SAYS IT MAY BE PRESSED (4.5.0 Task 1, fix round
+    // 2 — review r2's B1c). The X is one gesture with two halves and only the second is
+    // refusable: `cancel` returns on `!work.cancellable`, but the permanent no above it is
+    // written unconditionally. Pressed during the INSTALLING phase of a Play fetch — a streamed
+    // sha256 of 72,654,782 B plus a copy, so a window of many seconds — it wrote the declined
+    // flag, `card`'s `userSaidNo` outranked `workInFlight` so this card vanished as if the no had
+    // taken effect, the install landed anyway, and `localPreviewArms` has no declined term: live
+    // words then appeared for the user who had pressed the only control on screen to refuse them.
+    // That is the *installed AND declined* outcome this feature's own comments name twice as
+    // unacceptable, surviving at exactly the two phases fix round 1 moved OUT of `cancellable`.
+    //
+    // So the brief's second half — "or the UI must not offer a cancel on the route where it
+    // cannot" — is answered where it belongs, in the UI: no X over work that cannot be stopped.
+    // The card is then a receipt (the Settings row's own answer, one row per screen), and the
+    // announcement that follows the install carries an X that really does mean no. A gated WRITE
+    // was the alternative and is worse: a control that visibly does nothing is the same defect as
+    // the offer row that started this round.
+    val dismissWhereItWouldMeanSomething: (() -> Unit)? =
+        if (previewWork?.dismissable == false) null else dismiss
     when (
         PreviewAutoFetch.card(
             // A card is about ONE language's pack. On Auto (and on any language the catalogue
@@ -1069,7 +1088,7 @@ private fun LiveWordsCard(
             // fetch mid-transfer (the row's own B1 lesson).
             action = if (playAwaitsAnAnswer) StreamingPackCopy.CARD_ANSWER_PLAY else null,
             onAction = answerPlay,
-            onDismiss = dismiss,
+            onDismiss = dismissWhereItWouldMeanSomething,
         )
         // The OFFER is only ever answered over a matched pack and a read state, so these two
         // `?.let`s unwrap the snapshots rather than deciding anything — and the words, the route
@@ -1087,7 +1106,7 @@ private fun LiveWordsCard(
                     note = StreamingPackCopy.cardLanguageNote(languageName),
                     action = StreamingPackCopy.cardAction(offered, languageName),
                     onAction = { PreviewAutoFetchController.start(app, p, offered, auto = false) },
-                    onDismiss = dismiss,
+                    onDismiss = dismissWhereItWouldMeanSomething,
                 )
             }
         }
@@ -1097,7 +1116,7 @@ private fun LiveWordsCard(
             note = StreamingPackCopy.cardLanguageNote(languageName),
             action = null,
             onAction = {},
-            onDismiss = dismiss,
+            onDismiss = dismissWhereItWouldMeanSomething,
         )
     }
 }
@@ -1108,6 +1127,12 @@ private fun LiveWordsCard(
  * visual language for the same job would read as a second kind of thing. All copy arrives as
  * parameters from [StreamingPackCopy]; this shell spells no sentence and holds no rule. Untested
  * UI by house convention — the visibility and the words are both pinned elsewhere.
+ *
+ * @param onDismiss the X, or NULL to draw no X at all (4.5.0 Task 1, fix round 2 — review r2's
+ *        B1c). The caller decides that from the one observable's own `dismissable`: this card's
+ *        X writes a permanent no as well as abandoning the arrival, so over work that cannot be
+ *        stopped it would fire only the half that cannot be taken back. A card with no X is the
+ *        receipt this feature already renders everywhere else for work in flight.
  */
 @Composable
 private fun LiveWordsNote(
@@ -1116,7 +1141,7 @@ private fun LiveWordsNote(
     note: String?,
     action: String?,
     onAction: () -> Unit,
-    onDismiss: () -> Unit,
+    onDismiss: (() -> Unit)?,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1132,12 +1157,14 @@ private fun LiveWordsNote(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                    Icon(
-                        Icons.Filled.Close,
-                        contentDescription = StreamingPackCopy.CARD_DISMISS,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                if (onDismiss != null) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = StreamingPackCopy.CARD_DISMISS,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))

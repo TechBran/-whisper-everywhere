@@ -52,11 +52,18 @@ enum class PreviewStarter {
  *    why the honest answer is to offer no cancel rather than to publish a `Cancelled` that
  *    describes nothing.
  *
- * ### TWO PHASE TERMS CROSS EVERY ROW OF IT (fix round 1, review r1's B1a)
+ * ### THE PHASE TERM CROSSES EVERY ROW OF IT (fix round 1, review r1's B1a)
  *
- * A route can only stop bytes that are still moving, so the table is a conjunction and not an
- * answer on its own — [PreviewWork.cancellable] is the conjunction, and it is false for EVERY
- * route at two phases:
+ * **A route can only abandon an arrival that has not yet delivered its bytes.** That is the one
+ * rule, and it is NOT *"the bytes are still moving"* — which is what this section said until fix
+ * round 2 and is false on two of the five phases (review r2's nit 1): at [PreviewPhase.ASKING]
+ * and [PreviewPhase.AWAITING_ANSWER] no byte has moved yet, and a cancel there IS honoured,
+ * because Play still holds a fetch it can drop. Stating the criterion wrongly is how a table
+ * comes to answer one fact two ways, so it is stated once here and the grid
+ * (`PreviewWorkTest.onlyTheArrivalsNotYetDeliveredAreEverCancellableAnywhere`) is its teeth.
+ *
+ * The table is therefore a conjunction and not an answer on its own — [PreviewWork.cancellable]
+ * is the conjunction, and it is false for EVERY route at three phases:
  *
  *  - **[PreviewPhase.TRANSFERRING]** — Play's `STATUS_TRANSFERRING`, AFTER the download and
  *    BEFORE `COMPLETED`, a phase every asset-pack delivery passes through. The bytes are already
@@ -65,6 +72,8 @@ enum class PreviewStarter {
  *    gives as its reason: *"Play has already put those bytes on the device"*. Until 4.5.0's fix
  *    round the table answered the SAME fact `false` on one route and `true` on another.
  *  - **[PreviewPhase.INSTALLING]** — our own verify + copy, which has no suspension point left.
+ *  - **[PreviewPhase.ABANDONED]** — the cancel has already been accepted and the store has not
+ *    answered it yet, so there is nothing left for a second press to ask for.
  *
  * A fourth route must answer this table before it can be observed, which is the whole point of a
  * total `when` here rather than a Boolean on the record.
@@ -154,6 +163,32 @@ enum class PreviewPhase {
      */
     INSTALLING,
 
+    /**
+     * THE USER'S "NO", BEFORE THE STORE HAS ANSWERED IT (4.5.0 Task 1, fix round 2 — review r2's
+     * B1a). A cancel has been accepted and Google Play has been asked to drop the download;
+     * until Play says it has, this pack's arrival is neither running nor over.
+     *
+     * **It is a phase of the ONE OBSERVABLE rather than a field of the fetch shell, and that is
+     * the whole of this task.** Fix round 1 recorded this same fact in a private
+     * `StreamingPackController.abandonedPackName` AND published a terminal `CANCELLED` onto the
+     * board, so *"is work running?"* had two answers again: the actuator read the field (through
+     * `isBusy()`) and both surfaces read the board. Settings therefore fell through its
+     * *"something is in flight"* arm into its OFFER row and drew *"Get the English preview model
+     * — 73 MB"* with a live tap that `PreviewAutoFetchController.start` then refused in silence.
+     * Now `isBusy()` reads THIS phase, so the actuator and the surfaces cannot disagree.
+     *
+     * [inFlight] is TRUE: Play may still be delivering, and no second transfer may be started
+     * over a delivery it has not finished. [PreviewWork.cancellable] and
+     * [PreviewWork.dismissable] are FALSE: the abandon has already been asked for.
+     * [PreviewWork.writeCanStillLand] is FALSE too, and it is the one phase where that differs
+     * from [inFlight] — nothing of OURS can be written from here, because the install that
+     * follows a delivery is cancelled and a delivery that lands anyway is suppressed.
+     *
+     * Written by exactly one gesture (the shell's `cancel`) and never by [PreviewStep.of]: no
+     * status Play reports means *"the user changed their mind"*.
+     */
+    ABANDONED,
+
     /** Terminal: the marker landed and the recognizer can open the install. */
     INSTALLED,
 
@@ -168,6 +203,9 @@ enum class PreviewPhase {
     val inFlight: Boolean
         get() = when (this) {
             ASKING, AWAITING_ANSWER, DOWNLOADING, TRANSFERRING, INSTALLING -> true
+            // The user's no, not yet confirmed by Play: work is not over, because Play may still
+            // be delivering and a second transfer must not be started over it.
+            ABANDONED -> true
             INSTALLED, FAILED, CANCELLED -> false
         }
 }
@@ -249,13 +287,18 @@ data class PreviewWork(
      * Whether a cancel would actually stop THIS work — the conjunction of the two facts that
      * decide it, and the only answer any surface may offer a cancel from.
      *
-     * The phase term comes first because it is the one that crosses every route — TWO phases do
-     * (fix round 1, review r1's B1a), for the one reason: **a route can only stop bytes that are
-     * still MOVING.** At [PreviewPhase.TRANSFERRING] the download is over and Play is moving the
+     * The phase term comes first because it is the one that crosses every route — THREE phases
+     * do — for the one rule: **a route can only abandon an arrival that has not yet delivered
+     * its bytes.** At [PreviewPhase.TRANSFERRING] the download is over and Play is moving the
      * delivered pack into its own storage, so `AssetPackManager.cancel` has no download left to
      * cancel — [PreviewRoute.DELIVERED_PACK]'s own fact, arriving on another route. At
-     * [PreviewPhase.INSTALLING] our verify + copy has no suspension point left and it lands. The
-     * route term is [PreviewRoute.stopsBeforeTheCopy], whose KDoc is the table.
+     * [PreviewPhase.INSTALLING] our verify + copy has no suspension point left and it lands. At
+     * [PreviewPhase.ABANDONED] the cancel has already happened. The route term is
+     * [PreviewRoute.stopsBeforeTheCopy], whose KDoc is the table.
+     *
+     * The rule is deliberately NOT *"the bytes are still moving"*: [PreviewPhase.ASKING] and
+     * [PreviewPhase.AWAITING_ANSWER] have moved no bytes at all and are cancellable, because
+     * Play still holds a fetch it can drop (review r2's nit 1).
      */
     val cancellable: Boolean
         get() = when (phase) {
@@ -264,6 +307,54 @@ data class PreviewWork(
             PreviewPhase.DOWNLOADING,
             -> route.stopsBeforeTheCopy
             PreviewPhase.TRANSFERRING, PreviewPhase.INSTALLING -> false
+            PreviewPhase.ABANDONED -> false
+            PreviewPhase.INSTALLED, PreviewPhase.FAILED, PreviewPhase.CANCELLED -> false
+        }
+
+    /**
+     * WHETHER A SURFACE MAY OFFER THE GESTURE THAT ABANDONS THIS WORK — the X on Home's card
+     * (4.5.0 Task 1, fix round 2 — review r2's B1c).
+     *
+     * That X is ONE gesture with TWO halves: it writes the PERMANENT no
+     * (`PreferencesManager.setLivePreviewDeclined`) and then it abandons the arrival. Only the
+     * second half is refusable, so offering it where [cancellable] is false fires the first half
+     * alone — and fix round 1 made exactly the two phases where the bytes are already on the
+     * device uncancellable, which is where it hurts most. Press the X during the `INSTALLING`
+     * phase of a Play fetch (a streamed sha256 of 72,654,782 B plus a copy — many seconds, not a
+     * race) and: the declined flag is written, `PreviewAutoFetch.card`'s `userSaidNo` outranks
+     * `workInFlight` so the card vanishes as if the no had taken effect, the install lands
+     * anyway, and `localPreviewArms` has no declined term — so live words appear for the user
+     * who pressed the only control on screen to refuse them. *Installed AND declined* is the
+     * outcome this feature's own comments name twice as unacceptable.
+     *
+     * So the brief's second half — *"or the UI must not offer a cancel on the route where it
+     * cannot"* — is a property of the UI, and this is where the UI asks for it: **a control in
+     * this feature is enabled by the record or it is not offered.** Work that cannot be stopped
+     * is a receipt with nothing to press; the announcement that follows its install carries an X
+     * that really does mean no, because by then there is nothing in flight to contradict it.
+     */
+    val dismissable: Boolean get() = !inFlight || cancellable
+
+    /**
+     * WHETHER AN INSTALL OF OURS MAY STILL WRITE UNDER A DELETE while this record stands — the
+     * delete row's question ([PreviewDeleteCase.WORKING]), and deliberately not [inFlight].
+     *
+     * The two differ at exactly one phase, and the difference is the point:
+     * [PreviewPhase.ABANDONED] IS in flight, because Play may still be delivering and no second
+     * transfer may start over it — but the install that would follow a delivery has been
+     * cancelled and a delivery that lands anyway is suppressed by the shell, so nothing of ours
+     * can be written. *"Nothing to free yet: the model is being written right now"* would be
+     * false there, and the delete is safe.
+     */
+    val writeCanStillLand: Boolean
+        get() = when (phase) {
+            PreviewPhase.ASKING,
+            PreviewPhase.AWAITING_ANSWER,
+            PreviewPhase.DOWNLOADING,
+            PreviewPhase.TRANSFERRING,
+            PreviewPhase.INSTALLING,
+            -> true
+            PreviewPhase.ABANDONED -> false
             PreviewPhase.INSTALLED, PreviewPhase.FAILED, PreviewPhase.CANCELLED -> false
         }
 
@@ -312,7 +403,11 @@ enum class PreviewDeleteCase {
          *  1. **No bytes, no row.** `isInstalled` is `this is Installed` only, and a `Repair` is
          *     the other state with bytes under `filesDir`. A first install in flight has nothing
          *     to free, so it gets no row — the progress row above it is the one that speaks.
-         *  2. **A WRITE outranks everything** (review r3's H3-B1). `previewState` is remembered on
+         *  2. **A WRITE THAT CAN STILL LAND outranks everything** (review r3's H3-B1). The
+         *     question is [PreviewWork.writeCanStillLand] and not `inFlight`, which differ at
+         *     [PreviewPhase.ABANDONED]: there Play may still be delivering (so the feature is
+         *     busy) while no install of ours can follow (so a delete races nothing and the row
+         *     may promise the bytes back). `previewState` is remembered on
          *     keys our own install does not change, so through a repair install it stays `Repair`
          *     and the row used to draw beside the running copy — where `delete` clears the install
          *     dir under a verify + copy that is not cancellation-cooperative, so the copy lands
@@ -344,7 +439,7 @@ enum class PreviewDeleteCase {
         ): PreviewDeleteCase? {
             val bytesOnDisk = state.isInstalled || state is StreamingPackState.Repair
             if (!bytesOnDisk) return null
-            if (work?.inFlight == true) return WORKING
+            if (work?.writeCanStillLand == true) return WORKING
             if (state is StreamingPackState.Repair) return DAMAGED
             if (!showLiveWords) return OFF_SWITCH
             return if (selectedForThisPack) LIVE else OFF_SELECTION
