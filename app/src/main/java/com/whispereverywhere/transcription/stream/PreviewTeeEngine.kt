@@ -6,13 +6,13 @@ import com.whispereverywhere.transcription.TranscriptionEngine
 
 /**
  * THE TEE (spec §3, §4.1) — the `FallbackTranscriptionEngine` decorator shape
- * (transcription/cloud/FallbackTranscriptionEngine.kt:195-210) with the previewer in the mirror's
- * seat. [local] is the session's whisper engine (CPU or NPU) and keeps EVERYTHING it has today:
- * every seq it allocates, its EmptyExpected floor, its buffer, its resolutions — the typed
- * transcript cannot depend on the previewer.
+ * (transcription/cloud/FallbackTranscriptionEngine.kt, whose mirrored `sendAudio` is :204-209)
+ * with the previewer in the mirror's seat. [local] is the session's whisper engine (CPU or NPU)
+ * and keeps EVERYTHING it has today: every seq it allocates, its EmptyExpected floor, its buffer,
+ * its resolutions — the typed transcript cannot depend on the previewer.
  *
  *  - [sendAudio]: `local` FIRST (the CapSeamPinTest order), then the preview's non-blocking
- *    offer. The recorder hands a fresh copy per chunk (StreamingAudioRecorder.kt:96
+ *    offer. The recorder hands a fresh copy per chunk (util/StreamingAudioRecorder.kt:97
  *    `buffer.copyOf(read)`), so holding the reference in the preview's queue is safe.
  *  - every commit form forwards to `local` and, ONLY for a real seq (`>= 0`), freezes the preview
  *    under that seq — the previewer never allocates a seq and never resolves one.
@@ -22,7 +22,8 @@ import com.whispereverywhere.transcription.TranscriptionEngine
  *    resolution is forwarded, the composer drops that seq's frozen prefix and the shrunken strip
  *    is emitted — resolution first, so delivery timing is byte-identical to today.
  *  - the composer is the ONE `onDelta` source; its three writers (preview executor: partial,
- *    freeze; local executor: resolve) are serialised under [composerLock].
+ *    freeze; local executor: resolve) are serialised under [composerLock] — and so is the
+ *    DELIVERY, which is the part that makes the strip's order match the composer's. See [emit].
  *  - lifecycle (`prewarm` / `shutdown` / `awaitIdle` / `releaseContext`) is `local`'s alone: the
  *    service OWNS the resident previewer and releases it on trim/destroy; the tee borrows it.
  */
@@ -73,10 +74,25 @@ class PreviewTeeEngine(
     override fun awaitIdle(timeoutMs: Long): Boolean = local.awaitIdle(timeoutMs)
     override fun releaseContext() = local.releaseContext()
 
+    /**
+     * The ONE `onDelta` source. The composition AND its delivery happen under [composerLock]
+     * (review B2): composing under the lock and delivering outside it would order the `TreeMap`
+     * and not the deliveries, so an interleaved `partial` → "one two three" and `resolve(0)` →
+     * "two three" could reach the owner inverted and leave the strip repainting a prefix whisper
+     * has already typed into the document — the word on screen twice until the next partial
+     * (≤ 320 ms) or the next resolution.
+     *
+     * Deadlock surface: none. No path takes a second lock while holding [composerLock], and
+     * nothing holds another monitor on the way in — `LocalWhisperEngine.resolve` calls
+     * `onSegmentResolved` outside its `bufferLock` (LocalWhisperEngine.kt:595-603), `onFrozen`
+     * runs on the previewer's executor holding nothing (StreamingPreviewEngine.kt:166-205), and
+     * the service's `onDelta` reads two `@Volatile` gates and `launch`es
+     * (FloatingBubbleService.kt:3070-3084). A null listener (after [close]) short-circuits before
+     * the lock, so a late partial never even composes.
+     */
     private fun emit(compose: () -> String) {
         val l = listener ?: return
-        val text = synchronized(composerLock) { compose() }
-        l.onDelta(text)
+        synchronized(composerLock) { l.onDelta(compose()) }
     }
 
     private inner class Relay(private val owner: TranscriptionEngine.Listener) : TranscriptionEngine.Listener {

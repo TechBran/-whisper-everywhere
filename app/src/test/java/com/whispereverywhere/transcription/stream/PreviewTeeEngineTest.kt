@@ -7,6 +7,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The tee (spec §3, §4.1): `local` keeps every commit, every seq and every resolution exactly
@@ -214,6 +219,59 @@ class PreviewTeeEngineTest {
         assertEquals(1, owner.closedCalls)
         preview.partial("late")
         assertTrue("a partial after close reaches nobody", owner.deltas.isEmpty())
+    }
+
+    @Test fun twoEmittersAreNeverInsideTheOwnersOnDeltaAtOnce() {
+        // review B2 — composing under composerLock but DELIVERING outside it orders the TreeMap
+        // and not the deliveries. Two threads emit in production: the preview executor (partial,
+        // freeze) and local's executor (resolve, LocalWhisperEngine.kt:595-603). Interleaved, the
+        // owner can receive the stale, LONGER composition last and the strip repaints a prefix
+        // whisper has already typed into the document — the word on screen twice until the next
+        // partial. Here: A parks inside onDelta; B must not deliver until A returns.
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val depth = AtomicInteger(0)
+        val peak = AtomicInteger(0)
+        val parkNext = AtomicBoolean(false)
+        val seen = Collections.synchronizedList(mutableListOf<String>())
+        val gate = object : TranscriptionEngine.Listener {
+            override fun onOpen() = Unit
+            override fun onDelta(text: String) {
+                val now = depth.incrementAndGet()
+                peak.getAndUpdate { maxOf(it, now) }
+                seen += text
+                if (parkNext.compareAndSet(true, false)) {
+                    entered.countDown()
+                    release.await(5L, TimeUnit.SECONDS)
+                }
+                depth.decrementAndGet()
+            }
+            override fun onSegmentResolved(seq: Long, outcome: SegmentOutcome) = Unit
+            override fun onError(message: String) = Unit
+            override fun onClosed() = Unit
+        }
+        tee.connect("en", gate)
+        preview.frozenText = "one two"
+        tee.commit()                                   // seq 0 frozen: the strip is "one two"
+        assertEquals(listOf("one two"), seen.toList())
+
+        parkNext.set(true)
+        val a = Thread({ preview.partial("three") }, "emitter-A-partial")
+        a.start()
+        assertTrue("A reached the owner", entered.await(5L, TimeUnit.SECONDS))
+        val b = Thread({ local.resolve(0L, SegmentOutcome.Text("One two.")) }, "emitter-B-resolve")
+        b.start()
+        Thread.sleep(250L)                             // ample time for B to violate if it can
+        assertEquals("B delivered while A was still inside onDelta", listOf("one two", "one two three"), seen.toList())
+
+        release.countDown()
+        a.join(5_000L)
+        b.join(5_000L)
+        assertFalse(a.isAlive)
+        assertFalse(b.isAlive)
+        assertEquals(1, peak.get())
+        // B's delivery lands only after A returns, and it is the shrunken strip — never the other way.
+        assertEquals(listOf("one two", "one two three", "three"), seen.toList())
     }
 
     @Test fun lifecycleDelegatesToLocalAndNeverTouchesThePreviewsRecognizer() {
