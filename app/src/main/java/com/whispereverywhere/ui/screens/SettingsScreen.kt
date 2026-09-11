@@ -34,6 +34,7 @@ import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
 import com.whispereverywhere.transcription.stream.PreviewDeleteCase
 import com.whispereverywhere.transcription.stream.PreviewPhase
 import com.whispereverywhere.transcription.stream.PreviewTrigger
+import com.whispereverywhere.transcription.stream.PreviewUnreachable
 import com.whispereverywhere.transcription.stream.PreviewWorkboard
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
@@ -1097,12 +1098,22 @@ fun SettingsSection(
  *  - whether this user may be offered the pack at all: `StreamingPackCatalog.forLanguage` of
  *    their SELECTION (4.4.1 pass 3, ITEM 1) — no language is offered a model that has already
  *    been decided cannot arm for it, and the one it can never arm for is told so instead
+ *  - ...and whether this DEVICE may be (4.5.0 Task 4): `PreviewUnreachable.of`, which answers the
+ *    tier before the selection. With no on-device speech model every session is a cloud session,
+ *    `localPreviewArms` refuses on `!isCloudSession`, and no pack, pick, switch or connection can
+ *    put a word on the bubble — so this section draws ONE true sentence and offers nothing, in
+ *    place of an installed row, a switch, an offer and a repair that all promised words
  *
  * The one string the previewer has that this row does NOT render is
  * `StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE`: the canary's verdict lives on the previewer
  * instance the service builds (`StreamingPreviewEngine.isDisabled(pack)`, per-LANGUAGE since
  * 4.5.0 T2 defect 4) and nothing reads it — so a pack that failed its start-up check still reads
  * as installed and armable here. `LivePreviewRowsPinTest` pins the rest as source.
+ *
+ * @param localTierInstalled an on-device whisper tier exists — `installedModel != null` from this
+ *        screen's own `modelRefreshKey`-keyed read, passed DOWN rather than taken again, so this
+ *        section and the model section that can take the tier away cannot disagree and this
+ *        section answers in the frame the delete happens rather than on the next resume.
  */
 @Composable
 private fun LivePreviewRows(
@@ -1213,11 +1224,25 @@ private fun LivePreviewRows(
     // (4.4.1 pass 3, ITEM 1) The copy answers the two cases apart: Auto is a CHOICE, unmade in
     // the picker; a language the catalogue has no row for is a GAP in the app, and no pick closes
     // it today. Telling a French user to pick a language would be no help at all.
-    if (selectedPack == null) {
+    //
+    // (4.5.0 Task 4) AND THE DEVICE IS THE THIRD CASE, ANSWERED FIRST. ITEM 1's rule was *"no
+    // language may be offered a model that has already been decided cannot arm for it"*; the same
+    // rule one axis over is *no DEVICE may be*, and until this task nothing in the feature said
+    // it. With no on-device speech model every session is a cloud session, `localPreviewArms`
+    // refuses on `!isCloudSession`, and the pack, the pick, the switch and the connection are all
+    // beside the point. `PreviewUnreachable` is that order — the tier before the selection,
+    // because Auto's own sentence INSTRUCTS a pick (*"pick your transcription language to see
+    // words on the bubble"*) and that instruction is false here for every language they could
+    // pick. One pure decision, asked by this section and by Home's language card, so two surfaces
+    // cannot answer one pair of facts differently.
+    PreviewUnreachable.of(
+        localTierInstalled = localTierInstalled,
+        hasPackForSelection = selectedPack != null,
+    )?.let { unreachable ->
         SettingsItem(
             icon = Icons.Filled.Subtitles,
-            title = StreamingPackCopy.noLiveWordsTitle(pickedLanguage),
-            subtitle = StreamingPackCopy.noLiveWordsSubtitle(pickedLanguage),
+            title = StreamingPackCopy.unreachableTitle(unreachable, pickedLanguage),
+            subtitle = StreamingPackCopy.unreachableSubtitle(unreachable, pickedLanguage),
         )
     }
     // THE ROWS THAT DESCRIBE OR OFFER THIS PACK, and only for the user whose selection it serves.
@@ -1228,7 +1253,23 @@ private fun LivePreviewRows(
     // (fix round 1, H-B3) WORK IN FLIGHT IS NOT ONE OF THESE ROWS and has left this gate: it
     // describes neither the pack nor an offer but a transfer THE USER STARTED. It renders below,
     // ungated — see there for why.
-    if (selectedPack == previewPack) {
+    //
+    // (4.5.0 Task 4) AND NEITHER THE DESCRIPTION NOR THE OFFER IS DRAWN ON A DEVICE THAT CAN
+    // NEVER ARM. Every sentence in this branch promises words: the installed row's subtitle
+    // (*"Words appear on the bubble as you speak English"*), all three offer subtitles (which
+    // carry `ADDITIVE` verbatim) and all three repair subtitles (*"to restore live words"*) —
+    // and the offer's onClick SPENDS the 73 MB for a feature this device has already been
+    // refused. The caveat row above says the one true thing instead. This REMOVES states rather
+    // than adding them, which is what ITEM 1 did on the language axis (*"no language may be
+    // offered a model that has already been decided cannot arm for it"*) and is the cheapest
+    // honest answer here too: there is no sentence to rewrite if there is no row.
+    //
+    // The SWITCH goes with it, and that is deliberate rather than collateral: it is inside this
+    // branch, it changes nothing while `localPreviewArms` refuses on `!isCloudSession`, and this
+    // feature's own rule is that a control is enabled by the record or it is not offered (Task 1
+    // fix round 2's B1c, on the card's X). The preference keeps its value, so the day a tier
+    // arrives the switch comes back reading whatever the user last set.
+    if (selectedPack == previewPack && localTierInstalled) {
         when {
             previewState.isInstalled -> {
                 SettingsItem(

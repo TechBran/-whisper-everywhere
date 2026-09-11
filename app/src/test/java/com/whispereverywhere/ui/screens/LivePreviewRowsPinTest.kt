@@ -247,18 +247,19 @@ class LivePreviewRowsPinTest {
         )
         assertEquals(
             "and the two cases (Auto is a choice, a language with no row is a gap) are chosen " +
-                "by the copy's own pair, not by a sentence assembled here",
-            1, liveLineCount(rows, "StreamingPackCopy.noLiveWordsTitle("),
+                "by the copy's own pair, not by a sentence assembled here — reached, since " +
+                "4.5.0 Task 4, through the one decision that answers the DEVICE first",
+            1, liveLineCount(rows, "StreamingPackCopy.unreachableTitle("),
         )
-        assertEquals(1, liveLineCount(rows, "StreamingPackCopy.noLiveWordsSubtitle("))
+        assertEquals(1, liveLineCount(rows, "StreamingPackCopy.unreachableSubtitle("))
         assertEquals(
             "so the row names neither case itself",
             0,
             liveLineCount(rows, "StreamingPackCopy.AUTO_ROW_TITLE") +
                 liveLineCount(rows, "StreamingPackCopy.AUTO_NO_LIVE_WORDS"),
         )
-        val caveat = offsetOfLive(rows, "StreamingPackCopy.noLiveWordsTitle(")
-        val gate = offsetOfLive(rows, "if (selectedPack == previewPack) {")
+        val caveat = offsetOfLive(rows, "StreamingPackCopy.unreachableTitle(")
+        val gate = offsetOfLive(rows, "if (selectedPack == previewPack && localTierInstalled) {")
         val offer = offsetOfLive(rows, "onClick = startPreviewInstall,")
         assertTrue("the offer branch must still be there", offer >= 0)
         assertTrue("the caveat must be in the section", caveat >= 0)
@@ -270,6 +271,58 @@ class LivePreviewRowsPinTest {
         )
         assertTrue("the caveat is FIRST: a caveat read after the offer changed nothing", caveat < gate)
         assertTrue("and the offer is inside that gate", gate < offer)
+    }
+
+    @Test fun aDeviceThatCanNeverArmIsOfferedNothingAndToldTheOneTrueThing() {
+        // (4.5.0 Task 4) 4.4.1 pass 3's ITEM 1 rule, one axis over: **no DEVICE may be offered a
+        // model that has already been decided cannot arm on it.** With no on-device speech model
+        // every session is a cloud session and `localPreviewArms` refuses on `!isCloudSession` —
+        // and every sentence in the described/offered branch promises words: the installed row's
+        // subtitle (*"Words appear on the bubble as you speak English"*), all three offer
+        // subtitles (they carry `ADDITIVE` verbatim) and all three repair subtitles (*"to restore
+        // live words"*). The offer's own onClick also SPENDS the 73 MB.
+        //
+        // So the whole branch is withdrawn and the caveat row above says the one true thing. That
+        // REMOVES states rather than adding them, and it is why there is no second installed
+        // sentence and no second offer table to keep true.
+        assertEquals(
+            "the described/offered branch is gated on the DEVICE as well as the selection, in " +
+                "ONE condition — two nested gates is two places to forget one",
+            1, liveLineCount(rows, "if (selectedPack == previewPack && localTierInstalled) {"),
+        )
+        val gate = offsetOfLive(rows, "if (selectedPack == previewPack && localTierInstalled) {")
+        for (needle in listOf(
+            "StreamingPackCopy.settingsTitle(previewState, previewLanguage),",
+            "onClick = startPreviewInstall,",
+            "StreamingPackCopy.SWITCH_TITLE,",
+        )) {
+            val at = offsetOfLive(rows, needle)
+            assertTrue("<<$needle>> must still be in the section", at >= 0)
+            assertTrue(
+                "...and INSIDE the device gate: <<$needle>> is a sentence that promises words, " +
+                    "or a control that changes nothing, on a phone that can never show one",
+                gate < at,
+            )
+        }
+        // The WORK row is deliberately OUTSIDE it, and that is not an oversight: it describes a
+        // transfer that is actually happening, in the present tense, and it is happening whatever
+        // this device can arm. Hiding a running 73 MB is the silent spend ruling 3c closes.
+        val inFlight = offsetOfLive(rows, "if (!previewState.isInstalled && previewWorkLine != null) {")
+        assertTrue("the in-flight row must be there", inFlight >= 0)
+        assertEquals(
+            "and its guard must not have grown a tier term",
+            0,
+            liveLineCount(
+                rows,
+                "if (!previewState.isInstalled && previewWorkLine != null && localTierInstalled",
+            ),
+        )
+        // ...and so is the DELETE row, for its own standing reason: the bytes are reclaimable
+        // whatever the device can do with them. Its sentence is the tier's (PreviewDeleteCase
+        // OFF_TIER), which is the case `PreviewDeleteCase.of` answers for exactly this cell.
+        val delete = offsetOfLive(rows, "StreamingPackCopy.DELETE_TITLE")
+        assertTrue("the delete row must be after the gate's branch, ungated", gate < delete)
+        assertTrue("and after the in-flight row", inFlight < delete)
     }
 
     @Test
@@ -286,7 +339,7 @@ class LivePreviewRowsPinTest {
         //
         // (4.5.0 Task 1) ONE row where there were two, because there is one observable: the pair
         // existed only because Play's fetch and our install narrated through different values.
-        val gate = offsetOfLive(rows, "if (selectedPack == previewPack) {")
+        val gate = offsetOfLive(rows, "if (selectedPack == previewPack && localTierInstalled) {")
         val offer = offsetOfLive(rows, "onClick = startPreviewInstall,")
         val inFlight = offsetOfLive(rows, "if (!previewState.isInstalled && previewWorkLine != null) {")
         val workRow = offsetOfLive(rows, "subtitle = previewWorkLine,")
@@ -412,8 +465,16 @@ class LivePreviewRowsPinTest {
         // cloud session. It is the third arming fact this row can be wrong about and the only one
         // whose remedy is not on this screen.
         assertEquals(
-            "the DEVICE is a term of the derivation",
-            1, liveLineCount(rows, "localTierInstalled = localTierInstalled,"),
+            "the DEVICE is a term of the derivation — and of the caveat row above it, which are " +
+                "the section's TWO readers of the one fact it is handed",
+            2, liveLineCount(rows, "localTierInstalled = localTierInstalled,"),
+        )
+        val caveatTier = offsetOfLive(rows, "localTierInstalled = localTierInstalled,")
+        val deleteOf = offsetOfLive(rows, "PreviewDeleteCase.of(")
+        assertTrue(
+            "the caveat's reading comes first, because `PreviewUnreachable` is what decides " +
+                "whether anything is offered at all",
+            caveatTier in 0 until deleteOf,
         )
         assertEquals(
             "and the section is TOLD it, never re-reading the tier itself: this is the same " +
@@ -474,8 +535,12 @@ class LivePreviewRowsPinTest {
         )
         assertEquals(
             "the chip claims an INSTALLED model — offering it on a device with no pack is a " +
-                "promise the first session would break",
-            1, liveLineCount(step, "code == \"en\" && livePackInstalled ->"),
+                "promise the first session would break — and (4.5.0 Task 4) it claims LIVE " +
+                "WORDS, which a device with no on-device speech model can never show whatever " +
+                "is installed. The tier term costs a first-run reader nothing (`livePackInstalled` " +
+                "is already false on a fresh install); what it catches is the RE-ENTERED flow, " +
+                "which `firstRunStartDestination` routes to on exactly that missing tier.",
+            1, liveLineCount(step, "code == \"en\" && livePackInstalled && liveTierInstalled ->"),
         )
         assertEquals(
             "and the pack is read ONCE, at flow level, like the language tag beside it: a read " +

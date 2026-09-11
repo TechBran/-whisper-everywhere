@@ -130,7 +130,7 @@ class LivePreviewSelectorStripPinTest {
         assertEquals(
             "and the row asks the CATALOGUE which languages have one, so a language with no pack " +
                 "gets no badge rather than a \"no model\" chip on fifty rows",
-            1, liveLineCount(picker, "StreamingPackCatalog.forLanguage(code)?.let { pack ->"),
+            1, liveLineCount(picker, "StreamingPackCatalog.forLanguage(code)"),
         )
         assertEquals(
             "no size literal anywhere in the picker",
@@ -144,23 +144,86 @@ class LivePreviewSelectorStripPinTest {
         // on `selectedLanguage == "auto"`, so the user who picked French was told nothing here at
         // all. The honest predicate is the catalogue's — 4.4.1 pass 3's own ITEM 1, applied to
         // the third surface — and the `noLiveWords` pair answers both cases from one input.
+        //
+        // (4.5.0 Task 4) The predicate is still the catalogue's and the pair is still the copy's:
+        // what changed is that BOTH now arrive through `PreviewUnreachable`, which answers the
+        // DEVICE first. The catalogue answer is that decision's second input rather than an `if`
+        // of its own, and `unreachableSubtitle` returns `noLiveWordsSubtitle` unchanged for it.
         val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
         assertEquals(
-            1, liveLineCount(picker, "if (StreamingPackCatalog.forLanguage(selectedLanguage) == null) {"),
+            1,
+            liveLineCount(
+                picker,
+                "hasPackForSelection = StreamingPackCatalog.forLanguage(selectedLanguage) != null,",
+            ),
         )
         assertEquals(
-            "and the sentence is the pair's, which returns Auto's own arm for null",
-            1, liveLineCount(picker, "StreamingPackCopy.noLiveWordsSubtitle(pickedLanguage)"),
+            "and the sentence is the one pair over that decision, whose selection arm IS 4.4.1's " +
+                "own (StreamingPackCopyTest holds them byte for byte)",
+            1, liveLineCount(picker, "StreamingPackCopy.unreachableSubtitle(unreachable, pickedLanguage)"),
         )
         assertEquals(
             "so the previewer's caveat is no longer behind an == \"auto\" test",
             0, liveLineCount(picker, "StreamingPackCopy.AUTO_NO_LIVE_WORDS"),
         )
         assertEquals(
+            "nor behind a bare catalogue `if`, which could not see the device at all",
+            0,
+            liveLineCount(picker, "if (StreamingPackCatalog.forLanguage(selectedLanguage) == null) {"),
+        )
+        assertEquals(
             "the language's own word comes from the picker's one table, null on Auto — the " +
                 "Settings row's derivation verbatim, so the two surfaces cannot disagree",
             1,
             liveLineCount(picker, "val pickedLanguage = selectedLanguage.takeIf { it != \"auto\" }"),
+        )
+    }
+
+    @Test fun aDeviceThatCanNeverArmIsSoldNothingInThePickerAndToldOnce() {
+        // (4.5.0 Task 4) The three previewer sentences on this card, and the cells they may be
+        // read in. With no on-device speech model `localPreviewArms` refuses on `!isCloudSession`
+        // and `PreviewAutoFetch.decide` refuses on `!localTierInstalled`, so:
+        //
+        //  - `PICKER_DEAL` — *"that model IS DOWNLOADED and becomes your preview model — words
+        //    appear on the bubble as you speak"* — is false in BOTH halves. It was the
+        //    widest-read string in the feature: ungated, on the app's start destination.
+        //  - `pickerRowBadge` prices a model whose words can never appear there.
+        //  - the caveat under the field named the SELECTION, where no selection helps.
+        //
+        // All three are decided by the ONE fact the card is handed, and the third is the sentence
+        // that replaces the other two.
+        val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
+        assertEquals(
+            "the deal is inside the tier gate",
+            1, liveLineCount(picker, "if (localTierInstalled) {"),
+        )
+        val gateAt = offsetOfLive(picker, "if (localTierInstalled) {")
+        val dealAt = offsetOfLive(picker, "StreamingPackCopy.PICKER_DEAL")
+        assertTrue("the gate must precede the deal it withdraws", gateAt in 0 until dealAt)
+        assertEquals(
+            "and the per-row badge is withdrawn by the same fact, on the row's own lookup, so a " +
+                "language with a pack is unbadged here exactly where the deal is unsaid",
+            1, liveLineCount(picker, "?.takeIf { localTierInstalled }"),
+        )
+        assertEquals(
+            "the caveat asks ONE pure decision, which answers the device before the selection",
+            1, liveLineCount(picker, "PreviewUnreachable.of("),
+        )
+        assertEquals(
+            "handed the same fact, never a second read of the tier in this card — TWO named " +
+                "readers, the caveat's decision and the strip below the deal, both of the one " +
+                "parameter this card is given",
+            2, liveLineCount(picker, "localTierInstalled = localTierInstalled,"),
+        )
+        assertEquals(
+            "and this card takes the tier as a PARAMETER — a read of its own is the staleness " +
+                "that let a receipt outlive the pack (fix round 2's N2, one surface over)",
+            0,
+            liveLineCount(picker, "whisperModelManager") + liveLineCount(picker, "installedModel("),
+        )
+        assertEquals(
+            "no sentence of the picker's own about any of it: every word is the copy object's",
+            0, liveLineCount(picker, "\"Live words"),
         )
     }
 

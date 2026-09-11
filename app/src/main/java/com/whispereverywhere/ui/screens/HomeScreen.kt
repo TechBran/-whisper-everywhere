@@ -47,6 +47,7 @@ import com.whispereverywhere.transcription.stream.PreviewDisabled
 import com.whispereverywhere.transcription.stream.PreviewPhase
 import com.whispereverywhere.transcription.stream.PreviewPicks
 import com.whispereverywhere.transcription.stream.PreviewTrigger
+import com.whispereverywhere.transcription.stream.PreviewUnreachable
 import com.whispereverywhere.transcription.stream.PreviewWorkboard
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
@@ -1411,6 +1412,14 @@ fun UsageStatsCard(
  *        refuses on `!isCloudSession`, and *"English is ready: words appear on the bubble"* is
  *        permanently untrue (4.5.0 Task 3 fix round 1, review r1's B2 — the same input
  *        `PreviewAutoFetch.card` and `decide` already read).
+ *
+ *        (4.5.0 Task 4) It now decides the other three previewer sentences on this card too, and
+ *        they were the widest-read untrue ones the feature had: `PICKER_DEAL` rendered for every
+ *        user with no gate at all (*"that model **is downloaded** and becomes your preview
+ *        model — words appear on the bubble as you speak"*, both halves false with no tier),
+ *        `pickerRowBadge` priced a model whose words can never appear, and the caveat under the
+ *        field named the SELECTION on a device where no selection helps. All three are now the
+ *        one sentence `PreviewUnreachable` selects.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1492,13 +1501,24 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
             // surprise — and it is read BEFORE the menu opens, because a caveat read after the tap
             // is a caveat that changed nothing (the language step's own rule). It carries no
             // figure: the size is per language and belongs on the row, which is where it is.
-            Text(
-                text = StreamingPackCopy.PICKER_DEAL,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            //
+            // (4.5.0 Task 4) AND NOT AT ALL ON A DEVICE THAT CAN NEVER ARM. This is the
+            // widest-read sentence the previewer has — it renders for every user, on the app's
+            // start destination, with no gate of any kind — and on a phone with no on-device
+            // speech model BOTH of its claims are false: `PreviewAutoFetch.decide` refuses on
+            // `!localTierInstalled`, so switching language downloads nothing, and
+            // `localPreviewArms` refuses on `!isCloudSession`, so no word would appear if it did.
+            // The truth for that reader is the sentence under the field (`unreachableSubtitle`),
+            // which renders in exactly the cells this one does not.
+            if (localTierInstalled) {
+                Text(
+                    text = StreamingPackCopy.PICKER_DEAL,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
-            Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             // (4.5.0 Task 3c) THE PROGRESS LIVES ABOVE THE SELECTOR — owner ruling, 2026-09-11:
             // *"you can incorporate the status for that model being downloaded right there above
@@ -1575,7 +1595,15 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
                                     // and its own sentence under the field instead (AF8's pair),
                                     // because a missing model and a deliberate Auto are different
                                     // facts and a "no model" chip on fifty rows collapses them.
-                                    StreamingPackCatalog.forLanguage(code)?.let { pack ->
+                                    //
+                                    // (4.5.0 Task 4) ...and NO row is badged on a device that can
+                                    // never arm. The badge names the feature ("Live words · 73
+                                    // MB") beside a language whose words can never appear there,
+                                    // which is an advertisement rather than a sentence — and it
+                                    // would put a price on 73 MB that buys this phone nothing.
+                                    StreamingPackCatalog.forLanguage(code)
+                                        ?.takeIf { localTierInstalled }
+                                        ?.let { pack ->
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = StreamingPackCopy.pickerRowBadge(pack.totalBytes),
@@ -1615,10 +1643,21 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
             // said nothing at all to them. It is 4.4.1 pass 3's own ITEM 1 predicate, applied to
             // the third surface: the `noLiveWords` pair answers both cases from this one input,
             // and Auto's arm is the sentence that was already here.
-            if (StreamingPackCatalog.forLanguage(selectedLanguage) == null) {
+            //
+            // (4.5.0 Task 4) ...AND THE DEVICE IS ANSWERED BEFORE THE SELECTION, by the same pure
+            // decision the Settings section asks. With no on-device speech model this is the ONE
+            // sentence this card has left — the deal above and the badges in the menu are both
+            // withdrawn — and it renders for EVERY selection, because on that device Auto's
+            // instruction to *"pick your transcription language"* is false for every language
+            // they could pick. `pickedLanguage` is ignored by that arm and carried anyway, so the
+            // two arms read from one call.
+            PreviewUnreachable.of(
+                localTierInstalled = localTierInstalled,
+                hasPackForSelection = StreamingPackCatalog.forLanguage(selectedLanguage) != null,
+            )?.let { unreachable ->
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = StreamingPackCopy.noLiveWordsSubtitle(pickedLanguage),
+                    text = StreamingPackCopy.unreachableSubtitle(unreachable, pickedLanguage),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

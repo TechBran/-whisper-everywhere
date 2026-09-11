@@ -673,7 +673,18 @@ private fun LanguageStep(
                 code == "auto" -> OnboardingLogic.AUTO_LANGUAGE_SUBTITLE
                 // Only where the model is actually on the device: the chip claims an INSTALLED
                 // model, and offering it without one is a promise the first session would break.
-                code == "en" && livePackInstalled ->
+                //
+                // (4.5.0 Task 4) ...AND ONLY WHERE A WORD COULD ARRIVE. The chip says *"Live
+                // words on the bubble while you speak — preview model installed"*, and with no
+                // on-device speech model `localPreviewArms` refuses on `!isCloudSession` and no
+                // word ever does. It costs this step's first-run reader nothing: the pack is
+                // never installed on a fresh install, so `livePackInstalled` already withholds
+                // the chip from everyone standing here before the ENGINES step. What the tier
+                // term adds is the RE-ENTERED flow — a user who deleted their tier and is sent
+                // back through onboarding (`firstRunStartDestination` routes on exactly that) —
+                // where the pack IS installed and the chip was the one sentence on this screen
+                // that promised words.
+                code == "en" && livePackInstalled && liveTierInstalled ->
                     com.whispereverywhere.transcription.stream.StreamingPackCopy.LANGUAGE_CHIP
                 else -> null
             },
