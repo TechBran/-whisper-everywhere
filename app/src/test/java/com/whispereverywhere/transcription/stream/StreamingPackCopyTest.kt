@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription.stream
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -774,6 +775,25 @@ class StreamingPackCopyTest {
 
     // --------------------------------- above the language selector (4.5.0 Task 3c)
 
+    /**
+     * The strip's line, with the ordinary case as the default: the record's own language is the
+     * selected one (which is WHY the record exists), the switch is on and a tier is installed.
+     * Every test below states only the fact it is about.
+     */
+    private fun strip(
+        work: PreviewWork,
+        language: String = en,
+        selectedLanguage: String? = "en",
+        showLiveWords: Boolean = true,
+        localTierInstalled: Boolean = true,
+    ): String? = StreamingPackCopy.selectorLine(
+        work = work,
+        language = language,
+        selectedLanguage = selectedLanguage,
+        showLiveWords = showLiveWords,
+        localTierInstalled = localTierInstalled,
+    )
+
     @Test fun theSelectorStripSaysWhatIsArrivingForEveryPhaseThatIsArriving() {
         // Ruling 3c: *"incorporate the status for that model being downloaded right there above
         // the language selector … and know that their language is ready for selection."* The
@@ -782,9 +802,8 @@ class StreamingPackCopyTest {
         // rather than re-worded, because a parallel table of Play's phases is how two surfaces
         // come to describe one transfer differently.
         for (phase in PreviewPhase.entries) {
-            val line = StreamingPackCopy.selectorLine(
+            val line = strip(
                 work(PreviewRoute.PLAY_FETCH, phase, 12_000_000L, 72_654_782L, reason = "no room."),
-                en,
             )
             when (phase) {
                 // The user's own no — the dismissal was its own receipt.
@@ -792,7 +811,9 @@ class StreamingPackCopyTest {
                 // The one sentence the work line has no phase for.
                 PreviewPhase.INSTALLED ->
                     assertEquals(StreamingPackCopy.selectorReady(en), line)
-                // Everything else is the ONE work line, in its receipt form, verbatim.
+                // Everything else is the ONE work line, verbatim, in the form the SELECTION
+                // chooses — here the record's language is the selected one, which is the case an
+                // AWAITING_ANSWER record exists in.
                 else -> assertEquals(
                     "$phase must be the work line itself, not a second wording of it",
                     StreamingPackCopy.workLine(
@@ -800,7 +821,7 @@ class StreamingPackCopyTest {
                             PreviewRoute.PLAY_FETCH, phase, 12_000_000L, 72_654_782L,
                             reason = "no room.",
                         ),
-                        tappable = false,
+                        tappable = true,
                     ),
                     line,
                 )
@@ -809,43 +830,95 @@ class StreamingPackCopyTest {
         assertEquals(
             "and the bytes reach it, through the catalog's one rounding rule",
             "Fetching the preview model: 12 of 73 MB",
-            StreamingPackCopy.selectorLine(
-                work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING, 12_000_000L, 72_654_782L),
-                en,
-            ),
+            strip(work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING, 12_000_000L, 72_654_782L)),
         )
     }
 
-    @Test fun theStripAsksForNoTapBecauseItHasNoneAndPointsAtTheSelectorInstead() {
-        // `workLine`'s `tappable` parameter buys exactly one sentence, and this is the surface it
-        // was written for: AWAITING_ANSWER's receipt form ends "Pick that language again to
-        // answer", and the selector immediately below the strip is that gesture. Review r3's
-        // H3-B3 defect was a sentence naming a gesture the app had decided to refuse; here the
-        // named gesture is the one control on screen.
-        val line = StreamingPackCopy.selectorLine(
-            work(PreviewRoute.PLAY_FETCH, PreviewPhase.AWAITING_ANSWER),
-            en,
+    @Test fun theReadyReceiptIsRefusedWhereTheFEATURECannotKeepIt() {
+        // (fix round 1, review r1's B2) `selectorReady` is a PRESENT-TENSE PROMISE — *"words
+        // appear on the bubble whenever you pick it"* — rendered from a TERMINAL record that the
+        // board keeps. `PreviewAutoFetch.card` twelve lines away on the same screen answers
+        // `Card.NONE` on both of these before it will say anything, each guard earned by a review
+        // round, and the two composables narrate the same pack. So the strip asks them too.
+        val installed = work(PreviewRoute.PLAY_FETCH, PreviewPhase.INSTALLED)
+        assertEquals(
+            "the ordinary case still says it",
+            StreamingPackCopy.selectorReady(en), strip(installed),
         )
-        assertTrue("<<$line>> must not ask for a tap", line?.contains("tap") == false)
+        assertNull(
+            "the switch is OFF: no word will reach the bubble, so \"words appear\" is false — " +
+                "4.4.1 review r1's B2, on the card, re-committed on this surface until now",
+            strip(installed, showLiveWords = false),
+        )
+        assertNull(
+            "no on-device TIER: every session is a cloud session, `localPreviewArms` refuses on " +
+                "!isCloudSession, and the promise is permanently untrue however installed the " +
+                "pack is (4.4.1 pass 3's ITEM 3, the card's own reason)",
+            strip(installed, localTierInstalled = false),
+        )
+        assertNull(strip(installed, showLiveWords = false, localTierInstalled = false))
+        // ...and the two facts silence ONLY the promise. A transfer that is actually happening is
+        // narrated whoever started it and whatever the device can arm: hiding a running 73 MB
+        // from the user is the silent spend ruling 3c exists to close.
+        for (phase in PreviewPhase.entries) {
+            if (phase == PreviewPhase.INSTALLED || phase == PreviewPhase.CANCELLED) continue
+            val running = work(PreviewRoute.PLAY_FETCH, phase, 12_000_000L, 72_654_782L, reason = "no room.")
+            assertEquals(
+                "$phase: an in-flight line is a fact, not a promise",
+                strip(running),
+                strip(running, showLiveWords = false, localTierInstalled = false),
+            )
+            assertNotNull("$phase must still say something", strip(running, showLiveWords = false))
+        }
+    }
+
+    @Test fun theAwaitingAnswerSentenceNamesARePickONLYWhereARePickWouldChangeSomething() {
+        // (fix round 1, review r1's B2a) `workLine`'s `tappable` chooses between *"— tap to
+        // answer"* and *"Pick that language again to answer"*, and the second is TRUE only where
+        // re-picking moves the selection. The Settings row computes it as
+        // `workLineTappable(work) && selectedPack == previewPack` for exactly that reason.
+        //
+        // The strip's first version passed `tappable = false` unconditionally and called the
+        // receipt form a virtue, which put the instruction in front of the user in the one case
+        // where it is INERT: re-picking the already-selected language writes the same String into
+        // the same flow and `Set.plus` returns an equal set, so nothing emits, nothing recomposes
+        // and `LaunchedEffect(previewPhase)` cannot re-fire. And on this strip that is not an
+        // edge case — an AWAITING_ANSWER record exists BECAUSE that language was picked.
+        val awaiting = work(PreviewRoute.PLAY_FETCH, PreviewPhase.AWAITING_ANSWER)
+        val onSelection = strip(awaiting, selectedLanguage = "en")
         assertTrue(
-            "and must name the selection, which is what the strip sits above",
-            line?.contains("Pick that language again") == true,
+            "<<$onSelection>>: the record's language IS the selection, so the honest sentence is " +
+                "the one that asks for a tap — Play's dialog is raised on entry and the card " +
+                "carries the same gesture",
+            onSelection?.contains("tap to answer") == true,
         )
+        assertTrue(
+            "and it must NOT instruct a re-pick that would change nothing",
+            onSelection?.contains("Pick that language again") == false,
+        )
+        for (elsewhere in listOf("fr", "auto", null)) {
+            val offSelection = strip(awaiting, selectedLanguage = elsewhere)
+            assertTrue(
+                "selected=$elsewhere: the selection has moved off this pack, so re-picking it " +
+                    "really does move the selection, emit, and re-raise Play's dialog — and it " +
+                    "is the one control that unlocks this row",
+                offSelection?.contains("Pick that language again") == true,
+            )
+        }
     }
 
     @Test fun aFailedArrivalStaysOnTheStripBecauseNothingElseWouldSayIt() {
-        // Under 3b the user CAUSED this transfer by picking, and under 3a a metered connection has
-        // no offer card anywhere — so if the strip went silent on a failure the pick would have
-        // spent their data and reported nothing. The refusal is rendered VERBATIM, for the work
-        // line's own reason: the shell has already re-told it in this feature's words.
+        // Under 3b the user CAUSED this transfer by picking, so the place they picked is the place
+        // that owes them the news — the card's retry offer is reached by a different route and a
+        // user who scrolled past it would read nothing. The refusal is rendered VERBATIM, for the
+        // work line's own reason: the shell has already re-told it in this feature's words.
         assertEquals(
             "There is not enough room for the preview model.",
-            StreamingPackCopy.selectorLine(
+            strip(
                 work(
                     PreviewRoute.PLAY_FETCH, PreviewPhase.FAILED,
                     reason = "There is not enough room for the preview model.",
                 ),
-                en,
             ),
         )
     }

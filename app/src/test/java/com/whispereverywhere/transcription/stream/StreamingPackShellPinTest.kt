@@ -655,4 +655,37 @@ class StreamingPackShellPinTest {
             controller.contains("\"stream-pack: pack=\$packName status=\$word soFar=\$soFar total=\$total\""),
         )
     }
+
+    /**
+     * A DELETE TAKES THE BOARD'S RECORD OF THE ARRIVAL WITH IT (4.5.0 Task 3 fix round 1, review
+     * r1's B2).
+     *
+     * `PreviewWorkboard` keeps terminal records on purpose and had NO production caller of
+     * `forget` at all, which was safe only while nothing rendered a present-tense sentence off
+     * one. Ruling 3c's strip does — *"English is ready: words appear on the bubble whenever you
+     * pick it"*, above the language selector — so after install-then-delete that promise stood
+     * over a model that no longer existed, to a user who had just written `setLivePreviewDeclined`.
+     *
+     * It is pinned HERE, in the one production deleter, and not at the Settings row's onClick, for
+     * this file's own stated rule: a guard that trusts its caller to remember is not a guard. And
+     * it is pinned as SOURCE because there is no JVM path through `delete` (it stats `filesDir`
+     * and asks a `DownloadManager`), so a dropped line would be invisible to every other test.
+     */
+    @Test
+    fun theDeleteRetiresTheBoardsRecordOfTheArrivalItJustUndid() {
+        val body = scopeOf(manager, "fun delete(pack: StreamingPack)", "\n    /**")
+        assertEquals(
+            "one retire, in the one production deleter",
+            1, liveLineCount(body, "PreviewWorkboard.retire(pack.language)"),
+        )
+        assertEquals(
+            "and it is RETIRE, never forget: `retire` leaves a RUNNING record alone, so a delete " +
+                "can never blank a live progress row or make busy() answer false while Play is " +
+                "still delivering",
+            0, liveLineCount(body, "PreviewWorkboard.forget("),
+        )
+        val removes = offsetOfLive(body, "StreamingPackInstall.delete(root(), pack)")
+        val retires = offsetOfLive(body, "PreviewWorkboard.retire(pack.language)")
+        assertTrue("the bytes must go first", removes in 0 until retires)
+    }
 }

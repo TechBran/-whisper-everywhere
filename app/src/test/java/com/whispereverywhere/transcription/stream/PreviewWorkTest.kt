@@ -488,6 +488,48 @@ class PreviewWorkTest {
         assertEquals(setOf("de"), PreviewWorkboard.work.value.keys)
     }
 
+    @Test fun retireDropsATerminalRecordAndNEVERARunningOne() {
+        // (fix round 1, review r1's B2) "Kept until then" had no THEN: `forget` had zero
+        // production callers, so a terminal record was kept forever — and ruling 3c's strip is
+        // the first surface to render a PRESENT-TENSE promise off one. `retire` is the door the
+        // two gestures that contradict a record use (the delete, and the permanent no).
+        for (phase in PreviewPhase.entries) {
+            PreviewWorkboard.forgetAll()
+            PreviewWorkboard.begin(
+                "en", PreviewRoute.PLAY_FETCH, PreviewStarter.PICK, PreviewStep(phase),
+            )
+            PreviewWorkboard.retire("en")
+            if (phase.inFlight) {
+                assertEquals(
+                    "$phase: a RUNNING record is never dropped. `busy()` reads this board, so " +
+                        "dropping one would tell the actuator and both surfaces that nothing is " +
+                        "happening while Play is still delivering — review r2's B1a, through a " +
+                        "new door",
+                    phase, PreviewWorkboard.of("en")?.phase,
+                )
+            } else {
+                assertNull("$phase: the receipt goes, because it has been contradicted", PreviewWorkboard.of("en"))
+            }
+        }
+    }
+
+    @Test fun retireTakesOnlyItsOwnLanguageAndAnUnknownOneIsHarmless() {
+        PreviewWorkboard.begin("en", PreviewRoute.PLAY_FETCH, PreviewStarter.PICK, PreviewStep(PreviewPhase.INSTALLED))
+        PreviewWorkboard.begin("de", PreviewRoute.PLAY_FETCH, PreviewStarter.PICK, PreviewStep(PreviewPhase.INSTALLED))
+        PreviewWorkboard.retire("fr")
+        assertEquals(
+            "a language with no record is not an error: the delete row and the X are per " +
+                "language and either can be pressed with nothing on the board",
+            setOf("en", "de"), PreviewWorkboard.work.value.keys,
+        )
+        PreviewWorkboard.retire("en")
+        assertEquals(
+            "deleting English's model says nothing about German's — the board is keyed by " +
+                "language for exactly this reason",
+            setOf("de"), PreviewWorkboard.work.value.keys,
+        )
+    }
+
     // ------------------------------------------------------------------ the delete row's cases
 
     @Test fun thereIsNoDeleteRowWhereThereAreNoBytes() {

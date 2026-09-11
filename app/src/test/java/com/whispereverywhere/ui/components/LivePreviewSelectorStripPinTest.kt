@@ -97,9 +97,9 @@ class LivePreviewSelectorStripPinTest {
         val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
         assertEquals(
             "one strip in the picker, and exactly one",
-            1, liveLineCount(picker, "LivePreviewSelectorStrip()"),
+            1, liveLineCount(picker, "LivePreviewSelectorStrip("),
         )
-        val stripAt = offsetOfLive(picker, "LivePreviewSelectorStrip()")
+        val stripAt = offsetOfLive(picker, "LivePreviewSelectorStrip(")
         val selectorAt = offsetOfLive(picker, "ExposedDropdownMenuBox(")
         assertTrue("the selector must be in this card", selectorAt >= 0)
         assertTrue(
@@ -169,9 +169,9 @@ class LivePreviewSelectorStripPinTest {
         // "the progress no longer hides on Home". The rows ARE this step's selector.
         val step = scopeOf(onboarding, "private fun LanguageStep(", "private fun LanguageRow(")
         assertEquals(
-            1, liveLineCount(step, "LivePreviewSelectorStrip()"),
+            1, liveLineCount(step, "LivePreviewSelectorStrip("),
         )
-        val stripAt = offsetOfLive(step, "LivePreviewSelectorStrip()")
+        val stripAt = offsetOfLive(step, "LivePreviewSelectorStrip(")
         val rowsAt = offsetOfLive(step, "OnboardingLogic.languageRows(languageTag).forEach")
         assertTrue("the rows must be in this step", rowsAt >= 0)
         assertTrue("and the strip above them", stripAt in 0 until rowsAt)
@@ -190,8 +190,8 @@ class LivePreviewSelectorStripPinTest {
         assertEquals(
             "and exactly two call sites in the app — the two places a language is chosen",
             2,
-            liveLineCount(home, "LivePreviewSelectorStrip()") +
-                liveLineCount(onboarding, "LivePreviewSelectorStrip()"),
+            liveLineCount(home, "LivePreviewSelectorStrip(") +
+                liveLineCount(onboarding, "LivePreviewSelectorStrip("),
         )
     }
 
@@ -211,10 +211,17 @@ class LivePreviewSelectorStripPinTest {
         for (needle in listOf(
             "PreviewWorkboard.of(",
             "PreviewWorkboard.inFlight(",
-            "selectedLanguage",
             "StreamingPackController.state",
             "streamingPackManager",
             "StreamingPackCatalog.EN",
+            // (fix round 1, review r1's B2) The three facts the sentences depend on arrive as
+            // PARAMETERS, which is the opposite of a second read: no preferences instance, no
+            // second flow, and therefore nothing that can go stale behind the observable. The
+            // needles below are the READS this file must never grow — `getInstance`, a
+            // `preferencesManager`, a `whisperModelManager` — not the inputs it is handed.
+            "preferencesManager",
+            "whisperModelManager",
+            "getInstance(",
         )) {
             assertEquals(
                 "<<$needle>>: the strip asks the one observable and nothing else — a second read " +
@@ -222,6 +229,11 @@ class LivePreviewSelectorStripPinTest {
                 0, liveLineCount(strip, needle),
             )
         }
+        assertEquals(
+            "ONE collector in the whole file, and it is the board's: the facts are parameters " +
+                "precisely so there is no second source of truth to fall behind it",
+            1, liveLineCount(strip, "collectAsState()"),
+        )
         assertEquals(
             "the language's WORD comes from the picker's one table, so three surfaces cannot " +
                 "name one language three ways",
@@ -275,13 +287,71 @@ class LivePreviewSelectorStripPinTest {
         }
         assertEquals(
             "the line is the copy object's one function over the one observable",
-            1, liveLineCount(strip, "StreamingPackCopy.selectorLine(work, language)"),
+            1, liveLineCount(strip, "StreamingPackCopy.selectorLine("),
         )
+        // (fix round 1, review r1's B2) ...and the strip does not JUDGE the three facts it is
+        // handed. A conjunction here — `if (showLiveWords && localTierInstalled)` — would be a
+        // rule no JVM test can reach on a Compose file, which is `PreviewAutoFetch.card`'s own
+        // founding reason. They go into the pure function whole, and it answers null.
+        for (rule in listOf("if (showLiveWords", "&& localTierInstalled", "if (localTierInstalled")) {
+            assertEquals(
+                "<<$rule>> on the strip: which sentence is true is selectorLine's answer",
+                0, liveLineCount(strip, rule),
+            )
+        }
+        for (fact in listOf("selectedLanguage = selectedLanguage", "showLiveWords = showLiveWords", "localTierInstalled = localTierInstalled")) {
+            assertEquals(
+                "<<$fact>>: handed through by name, so a call site cannot pass one of them in " +
+                    "another's place",
+                1, liveLineCount(strip, fact),
+            )
+        }
         assertEquals(
             "and the title is the feature's own name, the SAME string the Settings in-flight row " +
                 "renders — so the two surfaces describing one transfer cannot head it differently",
             1, liveLineCount(strip, "StreamingPackCopy.featureTitle(language)"),
         )
+    }
+
+    @Test fun bothSitesHandTheStripTheThreeFactsAndNeitherOfThemFakesOne() {
+        // (fix round 1, review r1's B2) The defect was not a sentence, it was a component built to
+        // hold nothing that had three unstated assumptions. The facts now arrive from the call
+        // site, and the edit this pin catches is the cheap one: a `true` literal to make it
+        // compile, which restores the promise the switch and the tier had already withdrawn.
+        val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
+        val step = scopeOf(onboarding, "private fun LanguageStep(", "private fun LanguageRow(")
+        for ((site, scope) in listOf("picker" to picker, "onboarding step" to step)) {
+            for (literal in listOf(
+                "showLiveWords = true",
+                "localTierInstalled = true",
+                "selectedLanguage = \"",
+            )) {
+                assertEquals(
+                    "$site: <<$literal>> is the assumption coming back as a constant",
+                    0, liveLineCount(scope, literal),
+                )
+            }
+        }
+        assertEquals(
+            "the picker's selection is the one it renders the field and the badge from",
+            1, liveLineCount(picker, "selectedLanguage = selectedLanguage,"),
+        )
+        assertEquals(
+            "and the switch is the SAME flow the live-words card reads, not a second read",
+            1, liveLineCount(picker, "app.preferencesManager.localPreviewEnabledFlow.collectAsState()"),
+        )
+        assertEquals(
+            "the tier is PASSED DOWN from the screen's own resume-refreshed read, so this card " +
+                "and the live-words card above it cannot disagree about whether a device can arm",
+            1, liveLineCount(home, "LanguageSelectionCard(localTierInstalled = hasSpeechModel)"),
+        )
+        assertEquals(
+            "at the onboarding step the PICK is the selection — there is no stored selection " +
+                "until Continue",
+            1, liveLineCount(step, "selectedLanguage = picked,"),
+        )
+        assertEquals(1, liveLineCount(step, "showLiveWords = liveWordsSwitchOn,"))
+        assertEquals(1, liveLineCount(step, "localTierInstalled = liveTierInstalled,"))
     }
 
     @Test fun theStripDrawsNothingWhenThereIsNothingToSay() {

@@ -126,10 +126,22 @@ class StreamingPackManager(private val context: Context) {
         playCanDeliver = playCanDeliver(),
     )
 
+    /**
+     * Remove the install, whatever it left staged, and any `DownloadManager` row for it.
+     *
+     * ...AND THE BOARD'S RECORD OF THE ARRIVAL (4.5.0 Task 3 review r1, B2). The record is the
+     * receipt for an install that no longer exists, and one surface renders a present-tense
+     * promise off it — *"English is ready: words appear on the bubble whenever you pick it"*,
+     * above the language selector. Retiring it here rather than at the delete row's onClick is
+     * the house rule this file already follows: a guard that trusts its caller to remember is not
+     * a guard, and this is the one production deleter. [PreviewWorkboard.retire] leaves a RUNNING
+     * record alone, so this can never blank a live progress row or make `busy()` lie.
+     */
     fun delete(pack: StreamingPack) {
         StreamingPackInstall.delete(root(), pack)
         stagingDir(pack).deleteRecursively()
         removeStaleDownloads(downloadManager(), pack)
+        PreviewWorkboard.retire(pack.language)
     }
 
     /**

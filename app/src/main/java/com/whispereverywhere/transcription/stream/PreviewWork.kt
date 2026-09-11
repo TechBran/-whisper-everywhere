@@ -579,6 +579,45 @@ object PreviewWorkboard {
         _work.update { it - language }
     }
 
+    /**
+     * RETIRE ONE LANGUAGE'S RECORD BECAUSE THE USER HAS CONTRADICTED IT — [forget]'s production
+     * door, and the answer to *"how does a terminal record ever stop being read?"* (4.5.0 Task 3
+     * review r1, B2).
+     *
+     * Keeping terminal entries is deliberate, and until this build it meant keeping them FOREVER:
+     * [forget] had no production caller at all. That was safe only while nothing rendered a
+     * present-tense sentence off one — `StreamingPackCopy.workLine` answers null for both
+     * terminal-and-quiet phases. Ruling 3c's strip is the first surface that does
+     * (`selectorReady`: *"English is ready: words appear on the bubble whenever you pick it"*),
+     * and exactly two gestures make that receipt false about the world. Both are the user saying
+     * the opposite of what the record says, which is why they RETIRE it rather than being
+     * conditions the sentence has to ask about:
+     *
+     *  - **the model is DELETED** (`StreamingPackManager.delete`) — the arrival this record is
+     *    the receipt for has been undone, and 73 MB is no longer on the device.
+     *  - **the user says the PERMANENT NO** (Home's X, through
+     *    [PreviewAutoFetchController.cancel]) — `PreviewAutoFetch.card` has always answered
+     *    `Card.NONE` on `userSaidNo`, and the strip is the same claim on a second surface.
+     *
+     * The REVERSIBLE facts are deliberately NOT here: the *"Show live words"* switch and the
+     * on-device tier are terms in the sentence ([StreamingPackCopy.selectorLine]) because they
+     * can come back, and a receipt destroyed by a switch the user flips twice would be a receipt
+     * they cannot get back.
+     *
+     * **IN-FLIGHT WORK IS LEFT ALONE, and that is the rule rather than a precaution.**
+     * `PreviewAutoFetchController.busy()` reads this board, so dropping a RUNNING record would
+     * tell the actuator and both surfaces that nothing is happening while Play is still
+     * delivering — review r2's B1a, arriving through a new door. A delete cannot reach a running
+     * record anyway ([PreviewDeleteCase.WORKING] holds that row), and a cancel of one goes down
+     * the route table instead of here.
+     */
+    fun retire(language: String) {
+        _work.update { current ->
+            val existing = current[language] ?: return@update current
+            if (existing.inFlight) current else current - language
+        }
+    }
+
     /** Test-only: the board is process-scoped, so a JVM test must be able to start from empty. */
     fun forgetAll() {
         _work.value = emptyMap()

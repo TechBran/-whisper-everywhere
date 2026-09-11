@@ -649,6 +649,36 @@ class LiveWordsCardPinTest {
         )
     }
 
+    @Test fun aPermanentNoOverATerminalRecordRetiresTheReceiptRatherThanShrugging() {
+        // (4.5.0 Task 3 fix round 1, review r1's B2) The X on the INSTALLED announcement writes
+        // the permanent no and reaches `cancel` with a record that is OVER: `cancellable` is false
+        // for every terminal phase, so 4.5.0 logged "uncancellable" and left the record standing —
+        // and ruling 3c's strip renders *"English is ready: words appear on the bubble whenever
+        // you pick it"* off exactly that record, above the language selector, for the life of the
+        // process. `PreviewAutoFetch.card` has always answered `Card.NONE` on `userSaidNo`; this
+        // is that same refusal reaching the second surface, at the one gesture that writes it.
+        assertEquals(
+            1, liveLineCount(actuator, "if (!work.inFlight) {"),
+        )
+        assertEquals(
+            "and it RETIREs rather than forgets, so the same branch could never drop live work",
+            1, liveLineCount(actuator, "PreviewWorkboard.retire(language)"),
+        )
+        assertEquals(
+            0, liveLineCount(actuator, "PreviewWorkboard.forget("),
+        )
+        val looked = offsetOfLive(actuator, "val work = PreviewWorkboard.of(language) ?: return")
+        val over = offsetOfLive(actuator, "if (!work.inFlight) {")
+        val guard = offsetOfLive(actuator, "if (!work.cancellable) {")
+        assertTrue("the record is looked up first", looked in 0 until over)
+        assertTrue(
+            "the terminal test answers BEFORE the cancellable one: every terminal phase is " +
+                "uncancellable, so the order is what decides whether the receipt is retired or " +
+                "the gesture is merely logged as having done nothing",
+            over in 0 until guard,
+        )
+    }
+
     @Test fun theAnnouncementsRetirementIsReadOncePerForegroundAndReachesOnlyTheCard() {
         // CONTROLLER RULING 2026-09-11, CHANGE 4. The flag is written by the previewer's gate in
         // the service — i.e. while this screen is in the background — so it must be re-read on

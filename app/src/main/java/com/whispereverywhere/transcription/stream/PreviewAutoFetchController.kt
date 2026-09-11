@@ -218,6 +218,18 @@ object PreviewAutoFetchController {
      */
     fun cancel(language: String) {
         val work = PreviewWorkboard.of(language) ?: return
+        // THE ARRIVAL IS ALREADY OVER, so there is no transfer to stop — but the X that got here
+        // is the PERMANENT no, and what it still means is that this record stops being read
+        // (4.5.0 Task 3 review r1, B2). The strip above the language selector renders a
+        // present-tense sentence off a terminal `INSTALLED` record, and `PreviewAutoFetch.card`
+        // has always answered `Card.NONE` on `userSaidNo`; this is that same refusal, on the
+        // second surface, at the one gesture that writes the flag. A running record is not
+        // touched — `retire` refuses it — so this branch can only ever drop a receipt.
+        if (!work.inFlight) {
+            PreviewWorkboard.retire(language)
+            log(route = "dismiss", trigger = PreviewTrigger.TAP, outcome = "retired")
+            return
+        }
         if (!work.cancellable) {
             // Said out loud rather than swallowed: "the X did nothing" is the one outcome a
             // support log has to be able to explain.

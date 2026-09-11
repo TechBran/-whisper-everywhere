@@ -594,23 +594,76 @@ object StreamingPackCopy {
      * the one sentence [workLine] has no phase for — the READY receipt — and answers the rest by
      * asking it.
      *
-     * `tappable = false` because this strip has no tap. That is not a compromise: the sentence it
-     * selects for [PreviewPhase.AWAITING_ANSWER] is the receipt form, *"Pick that language again
-     * to answer"*, and the control it names is the selector immediately below. It is the one place
-     * in the app where that sentence points at something the reader can see.
+     * ### IT ASKS THE SAME QUESTIONS THE CARD TWELVE LINES AWAY ASKS (review r1's B2)
+     *
+     * `PreviewAutoFetch.card` answers `Card.NONE` on `!showLiveWords` and on `!localTierInstalled`
+     * before it will say anything, and each of those guards was earned by a review round —
+     * *"every sentence this card can spell is false while the switch is off"* (4.4.1 review r1's
+     * B2) and *"with no on-device tier every session is a cloud session and the gate refuses on
+     * `!isCloudSession`"* (pass 3's ITEM 3). `LivePreviewSelectorStrip` and `LiveWordsCard` are
+     * two composables in one `HomeScreen` narrating the SAME pack, so a sentence that is false on
+     * one is false on the other. The first version of this function asked nothing, and its READY
+     * receipt therefore outlived the switch going off and a device that can never arm.
+     *
+     * Those two facts are terms HERE, and not gestures that retire the record, because they are
+     * REVERSIBLE: the switch comes back on, and a tier can be installed. The two IRREVERSIBLE
+     * contradictions — the model deleted, the permanent no — retire the record itself
+     * ([PreviewWorkboard.retire]), because after either of them there is no arrival left for any
+     * surface to have a sentence about.
+     *
+     * **And the pair is not a guess about which facts matter: they are `localPreviewArms`' own
+     * standing terms.** That gate is `sessionLanguage in installedPackLanguages && !isCloudSession
+     * && !batchJobActive && userEnabled && previewReady`. `userEnabled` is [showLiveWords],
+     * `!isCloudSession` is [localTierInstalled] at setup level, `installedPackLanguages` is what
+     * the delete takes away (and with it the record), and the remaining two are momentary rather
+     * than standing — *"whenever you pick it"* is a promise about the next session, not about a
+     * batch job that is running now. There is deliberately no `userSaidNo` term, because the gate
+     * has none either: a user who declined and then installed from the Settings row really does
+     * get live words, and the card's silence there is about not nagging rather than about truth.
+     *
+     * ### Why the SELECTION is an input, and what it buys
+     *
+     * `workLine`'s `tappable` chooses between *"— tap to answer"* and *"Pick that language again
+     * to answer"*, and that second form is true only where re-picking would CHANGE something. The
+     * Settings row computes it as `workLineTappable(work) && selectedPack == previewPack`
+     * (`SettingsScreen`), so its receipt form renders only once the selection has moved off the
+     * pack — where the named gesture really does move the selection, emit, and re-raise Play's
+     * dialog. Passing `tappable = false` unconditionally put that sentence in front of the user in
+     * the one case where it is INERT: a re-pick of the already-selected language writes the same
+     * string into the same flow and `Set.plus` returns an equal set, so nothing emits, nothing
+     * recomposes, and `LaunchedEffect(previewPhase)` cannot re-fire. On this strip that is not an
+     * edge case, it is the ordinary one — an `AWAITING_ANSWER` record exists BECAUSE that language
+     * was picked. So the selection term comes in and the two forms render where each is true.
      *
      * @param work the board's record for ONE language. The strip renders a row per record, so two
      *        arrivals are two rows rather than one overwriting the other.
      * @param language that record's own language as the picker spells it — never the SELECTED
      *        one. A transfer keeps its surface when the selection moves off it (the Settings row's
      *        H-B3), so the row has to name the pack it is about.
+     * @param selectedLanguage the user's picked code (`PreferencesManager.selectedLanguage`, or
+     *        the onboarding step's own pick), compared with [PreviewWork.language] rather than
+     *        with [language] — the display name is a word, and the record is keyed by the code.
+     * @param showLiveWords the *"Show live words"* switch (`PreferencesManager
+     *        .localPreviewEnabled`), the same input `card` and `decide` read.
+     * @param localTierInstalled an on-device whisper tier exists — the same input, for the same
+     *        reason: without one `localPreviewArms` refuses on `!isCloudSession` and no word can
+     *        ever reach the bubble, however installed the pack is.
      */
-    fun selectorLine(work: PreviewWork, language: String): String? = when (work.phase) {
+    fun selectorLine(
+        work: PreviewWork,
+        language: String,
+        selectedLanguage: String?,
+        showLiveWords: Boolean,
+        localTierInstalled: Boolean,
+    ): String? = when (work.phase) {
         // The one sentence the work line has no phase for, and the one the ruling asks for by
         // name. The board keeps a terminal record, so this is the receipt for an arrival THIS
         // PROCESS made — not a badge on every installed pack, which is the Settings row's job and
-        // the language step's chip's.
-        PreviewPhase.INSTALLED -> selectorReady(language)
+        // the language step's chip's. It is a PROMISE about the future ("words appear... whenever
+        // you pick it"), so it is made only where the two reversible facts it depends on hold;
+        // the irreversible ones have already taken the record away.
+        PreviewPhase.INSTALLED ->
+            if (showLiveWords && localTierInstalled) selectorReady(language) else null
         // The user's own no. The strip is about arrivals; a withdrawn one is not one, and the
         // dismissal was itself the receipt.
         PreviewPhase.CANCELLED -> null
@@ -625,7 +678,11 @@ object StreamingPackCopy {
         // card's own retry offer is reached by a different route (the launch latch, not the
         // connection), and a user who has scrolled past it would otherwise read nothing at all.
         PreviewPhase.FAILED,
-        -> workLine(work, tappable = false)
+        // The IN-FLIGHT lines are deliberately NOT gated on the switch or the tier: they describe
+        // a transfer that is actually happening, in the present tense, and it is happening whoever
+        // started it and whatever the device can arm. Hiding a running 73 MB from the user is the
+        // silent spend ruling 3c exists to close.
+        -> workLine(work, tappable = selectedLanguage == work.language)
     }
 
     /**

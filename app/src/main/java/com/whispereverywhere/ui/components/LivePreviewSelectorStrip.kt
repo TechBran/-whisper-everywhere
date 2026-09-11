@@ -37,13 +37,24 @@ import com.whispereverywhere.transcription.stream.StreamingPackCopy
  * one of them to fall behind the observable — which is the shape of the defect 4.5.0 Task 1
  * exists to retire, one surface further out.
  *
- * ### What it holds: nothing
+ * ### What it holds: nothing. What it is TOLD: the facts its sentences depend on
  *
  * One collector of the ONE observable (`PreviewWorkboard`, Task 1), one row per record, and every
  * word from `StreamingPackCopy`. No decision, no actuator, no tap, no state of its own, and no
  * Application handle — so it can be dropped into any Compose tree, including onboarding's, where
  * there is no app-scoped view model in scope. `LivePreviewSelectorStripPinTest` holds it to that
  * as source.
+ *
+ * The first version of this component took NOTHING, which read as a virtue and was not one
+ * (review r1's B2): a board record says what a transfer DID, terminal records are kept, and
+ * `selectorReady` turns one into a PRESENT-TENSE promise — *"English is ready: words appear on
+ * the bubble whenever you pick it"*. Holding nothing meant holding three unstated assumptions,
+ * and the card twelve lines away on the same screen refuses to say anything at all until it has
+ * asked two of them (`PreviewAutoFetch.card`: `!showLiveWords` and `!localTierInstalled` are both
+ * `Card.NONE`, each earned by a review round). So the facts arrive as PARAMETERS — which is the
+ * opposite of a second read of state, and is what keeps every rule about them in the pure
+ * function that owns the words (`StreamingPackCopy.selectorLine`). This component still decides
+ * nothing; it passes three facts and a board record through and draws the answer.
  *
  * ### Why a row PER LANGUAGE, and why it renders nothing at all most of the time
  *
@@ -61,17 +72,41 @@ import com.whispereverywhere.transcription.stream.StreamingPackCopy
  * Home first composes with a tier installed. The strip is placed there anyway because the ruling
  * places it there, because it is the same component reading the same observable, and because the
  * day that order changes it will already be right.
+ *
+ * @param selectedLanguage the code the user has picked right now — the in-app picker's selection,
+ *        or the onboarding step's own pick. It decides which of `workLine`'s two
+ *        `AWAITING_ANSWER` sentences is true: *"Pick that language again to answer"* only means
+ *        something where re-picking would actually change the selection.
+ * @param showLiveWords the *"Show live words"* switch. With it off no word will reach the bubble,
+ *        so the READY receipt is a promise the feature cannot keep.
+ * @param localTierInstalled an on-device whisper tier exists. Without one every session is a
+ *        cloud session and the previewer can never arm, however installed the pack is.
  */
 @Composable
-fun LivePreviewSelectorStrip(modifier: Modifier = Modifier) {
+fun LivePreviewSelectorStrip(
+    selectedLanguage: String?,
+    showLiveWords: Boolean,
+    localTierInstalled: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val board by PreviewWorkboard.work.collectAsState()
     // Every arrival the feature is currently doing something about, in the words of the one
     // observable. The display name comes from the picker's own table — the same owner of
     // code-to-word the card and the Settings row read, so three surfaces cannot name one language
     // three ways — and the fallback is the code itself, unreachable for a catalogue row.
+    //
+    // The three facts go through UNJUDGED: which sentence they select, and whether there is a
+    // true one at all, is `selectorLine`'s to answer, because a conjunction written here is a
+    // rule no test can reach (`PreviewAutoFetch.card`'s own founding reason).
     val rows = board.values.mapNotNull { work ->
         val language = PreferencesManager.languageDisplayName(work.language) ?: work.language
-        StreamingPackCopy.selectorLine(work, language)?.let { line ->
+        StreamingPackCopy.selectorLine(
+            work = work,
+            language = language,
+            selectedLanguage = selectedLanguage,
+            showLiveWords = showLiveWords,
+            localTierInstalled = localTierInstalled,
+        )?.let { line ->
             StreamingPackCopy.featureTitle(language) to line
         }
     }

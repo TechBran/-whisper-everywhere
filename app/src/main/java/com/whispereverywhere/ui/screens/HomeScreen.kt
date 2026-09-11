@@ -506,7 +506,13 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Transcription language — the one place this is chosen; stays on the dashboard.
-            LanguageSelectionCard()
+            //
+            // (4.5.0 Task 3 fix round 1, review r1's B2) The tier read is passed DOWN rather than
+            // re-taken inside: `hasSpeechModel` is this screen's one answer to "can anything on
+            // this device arm the previewer", refreshed on every resume, and the progress strip
+            // inside this card promises live words. The card and the strip must not be able to
+            // disagree with the live-words card above about whether that promise can be kept.
+            LanguageSelectionCard(localTierInstalled = hasSpeechModel)
         }
     }
 }
@@ -1391,11 +1397,22 @@ fun UsageStatsCard(
     }
 }
 
+/**
+ * @param localTierInstalled the screen's own `hasSpeechModel`, passed down for the progress strip
+ *        below: without an on-device tier every session is a cloud session, `localPreviewArms`
+ *        refuses on `!isCloudSession`, and *"English is ready: words appear on the bubble"* is
+ *        permanently untrue (4.5.0 Task 3 fix round 1, review r1's B2 — the same input
+ *        `PreviewAutoFetch.card` and `decide` already read).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LanguageSelectionCard() {
+fun LanguageSelectionCard(localTierInstalled: Boolean) {
     val app = WhisperEverywhereApp.getInstance()
     val selectedLanguage by app.preferencesManager.selectedLanguage.collectAsState()
+    // ...and the switch, for the same reason and from the same place the live-words card reads it:
+    // with "Show live words" off, no word reaches the bubble and the strip's READY receipt is a
+    // promise the feature cannot keep (4.4.1 review r1's B2, on the card; review r1's B2 here).
+    val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
     var expanded by remember { mutableStateOf(false) }
 
     // Find the display name for the current selection — through the one owner of code-to-word
@@ -1474,7 +1491,17 @@ fun LanguageSelectionCard() {
             // now spends the user's data on any connection, so the place they picked has to show
             // it happening. The strip reads the ONE observable and this card reads nothing: no
             // decision, no board, no actuator here — the selection still writes one preference.
-            LivePreviewSelectorStrip()
+            //
+            // The three facts it is TOLD are the three its sentences depend on (fix round 1,
+            // review r1's B2): the selection, so *"Pick that language again to answer"* renders
+            // only where re-picking would change something; the switch and the tier, so the READY
+            // receipt is not a promise this device cannot keep. Every rule about them lives in
+            // `StreamingPackCopy.selectorLine` — none of them is judged here.
+            LivePreviewSelectorStrip(
+                selectedLanguage = selectedLanguage,
+                showLiveWords = showLiveWords,
+                localTierInstalled = localTierInstalled,
+            )
 
             // Dropdown menu
             ExposedDropdownMenuBox(
