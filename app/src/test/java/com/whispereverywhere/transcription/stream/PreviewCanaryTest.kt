@@ -51,7 +51,9 @@ class PreviewCanaryTest {
         assertEquals(81, s.fed.size)
         assertTrue(s.fed.dropLast(1).all { it == 512 })
         assertEquals(8_000, s.fed.last())
-        assertTrue("inputFinished after the pad", s.finished)
+        // ORDER, not just occurrence: the pad must reach the extractor BEFORE input closes
+        // (SherpaProbe.kt:295-296). fedAtFinish = 81 means all 80 chunks AND the pad were in.
+        assertEquals("inputFinished after the pad", 81, s.fedAtFinish)
         // 48,960 samples: the first decode at 7,200, then every 5,120 → 1 + (48,960 − 7,200) / 5,120 = 9 decodes.
         assertEquals(9, s.decodes)
         assertTrue("the throwaway stream is released", s.released)

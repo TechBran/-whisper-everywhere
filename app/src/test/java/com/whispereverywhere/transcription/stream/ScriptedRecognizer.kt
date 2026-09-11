@@ -23,8 +23,9 @@ class ScriptedRecognizer(
         var finished = false
         var released = false
         val fed = mutableListOf<Int>()               // per-call sample counts, in order
+        var fedAtFinish = -1                         // fed.size WHEN inputFinished() ran; -1 = never ran. Pins feed/finish ORDER
         override fun acceptWaveform(samples: FloatArray) { this.samples += samples.size; fed += samples.size }
-        override fun inputFinished() { finished = true }
+        override fun inputFinished() { finished = true; fedAtFinish = fed.size }
         override fun release() { released = true }
     }
 
