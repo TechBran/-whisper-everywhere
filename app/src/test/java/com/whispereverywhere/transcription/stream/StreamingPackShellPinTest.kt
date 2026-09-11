@@ -259,6 +259,63 @@ class StreamingPackShellPinTest {
     }
 
     /**
+     * ONE CANCEL, ONE MEANING — on the one route where 4.4.1's did not (4.5.0 Task 1, review r1's
+     * H1).
+     *
+     * `fetchOne` used to set `keepRow = true` on a `CancellationException`, so the X stopped the
+     * poll loop and left `DownloadManager` transferring the rest of the 73 MB — while `delete()`'s
+     * `removeStaleDownloads` removed that very row. The app both stopped and did not stop the same
+     * transfer, depending on which control the user found. `PreviewRoute.DIRECT_DOWNLOAD
+     * .stopsBeforeTheCopy` is now `true`, and these are the two lines that keep that promise: the
+     * row goes on every exit, and the staged files go with it.
+     *
+     * Neither is reachable from a JVM test — `DownloadManager` and `getExternalFilesDir` are both
+     * Android — and both are one-token edits that compile clean and change nothing any other test
+     * observes, which is exactly the shape this file exists for.
+     */
+    @Test
+    fun cancellingTheFallbackDownloadReallyStopsItAndSweepsWhatItStaged() {
+        val fetchOne = scopeOf(manager, "private suspend fun fetchOne(", "private fun stagingDir(")
+        assertEquals(
+            "no `keepRow` survives anywhere in the manager: it is the whole of H1",
+            0,
+            liveLineCount(manager, "keepRow"),
+        )
+        assertEquals(
+            "one removal, and it is unconditional",
+            1,
+            liveLineCount(fetchOne, "dm.remove(id)"),
+        )
+        val enqueued = offsetOfLive(fetchOne, "dm.enqueue(request)")
+        val finallyArm = offsetOfLive(fetchOne, "} finally {")
+        val removed = offsetOfLive(fetchOne, "dm.remove(id)")
+        assertTrue("the row must be enqueued first", enqueued in 0 until finallyArm)
+        assertTrue(
+            "and removed from the FINALLY, so no exit — a cancellation least of all — can skip " +
+                "it and leave the transfer running behind a UI that says it stopped",
+            finallyArm in 0 until removed,
+        )
+        // The staged files are OURS, unlike Play's delivered pack. fetchOne's removal takes the
+        // in-flight file with the row; the ones that already landed would otherwise park up to
+        // 73 MB in the external staging dir until the next attempt or a delete.
+        val download = scopeOf(manager, "suspend fun download(", "private fun fail(")
+        assertEquals(
+            "the download sweeps its own staging dir when it is cancelled",
+            1,
+            liveLineCount(download, "catch (cancelled: CancellationException)"),
+        )
+        val caught = offsetOfLive(download, "catch (cancelled: CancellationException)")
+        val swept = offsetOfLive(download, "staging.deleteRecursively()")
+        assertTrue("the sweep must exist", swept >= 0)
+        assertTrue(
+            "and the cancellation is RETHROWN: a user who cancelled has not hit a bad network, " +
+                "and the actuator's back-off must not record one",
+            liveLineCount(download, "throw cancelled") == 1,
+        )
+        assertTrue("the catch arm is in the download", caught >= 0)
+    }
+
+    /**
      * THE CARD SPEAKS THE PREVIEWER'S WORDS, not the NPU model chooser's.
      *
      * `NpuPackFetch.FetchState.Failed`'s own contract is *"[reason] is user-facing copy, rendered

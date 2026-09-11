@@ -9,6 +9,7 @@ import androidx.core.net.toUri
 import com.whispereverywhere.BuildConfig
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.play.PlayPacks
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -197,24 +198,37 @@ class StreamingPackManager(private val context: Context) {
                     "Not enough free storage: the preview model needs about ${(2 * required) / 1_000_000} MB free during install."
                 )
             }
-            removeStaleDownloads(dm, pack)
-            var doneBytes = 0L
-            for (f in pack.files) {
-                val dest = File(staging, f.name)
-                if (dest.exists()) dest.delete()
-                fetchOne(dm, pack, f, dest) { soFar -> onProgress(doneBytes + soFar, pack.totalBytes) }
-                doneBytes += f.bytes
-                onProgress(doneBytes, pack.totalBytes)
+            try {
+                removeStaleDownloads(dm, pack)
+                var doneBytes = 0L
+                for (f in pack.files) {
+                    val dest = File(staging, f.name)
+                    if (dest.exists()) dest.delete()
+                    fetchOne(dm, pack, f, dest) { soFar -> onProgress(doneBytes + soFar, pack.totalBytes) }
+                    doneBytes += f.bytes
+                    onProgress(doneBytes, pack.totalBytes)
+                }
+                when (val v = StreamingPackInstall.verify(staging, pack)) {
+                    PackVerdict.Ok -> Unit
+                    is PackVerdict.Missing -> fail(staging, "Preview model file missing after download: ${v.name}")
+                    is PackVerdict.SizeMismatch ->
+                        fail(staging, "Preview model file size mismatch: ${v.name} (${v.actual} of ${v.expected} bytes)")
+                    is PackVerdict.HashMismatch -> fail(staging, "Preview model file failed integrity verification: ${v.name}")
+                }
+                StreamingPackInstall.install(staging, root(), pack)
+                staging.deleteRecursively()
+            } catch (cancelled: CancellationException) {
+                // The OTHER half of the cancel promise (4.5.0 Task 1). [fetchOne]'s `finally` has
+                // already taken the in-flight row and its partial file; the files that ALREADY
+                // landed are ours, and leaving them would park up to 73 MB in the external staging
+                // dir until the next attempt or a delete. The route's contract is "the transfer
+                // stops and nothing is installed", and dead bytes on the user's storage are not
+                // that. The verify and install arms sweep on their own paths (`fail`, and
+                // `install`'s own `.tmp` teardown), so this arm only answers the cancellation.
+                staging.deleteRecursively()
+                // A cancellation is NOT a failure: the actuator's back-off must not record one.
+                throw cancelled
             }
-            when (val v = StreamingPackInstall.verify(staging, pack)) {
-                PackVerdict.Ok -> Unit
-                is PackVerdict.Missing -> fail(staging, "Preview model file missing after download: ${v.name}")
-                is PackVerdict.SizeMismatch ->
-                    fail(staging, "Preview model file size mismatch: ${v.name} (${v.actual} of ${v.expected} bytes)")
-                is PackVerdict.HashMismatch -> fail(staging, "Preview model file failed integrity verification: ${v.name}")
-            }
-            StreamingPackInstall.install(staging, root(), pack)
-            staging.deleteRecursively()
         }
 
     private fun fail(staging: File, message: String): Nothing {
@@ -233,7 +247,6 @@ class StreamingPackManager(private val context: Context) {
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(true)
         val id = dm.enqueue(request)
-        var keepRow = false
         try {
             while (true) {
                 val status = dm.query(DownloadManager.Query().setFilterById(id)).use { c ->
@@ -266,11 +279,20 @@ class StreamingPackManager(private val context: Context) {
                 if (status == DownloadManager.STATUS_SUCCESSFUL) return
                 delay(POLL_INTERVAL_MS)
             }
-        } catch (ce: kotlinx.coroutines.CancellationException) {
-            keepRow = true
-            throw ce
         } finally {
-            if (!keepRow) dm.remove(id)
+            // ONE CANCEL, ONE MEANING (4.5.0 Task 1; review r1's H1). Until this line the
+            // cancellation arm set `keepRow = true` and the row was spared — so the X stopped the
+            // poll loop and left `DownloadManager` transferring the rest of the 73 MB, while
+            // `delete()`'s `removeStaleDownloads` removed that very row. The app both stopped and
+            // did not stop one transfer, depending on which control the user found. The row (and
+            // with it the partial file) now goes on EVERY exit, which is what
+            // `PreviewRoute.DIRECT_DOWNLOAD.stopsBeforeTheCopy` promises the UI it may offer.
+            //
+            // The inherited `TtsModelManager` behaviour this drops was "keep the row so the
+            // transfer survives a screen change" — which is not a thing the previewer needs: its
+            // actuator is process-scoped (`PreviewAutoFetchController`), so leaving the screen
+            // does not cancel anything, and the only cancellation left is one the user asked for.
+            dm.remove(id)
         }
     }
 
