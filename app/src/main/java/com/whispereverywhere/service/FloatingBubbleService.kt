@@ -274,6 +274,13 @@ internal fun prewarmRearmsAfterTrim(state: FloatingBubbleService.BubbleState): B
         state == FloatingBubbleService.BubbleState.ERROR
 
 /**
+ * How long the post-trim re-arm waits before it reloads (4.4.0 startup amendment, Task S1) — the
+ * BOOT prewarm's own delay, matched rather than invented, ahead of the boot prewarm's own call.
+ * See `FloatingBubbleService.rearmPrewarmAfterTrim` for what the wait buys at this second site.
+ */
+private const val TRIM_REARM_DELAY_MS = 1_500L
+
+/**
  * Whether a WALL-CAP cut consumes the session's first-cap window (3.7, Workstream D — the
  * predicate only; the `else if` branch it sits under is unchanged).
  *
@@ -3607,6 +3614,65 @@ class FloatingBubbleService : Service(),
             // 4.4.0 (spec §4.1 step 10, §7.4): the previewer's +170 MB goes back under the same
             // three-state guard. Not a verdict — the next eligible session re-warms it.
             streamingPreview?.release()
+            // 4.4.0 startup amendment S1: and the counterpart the release never had — without it
+            // the next tap pays the full cold load (4,107 ms on npu-turbo), silently.
+            rearmPrewarmAfterTrim(level)
+        }
+    }
+
+    /**
+     * The pending post-trim re-arm, so a trim STORM collapses into one load (see
+     * [rearmPrewarmAfterTrim]). Main-confined, like every other timer handle in this file;
+     * `serviceScope.cancel()` in onDestroy retires it with the rest.
+     */
+    private var trimRearmJob: Job? = null
+
+    /**
+     * RE-ARM THE PREWARM AFTER A MEMORY TRIM (4.4.0 startup amendment, Task S1).
+     *
+     * [onTrimMemory] frees the native context while the service is idle and, until this existed,
+     * nothing warmed it again: the only prewarm triggers were service start and a model
+     * switch/install. So the next tap paid the whole cold load —
+     * `docs/superpowers/research/2026-09-10-startup-cutoff-investigation.md` measures **4,107 ms**
+     * on npu-turbo (§3a) and 237 ms–11,672 ms on CPU small — and paid it *silently*, because on the
+     * local tiers `startAudioInput()` is nested inside the engine's `onOpen()`, so the microphone
+     * is not open for any of it. The report's *"every once in a while"* is exactly which cold window
+     * the tap lands in, and §3e names the post-trim one as the most frequent by construction: a
+     * background overlay holding 342 MiB (`npu`) to 1.02 GiB (`npu-turbo`) is trimmed routinely.
+     *
+     * **It re-arms the boot prewarm's path, not a new one.** [warmLocalEngine] and then `prewarm`,
+     * without the rebuild permission (the tier did not change — only the slot emptied), and
+     * `prewarm` fills an EMPTY slot only. That last property is what makes the ordering free: the release
+     * above and this load both queue on the engine's single native executor, so the load cannot
+     * overtake the release, and if a `connect()` has already refilled the slot this no-ops.
+     *
+     * **The wait is the boot prewarm's own 1,500 ms** ([TRIM_REARM_DELAY_MS]) — matched rather than
+     * invented, which is the amendment's instruction — and it buys two things here. A trim arrives
+     * as a storm (RUNNING_LOW, then RUNNING_CRITICAL, then BACKGROUND), and cancelling the pending
+     * job collapses the storm into ONE load 1.5 s after the LAST trim, which is what the
+     * model-switch collector gets from its 750 ms `collectLatest` debounce. It also keeps the
+     * release honest: handing the pressure back a gigabyte in the same Main pass would not be
+     * re-arming the prewarm, it would be deleting the trim.
+     *
+     * **The gate is re-read below the suspension**, for the reason the model-switch collector
+     * states in its own fix round 2: a state read taken before the wait is not a check. Below it,
+     * [prewarmRearmsAfterTrim] and the call are one uninterrupted run on Main — `currentState` has
+     * a single writer (`updateBubbleState`) and nothing between the read and the call suspends — so
+     * the state cannot change underneath it. A session that started in the gap is skipped, never
+     * deferred: its own `connect()` loads the context this would have loaded.
+     *
+     * No `RejectedExecutionException` guard, unlike the model-switch collector: this is the boot
+     * prewarm's call, which has none either, and the only shutdown of that executor is `onDestroy`,
+     * which cancels `serviceScope` BEFORE it touches the engine — on this same (Main) thread, so
+     * the two cannot interleave.
+     */
+    private fun rearmPrewarmAfterTrim(level: Int) {
+        trimRearmJob?.cancel()
+        trimRearmJob = serviceScope.launch {
+            delay(TRIM_REARM_DELAY_MS)
+            val rearm = prewarmRearmsAfterTrim(currentState)
+            android.util.Log.i("WE-DIAG", "trim re-prewarm: level=$level state=$currentState rearm=$rearm")
+            if (rearm) warmLocalEngine().prewarm()
         }
     }
 
