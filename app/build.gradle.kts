@@ -575,6 +575,14 @@ tasks.withType<Test>().configureEach {
         // files, so without this entry the one edit each pin exists to catch is the one that
         // never re-runs it.
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewAutoFetchController.kt",
+        // (4.5.0) The previewer's sherpa ADAPTER — the one file in the app that imports
+        // com.k2fsa, whose static init loads libsherpa-onnx-jni.so, so no JVM test may reference
+        // it and SherpaPreviewLoaderPinTest pins it as source. What that pin protects is a single
+        // token: `modelType = ""`. A "fix" to "zipformer2" is an UNCATCHABLE _Exit(-1) on every
+        // zipformer v1 pack (fr, both zh-en rows) that no catch, no onLoadFailure, no markCorrupt
+        // and no crash sentinel can see. Without this entry the one edit that pin exists to catch
+        // is the one that never re-runs it.
+        "src/main/java/com/whispereverywhere/transcription/stream/SherpaPreviewRecognizer.kt",
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a

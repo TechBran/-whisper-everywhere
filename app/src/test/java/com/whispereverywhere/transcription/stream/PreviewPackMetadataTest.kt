@@ -37,6 +37,7 @@ class PreviewPackMetadataTest {
     // ---------------------------------------------------------------- the literals
 
     @Test fun theCatalogRecordsTheShippingEncodersCadenceAndFrameCount() {
+        assertEquals("model_type, read off the encoder's metadata_props", "zipformer2", pack.modelType)
         assertEquals("decode_chunk_len, read off the encoder's metadata_props", 32, pack.decodeChunkLen)
         assertEquals("T, read off the same place", 45, pack.encoderT)
         assertEquals("320 ms per forward pass after the first", 320L, pack.cadenceMs)
@@ -60,6 +61,7 @@ class PreviewPackMetadataTest {
             encoder != null,
         )
         val meta = OnnxMetadata.read(encoder!!)
+        assertEquals("model_type", pack.modelType, meta["model_type"])
         assertEquals("decode_chunk_len", pack.decodeChunkLen.toString(), meta["decode_chunk_len"])
         assertEquals("T", pack.encoderT.toString(), meta["T"])
         // And the export is the STREAMING one. The offline tell (qualification table §5.4): an
@@ -69,6 +71,23 @@ class PreviewPackMetadataTest {
         assertEquals("streaming zipformer2", meta["comment"])
         assertTrue("query_head_dims is present on a streaming export", meta.containsKey("query_head_dims"))
         assertTrue("value_head_dims is present on a streaming export", meta.containsKey("value_head_dims"))
+    }
+
+    @Test fun everyRowsFamilyIsOneTheShippedAarCanConstructAtAll() {
+        // The loader passes `modelType = ""` so the FILE chooses the family (see
+        // SherpaPreviewLoaderPinTest for why anything else is a process kill). This field is the
+        // catalogue's record of which choice the file will make — and the gate on adding a row
+        // whose family the shipped AAR has no class for at all. A CTC row (fa) needs a second
+        // config branch and a different file count; a Moonshine row (the ja candidate that looks
+        // streaming and apache-2.0) has no `OnlineMoonshine*` class and 5-8 files against this
+        // pack's 4 slots. Neither is a catalogue row — both are a new pack SHAPE.
+        for (p in StreamingPackCatalog.packs) {
+            assertTrue(
+                "${p.language}: model_type '${p.modelType}' is not a transducer family this AAR " +
+                    "builds — a row outside {zipformer, zipformer2} is a new pack shape, not a row",
+                p.modelType in setOf("zipformer", "zipformer2"),
+            )
+        }
     }
 
     /** The encoder under the pack module's payload directory, or null when it has not been placed. */

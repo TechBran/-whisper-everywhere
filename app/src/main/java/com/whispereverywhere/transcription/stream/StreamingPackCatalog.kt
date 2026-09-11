@@ -20,6 +20,17 @@ data class PackFile(val name: String, val bytes: Long, val sha256: String)
  * @property baseUrl the commit-pinned fallback source. It is NOT dead code and never becomes it:
  *   a debug build, a sideload and every install Play refuses by name have no pack to fetch, and
  *   the previewer must still be installable there (the NPU tiers' SAF import is the same idea).
+ * @property modelType the encoder's own `model_type` metadata value — `zipformer2` for this pack,
+ *   de, zh, ko and every Kroko build; **`zipformer` (v1)** for French and for both bilingual
+ *   zh-en rows. **It is recorded here and deliberately NOT passed to sherpa** (the loader passes
+ *   `""`, and `SherpaPreviewLoaderPinTest` holds it empty): a config string that disagrees with
+ *   the file forces `OnlineZipformer2TransducerModel`, which reads `query_head_dims` through a
+ *   macro whose miss path is `_Exit(-1)` — an **uncatchable process kill** that reaches neither
+ *   `warm()`'s catch, nor `onLoadFailure`, nor `markCorrupt`, nor any disabled flag
+ *   (qualification table §6(2)). An empty string lets the encoder's own metadata decide, which is
+ *   correct for every candidate in that table. What this field is FOR is saying, in the
+ *   catalogue, which decision the file is going to make — and refusing a row whose family the
+ *   shipped AAR cannot construct at all.
  * @property decodeChunkLen the encoder's own `decode_chunk_len` metadata value — the pack's
  *   CADENCE in frames, and therefore [cadenceMs] of audio per forward pass after the first. It is
  *   **32** for this pack and for de/fr/zh/zh-en/ko, **64** for ru/id/tr/et/pt and **128** for
@@ -41,6 +52,7 @@ data class StreamingPack(
     val decoder: PackFile,
     val joiner: PackFile,
     val tokens: PackFile,
+    val modelType: String,
     val decodeChunkLen: Int,
     val encoderT: Int,
 ) {
@@ -97,8 +109,9 @@ object StreamingPackCatalog {
         joiner = PackFile("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 259_335L, "d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297"),
         tokens = PackFile("tokens.txt", 5_048L, "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb"),
         // Read off this encoder's own `metadata_props` (PreviewPackMetadataTest re-reads the file
-        // and holds these equal wherever the payload is placed): decode_chunk_len=32 ⇒ 320 ms,
-        // T=45 ⇒ a 500 ms pad, which is exactly the pad that was measured.
+        // and holds these equal wherever the payload is placed): model_type=zipformer2,
+        // decode_chunk_len=32 ⇒ 320 ms, T=45 ⇒ a 500 ms pad, which is exactly the pad measured.
+        modelType = "zipformer2",
         decodeChunkLen = 32,
         encoderT = 45,
     )

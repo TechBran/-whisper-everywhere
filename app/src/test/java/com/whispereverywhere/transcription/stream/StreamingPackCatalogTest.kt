@@ -39,6 +39,7 @@ class StreamingPackCatalogTest {
         val p = StreamingPackCatalog.EN
         // Read off this encoder's `metadata_props` (PreviewPackMetadataTest re-reads the file
         // itself wherever the payload is placed): decode_chunk_len = 32, T = 45.
+        assertEquals("zipformer2", p.modelType)
         assertEquals(32, p.decodeChunkLen)
         assertEquals(45, p.encoderT)
         // 320 ms is the cadence the 0.401 s / p95 0.523 s word lag was measured at — and the only
@@ -114,7 +115,7 @@ class StreamingPackCatalogTest {
             decoder = PackFile("d", 1L, "1".repeat(64)),
             joiner = PackFile("j", 1L, "2".repeat(64)),
             tokens = PackFile("t", 1L, "3".repeat(64)),
-            decodeChunkLen = 64, encoderT = 77,
+            modelType = "zipformer2", decodeChunkLen = 64, encoderT = 77,
         )
         assertNull(fallbackOnly.packName)
     }

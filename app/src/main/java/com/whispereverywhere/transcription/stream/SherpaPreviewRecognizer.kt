@@ -12,11 +12,29 @@ import java.io.File
 /**
  * THE ONE ADAPTER over the AAR's streaming classes (sherpa-onnx 1.13.7, ORT 1.27.1 —
  * app/build.gradle.kts:596-598). The config is the probe's verbatim (rung 3 §2): 16 kHz / 80-bin
- * features with dither 0, `modelType = "zipformer2"`, `provider = "cpu"` (NNAPI is compiled out
+ * features with dither 0, `provider = "cpu"` (NNAPI is compiled out
  * of this AAR — rung 3 §5.6), `enableEndpoint = false` (the app's Silero cuts, never sherpa's),
  * `decodingMethod = "greedy_search"` (beam costs +40 % and retracts — rung 1 §7),
  * `assetManager = null` (absolute paths, as TtsEngine.buildTts does). Never referenced from a
- * test: the AAR's static init loads a native library.
+ * test: the AAR's static init loads a native library — so its contract is pinned as SOURCE, by
+ * `SherpaPreviewLoaderPinTest`.
+ *
+ * ### `modelType` is EMPTY on purpose, and restoring `"zipformer2"` ships a process kill
+ *
+ * 4.4.0 passed the literal `"zipformer2"`, which is true of the shipping English encoder and of
+ * nothing else the catalogue is about to carry: **French and both bilingual zh-en exports are
+ * `zipformer` v1**. `OnlineTransducerModel::Create` short-circuits on a NON-EMPTY config string
+ * (`online-transducer-model.cc:146`) and forces `OnlineZipformer2TransducerModel`, which reads
+ * `query_head_dims` through `SHERPA_ONNX_READ_META_DATA_VEC` — and that macro's miss path is
+ * `SHERPA_ONNX_EXIT(-1)` = **`_Exit(-1)`**. An **uncatchable process kill**: it reaches neither
+ * [StreamingPreviewEngine.warm]'s `catch`, nor `onLoadFailure`, nor `markCorrupt`, nor any
+ * disabled flag, and leaves no crash for a sentinel to find. The app simply vanishes.
+ *
+ * Empty hands the decision back to the file, where it belongs: `OnlineZipformerTransducerModel`
+ * reads exactly seven keys and **all seven are present in the French encoder**, English keeps
+ * loading because its own metadata says `zipformer2`, and empty is valid for **every** candidate
+ * in the qualification table (§6(2), whose finding this is). [StreamingPack.modelType] records
+ * what each encoder will answer; nothing passes it here.
  *
  * R8: `-keep class com.k2fsa.sherpa.onnx.** { *; }` (proguard-rules.pro) covers these classes;
  * a narrowed keep is a GetFieldID SIGABRT in release builds (the rule's comment says so).
@@ -43,7 +61,10 @@ class SherpaPreviewRecognizerFactory : PreviewRecognizerFactory {
                 numThreads = numThreads,
                 debug = false,
                 provider = "cpu",
-                modelType = "zipformer2",
+                // EMPTY, never the pack's own model_type and never a literal: a non-empty string
+                // short-circuits the family choice and a wrong one is _Exit(-1), uncatchable.
+                // The encoder's metadata decides. See the docblock above before editing this.
+                modelType = "",
             ),
             enableEndpoint = false,
             decodingMethod = "greedy_search",
