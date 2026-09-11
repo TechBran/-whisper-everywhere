@@ -7,7 +7,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
-import java.util.Locale
 
 /**
  * [PackTokenFacts] over the vocabulary SHAPES the qualification table §4.1 records — synthetic
@@ -107,10 +106,11 @@ class PackTokenFactsTest {
         val tr = facts(*specials, "▁bir", "▁iki", "▁İzmir", "▁Ankara", ".", "?")
         assertTrue(tr.vocabularyIsMixedCase)
         assertFalse("the file cannot prove the fold is free, and it is not", tr.foldIsProvablyLossless)
-        // But the row folds, and with its own locale — the two are a decision, not a census.
+        // But the row folds, and in its own language — the decision is hand-authored against this
+        // census, the locale is derived from `language` and is not a value the row can get wrong.
         val row = StreamingPackCatalog.EN.copy(
             language = "tr",
-            caseFold = CaseFold.Fold(Locale.forLanguageTag("tr")),
+            caseFold = CaseFold.Fold,
             emitsPunctuation = true,
         )
         assertEquals("ısparta", PreviewText.normalize("ISPARTA", row))

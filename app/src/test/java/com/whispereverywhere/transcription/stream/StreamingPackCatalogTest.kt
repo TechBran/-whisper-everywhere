@@ -116,7 +116,7 @@ class StreamingPackCatalogTest {
             joiner = PackFile("j", 1L, "2".repeat(64)),
             tokens = PackFile("t", 1L, "3".repeat(64)),
             modelType = "zipformer2", decodeChunkLen = 64, encoderT = 77,
-            caseFold = CaseFold.Fold(java.util.Locale.US),
+            caseFold = CaseFold.Fold,
             emitsPunctuation = false, emitsDigits = false,
             canaryAsset = StreamingPackCatalog.EN.canaryAsset,
             canaryRule = StreamingPackCatalog.EN.canaryRule,

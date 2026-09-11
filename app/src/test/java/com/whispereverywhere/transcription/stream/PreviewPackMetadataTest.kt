@@ -99,25 +99,29 @@ class PreviewPackMetadataTest {
         // the fields are not a free abstraction: `et` would be the FIRST row to set both booleans
         // true, `ko`/`zh` are the first `Keep` rows, and `tr` is the first row where the fold
         // locale decides anything.
-        assertEquals(CaseFold.Fold(Locale.US), pack.caseFold)
+        assertEquals(CaseFold.Fold, pack.caseFold)
         assertEquals(false, pack.emitsPunctuation)
         assertEquals(false, pack.emitsDigits)
     }
 
-    @Test fun aKeepRowCannotCarryAFoldLocaleAndAFoldRowCannotFoldWithoutOne() {
-        // The structural half of the fix, and the reason `caseFold` is a type rather than a boolean
-        // plus a `normalizeLocale` field. Under the pair, the locale was read ONLY on the fold
-        // branch while `tr` derived "cased" from its 34 uppercase pieces — so the field could not
-        // change one character of output on any of the fifteen rows in the table, and the two KDoc
-        // sentences calling Turkish the row it was load-bearing on were both false. A locale that
-        // exists only inside `Fold` cannot be inert: a row either folds and says with what, or
-        // keeps and has no locale at all.
+    @Test fun everyFoldRowFoldsInItsOwnLanguageAndEveryRowsLanguageIsATagTheJdkCanParse() {
+        // The row-by-row half of the case fix. A `Fold` row's locale is DERIVED from its language
+        // (`PreviewText.normalize`), so the only way this arm can be wrong is for the language
+        // itself to be a tag `forLanguageTag` cannot parse — which returns `und`, folds like ROOT,
+        // and is silently right everywhere except `tr`/`az`/`lt`, i.e. silently wrong in exactly
+        // the place the derivation exists for. `Locale.forLanguageTag("tr_TR")` is that mistake
+        // (underscores are not language-tag syntax), and it is the one this loop can still catch.
         val probe = "ISPARTA İSTANBUL NBA"
         for (p in StreamingPackCatalog.packs) {
-            when (val fold = p.caseFold) {
-                is CaseFold.Fold -> assertEquals(
-                    "${p.language}: the row's own locale is what the strip folds in",
-                    probe.lowercase(fold.locale),
+            assertTrue(
+                "${p.language}: a row's language must be a tag forLanguageTag can parse — the fold " +
+                    "locale IS this tag, and an unparseable one folds like ROOT",
+                Locale.forLanguageTag(p.language).language.isNotEmpty(),
+            )
+            when (p.caseFold) {
+                CaseFold.Fold -> assertEquals(
+                    "${p.language}: a Fold row folds in its OWN language",
+                    probe.lowercase(Locale.forLanguageTag(p.language)),
                     PreviewText.normalize(probe, p),
                 )
                 CaseFold.Keep -> assertEquals(
@@ -127,12 +131,38 @@ class PreviewPackMetadataTest {
                 )
             }
         }
-        // And the branch no catalogue row takes today, so the wiring is pinned in both directions
-        // before a second row lands: the SAME text, the SAME code, two rows, two answers.
-        val tr = StreamingPackCatalog.EN.copy(caseFold = CaseFold.Fold(Locale.forLanguageTag("tr")))
+    }
+
+    @Test fun aFoldRowsLocaleIsNotAValueAnyRowCanCarrySoItCannotDisagreeWithTheLanguage() {
+        // The structural half, and the half round 1 left open: making an INERT locale
+        // unrepresentable did not make a WRONG one unrepresentable. `Fold(Locale.US)` on a `tr` row
+        // compiled, rendered `i̇stanbul` (i + U+0307, a stray mark on the strip) for every capital
+        // İ, and no assertion in the suite could tell it from a deliberate choice — the loop that
+        // looked like it pinned the locale computed its expected value with the row's own
+        // `fold.locale`, so it passed for whatever the row carried. There is now no locale to
+        // carry: the same answer on two rows folds two ways, and the LANGUAGE is what decides.
+        val probe = "ISPARTA İSTANBUL NBA"
+        val tr = StreamingPackCatalog.EN.copy(language = "tr")
+        assertEquals(CaseFold.Fold, tr.caseFold)
         assertEquals("ısparta istanbul nba", PreviewText.normalize(probe, tr))
         assertEquals("isparta i̇stanbul nba", PreviewText.normalize(probe, StreamingPackCatalog.EN))
         assertEquals(probe, PreviewText.normalize(probe, StreamingPackCatalog.EN.copy(caseFold = CaseFold.Keep)))
+        // And 4.4.1's rendering, asserted against the locale the row used to name rather than
+        // against the row: `forLanguageTag("en")` and `Locale.US` fold the same characters, which
+        // is the whole reason dropping the field cannot have moved the shipping strip.
+        assertEquals(probe.lowercase(Locale.US), PreviewText.normalize(probe, StreamingPackCatalog.EN))
+        // Finally the claim "there is no locale to carry", asserted instead of asserted in prose,
+        // because it is one field away from stopping being true and the failure it re-opens is
+        // silent. A third answer carrying a locale on purpose (the `crh` case CaseFold.Fold's KDoc
+        // records) is a deliberate edit that adds a `when` branch; this pin covers the two answers
+        // that exist and the row they sit on.
+        for (c in listOf(CaseFold::class.java, CaseFold.Fold::class.java, CaseFold.Keep::class.java, StreamingPack::class.java)) {
+            assertTrue(
+                "${c.simpleName} declares a Locale field: a hand-authored fold locale is back, and " +
+                    "Fold(Locale.US) on a tr/az/lt row is then a typo no test can see",
+                c.declaredFields.none { Locale::class.java.isAssignableFrom(it.type) },
+            )
+        }
     }
 
     @Test fun theRecordedFlagsAreWhatThePacksOwnTokensFileSays() {

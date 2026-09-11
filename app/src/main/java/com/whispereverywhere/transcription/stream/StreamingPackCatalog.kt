@@ -1,14 +1,14 @@
 package com.whispereverywhere.transcription.stream
 
 import com.whispereverywhere.transcription.CanaryAudio
-import java.util.Locale
 
 /** One pinned file of a streaming pack: its name at the commit, its EXACT byte count, its sha256. */
 data class PackFile(val name: String, val bytes: Long, val sha256: String)
 
 /**
  * What the strip does with the case the model emitted — the decision [PreviewText.normalize]
- * branches on, and **the only place a fold locale exists**.
+ * branches on. **It carries no locale**: a fold locale is not a decision anyone gets to write, it
+ * is the row's own language, and [Fold] says why.
  *
  * ### Why this is a type and not the boolean it replaced
  *
@@ -22,38 +22,60 @@ data class PackFile(val name: String, val bytes: Long, val sha256: String)
  * whisper types `NBA`. A boolean over the census returns the harmful answer for exactly the row
  * whose harm motivated having a flag at all.
  *
- * So the four values collapse to two ANSWERS, and the locale rides with the one that uses it:
+ * So the four values collapse to two ANSWERS:
  *
  * | table value | rows | this type |
  * |---|---|---|
- * | `false` | en fr de ru id zh-en pt(lyr) | [Fold] `(Locale.US)` — single-case vocabulary, nothing to lose |
- * | `partial` (448 lower / 34 upper) | tr | [Fold] `(tr)` — **the row the locale is for** |
+ * | `false` | en fr de ru id zh-en pt(lyr) | [Fold] — single-case vocabulary, nothing to lose |
+ * | `partial` (448 lower / 34 upper) | tr | [Fold] — **and it folds Turkish because the ROW is `tr`** |
  * | `TRUE` | ko et es it nl pt(Kroko) ja | [Keep] — the case means something |
  * | `must not case-fold` | zh | [Keep] — byte fallback emits Latin the census cannot see |
  *
- * A [Keep] row has no locale to get wrong, and a [Fold] row cannot fold without stating one. That
- * is the whole point: under the boolean the locale was read only on the fold branch while `tr`
- * derived `true` from its 34 uppercase pieces, so the field could not change one character on any
- * of the fifteen rows.
+ * A [Keep] row has no locale to get wrong, and a [Fold] row has none to get wrong either, because
+ * it states none: the fold asks [StreamingPack.language]. Under the boolean this type replaced, the
+ * locale was read only on the fold branch while `tr` derived `true` from its 34 uppercase pieces,
+ * so the field could not change one character on any of the sixteen rows.
  *
- * **`PackTokenFacts` derives this from a `tokens.txt` for fourteen of the fifteen** (see
+ * **`PackTokenFacts` derives this DECISION from a `tokens.txt` for fifteen of the sixteen** (see
  * `PackTokenFacts.Facts.foldIsProvablyLossless`, which only ever suggests in the safe direction).
  * `tr` is the one row where a human overrode the suggestion — the table rules [Fold] against a
  * mixed census — and an override toward folding is the only direction that can cost a character,
- * so the row that takes it owes a written reason beside it.
+ * so the row that takes it owes a written reason beside it. **That one override is the whole of
+ * what is hand-authored here; the locale is mechanical on all sixteen.**
  */
 sealed interface CaseFold {
     /**
-     * Fold the strip to lowercase in THIS locale.
+     * Fold the strip to lowercase **in the row's own language** — `Locale.forLanguageTag(language)`,
+     * applied by [PreviewText.normalize] and written on no row.
      *
-     * `Locale.US` is right wherever the fold is cosmetic, and `java.lang.String`'s own contract is
-     * why "cosmetic" is checkable rather than a hope: lowercasing is locale-sensitive for **`tr`,
-     * `az` and `lt` only**. So `tr` is the single row in the table whose fold locale changes a
-     * character (`İ` → `i` under US, `i̇` under `tr`; `I` → `i` under US, the dotless `ı` under
-     * `tr`), which is the hazard [PreviewText.normalize]'s old comment named about English INPUT
-     * and got backwards for Turkish OUTPUT.
+     * ### Why the locale is derived rather than a field on this answer
+     *
+     * It was a field for one round, and a field is a value that can be WRONG. Nothing in the suite
+     * could tell `Fold(Locale.US)` on a `tr` row from a deliberate choice, and such a row renders
+     * `i̇stanbul` — `i` + U+0307, a stray mark on the strip — for every capital `İ` it hears. The
+     * controller brief's sentence is *"it is wrong for Turkish OUTPUT, and Turkish must not ship
+     * until this lands"*, and a locale a row can spell wrong cashes half of it: carrying the locale
+     * on the folding branch made the RIGHT spelling possible, and deriving it makes the wrong one
+     * unspellable.
+     *
+     * **And the row's language is all the locale ever was.** `java.lang.String` folds
+     * locale-sensitively for **`tr`, `az` and `lt` only**, so on fifteen of the table's sixteen
+     * rows every locale produces the same characters, and on `tr` — the sixteenth — the only right
+     * answer IS the row's own language. The table's `normalizeLocale` column (§4.1) says that, and
+     * says it sixteen times out of sixteen: every row is either its own language spelled out
+     * (`id ko et es it nl pt tr ja`) or `Locale.US` on a row that folds identically to it. So this
+     * is the mechanical half of the case question, against a decision that needs a human on one row
+     * in sixteen — and `en` still renders 4.4.1's characters exactly, because
+     * `Locale.forLanguageTag("en")` and `Locale.US` fold the same.
+     *
+     * The one thing this removes, stated because it is a real language and not a hypothetical: a
+     * row whose orthography wants Turkish folding while its own tag does not get it from the JDK
+     * (Crimean Tatar `crh` writes `İ`/`ı` and folds like ROOT) can no longer be fixed by a value on
+     * the row. It needs a third answer on this type, carrying its locale and its reason — the right
+     * price, because that is a decision and not a spelling. None of the table's sixteen rows needs
+     * one.
      */
-    data class Fold(val locale: Locale) : CaseFold
+    data object Fold : CaseFold
 
     /** Emit the case the model produced. Folding it would destroy output the user wanted. */
     data object Keep : CaseFold
@@ -98,16 +120,19 @@ sealed interface CaseFold {
  *   exports write `T = decodeChunkLen + 13` (32 → 45, 64 → 77, 128 → 141) and the `zipformer` v1
  *   exports write `T = decodeChunkLen + 7` (fr and zh-en are 32 → **39**), so it is READ off the
  *   file and asserted against it, never inferred.
- * @property caseFold what the strip does with the case this model emitted, and the only place a
- *   fold locale lives — see [CaseFold] for the four-values-to-two-answers table and for why a
- *   boolean over the token census returns the HARMFUL answer for `zh`. `Fold(Locale.US)` here:
- *   English's vocabulary is single-case (495 uppercase-bearing emittable pieces, and the only
- *   lowercase in the file is the three specials no decode emits), so the fold is lossless and the
- *   strip must not shout — byte-for-byte what 4.4.1 rendered. **`Keep` for ko/et/zh and every
- *   Kroko build**, where folding paints `nba` over the `NBA` the model produced and a lowercased
- *   German noun reads as WRONG rather than rough; **`Fold(tr)` for Turkish**, the one row whose
- *   locale changes a character (qualification table §4.1, §4.2). It is the one flag the strip's
- *   own rules branch on; the two below it are copy inputs.
+ * @property caseFold what the strip does with the case this model emitted — see [CaseFold] for the
+ *   four-values-to-two-answers table and for why a boolean over the token census returns the
+ *   HARMFUL answer for `zh`. **There is no fold locale on a row**: a [CaseFold.Fold] row folds in
+ *   `Locale.forLanguageTag(`[language]`)`, so a row cannot carry a locale that disagrees with its
+ *   own language. `Fold` here: English's vocabulary is single-case (495 uppercase-bearing emittable
+ *   pieces, and the only lowercase in the file is the three specials no decode emits), so the fold
+ *   is lossless and the strip must not shout — byte-for-byte what 4.4.1 rendered, because
+ *   `forLanguageTag("en")` folds exactly as the `Locale.US` this row used to name. **`Keep` for
+ *   ko/et/zh and every Kroko build**, where folding paints `nba` over the `NBA` the model produced
+ *   and a lowercased German noun reads as WRONG rather than rough; **`Fold` for Turkish too**, and
+ *   it is Turkish folding it gets, because [language] is `tr` — the one row where that changes a
+ *   character (qualification table §4.1, §4.2). It is the one flag the strip's own rules branch on;
+ *   the two below it are copy inputs.
  * @property emitsPunctuation whether the strip can carry `.` `?` `,` `!`. **False here**, and the
  *   judgement is deliberate: English has exactly ONE punctuation piece, the apostrophe at id 45,
  *   which is a word-internal joiner (`DON'T`) rather than punctuation, and the shipping sentence
@@ -220,9 +245,10 @@ object StreamingPackCatalog {
         // piece and it is the apostrophe at id 45, and the only digit-bearing pieces are the
         // `#0`/`#1` placeholders. Single-case with no byte fallback is the one shape a fold is
         // PROVABLY lossless on, so this row takes the derivation's own suggestion rather than
-        // overriding it, and `Locale.US` here is cosmetic by String's own contract (tr/az/lt are
-        // the only locales it folds differently in).
-        caseFold = CaseFold.Fold(Locale.US),
+        // overriding it. No locale is written here: the fold is `forLanguageTag("en")`, derived
+        // from this row's `language`, and for English that is byte-identical to the `Locale.US`
+        // 4.4.1 folded in, because String folds locale-sensitively for tr/az/lt only.
+        caseFold = CaseFold.Fold,
         emitsPunctuation = false,
         emitsDigits = false,
         // The bundled digits clip and the digits rule. The alias sets, the 4-of-5 tolerance and

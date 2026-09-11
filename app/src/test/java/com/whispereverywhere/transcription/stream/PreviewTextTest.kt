@@ -54,9 +54,12 @@ class PreviewTextTest {
         // 34 uppercase pieces and 448 lowercase ones derive "cased", the fold never runs, and the
         // locale is never read. `en.copy(normalizeLocale = tr)` was a pack shape the catalogue
         // could not hold for tr.
+        //
+        // And the locale is not written on the row: the two rows below carry the SAME `caseFold`
+        // answer and fold two different ways, because the fold is `forLanguageTag(pack.language)`.
+        // That is what makes `Fold(Locale.US)` on a Turkish row unspellable rather than untested.
         val tr = en.copy(
             language = "tr",
-            caseFold = CaseFold.Fold(Locale.forLanguageTag("tr")),
             emitsPunctuation = true,
             emitsDigits = false,
         )
@@ -64,7 +67,11 @@ class PreviewTextTest {
         assertEquals("istanbul", PreviewText.normalize("İSTANBUL", tr))
         assertEquals("isparta", PreviewText.normalize("ISPARTA", en))
         assertEquals("i̇stanbul", PreviewText.normalize("İSTANBUL", en))
-        assertEquals(CaseFold.Fold(Locale.US), en.caseFold)
+        assertEquals(CaseFold.Fold, en.caseFold)
+        assertEquals("one answer, two rows, two folds", en.caseFold, tr.caseFold)
+        // English's fold is still the one 4.4.1 shipped: String folds locale-sensitively for
+        // tr/az/lt only, so `forLanguageTag("en")` and `Locale.US` cannot differ by a character.
+        assertEquals("ISPARTA İSTANBUL".lowercase(Locale.US), PreviewText.normalize("ISPARTA İSTANBUL", en))
     }
 
     @Test fun aPackWhoseAcronymsArriveByByteFallbackKeepsThemEvenThoughItsVocabularyHasNoCase() {
