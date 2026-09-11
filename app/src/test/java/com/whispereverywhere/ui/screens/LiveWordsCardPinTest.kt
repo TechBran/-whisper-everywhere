@@ -300,6 +300,49 @@ class LiveWordsCardPinTest {
         )
     }
 
+    @Test fun theDismissalAbandonsTheArrivalItWasPressedOn() {
+        // CONTROLLER RULING 2026-09-11, CHANGE 2 (the auto-fetch round's C4). The X is the same
+        // gesture that writes the permanent no, and a "no" that lets 73 MB finish landing is not
+        // a no. The metered path is what makes this reachable and deliberate: a WORKING card on
+        // a metered connection exists only because the user tapped, so the X is them changing
+        // their mind about their own data.
+        assertEquals(
+            "one cancel, and it is the actuator's — the card owns no route and no transfer",
+            1, liveLineCount(card, "PreviewAutoFetchController.cancel()"),
+        )
+        val recorded = offsetOfLive(card, "livePreviewDeclined = true")
+        val cancelled = offsetOfLive(card, "PreviewAutoFetchController.cancel()")
+        assertTrue("the dismissal must record the no", recorded >= 0)
+        assertTrue(
+            "and record it BEFORE it cancels: a cancellation that threw would otherwise leave a " +
+                "device that re-fetches what the user just refused (the delete row's own rule)",
+            recorded in 0 until cancelled,
+        )
+    }
+
+    @Test fun theActuatorsCancelIsGuardedAndSpansBothStarters() {
+        assertEquals(1, liveLineCount(actuator, "fun cancel()"))
+        val guard = offsetOfLive(actuator, "if (!busy()) return")
+        val ours = offsetOfLive(actuator, "job?.cancel()")
+        val plays = offsetOfLive(actuator, "StreamingPackController.cancel()")
+        assertTrue("our own work is cancelled", ours >= 0)
+        assertTrue(
+            "and so is Play's, because busy() spans both starters and the card shows whichever " +
+                "one is running as its WORKING state",
+            plays >= 0,
+        )
+        assertTrue(
+            "nothing in flight is nothing to cancel: without this guard the offer card's X and " +
+                "the announcement's X would publish a Cancelled into the fetch shell's flow and " +
+                "move the Settings row's own line for no reason",
+            guard in 0 until minOf(ours, plays),
+        )
+        assertEquals(
+            "one cancel of each, so no second path can abandon half the work",
+            1, liveLineCount(actuator, "StreamingPackController.cancel()"),
+        )
+    }
+
     @Test fun theCellularConsentIsPlaysOwnDialogNeverAReAskOfOurs() {
         assertEquals(
             "this card can start a 73 MB Play fetch, and Play raises its own dialog for a " +

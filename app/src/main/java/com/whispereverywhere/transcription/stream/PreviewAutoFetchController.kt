@@ -117,6 +117,34 @@ object PreviewAutoFetchController {
     }
 
     /**
+     * ABANDON the arrival, whichever route is carrying it — the card's X, by the CONTROLLER
+     * RULING of 2026-09-11 (CHANGE 2, answering the auto-fetch round's own C4). That X is the
+     * same gesture that writes the permanent no, and a "no" that lets 73 MB finish landing is not
+     * a no.
+     *
+     * THE GUARD IS FIRST, and it is [busy] — the same predicate [start] refuses on, so "there is
+     * something to cancel" and "there is something to refuse to start" cannot disagree. The two
+     * card states with nothing in flight (the offer, the installed announcement) therefore
+     * publish no `Cancelled` into the fetch shell's StateFlow and do not move the Settings row's
+     * own line for a transfer that was never running.
+     *
+     * It cancels a fetch the SETTINGS ROW started too, and deliberately: [busy] spans both
+     * starters, so that work is exactly what the card is rendering as WORKING, and the X is
+     * pressed on a card describing the transfer that is running. Partial bytes are discarded and
+     * nothing is installed; a delivered-but-uninstalled pack stays with Play, so the Settings row
+     * still installs on demand at no further cost.
+     *
+     * A cancellation is NOT a failure: [ours] rethrows `CancellationException` untouched, so no
+     * back-off stamp is written and the model stays one tap away.
+     */
+    fun cancel() {
+        if (!busy()) return
+        job?.cancel()
+        StreamingPackController.cancel()
+        log(route = "dismiss", auto = false, outcome = "cancelled")
+    }
+
+    /**
      * Ask Google Play, then WATCH for the terminal state — the fetch shell owns the whole flow
      * from here (progress, the install that follows COMPLETED, the refusal latch), so all that is
      * left is the one thing it cannot know: that this attempt was ours, and a failure of it must

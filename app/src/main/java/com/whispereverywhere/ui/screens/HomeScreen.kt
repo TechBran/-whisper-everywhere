@@ -939,9 +939,15 @@ private fun LiveWordsCard(
     LaunchedEffect(previewFetch) {
         if (playAwaitsAnAnswer) answerPlay()
     }
+    // The X is the PERMANENT no, so it records the decision FIRST — the delete row's own rule,
+    // for the same reason: a cancellation that threw must not leave a device that re-fetches what
+    // the user just refused. Then it abandons the arrival it was pressed on, because a "no" that
+    // lets 73 MB finish landing is not a no (CONTROLLER RULING 2026-09-11, CHANGE 2). The cancel
+    // is a no-op when nothing is in flight, so the offer and the announcement cost nothing.
     val dismiss: () -> Unit = {
         app.preferencesManager.livePreviewDeclined = true
         saidNo = true
+        PreviewAutoFetchController.cancel()
     }
     when (
         PreviewAutoFetch.card(
