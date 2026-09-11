@@ -290,6 +290,69 @@ object StreamingPackCopy {
                 "none for $language yet. Your typed transcript in $language is unchanged."
         }
 
+    // ----------------------------------- what a DEVICE that can never arm costs (4.5.0 Task 4)
+
+    /**
+     * THE TIER AXIS, SPELLED ONCE and carried by every sentence that has to say it — the fact
+     * `localPreviewArms`' `!isCloudSession` conjunct is about, in the user's terms rather than the
+     * gate's.
+     *
+     * It names the RULE and not the missing file, deliberately: *"live words appear only while
+     * transcription runs on this device"* is the whole of why the previewer cannot arm, and it
+     * stays true word for word if the open ruling in [PreviewUnreachable]'s KDoc ever widens the
+     * input to include a device that HAS a tier but runs every session in the cloud. A sentence
+     * that said *"no model is installed"* alone would have to be rewritten for that; this one only
+     * changes who reads it.
+     *
+     * Three sentences share it, so a screen cannot come to describe one fact three ways — which is
+     * the defect this whole object is one table for: the Settings section's standing caveat
+     * ([NO_TIER_SUBTITLE]), the delete row's reason ([PreviewDeleteCase.OFF_TIER]) and Home's
+     * working card, whose usual note ([cardLanguageNote]) is the one sentence on it that this cell
+     * makes false.
+     */
+    private const val NO_TIER =
+        "Live words appear only while transcription runs on this device, and this device has no speech model."
+
+    /**
+     * The previewer section's own heading on a device that can never arm. It names the REQUIREMENT
+     * rather than the refusal, because the requirement is the only actionable half — and the
+     * action is the app's own ([com.whispereverywhere.ui.screens.setupBannerState]'s *"Download a
+     * model to transcribe on-device"*, and the delete dialog's *"until you download a model
+     * again"*), so this sentence sends the reader nowhere new.
+     */
+    const val NO_TIER_TITLE = "Live words need an on-device speech model"
+
+    /**
+     * ...and its body. It offers NOTHING — no tap, no size, no pack — because 73 MB buys this
+     * device nothing at all, which is exactly the spend 4.4.1 pass 3's ITEM 1 closed one axis over.
+     */
+    const val NO_TIER_SUBTITLE =
+        "$NO_TIER Download a speech model and live words follow the language you pick. " +
+            "Your typed transcript is unchanged."
+
+    /**
+     * WHAT THE PREVIEWER'S CAVEAT ROW SAYS, for whichever standing fact is in the way — one pair
+     * of functions over [PreviewUnreachable], so the two surfaces that draw that row (the Settings
+     * section and Home's language card) cannot answer the same pair of facts differently.
+     *
+     * The [PreviewUnreachable.NO_PACK_FOR_SELECTION] arm is 4.4.1's own pair, delegated and
+     * UNCHANGED — validated copy, reached by one more reader. Only the tier arm is new, and it is
+     * new because nothing in the feature said it.
+     *
+     * @param language the PICKED language's own word, or **null on Auto** — [noLiveWordsTitle]'s
+     *        input, and ignored by the tier arm, which is about the device and not about the pick.
+     *        That is the precedence: a fact no pick can change outranks a fact a pick would.
+     */
+    fun unreachableTitle(case: PreviewUnreachable, language: String?): String = when (case) {
+        PreviewUnreachable.NO_LOCAL_TIER -> NO_TIER_TITLE
+        PreviewUnreachable.NO_PACK_FOR_SELECTION -> noLiveWordsTitle(language)
+    }
+
+    fun unreachableSubtitle(case: PreviewUnreachable, language: String?): String = when (case) {
+        PreviewUnreachable.NO_LOCAL_TIER -> NO_TIER_SUBTITLE
+        PreviewUnreachable.NO_PACK_FOR_SELECTION -> noLiveWordsSubtitle(language)
+    }
+
     // ---------------------------------------------------------------- the offer, by source
 
     /** Play delivered the pack: verify + copy into `filesDir`, no network at any point. */

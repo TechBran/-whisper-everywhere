@@ -62,6 +62,10 @@ class StreamingPackCopyTest {
             // functions is AUTO_ROW_TITLE / AUTO_NO_LIVE_WORDS, already above.
             StreamingPackCopy.noLiveWordsTitle(es),
             StreamingPackCopy.noLiveWordsSubtitle(es),
+            // (4.5.0 Task 4) The TIER axis's own pair — the sentence a device that can never arm
+            // reads instead of an offer.
+            StreamingPackCopy.NO_TIER_TITLE,
+            StreamingPackCopy.NO_TIER_SUBTITLE,
             StreamingPackCopy.DELETE_TITLE,
             StreamingPackCopy.PROGRESS_STARTING,
             StreamingPackCopy.PROGRESS_INSTALLING,
@@ -458,6 +462,84 @@ class StreamingPackCopyTest {
             "and the gap's sentence must not, because the pick has already been made",
             StreamingPackCopy.noLiveWordsSubtitle(es).contains("pick"),
         )
+    }
+
+    // ------------------------------------------------ the DEVICE axis (4.5.0 Task 4)
+
+    @Test fun aDeviceThatCanNeverArmIsToldTheRuleAndIsOfferedNothing() {
+        assertEquals(
+            "Live words need an on-device speech model",
+            StreamingPackCopy.NO_TIER_TITLE,
+        )
+        assertEquals(
+            "Live words appear only while transcription runs on this device, and this device " +
+                "has no speech model. Download a speech model and live words follow the " +
+                "language you pick. Your typed transcript is unchanged.",
+            StreamingPackCopy.NO_TIER_SUBTITLE,
+        )
+        // IT NAMES THE RULE, NOT THE MISSING FILE. `localPreviewArms` refuses on
+        // `!isCloudSession`, and the tier is only the STANDING reason a session is always a cloud
+        // one. Naming the rule is what keeps this sentence true word for word if the open ruling
+        // widens its input to a device that HAS a tier and runs every session in the cloud.
+        assertTrue(
+            "the rule: words only while transcription runs here",
+            StreamingPackCopy.NO_TIER_SUBTITLE.contains(
+                "only while transcription runs on this device",
+            ),
+        )
+        // NOTHING IS FOR SALE ON THIS DEVICE — 4.4.1 pass 3's ITEM 1, one axis over: 73 MB buys
+        // it nothing at all, so neither sentence carries a size, a pack or an instruction to get
+        // one.
+        for (s in listOf(StreamingPackCopy.NO_TIER_TITLE, StreamingPackCopy.NO_TIER_SUBTITLE)) {
+            assertFalse("<<$s>> must not name a size", s.contains("MB"))
+            assertFalse("<<$s>> must not name the preview model as a thing to get", s.contains("preview model"))
+            assertFalse("<<$s>> must not name a language", s.contains(en))
+            assertFalse("nor Google Play", s.contains("Google Play"))
+        }
+        assertTrue(
+            "and the transcript stays out of the trade, like every other sentence here",
+            StreamingPackCopy.NO_TIER_SUBTITLE.contains("typed transcript"),
+        )
+    }
+
+    @Test fun theCaveatRowAnswersTheTIERFirstAndDelegatesTheSELECTIONUnchanged() {
+        // ONE pair of functions over `PreviewUnreachable`, because two surfaces draw this row
+        // (the Settings section and Home's language card) and a second table is how two
+        // surfaces come to answer one pair of facts differently.
+        assertEquals(
+            StreamingPackCopy.NO_TIER_TITLE,
+            StreamingPackCopy.unreachableTitle(PreviewUnreachable.NO_LOCAL_TIER, es),
+        )
+        assertEquals(
+            StreamingPackCopy.NO_TIER_SUBTITLE,
+            StreamingPackCopy.unreachableSubtitle(PreviewUnreachable.NO_LOCAL_TIER, es),
+        )
+        // The tier arm IGNORES the language, and that is the precedence made visible: it is about
+        // the device, so it reads identically for a pick, for a gap and for Auto.
+        for (name in listOf(es, "French", null)) {
+            assertEquals(
+                StreamingPackCopy.NO_TIER_TITLE,
+                StreamingPackCopy.unreachableTitle(PreviewUnreachable.NO_LOCAL_TIER, name),
+            )
+            assertEquals(
+                StreamingPackCopy.NO_TIER_SUBTITLE,
+                StreamingPackCopy.unreachableSubtitle(PreviewUnreachable.NO_LOCAL_TIER, name),
+            )
+        }
+        // ...and the SELECTION arm is 4.4.1's own pair, byte for byte. This task moved no
+        // validated copy; it gave the pair one more reader and one fact that outranks it.
+        for (name in listOf(es, "French", null)) {
+            assertEquals(
+                StreamingPackCopy.noLiveWordsTitle(name),
+                StreamingPackCopy.unreachableTitle(PreviewUnreachable.NO_PACK_FOR_SELECTION, name),
+            )
+            assertEquals(
+                StreamingPackCopy.noLiveWordsSubtitle(name),
+                StreamingPackCopy.unreachableSubtitle(
+                    PreviewUnreachable.NO_PACK_FOR_SELECTION, name,
+                ),
+            )
+        }
     }
 
     @Test fun everyPacksLanguageHasAWordThePickerCanSpell() {
