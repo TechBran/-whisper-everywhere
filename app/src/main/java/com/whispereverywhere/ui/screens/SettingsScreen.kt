@@ -27,8 +27,14 @@ import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.model.ModelMigration
 import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.WhisperCatalog
+import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.WhisperAccessibilityService
+import com.whispereverywhere.transcription.stream.StreamingPackCatalog
+import com.whispereverywhere.transcription.stream.StreamingPackController
+import com.whispereverywhere.transcription.stream.StreamingPackCopy
+import com.whispereverywhere.transcription.stream.StreamingPackInstall
+import com.whispereverywhere.transcription.stream.StreamingPackState
 import com.whispereverywhere.tts.VoiceInstallRoute
 import com.whispereverywhere.tts.cloud.CloudVoice
 import com.whispereverywhere.tts.cloud.GeminiTtsVoices
@@ -634,6 +640,14 @@ fun SettingsScreen(
                 }
             }
 
+            // Live words (4.4.0): the on-device streaming previewer's pack. Its own section
+            // rather than a fourth row under "Read aloud" — the two features share a delivery
+            // mechanism and nothing else, and a switch for the bubble's text under a heading
+            // about speaking text aloud is a heading that misleads.
+            SettingsSection(title = "Live words") {
+                LivePreviewRows(app = app, context = context)
+            }
+
             // Cloud providers (Release C1): bring-your-own-key credential management. No audio
             // is sent anywhere yet — that lands in C2, gated behind the same key.
             SettingsSection(title = "Cloud providers") {
@@ -1042,6 +1056,166 @@ fun SettingsSection(
         }
 
         Spacer(modifier = Modifier.height(8.dp))
+    }
+}
+
+/**
+ * 4.4.0: the streaming previewer's pack (spec §6, §9 as amended on 2026-09-10) — the offer, the
+ * Play fetch in flight, our own install, and then installed + switch + delete.
+ *
+ * It MIRRORS the read-aloud voice rows above it deliberately: the same four-branch `when` in the
+ * same order (installed first, so a stale terminal fetch state can never hide a working model),
+ * the same application-scoped manager (a per-composition one carries a private Play-refusal
+ * latch the fetch shell could never see), the same tap guard, and the same division of labour —
+ * every DECISION is pure and lives elsewhere, so this composable only wires them:
+ *
+ *  - which source this install has: `StreamingPackManager.state` → `StreamingPackInstall.resolve`
+ *  - which of the four actuators the one action uses: `StreamingPackInstall.sourceOf`
+ *  - every word, including the amendment's "included with the app" on the two Play routes:
+ *    `StreamingPackCopy`
+ *  - whether a tap does anything at all: `StreamingPackController.isBusy` +
+ *    `StreamingPackCopy.fetchLineTappable`
+ *
+ * The one string the previewer has that this row does NOT render is
+ * `StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE`: the canary's verdict lives on the previewer
+ * instance the service builds (`StreamingPreviewEngine.disabled`), and Task 7 owns both that
+ * wiring and its only reader. `LivePreviewRowsPinTest` pins the rest as source.
+ */
+@Composable
+private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
+    val previewScope = rememberCoroutineScope()
+    val previewManager = app.streamingPackManager
+    val previewPack = StreamingPackCatalog.EN
+    var previewRefreshKey by remember { mutableStateOf(0) }
+    // Set only while OUR OWN work runs (the verify+copy of a delivered pack, or the fallback
+    // download); Play's own fetch narrates itself through the shell's StateFlow below.
+    var previewInstallStatus by remember { mutableStateOf<String?>(null) }
+    val previewFetch by StreamingPackController.state.collectAsState()
+    val previewFetchLine = StreamingPackCopy.fetchLine(previewFetch)
+    // Keyed on the STATUS WORD, not the state: a Downloading tick arrives several times a second
+    // for the whole 73 MB, and state() does a Play getPackLocation plus five File reads ON THE
+    // COMPOSITION THREAD while its answer cannot change until the status does (the voice row's
+    // review nit 2, which this row would otherwise repeat).
+    val previewStatusWord = NpuPackFetch.statusWord(previewFetch)
+    val previewState = remember(previewRefreshKey, previewStatusWord) {
+        previewManager.state(previewPack)
+    }
+    val previewEnabled by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
+    // A landed pack install has to re-read the state: the rows are keyed on previewRefreshKey.
+    LaunchedEffect(previewStatusWord) {
+        if (previewFetch is NpuPackFetch.FetchState.Installed) {
+            previewRefreshKey++
+        }
+    }
+    // THE ROW'S ONE ACTION, spelled once and shared by the offer row and the in-flight row's
+    // retry — it has to be shared, because after a Play refusal the fallback latch has already
+    // moved the state to Downloadable, and a "Retry" that always re-asked Play would keep
+    // failing under a sentence promising the direct download instead.
+    val startPreviewInstall: () -> Unit = start@{
+        // Read at TAP time, not composition time, so no row can be left permanently dead by a
+        // state change that scheduled no recomposition.
+        if (StreamingPackController.isBusy()) return@start
+        when (StreamingPackInstall.sourceOf(previewState)) {
+            StreamingPackState.Installed -> Unit
+            StreamingPackState.PackFetchable -> {
+                StreamingPackController.start(context, previewPack)
+            }
+            StreamingPackState.PackDelivered -> {
+                previewInstallStatus = StreamingPackCopy.PROGRESS_INSTALLING
+                previewScope.launch {
+                    runCatching {
+                        previewManager.installFromPack(previewPack) { _, _ -> }
+                    }.onFailure {
+                        android.widget.Toast.makeText(
+                            context,
+                            it.message ?: StreamingPackCopy.INSTALL_FAILED,
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    previewInstallStatus = null
+                    previewRefreshKey++
+                }
+            }
+            StreamingPackState.Downloadable -> {
+                previewInstallStatus = StreamingPackCopy.PROGRESS_STARTING
+                previewScope.launch {
+                    runCatching {
+                        previewManager.download(previewPack) { soFar, total ->
+                            previewInstallStatus =
+                                StreamingPackCopy.downloadProgress(soFar, total)
+                        }
+                    }.onFailure {
+                        android.widget.Toast.makeText(
+                            context,
+                            it.message ?: StreamingPackCopy.INSTALL_FAILED,
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    previewInstallStatus = null
+                    previewRefreshKey++
+                }
+            }
+            // sourceOf never returns one; a `when` that is total is what keeps it that way.
+            is StreamingPackState.Repair -> Unit
+        }
+    }
+    when {
+        previewState.isInstalled -> {
+            SettingsItem(
+                icon = Icons.Filled.Subtitles,
+                title = StreamingPackCopy.settingsTitle(previewState),
+                subtitle = StreamingPackCopy.settingsSubtitle(previewState),
+            )
+            SettingsSwitchItem(
+                icon = Icons.Filled.Subtitles,
+                title = StreamingPackCopy.SWITCH_TITLE,
+                checked = previewEnabled,
+                onCheckedChange = { app.preferencesManager.localPreviewEnabled = it },
+            )
+            SettingsItem(
+                icon = Icons.Filled.Delete,
+                title = StreamingPackCopy.DELETE_TITLE,
+                subtitle = StreamingPackCopy.DELETE_SUBTITLE,
+                onClick = {
+                    previewManager.delete(previewPack)
+                    previewRefreshKey++
+                },
+            )
+        }
+        previewInstallStatus != null -> SettingsItem(
+            icon = Icons.Filled.CloudDownload,
+            title = StreamingPackCopy.settingsTitle(previewState),
+            subtitle = previewInstallStatus ?: "",
+        )
+        previewFetchLine != null -> {
+            // Tappable only where a tap does something: the terminal retry, and the
+            // NeedsConfirmation that answers PLAY'S OWN dialog. Every other state is work in
+            // flight, and SettingsItem makes itself clickable the moment it is handed an onClick.
+            val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch)
+            val previewRowTap: () -> Unit = {
+                val activity = context as? android.app.Activity
+                if (previewFetch is
+                        NpuPackFetch.FetchState.NeedsConfirmation &&
+                    activity != null
+                ) {
+                    StreamingPackController.confirm(activity)
+                } else {
+                    startPreviewInstall()
+                }
+            }
+            SettingsItem(
+                icon = Icons.Filled.CloudDownload,
+                title = StreamingPackCopy.SETTINGS_TITLE,
+                subtitle = previewFetchLine,
+                onClick = if (previewTappable) previewRowTap else null,
+            )
+        }
+        else -> SettingsItem(
+            icon = Icons.Filled.CloudDownload,
+            title = StreamingPackCopy.settingsTitle(previewState),
+            subtitle = StreamingPackCopy.settingsSubtitle(previewState),
+            onClick = startPreviewInstall,
+        )
     }
 }
 

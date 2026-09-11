@@ -121,6 +121,14 @@ fun OnboardingFlowScreen(
     // answer from the same tag (and the one-read pin in ChooserSteerWiringPinTest stays true).
     val languageTag = java.util.Locale.getDefault().toLanguageTag()
 
+    // 4.4.0: does the English row get the live-words chip? Read ONCE, beside the tag above and
+    // for the same reason — `isInstalled` is a marker plus four File.length() calls, and the
+    // language step recomposes on every tap.
+    val livePackInstalled = remember {
+        (context.applicationContext as WhisperEverywhereApp).streamingPackManager
+            .isInstalled(com.whispereverywhere.transcription.stream.StreamingPackCatalog.EN)
+    }
+
     // Permission state lives at flow level (3.5.x): the pinned footer gates Continue on the
     // bubble's two required permissions (mic, overlay — 4.3.3 made accessibility a
     // recommendation), so the step and the footer read the same truth. Re-checked on every
@@ -230,6 +238,7 @@ fun OnboardingFlowScreen(
                         languageTag = languageTag,
                         picked = pickedLanguage,
                         onPick = { pickedLanguage = it },
+                        livePackInstalled = livePackInstalled,
                     )
                     Step.ENGINES -> EnginesStep(
                         vm = setupVm,
@@ -589,10 +598,20 @@ private fun LanguageStep(
     languageTag: String,
     picked: String?,
     onPick: (String) -> Unit,
+    livePackInstalled: Boolean,
 ) {
     Text(
         OnboardingLogic.LANGUAGE_HINT,
         style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(8.dp))
+    // 4.4.0: the previewer is English-only (spec §5, §9) — said HERE, where the language is
+    // picked and before any row is offered, because a caveat read after the tap is a caveat that
+    // changed nothing.
+    Text(
+        com.whispereverywhere.transcription.stream.StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
+        style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(Modifier.height(16.dp))
@@ -600,7 +619,14 @@ private fun LanguageStep(
     OnboardingLogic.languageRows(languageTag).forEach { (code, displayName) ->
         LanguageRow(
             title = displayName,
-            subtitle = if (code == "auto") OnboardingLogic.AUTO_LANGUAGE_SUBTITLE else null,
+            subtitle = when {
+                code == "auto" -> OnboardingLogic.AUTO_LANGUAGE_SUBTITLE
+                // Only where the model is actually on the device: the chip claims an INSTALLED
+                // model, and offering it without one is a promise the first session would break.
+                code == "en" && livePackInstalled ->
+                    com.whispereverywhere.transcription.stream.StreamingPackCopy.LANGUAGE_CHIP
+                else -> null
+            },
             badged = code == deviceCode,
             selected = picked == code,
             onClick = { onPick(code) },
