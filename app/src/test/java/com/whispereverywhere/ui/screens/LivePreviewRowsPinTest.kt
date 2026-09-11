@@ -380,6 +380,21 @@ class LivePreviewRowsPinTest {
             "the work answer comes from the ONE observable, which sees all three starters",
             1, liveLineCount(rows, "work = previewWork,"),
         )
+        // (fix round 1, review r1's B2) ...AND IT CANNOT CONTRADICT THE SWITCH ONE ROW ABOVE.
+        // With "Show live words" off, English selected and the pack installed, the case was LIVE
+        // and the row read *"Frees 73 MB. Live words stop"* immediately under the OFF switch.
+        // Nothing stopped. The switch is a first-class arming term everywhere else in the feature
+        // (`localPreviewArms` conjoins it; `PreviewAutoFetch.card` returns NONE on it) and this
+        // was the one sentence that did not ask.
+        assertEquals(
+            "the SWITCH is a term of the derivation",
+            1, liveLineCount(rows, "showLiveWords = previewEnabled,"),
+        )
+        assertEquals(
+            "and it is the SAME value the switch row is drawn from — two spellings is how two " +
+                "adjacent rows come to disagree about whether words are showing",
+            1, liveLineCount(rows, "checked = previewEnabled,"),
+        )
         assertEquals(
             "and the WRITE is the one case with no tap — the row stays, saying what is true, " +
                 "which is this feature's answer for every other in-flight row",

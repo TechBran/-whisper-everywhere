@@ -79,7 +79,7 @@ class StreamingPackCopyTest {
             everyState.map { StreamingPackCopy.cardOffer(it, en) } +
             everyState.map { StreamingPackCopy.cardAction(it, en) } +
             // (4.5.0 Task 1) The one observable's own sentences, from every route and every
-            // phase, and the delete row's four. The scan's contract is "everything the user can
+            // phase, and the delete row's five. The scan's contract is "everything the user can
             // read, from every surface", and after this task these are the words BOTH surfaces
             // render for work in flight.
             PreviewDeleteCase.entries.map {
@@ -528,17 +528,29 @@ class StreamingPackCopyTest {
         }
     }
 
-    // ------------------------------------------- the delete row's FOUR cases (4.5.0 Task 1)
+    // ------------------------------------------- the delete row's FIVE cases (4.5.0 Task 1)
 
-    @Test fun theDeleteRowHasATrueSentenceForEachOfItsFourCases() {
-        // 4.4.1 rendered ONE sentence across all four facts the row can be looking at, and three
-        // of them made it false: the model is installed for a language the user is NOT
-        // transcribing (so "live words stop" is already untrue), the install is DAMAGED (same),
-        // or a write is in flight (so "Frees 73 MB" frees nothing at all). Four cases, four
-        // sentences, and the case is derived from the one observable rather than guessed at here.
+    @Test fun theDeleteRowHasATrueSentenceForEachOfItsFiveCases() {
+        // 4.4.1 rendered ONE sentence across every fact the row can be looking at, and four of
+        // them made it false: the model is installed for a language the user is NOT transcribing
+        // (so "live words stop" is already untrue), the SWITCH is off (same — review r1's B2),
+        // the install is DAMAGED (same), or a write is in flight (so "Frees 73 MB" frees nothing
+        // at all). Five cases, five sentences, and the case is derived from the one observable
+        // plus the switch rather than guessed at here.
         assertEquals(
             "Frees 73 MB. Live words stop; the typed transcript is unchanged.",
             StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.LIVE, en, bytes),
+        )
+        assertEquals(
+            "Frees 73 MB. Live words are already off: 'Show live words' is switched off. " +
+                "Deleting the English model stops nothing; the typed transcript is unchanged.",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.OFF_SWITCH, en, bytes),
+        )
+        assertTrue(
+            "and it quotes the switch's OWN title, so a rename cannot leave the sentence " +
+                "pointing at a control that no longer says that",
+            StreamingPackCopy.deleteSubtitle(PreviewDeleteCase.OFF_SWITCH, en, bytes)
+                .contains("'${StreamingPackCopy.SWITCH_TITLE}'"),
         )
         assertEquals(
             "Frees 73 MB. Live words are already off: they appear only while English is the " +
@@ -557,9 +569,10 @@ class StreamingPackCopyTest {
         )
     }
 
-    @Test fun onlyTheThreeCasesThatActuallyFreeBytesClaimToFreeThem() {
+    @Test fun onlyTheCasesThatActuallyFreeBytesClaimToFreeThem() {
         for (case in listOf(
             PreviewDeleteCase.LIVE,
+            PreviewDeleteCase.OFF_SWITCH,
             PreviewDeleteCase.OFF_SELECTION,
             PreviewDeleteCase.DAMAGED,
         )) {
@@ -588,9 +601,10 @@ class StreamingPackCopyTest {
                 line.contains("typed transcript is unchanged"),
             )
         }
-        // Three of the four are ABOUT a particular language's model, and say so; LIVE is about
+        // Four of the five are ABOUT a particular language's model, and say so; LIVE is about
         // the pack the user is actually transcribing in, where the rows around it already name it.
         for (case in listOf(
+            PreviewDeleteCase.OFF_SWITCH,
             PreviewDeleteCase.OFF_SELECTION,
             PreviewDeleteCase.DAMAGED,
             PreviewDeleteCase.WORKING,

@@ -72,19 +72,26 @@ object StreamingPackCopy {
     const val DELETE_TITLE = "Delete the preview model"
 
     /**
-     * WHAT DELETING COSTS, for each of the four facts the row can be looking at
-     * ([PreviewDeleteCase]) — and the promise again, on all four.
+     * WHAT DELETING COSTS, for each of the FIVE facts the row can be looking at
+     * ([PreviewDeleteCase]) — and the promise again, on all five.
      *
-     * ### Why this is four sentences and not one (4.5.0 Task 1)
+     * ### Why this is five sentences and not one (4.5.0 Task 1, fix round 1)
      *
      * 4.4.1's one `DELETE_SUBTITLE` — *"Frees 73 MB. Live words stop; the typed transcript is
-     * unchanged."* — was rendered across all four, and three of them made it false:
+     * unchanged."* — was rendered across all of them, and four made it false:
      *
      *  - the model is installed for a language the user is NOT transcribing (they picked another,
      *    or Auto) — live words are already off, so *"Live words stop"* stops nothing. The row is
      *    deliberately OUTSIDE the selection gate, because 73 MB installed for English must stay
      *    reclaimable after the user picks French, so this is not an edge case but the case the
      *    row's placement exists for;
+     *  - **the *"Show live words"* switch is OFF** — the switch THIS SECTION DRAWS ONE ROW ABOVE
+     *    the delete. Nothing stops, and until fix round 1 the two adjacent rows contradicted each
+     *    other on the default surface, one tap away, with no device, tier or connection
+     *    requirement (review r1's B2). The switch is an arming term everywhere else in the
+     *    feature — `localPreviewArms` conjoins it, and `PreviewAutoFetch.card` refuses on it
+     *    because *"every sentence this card can spell is false while the switch is off"* — and
+     *    this subtitle was the one sentence that did not ask;
      *  - the install is a `StreamingPackState.Repair` — `markCorrupt` removed the marker and left
      *    the bytes, so again live words are already off;
      *  - **a write is in flight**, where *"Frees …"* frees nothing at all: `delete` clears
@@ -93,8 +100,8 @@ object StreamingPackCopy {
      *    with the declined flag written (review r3's H3-B1). The row renders this sentence with
      *    NO tap; it is a receipt, the way every other in-flight row in this feature is.
      *
-     * @param language the PACK's language, as the picker spells it. Three of the four sentences
-     *        name it, because three of them are about a model that is not the one in use; the day
+     * @param language the PACK's language, as the picker spells it. Four of the five sentences
+     *        name it, because four of them are about a model that is not the one in use; the day
      *        a second catalogue row lands, a sentence that named none would describe one pack
      *        under another's name.
      * @param sizeBytes the PACK's own byte count, rounded through [StreamingPackCatalog.sizeBadge]
@@ -106,6 +113,14 @@ object StreamingPackCopy {
         return when (case) {
             PreviewDeleteCase.LIVE ->
                 "Frees $badge. Live words stop; the typed transcript is unchanged."
+            // The switch's own TITLE, not a second spelling of it: the sentence quotes the
+            // control the user has to find, and one rename must not leave it pointing at a row
+            // that no longer says that. It deliberately does not say "above" — the switch row is
+            // inside the selection gate, so with this pack installed for a language the user is
+            // not transcribing there is no switch on this screen to point at.
+            PreviewDeleteCase.OFF_SWITCH ->
+                "Frees $badge. Live words are already off: '$SWITCH_TITLE' is switched off. " +
+                    "Deleting the $language model stops nothing; the typed transcript is unchanged."
             PreviewDeleteCase.OFF_SELECTION ->
                 "Frees $badge. Live words are already off: they appear only while $language is " +
                     "the language you pick. The typed transcript is unchanged."

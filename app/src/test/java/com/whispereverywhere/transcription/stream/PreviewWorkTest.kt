@@ -18,7 +18,7 @@ import org.junit.Test
  * collected one of them, Settings collected the other, and every blocker of rounds 1-3 was a
  * different consequence of that gap. So the answer is now ONE record per pack, and this test is
  * the whole of its contract: the mapping from the Play machine, the route reduction, the cancel
- * table, the in-flight predicate, the per-language keying, and the delete row's four cases.
+ * table, the in-flight predicate, the per-language keying, and the delete row's five cases.
  */
 class PreviewWorkTest {
 
@@ -370,18 +370,21 @@ class PreviewWorkTest {
             StreamingPackState.Downloadable,
         )) {
             for (selected in listOf(true, false)) {
-                assertNull(
-                    "$state has nothing under filesDir to free, so the row promises nothing",
-                    PreviewDeleteCase.of(state, selected, null),
-                )
-                assertNull(
-                    "and a FIRST install in flight is still nothing to free",
-                    PreviewDeleteCase.of(
-                        state,
-                        selected,
-                        work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING),
-                    ),
-                )
+                for (switch in listOf(true, false)) {
+                    assertNull(
+                        "$state has nothing under filesDir to free, so the row promises nothing",
+                        PreviewDeleteCase.of(state, selected, switch, null),
+                    )
+                    assertNull(
+                        "and a FIRST install in flight is still nothing to free",
+                        PreviewDeleteCase.of(
+                            state,
+                            selected,
+                            switch,
+                            work(PreviewRoute.PLAY_FETCH, PreviewPhase.DOWNLOADING),
+                        ),
+                    )
+                }
             }
         }
     }
@@ -400,11 +403,13 @@ class PreviewWorkTest {
             StreamingPackState.Repair(StreamingPackState.Downloadable),
         )) {
             for (selected in listOf(true, false)) {
-                assertEquals(
-                    "$state, selected=$selected",
-                    PreviewDeleteCase.WORKING,
-                    PreviewDeleteCase.of(state, selected, writing),
-                )
+                for (switch in listOf(true, false)) {
+                    assertEquals(
+                        "$state, selected=$selected, switch=$switch",
+                        PreviewDeleteCase.WORKING,
+                        PreviewDeleteCase.of(state, selected, switch, writing),
+                    )
+                }
             }
         }
         assertEquals(
@@ -413,22 +418,46 @@ class PreviewWorkTest {
             PreviewDeleteCase.of(
                 StreamingPackState.Installed,
                 true,
+                true,
                 work(PreviewRoute.DELIVERED_PACK, PreviewPhase.INSTALLED),
             ),
         )
     }
 
-    @Test fun theFourCasesAreTheFourFactsTheRowCanBeLookingAt() {
+    /**
+     * THE FIVE CASES, over {installed} x {selected} x {switch} — the grid review r1's B2 showed
+     * no test could reach, because the switch was not an input to anything under test.
+     *
+     * The cell that shipped untrue: *"Show live words"* OFF, English selected, the pack
+     * installed. `of` answered LIVE and the delete row — immediately under the OFF switch — read
+     * *"Frees 73 MB. Live words stop; the typed transcript is unchanged."* Nothing stopped.
+     */
+    @Test fun theFiveCasesAreTheFiveFactsTheRowCanBeLookingAt() {
         assertEquals(
-            "installed, and it is the picked language's pack: live words are showing today",
+            "installed, the picked language's pack, AND the switch on: live words are showing " +
+                "today, so deleting really does stop them",
             PreviewDeleteCase.LIVE,
-            PreviewDeleteCase.of(StreamingPackState.Installed, true, null),
+            PreviewDeleteCase.of(StreamingPackState.Installed, true, true, null),
+        )
+        assertEquals(
+            "THE CELL THAT SHIPPED UNTRUE (review r1's B2): the switch this same section draws " +
+                "one row above is OFF, so nothing stops — no device, tier or connection " +
+                "requirement, and one tap away on the default surface",
+            PreviewDeleteCase.OFF_SWITCH,
+            PreviewDeleteCase.of(StreamingPackState.Installed, true, false, null),
         )
         assertEquals(
             "installed for a language the user is NOT transcribing (they picked another, or " +
                 "Auto): the bytes buy nothing today, so 'Live words stop' is false",
             PreviewDeleteCase.OFF_SELECTION,
-            PreviewDeleteCase.of(StreamingPackState.Installed, false, null),
+            PreviewDeleteCase.of(StreamingPackState.Installed, false, true, null),
+        )
+        assertEquals(
+            "and with BOTH off the switch is named, not the selection: both sentences are true " +
+                "there, and the switch is the one the user can see and the one tap that would " +
+                "change the answer — the same precedence PreviewAutoFetch.card takes",
+            PreviewDeleteCase.OFF_SWITCH,
+            PreviewDeleteCase.of(StreamingPackState.Installed, false, false, null),
         )
         for (via in listOf(
             StreamingPackState.PackDelivered,
@@ -436,19 +465,34 @@ class PreviewWorkTest {
             StreamingPackState.Downloadable,
         )) {
             for (selected in listOf(true, false)) {
-                assertEquals(
-                    "markCorrupt removes the marker and LEAVES the bytes, so a Repair is up to " +
-                        "73 MB with live words already off — whatever the selection is",
-                    PreviewDeleteCase.DAMAGED,
-                    PreviewDeleteCase.of(StreamingPackState.Repair(via), selected, null),
-                )
+                for (switch in listOf(true, false)) {
+                    assertEquals(
+                        "markCorrupt removes the marker and LEAVES the bytes, so a Repair is up " +
+                            "to 73 MB with live words already off — whatever the selection and " +
+                            "the switch are, and the repair is the more actionable fact",
+                        PreviewDeleteCase.DAMAGED,
+                        PreviewDeleteCase.of(StreamingPackState.Repair(via), selected, switch, null),
+                    )
+                }
             }
         }
         assertEquals(
-            "and the four cases are four, so a fifth fact cannot arrive without a sentence",
-            4,
+            "and the five cases are five, so a sixth fact cannot arrive without a sentence",
+            5,
             PreviewDeleteCase.entries.size,
         )
+        // No cell of the grid is unanswered, and only the one that is actually armable is LIVE.
+        for (selected in listOf(true, false)) {
+            for (switch in listOf(true, false)) {
+                assertEquals(
+                    "installed, selected=$selected, switch=$switch: LIVE is the ONE cell where " +
+                        "'Live words stop' is a true consequence",
+                    selected && switch,
+                    PreviewDeleteCase.of(StreamingPackState.Installed, selected, switch, null) ==
+                        PreviewDeleteCase.LIVE,
+                )
+            }
+        }
     }
 
     // ------------------------------------------------------------------ helper

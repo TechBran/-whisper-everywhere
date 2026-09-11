@@ -273,14 +273,23 @@ data class PreviewWork(
 }
 
 /**
- * WHAT THE DELETE ROW IS ACTUALLY LOOKING AT. Four facts, and `StreamingPackCopy.deleteSubtitle`
+ * WHAT THE DELETE ROW IS ACTUALLY LOOKING AT. FIVE facts, and `StreamingPackCopy.deleteSubtitle`
  * has a true sentence for each — because 4.4.1 rendered ONE sentence (*"Frees 73 MB. Live words
- * stop; the typed transcript is unchanged."*) across all four, and it is the largest untrue
+ * stop; the typed transcript is unchanged."*) across all of them, and it is the largest untrue
  * sentence the feature renders.
+ *
+ * The fifth arrived in fix round 1 (review r1's B2): [LIVE] asserted *"Live words stop"* without
+ * asking the switch immediately above it, so the screen contradicted itself in two adjacent rows.
  */
 enum class PreviewDeleteCase {
-    /** Installed, and it is the PICKED language's pack: live words really are showing. */
+    /** Installed, it is the PICKED language's pack, AND *"Show live words"* is on: live words
+     *  really are showing, so deleting really does stop them. */
     LIVE,
+
+    /** Installed and armable, but *"Show live words"* is switched OFF — the switch this same
+     *  section draws one row above. Deleting frees the bytes; *"live words stop"* would be false,
+     *  because the switch has already stopped them (fix round 1, review r1's B2). */
+    OFF_SWITCH,
 
     /** Installed for a language the user is not transcribing — they picked another one, or Auto.
      *  Deleting frees the bytes, but "live words stop" is false: they are already not showing. */
@@ -309,22 +318,35 @@ enum class PreviewDeleteCase {
          *     dir under a verify + copy that is not cancellation-cooperative, so the copy lands
          *     anyway and the pack ends up installed AND declined. The work answer is read from the
          *     board, which sees all three starters; 4.4.1's guard read one composable's own `var`.
-         *  3. **Damaged before selected.** A damaged install's live words are off for everyone.
-         *  4. Then the selection decides whether deleting stops anything.
+         *  3. **Damaged before selected.** A damaged install's live words are off for everyone,
+         *     switch or no switch, and the repair is the more actionable fact.
+         *  4. **THE SWITCH BEFORE THE SELECTION** (fix round 1, review r1's B2). Both say *"live
+         *     words are already off"* and both are true when both are false, so the order only
+         *     decides which REASON the sentence names — and the switch is the one the user can
+         *     see, one row above the delete on the same screen, one tap from being the answer.
+         *  5. Then the selection decides whether deleting stops anything.
          *
          * @param selectedForThisPack the user's picked language is the one this pack serves —
          *        `StreamingPackCatalog.forLanguage(selected) == pack`. NOT a tier or cloud-only
          *        term: whether a device can arm at all is Task 4's axis and deliberately absent here.
+         * @param showLiveWords the *"Show live words"* switch — `PreferencesManager
+         *        .localPreviewEnabled`, drawn by this very section one row above the delete. It is
+         *        a first-class ARMING term everywhere else in the feature (`localPreviewArms`
+         *        conjoins it; `PreviewAutoFetch.decide` returns NONE on it; `PreviewAutoFetch.card`
+         *        returns NONE on it, *"every sentence this card can spell is false while the
+         *        switch is off"*) and the delete subtitle was the one sentence that did not ask.
          */
         fun of(
             state: StreamingPackState,
             selectedForThisPack: Boolean,
+            showLiveWords: Boolean,
             work: PreviewWork?,
         ): PreviewDeleteCase? {
             val bytesOnDisk = state.isInstalled || state is StreamingPackState.Repair
             if (!bytesOnDisk) return null
             if (work?.inFlight == true) return WORKING
             if (state is StreamingPackState.Repair) return DAMAGED
+            if (!showLiveWords) return OFF_SWITCH
             return if (selectedForThisPack) LIVE else OFF_SELECTION
         }
     }

@@ -1316,9 +1316,19 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // rather than the row. An un-tappable row saying what is happening is this feature's own
     // answer everywhere else (the progress row above is exactly that); a row that vanishes for
     // the seconds a copy runs leaves the reader wondering where their reclaim went.
+    //
+    // (fix round 1, review r1's B2) AND THE SWITCH IS ONE OF THE FACTS. With "Show live words"
+    // switched OFF — the switch this same section draws one row above, inside the selection gate
+    // — the case used to be LIVE and the row read "Frees 73 MB. Live words stop", one tap under
+    // a switch that had already stopped them. It was the one sentence in the feature that did not
+    // ask: `localPreviewArms` conjoins `userEnabled`, `PreviewAutoFetch.decide` returns NONE on
+    // it and `PreviewAutoFetch.card` returns Card.NONE on it because "every sentence this card
+    // can spell is false while the switch is off". `previewEnabled` is the same value the switch
+    // above is drawn from, so the two rows cannot disagree.
     PreviewDeleteCase.of(
         state = previewState,
         selectedForThisPack = selectedPack == previewPack,
+        showLiveWords = previewEnabled,
         work = previewWork,
     )?.let { deleteCase ->
         SettingsItem(
