@@ -124,6 +124,21 @@ object StreamingPackInstall {
     }
 
     /**
+     * The SOURCE a state's one install action would use — [resolve]'s answer with any
+     * [StreamingPackState.Repair] wrapper taken off (recursively, so a wrapper added twice
+     * cannot outlive the reduction).
+     *
+     * It exists so the Settings row's one action can `when` over four states and no more: a
+     * repair takes the route a first install would have taken, which is what lets a delivered
+     * pack repair a half install without touching the network. `TtsModelManager.installRoute`
+     * makes the same reduction for the voice, and for the same reason — a `when` over a sealed
+     * state inside a composable is a decision no JVM test can reach, and the branch that falls
+     * through goes to the third-party download.
+     */
+    fun sourceOf(state: StreamingPackState): StreamingPackState =
+        if (state is StreamingPackState.Repair) sourceOf(state.via) else state
+
+    /**
      * Whether a Play failure reason means Play will NEVER serve this install — the previewer's
      * half of the discriminator the amendment calls `isPlayInstall()`-style, and it is REUSED
      * rather than forked: the family is [NpuPackFetch]'s own (API_NOT_AVAILABLE,

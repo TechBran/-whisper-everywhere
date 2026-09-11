@@ -336,6 +336,35 @@ class StreamingPackInstallTest {
         )
     }
 
+    @Test fun theRowsOneActionRoutesOnTheSOURCE_soARepairCostsWhatAFirstInstallWouldHave() {
+        // (Task 6) The Settings row has ONE action and four actuators; `sourceOf` is the
+        // reduction that picks which, and it is here rather than in the Compose tree for the
+        // reason `TtsModelManager.installRoute` is: a `when` over a sealed state inside a
+        // composable is a decision no JVM test can reach, and the one that falls through goes
+        // to the third-party download.
+        for (source in listOf(
+            StreamingPackState.Installed,
+            StreamingPackState.PackDelivered,
+            StreamingPackState.PackFetchable,
+            StreamingPackState.Downloadable,
+        )) {
+            assertEquals("a source state is its own source", source, StreamingPackInstall.sourceOf(source))
+            assertEquals(
+                "and a repair takes the route a first install would have taken — a delivered " +
+                    "pack repairs without touching the network",
+                source,
+                StreamingPackInstall.sourceOf(StreamingPackState.Repair(source)),
+            )
+        }
+        assertEquals(
+            "nested repairs cannot outlive the reduction either",
+            StreamingPackState.Downloadable,
+            StreamingPackInstall.sourceOf(
+                StreamingPackState.Repair(StreamingPackState.Repair(StreamingPackState.Downloadable)),
+            ),
+        )
+    }
+
     @Test fun onlyInstalledEverLetsTheRecognizerLoad() {
         // The previewer's gate reads exactly one Boolean off the state, and Repair is NOT it:
         // a half-installed pack must never be opened (spec §6, "corrupt or missing at load").

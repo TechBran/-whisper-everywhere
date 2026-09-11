@@ -59,6 +59,12 @@ class StreamingPackCopyTest {
             StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
             StreamingPackCopy.LANGUAGE_CHIP,
             StreamingPackCopy.DELETE_TITLE,
+            StreamingPackCopy.DELETE_SUBTITLE,
+            StreamingPackCopy.PROGRESS_STARTING,
+            StreamingPackCopy.PROGRESS_INSTALLING,
+            StreamingPackCopy.INSTALL_FAILED,
+            StreamingPackCopy.downloadProgress(1_000_000L, 72_654_782L),
+            StreamingPackCopy.downloadProgress(0L, 0L),
         ) + everyState.map { StreamingPackCopy.settingsTitle(it) } +
             everyState.map { StreamingPackCopy.settingsSubtitle(it) } +
             everyFetchState.mapNotNull { StreamingPackCopy.fetchLine(it) }
@@ -223,6 +229,47 @@ class StreamingPackCopyTest {
                 StreamingPackState.PackFetchable,
                 StreamingPackState.Downloadable,
             ).map { StreamingPackCopy.settingsTitle(StreamingPackState.Repair(it)) }.distinct().size,
+        )
+    }
+
+    // ------------------------------------------------------------------ our own work in flight
+
+    @Test fun theRowNarratesOurOwnInstallWithoutInventingADenominator() {
+        assertEquals("Starting…", StreamingPackCopy.PROGRESS_STARTING)
+        assertEquals("Verifying and installing…", StreamingPackCopy.PROGRESS_INSTALLING)
+        assertEquals(
+            "12 of 73 MB",
+            StreamingPackCopy.downloadProgress(12_000_000L, StreamingPackCatalog.EN.totalBytes),
+        )
+        assertEquals(
+            "and the two halves round the same way, so the line can finish where the badge says",
+            "73 of 73 MB",
+            StreamingPackCopy.downloadProgress(
+                StreamingPackCatalog.EN.totalBytes,
+                StreamingPackCatalog.EN.totalBytes,
+            ),
+        )
+        assertFalse(
+            "an unknown total invents no denominator, exactly as the fetch line does not",
+            StreamingPackCopy.downloadProgress(0L, 0L).contains("of 0"),
+        )
+        assertTrue(StreamingPackCopy.downloadProgress(0L, 0L).isNotBlank())
+        assertEquals(
+            "the failure the row falls back to when the exception carried no sentence of its own",
+            "The preview model could not be installed.",
+            StreamingPackCopy.INSTALL_FAILED,
+        )
+    }
+
+    @Test fun theDeleteRowSaysWhatIsLostAndWhatIsNot() {
+        assertEquals(
+            "Frees 73 MB. Live words stop; the typed transcript is unchanged.",
+            StreamingPackCopy.DELETE_SUBTITLE,
+        )
+        assertTrue(
+            "the figure is the catalog's, like every other number on this row",
+            StreamingPackCopy.DELETE_SUBTITLE
+                .contains(StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)),
         )
     }
 

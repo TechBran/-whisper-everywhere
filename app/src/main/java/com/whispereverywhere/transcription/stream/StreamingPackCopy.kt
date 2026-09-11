@@ -52,6 +52,9 @@ object StreamingPackCopy {
 
     const val DELETE_TITLE = "Delete the preview model"
 
+    /** What deleting costs and — the promise again — what it does not cost. */
+    val DELETE_SUBTITLE = "Frees $BADGE. Live words stop; the typed transcript is unchanged."
+
     val SETTINGS_INSTALLED =
         "Installed ($BADGE). Words appear on the bubble as you speak English; the typed transcript is unchanged."
 
@@ -140,6 +143,37 @@ object StreamingPackCopy {
         }
     }
 
+    // ---------------------------------------------------------------- our own work in flight
+
+    /** Between the tap and the first byte — [StreamingPackManager.download]'s own dead time. */
+    const val PROGRESS_STARTING = "Starting…"
+
+    /**
+     * The verify + land, whichever source the bytes came from: a hash of 72,654,782 B and a copy
+     * into `filesDir`, with no meaningful progress to report on the pack route (its `onProgress`
+     * is called twice, at 0 and at the end). Also what Play's own `Verifying` status reads as,
+     * because it is the same work.
+     */
+    const val PROGRESS_INSTALLING = "Verifying and installing…"
+
+    /**
+     * The fallback download's progress. Invents no denominator when the total is unknown, and
+     * rounds both halves through the catalog's one rule, so the line cannot end at "72 of 72 MB"
+     * under a row that has just promised 73.
+     */
+    fun downloadProgress(soFar: Long, total: Long): String =
+        if (total > 0L) {
+            "${StreamingPackCatalog.megabytes(soFar)} of ${StreamingPackCatalog.sizeBadge(total)}"
+        } else {
+            "Downloading…"
+        }
+
+    /**
+     * The last-resort failure sentence: every refusal the manager raises carries its own words
+     * ([StreamingPackException]), so this is only reached by a throwable that named nothing.
+     */
+    const val INSTALL_FAILED = "The preview model could not be installed."
+
     // ---------------------------------------------------------------- the Play fetch in flight
 
     /**
@@ -170,7 +204,7 @@ object StreamingPackCopy {
             }
         is NpuPackFetch.FetchState.Transferring ->
             "Google Play is moving the preview model into place…"
-        is NpuPackFetch.FetchState.Verifying -> "Verifying and installing…"
+        is NpuPackFetch.FetchState.Verifying -> PROGRESS_INSTALLING
         is NpuPackFetch.FetchState.NeedsConfirmation ->
             "Google Play needs your confirmation before it fetches the preview model — tap to answer."
         is NpuPackFetch.FetchState.Failed -> state.reason

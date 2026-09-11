@@ -73,7 +73,14 @@ object StreamingPackCatalog {
     fun forLanguage(code: String?): StreamingPack? = packs.firstOrNull { it.language == code }
 
     /** "73 MB" for 72,654,782 B — the house decimal convention (ModelTierCopy: "190 MB" for 190,085,487 B). */
-    fun sizeBadge(bytes: Long): String = "${(bytes + 500_000L) / 1_000_000L} MB"
+    fun sizeBadge(bytes: Long): String = "${megabytes(bytes)} MB"
+
+    /**
+     * [sizeBadge]'s rounding, without the unit — for the one place that renders TWO of these in
+     * one breath ("12 of 73 MB"). Spelled once so a progress line can never round differently
+     * from the badge above it and end at "72 of 72 MB" under a row that says 73.
+     */
+    fun megabytes(bytes: Long): Long = (bytes + 500_000L) / 1_000_000L
 
     /** The `.installed` marker's content: the four `sha256␠␠name` lines, written LAST by the installer. */
     fun markerText(pack: StreamingPack): String = pack.files.joinToString("") { "${it.sha256}  ${it.name}\n" }
