@@ -3475,6 +3475,12 @@ class FloatingBubbleService : Service(),
             ),
         )
         sessionHasLocalPreview = previewArmed
+        // (4.4.1, CONTROLLER RULING 2026-09-11, CHANGE 4) THE ANNOUNCEMENT RETIRES ITSELF HERE.
+        // Home's card says "Live words are on" until the user has actually seen them, and the
+        // only place that becomes true is the gate answering yes. Written here rather than from
+        // the previewer's first partial because ARMING is the fact the card is about, and this is
+        // the one site that knows it; the gate itself stays pure and is not consulted twice.
+        if (previewArmed) app.preferencesManager.livePreviewArmedOnce = true
         val engine: TranscriptionEngine = if (previewArmed) {
             com.whispereverywhere.transcription.stream.PreviewTeeEngine(requireNotNull(preview), baseEngine)
                 .also { transcriptionEngine = it }

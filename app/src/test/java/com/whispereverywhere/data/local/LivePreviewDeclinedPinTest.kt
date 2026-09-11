@@ -91,6 +91,11 @@ class LivePreviewDeclinedPinTest {
         source("src/main/java/com/whispereverywhere/net/ConnectivityMonitor.kt")
     }
 
+    /** The previewer's gate call site — the one place that knows live words actually armed. */
+    private val service: String by lazy {
+        source("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt")
+    }
+
     // ------------------------------------------------------------------ the flag
 
     @Test fun theUserSaidNoFlagDefaultsToFalse() {
@@ -121,6 +126,56 @@ class LivePreviewDeclinedPinTest {
                 prefs,
                 "KEY_LIVE_PREVIEW_AUTOFETCH_FAILED_AT = \"live_preview_autofetch_failed_at\"",
             ),
+        )
+    }
+
+    // ------------------------------------------------------------------ the announcement retires
+
+    @Test fun theSeenLiveWordsFlagDefaultsToFalseAndIsWrittenByTheGatesOwnCallSite() {
+        // CONTROLLER RULING 2026-09-11, CHANGE 4. Shipped `true` the announcement never appears
+        // at all, which is the silent no-op no behavioural test can see; and if nothing ever
+        // writes it, the announcement is permanent again and the X — the permanent no — is the
+        // only way out, which is the defect this flag exists to remove.
+        assertEquals(
+            1, liveLineCount(prefs, "prefs.getBoolean(KEY_LIVE_PREVIEW_ARMED_ONCE, false)"),
+        )
+        assertEquals(
+            "one reader, so no second read can carry a different default",
+            1, liveLineCount(prefs, "getBoolean(KEY_LIVE_PREVIEW_ARMED_ONCE"),
+        )
+        assertEquals(
+            1, liveLineCount(prefs, "putBoolean(KEY_LIVE_PREVIEW_ARMED_ONCE, value)"),
+        )
+        assertEquals(
+            1, liveLineCount(prefs, "KEY_LIVE_PREVIEW_ARMED_ONCE = \"live_preview_armed_once\""),
+        )
+        assertEquals(1, liveLineCount(prefs, "var livePreviewArmedOnce: Boolean"))
+        assertEquals(
+            "and it is NOT the declined flag: \"I have seen this\" is not \"I do not want this\"",
+            0, liveLineCount(prefs, "KEY_LIVE_PREVIEW_DECLINED = \"live_preview_armed_once\""),
+        )
+        // The write lives with the fact it records: the previewer gate's own call site is the one
+        // place that knows an arm happened, and it is guarded by the gate's answer rather than by
+        // a re-derivation of it.
+        assertEquals(
+            1,
+            liveLineCount(
+                service,
+                "if (previewArmed) app.preferencesManager.livePreviewArmedOnce = true",
+            ),
+        )
+        val gate = offsetOfLive(service, "val previewArmed = localPreviewArms(")
+        val written = offsetOfLive(service, "livePreviewArmedOnce = true")
+        assertTrue("the gate must exist", gate >= 0)
+        assertTrue(
+            "and answer BEFORE the flag is written — a write above the gate would record an arm " +
+                "that never happened",
+            gate in 0 until written,
+        )
+        assertEquals(
+            "one write site in the whole service, so no other path can claim the user has seen " +
+                "live words",
+            1, liveLineCount(service, "livePreviewArmedOnce"),
         )
     }
 

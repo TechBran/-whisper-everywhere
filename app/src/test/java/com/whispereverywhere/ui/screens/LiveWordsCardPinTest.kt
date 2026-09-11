@@ -372,6 +372,25 @@ class LiveWordsCardPinTest {
         )
     }
 
+    @Test fun theAnnouncementsRetirementIsReadOncePerForegroundAndReachesOnlyTheCard() {
+        // CONTROLLER RULING 2026-09-11, CHANGE 4. The flag is written by the previewer's gate in
+        // the service — i.e. while this screen is in the background — so it must be re-read on
+        // resume like `saidNo` is, or a user who has just watched live words appear comes back to
+        // the announcement they have outgrown.
+        assertEquals(
+            1, liveLineCount(card, "remember(resumeTick) { app.preferencesManager.livePreviewArmedOnce }"),
+        )
+        assertEquals(
+            "it reaches the card and NOT the decision: having seen live words is not a reason to " +
+                "stop fetching a model the user does not have",
+            1, liveLineCount(card, "previewHasArmed = hasArmed"),
+        )
+        assertEquals(
+            "and nothing on this screen writes it — the arm path is its only author",
+            0, liveLineCount(home, "livePreviewArmedOnce ="),
+        )
+    }
+
     @Test fun theCellularConsentIsPlaysOwnDialogNeverAReAskOfOurs() {
         assertEquals(
             "this card can start a 73 MB Play fetch, and Play raises its own dialog for a " +

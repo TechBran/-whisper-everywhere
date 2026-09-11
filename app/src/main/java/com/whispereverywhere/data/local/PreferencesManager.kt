@@ -467,6 +467,28 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
+     * 4.4.1 — THE USER HAS SEEN LIVE WORDS. Set once, from the previewer gate's own call site in
+     * `FloatingBubbleService.startRecording` the first time it arms; read only by Home's card,
+     * which stops announcing the feature after it (CONTROLLER RULING 2026-09-11, CHANGE 4).
+     *
+     * The brief asked for a ONE-TIME announcement — *"then it stops appearing"* — and that was
+     * true only via the card's X, which is also [livePreviewDeclined], the permanent no. So a
+     * 4.4.0 user who already had the pack had to choose between being told about live words on
+     * every single open and declining the feature for good. Once the previewer has armed for a
+     * real session the user has watched the words appear, and announcing them is noise.
+     *
+     * DELIBERATELY NOT the declined flag and deliberately NOT per language: "I have seen this" is
+     * not "I do not want this", and having seen live words once in any language is a fact about
+     * the user, not about a pack. It suppresses the ANNOUNCEMENT only — never the offer, never
+     * the working card — which `PreviewAutoFetchTest` holds by reading it under `installed` alone.
+     */
+    var livePreviewArmedOnce: Boolean
+        get() = prefs.getBoolean(KEY_LIVE_PREVIEW_ARMED_ONCE, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_LIVE_PREVIEW_ARMED_ONCE, value).apply()
+        }
+
+    /**
      * 4.4.1 — WHEN THE LAST AUTO-FETCH FAILED, as `System.currentTimeMillis()`; 0 = never, which
      * is what an absent pref reads as and what
      * [com.whispereverywhere.transcription.stream.PreviewAutoFetch.backedOff] treats as "no
@@ -578,6 +600,7 @@ class PreferencesManager(private val context: Context) {
         /** The previewer's switch (4.4.0, R3: default on). Read in exactly one place. */
         private const val KEY_LOCAL_PREVIEW_ENABLED = "local_preview_enabled"
         private const val KEY_LIVE_PREVIEW_DECLINED = "live_preview_declined"
+        private const val KEY_LIVE_PREVIEW_ARMED_ONCE = "live_preview_armed_once"
         private const val KEY_LIVE_PREVIEW_AUTOFETCH_FAILED_AT = "live_preview_autofetch_failed_at"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"
 

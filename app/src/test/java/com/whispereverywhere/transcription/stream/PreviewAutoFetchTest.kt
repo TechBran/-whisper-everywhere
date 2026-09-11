@@ -305,27 +305,80 @@ class PreviewAutoFetchTest {
 
     // ------------------------------------------------------------------ the card's own mapping
 
-    @Test fun theCardMappingIsTotalOverItsFiveInputs() {
+    /** [open]'s twin for the card: everything open, so a named cell states only its own rule. */
+    private fun card(
+        installed: Boolean = false,
+        previewHasArmed: Boolean = false,
+        userSaidNo: Boolean = false,
+        showLiveWords: Boolean = true,
+        workInFlight: Boolean = false,
+        decision: PreviewAutoFetch.Decision = PreviewAutoFetch.Decision.NONE,
+    ) = PreviewAutoFetch.card(
+        installed, previewHasArmed, userSaidNo, showLiveWords, workInFlight, decision,
+    )
+
+    @Test fun theCardMappingIsTotalOverItsSixInputs() {
         var cells = 0
-        for (installed in bools) for (no in bools) for (sw in bools) for (busy in bools) {
-            for (d in PreviewAutoFetch.Decision.entries) {
+        for (installed in bools) for (armed in bools) for (no in bools) for (sw in bools) {
+            for (busy in bools) for (d in PreviewAutoFetch.Decision.entries) {
                 cells++
                 val expected = when {
                     no -> PreviewAutoFetch.Card.NONE
                     !sw -> PreviewAutoFetch.Card.NONE
-                    installed -> PreviewAutoFetch.Card.INSTALLED
+                    installed ->
+                        if (armed) PreviewAutoFetch.Card.NONE else PreviewAutoFetch.Card.INSTALLED
                     busy || d == PreviewAutoFetch.Decision.FETCH -> PreviewAutoFetch.Card.WORKING
                     d == PreviewAutoFetch.Decision.OFFER -> PreviewAutoFetch.Card.OFFER
                     else -> PreviewAutoFetch.Card.NONE
                 }
                 assertEquals(
-                    "installed=$installed saidNo=$no switch=$sw inFlight=$busy decision=$d",
+                    "installed=$installed armed=$armed saidNo=$no switch=$sw inFlight=$busy " +
+                        "decision=$d",
                     expected,
-                    PreviewAutoFetch.card(installed, no, sw, busy, d),
+                    // Positionally, and deliberately: the helper above has defaults, and a
+                    // default is a value this walk must supply rather than inherit.
+                    PreviewAutoFetch.card(installed, armed, no, sw, busy, d),
                 )
             }
         }
-        assertEquals("the full product of the card's inputs", 48, cells)
+        assertEquals("the full product of the card's inputs", 96, cells)
+    }
+
+    @Test fun theAnnouncementRetiresItselfOnceTheUserHasSeenLiveWordsWithTheirOwnEyes() {
+        // CONTROLLER RULING 2026-09-11, CHANGE 4 (round-1 nits 1/2). The brief asked for a
+        // ONE-TIME announcement — "then it stops appearing" — and that was true only via the X,
+        // which is also the permanent no. So a 4.4.0 user who already had the pack had to choose
+        // between being told about live words on every open and declining the feature forever.
+        assertEquals(
+            "the first time, with the model installed and the previewer never yet armed",
+            PreviewAutoFetch.Card.INSTALLED,
+            card(installed = true, previewHasArmed = false),
+        )
+        assertEquals(
+            "and never again once the previewer has actually armed for a session: at that point " +
+                "the user has watched the words appear, and announcing them is noise",
+            PreviewAutoFetch.Card.NONE,
+            card(installed = true, previewHasArmed = true),
+        )
+    }
+
+    @Test fun havingSeenLiveWordsSilencesTheAnnouncementAndNothingElse() {
+        // It is NOT a "no" — a user who has seen live words and then deletes the model must still
+        // be offered it back by the Settings row, and a fetch they start must still narrate
+        // itself. Only the announcement is retired, so the flag may only ever be read under
+        // `installed`.
+        assertEquals(
+            PreviewAutoFetch.Card.OFFER,
+            card(previewHasArmed = true, decision = PreviewAutoFetch.Decision.OFFER),
+        )
+        assertEquals(
+            PreviewAutoFetch.Card.WORKING,
+            card(previewHasArmed = true, decision = PreviewAutoFetch.Decision.FETCH),
+        )
+        assertEquals(
+            PreviewAutoFetch.Card.WORKING,
+            card(previewHasArmed = true, workInFlight = true),
+        )
     }
 
     @Test fun theSwitchBeingOffSaysNothingRatherThanSomethingUntrue() {
@@ -334,14 +387,14 @@ class PreviewAutoFetchTest {
         // or a 4.4.1 user whose pack auto-fetched and who then turned it off. Neither wrote
         // userSaidNo (the switch is not the X and not the delete), and "Live words are on" is
         // flatly untrue for both. Every other state is false there too, so the card is silent.
-        for (installed in bools) for (busy in bools) {
+        for (installed in bools) for (armed in bools) for (busy in bools) {
             for (d in PreviewAutoFetch.Decision.entries) {
                 assertEquals(
-                    "installed=$installed inFlight=$busy decision=$d",
+                    "installed=$installed armed=$armed inFlight=$busy decision=$d",
                     PreviewAutoFetch.Card.NONE,
-                    PreviewAutoFetch.card(
+                    card(
                         installed = installed,
-                        userSaidNo = false,
+                        previewHasArmed = armed,
                         showLiveWords = false,
                         workInFlight = busy,
                         decision = d,
@@ -355,15 +408,15 @@ class PreviewAutoFetchTest {
         // AF4, and the reason userSaidNo outranks the work in flight as well as the decision: a
         // user who dismissed this card and then installed the model from the Settings row must
         // not have it reappear as a progress card.
-        for (installed in bools) for (busy in bools) {
+        for (installed in bools) for (armed in bools) for (busy in bools) {
             for (d in PreviewAutoFetch.Decision.entries) {
                 assertEquals(
-                    "installed=$installed inFlight=$busy decision=$d",
+                    "installed=$installed armed=$armed inFlight=$busy decision=$d",
                     PreviewAutoFetch.Card.NONE,
-                    PreviewAutoFetch.card(
+                    card(
                         installed = installed,
+                        previewHasArmed = armed,
                         userSaidNo = true,
-                        showLiveWords = true,
                         workInFlight = busy,
                         decision = d,
                     ),
@@ -376,13 +429,7 @@ class PreviewAutoFetchTest {
         assertEquals(
             "a stale 'arriving…' over a working model is a lie the user cannot dismiss",
             PreviewAutoFetch.Card.INSTALLED,
-            PreviewAutoFetch.card(
-                installed = true,
-                userSaidNo = false,
-                showLiveWords = true,
-                workInFlight = true,
-                decision = PreviewAutoFetch.Decision.NONE,
-            ),
+            card(installed = true, workInFlight = true),
         )
     }
 
@@ -391,36 +438,18 @@ class PreviewAutoFetchTest {
         // the shell to publish its first state, or the fetch would begin invisibly.
         assertEquals(
             PreviewAutoFetch.Card.WORKING,
-            PreviewAutoFetch.card(
-                installed = false,
-                userSaidNo = false,
-                showLiveWords = true,
-                workInFlight = false,
-                decision = PreviewAutoFetch.Decision.FETCH,
-            ),
+            card(decision = PreviewAutoFetch.Decision.FETCH),
         )
     }
 
     @Test fun theOfferCardIsShownForTheOfferDecisionAndNothingElse() {
         assertEquals(
             PreviewAutoFetch.Card.OFFER,
-            PreviewAutoFetch.card(
-                installed = false,
-                userSaidNo = false,
-                showLiveWords = true,
-                workInFlight = false,
-                decision = PreviewAutoFetch.Decision.OFFER,
-            ),
+            card(decision = PreviewAutoFetch.Decision.OFFER),
         )
         assertEquals(
             PreviewAutoFetch.Card.NONE,
-            PreviewAutoFetch.card(
-                installed = false,
-                userSaidNo = false,
-                showLiveWords = true,
-                workInFlight = false,
-                decision = PreviewAutoFetch.Decision.NONE,
-            ),
+            card(decision = PreviewAutoFetch.Decision.NONE),
         )
     }
 
@@ -429,31 +458,13 @@ class PreviewAutoFetchTest {
     @Test fun af1_wifiOpenFetchesWithNoTaps() {
         val d = open(state = StreamingPackState.PackFetchable, unmetered = true)
         assertEquals(PreviewAutoFetch.Decision.FETCH, d)
-        assertEquals(
-            PreviewAutoFetch.Card.WORKING,
-            PreviewAutoFetch.card(
-                installed = false,
-                userSaidNo = false,
-                showLiveWords = true,
-                workInFlight = false,
-                decision = d,
-            ),
-        )
+        assertEquals(PreviewAutoFetch.Card.WORKING, card(decision = d))
     }
 
     @Test fun af2_cellularOpenShowsTheOfferAndMovesNothing() {
         val d = open(state = StreamingPackState.PackFetchable, unmetered = false)
         assertEquals(PreviewAutoFetch.Decision.OFFER, d)
-        assertEquals(
-            PreviewAutoFetch.Card.OFFER,
-            PreviewAutoFetch.card(
-                installed = false,
-                userSaidNo = false,
-                showLiveWords = true,
-                workInFlight = false,
-                decision = d,
-            ),
-        )
+        assertEquals(PreviewAutoFetch.Card.OFFER, card(decision = d))
     }
 
     @Test fun af3_aDeletedModelDoesNotComeBackAndSaysNothing() {
@@ -461,13 +472,7 @@ class PreviewAutoFetchTest {
         assertEquals(PreviewAutoFetch.Decision.NONE, d)
         assertEquals(
             PreviewAutoFetch.Card.NONE,
-            PreviewAutoFetch.card(
-                installed = false,
-                userSaidNo = true,
-                showLiveWords = true,
-                workInFlight = false,
-                decision = d,
-            ),
+            card(userSaidNo = true, decision = d),
         )
     }
 
@@ -476,13 +481,7 @@ class PreviewAutoFetchTest {
         assertEquals(PreviewAutoFetch.Decision.NONE, d)
         assertEquals(
             PreviewAutoFetch.Card.NONE,
-            PreviewAutoFetch.card(
-                installed = false,
-                userSaidNo = true,
-                showLiveWords = true,
-                workInFlight = false,
-                decision = d,
-            ),
+            card(userSaidNo = true, decision = d),
         )
         // ...and the Settings row is untouched by all of this: its own action reads the state
         // machine, not this decision. The pin for that is LivePreviewRowsPinTest, unchanged.
@@ -494,24 +493,17 @@ class PreviewAutoFetchTest {
     }
 
     @Test fun theInstalledCardAnnouncesItselfOnceAndThenTheDismissalEndsIt() {
-        val landed = PreviewAutoFetch.card(
-            installed = true,
-            userSaidNo = false,
-            showLiveWords = true,
-            workInFlight = false,
-            decision = PreviewAutoFetch.Decision.NONE,
-        )
-        assertEquals(PreviewAutoFetch.Card.INSTALLED, landed)
+        assertEquals(PreviewAutoFetch.Card.INSTALLED, card(installed = true))
         assertEquals(
-            "its X sets the same flag, which is what makes it one-time",
+            "its X sets the declined flag, which is what makes it one-time AND permanent",
             PreviewAutoFetch.Card.NONE,
-            PreviewAutoFetch.card(
-                installed = true,
-                userSaidNo = true,
-                showLiveWords = true,
-                workInFlight = false,
-                decision = PreviewAutoFetch.Decision.NONE,
-            ),
+            card(installed = true, userSaidNo = true),
+        )
+        assertEquals(
+            "and the previewer arming for one real session ends it WITHOUT declining anything " +
+                "(CONTROLLER RULING 2026-09-11, CHANGE 4) — the X is no longer the only way out",
+            PreviewAutoFetch.Card.NONE,
+            card(installed = true, previewHasArmed = true),
         )
     }
 }

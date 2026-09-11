@@ -867,6 +867,11 @@ private fun LiveWordsCard(
     var saidNo by remember(resumeTick) {
         mutableStateOf(app.preferencesManager.livePreviewDeclined)
     }
+    // (CONTROLLER RULING 2026-09-11, CHANGE 4) Has the user already SEEN live words? Written by
+    // the gate's own call site the first time the previewer arms, so it can become true while
+    // this screen is in the background — hence the resume key, the same one `saidNo` uses. It
+    // retires the announcement and nothing else.
+    val hasArmed = remember(resumeTick) { app.preferencesManager.livePreviewArmedOnce }
     val statusWord = NpuPackFetch.statusWord(previewFetch)
     val working = ourLine != null
     // BOTH SYSTEM READS OFF THE COMPOSITION THREAD, on the app's start destination (review r1,
@@ -962,6 +967,10 @@ private fun LiveWordsCard(
         PreviewAutoFetch.card(
             // Not-yet-read is not installed: the card says nothing for that one frame.
             installed = packState?.isInstalled == true,
+            // The announcement is one-time without being a refusal: once live words have armed
+            // for a real session the user has watched them appear, and the X stays free to mean
+            // "no" rather than "I have read this" (CONTROLLER RULING 2026-09-11, CHANGE 4).
+            previewHasArmed = hasArmed,
             userSaidNo = saidNo,
             // The switch silences the card as well as the fetch: with it off there is no true
             // sentence left for this card to spell, least of all "Live words are on" over an

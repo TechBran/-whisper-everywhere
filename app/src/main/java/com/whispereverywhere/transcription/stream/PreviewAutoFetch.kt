@@ -202,7 +202,7 @@ object PreviewAutoFetch {
     }
 
     /**
-     * WHAT THE CARD SHOWS, as a total mapping of the five things Home knows. Pure for the reason
+     * WHAT THE CARD SHOWS, as a total mapping of the six things Home knows. Pure for the reason
      * every card rule in this app is pure (`CloudKeyNote.shouldShow` is the precedent): a
      * conjunction inside a composable is a rule no test can reach.
      *
@@ -223,7 +223,24 @@ object PreviewAutoFetch {
      * stale "arriving…" line over a working model is a lie they cannot dismiss (the fetch line's
      * own rule, `StreamingPackCopyTest`).
      *
+     * ### Why the announcement retires itself (CONTROLLER RULING 2026-09-11, CHANGE 4)
+     *
+     * The brief asked for a ONE-TIME announcement — *"then it stops appearing"* — and until this
+     * ruling that was true only via the X, which is also the permanent no. So a 4.4.0 user who
+     * already had the pack had to choose between being told about live words on every single open
+     * and declining the feature forever. [previewHasArmed] is the third answer: once the previewer
+     * has armed for a real session the user has seen live words with their own eyes, and
+     * announcing them is noise. The X keeps working and keeps meaning no.
+     *
+     * It is a SEPARATE flag from [userSaidNo] on purpose, and the two say different things: "I
+     * have seen this" is not "I do not want this", it is not per language, and it is written by
+     * the arm path rather than by a gesture.
+     *
      * @param installed `StreamingPackState.isInstalled`.
+     * @param previewHasArmed the previewer has armed for at least one real session on this
+     *        install (`PreferencesManager.livePreviewArmedOnce`, written from the gate's own call
+     *        site). Silences the announcement and nothing else — it is not a "no", so it must
+     *        never suppress the offer or the working card.
      * @param userSaidNo the same persisted flag [decide] reads.
      * @param showLiveWords the same switch [decide] reads (`PreferencesManager.localPreviewEnabled`).
      * @param workInFlight a fetch or install is running: `StreamingPackInstall.fetchInFlight` of
@@ -233,6 +250,7 @@ object PreviewAutoFetch {
      */
     fun card(
         installed: Boolean,
+        previewHasArmed: Boolean,
         userSaidNo: Boolean,
         showLiveWords: Boolean,
         workInFlight: Boolean,
@@ -240,7 +258,7 @@ object PreviewAutoFetch {
     ): Card = when {
         userSaidNo -> Card.NONE
         !showLiveWords -> Card.NONE
-        installed -> Card.INSTALLED
+        installed -> if (previewHasArmed) Card.NONE else Card.INSTALLED
         workInFlight || decision == Decision.FETCH -> Card.WORKING
         decision == Decision.OFFER -> Card.OFFER
         else -> Card.NONE
