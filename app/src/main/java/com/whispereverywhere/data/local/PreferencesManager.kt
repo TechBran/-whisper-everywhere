@@ -167,8 +167,26 @@ class PreferencesManager(private val context: Context) {
     fun isPreferDeviceAudio(): Boolean = _preferDeviceAudio.value
 
     // Language selection for transcription
+    /**
+     * THE ONE WRITER of the selection — the in-app dropdown and onboarding's Continue, and
+     * nowhere else (`LiveWordsCardPinTest` holds both sites to one write each).
+     *
+     * (4.5.0 Task 3b) It also RECORDS THE PICK, because it is the one place that can see a pick
+     * happen: `selectedLanguage` answers *"which language is selected"* and can never answer
+     * *"did the user just choose it"*, and the owner's ruling of 2026-09-11 divides on exactly
+     * that — an unasked top-up waits for wifi, a pick downloads at once. Recording a FACT about a
+     * gesture is not owning a download: the 4.4.1 amendment's rule that *"a SharedPreferences
+     * writer called from Compose click handlers has no business owning a download"* still holds,
+     * and the decision that turns a pick into an arrival is where it always was
+     * (`PreviewAutoFetch.decide`, from Home's card).
+     *
+     * The pick is noted BEFORE the flow is written, and the order is load-bearing: the flow write
+     * is what recomposes the card that reads both, so a note after it would be a frame late and
+     * the pick would be read as a top-up.
+     */
     fun setSelectedLanguage(languageCode: String) {
         prefs.edit().putString(KEY_SELECTED_LANGUAGE, languageCode).apply()
+        com.whispereverywhere.transcription.stream.PreviewPicks.note(languageCode)
         _selectedLanguage.value = languageCode
     }
 

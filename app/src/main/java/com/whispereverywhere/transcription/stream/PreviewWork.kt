@@ -7,12 +7,68 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 /**
+ * WHY an arrival is being started — the CAUSE, as the one call site that knows it spells it, and
+ * the input both the connection rule and the once-per-launch latch branch on (4.5.0 Task 3b).
+ *
+ * Three values rather than [PreviewStarter]'s two, because the two questions they answer split
+ * differently and a boolean cannot carry both:
+ *
+ * | | [starter] — may it spend a metered connection? | [latchedForTheLaunch] — is it once per launch? |
+ * |---|---|---|
+ * | [TOP_UP] | no: nobody asked | yes |
+ * | [SELECTION] | **yes: the pick IS the consent** | **yes** |
+ * | [TAP] | yes: the tap IS the consent | no: consent may be repeated |
+ *
+ * [SELECTION] is the row the 4.4.1 `auto: Boolean` could not express, and it is the whole of
+ * ruling 3b: a pick spends the connection like a tap does, and is latched like a top-up is —
+ * because a pick that FAILED must not retry itself on the next recomposition, which a
+ * latch-exempt selection would (`decision` returns to FETCH the instant `busy()` goes false, and
+ * the effect is keyed on `decision`).
+ */
+enum class PreviewTrigger {
+    /** The foreground hook's unasked look at a pack the user has not touched. */
+    TOP_UP,
+
+    /** The user picked a language — the in-app dropdown, or onboarding's Continue. */
+    SELECTION,
+
+    /** The user tapped an offer: Home's card action, or the Settings row. */
+    TAP;
+
+    /** WHO caused it, as the board records it. Three causes, two starters. */
+    val starter: PreviewStarter
+        get() = when (this) {
+            TOP_UP -> PreviewStarter.TOP_UP
+            SELECTION, TAP -> PreviewStarter.PICK
+        }
+
+    /**
+     * Whether this attempt spends the once-per-launch latch
+     * (`PreviewAutoFetchController.attemptedThisLaunch`).
+     *
+     * True for everything the app starts on its own initiative — the top-up AND the selection —
+     * because both are re-decided by a recomposition and would otherwise loop on a failure. False
+     * for a [TAP], which happens only because a finger moved: *"a tap is consent and may be
+     * repeated"*, and a latched tap would answer a user's retry with the same offer card they
+     * just pressed.
+     */
+    val latchedForTheLaunch: Boolean
+        get() = when (this) {
+            TOP_UP, SELECTION -> true
+            TAP -> false
+        }
+}
+
+/**
  * WHO caused a transfer — the one distinction the copy cannot derive from anything else.
  *
  * The asymmetry the 2026-09-11 acquisition rulings turn on: an UNASKED top-up spends the user's
  * data without being asked and must therefore behave differently from a transfer the user caused
  * by picking a language, where the pick IS the consent. A surface that cannot tell the two apart
  * cannot state that deal honestly.
+ *
+ * Derived from [PreviewTrigger], never written at a call site: the cause is what a caller knows,
+ * and the mapping from three causes to two starters is a rule with one home.
  */
 enum class PreviewStarter {
     /** The foreground hook's silent fetch — nobody asked for it. */

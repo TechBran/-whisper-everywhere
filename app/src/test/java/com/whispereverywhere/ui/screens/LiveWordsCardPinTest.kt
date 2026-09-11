@@ -114,11 +114,31 @@ class LiveWordsCardPinTest {
 
     @Test fun theHookPerformsTheDecisionAndTestsNothingOfItsOwn() {
         assertEquals(
-            "the auto path is entered from exactly one place, and it says so",
-            1, liveLineCount(card, "auto = true"),
+            "the hook's own actuation is entered from exactly one place, and it hands over the " +
+                "CAUSE it computed rather than a literal — `auto = true` until 4.5.0 Task 3b, " +
+                "which is the one thing a hook that can be reached by a pick must not hard-code",
+            1, liveLineCount(card, "PreviewAutoFetchController.start(app, p, it, trigger)"),
+        )
+        assertEquals(
+            "and the cause is the pick register's answer, computed ONCE — a second reading of it " +
+                "is a second chance for the decision and the actuation to disagree about whether " +
+                "the user asked for this",
+            1,
+            liveLineCount(card, "if (selectedLanguage in pickedThisProcess) {"),
+        )
+        assertEquals(
+            "the starter the decision is handed is DERIVED from that cause and never spelled: a " +
+                "literal TOP_UP here would make every pick wait for wifi, and a literal PICK " +
+                "would spend a cellular user's data for a selection they made last month",
+            1, liveLineCount(card, "starter = trigger.starter"),
+        )
+        assertEquals(
+            "so no PreviewStarter literal appears on this card at all — the 3-to-2 mapping has " +
+                "one home, and it is the enum's",
+            0, liveLineCount(card, "PreviewStarter."),
         )
         val decided = offsetOfLive(card, "PreviewAutoFetch.decide(")
-        val performed = offsetOfLive(card, "auto = true")
+        val performed = offsetOfLive(card, "PreviewAutoFetchController.start(app, p, it, trigger)")
         assertTrue("the decision must exist", decided >= 0)
         assertTrue(
             "and be taken BEFORE it is performed: a hook that starts a fetch and then asks " +
@@ -251,6 +271,12 @@ class LiveWordsCardPinTest {
         // a SharedPreferences writer called from Compose click handlers and has no business
         // owning a download"*, and by the same argument neither does a click handler. Both sites
         // write the ONE pref and the collector does the rest.
+        //
+        // (4.5.0 Task 3b) That rule SURVIVES ruling 3b, and this test is why the ruling did not
+        // need to break it. A selection must now download at once on any connection — but what
+        // the selection sites gained is nothing at all: the writer they already called RECORDS
+        // the pick (`PreviewPicks`, one line inside `setSelectedLanguage`), and the one decision
+        // reads that register. Neither site grew a decision, a route, an actuator or a scope.
         val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
         assertEquals(
             "the in-app picker's one write",
@@ -261,6 +287,7 @@ class LiveWordsCardPinTest {
             "PreviewAutoFetch.decide(",
             "StreamingPackController.start(",
             "streamingPackManager",
+            "PreviewPicks",
         )) {
             assertEquals(
                 "<<$needle>> in the language picker: the selection writes a preference, and the " +
@@ -279,12 +306,44 @@ class LiveWordsCardPinTest {
             "PreviewAutoFetch.decide(",
             "StreamingPackController.start(",
             "StreamingPackCopy.cardOffer(",
+            "PreviewPicks",
         )) {
             assertEquals(
                 "<<$needle>> in the onboarding flow: the pack arrives on Home, where the card " +
                     "that reports it lives — not beside the 190 MB speech model the user is " +
                     "already waiting for",
                 0, liveLineCount(onboarding, needle),
+            )
+        }
+    }
+
+    @Test fun thePickIsRecordedByTheONEWriterOfTheSelectionAndBeforeTheFlowItWrites() {
+        // (4.5.0 Task 3b) The register has to be written where a pick can be SEEN, and there is
+        // exactly one such place: `setSelectedLanguage` is the only writer of the selection, and
+        // both selection sites already call it (pinned above). One site, so no selection site can
+        // forget; a fact, not a fetch, so the amendment's rule about that writer still holds.
+        val prefs = source("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt")
+        assertEquals(
+            "one note, in the one writer",
+            1, liveLineCount(prefs, "PreviewPicks.note(languageCode)"),
+        )
+        val noted = offsetOfLive(prefs, "PreviewPicks.note(languageCode)")
+        val published = offsetOfLive(prefs, "_selectedLanguage.value = languageCode")
+        assertTrue("the note must exist", noted >= 0)
+        assertTrue(
+            "and be written BEFORE the flow that recomposes the card reading both — a note after " +
+                "it is a frame late, and the pick would be read as an unasked top-up",
+            noted in 0 until published,
+        )
+        for (needle in listOf(
+            "PreviewAutoFetchController",
+            "PreviewAutoFetch.decide(",
+            "streamingPackManager",
+        )) {
+            assertEquals(
+                "<<$needle>> in the preferences layer: a SharedPreferences writer called from " +
+                    "Compose click handlers has no business owning a download",
+                0, liveLineCount(prefs, needle),
             )
         }
     }
@@ -482,9 +541,9 @@ class LiveWordsCardPinTest {
     @Test fun theDismissalAbandonsTheArrivalItWasPressedOn() {
         // CONTROLLER RULING 2026-09-11, CHANGE 2 (the auto-fetch round's C4). The X is the same
         // gesture that writes the permanent no, and a "no" that lets 73 MB finish landing is not
-        // a no. The metered path is what makes this reachable and deliberate: a WORKING card on
-        // a metered connection exists only because the user tapped, so the X is them changing
-        // their mind about their own data.
+        // a no. A metered connection is what makes this reachable and deliberate: since Task 3b a
+        // WORKING card on cellular exists only because the user PICKED a language or tapped an
+        // offer, so the X is them changing their mind about their own data.
         assertEquals(
             "one cancel, and it is the actuator's — the card owns no route and no transfer",
             1, liveLineCount(card, "PreviewAutoFetchController.cancel(selectedLanguage)"),
@@ -693,17 +752,29 @@ class LiveWordsCardPinTest {
             guard in 0 until routed,
         )
         assertEquals(
-            "the once-per-launch latch is set in the AUTO path only — a tap is consent and may " +
-                "be repeated — and it is tested and set in ONE step, keyed by LANGUAGE, so two " +
-                "auto attempts for one pack cannot both pass and a second language's first " +
+            "the once-per-launch latch is set for what the APP starts on its own — the top-up " +
+                "and, since Task 3b, a language SELECTION — and never for a tap, which is consent " +
+                "that may be repeated. It is tested and set in ONE step, keyed by LANGUAGE, so " +
+                "two attempts for one pack cannot both pass and a second language's first " +
                 "selection is not refused by the first language's attempt",
-            1, liveLineCount(actuator, "if (auto && !autoAttempted.add(pack.language)) return false"),
+            1,
+            liveLineCount(
+                actuator,
+                "if (trigger.latchedForTheLaunch && !attemptedWithoutATap.add(pack.language)) return false",
+            ),
         )
-        val latch = offsetOfLive(actuator, "autoAttempted.add(pack.language)")
+        val latch = offsetOfLive(actuator, "attemptedWithoutATap.add(pack.language)")
         assertTrue("and it is set before the work starts", latch in 0 until routed)
         assertEquals(
             "no global latch survives beside it: a Boolean here silences every other language",
-            0, liveLineCount(actuator, "autoAttempted = true"),
+            0, liveLineCount(actuator, "attemptedWithoutATap = true"),
+        )
+        assertEquals(
+            "and the latch rule is the enum's, never re-derived here: a second spelling of " +
+                "\"which causes are latched\" is how a tap comes to be refused as a retry",
+            0,
+            liveLineCount(actuator, "trigger == PreviewTrigger.TOP_UP") +
+                liveLineCount(actuator, "trigger != PreviewTrigger.TAP"),
         )
     }
 
@@ -750,12 +821,23 @@ class LiveWordsCardPinTest {
         assertEquals(
             1, liveLineCount(actuator, "\"stream-auto: "),
         )
-        // A route name, a flag and an outcome word, and that is the whole line: one `route=`,
-        // one `auto=`, one `outcome=`, all on it. Nothing the user said can reach this file — the
-        // actuator moves a model file and asks Play for a pack — and nothing it CAN see (a path,
-        // an exception message) is put on the line either.
+        // A route name, the CAUSE and an outcome word, and that is the whole line: one `route=`,
+        // one `trigger=`, one `outcome=`, all on it. Nothing the user said can reach this file —
+        // the actuator moves a model file and asks Play for a pack — and nothing it CAN see (a
+        // path, an exception message) is put on the line either.
+        //
+        // (4.5.0 Task 3b) The second field was `auto=0|1` and is now the cause's own name,
+        // because there are three causes and the two that shared `auto=0` behave differently: a
+        // `selection` spends the once-per-launch latch and a `tap` does not, so a log that could
+        // not tell them apart could not explain why a retry was refused.
         assertEquals(1, liveLineCount(actuator, "route="))
+        assertEquals(1, liveLineCount(actuator, "trigger="))
         assertEquals(1, liveLineCount(actuator, "outcome="))
+        assertEquals(
+            "and the old field is gone rather than kept beside it — two fields for one fact is " +
+                "how a grep comes to disagree with the code",
+            0, liveLineCount(actuator, "auto="),
+        )
         assertEquals(0, liveLineCount(actuator, "onDelta"))
         assertEquals(0, liveLineCount(actuator, "absolutePath"))
         // The emitter's own body is where the ban has to hold, and it holds by construction:
@@ -770,7 +852,7 @@ class LiveWordsCardPinTest {
         assertTrue(
             "and the line is the three fields and nothing more",
             actuator.contains(
-                "\"stream-auto: route=\$route auto=\${if (auto) 1 else 0} outcome=\$outcome\"",
+                "\"stream-auto: route=\$route trigger=\${trigger.name.lowercase()} outcome=\$outcome\"",
             ),
         )
         // (4.5.0 Task 1) The ONE `.message` read in this file goes to the BOARD, not to a log:

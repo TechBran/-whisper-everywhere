@@ -36,9 +36,21 @@ package com.whispereverywhere.transcription.stream
  * The exception is [StreamingPackState.PackDelivered], below: metering cannot apply to a transfer
  * that does not happen.
  *
- * The cost is stated rather than hidden: **a user whose selected language's pack is missing and
- * who is on cellular gets nothing until they reach wifi** — and nothing is said to them about it
- * while they wait, which is the ruling's own trade.
+ * ### AND ITS OTHER HALF: A PICK IS A CONSENT (owner, 2026-09-11 — Task 3b)
+ *
+ * > *"And if you select a different language, then automatically download and set up the language
+ * > pack for that language automatically. … No one's gonna care about sixty more megabytes."*
+ *
+ * **AN UNASKED BACKGROUND TRANSFER WAITS FOR WIFI; A TRANSFER THE USER JUST CAUSED BY PICKING A
+ * LANGUAGE HAPPENS AT ONCE, BECAUSE THE PICK IS THE CONSENT.** That sentence is the whole of the
+ * asymmetry, it is deliberate, and [decide]'s [PreviewStarter] parameter is where it lives —
+ * written down here and there because someone reading either half alone will otherwise "fix" it
+ * into symmetry, in one of the two directions that each undo a ruling.
+ *
+ * The consequence, surfaced rather than hidden: **a cellular user who PICKS a language gets an
+ * immediate download, while a cellular user who already had that language selected gets nothing
+ * until wifi.** Both are the ruling. What tells them apart is [PreviewPicks] — a pick is an event
+ * this process watched happen, not a value a preference can report.
  *
  * The exception is [StreamingPackState.PackDelivered]: Google Play has already delivered those
  * bytes to the device and the install is a local verify + copy that touches no network at all
@@ -196,6 +208,13 @@ object PreviewAutoFetch {
      *        would be 73 MB for a surface that will not draw.
      * @param localTierInstalled an on-device whisper tier exists. See the class KDoc: without one
      *        every session is a cloud session and the previewer can never arm.
+     * @param starter WHO caused this look — [PreviewTrigger.starter] at the one call site, never a
+     *        literal. **The asymmetry of rulings 3a and 3b hangs on this one input, and on nothing
+     *        else**: an unasked [PreviewStarter.TOP_UP] waits for an unmetered network and is
+     *        silenced by the 24 h back-off, while a [PreviewStarter.PICK] spends the connection at
+     *        once and ignores that back-off, *because the pick IS the consent*. The one rule they
+     *        SHARE is [attemptedThisLaunch]: both are re-decided by a recomposition, so both are
+     *        latched, or a failed pick retries itself for the life of the process.
      * @param unmetered the platform's own NOT_METERED *and* VALIDATED reading
      *        (`ConnectivityMonitor.isUnmetered`, false when there is no active network at all and
      *        false on a captive portal — CONTROLLER RULING 2026-09-11, CHANGE 1). Since the
@@ -212,7 +231,13 @@ object PreviewAutoFetch {
      *        the same staging paths.
      * @param attemptedThisLaunch this process has already tried once
      *        ([PreviewAutoFetchController.attemptedThisLaunch]) — *"once per launch at most"*.
-     * @param backedOff [backedOff] of the persisted failure stamp.
+     *        It binds on BOTH starters (see [starter]); a tap is exempt because it never reaches
+     *        this decision at all.
+     * @param backedOff [backedOff] of the persisted failure stamp. It silences the UNASKED path
+     *        only: its own KDoc scopes it to *"a failed auto-fetch"* and to the across-launch loop
+     *        of *"a user reopening the app all afternoon"*, and a pick in a later launch is a new
+     *        consent rather than that loop. Within one launch [attemptedThisLaunch] is what bounds
+     *        a pick.
      */
     fun decide(
         selectedLanguage: String,
@@ -221,6 +246,7 @@ object PreviewAutoFetch {
         userSaidNo: Boolean,
         showLiveWords: Boolean,
         localTierInstalled: Boolean,
+        starter: PreviewStarter,
         unmetered: Boolean,
         sessionActive: Boolean,
         batchJobActive: Boolean,
@@ -250,19 +276,40 @@ object PreviewAutoFetch {
             // 73 MB from a THIRD PARTY (the catalog's commit-pinned base), which this app never
             // moves unasked however cheap the connection: OFFER, and the card carries the
             // download's own sentence for the user to answer. See the class KDoc.
+            //
+            // (4.5.0 Task 3b) AND A PICK DOES NOT CHANGE IT, deliberately. Ruling 3b is about
+            // what a transfer COSTS — "no one's gonna care about sixty more megabytes" — and this
+            // route's consent is about WHO serves the bytes: the pick says nothing about Hugging
+            // Face, and `installDownload` is the one sentence in the feature that admits a third
+            // party. Unreachable on a Play install; see the report's concern.
             StreamingPackState.Downloadable -> return Decision.OFFER
             // Both answered above; spelled so this `when` is total over the machine rather than
             // wildcarding a future state into a silent transfer.
             StreamingPackState.Installed -> return Decision.NONE
             is StreamingPackState.Repair -> return Decision.NONE
         }
-        // (4.5.0 Task 3a) THE UNASKED TOP-UP WAITS FOR WIFI, AND SAYS NOTHING WHILE IT WAITS.
-        // Until this ruling the same cell answered OFFER — a card, with a tap, on the one
-        // condition the card itself could do nothing about. The owner deleted that state:
-        // *"the auto download for the model, I think we should just we should skip that."*
-        if (wouldSpendTheUsersData && !unmetered) return Decision.NONE
-        // Still the user's to have — one tap, and the tap is consent the latch never was.
-        if (attemptedThisLaunch || backedOff) return Decision.OFFER
+        // (4.5.0 Task 3a + 3b) THE ASYMMETRY, AND IT IS DELIBERATE: AN UNASKED BACKGROUND
+        // TRANSFER WAITS FOR WIFI; A TRANSFER THE USER JUST CAUSED BY PICKING A LANGUAGE HAPPENS
+        // AT ONCE, BECAUSE THE PICK IS THE CONSENT.
+        //
+        // 3a deleted the OFFER this cell used to answer — a card, with a tap, on the one
+        // condition the card itself could do nothing about: *"the auto download for the model, I
+        // think we should just we should skip that."* 3b is why the silence is not the whole
+        // answer: *"if you select a different language, then automatically download and set up
+        // the language pack for that language automatically."*
+        if (wouldSpendTheUsersData && !unmetered && starter == PreviewStarter.TOP_UP) {
+            return Decision.NONE
+        }
+        // THE LOOP GUARD BINDS ON BOTH STARTERS. A pick is decided in composition and the effect
+        // that performs it is keyed on this answer, so a latch-exempt pick whose transfer FAILED
+        // would go straight back to FETCH the instant `busy()` cleared — once per failure, for
+        // the life of the process. Still the user's to have: one tap, and the tap is consent the
+        // latch never was.
+        if (attemptedThisLaunch) return Decision.OFFER
+        // ...and the 24 h back-off silences the UNASKED path ONLY. It exists for the
+        // across-launch loop its own KDoc names — a user reopening the app all afternoon on a bad
+        // connection — and a pick made in a later launch is a new consent, not that loop.
+        if (backedOff && starter == PreviewStarter.TOP_UP) return Decision.OFFER
         return Decision.FETCH
     }
 

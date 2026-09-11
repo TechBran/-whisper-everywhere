@@ -44,6 +44,8 @@ import com.whispereverywhere.service.resolveSttProvider
 import com.whispereverywhere.transcription.stream.PreviewAutoFetch
 import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
 import com.whispereverywhere.transcription.stream.PreviewPhase
+import com.whispereverywhere.transcription.stream.PreviewPicks
+import com.whispereverywhere.transcription.stream.PreviewTrigger
 import com.whispereverywhere.transcription.stream.PreviewWorkboard
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
@@ -891,6 +893,19 @@ private fun LiveWordsCard(
     // only one of which the Settings row collected.
     val previewWorkboard by PreviewWorkboard.work.collectAsState()
     val previewWork = pack?.let { previewWorkboard[it.language] }
+    // (4.5.0 Task 3b) WHY a transfer would be starting, which is the one input the connection
+    // rule branches on: *"an unasked background transfer waits for wifi; a transfer the user just
+    // caused by picking a language happens at once, because the pick IS the consent."* The
+    // selection flow cannot answer it — it replays its current value to every new collector, so a
+    // language chosen ten seconds ago and one chosen before the last update arrive identically —
+    // and `PreviewPicks` is the process-scoped record of the gesture itself, written by the one
+    // writer of the selection. Collected rather than read, so a pick re-asks ON THE SPOT.
+    val pickedThisProcess by PreviewPicks.picked.collectAsState()
+    val trigger = if (selectedLanguage in pickedThisProcess) {
+        PreviewTrigger.SELECTION
+    } else {
+        PreviewTrigger.TOP_UP
+    }
     val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
     // Read into a local mirror — the house convention for plain-var prefs read in composition,
     // and the cloud-key note's own shape for the same gesture — and re-read on each foreground,
@@ -964,6 +979,9 @@ private fun LiveWordsCard(
             userSaidNo = saidNo,
             showLiveWords = showLiveWords,
             localTierInstalled = localTierInstalled,
+            // (4.5.0 Task 3b) The cause, mapped to the starter by the enum rather than by a
+            // literal here: this is the ONE input the metered rule and the back-off branch on.
+            starter = trigger.starter,
             unmetered = unmetered,
             sessionActive = AudioArbiter.isCapturing(),
             batchJobActive = BatchJobController.active != null,
@@ -987,7 +1005,7 @@ private fun LiveWordsCard(
     LaunchedEffect(resumeTick, selectedLanguage, decision) {
         if (decision == PreviewAutoFetch.Decision.FETCH) {
             pack?.let { p ->
-                packState?.let { PreviewAutoFetchController.start(app, p, it, auto = true) }
+                packState?.let { PreviewAutoFetchController.start(app, p, it, trigger) }
             }
         }
     }
@@ -1105,7 +1123,7 @@ private fun LiveWordsCard(
                     // is free — the language step's sentence is for someone still choosing.
                     note = StreamingPackCopy.cardLanguageNote(languageName),
                     action = StreamingPackCopy.cardAction(offered, languageName),
-                    onAction = { PreviewAutoFetchController.start(app, p, offered, auto = false) },
+                    onAction = { PreviewAutoFetchController.start(app, p, offered, PreviewTrigger.TAP) },
                     onDismiss = dismissWhereItWouldMeanSomething,
                 )
             }

@@ -7,11 +7,12 @@ import org.junit.Test
 
 /**
  * The 4.4.1 auto-fetch decision and the card's state mapping, pinned EXHAUSTIVELY — every cell of
- * installed-state × user-said-no × switch × local tier × metered × session × batch × in-flight ×
- * tried-this-launch × backed-off, and every cell of the card's own five inputs.
+ * installed-state × user-said-no × switch × local tier × STARTER × metered × session × batch ×
+ * in-flight × tried-this-launch × backed-off, and every cell of the card's own five inputs.
  *
- * The cross product is walked in full (7 × 2^9 = 3,584 cells for the decision, 2^4 × 3 = 48 for
- * the card) and each cell is checked against the rules stated INDEPENDENTLY as a flat
+ * The cross product is walked in full (6 language pairs × 7 states × 2^10 = 43,008 cells for
+ * the decision, 2^4 × 3 = 48 for the card) and each cell is checked against the rules stated
+ * INDEPENDENTLY as a flat
  * conjunction — not against a copy of the implementation's `if` ladder, which would pass for any
  * ordering of it. What that catches is precisely the bug an example-based test cannot: a refusal
  * answered in the wrong order (a metered check reached before the "the user said no" check, say,
@@ -63,13 +64,16 @@ class PreviewAutoFetchTest {
         Lang("zh", "en"),
     )
 
-    /** One cell of the cross product, named so a failure says which of the 21,504 broke. */
+    /** One cell of the cross product, named so a failure says which of the 43,008 broke. */
     private data class Cell(
         val lang: Lang,
         val state: StreamingPackState,
         val userSaidNo: Boolean,
         val showLiveWords: Boolean,
         val localTierInstalled: Boolean,
+        // (4.5.0 Task 3b) WHO caused this look. The one input the connection rule and the
+        // back-off branch on, and the whole of the 3a/3b asymmetry.
+        val starter: PreviewStarter,
         val unmetered: Boolean,
         val sessionActive: Boolean,
         val batchJobActive: Boolean,
@@ -83,7 +87,14 @@ class PreviewAutoFetchTest {
             for (no in bools) for (sw in bools) for (tier in bools) for (un in bools) {
                 for (sess in bools) for (batch in bools) for (busy in bools) {
                     for (tried in bools) for (back in bools) {
-                        add(Cell(lang, state, no, sw, tier, un, sess, batch, busy, tried, back))
+                        for (starter in PreviewStarter.entries) {
+                            add(
+                                Cell(
+                                    lang, state, no, sw, tier, starter, un, sess, batch, busy,
+                                    tried, back,
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -97,6 +108,7 @@ class PreviewAutoFetchTest {
         userSaidNo = c.userSaidNo,
         showLiveWords = c.showLiveWords,
         localTierInstalled = c.localTierInstalled,
+        starter = c.starter,
         unmetered = c.unmetered,
         sessionActive = c.sessionActive,
         batchJobActive = c.batchJobActive,
@@ -109,7 +121,7 @@ class PreviewAutoFetchTest {
 
     @Test fun theDecisionIsTheStatedRuleInEveryCellOfItsInputs() {
         val cells = everyCell()
-        assertEquals("the walk must be the full cross product", 6 * 7 * 512, cells.size)
+        assertEquals("the walk must be the full cross product", 6 * 7 * 512 * 2, cells.size)
         for (c in cells) {
             // The rules, spelled independently of the implementation's ordering.
             val nothingToDo = c.state.isInstalled || c.state is StreamingPackState.Repair
@@ -122,24 +134,34 @@ class PreviewAutoFetchTest {
             // A third party's bytes are never moved silently, whatever the network reads.
             val thirdParty = c.state == StreamingPackState.Downloadable
             val spendsData = c.state == StreamingPackState.PackFetchable
+            val unasked = c.starter == PreviewStarter.TOP_UP
             val expected = when {
                 nothingToDo || refused || notNow -> PreviewAutoFetch.Decision.NONE
                 thirdParty -> PreviewAutoFetch.Decision.OFFER
-                // (4.5.0 Task 3a) The unasked top-up on a metered connection says NOTHING and
-                // waits. It used to OFFER, which is the state the owner's ruling deletes.
-                spendsData && !c.unmetered -> PreviewAutoFetch.Decision.NONE
-                c.attemptedThisLaunch || c.backedOff -> PreviewAutoFetch.Decision.OFFER
+                // (4.5.0 Task 3a) The UNASKED top-up on a metered connection says NOTHING and
+                // waits. It used to OFFER, which is the state the owner's ruling deletes. (3b)
+                // A PICK is exempt: the pick IS the consent, so it spends the connection.
+                spendsData && !c.unmetered && unasked -> PreviewAutoFetch.Decision.NONE
+                // The loop guard binds on both starters...
+                c.attemptedThisLaunch -> PreviewAutoFetch.Decision.OFFER
+                // ...and the 24 h back-off silences the unasked path only.
+                c.backedOff && unasked -> PreviewAutoFetch.Decision.OFFER
                 else -> PreviewAutoFetch.Decision.FETCH
             }
             assertEquals("$c", expected, decide(c))
         }
     }
 
-    @Test fun aSilentFetchIsOnlyEverReachedWithEveryConditionOpenAtOnce() {
+    @Test fun anUnaskedSilentFetchIsOnlyEverReachedWithEveryConditionOpenAtOnce() {
         // The same walk read the other way round: the NECESSARY conditions for spending a user's
-        // resources without asking. Every one of these has its own named cell below; this is the
+        // resources WITHOUT ASKING. Every one of these has its own named cell below; this is the
         // claim that no combination anywhere in the product sneaks past all of them.
+        //
+        // (4.5.0 Task 3b) Scoped to the TOP_UP starter, because a PICK is not without asking —
+        // the pick IS the asking. Its own necessary conditions are the test below, which differs
+        // from this one in exactly the two inputs the ruling names.
         for (c in everyCell()) {
+            if (c.starter != PreviewStarter.TOP_UP) continue
             if (decide(c) != PreviewAutoFetch.Decision.FETCH) continue
             assertEquals(
                 "$c: the pack fetched is the SELECTED language's, and no other — a 73 MB model " +
@@ -170,6 +192,72 @@ class PreviewAutoFetchTest {
         }
     }
 
+    @Test fun aPicksFetchKeepsEveryRefusalAndDropsExactlyTheTwoThatProtectAnUnaskedOne() {
+        // (4.5.0 Task 3b) THE PICK'S OWN necessary conditions. It is the same list as the
+        // unasked one MINUS the connection and the back-off — the two inputs that exist because
+        // nobody asked — and minus nothing else. A pick is a consent to spend DATA; it is not a
+        // consent to undo a delete, override the switch, fetch for a language nobody picked, or
+        // run 73 MB beside a live transcription.
+        for (c in everyCell()) {
+            if (c.starter != PreviewStarter.PICK) continue
+            if (decide(c) != PreviewAutoFetch.Decision.FETCH) continue
+            assertEquals("$c: still the SELECTED language's pack", c.lang.selected, c.lang.pack)
+            assertFalse("$c: an installed pack is never re-fetched", c.state.isInstalled)
+            assertFalse("$c: a damaged install is still the row's", c.state is StreamingPackState.Repair)
+            assertFalse("$c: a delete or a dismissal is still never undone", c.userSaidNo)
+            assertTrue("$c: the switch must still be on", c.showLiveWords)
+            assertTrue("$c: a cloud-only setup still gets nothing", c.localTierInstalled)
+            assertFalse("$c: still never during a session", c.sessionActive)
+            assertFalse("$c: still never while a batch job runs", c.batchJobActive)
+            assertFalse("$c: still never on top of work in flight", c.packWorkInFlight)
+            assertFalse(
+                "$c: AND STILL ONCE PER LAUNCH. This is the one guard a pick does NOT escape: " +
+                    "it is decided in composition and performed by an effect keyed on that " +
+                    "decision, so a latch-exempt pick whose transfer failed would return to " +
+                    "FETCH the moment busy() cleared — for the life of the process",
+                c.attemptedThisLaunch,
+            )
+            assertTrue(
+                "$c: and a pick still never moves a THIRD PARTY's bytes — that consent is " +
+                    "about WHO serves them, and the pick says nothing about Hugging Face",
+                c.state == StreamingPackState.PackFetchable ||
+                    c.state == StreamingPackState.PackDelivered,
+            )
+        }
+    }
+
+    @Test fun aPickDiffersFromAnUnaskedTopUpOnExactlyTheTwoInputsTheRulingNames() {
+        // The asymmetry, characterised over the whole product instead of asserted cell by cell:
+        // wherever the two starters disagree, the disagreement is the metered spend or the
+        // back-off, and the pick's answer is never the more restrictive of the two. Anything
+        // else would be a second rule riding on this one input.
+        fun rank(d: PreviewAutoFetch.Decision): Int = when (d) {
+            PreviewAutoFetch.Decision.NONE -> 0
+            PreviewAutoFetch.Decision.OFFER -> 1
+            PreviewAutoFetch.Decision.FETCH -> 2
+        }
+        var seenMetered = 0
+        var seenBackOff = 0
+        for (c in everyCell()) {
+            if (c.starter != PreviewStarter.TOP_UP) continue
+            val topUp = decide(c)
+            val pick = decide(c.copy(starter = PreviewStarter.PICK))
+            if (topUp == pick) continue
+            val meteredSpend = c.state == StreamingPackState.PackFetchable && !c.unmetered
+            assertTrue(
+                "$c: the starter may only change the answer where the ruling says it does",
+                meteredSpend || c.backedOff,
+            )
+            assertTrue(
+                "$c: and a pick is never told LESS than an unasked top-up would be",
+                rank(pick) >= rank(topUp),
+            )
+            if (meteredSpend) seenMetered++ else seenBackOff++
+        }
+        assertTrue("both halves of the asymmetry must be reachable", seenMetered > 0)
+        assertTrue(seenBackOff > 0)
+    }
+
     @Test fun everyRefusalIsAnAbsoluteSilenceAndNotMerelyADemotionToTheOffer() {
         // The difference that matters on a device: OFFER still renders a card with an action.
         // "The user said no" and "the feature is switched off" must produce no card at all.
@@ -178,7 +266,10 @@ class PreviewAutoFetchTest {
             // (4.5.0 Task 3a) THE METERED TOP-UP JOINED THIS LIST, and that is the whole of the
             // ruling: it was the one input that answered OFFER — a card, a tap, a nag — for a
             // condition the user cannot act on from the card. Now it says nothing and waits.
-            val meteredTopUp = c.state == StreamingPackState.PackFetchable && !c.unmetered
+            // (3b) The PICK is not on the list: it is the same connection and the same missing
+            // pack, and the answer turns on who asked.
+            val meteredTopUp = c.state == StreamingPackState.PackFetchable && !c.unmetered &&
+                c.starter == PreviewStarter.TOP_UP
             if (c.lang.pack == null || c.lang.pack != c.lang.selected ||
                 c.userSaidNo || !c.showLiveWords || !c.localTierInstalled ||
                 c.sessionActive || c.batchJobActive || c.packWorkInFlight ||
@@ -199,6 +290,9 @@ class PreviewAutoFetchTest {
         userSaidNo: Boolean = false,
         showLiveWords: Boolean = true,
         localTierInstalled: Boolean = true,
+        // The UNASKED path is the default, so every named cell below still states only its own
+        // rule — and the cells that are about a pick say so.
+        starter: PreviewStarter = PreviewStarter.TOP_UP,
         unmetered: Boolean = true,
         sessionActive: Boolean = false,
         batchJobActive: Boolean = false,
@@ -207,7 +301,7 @@ class PreviewAutoFetchTest {
         backedOff: Boolean = false,
     ) = decide(
         Cell(
-            lang, state, userSaidNo, showLiveWords, localTierInstalled, unmetered,
+            lang, state, userSaidNo, showLiveWords, localTierInstalled, starter, unmetered,
             sessionActive, batchJobActive, packWorkInFlight, attemptedThisLaunch, backedOff,
         )
     )
@@ -337,15 +431,61 @@ class PreviewAutoFetchTest {
         )
     }
 
+    @Test fun aPickDownloadsOnAMeteredConnectionBecauseThePickIsTheConsent() {
+        // (4.5.0 Task 3b) The other half of the ruling, and the reason 3a's silence is principled
+        // rather than a feature being withheld: *"And if you select a different language, then
+        // automatically download and set up the language pack for that language automatically …
+        // No one's gonna care about sixty more megabytes."*
+        assertEquals(
+            PreviewAutoFetch.Decision.FETCH,
+            open(
+                state = StreamingPackState.PackFetchable,
+                starter = PreviewStarter.PICK,
+                unmetered = false,
+            ),
+        )
+    }
+
+    @Test fun aPickIsNotSilencedByTheBackOffAnUnaskedFailureWrote() {
+        // The back-off's own KDoc scopes it to *"a failed AUTO-fetch"* and to the across-launch
+        // loop of a user reopening the app all afternoon. A pick is not that loop: it is a new
+        // gesture, and answering it with the offer card would be the app remembering a failure
+        // the user has not seen and cannot act on.
+        assertEquals(
+            PreviewAutoFetch.Decision.OFFER,
+            open(backedOff = true),
+        )
+        assertEquals(
+            PreviewAutoFetch.Decision.FETCH,
+            open(backedOff = true, starter = PreviewStarter.PICK),
+        )
+    }
+
+    @Test fun aPickIsStillBoundByTheOncePerLaunchLatchSoAFailedPickCannotLoop() {
+        // The one guard both starters share, and the reason it must: the pick is decided in
+        // composition and performed by an effect keyed on that decision, so an exempt pick whose
+        // transfer failed would go straight back to FETCH the instant busy() cleared — once per
+        // failure, for the life of the process. The offer card's tap is the way back, and a TAP
+        // never reaches this decision at all.
+        for (starter in PreviewStarter.entries) {
+            assertEquals(
+                "$starter",
+                PreviewAutoFetch.Decision.OFFER,
+                open(attemptedThisLaunch = true, starter = starter),
+            )
+        }
+    }
+
     @Test fun noConditionAnywhereInTheProductPutsTheMeteredOfferBack() {
         // The deleted state, stated as a claim over the whole product rather than one cell: with
-        // the Play fetch as the source and a metered connection, the answer is NONE or it is
-        // nothing. A cell that answered OFFER here would be the nag the ruling removed, reached
-        // from some other input's back door.
+        // the Play fetch as the source, a metered connection and NOBODY HAVING ASKED, the answer
+        // is NONE or it is nothing. A cell that answered OFFER here would be the nag the ruling
+        // removed, reached from some other input's back door.
         for (c in everyCell()) {
             if (c.state != StreamingPackState.PackFetchable || c.unmetered) continue
+            if (c.starter != PreviewStarter.TOP_UP) continue
             assertEquals(
-                "$c: a metered Play fetch is never an offer any more",
+                "$c: a metered unasked Play fetch is never an offer any more",
                 PreviewAutoFetch.Decision.NONE,
                 decide(c),
             )
@@ -637,6 +777,18 @@ class PreviewAutoFetchTest {
 
     @Test fun af1_wifiOpenFetchesWithNoTaps() {
         val d = open(state = StreamingPackState.PackFetchable, unmetered = true)
+        assertEquals(PreviewAutoFetch.Decision.FETCH, d)
+        assertEquals(PreviewAutoFetch.Card.WORKING, card(decision = d))
+    }
+
+    @Test fun af2b_cellularPickDownloadsAtOnceAndTheCardSaysSo() {
+        // The acceptance row ruling 3b adds beside AF2, and the pair is the whole asymmetry: same
+        // cellular connection, same missing pack, and the answer turns on who asked.
+        val d = open(
+            state = StreamingPackState.PackFetchable,
+            starter = PreviewStarter.PICK,
+            unmetered = false,
+        )
         assertEquals(PreviewAutoFetch.Decision.FETCH, d)
         assertEquals(PreviewAutoFetch.Card.WORKING, card(decision = d))
     }

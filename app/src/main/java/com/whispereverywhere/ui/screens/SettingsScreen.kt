@@ -33,6 +33,7 @@ import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
 import com.whispereverywhere.transcription.stream.PreviewDeleteCase
 import com.whispereverywhere.transcription.stream.PreviewPhase
+import com.whispereverywhere.transcription.stream.PreviewTrigger
 import com.whispereverywhere.transcription.stream.PreviewWorkboard
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
@@ -1166,11 +1167,13 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // going. One actuator answers both: the guard is `busy()` for all three starters, the route
     // reduction happens once inside it, and the work is on a process-scoped scope whoever began it.
     //
-    // `auto = false` because a tap is a PICK, not an unasked top-up: it is exempt from the
+    // `PreviewTrigger.TAP` because a tap is a PICK, not an unasked top-up: it is exempt from the
     // once-per-launch latch (a tap is consent and may be repeated) and it is recorded on the board
-    // as the user's own, which is what lets the copy state the deal honestly.
+    // as the user's own, which is what lets the copy state the deal honestly. It is also the one
+    // cause that spends the user's connection whatever the connection reads — this row has never
+    // been gated on metering, and Task 3a's silence is the UNASKED path's alone.
     val startPreviewInstall: () -> Unit = {
-        PreviewAutoFetchController.start(app, previewPack, previewState, auto = false)
+        PreviewAutoFetchController.start(app, previewPack, previewState, PreviewTrigger.TAP)
     }
     // WHAT A SELECTION WITH NO PACK COSTS, first in the section and above every offer (owner
     // ruling 1, 2026-09-11: *"if they leave it in auto, then you get no live streaming at all.

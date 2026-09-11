@@ -273,9 +273,10 @@ class LivePreviewDeclinedPinTest {
             1, liveLineCount(settings, "PreviewAutoFetchController.start("),
         )
         assertEquals(
-            "declared a PICK, never an unasked top-up: the once-per-launch latch is the auto " +
-                "path's alone, and a tap is consent that may be repeated",
-            1, liveLineCount(settings, "auto = false"),
+            "declared a TAP, never an unasked top-up and never a selection: a tap is consent " +
+                "that may be repeated, so it is the one cause exempt from the once-per-launch " +
+                "latch, and it spends the connection whatever the connection reads (4.5.0 T3)",
+            1, liveLineCount(settings, "PreviewTrigger.TAP"),
         )
         assertEquals(
             "and the row starts nothing else and cancels nothing — the X is the card's gesture",

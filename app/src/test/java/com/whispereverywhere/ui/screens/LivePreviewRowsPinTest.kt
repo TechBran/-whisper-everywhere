@@ -148,7 +148,7 @@ class LivePreviewRowsPinTest {
         assertEquals(
             "a tap is a PICK, never an unasked top-up: it is exempt from the once-per-launch " +
                 "latch and recorded on the board as the user's own",
-            1, liveLineCount(rows, "auto = false"),
+            1, liveLineCount(rows, "PreviewTrigger.TAP"),
         )
         assertEquals(
             "no scope that dies with the screen: leaving Settings mid-download used to cancel " +

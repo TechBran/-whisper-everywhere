@@ -634,6 +634,46 @@ class PreviewWorkTest {
         }
     }
 
+    // ------------------------------------------------- the CAUSE, and its two answers (Task 3b)
+
+    @Test fun theThreeCausesMapToTwoStartersAndTwoLatchAnswersAndTheTableIsTotal() {
+        // (4.5.0 Task 3b) `auto: Boolean` could carry one of these two questions, not both — and
+        // the row it could not express is the SELECTION, which spends a metered connection like a
+        // tap does (the pick IS the consent) and is latched like a top-up is (it is decided in
+        // composition, so an exempt pick whose transfer failed would retry itself for the life of
+        // the process). Three causes, two answers each, and both mappings live on the enum rather
+        // than at a call site, so no surface can spell either one differently.
+        assertEquals(PreviewStarter.TOP_UP, PreviewTrigger.TOP_UP.starter)
+        assertEquals(PreviewStarter.PICK, PreviewTrigger.SELECTION.starter)
+        assertEquals(PreviewStarter.PICK, PreviewTrigger.TAP.starter)
+        assertTrue(PreviewTrigger.TOP_UP.latchedForTheLaunch)
+        assertTrue(
+            "the row `auto: Boolean` could not express: latched like a top-up, because a pick is " +
+                "re-decided by every recomposition",
+            PreviewTrigger.SELECTION.latchedForTheLaunch,
+        )
+        assertFalse(
+            "and a tap is exempt: consent may be repeated, and a latched tap would answer a " +
+                "user's retry with the same offer card they just pressed",
+            PreviewTrigger.TAP.latchedForTheLaunch,
+        )
+        assertEquals(
+            "three causes, so a fourth cannot arrive without answering both questions",
+            3,
+            PreviewTrigger.entries.size,
+        )
+        assertEquals(
+            "exactly one cause is unasked, and it is the only one the metered silence applies to",
+            listOf(PreviewTrigger.TOP_UP),
+            PreviewTrigger.entries.filter { it.starter == PreviewStarter.TOP_UP },
+        )
+        assertEquals(
+            "and exactly one is a finger on a control, which is the only latch-exempt one",
+            listOf(PreviewTrigger.TAP),
+            PreviewTrigger.entries.filterNot { it.latchedForTheLaunch },
+        )
+    }
+
     // ------------------------------------------------------------------ helper
 
     private fun work(route: PreviewRoute, phase: PreviewPhase): PreviewWork = PreviewWork(

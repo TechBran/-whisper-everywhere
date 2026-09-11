@@ -55,12 +55,14 @@ import java.util.concurrent.ConcurrentHashMap
  *    `StreamingPackController.isBusy()` — so no two of the three starters can double one 73 MB.
  *    Two installs write the same staging paths (the import controller's N4 lesson).
  *  - **THE BOARD IS BEGUN BY THE STARTER, and narrated after** (4.5.0 Task 1). Each route calls
- *    `PreviewWorkboard.begin` with its own [PreviewRoute] and [starterOf]'s answer before its
+ *    `PreviewWorkboard.begin` with its own [PreviewRoute] and [PreviewTrigger.starter] before its
  *    first byte, and `note`s every step after — so no surface ever sees a phase for work with no
  *    owner, and both surfaces see work whichever starter began it.
- *  - **The latch belongs to the AUTO path only, and to one LANGUAGE at a time.** A tap is consent
- *    and may be repeated; the *"once per launch at most"* rule is about the silent fetch of ONE
- *    pack, and a second language selected in the same launch is a new decision rather than a
+ *  - **The latch belongs to what the app starts on its own, and to one LANGUAGE at a time.** A tap
+ *    is consent and may be repeated, so a [PreviewTrigger.TAP] is exempt; a top-up and a language
+ *    SELECTION are both decided in composition and are both latched (4.5.0 Task 3b), because
+ *    either would otherwise retry itself on the recomposition that follows its own failure. And it
+ *    is per LANGUAGE: a second language selected in the same launch is a new decision rather than a
  *    repeat of an old one (owner rulings 2026-09-11).
  *  - **Every failure records the back-off, and a cancellation is not a failure.** One write site,
  *    reached from our own two routes' `catch` and from Play's terminal `Failed` — the loop this
@@ -76,8 +78,8 @@ object PreviewAutoFetchController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * The languages the AUTO path has already tried this launch — never a tap's, never cleared:
-     * *"once per launch at most"*.
+     * The languages this launch has already attempted WITHOUT A TAP — never a tap's, never
+     * cleared: *"once per launch at most"*.
      *
      * PER LANGUAGE since 4.4.1's acquisition amendment (owner rulings 2026-09-11). The loop the
      * latch exists to stop is a re-fetch of ONE pack; a user who picks a second language in the
@@ -85,13 +87,20 @@ object PreviewAutoFetchController {
      * installed, it should just automatically download right there on the spot"* — and a global
      * latch would answer that with the offer card instead. A concurrent set because
      * [attemptedThisLaunch] is read from composition while [start] writes it under its monitor.
+     *
+     * **It is no longer the AUTO path's alone** (4.5.0 Task 3b). A
+     * [PreviewTrigger.SELECTION] is latched too, because it is decided in composition and
+     * performed by an effect keyed on that decision: a latch-exempt pick whose transfer failed
+     * would return to FETCH the moment [busy] cleared, once per failure, for the life of the
+     * process. [PreviewTrigger.latchedForTheLaunch] is that rule, and it is the enum's to state
+     * rather than this object's to re-derive.
      */
-    private val autoAttempted: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val attemptedWithoutATap: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     @Volatile
     private var job: Job? = null
 
-    fun attemptedThisLaunch(pack: StreamingPack): Boolean = pack.language in autoAttempted
+    fun attemptedThisLaunch(pack: StreamingPack): Boolean = pack.language in attemptedWithoutATap
 
     /**
      * Whether a fetch or install is in flight ANYWHERE — ours, or one [StreamingPackController]
@@ -110,21 +119,11 @@ object PreviewAutoFetchController {
     fun busy(): Boolean = job?.isActive == true || StreamingPackController.isBusy()
 
     /**
-     * WHO is asking, as the board records it.
-     *
-     * The asymmetry this exists to carry is the 2026-09-11 acquisition rulings': an unasked
-     * background transfer waits for wifi, and a transfer the user just caused by picking a
-     * language happens at once, **because the pick IS the consent**. A surface that cannot tell
-     * the two apart cannot state that deal honestly, and the copy is downstream of this.
-     */
-    private fun starterOf(auto: Boolean): PreviewStarter =
-        if (auto) PreviewStarter.TOP_UP else PreviewStarter.PICK
-
-    /**
      * Start the arrival of [pack] by whichever route [state] names — for ALL THREE STARTERS since
-     * 4.5.0: the foreground hook's silent top-up, Home's offer card, and the Settings row.
-     * Returns false when nothing was started: work already in flight, the launch's auto attempt
-     * already spent, or a state with no install action (an [StreamingPackState.Installed] pack).
+     * 4.5.0: the foreground hook (a top-up or a pick), Home's offer card, and the Settings row.
+     * Returns false when nothing was started: work already in flight, this launch's latched
+     * attempt already spent, or a state with no install action (an
+     * [StreamingPackState.Installed] pack).
      *
      * A [StreamingPackState.Repair] DOES reach here as of 4.5.0 — it is the Settings row's repair
      * offer, which `decide` refuses for the auto path and Home's card therefore never taps — and
@@ -132,23 +131,27 @@ object PreviewAutoFetchController {
      * every Repair wrapper first, so a repair takes the route a first install would have taken.
      * The `is Repair` arm below is totality, and unreachable for that reason.
      *
-     * @param auto true for the foreground hook's silent fetch — the only caller the once-per-launch
-     *        latch applies to, and the only one recorded as a [PreviewStarter.TOP_UP]. A tap from
-     *        either surface is a [PreviewStarter.PICK]: consent, repeatable, latch-exempt.
+     * @param trigger WHY this is starting (4.5.0 Task 3b). It answers both things this object
+     *        needs, and neither is a boolean: [PreviewTrigger.starter] is what the board records,
+     *        and [PreviewTrigger.latchedForTheLaunch] is whether this attempt spends the
+     *        once-per-launch latch. It replaced `auto: Boolean`, which could not express the third
+     *        cause — a language SELECTION, which spends a metered connection like a tap does and
+     *        is latched like a top-up is.
      */
     fun start(
         app: WhisperEverywhereApp,
         pack: StreamingPack,
         state: StreamingPackState,
-        auto: Boolean,
+        trigger: PreviewTrigger,
     ): Boolean = synchronized(this) {
         if (busy()) return false
-        // Test and set in one step, so two auto attempts for the same language cannot both pass.
-        if (auto && !autoAttempted.add(pack.language)) return false
+        // Test and set in one step, so two latched attempts for the same language cannot both
+        // pass. A TAP is exempt, because consent may be repeated.
+        if (trigger.latchedForTheLaunch && !attemptedWithoutATap.add(pack.language)) return false
         when (StreamingPackInstall.sourceOf(state)) {
-            StreamingPackState.PackFetchable -> askPlay(app, pack, auto)
-            StreamingPackState.PackDelivered -> landDeliveredPack(app, pack, auto)
-            StreamingPackState.Downloadable -> downloadFallback(app, pack, auto)
+            StreamingPackState.PackFetchable -> askPlay(app, pack, trigger)
+            StreamingPackState.PackDelivered -> landDeliveredPack(app, pack, trigger)
+            StreamingPackState.Downloadable -> downloadFallback(app, pack, trigger)
             // Nothing to start. Spelled rather than wildcarded so a state added to the machine is
             // answered here instead of falling into the third-party download below. `sourceOf`
             // strips every Repair wrapper, so that arm is totality and nothing else — a repair
@@ -218,7 +221,7 @@ object PreviewAutoFetchController {
         if (!work.cancellable) {
             // Said out loud rather than swallowed: "the X did nothing" is the one outcome a
             // support log has to be able to explain.
-            log(route = "dismiss", auto = false, outcome = "uncancellable")
+            log(route = "dismiss", trigger = PreviewTrigger.TAP, outcome = "uncancellable")
             return
         }
         when (work.route) {
@@ -232,7 +235,7 @@ object PreviewAutoFetchController {
             // rather than silently taking Play's branch and cancelling someone else's fetch.
             PreviewRoute.DELIVERED_PACK -> return
         }
-        log(route = "dismiss", auto = false, outcome = "cancelled")
+        log(route = "dismiss", trigger = PreviewTrigger.TAP, outcome = "cancelled")
     }
 
     /**
@@ -245,8 +248,8 @@ object PreviewAutoFetchController {
      * hand-rolled list: Idle is excluded because the flow starts there and `start` publishes
      * `Pending` synchronously, so a flow still reading Idle has not begun.
      */
-    private fun askPlay(app: WhisperEverywhereApp, pack: StreamingPack, auto: Boolean) {
-        StreamingPackController.start(app, pack, starterOf(auto))
+    private fun askPlay(app: WhisperEverywhereApp, pack: StreamingPack, trigger: PreviewTrigger) {
+        StreamingPackController.start(app, pack, trigger.starter)
         job = scope.launch {
             // The terminal test is the BOARD's own in-flight predicate — the same one the card,
             // the row and the delete guard read — so "this attempt is over" cannot mean two
@@ -257,44 +260,44 @@ object PreviewAutoFetchController {
                 .map { it[pack.language] }
                 .first { it != null && !it.inFlight }!!
             if (terminal.phase == PreviewPhase.FAILED) {
-                noteFailure(app, route = "play", auto = auto, kind = "refused")
+                noteFailure(app, route = "play", trigger = trigger, kind = "refused")
             } else {
-                log(route = "play", auto = auto, outcome = terminal.phase.name.lowercase())
+                log(route = "play", trigger = trigger, outcome = terminal.phase.name.lowercase())
             }
         }
     }
 
     /** Play already delivered the 73 MB: verify + copy into `filesDir`, no network at any point. */
-    private fun landDeliveredPack(app: WhisperEverywhereApp, pack: StreamingPack, auto: Boolean) {
+    private fun landDeliveredPack(app: WhisperEverywhereApp, pack: StreamingPack, trigger: PreviewTrigger) {
         job = scope.launch {
             PreviewWorkboard.begin(
                 pack.language,
                 PreviewRoute.DELIVERED_PACK,
-                starterOf(auto),
+                trigger.starter,
                 // The route has exactly ONE phase: the bytes are here, and what is left is the
                 // copy. It is also the phase no cancel can stop, which is why the route's own
                 // `stopsBeforeTheCopy` is false.
                 PreviewStep(PreviewPhase.INSTALLING),
             )
-            ours(app, pack, route = "pack", auto = auto) {
+            ours(app, pack, route = "pack", trigger = trigger) {
                 app.streamingPackManager.installFromPack(pack) { _, _ -> }
             }
         }
     }
 
     /** The non-Play fallback — a debug build, a sideload, or an install Play refused by name. */
-    private fun downloadFallback(app: WhisperEverywhereApp, pack: StreamingPack, auto: Boolean) {
+    private fun downloadFallback(app: WhisperEverywhereApp, pack: StreamingPack, trigger: PreviewTrigger) {
         job = scope.launch {
             PreviewWorkboard.begin(
                 pack.language,
                 PreviewRoute.DIRECT_DOWNLOAD,
-                starterOf(auto),
+                trigger.starter,
                 // No denominator yet: `download` gates free space and clears stale rows before
                 // the first byte, and the line says "Downloading the preview model…" until it can
                 // say a number rather than inventing one.
                 PreviewStep(PreviewPhase.DOWNLOADING),
             )
-            ours(app, pack, route = "download", auto = auto) {
+            ours(app, pack, route = "download", trigger = trigger) {
                 app.streamingPackManager.download(pack) { soFar, total ->
                     // `download` reports the CUMULATIVE staged bytes and calls this one last time
                     // at the total, immediately before the sha256 + copy — which is the same work
@@ -328,13 +331,13 @@ object PreviewAutoFetchController {
         app: WhisperEverywhereApp,
         pack: StreamingPack,
         route: String,
-        auto: Boolean,
+        trigger: PreviewTrigger,
         work: suspend () -> Unit,
     ) {
         try {
             work()
             PreviewWorkboard.note(pack.language, PreviewStep(PreviewPhase.INSTALLED))
-            log(route = route, auto = auto, outcome = "installed")
+            log(route = route, trigger = trigger, outcome = "installed")
         } catch (cancelled: CancellationException) {
             PreviewWorkboard.note(pack.language, PreviewStep(PreviewPhase.CANCELLED))
             throw cancelled
@@ -350,7 +353,7 @@ object PreviewAutoFetchController {
                         ?: StreamingPackCopy.INSTALL_FAILED,
                 ),
             )
-            noteFailure(app, route = route, auto = auto, kind = t.javaClass.simpleName)
+            noteFailure(app, route = route, trigger = trigger, kind = t.javaClass.simpleName)
         }
     }
 
@@ -359,18 +362,27 @@ object PreviewAutoFetchController {
      * [PreviewAutoFetch.backedOff] able to hold — a route that failed quietly would retry once
      * per process start for as long as the network stayed bad.
      */
-    private fun noteFailure(app: WhisperEverywhereApp, route: String, auto: Boolean, kind: String) {
+    private fun noteFailure(app: WhisperEverywhereApp, route: String, trigger: PreviewTrigger, kind: String) {
         app.preferencesManager.livePreviewAutoFetchFailedAt = System.currentTimeMillis()
-        log(route = route, auto = auto, outcome = "failed:$kind")
+        log(route = route, trigger = trigger, outcome = "failed:$kind")
     }
 
     /**
      * One `stream-auto:` line per attempt outcome, so "why did the model not arrive?" is one grep.
-     * A route name, whether it was silent, and an outcome word — no file path, no exception
-     * message, and nothing this object could not see anyway: it moves a model file and asks Play
-     * for a pack, and never touches a transcript.
+     * A route name, WHY it started, and an outcome word — no file path, no exception message, and
+     * nothing this object could not see anyway: it moves a model file and asks Play for a pack,
+     * and never touches a transcript.
+     *
+     * The second field was `auto=0|1` until 4.5.0 Task 3b and is now `trigger=` with the cause's
+     * own name, because there are three causes and the two that share `auto=0` behave differently:
+     * a `selection` spends the once-per-launch latch and a `tap` does not. One line, one field,
+     * three values — a support log that could not tell a pick from a tap could not explain why a
+     * retry was refused.
      */
-    private fun log(route: String, auto: Boolean, outcome: String) {
-        Log.i("WE-DIAG", "stream-auto: route=$route auto=${if (auto) 1 else 0} outcome=$outcome")
+    private fun log(route: String, trigger: PreviewTrigger, outcome: String) {
+        Log.i(
+            "WE-DIAG",
+            "stream-auto: route=$route trigger=${trigger.name.lowercase()} outcome=$outcome",
+        )
     }
 }
