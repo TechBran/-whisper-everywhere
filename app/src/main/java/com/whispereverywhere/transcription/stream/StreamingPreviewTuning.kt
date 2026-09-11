@@ -26,7 +26,12 @@ object StreamingPreviewTuning {
     /** The retained-tail ring: CommitCadencePolicy.CAP_CUT_MAX_RETAIN_MS of PCM. */
     const val RETAIN_RING_MS = 3_000L
 
-    /** Consecutive decode failures inside one segment before the previewer disables itself for the process. */
+    /**
+     * Consecutive decode failures inside one SESSION before the previewer disables itself for the
+     * process. Session, not segment: only a decode that returned clears the count (9 of 10 bursts
+     * decode nothing, so clearing per burst would make this constant dead code), so it carries
+     * across a commit and is cleared by `StreamingPreviewEngine.open`.
+     */
     const val MAX_CONSECUTIVE_FAILURES = 3
 
     fun padSamples(): Int = (PAD_MS * SAMPLE_RATE / 1000L).toInt()

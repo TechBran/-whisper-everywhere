@@ -132,6 +132,7 @@ class StreamingPreviewEngine(
             stream = rec.createStream()
             queue.clear()
             ring.clear()
+            consecutiveFailures = 0   // a new session is a new verdict (spec §7.1)
             resetSegment()
         }
     }
@@ -239,6 +240,12 @@ class StreamingPreviewEngine(
      * nothing (T = 45, then every 320 ms), and a fresh stream after a throw needs 14 silent
      * accepts before its first decode — so clearing the count on a burst that never decoded
      * would make three failures unreachable and `MAX_CONSECUTIVE_FAILURES` dead.
+     *
+     * The count therefore carries across the SEGMENTS of one session (a model that throws once
+     * per segment must still disable), and [open] clears it — the carry stops at the SESSION
+     * boundary, so three throws spread over three sessions do not switch the previewer off for
+     * the process. Any session whose last decode threw ends at a non-zero count (a stop
+     * mid-sentence is exactly that shape), which is why the boundary has to clear it.
      */
     private fun feedAndDecode(rec: PreviewRecognizer, s: PreviewStream, samples: FloatArray): Boolean = try {
         s.acceptWaveform(samples)
