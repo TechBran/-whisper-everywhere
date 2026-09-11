@@ -231,7 +231,7 @@ object PreviewAutoFetch {
     }
 
     /**
-     * WHAT THE CARD SHOWS, as a total mapping of the seven things Home knows. Pure for the reason
+     * WHAT THE CARD SHOWS, as a total mapping of the eight things Home knows. Pure for the reason
      * every card rule in this app is pure (`CloudKeyNote.shouldShow` is the precedent): a
      * conjunction inside a composable is a rule no test can reach.
      *
@@ -247,7 +247,7 @@ object PreviewAutoFetch {
      * outrank [workInFlight] as well as [decision]: a user who dismissed this card and then
      * installed the model from the Settings row must not have it reappear as a progress card.
      *
-     * [showLiveWords] is answered second and just as absolutely (review r1, B2). It is NOT the
+     * [showLiveWords] is answered third and just as absolutely (review r1, B2). It is NOT the
      * same gesture as the X or the delete — a user who turned the switch off has not declined the
      * card, and [decide] deliberately leaves [userSaidNo] unwritten for it — but every sentence
      * this card can spell is false while the switch is off: "Live words are on" most of all, on
