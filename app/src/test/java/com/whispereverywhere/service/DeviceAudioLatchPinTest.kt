@@ -100,6 +100,81 @@ class DeviceAudioLatchPinTest {
         )
     }
 
+    /**
+     * THE LEAK 4.4.0 S2 NEWLY MAKES REACHABLE, and the amendment's condition 5: "with the recorder
+     * open before the source is settled, prove the mic can never contribute to a device-audio
+     * session". There was no pin for this before S2 — the three above are each scoped to some
+     * other member's body — and S2 is exactly what makes it worth one: `startAudioInput()` now
+     * runs at the TAP, above `connect()`, so the tempting shortcut is "open the mic while we work
+     * out what the source should be", and that shortcut is this class's whole prohibition.
+     *
+     * The structural answer is that `startRecording` opens NO source of its own. Its single
+     * audio-start call is `startAudioInput()`, and `startAudioInput()`'s first statement is
+     * `AudioSourcePolicy.decide(...)` — which depends on nothing from `connect()`
+     * (`docs/superpowers/research/2026-09-10-startup-cutoff-investigation.md` §2 fact 3: it reads
+     * only mediaPlaying / hasProjection / sdkInt / preferDeviceAudio / consentAvailable), which is
+     * why the whole call could legally move above `connect()` in the first place.
+     */
+    @Test
+    fun starting_a_session_opens_no_source_of_its_own_now_that_the_recorder_precedes_connect() {
+        val body = memberBody(service, "    private fun startRecording() {")
+        assertEquals(
+            "startRecording must reach the microphone only through startAudioInput() — found: " +
+                liveLines(body, "audioRecorder.start("),
+            emptyList<String>(),
+            liveLines(body, "audioRecorder.start("),
+        )
+        assertEquals(
+            "...and not through the source starters either — found: " + liveLines(body, "startMicSource("),
+            emptyList<String>(),
+            liveLines(body, "startMicSource("),
+        )
+        assertEquals(
+            emptyList<String>(),
+            liveLines(body, "startPlaybackSource("),
+        )
+        assertEquals(
+            "exactly one audio-start call at session open, and it is the one that decides",
+            1,
+            liveLines(body, "startAudioInput()").size,
+        )
+    }
+
+    @Test
+    fun the_source_is_decided_before_any_capture_opens() {
+        val body = memberBody(service, "    private fun startAudioInput(): Result<Unit> {")
+        val decide = body.indexOf("com.whispereverywhere.audio.AudioSourcePolicy.decide(")
+        assertTrue("startAudioInput must ask the policy", decide >= 0)
+        for (starter in listOf("startMicSource()", "startPlaybackSource()")) {
+            val first = body.indexOf(starter)
+            assertTrue("$starter must not open a source above the decision", first > decide)
+        }
+        // Exactly the three routes the policy has: UseMic -> mic, UsePlayback -> playback with the
+        // pre-Q mic fallback, RequestConsent -> nothing. A fourth mic route here would be a mic
+        // opened for a reason the policy never gave.
+        assertEquals(2, liveLines(body, "startMicSource()").size)
+        assertEquals(1, liveLines(body, "startPlaybackSource()").size)
+    }
+
+    @Test
+    fun waiting_for_projection_consent_opens_no_source_at_all() {
+        // The branch the investigation calls out by name: the mic is NOT opened while the consent
+        // sheet is up (1-3 s), because media capture must never mix room audio. S2 gives this
+        // branch no ring either — there is nothing captured to buffer — and its accepted gap is a
+        // separate fix, out of S2's scope.
+        val branch = memberBody(
+            service,
+            "            com.whispereverywhere.audio.SourceDecision.RequestConsent -> {",
+        )
+        for (needle in listOf("startMicSource(", "startPlaybackSource(", "audioRecorder.start(")) {
+            assertEquals(
+                "the consent wait must open no source — found: " + liveLines(branch, needle),
+                emptyList<String>(),
+                liveLines(branch, needle),
+            )
+        }
+    }
+
     @Test
     fun a_session_that_starts_while_media_plays_still_hands_the_mic_over_to_the_stream() {
         // The latch is one-way. Handing the MIC over TO device audio stays: that is the
