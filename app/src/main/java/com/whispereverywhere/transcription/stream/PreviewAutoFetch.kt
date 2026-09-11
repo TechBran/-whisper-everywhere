@@ -16,14 +16,29 @@ package com.whispereverywhere.transcription.stream
  * [decide]; the actuator ([PreviewAutoFetchController]) performs whatever it answered. Neither
  * decides anything of its own — `LiveWordsCardPinTest` holds them to that as source.
  *
- * ### The CONTROLLER RULING on data (2026-09-11), and where it lives
+ * ### THE OWNER'S ACQUISITION RULING ON DATA (2026-09-11), which SUPERSEDES the controller's
  *
- * The owner's *"it's nothing, everyone's phone can handle that"* is about STORAGE, and it is
- * accepted: 73 MB of `filesDir` is nothing on a modern phone. It is not nothing on a capped
- * plan, and this app has never moved a byte the user did not ask for. So the auto-fetch is
- * silent on an UNMETERED connection and becomes a CARD WITH A TAP on a metered one — the user's
- * consent, once, for their own data. One predicate ([unmetered]'s reading at the one call site)
- * is the whole flip if that ruling is ever overruled.
+ * > *"when it comes to being on... not on Wi Fi, the auto download for the model, I think we
+ * > should just we should skip that."*
+ *
+ * The controller's ruling of the same morning made a metered connection an OFFER: a card with a
+ * tap, the user's consent once for their own data. The owner has replaced that with a SILENCE. On
+ * a metered connection the unasked top-up does **nothing at all** — no card, no nag, no tap — and
+ * waits for an unmetered VALIDATED network (`ConnectivityMonitor.isUnmetered`). It still never
+ * moves a byte the user did not ask for; what is gone is the state that ASKED.
+ *
+ * **This REMOVES a state rather than adding one** (4.5.0 Task 3a): there is no
+ * OFFER-because-metered branch any more, so there is no metered sentence anywhere in
+ * [StreamingPackCopy] and no metered cell in [card]. [PreviewAutoFetchTest]'s
+ * `noConditionAnywhereInTheProductPutsTheMeteredOfferBack` is the claim over the whole product,
+ * and not one cell of it, because a deleted state comes back through a back door or not at all.
+ *
+ * The exception is [StreamingPackState.PackDelivered], below: metering cannot apply to a transfer
+ * that does not happen.
+ *
+ * The cost is stated rather than hidden: **a user whose selected language's pack is missing and
+ * who is on cellular gets nothing until they reach wifi** — and nothing is said to them about it
+ * while they wait, which is the ruling's own trade.
  *
  * The exception is [StreamingPackState.PackDelivered]: Google Play has already delivered those
  * bytes to the device and the install is a local verify + copy that touches no network at all
@@ -88,7 +103,10 @@ object PreviewAutoFetch {
         /** Show the card with its one action and spend nothing until it is tapped. */
         OFFER,
 
-        /** Say nothing: installed, declined, switched off, un-armable, or busy. */
+        /**
+         * Say nothing: installed, declined, switched off, un-armable, busy — or, since Task 3a,
+         * an unasked top-up that would spend the user's data on a metered connection.
+         */
         NONE,
     }
 
@@ -99,7 +117,16 @@ object PreviewAutoFetch {
         /** The fetch or the install is running; the card carries its progress line. */
         WORKING,
 
-        /** The metered (or backed-off) case: the offer, with the action that starts it. */
+        /**
+         * The offer, with the action that starts it.
+         *
+         * Its reasons are now the THIRD PARTY's route (a sideload or a Play refusal, where the
+         * tap is consent to contact someone other than Google Play) and the two loop guards (this
+         * launch's attempt already spent, or the back-off after a failure). **Metering is no
+         * longer one of them** — the owner's ruling of 2026-09-11 makes a metered top-up silent
+         * instead of an offer, which is why a cellular user who has not picked anything sees no
+         * card at all (Task 3a).
+         */
         OFFER,
 
         /** The one-time announcement that live words are on and English shows them. */
@@ -113,7 +140,11 @@ object PreviewAutoFetch {
      * network"* — where a user reopening the app all afternoon pays for a failing 73 MB transfer
      * once per process start. A day is the interval, because the failures that matter (no
      * connection, Play unavailable, no room) are the kind that are fixed in hours, not seconds,
-     * and the card's own tap is available the whole time.
+     * and the Settings row's own tap is available the whole time.
+     *
+     * (It used to say *"the card's own tap"*. Since Task 3a a metered connection shows no card,
+     * so the always-available tap is the Settings row's — which is ungated by metering and always
+     * has been.)
      */
     const val BACK_OFF_MS: Long = 24L * 60L * 60L * 1_000L
 
@@ -167,8 +198,9 @@ object PreviewAutoFetch {
      *        every session is a cloud session and the previewer can never arm.
      * @param unmetered the platform's own NOT_METERED *and* VALIDATED reading
      *        (`ConnectivityMonitor.isUnmetered`, false when there is no active network at all and
-     *        false on a captive portal — CONTROLLER RULING 2026-09-11, CHANGE 1). The CONTROLLER
-     *        RULING's one predicate.
+     *        false on a captive portal — CONTROLLER RULING 2026-09-11, CHANGE 1). Since the
+     *        owner's ruling of that afternoon (Task 3a) a `false` here is a SILENCE and no longer
+     *        an offer: see the class KDoc.
      * @param sessionActive a dictation session is being set up, recording, or finishing
      *        (`AudioArbiter.isCapturing` — the house's single owner of that question). A 73 MB
      *        transfer and a sha256 of it beside a live transcription is the same CPU contention
@@ -224,7 +256,11 @@ object PreviewAutoFetch {
             StreamingPackState.Installed -> return Decision.NONE
             is StreamingPackState.Repair -> return Decision.NONE
         }
-        if (wouldSpendTheUsersData && !unmetered) return Decision.OFFER
+        // (4.5.0 Task 3a) THE UNASKED TOP-UP WAITS FOR WIFI, AND SAYS NOTHING WHILE IT WAITS.
+        // Until this ruling the same cell answered OFFER — a card, with a tap, on the one
+        // condition the card itself could do nothing about. The owner deleted that state:
+        // *"the auto download for the model, I think we should just we should skip that."*
+        if (wouldSpendTheUsersData && !unmetered) return Decision.NONE
         // Still the user's to have — one tap, and the tap is consent the latch never was.
         if (attemptedThisLaunch || backedOff) return Decision.OFFER
         return Decision.FETCH

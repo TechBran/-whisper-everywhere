@@ -26,8 +26,8 @@ class ConnectivityMonitor(private val context: Context) {
      * same shape as [hasValidatedNetwork] above rather than a second idiom.
      *
      * THE DEFAULT IS THE SAFE SIDE, twice over: no active network, no capabilities, or a throwing
-     * `ConnectivityManager` all read as METERED, so the card shows its tap-to-fetch instead of a
-     * silent 73 MB transfer starting on a phone that could not finish it.
+     * `ConnectivityManager` all read as METERED, so the unasked top-up WAITS instead of starting
+     * a silent 73 MB transfer on a phone that could not finish it.
      *
      * `NET_CAPABILITY_NOT_METERED`, not `isActiveNetworkMetered()`: the capability is the reading
      * Play's own asset-delivery consent uses, it does not invert the sense, and one spelling of a
@@ -38,8 +38,12 @@ class ConnectivityMonitor(private val context: Context) {
      * NOT_METERED while every request fails. Reading that as "spend freely" starts a transfer
      * that cannot finish, and the 24 h back-off that failure writes then withholds the model for
      * a DAY after the user reaches a network that would have worked. The cost of requiring
-     * VALIDATED is that an unvalidated wifi shows the card's tap instead of fetching silently —
-     * a correct wait. The cost of not requiring it was a day of silence.
+     * VALIDATED is that an unvalidated wifi waits instead of fetching — a correct wait. The cost
+     * of not requiring it was a day of silence.
+     *
+     * (4.5.0 Task 3a) A `false` here is now a SILENCE rather than an offer card: the owner's
+     * ruling of 2026-09-11 deleted the OFFER-because-metered state, so this predicate decides
+     * between "fetch now" and "wait", and no longer between "fetch now" and "ask".
      */
     fun isUnmetered(): Boolean = runCatching {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager

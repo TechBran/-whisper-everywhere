@@ -125,7 +125,9 @@ class PreviewAutoFetchTest {
             val expected = when {
                 nothingToDo || refused || notNow -> PreviewAutoFetch.Decision.NONE
                 thirdParty -> PreviewAutoFetch.Decision.OFFER
-                spendsData && !c.unmetered -> PreviewAutoFetch.Decision.OFFER
+                // (4.5.0 Task 3a) The unasked top-up on a metered connection says NOTHING and
+                // waits. It used to OFFER, which is the state the owner's ruling deletes.
+                spendsData && !c.unmetered -> PreviewAutoFetch.Decision.NONE
                 c.attemptedThisLaunch || c.backedOff -> PreviewAutoFetch.Decision.OFFER
                 else -> PreviewAutoFetch.Decision.FETCH
             }
@@ -173,10 +175,14 @@ class PreviewAutoFetchTest {
         // "The user said no" and "the feature is switched off" must produce no card at all.
         for (c in everyCell()) {
             val d = decide(c)
+            // (4.5.0 Task 3a) THE METERED TOP-UP JOINED THIS LIST, and that is the whole of the
+            // ruling: it was the one input that answered OFFER — a card, a tap, a nag — for a
+            // condition the user cannot act on from the card. Now it says nothing and waits.
+            val meteredTopUp = c.state == StreamingPackState.PackFetchable && !c.unmetered
             if (c.lang.pack == null || c.lang.pack != c.lang.selected ||
                 c.userSaidNo || !c.showLiveWords || !c.localTierInstalled ||
                 c.sessionActive || c.batchJobActive || c.packWorkInFlight ||
-                c.state.isInstalled || c.state is StreamingPackState.Repair
+                c.state.isInstalled || c.state is StreamingPackState.Repair || meteredTopUp
             ) {
                 assertEquals("$c", PreviewAutoFetch.Decision.NONE, d)
             } else {
@@ -313,16 +319,37 @@ class PreviewAutoFetchTest {
         )
     }
 
-    @Test fun aMeteredConnectionOffersInsteadOfSpendingTheUsersData() {
-        // AF2 — the CONTROLLER RULING. Nothing moves until the card is tapped.
+    @Test fun theUnaskedTopUpOnAMeteredConnectionSaysNothingAtAllAndWaits() {
+        // (4.5.0 Task 3a) THE OWNER'S RULING, superseding the controller's metered OFFER: *"when
+        // it comes to being on... not on Wi Fi, the auto download for the model, I think we should
+        // just we should skip that."* Not a card, not a nag, not a tap — nothing, until an
+        // unmetered validated network. This REMOVES a state rather than adding one.
         assertEquals(
-            PreviewAutoFetch.Decision.OFFER,
+            PreviewAutoFetch.Decision.NONE,
             open(state = StreamingPackState.PackFetchable, unmetered = false),
         )
         assertEquals(
+            "and it is the SILENCE that is new, not a change to the third-party route: that one " +
+                "still offers, on every connection, because its consent is about WHO serves the " +
+                "bytes rather than what they cost",
             PreviewAutoFetch.Decision.OFFER,
             open(state = StreamingPackState.Downloadable, unmetered = false),
         )
+    }
+
+    @Test fun noConditionAnywhereInTheProductPutsTheMeteredOfferBack() {
+        // The deleted state, stated as a claim over the whole product rather than one cell: with
+        // the Play fetch as the source and a metered connection, the answer is NONE or it is
+        // nothing. A cell that answered OFFER here would be the nag the ruling removed, reached
+        // from some other input's back door.
+        for (c in everyCell()) {
+            if (c.state != StreamingPackState.PackFetchable || c.unmetered) continue
+            assertEquals(
+                "$c: a metered Play fetch is never an offer any more",
+                PreviewAutoFetch.Decision.NONE,
+                decide(c),
+            )
+        }
     }
 
     @Test fun aDeliveredPackInstallsOnAnyConnectionBecauseItSpendsNone() {
@@ -614,10 +641,13 @@ class PreviewAutoFetchTest {
         assertEquals(PreviewAutoFetch.Card.WORKING, card(decision = d))
     }
 
-    @Test fun af2_cellularOpenShowsTheOfferAndMovesNothing() {
+    @Test fun af2_cellularOpenMovesNothingAndShowsNothing() {
+        // AF2 as the owner re-ruled it (2026-09-11, Task 3a). 4.4.1's row read "the offer card
+        // appears and nothing moves"; the offer is gone, so the row is now "nothing moves and
+        // nothing is said". The user's data is still unspent, which was always the point.
         val d = open(state = StreamingPackState.PackFetchable, unmetered = false)
-        assertEquals(PreviewAutoFetch.Decision.OFFER, d)
-        assertEquals(PreviewAutoFetch.Card.OFFER, card(decision = d))
+        assertEquals(PreviewAutoFetch.Decision.NONE, d)
+        assertEquals(PreviewAutoFetch.Card.NONE, card(decision = d))
     }
 
     @Test fun af3_aDeletedModelDoesNotComeBackAndSaysNothing() {
