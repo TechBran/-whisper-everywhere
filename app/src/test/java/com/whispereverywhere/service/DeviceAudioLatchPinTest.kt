@@ -278,4 +278,139 @@ class DeviceAudioLatchPinTest {
             liveLines(service, "handOverMicToDeviceAudio()").size,
         )
     }
+
+    /**
+     * S2 ROUND 2, B4 — THE ANSWER TO AN ASYNCHRONOUS SOURCE QUESTION MUST OUTLIVE `CONNECTING`,
+     * AND THIS IS THE THIRD GATE S2's HOIST INVALIDATED.
+     *
+     * `startAudioInput()` used to run INSIDE `onOpen`, with `updateBubbleState(BubbleState.RECORDING)`
+     * as the next-but-one SYNCHRONOUS statement, so the projection sheet went up and the state
+     * became RECORDING inside one Main block. Every callback that asks "is there still a session
+     * that wants this?" could therefore write `currentState == BubbleState.RECORDING` and be right.
+     * S2 samples the source decision at the TAP, so the sheet now stands over the whole CONNECTING
+     * window — 4,107 ms on a cold npu-turbo load, up to 11,672 ms for the first ggml load in a
+     * process — while a person answers in 1-3 s, and `MediaProjectionGate.deliverResult` has no
+     * queue: it calls the listener on the spot. With a RECORDING test, a GRANT stopped the token it
+     * had just been handed (logging a session end that had not happened), a DENY did nothing at all,
+     * and the session ran to the user's stop tap with no recorder and no capturer — the "listening"
+     * cue firing at a shut microphone, one of two per-session asks spent for nothing.
+     *
+     * It is the amendment's own S2 acceptance row ("and on device audio: start a video and tap"),
+     * and the ONLY door into a FIRST device-audio session: `stopRecording` releases the projection,
+     * so `hasProjection()` is false at every tap and `AudioSourcePolicy.decide` can never answer
+     * `UsePlayback` there — every device-audio session must pass through `RequestConsent`.
+     *
+     * Pinned as ONE named predicate with a counted set of call sites, because the three gates this
+     * family has already broken (round 1's B1 and B3, and this one) were each silent when they
+     * broke and each found by a reviewer rather than by an instrument.
+     */
+    @Test
+    fun the_projection_answer_is_honoured_through_the_connect_window_and_not_only_at_RECORDING() {
+        // The predicate names exactly the two states a LIVE session occupies. The states left out
+        // are the ones that really are over (IDLE / ERROR / FINALIZING / PROCESSING), which is what
+        // keeps "the sharing indicator must not outlive the transcript" true.
+        assertTrue(
+            "the live-session predicate must exist and name both CONNECTING and RECORDING",
+            service.contains(
+                "    private fun sessionStillWantsASource(): Boolean =\n" +
+                    "        currentState == BubbleState.RECORDING || currentState == BubbleState.CONNECTING"
+            ),
+        )
+
+        val granted = memberBody(service, "        override fun onConsentGranted(resultCode: Int, data: Intent) {")
+        for (stale in listOf("currentState == BubbleState.RECORDING", "currentState != BubbleState.RECORDING")) {
+            assertEquals(
+                "a grant may not be judged by RECORDING alone — found: " + liveLines(granted, stale),
+                emptyList<String>(),
+                liveLines(granted, stale),
+            )
+        }
+        assertEquals(
+            "all three of the grant's gates ask the one question: the foreground-upgrade fallback, " +
+                "the null-projection fallback, and the after-the-session stop",
+            3,
+            liveLines(granted, "sessionStillWantsASource()").size,
+        )
+        // A grant a live session wants is KEPT and started; the guard above it is what stops a
+        // grant no session wants. Order, so the token can never be stored for a finished session.
+        val guard = granted.indexOf("                if (!sessionStillWantsASource()) {")
+        val stop = granted.indexOf("                    runCatching { projection.stop() }")
+        val store = granted.indexOf("                com.whispereverywhere.audio.MediaProjectionGate.storeProjection(projection)")
+        val capture = granted.indexOf("                    startPlaybackSource()")
+        assertTrue("the grant must still stop a token no session wants", guard in 0 until stop)
+        assertTrue("and store one a live session does want, below that guard", store > stop)
+        assertTrue("...then open the capturer", capture > store)
+
+        val denied = memberBody(service, "        override fun onConsentDenied() {")
+        for (stale in listOf("currentState == BubbleState.RECORDING", "currentState != BubbleState.RECORDING")) {
+            assertEquals(
+                "nor may a deny — found: " + liveLines(denied, stale),
+                emptyList<String>(),
+                liveLines(denied, stale),
+            )
+        }
+        assertEquals(1, liveLines(denied, "sessionStillWantsASource()").size)
+        assertEquals(
+            "deny/back still falls back to the microphone, which is what the ask's KDoc promises",
+            1,
+            liveLines(denied, "startMicSource()").size,
+        )
+
+        // THE ONE-SHOT WATCHDOG, which becomes reachable before RECORDING the moment a grant can
+        // start a capturer during CONNECTING: PlaybackAudioCapturer's `silentFired` fires exactly
+        // once, SilentStreamPolicy.SILENT_TIMEOUT_MS after the capturer starts (3,000 ms — inside a
+        // 4,107 ms load and far inside an 11,672 ms one). A gate that refuses it there would latch
+        // on a refusal that did nothing, and a Netflix or Teams session would capture digital
+        // silence for its whole life with no fallback and no toast.
+        val playback = memberBody(service, "    private fun startPlaybackSource(): Result<Unit> {")
+        assertEquals(
+            "the silent-stream gate asks the same question — found: " +
+                liveLines(playback, "currentState == BubbleState.RECORDING"),
+            emptyList<String>(),
+            liveLines(playback, "currentState == BubbleState.RECORDING"),
+        )
+        assertEquals(1, liveLines(playback, "sessionStillWantsASource()").size)
+        assertEquals(1, liveLines(playback, "fallBackFromSilentStreamToMic()").size)
+
+        // ...and the handover it calls has an arm for each state. RECORDING stays switchSource's
+        // (engine open: flush the ring and cut the boundary on the old source's side). CONNECTING
+        // must NOT go through switchSource, which before readiness would sendAudio into a loading
+        // context, commit a segment never fed a byte, and reset an endpointer no frame has reached
+        // — the BUFFER route does not drive the probe at all. The captured silence is dropped
+        // instead of replayed into the microphone's own segment, where it would have no boundary
+        // to sit behind: SilentStreamPolicy's guarantee is that the stream NEVER carried audio.
+        val fallback = memberBody(service, "    private fun fallBackFromSilentStreamToMic() {")
+        assertEquals(
+            "RECORDING is switchSource's case and stays switchSource's",
+            1,
+            liveLines(fallback, "switchSource(to = com.whispereverywhere.audio.ActiveSource.MIC)").size,
+        )
+        assertTrue(
+            "...gated on RECORDING, so the pre-readiness arm is the other one",
+            fallback.contains("        if (currentState == BubbleState.RECORDING) {"),
+        )
+        assertEquals("the pre-readiness arm stops the silent capturer", 1,
+            liveLines(fallback, "stopPlaybackCapturer()").size)
+        assertEquals("drops what it captured rather than replaying it", 1,
+            liveLines(fallback, "startupRing.clear()").size)
+        assertEquals("and opens the microphone", 1, liveLines(fallback, "startMicSource()").size)
+        for (beforeReadiness in listOf("sendAudio(", "commitSegment(", "endpointer.reset()", "drainAll")) {
+            assertEquals(
+                "the pre-readiness arm must not touch the engine or the probe — found: " +
+                    liveLines(fallback, beforeReadiness),
+                emptyList<String>(),
+                liveLines(fallback, beforeReadiness),
+            )
+        }
+
+        // ONE predicate, a COUNTED set of askers: the declaration plus five call sites (three in
+        // the grant, one in the deny, one in the silent-stream watchdog). A sixth is a new gate of
+        // this family and should have to say so here.
+        assertEquals(
+            "the declaration plus exactly five askers — found: " +
+                liveLines(service, "sessionStillWantsASource()"),
+            6,
+            liveLines(service, "sessionStillWantsASource()").size,
+        )
+    }
 }

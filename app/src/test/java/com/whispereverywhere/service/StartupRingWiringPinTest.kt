@@ -272,7 +272,25 @@ class StartupRingWiringPinTest {
         )
         assertEquals(1, liveLines(teardown, "stopPlaybackCapturer()").size)
 
-        assertEquals("exactly two clears: session open and session exit", 2, count("startupRing.clear()"))
+        // ROUND 2, B4 — A THIRD CLEAR, and the census moves with a reason rather than being
+        // relaxed. `fallBackFromSilentStreamToMic()` discards the ring when the DRM/silent-stream
+        // watchdog fires BEFORE readiness, which a projection grant answered during CONNECTING now
+        // makes reachable. What it drops is the silent capturer's own bytes — SilentStreamPolicy's
+        // guarantee is that the stream NEVER carried audio — and dropping them is what keeps them
+        // out of the microphone's segment, which before readiness has no boundary to sit behind
+        // (there is no open engine to cut one). So: session open, session exit, and the one
+        // handover that cannot cut.
+        val silentFallback = memberBody("    private fun fallBackFromSilentStreamToMic() {")
+        assertEquals(
+            "the pre-readiness silent-stream handover discards the ring it cannot cut",
+            1,
+            liveLines(silentFallback, "startupRing.clear()").size,
+        )
+        assertEquals(
+            "exactly three clears: session open, session exit, and the handover with no boundary",
+            3,
+            count("startupRing.clear()"),
+        )
     }
 
     @Test

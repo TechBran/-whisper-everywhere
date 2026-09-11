@@ -2501,9 +2501,13 @@ class FloatingBubbleService : Service(),
             com.whispereverywhere.audio.SourceDecision.RequestConsent -> {
                 // Ask once; capture begins when consent arrives (projectionListener). The mic
                 // is NOT opened meanwhile — media capture must never mix room audio.
-                // KNOWN GAP (accepted): until the user answers (typically 1-3s), the session
-                // shows RECORDING with no live source; grant starts capture, deny/back falls
-                // back to mic. NOTE: MediaProjectionGate.listener is a single process-global
+                // KNOWN GAP (accepted): until the user answers (typically 1-3s) this session has
+                // no live source at all — and since 4.4.0 S2 this branch runs at the TAP, so the
+                // sheet stands over a bubble that reads CONNECTING while the model loads, not
+                // RECORDING. A grant starts capture there; deny/back falls back to the mic. Both
+                // answers are honoured for CONNECTING as well as RECORDING, which is what makes
+                // the previous sentence true at all — see sessionStillWantsASource() (round 2, B4).
+                // NOTE: MediaProjectionGate.listener is a single process-global
                 // slot — safe because only one FloatingBubbleService instance is ever live.
                 com.whispereverywhere.audio.MediaProjectionGate.listener = projectionListener
                 consentBudget.noteAsked()
@@ -2539,6 +2543,41 @@ class FloatingBubbleService : Service(),
         android.util.Log.i("WE-DIAG", "flatline: ${if (armed) "armed" else "disarmed"} source=$source")
     }
 
+    /**
+     * "IS THERE STILL A SESSION THAT WANTS A CAPTURE SOURCE?" — the question every asynchronous
+     * source callback has to ask, and the question `currentState == BubbleState.RECORDING` stopped
+     * answering at 4.4.0 S2 (round 2, B4).
+     *
+     * Until S2, `startAudioInput()` ran INSIDE `onOpen`, with `updateBubbleState(BubbleState.RECORDING)`
+     * as the next-but-one SYNCHRONOUS statement: the consent sheet went up and the state became
+     * RECORDING inside one Main block — microseconds — so no human answer could possibly arrive
+     * before the gate passed. S2 hoisted the source decision to the TAP, so the sheet is now up for
+     * the WHOLE CONNECTING window: 4,107 ms on a cold npu-turbo load, up to 11,672 ms for the first
+     * ggml load in a process (investigation §3a/§3b), against the 1-3 s a person takes to answer.
+     * The answer therefore lands mid-load, and `MediaProjectionGate.deliverResult` has no queue — it
+     * calls the listener on the spot. Read as "is this session over?", a RECORDING test answers YES
+     * for exactly the window that matters, and the answer was thrown away: a GRANT stopped the
+     * projection it had just been handed, a DENY fell back to nothing, and either way the session ran
+     * to the user's stop tap with NO recorder and NO capturer — the "listening" cue firing at a shut
+     * microphone — with one of the two per-session asks already spent on it. That is the amendment's
+     * own S2 acceptance row ("and on device audio: start a video and tap"), and it is the ONLY door
+     * into a first device-audio session: `stopRecording` releases the projection, so `hasProjection()`
+     * is false at every tap and `AudioSourcePolicy.decide` can never answer `UsePlayback` there.
+     *
+     * CONNECTING and RECORDING are exactly the two states a LIVE session occupies. The states left
+     * out are the ones that really are over — IDLE, ERROR, FINALIZING, PROCESSING — and leaving them
+     * out is what keeps the 2026-08-01 rule intact: a token stored for a finished session would light
+     * the system's sharing indicator with nothing capturing, and the sharing indicator must not
+     * outlive the transcript.
+     *
+     * THIS IS THE THIRD GATE S2's HOIST INVALIDATED (round 1's B1 and B3 were the first two). Each
+     * was silent when it broke and each was found by a reviewer rather than by an instrument, which
+     * is why the answer is a NAMED predicate rather than three widened comparisons: a fourth gate of
+     * this family is now a call site, and `DeviceAudioLatchPinTest` counts them.
+     */
+    private fun sessionStillWantsASource(): Boolean =
+        currentState == BubbleState.RECORDING || currentState == BubbleState.CONNECTING
+
     private fun startMicSource(): Result<Unit> {
         setActiveSource(com.whispereverywhere.audio.ActiveSource.MIC)
         return audioRecorder.start(::onAudioChunk)
@@ -2552,7 +2591,7 @@ class FloatingBubbleService : Service(),
             // DRM opt-out / silent stream: fall back to the microphone, on the main thread.
             serviceScope.launch(Dispatchers.Main) {
                 if (activeSource == com.whispereverywhere.audio.ActiveSource.PLAYBACK &&
-                    currentState == BubbleState.RECORDING
+                    sessionStillWantsASource()
                 ) {
                     // THE ONE MIC HANDOVER THE LATCH ALLOWS, and it is announced rather than
                     // silent. This app blocks capture (Netflix, Hulu, Sling — DRM licensing), or
@@ -2563,8 +2602,18 @@ class FloatingBubbleService : Service(),
                     // consequence the owner's rule cares about: the user's own voice is now in
                     // the transcript. SilentStreamPolicy guarantees this fires only for a stream
                     // that NEVER carried audio, so a paused or quiet video can never reach it.
+                    //
+                    // 4.4.0 S2 round 2 (B4) — THE WATCHDOG IS ONE-SHOT, so this gate gets exactly
+                    // one chance and may not be the RECORDING test it was. A capturer can now
+                    // start during CONNECTING (a projection grant answered mid-load), and the
+                    // watchdog fires SilentStreamPolicy.SILENT_TIMEOUT_MS = 3,000 ms after it
+                    // starts — inside a 4,107 ms load, and far inside an 11,672 ms one. With a
+                    // RECORDING test here, `silentFired` would latch on a refusal that did
+                    // nothing and never fire again, and a Netflix or Teams session would capture
+                    // digital silence for its whole life with no fallback and no toast — for
+                    // exactly the apps this fallback exists for.
                     showToast("This app blocks audio capture — using the microphone, so your voice is included too")
-                    switchSource(to = com.whispereverywhere.audio.ActiveSource.MIC)
+                    fallBackFromSilentStreamToMic()
                 }
             }
         }
@@ -2581,6 +2630,49 @@ class FloatingBubbleService : Service(),
             android.util.Log.w("WE-DIAG", "playback capture failed to start -> mic fallback")
             // Restores the microphone route as well: nothing was captured, so nothing is lost.
             startMicSource()
+        }
+    }
+
+    /**
+     * THE DRM/SILENT-STREAM HANDOVER BACK TO THE MICROPHONE, in both of the states a session can be
+     * in when the one-shot watchdog fires (4.4.0 S2 round 2, B4). Main thread only.
+     *
+     * RECORDING is [switchSource]'s case and stays [switchSource]'s: the engine is open, whatever it
+     * has accumulated is cut on the OLD source's side of the boundary, the ring is flushed there too,
+     * and the D9/D10 endpointer reset follows the cut.
+     *
+     * CONNECTING is a DIFFERENT case and deliberately does NOT go through [switchSource], which
+     * before readiness would do three wrong things: `sendAudio` into an engine whose context is still
+     * loading (the exact thing the ring exists to avoid), `commit` a segment that has never been fed
+     * a byte, and reset an endpointer no frame has reached — `onAudioChunk`'s BUFFER route does not
+     * drive the probe at all, so there is no LSTM recurrence here to carry across the acoustic change
+     * and no fourth `endpointer.reset()` site to justify.
+     *
+     * What the ring holds on this path is what the silent capturer put there, and
+     * `SilentStreamPolicy`'s whole guarantee is that this stream NEVER carried audio: it is digital
+     * silence, so it is DROPPED rather than replayed into the microphone's own segment — where it has
+     * no boundary to sit behind (there is no engine to cut one) and would evict up to 3 s of the
+     * user's real words from a 6 s ring on the slowest loads. The line reports the DURATION dropped,
+     * like every other ring line.
+     */
+    private fun fallBackFromSilentStreamToMic() {
+        if (currentState == BubbleState.RECORDING) {
+            switchSource(to = com.whispereverywhere.audio.ActiveSource.MIC)
+            return
+        }
+        stopPlaybackCapturer()
+        val droppedMs = StartupRing.msOf(startupRing.byteSize())
+        startupRing.clear()
+        android.util.Log.i(
+            "WE-DIAG",
+            "silent stream before readiness: dropped ${droppedMs}ms of captured silence -> mic",
+        )
+        val started = startMicSource()
+        if (started.isFailure) {
+            android.util.Log.w(
+                "WE-DIAG",
+                "silent-stream mic fallback failed to start (${started.exceptionOrNull()?.message})",
+            )
         }
     }
 
@@ -2707,14 +2799,14 @@ class FloatingBubbleService : Service(),
                 } catch (t: Throwable) {
                     android.util.Log.w("WE-DIAG",
                         "projection foreground upgrade rejected (${t.javaClass.simpleName}) -> mic")
-                    if (currentState == BubbleState.RECORDING) startMicSource()
+                    if (sessionStillWantsASource()) startMicSource()
                     return@launch
                 }
                 val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
                 val projection = runCatching { mpm.getMediaProjection(resultCode, data) }.getOrNull()
                 if (projection == null) {
                     android.util.Log.w("WE-DIAG", "getMediaProjection returned null -> mic")
-                    if (currentState == BubbleState.RECORDING) startMicSource()
+                    if (sessionStillWantsASource()) startMicSource()
                     return@launch
                 }
                 projection.registerCallback(object : android.media.projection.MediaProjection.Callback() {
@@ -2727,13 +2819,28 @@ class FloatingBubbleService : Service(),
                 // light the system's sharing indicator with nothing capturing — exactly the lie
                 // that policy exists to prevent. Stop it on the spot; the next media session asks
                 // again.
-                if (currentState != BubbleState.RECORDING) {
+                //
+                // 4.4.0 S2 round 2 (B4) — "AFTER THE SESSION ENDED" IS NOT "NOT RECORDING" ANY
+                // MORE. This branch used to fire for the entire CONNECTING window, where the
+                // session has not ended but has not opened either: it threw away the token it had
+                // just been handed, logged a session end that had not happened, and left the
+                // media-first flow ("start a video, then tap") with no capture source for its
+                // whole life. CONNECTING is a session that WANTS this grant, so it takes it; the
+                // states that really are over keep the stop. See sessionStillWantsASource().
+                if (!sessionStillWantsASource()) {
                     android.util.Log.i("WE-DIAG", "consent arrived after session end -> stopping projection")
                     runCatching { projection.stop() }
                     return@launch
                 }
                 com.whispereverywhere.audio.MediaProjectionGate.storeProjection(projection)
                 if (activeSource != com.whispereverywhere.audio.ActiveSource.PLAYBACK) {
+                    // Starting the capturer BEFORE readiness is exactly what the startup ring is
+                    // for: its first chunks take the BUFFER route and the paced DRAIN releases
+                    // them when the engine opens, so the seconds of the video that played while
+                    // the model loaded are in the transcript instead of lost. Nothing to flush or
+                    // cut first — this path never opened the microphone (pinned by
+                    // DeviceAudioLatchPinTest.waiting_for_projection_consent_opens_no_source_at_all),
+                    // so the ring is empty and no boundary is needed.
                     startPlaybackSource()
                 }
             }
@@ -2741,7 +2848,12 @@ class FloatingBubbleService : Service(),
 
         override fun onConsentDenied() {
             serviceScope.launch(Dispatchers.Main) {
-                if (currentState == BubbleState.RECORDING) {
+                // 4.4.0 S2 round 2 (B4) — the same widening as the grant, for the same reason and
+                // with more at stake: the ask was raised at the TAP, so a deny or a back press
+                // almost always lands during CONNECTING, and a RECORDING test here meant the
+                // promise the ask's own KDoc makes ("deny/back falls back to mic") was kept only
+                // on paper. No toast, no recorder, and a session that produced nothing.
+                if (sessionStillWantsASource()) {
                     showToast("Using microphone (capture permission declined)")
                     startMicSource()
                 }
