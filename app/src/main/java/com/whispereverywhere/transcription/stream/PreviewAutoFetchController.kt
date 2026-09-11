@@ -178,14 +178,15 @@ object PreviewAutoFetchController {
      * at each route, read at the code rather than assumed:
      *
      *  - **[PreviewRoute.PLAY_FETCH] — the bytes stop, while they are still moving.**
-     *    `StreamingPackController.cancel()` LATCHES the pack as abandoned, asks PLAY to cancel the
-     *    pack download and publishes `Cancelled`, which reaches the board through that shell's one
-     *    note site; the watcher job goes with it. The latch is what makes the "no" a no rather
-     *    than a request: a `COMPLETED` that beat the cancel is neither narrated nor installed, and
-     *    the pack counts as busy until Play has finished with it, so no surface offers a second
-     *    73 MB over a delivery Play is still making. Nothing of ours is installed, and the partial
-     *    transfer is Play's own to keep or discard. A pack Play has ALREADY delivered stays
-     *    delivered, so a later install costs no transfer at all.
+     *    `StreamingPackController.cancel()` notes the pack [PreviewPhase.ABANDONED] on the board
+     *    through that shell's one note site, asks PLAY to cancel the pack download, and takes the
+     *    watcher job with it. That phase is what makes the "no" a no rather than a request: a
+     *    `COMPLETED` that beat the cancel is neither narrated nor installed, and the pack counts
+     *    as busy — `isBusy()` reads the phase — until Play has answered or the shell's own
+     *    watchdog releases it, so no surface offers a second 73 MB over a delivery Play is still
+     *    making, and both surfaces can SAY so because it is the phase they render from. Nothing
+     *    of ours is installed, and the partial transfer is Play's own to keep or discard. A pack
+     *    Play has ALREADY delivered stays delivered, so a later install costs no transfer at all.
      *  - **[PreviewRoute.DIRECT_DOWNLOAD] — the bytes stop, as of 4.5.0.** The poll loop's `delay`
      *    IS a suspension point, so the cancel is seen within one poll, and
      *    `StreamingPackManager.fetchOne` now removes the `DownloadManager` row on every exit while

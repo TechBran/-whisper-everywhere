@@ -280,19 +280,27 @@ object StreamingPackInstall {
     }
 
     /**
-     * THE ABANDONED LATCH'S RELEASE CONDITION (4.5.0 Task 1, fix round 1 — review r1's B1):
+     * PLAY'S OWN ANSWER TO AN ABANDONED FETCH (4.5.0 Task 1, fix round 1 — review r1's B1):
      * whether PLAY still holds a delivery for this pack, so that a cancelled fetch stays busy
      * until Play itself has finished with it.
      *
-     * `StreamingPackController.cancel()` publishes a terminal `Cancelled` at once — *"from the
-     * user's point of view the fetch they cancelled is over the moment they say so"* — but Play
-     * is not necessarily done: at 99 % of `DOWNLOADING` it can complete before it processes the
-     * cancel. So the shell latches the pack as abandoned and asks THIS predicate of every state
-     * that still arrives for it. While the answer is true the pack is refused a second `fetch`
-     * (the latch is a term of `isBusy()`), and no state is published or installed — without
-     * that, `Cancelled` is not `fetchInFlight`, `busy()` goes false the instant the X is pressed,
-     * and the Settings row offers a second 73 MB over a delivery Play has not finished (H3-B2,
-     * reopened through the cancel path).
+     * `StreamingPackController.cancel()` notes the pack [PreviewPhase.ABANDONED] on the one
+     * observable at once — *"from the user's point of view the fetch they cancelled is over the
+     * moment they say so"* — but Play is not necessarily done: at 99 % of `DOWNLOADING` it can
+     * complete before it processes the cancel. So the shell holds that phase and asks THIS
+     * predicate of every state that still arrives for the pack. While the answer is true the pack
+     * is refused a second `fetch` (the phase is a term of `isBusy()`), and no state is published
+     * or installed — without that, `Cancelled` is not `fetchInFlight`, `busy()` goes false the
+     * instant the X is pressed, and the Settings row offers a second 73 MB over a delivery Play
+     * has not finished (H3-B2, reopened through the cancel path).
+     *
+     * **It is ONE of two releases, not the release** (fix round 2, review r2's B2). This one
+     * lives inside a callback the app does not own, and `PreviewWork.cancellable` admits
+     * `AWAITING_ANSWER` — `STATUS_WAITING_FOR_WIFI` / `STATUS_REQUIRES_USER_CONFIRMATION`, where
+     * no byte has moved and `AssetPackManager.cancel` has no active download to stop, so Play's
+     * own contract promises no further state for the pack. `cancel()` therefore also arms a
+     * bounded watchdog of its own. Neither release is load-bearing alone, which is what keeps a
+     * silent third-party stall from refusing every language for the life of the process.
      *
      * It differs from [fetchInFlight] in exactly ONE cell, and the two questions are different:
      * that one asks *"may a second `fetch` be issued?"* and answers no over OUR verify + copy;

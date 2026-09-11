@@ -546,6 +546,85 @@ class StreamingPackShellPinTest {
     }
 
     /**
+     * THE ABANDON HAS A RELEASE OF OUR OWN, AND IT IS BOUNDED (4.5.0 Task 1, fix round 2 —
+     * review r2's B2).
+     *
+     * Fix round 1 released the abandon in exactly one place: inside `onPackState`, i.e. only when
+     * Google Play delivers another `AssetPackState` for that pack. There was no timeout, no clear
+     * in `start()` and no user gesture that could free it — and while it was held `isBusy()` was
+     * true, so `PreviewAutoFetchController.start` refused for EVERY language and every route and
+     * `PreviewAutoFetch.decide` answered NONE for every language. The whole feature was dead
+     * until the process died, with no line anywhere saying so.
+     *
+     * The round's justification was that the release is always reachable because the cancel *"is
+     * only ever reached at a phase where Play still has a download to cancel"*. But
+     * [PreviewWork.cancellable] admits [PreviewPhase.AWAITING_ANSWER], which is
+     * `NpuPackFetch.advance`'s mapping of `STATUS_WAITING_FOR_WIFI` and
+     * `STATUS_REQUIRES_USER_CONFIRMATION` — where this feature's own copy says twice that no byte
+     * has moved and there is no download — and `AssetPackManager.cancel` is documented as
+     * cancelling downloads, only active ones. Whether Play stays silent there cannot be proved
+     * off a device; the DEFECT was the absence of any other release, and that is verifiable here.
+     *
+     * So there are two release CALLS and one release FUNCTION: Play's own answer, and a watchdog
+     * of ours that cannot be blocked by a third party. Neither is load-bearing alone.
+     */
+    @Test
+    fun theAbandonIsReleasedByUsTooSoAStalledCancelCannotKillTheFeature() {
+        val cancel = scopeOf(controller, "fun cancel() {", "private fun release(")
+        assertEquals(
+            "the cancel arms the bounded release itself — a wait on a third-party callback is " +
+                "not a release",
+            1,
+            liveLineCount(cancel, "delay(ABANDON_GRACE_MS)"),
+        )
+        assertEquals(
+            "and the window is a named constant with its reasoning, not a literal",
+            1,
+            liveLineCount(controller, "private const val ABANDON_GRACE_MS: Long"),
+        )
+        val asked = offsetOfLive(cancel, "manager?.cancel(listOf(packName))")
+        val armed = offsetOfLive(cancel, "delay(ABANDON_GRACE_MS)")
+        assertTrue(
+            "Play is asked ($asked) before the watchdog is armed ($armed): the grace is for " +
+                "Play's ANSWER, so the clock must not start before the question",
+            asked in 0 until armed,
+        )
+        assertEquals(
+            "TWO release calls — Play's listener and our watchdog — so neither is load-bearing " +
+                "alone",
+            2,
+            liveLineCount(controller, "release(pack, packName)"),
+        )
+        assertEquals(
+            "and ONE release function, so the two cannot free different things",
+            1,
+            liveLineCount(controller, "private fun release(pack: StreamingPack"),
+        )
+        val release = scopeOf(controller, "private fun release(pack: StreamingPack", "fun confirm(")
+        assertEquals(
+            "it is guarded on the pack it was asked about AND on the board's phase, so a " +
+                "release racing a later start cannot free the wrong fetch",
+            1,
+            liveLineCount(release, "if (activePack !== pack || !abandoned(pack)) return"),
+        )
+        assertEquals(
+            "and THE RELEASE is what clears activePack: after it, a delivery that lands anyway " +
+                "reaches the listener's own `activePack ?: return` and neither narrates nor " +
+                "installs — which is how the permanent no survives a late 73 MB",
+            1,
+            liveLineCount(release, "activePack = null"),
+        )
+        val cleared = offsetOfLive(release, "activePack = null")
+        val terminal =
+            offsetOfLive(release, "publish(packName, pack.language, NpuPackFetch.FetchState.Cancelled)")
+        assertTrue(
+            "cleared ($cleared) before the board is told it is over ($terminal): the publish " +
+                "makes isBusy() false, and a state arriving in between must find no active pack",
+            cleared in 0 until terminal,
+        )
+    }
+
+    /**
      * The previewer narrates itself and borrows no NPU line. `NpuDiagTest` pins the `pack:`
      * family at exactly one emitter each inside `NpuPackController.kt`; a `NpuDiag.packLine` from
      * here would put a previewer fetch under a tier's name in the run-book — and the previewer

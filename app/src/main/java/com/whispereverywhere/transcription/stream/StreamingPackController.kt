@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -79,6 +80,26 @@ import kotlinx.coroutines.launch
  * entry point re-attaches to a download Play still owns or begins a new one.
  */
 object StreamingPackController {
+
+    /**
+     * How long an abandoned pack stays ABANDONED on the board — and therefore how long [isBusy]
+     * stays true — while waiting for GOOGLE PLAY to confirm the cancel, before the app releases
+     * it itself (fix round 2, review r2's B2). Ten seconds: Play answers a cancel in well under
+     * one, and the two errors are wildly asymmetric.
+     *
+     * Releasing too EARLY costs nothing recoverable: [release] clears [activePack], so a delivery
+     * that completes afterwards narrates nothing and installs nothing, the pack simply stays with
+     * Play for a costless later install, and a retry is `fetch` re-attaching to a download Play
+     * still owns. Releasing too LATE — never, which is what fix round 1 risked at
+     * [PreviewPhase.AWAITING_ANSWER] — refuses every language on every route for the life of the
+     * process with no line anywhere saying so.
+     *
+     * It is a watchdog rather than a timestamp read by [isBusy] deliberately: the board is a
+     * `StateFlow` that composition collects, and a value that silently expires would leave
+     * *"Cancelling the preview model…"* on both surfaces until something unrelated recomposed.
+     * A release that WRITES is a release the user can see.
+     */
+    private const val ABANDON_GRACE_MS: Long = 10_000L
 
     /** Process-scoped for `NpuPackController`'s reason: a 73 MB fetch must outlive the Compose
      *  tree that started it, and a `SupervisorJob` keeps one failed install from poisoning the
@@ -147,8 +168,10 @@ object StreamingPackController {
      *    nothing pinning that it was reachable (review r2's B2).
      *
      * [PreviewPhase.ABANDONED] answers all three: `inFlight` true, so no second transfer may
-     * start and both surfaces keep a row; `cancellable` and `dismissable` false, so no control
-     * is offered over it; a sentence of its own; and [release] as its one release.
+     * start and both surfaces keep a row; `cancellable` and `dismissable` false, so no control is
+     * offered over it; a sentence of its own; and [release] as the one function that clears it,
+     * reached by Play's own answer AND by [cancel]'s bounded watchdog, so neither is
+     * load-bearing alone.
      */
     private fun abandoned(pack: StreamingPack): Boolean =
         PreviewWorkboard.of(pack.language)?.phase == PreviewPhase.ABANDONED
@@ -239,6 +262,24 @@ object StreamingPackController {
      * the fetch they cancelled is over the moment they say so, and [isBusy] then rests on the
      * board's phase alone rather than on two independently-expiring facts.
      *
+     * ### AND THE RELEASE IS OURS, NOT PLAY'S (fix round 2, review r2's B2)
+     *
+     * Fix round 1 argued the release was always reachable because *"it is only ever reached at a
+     * phase where Play still has a download to cancel"*. [PreviewWork.cancellable] admits
+     * [PreviewPhase.AWAITING_ANSWER], which is `NpuPackFetch.advance`'s mapping of
+     * `STATUS_WAITING_FOR_WIFI` and `STATUS_REQUIRES_USER_CONFIRMATION` — where, as this
+     * feature's own copy says twice, NO BYTE HAS MOVED and there is no download —
+     * and `AssetPackManager.cancel` is documented as cancelling downloads, with the caveat that
+     * only active ones can be cancelled. So the one release sat inside a callback this app does
+     * not own, at the one phase where Play's own contract does not promise another state. While
+     * it was held [isBusy] was true, so `start` refused for EVERY language and every route and
+     * `decide` answered NONE everywhere: a stuck cancel killed the whole feature for the life of
+     * the process, silently, and that is a strict regression on the pre-latch behaviour (which
+     * was wrong in the recoverable direction).
+     *
+     * So this call also arms a bounded watchdog: after [ABANDON_GRACE_MS] the app releases the
+     * pack itself. Play's answer is now one of TWO releases and neither is load-bearing alone.
+     *
      * WHETHER it may be called at all is [PreviewWork.cancellable]'s answer, decided by
      * [PreviewAutoFetchController.cancel] — this object holds no route table of its own.
      */
@@ -261,6 +302,14 @@ object StreamingPackController {
         )
         runCatching { manager?.cancel(listOf(packName)) }
         job?.cancel()
+        // THE BOUNDED RELEASE (fix round 2, review r2's B2). Its own scope, never `job`: that
+        // one belongs to the install and is being cancelled one line above. `release` is
+        // idempotent and guarded on the pack, so whichever of the two arrives first wins and the
+        // other is a no-op.
+        scope.launch {
+            delay(ABANDON_GRACE_MS)
+            release(pack, packName)
+        }
     }
 
     /**
@@ -274,7 +323,8 @@ object StreamingPackController {
      * wrote from being contradicted by a 73 MB that lands later.
      *
      * Idempotent and guarded on the pack it was asked about, so a release for a pack a later
-     * [start] has replaced cannot free the wrong one.
+     * [start] has replaced cannot free the wrong one — it is reached from two threads, Play's
+     * listener (main) and [cancel]'s watchdog (IO), and whichever arrives first wins.
      */
     private fun release(pack: StreamingPack, packName: String) {
         synchronized(this) {
