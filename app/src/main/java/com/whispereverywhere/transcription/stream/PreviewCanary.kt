@@ -18,7 +18,9 @@ sealed class CanaryVerdict {
  * `8elite5_galaxy` census family (NpuFleetCensus.kt:142-145) we cannot test.
  *
  * Feeds the bundled `canary_digits.wav` (CanaryAudio.samples(), the GPU canary's own reader:
- * 2.560 s of "one two three four five") in the app's 512-sample chunks, pads PAD_MS, finishes,
+ * 2.560 s of "one two three four five") in the app's 512-sample chunks, pads the PACK's own
+ * [StreamingPack.padMs] — the same derived pad the commit hook uses, because a canary padded
+ * shorter than the stream is a verdict on a configuration the feature never runs — finishes,
  * drains, and scores with `GpuCanaryPolicy.canaryPasses` — unchanged, because it already
  * answers the three signatures (empty / garbage / runaway) and passes the measured
  * `ONE TWO THREE FOUR FIVE`. A null clip is NO VERDICT, not a failure — and, unlike the GPU
@@ -29,7 +31,7 @@ sealed class CanaryVerdict {
  */
 object PreviewCanary {
 
-    fun run(recognizer: PreviewRecognizer, clip: FloatArray?): CanaryVerdict {
+    fun run(recognizer: PreviewRecognizer, clip: FloatArray?, pack: StreamingPack): CanaryVerdict {
         if (clip == null || clip.isEmpty()) return CanaryVerdict.NoClip
         val stream = recognizer.createStream()
         var decodes = 0
@@ -44,7 +46,7 @@ object PreviewCanary {
                 }
                 i += n
             }
-            stream.acceptWaveform(FloatArray(StreamingPreviewTuning.padSamples()))
+            stream.acceptWaveform(FloatArray(StreamingPreviewTuning.padSamplesFor(pack.encoderT)))
             stream.inputFinished()
             while (recognizer.isReady(stream)) {
                 recognizer.decode(stream)

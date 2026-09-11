@@ -20,6 +20,17 @@ data class PackFile(val name: String, val bytes: Long, val sha256: String)
  * @property baseUrl the commit-pinned fallback source. It is NOT dead code and never becomes it:
  *   a debug build, a sideload and every install Play refuses by name have no pack to fetch, and
  *   the previewer must still be installable there (the NPU tiers' SAF import is the same idea).
+ * @property decodeChunkLen the encoder's own `decode_chunk_len` metadata value — the pack's
+ *   CADENCE in frames, and therefore [cadenceMs] of audio per forward pass after the first. It is
+ *   **32** for this pack and for de/fr/zh/zh-en/ko, **64** for ru/id/tr/et/pt and **128** for
+ *   every Kroko build, so it is per-pack and not a constant (qualification table, correction 8:
+ *   the survey's own table had no cadence column, and the omission hid the property that carries
+ *   [padMs], the test double's shift and three KDoc lines with it).
+ * @property encoderT the encoder's own `T` metadata value — the frames ONE forward pass consumes,
+ *   which is what [padMs] is derived from. Not a function of [decodeChunkLen]: `zipformer2`
+ *   exports write `T = decodeChunkLen + 13` (32 → 45, 64 → 77, 128 → 141) and the `zipformer` v1
+ *   exports write `T = decodeChunkLen + 7` (fr and zh-en are 32 → **39**), so it is READ off the
+ *   file and asserted against it, never inferred.
  */
 data class StreamingPack(
     val language: String,
@@ -30,10 +41,30 @@ data class StreamingPack(
     val decoder: PackFile,
     val joiner: PackFile,
     val tokens: PackFile,
+    val decodeChunkLen: Int,
+    val encoderT: Int,
 ) {
     val files: List<PackFile> get() = listOf(encoder, decoder, joiner, tokens)
     val totalBytes: Long get() = files.sumOf { it.bytes }
     fun urlOf(file: PackFile): String = baseUrl + file.name
+
+    /**
+     * The pack's cadence in milliseconds — how often the strip can repaint once a stream is
+     * running. 320 ms here; 640 for the `T = 77` packs and 1,280 for a Kroko build.
+     *
+     * **The measured 0.4 s word lag is a 320 ms number and cannot be reused in copy for a pack
+     * whose cadence is not 320** (qualification table §4.2, and owner ruling O7 is open on
+     * whether 640 ms clears the bar at all). This property is where a sentence that wants to
+     * quote a lag has to start.
+     */
+    val cadenceMs: Long get() = decodeChunkLen * StreamingPreviewTuning.FRAME_SHIFT_MS
+
+    /**
+     * The zeros the commit hook pads before `inputFinished`, DERIVED from [encoderT] — see
+     * [StreamingPreviewTuning.padMsFor] for why a flat 500 drops the last word of every utterance
+     * on a `T = 77` pack, and why the measured 500 is that derivation's floor.
+     */
+    val padMs: Long get() = StreamingPreviewTuning.padMsFor(encoderT)
 }
 
 /**
@@ -65,6 +96,11 @@ object StreamingPackCatalog {
         decoder = PackFile("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_307_236L, "98da299f471e38bb4e1a8df579b8cc9122d6039576a77e357b3c60f17dd83b02"),
         joiner = PackFile("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 259_335L, "d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297"),
         tokens = PackFile("tokens.txt", 5_048L, "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb"),
+        // Read off this encoder's own `metadata_props` (PreviewPackMetadataTest re-reads the file
+        // and holds these equal wherever the payload is placed): decode_chunk_len=32 ⇒ 320 ms,
+        // T=45 ⇒ a 500 ms pad, which is exactly the pad that was measured.
+        decodeChunkLen = 32,
+        encoderT = 45,
     )
 
     val packs: List<StreamingPack> = listOf(EN)

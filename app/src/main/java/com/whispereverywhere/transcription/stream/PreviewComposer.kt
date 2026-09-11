@@ -37,7 +37,7 @@ class PreviewComposer {
      * decodes and resolves `SegmentOutcome.EmptyExpected` off local's executor within ~1 ms of
      * the cut (LocalWhisperEngine.kt:375-382), and a `Lost` on a missing context
      * (LocalWhisperEngine.kt:431) is just as immediate, while `onFrozen` comes back only after
-     * PAD_MS of zeros plus a drain plus a decode (StreamingPreviewEngine.kt:166-205). Stored
+     * the pack's pad of zeros plus a drain plus a decode (StreamingPreviewEngine.kt:166-205). Stored
      * unconditionally, that late freeze re-inserts a seq [resolve] has already swept and nothing
      * but a LATER resolution can reach it — so the strip would LEAD with words whisper has
      * declared it will never type, from the freeze until some seq >= N+1 resolves (a whole next

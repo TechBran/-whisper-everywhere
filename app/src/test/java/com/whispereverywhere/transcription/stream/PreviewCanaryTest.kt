@@ -18,9 +18,12 @@ class PreviewCanaryTest {
     /** 2.560 s of "audio" — the canary clip's length (40,960 frames, rung 1 §1.6). Values are irrelevant to the fake. */
     private val clip = FloatArray(40_960)
 
+    /** The pack is the canary's PAD (and, from the per-pack-canary commit, its clip and its rule). */
+    private val pack = StreamingPackCatalog.EN
+
     @Test fun theMeasuredTextPasses() {
         val rec = ScriptedRecognizer(listOf("ONE", "ONE TWO THREE", "ONE TWO THREE FOUR", "ONE TWO THREE FOUR FIVE"))
-        val v = PreviewCanary.run(rec, clip)
+        val v = PreviewCanary.run(rec, clip, pack)
         assertTrue(v is CanaryVerdict.Pass)
         assertEquals("pass", v.code)
         val pass = v as CanaryVerdict.Pass
@@ -31,24 +34,24 @@ class PreviewCanaryTest {
 
     @Test fun emptyTextIsTheSmeSignatureAndFails() {
         val rec = ScriptedRecognizer(listOf(""))
-        val v = PreviewCanary.run(rec, clip)
+        val v = PreviewCanary.run(rec, clip, pack)
         assertTrue(v is CanaryVerdict.Fail)
         assertEquals("fail", v.code)
         assertEquals(0, (v as CanaryVerdict.Fail).outLen)
     }
 
     @Test fun garbageFails() {
-        assertTrue(PreviewCanary.run(ScriptedRecognizer(listOf("MY WOMAN")), clip) is CanaryVerdict.Fail)
+        assertTrue(PreviewCanary.run(ScriptedRecognizer(listOf("MY WOMAN")), clip, pack) is CanaryVerdict.Fail)
     }
 
     @Test fun oneDroppedDigitIsOrdinaryAndPasses() {
         // GpuCanaryPolicy.MIN_MATCHES = 4 — the tolerance the GPU canary was written with.
-        assertTrue(PreviewCanary.run(ScriptedRecognizer(listOf("ONE TWO THREE FOUR")), clip) is CanaryVerdict.Pass)
+        assertTrue(PreviewCanary.run(ScriptedRecognizer(listOf("ONE TWO THREE FOUR")), clip, pack) is CanaryVerdict.Pass)
     }
 
     @Test fun theClipIsFedInAppSizedChunksThenPaddedThenFinishedThenDrained() {
         val rec = ScriptedRecognizer(listOf("ONE TWO THREE FOUR FIVE"))
-        PreviewCanary.run(rec, clip)
+        PreviewCanary.run(rec, clip, pack)
         val s = rec.streams.single()
         // 40,960 samples = 80 chunks of 512, then ONE pad of 8,000 zeros.
         assertEquals(81, s.fed.size)
@@ -63,17 +66,27 @@ class PreviewCanaryTest {
         assertFalse("the recognizer itself is NOT released by the canary", rec.released)
     }
 
+    @Test fun thePadIsThePacksOwnAndNotAConstant() {
+        // A 640 ms row (ru, id, tr, et, pt: decode_chunk_len 64 / T 77) needs 820 ms of zeros for
+        // one more forward pass. The canary must pad what the COMMIT hook pads, or it renders a
+        // verdict on a configuration the feature never runs.
+        val rec = ScriptedRecognizer(listOf("ONE TWO THREE FOUR FIVE"))
+        val sixForty = pack.copy(language = "xx", decodeChunkLen = 64, encoderT = 77)
+        PreviewCanary.run(rec, clip, sixForty)
+        assertEquals(13_120, rec.streams.single().fed.last())
+    }
+
     @Test fun aMissingClipIsNoVerdict() {
         val rec = ScriptedRecognizer(listOf("ONE TWO THREE FOUR FIVE"))
-        assertEquals(CanaryVerdict.NoClip, PreviewCanary.run(rec, null))
-        assertEquals(CanaryVerdict.NoClip, PreviewCanary.run(rec, FloatArray(0)))
+        assertEquals(CanaryVerdict.NoClip, PreviewCanary.run(rec, null, pack))
+        assertEquals(CanaryVerdict.NoClip, PreviewCanary.run(rec, FloatArray(0), pack))
         assertEquals("none", CanaryVerdict.NoClip.code)
         assertTrue("no stream is opened for no clip", rec.streams.isEmpty())
     }
 
     @Test fun theStreamIsReleasedEvenWhenDecodeThrows() {
         val rec = ScriptedRecognizer(listOf("ONE"), failDecodesFrom = 2)
-        val thrown = runCatching { PreviewCanary.run(rec, clip) }.exceptionOrNull()
+        val thrown = runCatching { PreviewCanary.run(rec, clip, pack) }.exceptionOrNull()
         assertTrue(thrown is IllegalStateException)
         assertTrue(rec.streams.single().released)
     }

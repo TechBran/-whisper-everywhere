@@ -35,6 +35,29 @@ class StreamingPackCatalogTest {
         assertEquals(72_654_782L, p.totalBytes)
     }
 
+    @Test fun theCadenceAndTheFrameCountAreTheEncodersOwnMetadataAndThePadFollowsThem() {
+        val p = StreamingPackCatalog.EN
+        // Read off this encoder's `metadata_props` (PreviewPackMetadataTest re-reads the file
+        // itself wherever the payload is placed): decode_chunk_len = 32, T = 45.
+        assertEquals(32, p.decodeChunkLen)
+        assertEquals(45, p.encoderT)
+        // 320 ms is the cadence the 0.401 s / p95 0.523 s word lag was measured at — and the only
+        // cadence any copy may quote that number for (qualification table §4.2).
+        assertEquals(320L, p.cadenceMs)
+        // The derived pad reproduces the measured 500 for this pack, exactly.
+        assertEquals(500L, p.padMs)
+        assertEquals(StreamingPreviewTuning.MEASURED_PAD_MS, p.padMs)
+    }
+
+    @Test fun aSixHundredFortyMillisecondRowWouldGetAnEightHundredTwentyMillisecondPad() {
+        // The route, proven on a row this build does NOT ship: ru/id/tr/et/pt are all
+        // decode_chunk_len 64 / T 77, and the flat 500 ms pad is 320 ms short of one forward pass
+        // there — the last word of every utterance would silently never emit (§6(4), E1).
+        val sixForty = StreamingPackCatalog.EN.copy(language = "xx", decodeChunkLen = 64, encoderT = 77)
+        assertEquals(640L, sixForty.cadenceMs)
+        assertEquals(820L, sixForty.padMs)
+    }
+
     @Test fun theUrlIsTheCommitPinnedBasePlusTheFileName() {
         val p = StreamingPackCatalog.EN
         assertEquals(p.baseUrl + "tokens.txt", p.urlOf(p.tokens))
@@ -91,6 +114,7 @@ class StreamingPackCatalogTest {
             decoder = PackFile("d", 1L, "1".repeat(64)),
             joiner = PackFile("j", 1L, "2".repeat(64)),
             tokens = PackFile("t", 1L, "3".repeat(64)),
+            decodeChunkLen = 64, encoderT = 77,
         )
         assertNull(fallbackOnly.packName)
     }

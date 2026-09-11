@@ -35,8 +35,9 @@ interface LocalPreview {
  * (at 320 ms the 150 ms throttle never bites; it thins only the commit-time burst, and the
  * freeze bypasses it).
  *
- * **The commit hook** (spec §4.3): pad [StreamingPreviewTuning.PAD_MS] of zeros (the measured
- * floor — 450 loses the canary's `VE`), `inputFinished`, drain, take the result, trim it at the
+ * **The commit hook** (spec §4.3): pad [StreamingPack.padMs] of zeros — DERIVED from the pack's
+ * own `T` (500 ms here, where 450 loses the canary's `VE`; 820 ms for a `T = 77` pack, where a
+ * flat 500 would drop the last word of every utterance), `inputFinished`, drain, take the result, trim it at the
  * cut when a tail is retained, hand it to [onFrozen], log `stream-timing:`, then RELEASE the
  * stream and `createStream()` — never `reset`, which cannot drop encoder state through this
  * AAR and would decode the pad into the next utterance (research §3.3). The retained tail is
@@ -72,6 +73,20 @@ class StreamingPreviewEngine(
         private set
 
     @Volatile private var warm = false
+
+    /**
+     * The pack the resident [recognizer] was loaded for, or null when none is resident.
+     *
+     * **Every per-pack number the loop needs comes from here** — today the commit pad
+     * ([StreamingPack.padMs], derived from the pack's own `T`), which is why this field exists in
+     * the pad's own commit rather than later: a pad read from a process-wide constant is the
+     * silent defect, and a pad read from "the pack Main happens to be holding" is the same defect
+     * wearing the fix's clothes.
+     *
+     * `@Volatile` because [padSamples] and the timing line run on the executor while `warm`'s
+     * caller may read the engine from Main.
+     */
+    @Volatile private var loadedPack: StreamingPack? = null
 
     // Executor-confined from here down.
     private var recognizer: PreviewRecognizer? = null
@@ -123,7 +138,7 @@ class StreamingPreviewEngine(
             val loadMs = msSince(t0)
             val t1 = nanoClock()
             val verdict = try {
-                PreviewCanary.run(rec, canaryClip())
+                PreviewCanary.run(rec, canaryClip(), pack)
             } catch (t: Throwable) {
                 CanaryVerdict.Fail(0, 0)
             }
@@ -135,6 +150,7 @@ class StreamingPreviewEngine(
             log(StreamDiag.openLine(factory.sherpaVersion(), factory.ortVersion(), StreamingPreviewTuning.NUM_THREADS, loadMs, verdict.code, msSince(t1), outLen, "ok"))
             if (verdict is CanaryVerdict.Pass) {
                 recognizer = rec
+                loadedPack = pack
                 warm = true
             } else {
                 runCatching { rec.release() }
@@ -183,7 +199,7 @@ class StreamingPreviewEngine(
                 StreamDiag.timingLine(
                     seq, audioMs, segment.decodes, segment.decodeUs / 1000L, segment.p50Us(), segment.p99Us(),
                     StreamDiag.rtf(segment.decodeUs / 1000L, audioMs), segment.partials, segment.firstPartialMs,
-                    StreamingPreviewTuning.PAD_MS, shedThisSegment, segment.retractions,
+                    padMs(), shedThisSegment, segment.retractions,
                 ),
             )
             onFrozen(seq, frozen)
@@ -323,8 +339,19 @@ class StreamingPreviewEngine(
         onPartial?.invoke(text)
     }
 
+    /**
+     * The resident pack's pad, and the ONE spelling of it: the zeros [freeze] feeds and the number
+     * the `stream-timing:` line prints must be the same value, or the line reports a pad the
+     * stream never received. Falls back to the measured 500 only when no pack is resident, which
+     * is a state neither caller can reach ([freeze] runs under a non-null recognizer).
+     */
+    private fun padMs(): Long = loadedPack?.padMs ?: StreamingPreviewTuning.MEASURED_PAD_MS
+
+    /** Derived from [padMs] and never from the pack a second time: one number, two uses. */
+    private fun padSamples(): Int = (padMs() * StreamingPreviewTuning.SAMPLE_RATE / 1000L).toInt()
+
     private fun freeze(rec: PreviewRecognizer, s: PreviewStream, retainMs: Long): String = try {
-        s.acceptWaveform(FloatArray(StreamingPreviewTuning.padSamples()))
+        s.acceptWaveform(FloatArray(padSamples()))
         s.inputFinished()
         while (rec.isReady(s)) timedDecode(rec, s)
         val r = rec.result(s)

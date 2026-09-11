@@ -138,7 +138,7 @@ class StreamingPreviewEngineTest {
         e.commit(seq = 0L, retainMs = 0L) { seq, text -> frozen = seq to text }
         assertEquals(0L to "one two three four five", frozen)
         val s1 = rec.streams[1]
-        assertEquals("the pad is exactly PAD_MS of zeros", 8_000, s1.fed.last())
+        assertEquals("the pad is exactly the PACK's padMs of zeros", 8_000, s1.fed.last())
         assertTrue(s1.finished)
         assertTrue("the padded stream is released, never reset", s1.released)
         assertEquals("canary + session + the fresh stream", 3, rec.streams.size)
@@ -149,6 +149,22 @@ class StreamingPreviewEngineTest {
             logs.last(),
         )
         assertEquals("the freeze itself emits no partial — the composer speaks for it", 4, emitted.size)
+    }
+
+    @Test fun theCommitPadAndTheLoggedPadBothComeFromTheLOADEDPack() {
+        // The route for a second language, proven without one: warm a 640 ms row (T = 77) and the
+        // freeze feeds 13,120 zeros instead of 8,000 AND the timing line says padMs=820. A flat
+        // 500 there is 320 ms short of one forward pass, so the utterance-final word would never
+        // emit — and the line would report a pad the stream never received (qualification E1).
+        val sixForty = StreamingPackCatalog.EN.copy(language = "xx", decodeChunkLen = 64, encoderT = 77)
+        val rec = ScriptedRecognizer(CANARY_PARTIALS, canaryText = CANARY)
+        val e = engine(rec)
+        e.warm(dir, sixForty)
+        e.open { emitted += it }
+        feedMs(e, 2_560)
+        e.commit(seq = 0L, retainMs = 0L) { _, _ -> }
+        assertEquals("the pack's own pad, not the measured constant", 13_120, rec.streams[1].fed.last())
+        assertTrue("and the line reports the pad the stream got", logs.last().contains(" padMs=820 "))
     }
 
     @Test fun aRetainedTailIsTrimmedFromTheFrozenTextAndRefedToTheFreshStream() {
