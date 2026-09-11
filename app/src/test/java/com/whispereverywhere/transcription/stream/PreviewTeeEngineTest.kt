@@ -65,14 +65,19 @@ class PreviewTeeEngineTest {
         val commits = mutableListOf<Pair<Long, Long>>()
         var frozenText = "frozen"
         var closed = false
+        /** The real onFrozen lands PAD_MS + a drain + a decode after the cut; hold it to model that. */
+        var deferFreeze = false
+        private var held: (() -> Unit)? = null
         override fun open(onPartial: (String) -> Unit) { this.onPartial = onPartial; order += "preview.open" }
         override fun sendAudio(pcm: ByteArray) { audio += pcm; order += "preview" }
         override fun commit(seq: Long, retainMs: Long, onFrozen: (Long, String) -> Unit) {
             commits += seq to retainMs
-            onFrozen(seq, frozenText)
+            val text = frozenText
+            if (deferFreeze) held = { onFrozen(seq, text) } else onFrozen(seq, text)
         }
         override fun close() { closed = true; order += "preview.close" }
         fun partial(text: String) = onPartial!!.invoke(text)
+        fun fireHeldFreeze() { held!!.invoke(); held = null }
     }
 
     private class Owner : TranscriptionEngine.Listener {
@@ -167,6 +172,28 @@ class PreviewTeeEngineTest {
         assertEquals("how are you", owner.deltas.last())
         local.resolve(1L, SegmentOutcome.EmptyExpected)
         assertEquals("an EmptyExpected drops its frozen prefix too — whisper's verdict is the truth", "", owner.deltas.last())
+    }
+
+    @Test fun aFreezeThatLandsAfterItsOwnResolutionNeverReachesTheStrip() {
+        // review B1 — the production order on a SKIPPED segment, not a race: local.commit on
+        // evidence under EndpointerTuning.MIN_SPEECH_EVIDENCE_MS (192 ms, EndpointerTuning.kt:197)
+        // resolves EmptyExpected off its executor within ~1 ms (LocalWhisperEngine.kt:375-382),
+        // while onFrozen returns only after PAD_MS + drain + decode
+        // (StreamingPreviewEngine.kt:166-205). The previewer's Zipformer has no VAD, so its text
+        // for that segment can be real words — words whisper has declared it will never type.
+        connected()
+        preview.deferFreeze = true
+        preview.frozenText = "yeah"
+        preview.partial("yeah")
+        assertEquals("yeah", owner.deltas.last())
+        assertEquals(0L, tee.commit(SpeechEvidence.of(100L)))
+        local.resolve(0L, SegmentOutcome.EmptyExpected)
+        assertEquals("nothing is frozen yet — the live partial is all the strip has", "yeah", owner.deltas.last())
+        preview.fireHeldFreeze()
+        assertEquals("the late freeze must paint nothing", "", owner.deltas.last())
+        // and it is not merely hidden: the next segment's partial stands alone on the strip.
+        preview.partial("hello there")
+        assertEquals("hello there", owner.deltas.last())
     }
 
     @Test fun everySeqReachesTheOwnerExactlyOnceInOrder() {

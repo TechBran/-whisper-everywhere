@@ -67,4 +67,49 @@ class PreviewComposerTest {
         assertEquals("", c.compose())
         assertEquals(0, c.pending())
     }
+
+    // ── review B1: the freeze is asynchronous, the skipped segment's resolution is not ──────────
+
+    @Test fun aFreezeForAnAlreadyResolvedSeqStoresNothing() {
+        // On a segment under EndpointerTuning.MIN_SPEECH_EVIDENCE_MS whisper does not decode at
+        // all: it resolves EmptyExpected within ~1 ms of the cut (LocalWhisperEngine.kt:375-382),
+        // while onFrozen comes back only after PAD_MS + drain + decode
+        // (StreamingPreviewEngine.kt:166-205). So THIS is the normal order, not a race — and
+        // stored unconditionally the late freeze would lead the strip with words whisper has
+        // declared it will never type until some LATER seq resolves.
+        val c = PreviewComposer()
+        c.onPartial("yeah")
+        // The resolution sweeps the frozen window; the LIVE partial is the stream's own business
+        // and only the freeze it supersedes clears it.
+        assertEquals("yeah", c.resolve(0L))
+        assertEquals("the late freeze for seq 0 paints nothing", "", c.freeze(0L, "yeah"))
+        assertEquals(0, c.pending())
+        // and it is gone for good: nothing can sweep what was never stored.
+        assertEquals("", c.compose())
+        // the NEXT segment is unaffected — the mark refuses only what is at or below it.
+        assertEquals("hello there", c.freeze(1L, "hello there"))
+        assertEquals(1, c.pending())
+    }
+
+    @Test fun theMarkRefusesOnlyAtOrBelowItAndNeverTouchesWhatWasFrozenInTime() {
+        val c = PreviewComposer()
+        c.freeze(0L, "one")
+        c.freeze(1L, "two")
+        assertEquals("two", c.resolve(0L))             // mark = 0; seq 1 was frozen in time, stays
+        assertEquals("two", c.freeze(0L, "one again")) // at the mark: refused, seq 1 untouched
+        assertEquals("two three", c.freeze(2L, "three"))
+        assertEquals(2, c.pending())
+        assertEquals("", c.resolve(2L))
+        assertEquals(0, c.pending())
+    }
+
+    @Test fun resetForgetsTheResolvedThroughMarkToo() {
+        // Seqs restart at 0 every session (LocalWhisperEngine.kt:135), so a mark carried across a
+        // reset would refuse the new session's first segments outright.
+        val c = PreviewComposer()
+        assertEquals("", c.resolve(7L))
+        c.reset()
+        assertEquals("a", c.freeze(0L, "a"))
+        assertEquals(1, c.pending())
+    }
 }
