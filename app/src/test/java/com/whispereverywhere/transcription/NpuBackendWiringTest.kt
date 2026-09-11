@@ -627,17 +627,20 @@ class NpuBackendWiringTest {
             count(service, "warmLocalEngine(allowRebuild = true).prewarmModelSwitch()"),
         )
         assertEquals(
-            "the boot prewarm does NOT have the permission: it only ever fills an empty slot, so " +
-                "it has nothing to tear down, and a rebuild there is precisely the un-gated one " +
-                "the Critical was about",
-            1,
+            "NEITHER prewarm site has the permission: each only ever fills an empty slot, so it " +
+                "has nothing to tear down, and a rebuild there is precisely the un-gated one the " +
+                "Critical was about. Deliberately 2 since the 4.4.0 startup amendment (S1): the " +
+                "boot prewarm, and the post-trim re-arm that runs the very same un-permissioned " +
+                "call — a census the re-arm was written to answer, not to dodge.",
+            2,
             count(service, "warmLocalEngine().prewarm()"),
         )
         assertEquals(
-            "four live mentions of warmLocalEngine( in this file — the declaration and its three " +
-                "call sites. A fifth cannot be added without moving this number, which is what " +
-                "makes the assertions above a complete audit rather than a spot check.",
-            4,
+            "five live mentions of warmLocalEngine( in this file — the declaration and its four " +
+                "call sites (the fourth is S1's post-trim re-arm). A sixth cannot be added without " +
+                "moving this number, which is what makes the assertions above a complete audit " +
+                "rather than a spot check.",
+            5,
             liveOffsets(service, "warmLocalEngine(").size,
         )
         // THE ORDER, and it is the invariant rather than the presence: a permission check that runs
