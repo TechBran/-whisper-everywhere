@@ -1402,6 +1402,12 @@ fun LanguageSelectionCard() {
     // (4.4.1), so this field and the live-words card cannot name the same language differently.
     val selectedDisplayName =
         PreferencesManager.languageDisplayName(selectedLanguage) ?: "Auto-detect"
+    // (4.5.0 Task 3d) The picked language's own word, or NULL on Auto — the Settings row's
+    // derivation, verbatim, because the sentence below is the same pair of sentences that row
+    // renders and the two must not diverge. Auto is a CHOICE, unmade in this very control; a
+    // language with no catalogue row is a GAP in the app, and no pick closes it today.
+    val pickedLanguage = selectedLanguage.takeIf { it != "auto" }
+        ?.let { PreferencesManager.languageDisplayName(it) ?: it }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1442,6 +1448,22 @@ fun LanguageSelectionCard() {
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // (4.5.0 Task 3d) THE DEAL, STATED WHERE THE SWITCH IS MADE — owner ruling,
+            // 2026-09-11: *"we could just say that in the copy for the drop down for the multi
+            // languages … that when you switch language, a new light model will be downloaded, and
+            // it will be used as your preview model."* Under 3b that switch spends the user's data
+            // at once on any connection, so this sentence is what makes it a deal rather than a
+            // surprise — and it is read BEFORE the menu opens, because a caveat read after the tap
+            // is a caveat that changed nothing (the language step's own rule). It carries no
+            // figure: the size is per language and belongs on the row, which is where it is.
+            Text(
+                text = StreamingPackCopy.PICKER_DEAL,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -1500,6 +1522,22 @@ fun LanguageSelectionCard() {
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
+                                    // (4.5.0 Task 3d) WHAT THIS LANGUAGE'S PREVIEW MODEL COSTS,
+                                    // from the PACK'S OWN byte count — the brief's *"use the
+                                    // pack's OWN size, never a fixed number"*. English is 73 MB,
+                                    // German 71 and French 128, so the number can only come from
+                                    // the row it is about. A language with no pack gets no badge
+                                    // and its own sentence under the field instead (AF8's pair),
+                                    // because a missing model and a deliberate Auto are different
+                                    // facts and a "no model" chip on fifty rows collapses them.
+                                    StreamingPackCatalog.forLanguage(code)?.let { pack ->
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = StreamingPackCopy.pickerRowBadge(pack.totalBytes),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             },
                             onClick = {
@@ -1518,15 +1556,24 @@ fun LanguageSelectionCard() {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                // ...and what that costs (owner ruling 1, 2026-09-11): *"if they leave it in
-                // auto, then you get no live streaming at all. And that will seem to be a very
-                // fair trade-off."* A trade the user is never told about is not a trade, and this
-                // is the one surface where they are standing on the Auto side of it — there is no
-                // card on Auto, by design. The sentence is the previewer's own, from the file
-                // that owns every word of it.
+            }
+            // ...and what the selection costs the previewer (owner ruling 1, 2026-09-11): *"if
+            // they leave it in auto, then you get no live streaming at all. And that will seem to
+            // be a very fair trade-off."* A trade the user is never told about is not a trade, and
+            // this is the surface where they are standing on the wrong side of it — there is no
+            // card here, by design. The sentence is the previewer's own, from the file that owns
+            // every word of it.
+            //
+            // (4.5.0 Task 3d) THE PREDICATE IS THE CATALOGUE'S, not `== "auto"`. Ruling 3d: *"a
+            // language with no pack still says so, and must not be collapsed into Auto's"* — so
+            // the user who picked French is told the truth here too, where until now this card
+            // said nothing at all to them. It is 4.4.1 pass 3's own ITEM 1 predicate, applied to
+            // the third surface: the `noLiveWords` pair answers both cases from this one input,
+            // and Auto's arm is the sentence that was already here.
+            if (StreamingPackCatalog.forLanguage(selectedLanguage) == null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+                    text = StreamingPackCopy.noLiveWordsSubtitle(pickedLanguage),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

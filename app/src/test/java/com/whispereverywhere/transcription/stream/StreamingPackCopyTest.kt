@@ -78,6 +78,9 @@ class StreamingPackCopyTest {
             // to `workLine` (already in the scan below), so what joins here is the one sentence
             // of its own — the READY receipt.
             StreamingPackCopy.selectorReady(en),
+            // (4.5.0 Task 3d) The picker's own two: the deal, and one language's size badge.
+            StreamingPackCopy.PICKER_DEAL,
+            StreamingPackCopy.pickerRowBadge(StreamingPackCatalog.EN.totalBytes),
         ) + everyState.map { StreamingPackCopy.settingsTitle(it, en) } +
             everyState.map { StreamingPackCopy.settingsSubtitle(it, en) } +
             everyState.map { StreamingPackCopy.cardOffer(it, en) } +
@@ -876,6 +879,97 @@ class StreamingPackCopyTest {
         assertTrue(
             "and it keeps the additive promise, like every other sentence in this object",
             StreamingPackCopy.selectorReady(en).contains("typed transcript is unchanged"),
+        )
+    }
+
+    // --------------------------------- the picker states the deal (4.5.0 Task 3d)
+
+    @Test fun thePickerStatesTheDealVerbatimAndCarriesNoFigureOfItsOwn() {
+        // Owner ruling 3d: *"we could just say that in the copy for the drop down for the multi
+        // languages, we could just say that when you switch language, a new light model will be
+        // downloaded, and it will be used as your preview model."*
+        assertEquals(
+            "Switch to a language with a preview model and that model is downloaded and becomes " +
+                "your preview model — words appear on the bubble as you speak. The menu names " +
+                "the size of each language that has one; your typed transcript is the same " +
+                "either way.",
+            StreamingPackCopy.PICKER_DEAL,
+        )
+        // THE FIGURE IS THE ONE THING THIS SENTENCE MUST NOT CARRY. The owner said "sixty
+        // megabytes" twice; the real sizes are English 73 MB, German 71 and French 128, so a
+        // number in a sentence about "whichever language you switch to" is wrong for most of
+        // them. The brief: *"use the pack's OWN size, never a fixed number."*
+        assertFalse("no size at all: $en", StreamingPackCopy.PICKER_DEAL.contains("MB"))
+        assertFalse(Regex("\\d").containsMatchIn(StreamingPackCopy.PICKER_DEAL))
+        assertTrue(
+            "it says the switch DOWNLOADS something, which is the half of ruling 3b a user has " +
+                "to be told before they tap",
+            StreamingPackCopy.PICKER_DEAL.contains("downloaded"),
+        )
+        assertTrue(
+            "and that the thing downloaded becomes their preview model, which is the owner's own " +
+                "second clause",
+            StreamingPackCopy.PICKER_DEAL.contains("becomes your preview model"),
+        )
+        assertTrue(
+            "and it keeps the typed transcript out of the trade",
+            StreamingPackCopy.PICKER_DEAL.contains("typed transcript is the same either way"),
+        )
+        assertFalse(
+            "it names no language either — the menu below it names all of them, and a literal " +
+                "here would be a lie the day a second row lands",
+            StreamingPackCopy.PICKER_DEAL.contains(en),
+        )
+    }
+
+    @Test fun theRowBadgeIsThePacksOwnSizeAndCannotBeALiteral() {
+        assertEquals(
+            "Live words · 73 MB",
+            StreamingPackCopy.pickerRowBadge(StreamingPackCatalog.EN.totalBytes),
+        )
+        // The three real sizes from the qualification table, each rounded by the ONE rule. This is
+        // the assertion that fails if anyone re-introduces a shared badge: English 73, German 71,
+        // French 128 — one constant would be wrong for two of them.
+        assertEquals("Live words · 71 MB", StreamingPackCopy.pickerRowBadge(71_000_000L))
+        assertEquals("Live words · 128 MB", StreamingPackCopy.pickerRowBadge(128_000_000L))
+        for (b in listOf(72_654_782L, 71_000_000L, 128_000_000L)) {
+            assertTrue(
+                "every badge rounds through the catalog's one rule, so a row and its progress " +
+                    "line can never disagree about the same pack's size",
+                StreamingPackCopy.pickerRowBadge(b).contains(StreamingPackCatalog.sizeBadge(b)),
+            )
+        }
+        assertTrue(
+            "and it names the feature, because a bare size beside a language name says nothing " +
+                "about what the size is for",
+            StreamingPackCopy.pickerRowBadge(72_654_782L).startsWith("Live words"),
+        )
+    }
+
+    @Test fun aLanguageWithNoPackStillSaysSoAndIsNotCollapsedIntoAutos() {
+        // Ruling 3d's last clause, and it is a REFUSAL to add copy: *"A language with no pack
+        // still says so — 4.4.1's AF8 sentence stands and must not be collapsed into Auto's,
+        // because a missing model and a deliberate Auto are different facts about the world."*
+        // So the two sentences are still two, they are still the same two, and the badge above
+        // does not invent a third ("no model") for fifty rows to wear.
+        assertEquals(
+            "Auto's arm is unchanged",
+            StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+            StreamingPackCopy.noLiveWordsSubtitle(null),
+        )
+        assertFalse(
+            "and the gap's is still a different sentence",
+            StreamingPackCopy.noLiveWordsSubtitle(es) == StreamingPackCopy.AUTO_NO_LIVE_WORDS,
+        )
+        assertTrue(
+            "the gap's names its language, so it cannot describe one language under another's name",
+            StreamingPackCopy.noLiveWordsSubtitle(es).contains(es),
+        )
+        assertEquals(
+            "and the catalogue is what tells them apart — null for Auto and for every language " +
+                "with no row, which is the predicate both the Settings row and the picker read",
+            null,
+            StreamingPackCatalog.forLanguage("auto") ?: StreamingPackCatalog.forLanguage(null),
         )
     }
 

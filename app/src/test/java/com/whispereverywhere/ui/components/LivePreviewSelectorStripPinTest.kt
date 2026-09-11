@@ -6,8 +6,13 @@ import org.junit.Test
 import java.io.File
 
 /**
- * THE PROGRESS STRIP ABOVE THE LANGUAGE SELECTOR, pinned as source (4.5.0 Task 3c) —
- * `LiveWordsCardPinTest`'s instrument, turned on the two SELECTION sites.
+ * THE TWO SELECTION SITES' OWN PREVIEWER SURFACE, pinned as source (4.5.0 Task 3c and 3d) —
+ * `LiveWordsCardPinTest`'s instrument, turned on the places a language is CHOSEN.
+ *
+ * It is named for the strip because the strip is the component it protects, but it holds the
+ * whole of what rulings 3c and 3d put at a selector: the progress ABOVE the control, at both
+ * sites; the deal stated BEFORE the menu opens; the size on the per-language ROW and nowhere
+ * else; and the no-pack sentence reaching every language rather than only Auto.
  *
  * Nothing here can be executed by a JVM test: the strip is a `@Composable` and its two call sites
  * are inside composables that read the Application. Every WORD it renders is pure and executed by
@@ -102,6 +107,60 @@ class LivePreviewSelectorStripPinTest {
                 "and a receipt under the control that caused the spend is a receipt the picking " +
                 "user scrolls past",
             stripAt in 0 until selectorAt,
+        )
+    }
+
+    @Test fun thePickerStatesTheDealBeforeTheMenuAndBadgesEachRowFromItsOwnPack() {
+        // (4.5.0 Task 3d) The deal is read BEFORE the menu opens — the language step's own rule,
+        // *"a caveat read after the tap is a caveat that changed nothing"* — and the SIZE is on
+        // the per-language row, from that pack's own byte count, because the brief forbids a fixed
+        // number and English/German/French are 73/71/128 MB.
+        val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
+        assertEquals(
+            "one deal sentence, and it is the copy object's",
+            1, liveLineCount(picker, "StreamingPackCopy.PICKER_DEAL"),
+        )
+        val dealAt = offsetOfLive(picker, "StreamingPackCopy.PICKER_DEAL")
+        val selectorAt = offsetOfLive(picker, "ExposedDropdownMenuBox(")
+        assertTrue("the deal must be stated above the control that makes it", dealAt in 0 until selectorAt)
+        assertEquals(
+            "one badge, on the row, from the PACK's own size — never a shared constant",
+            1, liveLineCount(picker, "StreamingPackCopy.pickerRowBadge(pack.totalBytes)"),
+        )
+        assertEquals(
+            "and the row asks the CATALOGUE which languages have one, so a language with no pack " +
+                "gets no badge rather than a \"no model\" chip on fifty rows",
+            1, liveLineCount(picker, "StreamingPackCatalog.forLanguage(code)?.let { pack ->"),
+        )
+        assertEquals(
+            "no size literal anywhere in the picker",
+            0, liveLineCount(picker, "\"73 MB\"") + liveLineCount(picker, "sizeBadge("),
+        )
+    }
+
+    @Test fun thePickerTellsAnyLanguageWithNoPackAndNotOnlyAuto() {
+        // (4.5.0 Task 3d) *"A language with no pack still says so — 4.4.1's AF8 sentence stands
+        // and must not be collapsed into Auto's."* Until this task the picker's caveat was gated
+        // on `selectedLanguage == "auto"`, so the user who picked French was told nothing here at
+        // all. The honest predicate is the catalogue's — 4.4.1 pass 3's own ITEM 1, applied to
+        // the third surface — and the `noLiveWords` pair answers both cases from one input.
+        val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
+        assertEquals(
+            1, liveLineCount(picker, "if (StreamingPackCatalog.forLanguage(selectedLanguage) == null) {"),
+        )
+        assertEquals(
+            "and the sentence is the pair's, which returns Auto's own arm for null",
+            1, liveLineCount(picker, "StreamingPackCopy.noLiveWordsSubtitle(pickedLanguage)"),
+        )
+        assertEquals(
+            "so the previewer's caveat is no longer behind an == \"auto\" test",
+            0, liveLineCount(picker, "StreamingPackCopy.AUTO_NO_LIVE_WORDS"),
+        )
+        assertEquals(
+            "the language's own word comes from the picker's one table, null on Auto — the " +
+                "Settings row's derivation verbatim, so the two surfaces cannot disagree",
+            1,
+            liveLineCount(picker, "val pickedLanguage = selectedLanguage.takeIf { it != \"auto\" }"),
         )
     }
 

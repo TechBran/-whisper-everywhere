@@ -171,6 +171,57 @@ object StreamingPackCopy {
     /** Rendered in the English row's subtitle slot on the language step when the pack is installed. */
     const val LANGUAGE_CHIP = "Live words on the bubble while you speak — preview model installed."
 
+    // ------------------------------------- what the PICKER's own copy says (4.5.0 Task 3d)
+
+    /**
+     * THE DEAL, STATED WHERE THE SWITCH IS MADE — owner ruling 3d, 2026-09-11:
+     *
+     * > *"And we could just say that in the copy for the drop down for the multi languages, we
+     * > could just say that when you switch language, a new light model will be downloaded, and it
+     * > will be used as your preview model."*
+     *
+     * Under ruling 3b a pick spends the user's data at once, on any connection. This is the
+     * sentence that makes that a deal rather than a surprise, and it sits at the control that
+     * makes it.
+     *
+     * ### Why it carries NO NUMBER
+     *
+     * The owner said *"sixty megabytes"* twice, and the real sizes are English 73 MB, German 71 MB
+     * and **French 128 MB** — so any figure in a sentence about *"whichever language you switch
+     * to"* would be wrong for most of them. The brief's instruction is to *"use the pack's OWN
+     * size via [StreamingPackCatalog.sizeBadge], never a fixed number"*, and a size that is per
+     * language belongs on the per-language ROW: [pickerRowBadge] is that, derived from the pack's
+     * own `totalBytes`, and this sentence points at it. A figure here would be the one thing the
+     * ruling names as forbidden, dressed as helpfulness.
+     *
+     * It is deliberately NOT added to the onboarding language step, whose
+     * [LANGUAGE_STEP_SENTENCE] owns that moment's copy: the ENGINES step comes after the language
+     * step, so no pick made there downloads anything until setup finishes, and "is downloaded"
+     * would be the wrong tense in the one place it would be read first. Flagged for a controller
+     * rather than decided here.
+     */
+    const val PICKER_DEAL =
+        "Switch to a language with a preview model and that model is downloaded and becomes your " +
+            "preview model — words appear on the bubble as you speak. The menu names the size of " +
+            "each language that has one; your typed transcript is the same either way."
+
+    /**
+     * WHAT THIS ONE LANGUAGE'S PREVIEW MODEL COSTS, beside its row in the picker — the per-language
+     * half of ruling 3d, and the only place a number belongs.
+     *
+     * @param sizeBytes the PACK's own byte count, rounded here through
+     *        [StreamingPackCatalog.sizeBadge] rather than accepted as a string, so a caller cannot
+     *        pass a literal. English is 73 MB, German 71 MB and French 128 MB: one retyped figure
+     *        would be wrong for two of the three.
+     *
+     * A language with NO pack gets no badge at all, and its own sentence instead — 4.4.1's AF8
+     * pair ([noLiveWordsTitle] / [noLiveWordsSubtitle]), which the brief says *"stands and must not
+     * be collapsed into Auto's"*: a missing model and a deliberate Auto are different facts about
+     * the world. A badge reading "no model" on fifty rows would be the collapse by another route.
+     */
+    fun pickerRowBadge(sizeBytes: Long): String =
+        "Live words · ${StreamingPackCatalog.sizeBadge(sizeBytes)}"
+
     // ------------------------------------------- what a selection with no pack costs, and where
 
     /**
