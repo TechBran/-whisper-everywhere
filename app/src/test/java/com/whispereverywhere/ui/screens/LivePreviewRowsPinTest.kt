@@ -367,8 +367,11 @@ class LivePreviewRowsPinTest {
         )
         assertEquals(
             "the size is the PACK's own bytes, never a literal: English is 73 MB, German 71 MB " +
-                "and French 128 MB",
-            1, liveLineCount(rows, "previewPack.totalBytes"),
+                "and French 128 MB. THREE readings since 4.5.0 Task 3d — the delete row's, and " +
+                "the two subtitles above it, which drew their figure from one shared class-init " +
+                "`val` over the English row until that task and would have described a second " +
+                "row wrongly",
+            3, liveLineCount(rows, "previewPack.totalBytes"),
         )
         // (fix round 2, H2-B2; review r3's H3-B1) ...and the row cannot render OVER A WRITE.
         // `previewState` is remembered on keys our own install does not change, so through a

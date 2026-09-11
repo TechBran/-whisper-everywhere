@@ -5,8 +5,20 @@ package com.whispereverywhere.transcription.stream
  * Every user-facing string of the previewer (spec §9, as amended on 2026-09-10) — pure,
  * Compose-free, pinned verbatim by `StreamingPackCopyTest` and scanned for the app's banned
  * speed words. "Live" is the app's own word for the surface (`CLOUD_LIVE`); no sentence promises
- * a latency. The size badge is the catalog's ([StreamingPackCatalog.sizeBadge] → "73 MB"), never
- * a retyped number.
+ * a latency.
+ *
+ * ### THE SIZE IS THE PACK'S OWN, and every sentence that names one takes its bytes
+ *
+ * The badge is the catalog's ([StreamingPackCatalog.sizeBadge] → "73 MB"), never a retyped number
+ * — and, since 4.5.0 Task 3d, never a SHARED one either. Until this task the sizes came from one
+ * class-init `val` over `StreamingPackCatalog.EN.totalBytes`, carried by six sentences: correct
+ * while one row existed, and wrong for most rows the moment a second landed, because **a row is
+ * not the same size as another row** (English 73 MB, German 71 MB, **French 128 MB** — the
+ * qualification table, §4). The brief's instruction is *"use the pack's OWN size via
+ * `StreamingPackCatalog.sizeBadge`, never a fixed number"*, and the strongest form of that is a
+ * signature: a sentence about a pack takes that pack's `totalBytes`, so there is no shared figure
+ * left for a second row to be wrong about. Every rendered string is byte-identical for `preview_en`
+ * — this moved no validated copy, it removed the one place a future row could be mis-described.
  *
  * ### Why the install sentence is a TABLE and not one constant
  *
@@ -44,8 +56,6 @@ package com.whispereverywhere.transcription.stream
  * [StreamingPackInstall.resolve].
  */
 object StreamingPackCopy {
-
-    private val BADGE = StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)
 
     /**
      * The one promise that matters, spelled ONCE and carried by every install sentence: the
@@ -133,8 +143,12 @@ object StreamingPackCopy {
         }
     }
 
-    fun installed(language: String): String =
-        "Installed ($BADGE). Words appear on the bubble as you speak $language; the typed transcript is unchanged."
+    /**
+     * @param sizeBytes the PACK's own byte count. See the class KDoc's SIZE section for why every
+     *        sentence that carries a size takes one.
+     */
+    fun installed(language: String, sizeBytes: Long): String =
+        "Installed (${StreamingPackCatalog.sizeBadge(sizeBytes)}). Words appear on the bubble as you speak $language; the typed transcript is unchanged."
 
     /**
      * RULING ASSUMED (R1): the canary is the only SME guard; this is what the row says after it
@@ -279,8 +293,8 @@ object StreamingPackCopy {
     // ---------------------------------------------------------------- the offer, by source
 
     /** Play delivered the pack: verify + copy into `filesDir`, no network at any point. */
-    val SETTINGS_INSTALL_FROM_PACK =
-        "Included with the app ($BADGE) and already on this device — nothing to fetch. $ADDITIVE"
+    fun settingsInstallFromPack(sizeBytes: Long): String =
+        "Included with the app (${StreamingPackCatalog.sizeBadge(sizeBytes)}) and already on this device — nothing to fetch. $ADDITIVE"
 
     /**
      * Play can serve this install: the ordinary on-demand fetch, and still not a third party.
@@ -290,9 +304,9 @@ object StreamingPackCopy {
      * [SETTINGS_INSTALL_FROM_PACK]'s "included with the app": the pack is `on-demand`, so on this
      * row the bytes are not on the device yet (fix round 1, B1 — see the class KDoc).
      */
-    val SETTINGS_INSTALL_FETCH =
-        "The app's own $BADGE model, fetched from Google Play over your connection when you ask " +
-            "for it — never from a third party. $ADDITIVE"
+    fun settingsInstallFetch(sizeBytes: Long): String =
+        "The app's own ${StreamingPackCatalog.sizeBadge(sizeBytes)} model, fetched from Google " +
+            "Play over your connection when you ask for it — never from a third party. $ADDITIVE"
 
     /**
      * The NON-PLAY row, and the spec's original sentence verbatim. Reached only where
@@ -300,8 +314,8 @@ object StreamingPackCopy {
      * Play has already named as this install's own fault — which is exactly where a download
      * from the commit-pinned Hugging Face base is what the tap does.
      */
-    fun installDownload(language: String): String =
-        "Download a $BADGE $language preview model. $ADDITIVE"
+    fun installDownload(language: String, sizeBytes: Long): String =
+        "Download a ${StreamingPackCatalog.sizeBadge(sizeBytes)} $language preview model. $ADDITIVE"
 
     // ---------------------------------------------------------------- the damaged install
 
@@ -319,8 +333,8 @@ object StreamingPackCopy {
      * transfer of the whole pack, so it carries the size for the same reason
      * [SETTINGS_INSTALL_FETCH] does.
      */
-    val SETTINGS_REPAIR_FETCH =
-        "$DAMAGED Get it again from Google Play ($BADGE over your connection) to restore live words."
+    fun settingsRepairFetch(sizeBytes: Long): String =
+        "$DAMAGED Get it again from Google Play (${StreamingPackCatalog.sizeBadge(sizeBytes)} over your connection) to restore live words."
 
     // ---------------------------------------------------------------- the row
 
@@ -340,15 +354,22 @@ object StreamingPackCopy {
         is StreamingPackState.Repair -> "Repair the $language preview model"
     }
 
-    /** The row's subtitle, by the same table. See the class KDoc for why it is a table. */
-    fun settingsSubtitle(state: StreamingPackState, language: String): String = when (state) {
-        StreamingPackState.Installed -> installed(language)
-        StreamingPackState.PackDelivered -> SETTINGS_INSTALL_FROM_PACK
-        StreamingPackState.PackFetchable -> SETTINGS_INSTALL_FETCH
-        StreamingPackState.Downloadable -> installDownload(language)
+    /**
+     * The row's subtitle, by the same table. See the class KDoc for why it is a table, and its
+     * SIZE section for why [sizeBytes] is a parameter rather than a constant.
+     */
+    fun settingsSubtitle(
+        state: StreamingPackState,
+        language: String,
+        sizeBytes: Long,
+    ): String = when (state) {
+        StreamingPackState.Installed -> installed(language, sizeBytes)
+        StreamingPackState.PackDelivered -> settingsInstallFromPack(sizeBytes)
+        StreamingPackState.PackFetchable -> settingsInstallFetch(sizeBytes)
+        StreamingPackState.Downloadable -> installDownload(language, sizeBytes)
         is StreamingPackState.Repair -> when (state.via) {
             StreamingPackState.PackDelivered -> SETTINGS_REPAIR_FROM_PACK
-            StreamingPackState.PackFetchable -> SETTINGS_REPAIR_FETCH
+            StreamingPackState.PackFetchable -> settingsRepairFetch(sizeBytes)
             // A Repair's `via` is the source a FIRST install would have taken, so it is never
             // Installed and never another Repair (StreamingPackInstall.resolve builds it from
             // the three source states only). Downloadable is the remaining one, and the
@@ -437,8 +458,8 @@ object StreamingPackCopy {
      * pack (fix round 1's B1, on the row) one edit later; delegating makes that unexpressible,
      * and `StreamingPackCopyTest` holds the two equal for every state.
      */
-    fun cardOffer(state: StreamingPackState, language: String): String =
-        settingsSubtitle(state, language)
+    fun cardOffer(state: StreamingPackState, language: String, sizeBytes: Long): String =
+        settingsSubtitle(state, language, sizeBytes)
 
     /** The offer card's action label — the ACTION's own name, so it names the source it will use. */
     fun cardAction(state: StreamingPackState, language: String): String =

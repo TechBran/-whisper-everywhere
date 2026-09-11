@@ -42,13 +42,13 @@ class StreamingPackCopyTest {
     private val all: List<String>
         get() = listOf(
             StreamingPackCopy.featureTitle(en),
-            StreamingPackCopy.installed(en),
-            StreamingPackCopy.SETTINGS_INSTALL_FROM_PACK,
-            StreamingPackCopy.SETTINGS_INSTALL_FETCH,
-            StreamingPackCopy.installDownload(en),
+            StreamingPackCopy.installed(en, bytes),
+            StreamingPackCopy.settingsInstallFromPack(bytes),
+            StreamingPackCopy.settingsInstallFetch(bytes),
+            StreamingPackCopy.installDownload(en, bytes),
             StreamingPackCopy.SETTINGS_REPAIR,
             StreamingPackCopy.SETTINGS_REPAIR_FROM_PACK,
-            StreamingPackCopy.SETTINGS_REPAIR_FETCH,
+            StreamingPackCopy.settingsRepairFetch(bytes),
             StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE,
             StreamingPackCopy.SWITCH_TITLE,
             StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
@@ -82,8 +82,8 @@ class StreamingPackCopyTest {
             StreamingPackCopy.PICKER_DEAL,
             StreamingPackCopy.pickerRowBadge(StreamingPackCatalog.EN.totalBytes),
         ) + everyState.map { StreamingPackCopy.settingsTitle(it, en) } +
-            everyState.map { StreamingPackCopy.settingsSubtitle(it, en) } +
-            everyState.map { StreamingPackCopy.cardOffer(it, en) } +
+            everyState.map { StreamingPackCopy.settingsSubtitle(it, en, bytes) } +
+            everyState.map { StreamingPackCopy.cardOffer(it, en, bytes) } +
             everyState.map { StreamingPackCopy.cardAction(it, en) } +
             // (4.5.0 Task 1) The one observable's own sentences, from every route and every
             // phase, and the delete row's five. The scan's contract is "everything the user can
@@ -111,19 +111,19 @@ class StreamingPackCopyTest {
         assertEquals("Live words while you speak (English)", StreamingPackCopy.featureTitle(en))
         assertEquals(
             "Installed (73 MB). Words appear on the bubble as you speak English; the typed transcript is unchanged.",
-            StreamingPackCopy.installed(en),
+            StreamingPackCopy.installed(en, bytes),
         )
         assertEquals(
             "Included with the app (73 MB) and already on this device — nothing to fetch. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
-            StreamingPackCopy.SETTINGS_INSTALL_FROM_PACK,
+            StreamingPackCopy.settingsInstallFromPack(bytes),
         )
         assertEquals(
             "The app's own 73 MB model, fetched from Google Play over your connection when you ask for it — never from a third party. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
-            StreamingPackCopy.SETTINGS_INSTALL_FETCH,
+            StreamingPackCopy.settingsInstallFetch(bytes),
         )
         assertEquals(
             "Download a 73 MB English preview model. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
-            StreamingPackCopy.installDownload(en),
+            StreamingPackCopy.installDownload(en, bytes),
         )
         assertEquals(
             "The preview model is damaged. Download it again to restore live words.",
@@ -135,7 +135,7 @@ class StreamingPackCopyTest {
         )
         assertEquals(
             "The preview model is damaged. Get it again from Google Play (73 MB over your connection) to restore live words.",
-            StreamingPackCopy.SETTINGS_REPAIR_FETCH,
+            StreamingPackCopy.settingsRepairFetch(bytes),
         )
         assertEquals(
             "Live words are off on this device: the preview model did not pass its start-up check. Your transcripts are unaffected.",
@@ -166,10 +166,10 @@ class StreamingPackCopyTest {
     @Test fun theBadgeIsTheCatalogsNotARetypedNumber() {
         val badge = StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)
         assertEquals("73 MB", badge)
-        assertTrue(StreamingPackCopy.SETTINGS_INSTALL_FROM_PACK.contains(badge))
-        assertTrue(StreamingPackCopy.SETTINGS_INSTALL_FETCH.contains(badge))
-        assertTrue(StreamingPackCopy.installDownload(en).contains(badge))
-        assertTrue(StreamingPackCopy.installed(en).contains(badge))
+        assertTrue(StreamingPackCopy.settingsInstallFromPack(bytes).contains(badge))
+        assertTrue(StreamingPackCopy.settingsInstallFetch(bytes).contains(badge))
+        assertTrue(StreamingPackCopy.installDownload(en, bytes).contains(badge))
+        assertTrue(StreamingPackCopy.installed(en, bytes).contains(badge))
         all.forEach { assertFalse("never the tarball's size under the small badge", it.contains("310")) }
     }
 
@@ -187,10 +187,10 @@ class StreamingPackCopyTest {
     @Test fun everyInstallStringSaysTheTypedTranscriptIsUntouched() {
         // The one promise that matters: the previewer is additive (spec §10). It is made on every
         // route, because every route ends in the same feature.
-        assertTrue(StreamingPackCopy.SETTINGS_INSTALL_FROM_PACK.contains("typed transcript"))
-        assertTrue(StreamingPackCopy.SETTINGS_INSTALL_FETCH.contains("typed transcript"))
-        assertTrue(StreamingPackCopy.installDownload(en).contains("typed transcript"))
-        assertTrue(StreamingPackCopy.installed(en).contains("typed transcript"))
+        assertTrue(StreamingPackCopy.settingsInstallFromPack(bytes).contains("typed transcript"))
+        assertTrue(StreamingPackCopy.settingsInstallFetch(bytes).contains("typed transcript"))
+        assertTrue(StreamingPackCopy.installDownload(en, bytes).contains("typed transcript"))
+        assertTrue(StreamingPackCopy.installed(en, bytes).contains("typed transcript"))
         assertTrue(StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE.contains("transcripts are unaffected"))
     }
 
@@ -202,7 +202,7 @@ class StreamingPackCopyTest {
         // about PROVENANCE, and naming Play is what keeps it: no Play row may offer a
         // third-party download.
         for (state in listOf(StreamingPackState.PackDelivered, StreamingPackState.PackFetchable)) {
-            val sub = StreamingPackCopy.settingsSubtitle(state, en)
+            val sub = StreamingPackCopy.settingsSubtitle(state, en, bytes)
             assertFalse(
                 "and must promise no third-party download: on a Play route the bytes are the " +
                     "app's own, which is the whole point of the amendment: $sub",
@@ -218,10 +218,10 @@ class StreamingPackCopyTest {
         // PackFetchable the pack rides the AAB we UPLOADED, not the install the user HAS: the
         // tap starts a real 73 MB transfer, which is exactly why this row has to answer
         // NeedsConfirmation. Only the DELIVERED row may say the bytes came with the app.
-        val delivered = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackDelivered, en)
+        val delivered = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackDelivered, en, bytes)
         assertTrue("the delivered row is the one that really is already here: $delivered", delivered.contains("Included with the app"))
         assertTrue(delivered.contains("already on this device"))
-        val fetchable = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackFetchable, en)
+        val fetchable = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackFetchable, en, bytes)
         assertFalse(
             "an on-demand pack that has not been delivered is NOT included with the install the " +
                 "user has, and saying so hides 73 MB of their data: $fetchable",
@@ -236,7 +236,9 @@ class StreamingPackCopyTest {
         assertTrue("and that it travels over the user's own connection: $fetchable", fetchable.contains("your connection"))
         // The repair that re-fetches costs the same 73 MB and says so too.
         val repairFetch =
-            StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(StreamingPackState.PackFetchable), en)
+            StreamingPackCopy.settingsSubtitle(
+                StreamingPackState.Repair(StreamingPackState.PackFetchable), en, bytes,
+            )
         assertTrue(repairFetch.contains("Google Play"))
         assertTrue(
             "a repair that re-fetches the whole pack is not free either: $repairFetch",
@@ -248,10 +250,10 @@ class StreamingPackCopyTest {
         // "the fallback wording only on non-Play builds" — Downloadable is reached from exactly
         // one place (StreamingPackInstall.playCanDeliver: a debug build, a sideload, or a refusal
         // Play named as this install's own fault), so this is the only honest "Download" row.
-        val sub = StreamingPackCopy.settingsSubtitle(StreamingPackState.Downloadable, en)
+        val sub = StreamingPackCopy.settingsSubtitle(StreamingPackState.Downloadable, en, bytes)
         assertTrue("the fallback is honest about being one: $sub", sub.startsWith("Download a 73 MB"))
         val saysDownload = everyState.filter {
-            StreamingPackCopy.settingsSubtitle(it, en).lowercase().contains("download")
+            StreamingPackCopy.settingsSubtitle(it, en, bytes).lowercase().contains("download")
         }
         assertEquals(
             "exactly two rows may say 'download': the fallback offer and the repair that would " +
@@ -267,7 +269,7 @@ class StreamingPackCopyTest {
         // third-party download by accident.
         for (state in everyState) {
             assertTrue("$state has a title", StreamingPackCopy.settingsTitle(state, en).isNotBlank())
-            assertTrue("$state has a subtitle", StreamingPackCopy.settingsSubtitle(state, en).isNotBlank())
+            assertTrue("$state has a subtitle", StreamingPackCopy.settingsSubtitle(state, en, bytes).isNotBlank())
         }
         val offers = listOf(
             StreamingPackState.Installed,
@@ -278,14 +280,14 @@ class StreamingPackCopyTest {
         assertEquals(
             "the four sources read differently",
             offers.size,
-            offers.map { StreamingPackCopy.settingsSubtitle(it, en) }.distinct().size,
+            offers.map { StreamingPackCopy.settingsSubtitle(it, en, bytes) }.distinct().size,
         )
         assertEquals(
             "and so do the three repairs — a repair from the delivered pack costs no network " +
                 "and must not be offered as a download",
             3,
             offers.drop(1)
-                .map { StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(it), en) }
+                .map { StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(it), en, bytes) }
                 .distinct().size,
         )
     }
@@ -296,7 +298,7 @@ class StreamingPackCopyTest {
             StreamingPackState.PackFetchable,
             StreamingPackState.Downloadable,
         )) {
-            val sub = StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(via), en)
+            val sub = StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(via), en, bytes)
             assertTrue("a repair names the damage first: $sub", sub.startsWith("The preview model is damaged."))
         }
         assertEquals(
@@ -363,8 +365,8 @@ class StreamingPackCopyTest {
             StreamingPackCopy.cardInstalled(es),
             StreamingPackCopy.cardLanguageNote(es),
             StreamingPackCopy.featureTitle(es),
-            StreamingPackCopy.installed(es),
-            StreamingPackCopy.installDownload(es),
+            StreamingPackCopy.installed(es, bytes),
+            StreamingPackCopy.installDownload(es, bytes),
         ) + states.map { StreamingPackCopy.cardAction(it, es) } +
             states.map { StreamingPackCopy.settingsTitle(it, es) }
         for (s in rendered) {
@@ -482,8 +484,8 @@ class StreamingPackCopyTest {
         for (state in everyState) {
             assertEquals(
                 "the card's body for $state",
-                StreamingPackCopy.settingsSubtitle(state, en),
-                StreamingPackCopy.cardOffer(state, en),
+                StreamingPackCopy.settingsSubtitle(state, en, bytes),
+                StreamingPackCopy.cardOffer(state, en, bytes),
             )
             assertEquals(
                 "and its action names the source that action will actually use",
@@ -506,7 +508,7 @@ class StreamingPackCopyTest {
         )) {
             assertTrue(
                 "the offer body carries the additive promise for $state",
-                StreamingPackCopy.cardOffer(state, en).contains("typed transcript"),
+                StreamingPackCopy.cardOffer(state, en, bytes).contains("typed transcript"),
             )
             assertTrue(
                 "and its action names the language: ${StreamingPackCopy.cardAction(state, en)}",

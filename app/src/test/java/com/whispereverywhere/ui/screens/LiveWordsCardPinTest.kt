@@ -473,7 +473,7 @@ class LiveWordsCardPinTest {
             "StreamingPackCopy.CARD_INSTALLED_TITLE",
             "StreamingPackCopy.cardInstalled(languageName)",
             "StreamingPackCopy.CARD_DISMISS",
-            "StreamingPackCopy.cardOffer(offered, languageName)",
+            "StreamingPackCopy.cardOffer(offered, languageName, p.totalBytes)",
             "StreamingPackCopy.cardAction(offered, languageName)",
             "StreamingPackCopy.cardLanguageNote(languageName)",
         )) {

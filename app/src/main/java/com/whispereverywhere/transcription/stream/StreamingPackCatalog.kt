@@ -205,10 +205,11 @@ data class StreamingPack(
  * again — 310,414,022 B of fp32 + int8 + wavs — and is never any pack's size.)
  *
  * **A row is not the same size as another row** — fr is 128 MB, de 71, ru 29, the bilingual zh-en
- * 50 — and `StreamingPackCopy.BADGE` is still a class-init `val` over THIS row's `totalBytes`,
- * carried by seven sentences. That is a copy defect the moment a second row lands, and it is
- * Task 3's (ruling 3d, *"use the pack's OWN size, never a fixed number"*), not this object's:
- * [sizeBadge] already takes bytes, so the fix is at the call sites.
+ * 50. `StreamingPackCopy` used to carry that number in one class-init `val` over THIS row's
+ * `totalBytes`, across six sentences, which would have described most future rows wrongly. Task 3
+ * closed it at the call sites (ruling 3d, *"use the pack's OWN size, never a fixed number"*):
+ * every sentence that names a size now takes the pack's `totalBytes` and rounds it through
+ * [sizeBadge] itself, so there is no shared figure left for a second row to inherit.
  *
  * The byte counts and digests here are the ONE census: `tools/build_asset_packs.py preview`
  * places the pack payload against the same literals, `verifyPreviewPack` gates every bundle

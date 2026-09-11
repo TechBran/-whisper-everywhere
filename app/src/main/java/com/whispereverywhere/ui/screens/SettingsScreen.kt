@@ -1205,7 +1205,11 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
                 SettingsItem(
                     icon = Icons.Filled.Subtitles,
                     title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
-                    subtitle = StreamingPackCopy.settingsSubtitle(previewState, previewLanguage),
+                    subtitle = StreamingPackCopy.settingsSubtitle(
+                        previewState,
+                        previewLanguage,
+                        previewPack.totalBytes,
+                    ),
                 )
                 SettingsSwitchItem(
                     icon = Icons.Filled.Subtitles,
@@ -1231,7 +1235,11 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
             else -> SettingsItem(
                 icon = Icons.Filled.CloudDownload,
                 title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
-                subtitle = StreamingPackCopy.settingsSubtitle(previewState, previewLanguage),
+                subtitle = StreamingPackCopy.settingsSubtitle(
+                        previewState,
+                        previewLanguage,
+                        previewPack.totalBytes,
+                    ),
                 onClick = startPreviewInstall,
             )
         }

@@ -33,9 +33,6 @@ package com.whispereverywhere.transcription.stream
  * `noConditionAnywhereInTheProductPutsTheMeteredOfferBack` is the claim over the whole product,
  * and not one cell of it, because a deleted state comes back through a back door or not at all.
  *
- * The exception is [StreamingPackState.PackDelivered], below: metering cannot apply to a transfer
- * that does not happen.
- *
  * ### AND ITS OTHER HALF: A PICK IS A CONSENT (owner, 2026-09-11 — Task 3b)
  *
  * > *"And if you select a different language, then automatically download and set up the language
@@ -66,7 +63,7 @@ package com.whispereverywhere.transcription.stream
  * install Play cannot serve: a debug build, a sideload of the public repo, or a release Play has
  * already refused by name. The ruling authorized fetching *"that pack from the assets"* — the
  * app's own asset pack — and the app's own copy draws exactly this line:
- * `StreamingPackCopy.SETTINGS_INSTALL_FETCH` promises *"never from a third party"*, and
+ * `StreamingPackCopy.settingsInstallFetch` promises *"never from a third party"*, and
  * `StreamingPackCopy.installDownload` is the one sentence that admits one. A silent fetch is the case
  * where the user never reads that sentence, because no card precedes the transfer. So this route
  * answers OFFER whatever the network reads: the card shows the download's own sentence, and one

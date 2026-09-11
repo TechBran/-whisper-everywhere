@@ -1119,7 +1119,7 @@ private fun LiveWordsCard(
                     title = StreamingPackCopy.CARD_TITLE,
                     // The SAME per-source table the Settings row reads, so this card cannot
                     // promise a route the tap will not take.
-                    body = StreamingPackCopy.cardOffer(offered, languageName),
+                    body = StreamingPackCopy.cardOffer(offered, languageName, p.totalBytes),
                     // What the pick buys and what Auto costs, on the state where the note slot
                     // is free — the language step's sentence is for someone still choosing.
                     note = StreamingPackCopy.cardLanguageNote(languageName),
