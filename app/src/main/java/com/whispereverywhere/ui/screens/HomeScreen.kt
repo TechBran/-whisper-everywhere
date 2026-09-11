@@ -998,7 +998,7 @@ private fun LiveWordsCard(
     // ...and the SAME gesture, offered on the card. Raising it once per entry is right (a dialog
     // re-raised on every recomposition is unusable), but it left a user who back-pressed out of
     // Play's dialog on a note reading "tap to answer" with nothing to tap but the permanent-no X
-    // — the metered path's own state. The Settings row's fetchLineTappable + previewRowTap
+    // — the metered path's own state. The Settings row's workLineTappable + previewRowTap
     // lesson, inherited rather than re-learned (review r1, B3).
     val answerPlay: () -> Unit = {
         (context as? android.app.Activity)?.let { StreamingPackController.confirm(it) }

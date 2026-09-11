@@ -1,6 +1,5 @@
 package com.whispereverywhere.transcription.stream
 
-import com.whispereverywhere.npu.NpuPackFetch
 
 /**
  * Every user-facing string of the previewer (spec §9, as amended on 2026-09-10) — pure,
@@ -25,7 +24,7 @@ import com.whispereverywhere.npu.NpuPackFetch
  * `preview_en` is `deliveryType.set("on-demand")` (`preview_en/build.gradle.kts:35`), so those
  * 73 MB ride the AAB we UPLOADED — not the install the user HAS. Until Play has delivered the
  * pack, a tap starts a real 73 MB transfer over the user's own connection, which is precisely
- * why this row must answer [NpuPackFetch.FetchState.NeedsConfirmation] at all (Play raises its
+ * why this row must answer [PreviewPhase.AWAITING_ANSWER] at all (Play raises its
  * own metered/size dialog before a transfer that size). So "included with the app" belongs to
  * [StreamingPackState.PackDelivered], where the bytes really are on the device; the
  * [StreamingPackState.PackFetchable] row keeps the provenance clause but drops the cost claim
@@ -318,7 +317,7 @@ object StreamingPackCopy {
      * The card while the fetch or the install runs. It promises nothing about when, carries the
      * additive promise in the shortest true form, and asks for nothing — a working card that
      * mentioned Settings or a tap would undo the ruling it exists to serve. The live progress
-     * line under it is [fetchLine]'s or [downloadProgress]'s, never a second wording.
+     * line under it is [workLine]'s, never a second wording.
      *
      * It carries [cardLanguageNote] INLINE rather than in the note slot, because on this state
      * that slot holds the progress line — and this is the state review r1's nit 1 flagged for
@@ -350,13 +349,13 @@ object StreamingPackCopy {
      * The working card's one action, and the only gesture that card can ever need: Google Play is
      * holding its own dialog (a cellular or size confirmation, or a wait for wifi — both
      * `STATUS_REQUIRES_USER_CONFIRMATION` and `STATUS_WAITING_FOR_WIFI` arrive as
-     * [NpuPackFetch.FetchState.NeedsConfirmation]), and [fetchLine] says so, ending in *"tap to
+     * [PreviewPhase.AWAITING_ANSWER]), and [workLine] says so, ending in *"tap to
      * answer"*.
      *
      * Without this button that sentence named a gesture the card did not have (review r1, B3):
      * the dialog is raised once per ENTRY into that state, so a user who backed out of it was
      * parked on an instruction with only the X left — and the X is the permanent no. The Settings
-     * row solved the same thing with [fetchLineTappable] plus a tap that re-shows PLAY'S OWN
+     * row solved the same thing with [workLineTappable] plus a tap that re-shows PLAY'S OWN
      * dialog; this is that tap, with a label, because a card's action is a button. It names Play
      * because the dialog is Play's and the decision in it is Play's.
      */
@@ -405,7 +404,7 @@ object StreamingPackCopy {
 
     /**
      * WHAT BOTH SURFACES SAY about work in flight — one function over the one observable
-     * ([PreviewWork]), replacing the two that came before it: [fetchLine] for Play's own machine
+     * ([PreviewWork]), replacing the two that came before it: `fetchLine` for Play's own machine
      * and the Settings row's `previewInstallStatus` for ours. That split is the defect Task 1
      * exists to retire: Home collected one of them, Settings collected the other, and a transfer
      * one surface started was invisible on the other.
