@@ -440,31 +440,42 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
-     * 4.4.1 — THE USER SAID NO. Set by Home's live-words card X and by the Settings row's DELETE,
-     * never unset in-app; read by [com.whispereverywhere.transcription.stream.PreviewAutoFetch],
-     * which treats it as absolute.
+     * 4.4.1 — THE USER SAID NO, **for one language** (owner rulings 2026-09-11, consequence 5).
+     * Set by Home's live-words card X and by the Settings row's DELETE, never unset in-app; read
+     * by [com.whispereverywhere.transcription.stream.PreviewAutoFetch], which treats it as
+     * absolute for the language it was recorded in.
      *
-     * The owner's discovery ruling makes the previewer's 73 MB arrive unasked, and the one thing
+     * The owner's discovery ruling makes the previewer's pack arrive unasked, and the one thing
      * that must never do is undo a decision the user already made. A DELETE is such a decision —
      * the user freed the space on purpose — so it writes this flag, and the auto-fetch is over
-     * for good on that install. The MANUAL path is untouched: the Settings row still installs on
-     * a tap, which is the only way back and the only way that asks.
+     * for good for that language. The MANUAL path is untouched: the Settings row still installs
+     * on a tap, which is the only way back and the only way that asks.
      *
-     * ONE flag for both gestures on purpose. Dismissing the card and deleting the model are the
-     * same sentence from the user ("not this"), and the third gesture the flag also ends — the
-     * one-time "Live words are on" announcement — cannot disagree with it: that card only exists
-     * while the model IS installed, where an auto-fetch has nothing left to do. Two flags would be
-     * two chances for these three surfaces to drift apart.
+     * ### Why the key carries the language, and why now
      *
-     * NOT a StateFlow: the card reads it once per composition into a local mirror, the house
+     * *"So a user can have multiple languages loaded onto their app."* The store is a SET, so a
+     * "no" has to be one too: deleting the Spanish pack must not stop English arriving, and must
+     * not let the foreground top-up re-download Spanish on the next launch. A GLOBAL flag
+     * persisted by 4.4.1 and re-keyed in a later release would need a migration for every user
+     * who set it — and getting that migration wrong means a 73 MB fetch of a model somebody
+     * deleted on purpose. Nothing has shipped with the global key, so this is a re-key, not a
+     * migration.
+     *
+     * ONE flag for BOTH gestures, still, and per language for both: dismissing the card and
+     * deleting the model are the same sentence from the user ("not this one"). The third thing
+     * that silences the card — the announcement retiring itself — is [livePreviewArmedOnce],
+     * deliberately separate and deliberately not per language.
+     *
+     * NOT a StateFlow: the card reads it once per foreground into a local mirror, the house
      * convention for plain-var prefs read in composition ([cloudNoteDismissed] is the precedent
      * and the same card shape).
      */
-    var livePreviewDeclined: Boolean
-        get() = prefs.getBoolean(KEY_LIVE_PREVIEW_DECLINED, false)
-        set(value) {
-            prefs.edit().putBoolean(KEY_LIVE_PREVIEW_DECLINED, value).apply()
-        }
+    fun livePreviewDeclined(languageCode: String): Boolean =
+        readLivePreviewDeclined(languageCode, prefs::getBoolean)
+
+    fun setLivePreviewDeclined(languageCode: String, declined: Boolean) {
+        prefs.edit().putBoolean(livePreviewDeclinedKey(languageCode), declined).apply()
+    }
 
     /**
      * 4.4.1 — THE USER HAS SEEN LIVE WORDS. Set once, from the previewer gate's own call site in
@@ -599,7 +610,33 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_STT_LIVE_MODE_GEMINI = "stt_live_mode_gemini"
         /** The previewer's switch (4.4.0, R3: default on). Read in exactly one place. */
         private const val KEY_LOCAL_PREVIEW_ENABLED = "local_preview_enabled"
-        private const val KEY_LIVE_PREVIEW_DECLINED = "live_preview_declined"
+        /**
+         * The previewer's per-language "the user said no" store (4.4.1 acquisition amendment).
+         * A PREFIX, not a key: the language code is the rest of it, so one language's decision
+         * can never be another's. See [livePreviewDeclined].
+         */
+        private const val KEY_LIVE_PREVIEW_DECLINED_PREFIX = "live_preview_declined_"
+
+        /**
+         * The stored key for one language's refusal. Spelled once, and `internal` so the test
+         * that holds the per-language property can name the same key the writer uses rather than
+         * a retyped copy of it.
+         */
+        internal fun livePreviewDeclinedKey(languageCode: String): String =
+            KEY_LIVE_PREVIEW_DECLINED_PREFIX + languageCode
+
+        /**
+         * The one production read of a language's refusal, as a pure function of a
+         * `getBoolean(key, default)` accessor so it is unit-testable without a Context — the
+         * [readCloudDisclosureAccepted] seam, for the same reason. The default is **false**: an
+         * unset store has declined nothing, and shipped the other way round the feature would
+         * silently never arrive for anyone.
+         */
+        internal fun readLivePreviewDeclined(
+            languageCode: String,
+            getBoolean: (String, Boolean) -> Boolean,
+        ): Boolean = getBoolean(livePreviewDeclinedKey(languageCode), false)
+
         private const val KEY_LIVE_PREVIEW_ARMED_ONCE = "live_preview_armed_once"
         private const val KEY_LIVE_PREVIEW_AUTOFETCH_FAILED_AT = "live_preview_autofetch_failed_at"
         private const val KEY_TTS_PROVIDER_ID = "tts_provider_id"

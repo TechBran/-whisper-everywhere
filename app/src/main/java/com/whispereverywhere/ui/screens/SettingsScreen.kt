@@ -1181,7 +1181,10 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
                     // 4.4.1 auto-fetch would otherwise put this model back on the next app open,
                     // which is the one thing the owner's discovery ruling must not do. Written
                     // first so a removal that failed partway still leaves the decision recorded.
-                    app.preferencesManager.livePreviewDeclined = true
+                    // (4.4.1 acquisition amendment) And it is recorded FOR THIS PACK'S LANGUAGE,
+                    // not globally: deleting one language's model says nothing about another's,
+                    // and the store is a set (owner ruling 2026-09-11, consequence 5).
+                    app.preferencesManager.setLivePreviewDeclined(previewPack.language, true)
                     previewManager.delete(previewPack)
                     previewRefreshKey++
                 },

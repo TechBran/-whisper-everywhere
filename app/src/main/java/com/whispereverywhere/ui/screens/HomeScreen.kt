@@ -864,8 +864,10 @@ private fun LiveWordsCard(
     // so a delete made in Settings is seen here without depending on the NavHost having disposed
     // this screen (review r1, nit 4). A stale read here errs toward re-fetching, which is the
     // direction AF3 and AF4 are about.
-    var saidNo by remember(resumeTick) {
-        mutableStateOf(app.preferencesManager.livePreviewDeclined)
+    // ...and it is read FOR THIS PACK'S LANGUAGE (4.4.1 acquisition amendment): a user who
+    // deleted the Spanish model has declined Spanish, not live words.
+    var saidNo by remember(resumeTick, pack.language) {
+        mutableStateOf(app.preferencesManager.livePreviewDeclined(pack.language))
     }
     // (CONTROLLER RULING 2026-09-11, CHANGE 4) Has the user already SEEN live words? Written by
     // the gate's own call site the first time the previewer arms, so it can become true while
@@ -959,7 +961,7 @@ private fun LiveWordsCard(
     // lets 73 MB finish landing is not a no (CONTROLLER RULING 2026-09-11, CHANGE 2). The cancel
     // is a no-op when nothing is in flight, so the offer and the announcement cost nothing.
     val dismiss: () -> Unit = {
-        app.preferencesManager.livePreviewDeclined = true
+        app.preferencesManager.setLivePreviewDeclined(pack.language, true)
         saidNo = true
         PreviewAutoFetchController.cancel()
     }

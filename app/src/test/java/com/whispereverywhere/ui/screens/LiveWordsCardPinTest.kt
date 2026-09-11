@@ -318,14 +318,17 @@ class LiveWordsCardPinTest {
         )
     }
 
-    @Test fun theDismissWritesThePersistedNo() {
+    @Test fun theDismissWritesThePersistedNoForTheLanguageTheCardIsAbout() {
         assertEquals(
-            1, liveLineCount(card, "livePreviewDeclined = true"),
+            "one write, and it carries the language: dismissing the Spanish card says nothing " +
+                "about English (owner ruling 2026-09-11, consequence 5)",
+            1, liveLineCount(card, "setLivePreviewDeclined(pack.language, true)"),
         )
         assertEquals(
             "read once into a local mirror, the house convention for plain-var prefs in " +
-                "composition (cloudNoteDismissed is the precedent and the same card shape)",
-            1, liveLineCount(card, "app.preferencesManager.livePreviewDeclined)"),
+                "composition (cloudNoteDismissed is the precedent and the same card shape) — and " +
+                "for the SAME language it writes, or the X would hide a card it never silenced",
+            1, liveLineCount(card, "app.preferencesManager.livePreviewDeclined(pack.language)"),
         )
     }
 
@@ -339,7 +342,7 @@ class LiveWordsCardPinTest {
             "one cancel, and it is the actuator's — the card owns no route and no transfer",
             1, liveLineCount(card, "PreviewAutoFetchController.cancel()"),
         )
-        val recorded = offsetOfLive(card, "livePreviewDeclined = true")
+        val recorded = offsetOfLive(card, "setLivePreviewDeclined(")
         val cancelled = offsetOfLive(card, "PreviewAutoFetchController.cancel()")
         assertTrue("the dismissal must record the no", recorded >= 0)
         assertTrue(

@@ -98,19 +98,33 @@ class LivePreviewDeclinedPinTest {
 
     // ------------------------------------------------------------------ the flag
 
-    @Test fun theUserSaidNoFlagDefaultsToFalse() {
+    @Test fun theUserSaidNoFlagIsReadThroughOnePureSeamWithOneDefault() {
+        // The DEFAULT and the KEY are pinned as behaviour by LivePreviewDeclinedPerLanguageTest,
+        // which executes the real seam; what is pinned here is that the seam is the only path —
+        // a second `getBoolean` over the same prefix would be a second default, and the accessor
+        // pair the two surfaces call must be singular or the X and the delete can disagree.
         assertEquals(
-            "shipped true this declines the feature for everyone on first launch and the " +
-                "auto-fetch silently never happens",
-            1, liveLineCount(prefs, "prefs.getBoolean(KEY_LIVE_PREVIEW_DECLINED, false)"),
+            1, liveLineCount(prefs, "readLivePreviewDeclined(languageCode, prefs::getBoolean)"),
         )
         assertEquals(
-            "and there is exactly one reader, so no second read can carry a different default",
-            1, liveLineCount(prefs, "getBoolean(KEY_LIVE_PREVIEW_DECLINED"),
+            "one reader of the store, and it is the pure seam's own",
+            1, liveLineCount(prefs, "getBoolean(livePreviewDeclinedKey(languageCode), false)"),
         )
         assertEquals(
             "and exactly one writer",
-            1, liveLineCount(prefs, "putBoolean(KEY_LIVE_PREVIEW_DECLINED, value)"),
+            1, liveLineCount(prefs, "putBoolean(livePreviewDeclinedKey(languageCode), declined)"),
+        )
+        assertEquals(
+            "the accessor pair is spelled once each, so no surface can reach a second opinion",
+            1, liveLineCount(prefs, "fun livePreviewDeclined(languageCode: String): Boolean"),
+        )
+        assertEquals(
+            1, liveLineCount(prefs, "fun setLivePreviewDeclined(languageCode: String, declined: Boolean)"),
+        )
+        assertEquals(
+            "and the GLOBAL flag is gone rather than left beside it: two spellings of \"the user " +
+                "said no\" is how a Spanish delete silences English",
+            0, liveLineCount(prefs, "var livePreviewDeclined: Boolean"),
         )
     }
 
@@ -118,7 +132,17 @@ class LivePreviewDeclinedPinTest {
         // A renamed key forgets every user's recorded decision, and the first thing that happens
         // after it is forgotten is a 73 MB fetch of a model somebody deleted on purpose.
         assertEquals(
-            1, liveLineCount(prefs, "KEY_LIVE_PREVIEW_DECLINED = \"live_preview_declined\""),
+            1,
+            liveLineCount(
+                prefs,
+                "KEY_LIVE_PREVIEW_DECLINED_PREFIX = \"live_preview_declined_\"",
+            ),
+        )
+        assertEquals(
+            "and composed in exactly one place — the key a surface writes and the key the " +
+                "decision reads are the same function or they are not the same key",
+            1,
+            liveLineCount(prefs, "KEY_LIVE_PREVIEW_DECLINED_PREFIX + languageCode"),
         )
         assertEquals(
             1,
@@ -193,7 +217,7 @@ class LivePreviewDeclinedPinTest {
     @Test fun neitherValueIsReachableThroughAnySecondSpellingOfItsName() {
         // The flag is read by the hook and written by two gestures (the card's X, the delete).
         // A second property over the same key is how those four sites start disagreeing.
-        assertEquals(1, liveLineCount(prefs, "var livePreviewDeclined: Boolean"))
+        assertEquals(1, liveLineCount(prefs, "fun livePreviewDeclined(languageCode: String)"))
         assertEquals(1, liveLineCount(prefs, "var livePreviewAutoFetchFailedAt: Long"))
     }
 
@@ -202,10 +226,12 @@ class LivePreviewDeclinedPinTest {
     @Test fun theDeleteRecordsTheDecisionBeforeItRemovesTheBytes() {
         assertEquals(
             "the brief's own rule: a DELETE is a decision and must not be undone by an " +
-                "auto-fetch (AF3)",
-            1, liveLineCount(rows, "livePreviewDeclined = true"),
+                "auto-fetch (AF3) — and it is recorded for THIS PACK'S language, from the pack " +
+                "itself rather than a retyped code, so the flag and the bytes cannot drift (AF8)",
+            1,
+            liveLineCount(rows, "setLivePreviewDeclined(previewPack.language, true)"),
         )
-        val decision = offsetOfLive(rows, "livePreviewDeclined = true")
+        val decision = offsetOfLive(rows, "setLivePreviewDeclined(")
         val removal = offsetOfLive(rows, "previewManager.delete(")
         assertTrue("the delete branch must still exist", removal >= 0)
         assertTrue("and the flag must be written in it", decision >= 0)
