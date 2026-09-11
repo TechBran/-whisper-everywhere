@@ -225,16 +225,34 @@ internal fun sessionLanguageFor(
  * Cloud sessions (batch or live) keep today's strip; a running batch file job vetoes (two CPU
  * consumers beside whisper's bursts is the research's §3.9 refusal); [previewReady] is the
  * resident recognizer's `isWarm()` — false while it loads and forever after a failed canary.
+ *
+ * ### 4.4.1's one change to this predicate: the English literal is gone
+ *
+ * Owner rulings 2026-09-11 make packs PER LANGUAGE and the store a SET — *"a user can have
+ * multiple languages loaded onto their app"* — so `sessionLanguage == "en" && packInstalled`
+ * becomes the one question those two terms were always asking: is THIS session's language one of
+ * the installed pack languages? The catalogue lookup that decides which languages can be
+ * installed at all lives in the set's one producer
+ * ([com.whispereverywhere.transcription.stream.StreamingPackManager.installedLanguages]), so it
+ * is asked once, by the object that reads the disk, and no row can be invented here.
+ *
+ * NO OTHER TERM CHANGED, deliberately: the owner tested this gate on device and found it correct
+ * once explained, so the cloud, batch, switch and readiness vetoes read exactly as they did.
+ *
+ * @param installedPackLanguages the language codes whose previewer packs are installed. Empty on
+ *        a device with none; a SET rather than a Boolean because installing Spanish must not
+ *        remove English and a Spanish session must not arm on English's model.
  */
 internal fun localPreviewArms(
     sessionLanguage: String?,
-    packInstalled: Boolean,
+    installedPackLanguages: Set<String>,
     isCloudSession: Boolean,
     batchJobActive: Boolean,
     userEnabled: Boolean,
     previewReady: Boolean,
 ): Boolean =
-    sessionLanguage == "en" && packInstalled && !isCloudSession && !batchJobActive && userEnabled && previewReady
+    sessionLanguage != null && sessionLanguage in installedPackLanguages &&
+        !isCloudSession && !batchJobActive && userEnabled && previewReady
 
 /**
  * The states whose elapsed ticker runs (3.6.0, Workstream E4). PROCESSING kept for the legacy
@@ -3450,7 +3468,11 @@ class FloatingBubbleService : Service(),
         // rules read sessionHasLocalPreview (Task 1's second input) — assigned the gate's answer,
         // never a constant. Every input is logged, so a "why no words?" is one grep.
         val previewPack = com.whispereverywhere.transcription.stream.StreamingPackCatalog.EN
-        val packInstalled = app.streamingPackManager.isInstalled(previewPack)
+        // (4.4.1 acquisition amendment) WHICH previewer packs are on disk, read ONCE for the gate
+        // and the warm-up below: the gate's language term is now "is this session's language one
+        // of these" rather than an English literal, and the set is the catalogue's own answer.
+        val installedPreviewLanguages = app.streamingPackManager.installedLanguages()
+        val packInstalled = previewPack.language in installedPreviewLanguages
         val userEnabled = app.preferencesManager.localPreviewEnabled
         // warmStreamingPreview() unconditionally when the pack and the switch allow it, not
         // `streamingPreview ?: warm…`: after an onTrimMemory the field still holds the engine
@@ -3461,12 +3483,17 @@ class FloatingBubbleService : Service(),
         val previewReady = preview?.isWarm() == true
         val previewArmed = localPreviewArms(
             sessionLanguage = lang,
-            packInstalled = packInstalled,
+            installedPackLanguages = installedPreviewLanguages,
             isCloudSession = cloudWrapper != null,
             batchJobActive = BatchJobController.active != null,
             userEnabled = userEnabled,
             previewReady = previewReady,
         )
+        // `pack=` on this line keeps its 4.4.0 meaning — the ENGLISH pack is on disk — because
+        // that is what the warm-up above gates on and what a log read against older captures
+        // compares to. With a non-English `lang=` the gate's own language term is false while
+        // this reads 1; `lang=` is the field that says why. When the language list lands, both
+        // this field and warmStreamingPreview() become the SESSION language's pack together.
         android.util.Log.i(
             "WE-DIAG",
             com.whispereverywhere.transcription.stream.StreamDiag.gateLine(

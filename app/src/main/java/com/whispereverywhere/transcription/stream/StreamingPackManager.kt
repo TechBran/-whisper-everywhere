@@ -58,6 +58,25 @@ class StreamingPackManager(private val context: Context) {
 
     fun installDir(pack: StreamingPack): File = StreamingPackInstall.installDir(root(), pack)
     fun isInstalled(pack: StreamingPack): Boolean = StreamingPackInstall.isInstalled(installDir(pack), pack)
+
+    /**
+     * WHICH previewer packs are installed, as their language codes — the previewer gate's one
+     * language input since 4.4.1's acquisition amendment (owner rulings 2026-09-11: *"a user can
+     * have multiple languages loaded onto their app. Since they're so small… maybe a person uses
+     * three different languages"*).
+     *
+     * A SET because the store is one: installing Spanish must not remove English, and every
+     * operation in this class is already keyed by the pack. It is also the ONE place the
+     * catalogue decides which languages can be installed at all, which is what lets
+     * `localPreviewArms` ask its question without a catalogue lookup of its own — a set built
+     * from [StreamingPackCatalog.packs] can never contain a code the catalogue does not have.
+     *
+     * One [isInstalled] per catalogue row (one row today), i.e. the marker plus four exact byte
+     * counts — the same read the gate already paid for English.
+     */
+    fun installedLanguages(): Set<String> =
+        StreamingPackCatalog.packs.filterTo(mutableListOf()) { isInstalled(it) }
+            .mapTo(mutableSetOf()) { it.language }
     fun installedDir(pack: StreamingPack): File? = if (isInstalled(pack)) installDir(pack) else null
     fun markCorrupt(pack: StreamingPack) = StreamingPackInstall.markCorrupt(root(), pack)
 

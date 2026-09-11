@@ -40,6 +40,110 @@ class StreamingPackInstallTest {
         return staged
     }
 
+    /**
+     * A SECOND language's pack, distinguishable from [pack] in every field the installer keys on:
+     * a different `dirName` (the install directory), a different `packName` (Play's delivery
+     * directory) and a different `language` (the catalogue's and the flag's key).
+     */
+    private val second = StreamingPack(
+        language = "es", dirName = "es-test", packName = "preview_test_es",
+        baseUrl = "https://example.invalid/resolve/def/",
+        encoder = PackFile("encoder.onnx", enc.size.toLong(), sha(enc)),
+        decoder = PackFile("decoder.onnx", dec.size.toLong(), sha(dec)),
+        joiner = PackFile("joiner.onnx", joi.size.toLong(), sha(joi)),
+        tokens = PackFile("tokens.txt", tok.size.toLong(), sha(tok)),
+    )
+
+    // ------------------------------------------------------------- the store is a SET, not a slot
+
+    @Test fun installingASecondLanguageLeavesTheFirstInstalledAndLocatable() {
+        // Owner ruling 2026-09-11, consequence 3: *"So a user can have multiple languages loaded
+        // onto their app. Since they're so small, you know, maybe a person uses three different
+        // languages sometimes for transcriptions."* Installing Spanish must not remove English.
+        //
+        // Nothing in the install path may assume ONE previewer model exists at a time, and this
+        // is the property that says so: every path is keyed by the pack (`installDir`, `tmpDir`,
+        // `marker`, `isInstalled`), so two rows land in two directories under one root.
+        val root = tmp.newFolder("root")
+        StreamingPackInstall.install(stage(), root, pack)
+        assertTrue(StreamingPackInstall.isInstalled(StreamingPackInstall.installDir(root, pack), pack))
+
+        StreamingPackInstall.install(stage(), root, second)
+
+        assertTrue(
+            "the first language is still installed after the second lands",
+            StreamingPackInstall.isInstalled(StreamingPackInstall.installDir(root, pack), pack),
+        )
+        assertTrue(
+            "and so is the second",
+            StreamingPackInstall.isInstalled(StreamingPackInstall.installDir(root, second), second),
+        )
+        assertNotEquals(
+            "in directories of their own — one install directory for two packs is the slot this " +
+                "ruling forbids",
+            StreamingPackInstall.installDir(root, pack).absolutePath,
+            StreamingPackInstall.installDir(root, second).absolutePath,
+        )
+        assertNotEquals(
+            "with staging directories of their own too, so a second install cannot half-write " +
+                "the first",
+            StreamingPackInstall.tmpDir(root, pack).absolutePath,
+            StreamingPackInstall.tmpDir(root, second).absolutePath,
+        )
+        // ...and each one's marker is its OWN census, so a cross-verified install is impossible.
+        assertEquals(
+            StreamingPackCatalog.markerText(pack),
+            StreamingPackInstall.marker(StreamingPackInstall.installDir(root, pack)).readText(),
+        )
+        assertEquals(
+            StreamingPackCatalog.markerText(second),
+            StreamingPackInstall.marker(StreamingPackInstall.installDir(root, second)).readText(),
+        )
+    }
+
+    @Test fun removingOneLanguageLeavesTheOtherUntouched() {
+        // AF8: *"Delete one language's pack and reopen: that one stays gone; another installed
+        // language is untouched and its live words still work."*
+        val root = tmp.newFolder("root")
+        StreamingPackInstall.install(stage(), root, pack)
+        StreamingPackInstall.install(stage(), root, second)
+
+        StreamingPackInstall.delete(root, second)
+
+        assertFalse(
+            StreamingPackInstall.isInstalled(StreamingPackInstall.installDir(root, second), second),
+        )
+        assertTrue(
+            "a delete is per pack, like every other operation in this object",
+            StreamingPackInstall.isInstalled(StreamingPackInstall.installDir(root, pack), pack),
+        )
+        // And a withdrawn verdict is per pack as well: markCorrupt on one must not send the other
+        // to the Repair row.
+        StreamingPackInstall.install(stage(), root, second)
+        StreamingPackInstall.markCorrupt(root, second)
+        assertFalse(
+            StreamingPackInstall.isInstalled(StreamingPackInstall.installDir(root, second), second),
+        )
+        assertTrue(
+            StreamingPackInstall.isInstalled(StreamingPackInstall.installDir(root, pack), pack),
+        )
+    }
+
+    @Test fun aPackLocatedInPlaysDeliveredAssetsIsLocatedByItsOwnName() {
+        // The delivered-pack source directory is the PACK'S name, so two delivered packs are two
+        // directories and `isPackComplete` cannot read one language's bytes as another's.
+        val assetsRoot = tmp.newFolder("assets")
+        val first = StreamingPackInstall.packSourceDir(assetsRoot, pack)
+        val other = StreamingPackInstall.packSourceDir(assetsRoot, second)
+        assertNotEquals(first!!.absolutePath, other!!.absolutePath)
+        assertEquals("preview_test", first.name)
+        assertEquals("preview_test_es", other.name)
+        // Only the one whose bytes are actually there is complete.
+        stage().copyRecursively(first)
+        assertTrue(StreamingPackInstall.isPackComplete(first, pack))
+        assertFalse(StreamingPackInstall.isPackComplete(other, second))
+    }
+
     @Test fun verifyPassesTheExactFiles() {
         assertEquals(PackVerdict.Ok, StreamingPackInstall.verify(stage(), pack))
     }

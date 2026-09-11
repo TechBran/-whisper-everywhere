@@ -14,23 +14,87 @@ import org.junit.Test
  * Auto = whisper only on multilingual tiers; Auto on `pro` = English, which `sessionLanguageFor`
  * already answers (FloatingBubbleService.kt:203-209). A flip to "Auto + pack ⇒ English partials
  * regardless" is one accepted value (`null`) in the gate and one row here.
+ *
+ * ### The language term is the CATALOGUE's, since 4.4.1's acquisition amendment
+ *
+ * The gate used to read `sessionLanguage == "en" && packInstalled`. Owner rulings 2026-09-11 make
+ * packs per language and the store a SET, so the two terms become one — *is THIS session's
+ * language one of the installed pack languages?* — and the English literal is gone. The catalogue
+ * lookup moved to the set's one producer (`StreamingPackManager.installedLanguages`, which can
+ * only ever answer with catalogue rows), so the gate asks the question once and no row can be
+ * invented here. NO OTHER TERM CHANGED: the owner tested this gate and found it correct, so the
+ * cloud, batch, switch and readiness vetoes read exactly as they did.
  */
 class LocalPreviewGateTest {
 
+    /**
+     * Two languages on disk. "es" has no catalogue row yet — one language ships the machinery and
+     * the rest are additive — but the GATE must already be language-shaped rather than
+     * English-shaped, and a set is how that is stated without waiting for the second row.
+     */
+    private val everyPack = setOf("en", "es")
+
     private fun arms(
         lang: String?,
-        pack: Boolean = true,
+        packs: Set<String> = setOf("en"),
         cloud: Boolean = false,
         batch: Boolean = false,
         enabled: Boolean = true,
         ready: Boolean = true,
     ) = localPreviewArms(
-        sessionLanguage = lang, packInstalled = pack, isCloudSession = cloud,
+        sessionLanguage = lang, installedPackLanguages = packs, isCloudSession = cloud,
         batchJobActive = batch, userEnabled = enabled, previewReady = ready,
     )
 
     @Test fun fixedEnglishWithThePackArms() {
         assertTrue(arms("en"))
+    }
+
+    // ------------------------------------------------------------------ language x installed set
+
+    @Test fun theGateIsTheLanguagesOwnPackBeingInstalledAndNotAnyPackBeingInstalled() {
+        // The cross product the acquisition amendment asks for: {selected language} x {which
+        // packs installed}. Written as an independent statement of the rule — THIS language's
+        // pack must be on disk — so a gate that answered "some pack is installed", or one that
+        // kept an English literal beside the set, fails here rather than passing by construction.
+        val languages = listOf(null, "auto", "en", "es", "zh")
+        val sets = listOf(emptySet(), setOf("en"), setOf("es"), everyPack)
+        for (lang in languages) for (packs in sets) {
+            val expected = lang != null && lang in packs
+            assertEquals("lang=$lang installed=$packs", expected, arms(lang, packs = packs))
+        }
+    }
+
+    @Test fun autoArmsNothingWithEveryPackInTheWorldInstalled() {
+        // Owner ruling 2026-09-11: *"Now if they leave it in auto, then you get no live streaming
+        // at all. And that will seem to be a very fair trade-off."* A session with no resolved
+        // language has no pack to choose, whatever is on disk. (An ENGLISH-scope whisper tier is
+        // the one case where Auto still reaches the gate AS "en" — sessionLanguageFor resolves it
+        // before the gate sees it, which is R4 and is deliberately unchanged; see the row below.)
+        assertFalse(arms(null, packs = everyPack))
+        assertFalse(
+            "and the raw picker code never reaches the gate unresolved — but if it did, no " +
+                "pack's language is \"auto\", so the set can never contain it",
+            arms("auto", packs = everyPack),
+        )
+        assertFalse(
+            "the catalogue agrees: there is nothing to fetch or arm for Auto",
+            com.whispereverywhere.transcription.stream.StreamingPackCatalog.forLanguage("auto") != null,
+        )
+    }
+
+    @Test fun aLanguageWithNoPackNeverArmsHoweverManyOtherPacksAreInstalled() {
+        assertFalse(arms("zh", packs = everyPack))
+        assertFalse(arms("fr", packs = everyPack))
+    }
+
+    @Test fun eachInstalledLanguageArmsForItselfAndOnlyForItself() {
+        // AF8's second half: two packs on disk, each language's own live words working, and
+        // neither one borrowing the other's model.
+        assertTrue(arms("en", packs = everyPack))
+        assertTrue(arms("es", packs = everyPack))
+        assertFalse("English alone does not arm a Spanish session", arms("es", packs = setOf("en")))
+        assertFalse("nor the other way round", arms("en", packs = setOf("es")))
     }
 
     @Test fun autoOnAnEnglishOnlyTierResolvesToEnglishAndArms() {
@@ -60,7 +124,7 @@ class LocalPreviewGateTest {
     }
 
     @Test fun everyOtherInputIsAVeto() {
-        assertFalse("no pack", arms("en", pack = false))
+        assertFalse("no pack", arms("en", packs = emptySet()))
         assertFalse("a cloud session (batch or live) keeps today's strip", arms("en", cloud = true))
         assertFalse("a batch file job is running", arms("en", batch = true))
         assertFalse("the switch is off (R3 makes it default-on; off is still off)", arms("en", enabled = false))
