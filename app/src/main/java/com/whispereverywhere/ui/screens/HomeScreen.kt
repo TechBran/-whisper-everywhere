@@ -47,6 +47,7 @@ import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPackController
 import com.whispereverywhere.transcription.stream.StreamingPackCopy
 import com.whispereverywhere.transcription.stream.StreamingPackInstall
+import com.whispereverywhere.transcription.stream.StreamingPackState
 import com.whispereverywhere.tts.TtsModelManager
 import com.whispereverywhere.tts.TtsPackController
 import com.whispereverywhere.tts.TtsVoices
@@ -858,41 +859,69 @@ private fun LiveWordsCard(
     val previewFetch by StreamingPackController.state.collectAsState()
     val ourLine by PreviewAutoFetchController.line.collectAsState()
     val showLiveWords by app.preferencesManager.localPreviewEnabledFlow.collectAsState()
-    // Read once into a local mirror — the house convention for plain-var prefs read in
-    // composition, and the cloud-key note's own shape for the same gesture.
-    var saidNo by remember { mutableStateOf(app.preferencesManager.livePreviewDeclined) }
-    // Keyed on the STATUS WORD and on whether our own work is running — never on the progress
-    // line itself: state() is a Play getPackLocation plus five File reads, and a Downloading tick
-    // arrives several times a second for the whole 73 MB (the voice row's review nit 2, which the
-    // Settings row already learned).
+    // Read into a local mirror — the house convention for plain-var prefs read in composition,
+    // and the cloud-key note's own shape for the same gesture — and re-read on each foreground,
+    // so a delete made in Settings is seen here without depending on the NavHost having disposed
+    // this screen (review r1, nit 4). A stale read here errs toward re-fetching, which is the
+    // direction AF3 and AF4 are about.
+    var saidNo by remember(resumeTick) {
+        mutableStateOf(app.preferencesManager.livePreviewDeclined)
+    }
     val statusWord = NpuPackFetch.statusWord(previewFetch)
     val working = ourLine != null
-    val packState = remember(resumeTick, statusWord, working) {
-        app.streamingPackManager.state(pack)
+    // BOTH SYSTEM READS OFF THE COMPOSITION THREAD, on the app's start destination (review r1,
+    // B4): state() is nine File stats plus a Play getPackLocation through PlayPacks.assetsPath,
+    // and isUnmetered() is a getSystemService plus a getNetworkCapabilities. The Settings row's
+    // own comment says that read is too expensive for a recomposition; here it would also be
+    // paid on the first frame and on every resume by every user — one who deleted the model, one
+    // who dismissed the card, one with no local tier — for an answer that is then discarded.
+    // HomeScreen's own pattern for exactly this shape of read is produceState + Dispatchers.IO
+    // (the keystore and installedModel snapshots above). Keyed as the remembers were: the resume
+    // tick, the status WORD — never the progress line, which ticks several times a second for the
+    // whole 73 MB — and whether our own work is running.
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val packStateSnapshot by produceState<StreamingPackState?>(
+        null, resumeTick, statusWord, working,
+    ) {
+        value = withContext(Dispatchers.IO) { app.streamingPackManager.state(pack) }
     }
-    // One system read per foreground, not one per recomposition of the dashboard.
-    val unmetered = remember(resumeTick) { ConnectivityMonitor(context).isUnmetered() }
-    val decision = PreviewAutoFetch.decide(
-        state = packState,
-        userSaidNo = saidNo,
-        showLiveWords = showLiveWords,
-        localTierInstalled = localTierInstalled,
-        unmetered = unmetered,
-        sessionActive = AudioArbiter.isCapturing(),
-        batchJobActive = BatchJobController.active != null,
-        packWorkInFlight = PreviewAutoFetchController.busy(),
-        attemptedThisLaunch = PreviewAutoFetchController.attemptedThisLaunch(),
-        backedOff = PreviewAutoFetch.backedOff(
-            lastFailureAtMs = app.preferencesManager.livePreviewAutoFetchFailedAt,
-            nowMs = System.currentTimeMillis(),
-        ),
-    )
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val unmeteredSnapshot by produceState<Boolean?>(null, resumeTick) {
+        value = withContext(Dispatchers.IO) { ConnectivityMonitor(context).isUnmetered() }
+    }
+    // Plain locals, so the "not yet known" check below reads as one null test (a delegated
+    // property cannot be smart-cast) and so the decision and the card see the same snapshot.
+    val packState = packStateSnapshot
+    val unmetered = unmeteredSnapshot
+    // Until both snapshots have landed there is nothing to decide and nothing true to say, so
+    // the answer is NONE for that one frame — the same flicker the cloud-key note's own resume
+    // snapshot has. The other default would be a 73 MB transfer decided on inputs not yet read.
+    val decision = if (packState == null || unmetered == null) {
+        PreviewAutoFetch.Decision.NONE
+    } else {
+        PreviewAutoFetch.decide(
+            state = packState,
+            userSaidNo = saidNo,
+            showLiveWords = showLiveWords,
+            localTierInstalled = localTierInstalled,
+            unmetered = unmetered,
+            sessionActive = AudioArbiter.isCapturing(),
+            batchJobActive = BatchJobController.active != null,
+            packWorkInFlight = PreviewAutoFetchController.busy(),
+            attemptedThisLaunch = PreviewAutoFetchController.attemptedThisLaunch(),
+            backedOff = PreviewAutoFetch.backedOff(
+                lastFailureAtMs = app.preferencesManager.livePreviewAutoFetchFailedAt,
+                nowMs = System.currentTimeMillis(),
+            ),
+        )
+    }
     // THE FOREGROUND HOOK, and the whole of it: it performs the decision above and tests nothing
     // of its own. Keyed on the resume tick, so every return to the foreground asks again, and on
-    // the answer, so the effect cannot fire under a stale one.
+    // the answer, so the effect cannot fire under a stale one. The `?.let` is the snapshot's
+    // null-unwrap, not a second condition: a FETCH is only ever answered over a read state.
     LaunchedEffect(resumeTick, decision) {
         if (decision == PreviewAutoFetch.Decision.FETCH) {
-            PreviewAutoFetchController.start(app, pack, packState, auto = true)
+            packState?.let { PreviewAutoFetchController.start(app, pack, it, auto = true) }
         }
     }
     // Play's own consent dialog, once per ENTRY into NeedsConfirmation — the missing-voice row's
@@ -916,7 +945,8 @@ private fun LiveWordsCard(
     }
     when (
         PreviewAutoFetch.card(
-            installed = packState.isInstalled,
+            // Not-yet-read is not installed: the card says nothing for that one frame.
+            installed = packState?.isInstalled == true,
             userSaidNo = saidNo,
             // The switch silences the card as well as the fetch: with it off there is no true
             // sentence left for this card to spell, least of all "Live words are on" over an
@@ -942,16 +972,21 @@ private fun LiveWordsCard(
             onAction = answerPlay,
             onDismiss = dismiss,
         )
-        PreviewAutoFetch.Card.OFFER -> LiveWordsNote(
-            title = StreamingPackCopy.CARD_TITLE,
-            // The SAME per-source table the Settings row reads, so this card cannot promise a
-            // route the tap will not take.
-            body = StreamingPackCopy.cardOffer(packState),
-            note = StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
-            action = StreamingPackCopy.cardAction(packState),
-            onAction = { PreviewAutoFetchController.start(app, pack, packState, auto = false) },
-            onDismiss = dismiss,
-        )
+        // The OFFER is only ever answered over a read state, so this `?.let` unwraps the
+        // snapshot rather than deciding anything — and it is the same snapshot the words and the
+        // tap's route are taken from, which is what keeps them from naming different sources.
+        PreviewAutoFetch.Card.OFFER -> packState?.let { offered ->
+            LiveWordsNote(
+                title = StreamingPackCopy.CARD_TITLE,
+                // The SAME per-source table the Settings row reads, so this card cannot promise
+                // a route the tap will not take.
+                body = StreamingPackCopy.cardOffer(offered),
+                note = StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
+                action = StreamingPackCopy.cardAction(offered),
+                onAction = { PreviewAutoFetchController.start(app, pack, offered, auto = false) },
+                onDismiss = dismiss,
+            )
+        }
         PreviewAutoFetch.Card.INSTALLED -> LiveWordsNote(
             title = StreamingPackCopy.CARD_INSTALLED_TITLE,
             body = StreamingPackCopy.CARD_INSTALLED,

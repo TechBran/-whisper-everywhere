@@ -183,7 +183,7 @@ class LiveWordsCardPinTest {
         assertTrue(
             "keyed on the resume tick: a system call on every recomposition of the dashboard is " +
                 "the cost this card must not add",
-            liveLineCount(card, "remember(resumeTick) { ConnectivityMonitor(context).isUnmetered() }") >= 1,
+            liveLineCount(card, "produceState<Boolean?>(null, resumeTick)") >= 1,
         )
         for (needle in listOf("NetworkCapabilities", "isActiveNetworkMetered", "NET_CAPABILITY")) {
             assertEquals(
@@ -197,13 +197,46 @@ class LiveWordsCardPinTest {
         assertEquals(
             1, liveLineCount(card, "streamingPackManager.state("),
         )
-        val remembered = offsetOfLive(card, "remember(resumeTick, statusWord, working)")
+        val produced = offsetOfLive(card, "produceState<StreamingPackState?>(")
         val read = offsetOfLive(card, "streamingPackManager.state(")
-        assertTrue("the read must be inside the keyed remember", remembered in 0..read)
+        assertTrue("the read must exist", read >= 0)
+        assertTrue("and be inside the keyed producer", produced in 0..read)
         assertEquals(
-            "keyed on the status WORD, never on the progress line: a Downloading tick arrives " +
-                "several times a second for the whole 73 MB",
+            "keyed on the resume tick, the status WORD and our own work — never on the progress " +
+                "line, which ticks several times a second for the whole 73 MB",
+            1, liveLineCount(card, "null, resumeTick, statusWord, working,"),
+        )
+        assertEquals(
             1, liveLineCount(card, "NpuPackFetch.statusWord("),
+        )
+    }
+
+    @Test fun neitherSystemReadHappensOnTheCompositionThread() {
+        // Review r1, B4. This card sits on the app's START DESTINATION, and both reads are paid
+        // on the first frame and on every resume by EVERY user — including one who deleted the
+        // model, dismissed the card, or has no local tier, for an answer that is discarded.
+        // state() is nine File stats plus a Play getPackLocation (PlayPacks.assetsPath);
+        // isUnmetered() is a getSystemService plus a getNetworkCapabilities. HomeScreen's own
+        // pattern for this shape of read is produceState + Dispatchers.IO (the keystore and
+        // installedModel snapshots, 700 lines above), and the Settings row's own comment says
+        // the pack read is too expensive even for a recomposition.
+        assertEquals(
+            "both reads are taken off the composition thread, each in its own producer",
+            2, liveLineCount(card, "withContext(Dispatchers.IO)"),
+        )
+        for (needle in listOf(
+            "remember(resumeTick, statusWord",
+            "remember(resumeTick) { ConnectivityMonitor",
+        )) {
+            assertEquals(
+                "<<$needle>>: neither read is taken synchronously in composition any more",
+                0, liveLineCount(card, needle),
+            )
+        }
+        assertEquals(
+            "the not-yet-known frame answers NONE rather than defaulting to a 73 MB transfer " +
+                "decided on inputs that have not been read",
+            1, liveLineCount(card, "if (packState == null || unmetered == null)"),
         )
     }
 
