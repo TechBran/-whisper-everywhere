@@ -241,6 +241,43 @@ class LivePreviewRowsPinTest {
     }
 
     @Test
+    fun workAlreadyInFlightKeepsItsSurfaceWhereverTheSelectionGoes() {
+        // (fix round 1, H-B3.) The progress row and the Play row describe a transfer the USER
+        // STARTED, not an offer. Inside the selection gate, a language change mid-transfer hid a
+        // running 73 MB everywhere in the app — Home renders nothing for a selection with no pack
+        // — and took Play's *"tap to answer"* with it, which is the one gesture the r1 B3 fix
+        // exists to provide. So they sit OUTSIDE the gate, under their own not-installed guard.
+        val gate = offsetOfLive(rows, "if (selectedPack == previewPack) {")
+        val offer = offsetOfLive(rows, "onClick = startPreviewInstall,")
+        val inFlight = offsetOfLive(rows, "if (!previewState.isInstalled) {")
+        val ourProgress = offsetOfLive(rows, "subtitle = previewInstallStatus ?: \"\",")
+        val playLine = offsetOfLive(rows, "subtitle = previewFetchLine,")
+        assertTrue("the selection gate must still be there", gate >= 0)
+        assertTrue(
+            "and the two in-flight rows must sit after it, under their own bytes-not-yet guard, " +
+                "so a selection with no pack still sees the transfer it started",
+            offer in 0 until inFlight,
+        )
+        assertTrue("ours first", inFlight in 0 until ourProgress)
+        assertTrue("then Play's", ourProgress < playLine)
+        assertEquals(
+            "and the gate renders NEITHER of them: the two must never both draw, and the offer " +
+                "must never appear over work already running",
+            1, liveLineCount(rows, "previewInstallStatus != null || previewFetchLine != null -> Unit"),
+        )
+        assertEquals(
+            "the terminal RETRY is the one tap that does not survive the selection moving — a " +
+                "fresh 73 MB for a language the gate has already refused is the offer this " +
+                "section stopped making",
+            1, liveLineCount(rows, "selectedPack == previewPack ||"),
+        )
+        assertEquals(
+            "while PLAY'S OWN confirmation still answers, because that is the transfer in flight",
+            1, liveLineCount(rows, "previewFetch is NpuPackFetch.FetchState.NeedsConfirmation"),
+        )
+    }
+
+    @Test
     fun theDeleteRowFollowsTheBYTESAndNotTheSelection() {
         assertEquals(
             "ONE delete site, wherever it sits", 1, liveLineCount(rows, "StreamingPackCopy.DELETE_TITLE"),

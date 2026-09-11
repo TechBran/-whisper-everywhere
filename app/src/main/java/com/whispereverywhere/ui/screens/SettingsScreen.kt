@@ -1205,6 +1205,10 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
     // `selectedPack == previewPack` rather than `!= null` so that the day a second catalogue row
     // lands this section is SILENT for it rather than describing the English model under another
     // language's name — the per-language LIST is the multilingual build's, parked by the brief.
+    //
+    // (fix round 1, H-B3) WORK IN FLIGHT IS NOT ONE OF THESE ROWS and has left this gate: it
+    // describes neither the pack nor an offer but a transfer THE USER STARTED. It renders below,
+    // ungated — see there for why.
     if (selectedPack == previewPack) {
         when {
             previewState.isInstalled -> {
@@ -1220,40 +1224,69 @@ private fun LivePreviewRows(app: WhisperEverywhereApp, context: Context) {
                     onCheckedChange = { app.preferencesManager.localPreviewEnabled = it },
                 )
             }
-            previewInstallStatus != null -> SettingsItem(
-                icon = Icons.Filled.CloudDownload,
-                title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
-                subtitle = previewInstallStatus ?: "",
-            )
-            previewFetchLine != null -> {
-                // Tappable only where a tap does something: the terminal retry, and the
-                // NeedsConfirmation that answers PLAY'S OWN dialog. Every other state is work in
-                // flight, and SettingsItem makes itself clickable the moment it is handed an
-                // onClick.
-                val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch)
-                val previewRowTap: () -> Unit = {
-                    val activity = context as? android.app.Activity
-                    if (previewFetch is
-                            NpuPackFetch.FetchState.NeedsConfirmation &&
-                        activity != null
-                    ) {
-                        StreamingPackController.confirm(activity)
-                    } else {
-                        startPreviewInstall()
-                    }
-                }
-                SettingsItem(
-                    icon = Icons.Filled.CloudDownload,
-                    title = StreamingPackCopy.featureTitle(previewLanguage),
-                    subtitle = previewFetchLine,
-                    onClick = if (previewTappable) previewRowTap else null,
-                )
-            }
+            // Both in-flight rows render BELOW instead, for every selection — and not here, so
+            // that the two can never both draw and the offer can never appear over work that is
+            // already running.
+            previewInstallStatus != null || previewFetchLine != null -> Unit
             else -> SettingsItem(
                 icon = Icons.Filled.CloudDownload,
                 title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
                 subtitle = StreamingPackCopy.settingsSubtitle(previewState, previewLanguage),
                 onClick = startPreviewInstall,
+            )
+        }
+    }
+    // WORK IN FLIGHT KEEPS ITS SURFACE WHEREVER THE SELECTION GOES (fix round 1, H-B3). Both rows
+    // below describe a transfer the user THEMSELVES started, so a selection that moves off this
+    // pack's language mid-transfer must not hide it: `previewInstallStatus` is remembered in a
+    // composable that stays composed and `StreamingPackController.state` is global, so the 73 MB
+    // keeps going either way — and Home renders nothing at all for a selection with no pack
+    // (`hasPackForSelection` false ⇒ Card.NONE). Gated on the selection, a Play fetch parked in
+    // NeedsConfirmation therefore had its *"tap to answer"* — the one gesture the r1 B3 fix exists
+    // to provide — unreachable, and the transfer invisible everywhere in the app, with no system
+    // notification on either Play route. That is the same hiding of the user's own action D17
+    // refused on the card ("hiding its progress card would hide their own action from them and
+    // leave the X as the only thing to press"). An un-tappable progress row naming the model they
+    // asked for is a receipt, not a sale.
+    //
+    // The one tap that does NOT survive the selection moving is the TERMINAL RETRY: a fresh 73 MB
+    // for a language the gate has already refused is exactly the offer the section above stopped
+    // making. A Failed row still SAYS what happened; it simply cannot restart until the language
+    // is picked back. Play's own confirmation still answers, because that is the transfer already
+    // in flight.
+    if (!previewState.isInstalled) {
+        if (previewInstallStatus != null) {
+            SettingsItem(
+                icon = Icons.Filled.CloudDownload,
+                title = StreamingPackCopy.settingsTitle(previewState, previewLanguage),
+                subtitle = previewInstallStatus ?: "",
+            )
+        } else if (previewFetchLine != null) {
+            // Tappable only where a tap does something: the terminal retry, and the
+            // NeedsConfirmation that answers PLAY'S OWN dialog. Every other state is work in
+            // flight, and SettingsItem makes itself clickable the moment it is handed an
+            // onClick.
+            val previewTappable = StreamingPackCopy.fetchLineTappable(previewFetch) &&
+                (
+                    selectedPack == previewPack ||
+                        previewFetch is NpuPackFetch.FetchState.NeedsConfirmation
+                )
+            val previewRowTap: () -> Unit = {
+                val activity = context as? android.app.Activity
+                if (previewFetch is
+                        NpuPackFetch.FetchState.NeedsConfirmation &&
+                    activity != null
+                ) {
+                    StreamingPackController.confirm(activity)
+                } else {
+                    startPreviewInstall()
+                }
+            }
+            SettingsItem(
+                icon = Icons.Filled.CloudDownload,
+                title = StreamingPackCopy.featureTitle(previewLanguage),
+                subtitle = previewFetchLine,
+                onClick = if (previewTappable) previewRowTap else null,
             )
         }
     }
