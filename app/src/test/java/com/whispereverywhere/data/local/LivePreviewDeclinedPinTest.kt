@@ -439,6 +439,21 @@ class LivePreviewDeclinedPinTest {
         // What is NOT forbidden: Play's own dialog. `STATUS_WAITING_FOR_WIFI` is Play's wait, not
         // ours, and two KDocs describe it as *"a wait for wifi"* — still true, and deliberately
         // not matched by the needle, which is the third-person present of OUR deleted rule.
+        //
+        // **WHERE THIS INSTRUMENT IS WEAKER THAN ITS NEIGHBOUR, stated so nobody reads it as
+        // stronger.** The walk above asserts the absence of CODE, so adding the read changes
+        // `compileDebugKotlin`'s output and this task re-runs on its own (its own KDoc's C8
+        // argument). This one asserts the absence of PROSE, and a comment-only edit compiles to a
+        // byte-identical class — which is the whole reason `sourcePinnedInputs` exists in
+        // `app/build.gradle.kts`. Of the ruling's seven prose homes, four are on that list
+        // (`PreferencesManager.kt` — B1's own site — plus `PreviewAutoFetch.kt`,
+        // `PreviewAutoFetchController.kt` and `ConnectivityMonitor.kt`) and three are not
+        // (`PreviewWork.kt`, `PreviewPicks.kt`, and the two screens). So a comment-only
+        // reintroduction in one of those three can ride a build where nothing else changed. Any
+        // commit that also touches code re-runs this; adding the two small ones to that list
+        // would close the rest, and is left as a controller decision because this fix round's
+        // list was closed.
+
         for (needle in listOf(
             "waits for wifi",
             "waits for Wi-Fi",
