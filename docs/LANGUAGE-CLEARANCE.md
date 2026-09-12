@@ -5,11 +5,22 @@ clearance is the one unrecoverable error in the 4.5.0 languages build, which is 
 pinned by a test that names exactly two cleared languages and why granting a third costs three
 deliberate edits — the third of them in a test whose docblock says why a subagent must not write it.
 
-**Every edit list in this document was walked against the suite rather than reasoned about.** A yes
-(German), and a withdrawal (French), were each applied exactly as written below and the suite run;
-where the list was short, the list was fixed, not the claim. If you follow one of these lists and the
-suite is red, the document is wrong — say so, and do not start editing clearance assertions to make
-it green.
+**The edit lists below were walked against the suite rather than reasoned about — and this is
+exactly which walks were run**, because "every list was measured" is the kind of claim that goes
+stale the moment a list is added. All of it on this tree, on 2026-09-12:
+
+| transition | applied to | result |
+|---|---|---|
+| **a YES** — the three edits under *"When an answer arrives"* and nothing else | each of the five outstanding rows in turn: `de`, `ru`, `id`, `ko`, `zh` | **green, all five** |
+| **a WITHDRAWAL** — the three edits at the end of the French section | both cleared rows: `fr`, and `en` by the same list | **green, both** |
+| **a REFUSAL** — every step of the refusal path a test can see | `zh` | **15 failures in 5 classes**, which is where step 6's table of classes comes from: the earlier inspected list named three of the five |
+
+Where a list was short, the list was fixed, not the claim — that has now happened three times, and
+each time it was the transition the previous fix had *not* re-walked. Two steps of the refusal path
+are marked *inspected* rather than measured, and say so where they are written.
+
+**If you follow one of these lists and the suite is red, the document is wrong** — say so, and do
+not start editing clearance assertions to make it green.
 
 **What it gates, and what it does not.**
 
@@ -68,7 +79,9 @@ that puts anything on the strip when an English speaker talks mid-Chinese.
 Say the German author replies and confirms his Apache-2.0. Recording that takes **three** edits that
 the suite enforces — the third is friction on purpose, it is what makes an invented clearance show up
 as a diff — **plus one sentence on the acceptance sheet that no test can see** (step 4). The list is
-exhaustive: applied as written, on this tree, the suite ends green.
+exhaustive, and measured that way: applied as written to German — and to each of the other four
+outstanding rows in turn, because a list that is only ever walked for one language is a list that
+works for one language — the suite ends green every time.
 
 **1. The verdict**, in `StreamingPackClearance.kt`. Replace that row's
 `ClearanceVerdict.Outstanding(...)` with:
@@ -108,6 +121,13 @@ state of the record**, and it holds **three** literals. A clearance moves all th
 Then rename the test to say what it now pins, and keep the docblock: it explains why the edit exists,
 and the explanation is the part that makes a forged clearance visible.
 
+**Leave the language's section in this document exactly where it is.** A clearance does not retire a
+section — only a refusal deletes one (the refusal path, step 5). The suite asks every *cleared* row
+for its section too, because a clearance can be withdrawn and the section has to exist before that
+day rather than be written on it; the row's evidence, its pinned commit and the answerer it would go
+back to are all in there. Editing the section to record *when and by whom* it was cleared is welcome.
+Deleting it is a red suite.
+
 Then run the suite. It must be green:
 
 ```
@@ -142,15 +162,40 @@ A refusal is **not** a switch — it is the removal of a row, and it is a code c
 5. delete its section from this document, and mark its §AL row on the acceptance sheet **REMOVED**
    with the date and the reason — that sheet's rule is that a row which once passed is rewritten in
    place and never deleted (see AF2, which is the worked example),
-6. update the tests that hold a language list as a **literal**. By inspection of this tree those are:
-   `PreviewPackLayoutTest` (the `assetPacks` expression, held as exact text — the pin that makes "all
-   six ship" true, so it is meant to cost an edit), the picker copy tests (which assert which
-   languages have packs), the per-language flag lists in `StreamingPackLanguagesTest`, and in
-   `StreamingPackClearanceTest` the **outstanding census** in
-   `onlyEnglishAndFrenchAreClearedOnThisBranch` — that last one only if the refused row was still
-   outstanding, which after a refusal it always is. Nothing else in the clearance suite names a
-   language: the record-to-catalogue one-to-one, the promotion state, the pack-module scan and the
-   licence-page check all derive from the catalogue, so deleting a row is silent in all four.
+6. update the tests that hold a language **by name**. This list is MEASURED, not inspected: steps
+   1-5 above were applied for a refusal of `zh` on 2026-09-12 (bar the two marked *inspected*
+   below) and the full suite came back **15 failures in 5 classes** — three of which the earlier,
+   inspected version of this list did not name.
+
+   | class | red | what it holds |
+   |---|---|---|
+   | `PreviewCanaryClipsTest` | **8** | its `clips` table, held one-to-one against the rows that carry a canary (`:196`), plus the measured-strip, unit, runaway-ceiling and corruption-shape gates that all read that table. **Deleting the clip file in step 4 is not enough — its row in this table goes with it.** |
+   | `PreviewPackLayoutTest` | 2 | the seven-row module census (`:96`) and the `assetPacks` expression held as exact text (`:212`). Both are deliberate friction: they are the pins that make "all six ship" true |
+   | `StreamingPackLanguagesTest` | 3 | the per-language flag rows (`zh`'s at `:366-415`) |
+   | `StreamingPackCatalogTest` | 1 | `forLanguage("zh")` resolving to the row, asserted by symbol (`:145`) |
+   | `StreamingPackCopyTest` | 1 | the picker's seven language words, in the catalogue's order (`:644`) |
+
+   — plus, in `StreamingPackClearanceTest`, the **outstanding census** in
+   `onlyEnglishAndFrenchAreClearedOnThisBranch`, which was part of the applied edit: that one only
+   if the refused row was still outstanding, which after a refusal it always is.
+
+   **And one consequence that is not a test failure at all.** Those test files name the row by
+   SYMBOL (`StreamingPackCatalog.ZH`, in `StreamingPackCopyTest`, `StreamingPackLanguagesTest` and
+   `StreamingPackCatalogTest`), so deleting the `val` itself does not redden a test — it stops the
+   test source set COMPILING, which a reader hunting red tests will not recognise as this list.
+   Delete the references first, then the row.
+
+   **Nothing else in the clearance suite names a language, and that half is measured too:** with
+   the census line removed, all 11 of `StreamingPackClearanceTest`'s tests stayed green. The
+   record-to-catalogue one-to-one, the promotion state, the pack-module scan and the licence-page
+   check all derive from the catalogue, so deleting a row is silent in all four.
+
+   **Two steps were INSPECTED rather than measured, and for stated reasons:** the `preview_<lang>`
+   directory and its gitignored payload were left on disk (the payload is yours, not the suite's,
+   and `PreviewPackLayoutTest` reads the payload directory — deleting it would redden that class
+   for a reason the refusal did not cause), and the acceptance sheet's §AL row was left alone
+   (marking it REMOVED is prose no test reads). Expect those two to cost what step 2 and step 5
+   say, and nothing in the suite to notice either way.
 
 That is a real half-day, and it is deliberately not a flag: a language that may not be published is a
 language the product does not have, and a switch that hid it would leave the bytes in the bundle and
@@ -381,9 +426,20 @@ verdict = ClearanceVerdict.Outstanding(
 **3. The pin** — `onlyEnglishAndFrenchAreClearedOnThisBranch`, all three literals, the reverse of a
 clearance: `"fr"` out of the cleared list, out of the switch, and **into** the outstanding census as
 `"fr" to ClearanceAnswerer.OWNER` (in the record's order — `fr` is the second row, so the pair goes
-**first**, ahead of `"de"`). Rename the test. If you record `COUNSEL` instead of `OWNER` in edit 1, the census pair takes `COUNSEL` too — the
-suite reads the answerer from the record and asks this document for the matching words, and the
-French section above says both.
+**first**, ahead of `"de"`). Rename the test. If you record `COUNSEL` instead of `OWNER` in edit 1,
+the census pair takes `COUNSEL` too — the suite reads the answerer from the record rather than from
+this list.
+
+**And one conditional fourth edit, which applies to any withdrawal, not just French's.** The suite
+asks an OUTSTANDING row's section for the words of *its own* answerer, in this document's own
+spelling — `uploader` for `UPSTREAM_AUTHOR`, `your own risk call` for `OWNER`, `counsel` for
+`COUNSEL`. So **if the answerer you record in edit 1 is one this row's section does not already
+name, add the phrase to the section**: one sentence, in the row's own words, saying who the question
+now goes to. That is the only edit a withdrawal can take beyond the three above, and it is why a
+cleared row's section is asked (before any withdrawal) to name *some* answerer rather than a
+particular one — a requirement keyed to one answerer is a red suite the day a row whose answerer is
+a different one changes state, which is exactly how this paragraph came to be written. French's
+section names all three phrases today, so its own withdrawal takes none of this.
 
 Then the suite is green again, and production is simply withheld on six languages instead of five.
 (Withdrawal was measured too: the earlier version of this paragraph named two edits and claimed the
