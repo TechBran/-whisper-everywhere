@@ -483,8 +483,7 @@ class StreamingPackCopyTest {
         )
         assertEquals(
             "Live words appear only while transcription runs on this device, and this device " +
-                "has no speech model. Whenever transcription does run on this device, live " +
-                "words follow the language you pick. Your typed transcript is unchanged.",
+                "has no speech model. Your typed transcript is unchanged.",
             StreamingPackCopy.NO_TIER_SUBTITLE,
         )
         // IT NAMES THE RULE, NOT THE MISSING FILE — and the rule is true of BOTH mechanisms
@@ -499,37 +498,45 @@ class StreamingPackCopyTest {
                 "only while transcription runs on this device",
             ),
         )
-        // ...AND THAT PROPERTY IS NOW ASSERTED OF THE WHOLE SENTENCE AND NOT ONLY OF ITS FIRST
-        // CLAUSE (fix round 2, review r2's B1 — it was a comment here, and the clause the comment
-        // was written about was the only half that had it). The second sentence used to INSTRUCT:
-        // *"Download a speech model and live words follow the language you pick."* Following it
-        // lands a user in `PreviewUnreachable`'s cell *"a tier, a provider"* — `decideEngineChoice`
-        // answers a CLOUD leaf, `localPreviewArms` refuses on `!isCloudSession`, no live word
-        // appears on any of their normal sessions — and this caveat is withdrawn by the very tier
-        // that arrived, so the one true sentence they were reading is replaced by the whole 4.4.1
-        // copy. That sub-cell is plausibly the majority of the no-tier population (the ENGINES
-        // step is mandatory, so this state is reached by a deliberate delete, and the user for
-        // whom that delete is acceptable is the one who transcribes in the cloud).
+        // ...AND IT MAKES NO FORWARD PROMISE AT ALL, WHICH IS A RULE ABOUT THIS SENTENCE AND NOT
+        // A CELL IN A TABLE (pass 2's Fix 3 — review r3's B1, the third round running whose
+        // blocker was this one sentence).
         //
-        // A conditional cannot be followed into a lie. It promises nothing about what a download
-        // would do, and it is true in both sub-cells — which is the property the sentence has to
-        // have, because this enum's input cannot see which of them the reader is in.
-        val promise = "live words follow the language you pick"
+        // A sentence selected by a decision over N facts may assert only the NECESSITY of those
+        // N facts. `PreviewUnreachable.of` reads two booleans and its tier arm answers for every
+        // selection, so this sentence can see one term of `localPreviewArms` — and each round's
+        // blocker was a SUFFICIENCY claim smuggled in beside the rule:
+        //
+        //  - r1: the REASON given for the rule (*"the gate can never fire"*) was itself a
+        //    sufficiency claim about the tier, and false.
+        //  - r2: *"Download a speech model and live words follow the language you pick"* —
+        //    sufficiency as an imperative. Fixed by scoping the antecedent.
+        //  - r3: *"Whenever transcription does run on this device, live words follow the language
+        //    you pick"* — the same claim, scoped by an antecedent that is satisfied while the
+        //    switch is OFF (the one arming term this decision does not read, and whose control
+        //    this task removed from that screen), satisfied for a selection with no pack, and
+        //    satisfied by `FallbackTranscriptionEngine`'s on-device mirror, which runs under
+        //    `"en"` in a cloud session where the previewer never armed — the very cell the
+        //    scoping was added for.
+        //
+        // So the clause is DELETED rather than qualified a third time, and what remains is the
+        // rule plus the additive promise. TWO sentences, asserted as two, because a third
+        // sentence is where the next promise would go.
+        for (needle in listOf(
+            "live words follow the language you pick",
+            "Whenever transcription does run",
+            "Download a speech model",
+        )) {
+            assertFalse(
+                "<<$needle>> is a SUFFICIENCY claim, and sufficiency needs the whole of " +
+                    "`localPreviewArms` plus the catalogue, of which this decision reads one " +
+                    "term: <<${StreamingPackCopy.NO_TIER_SUBTITLE}>>",
+                StreamingPackCopy.NO_TIER_SUBTITLE.contains(needle),
+            )
+        }
         assertEquals(
-            "the pick's half is spelled once, so there is one place for this property to hold",
-            1, StreamingPackCopy.NO_TIER_SUBTITLE.split(promise).size - 1,
-        )
-        assertTrue(
-            "and it is SCOPED BY THE RULE rather than offered as the result of an errand: " +
-                "<<${StreamingPackCopy.NO_TIER_SUBTITLE}>>",
-            StreamingPackCopy.NO_TIER_SUBTITLE.contains(
-                "Whenever transcription does run on this device, $promise",
-            ),
-        )
-        assertFalse(
-            "the retired spelling must not come back — it is the one sentence this axis added " +
-                "that could be ACTED on, and acting on it produced six false ones",
-            StreamingPackCopy.NO_TIER_SUBTITLE.contains("Download a speech model and $promise"),
+            "two sentences: the rule, and the transcript. A third is where a promise goes",
+            2, StreamingPackCopy.NO_TIER_SUBTITLE.trim().split(". ", ".").count { it.isNotBlank() },
         )
         // NOTHING IS FOR SALE ON THIS DEVICE — 4.4.1 pass 3's ITEM 1, one axis over: 73 MB buys
         // it nothing at all, so neither sentence carries a size, a pack or an instruction to get

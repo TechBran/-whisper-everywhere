@@ -353,7 +353,8 @@ object StreamingPackCopy {
      * *"Download a model to transcribe on-device"*, and the delete dialog's *"until you download a
      * model again"*), so this sentence sends the reader nowhere new. A necessary condition is true
      * of every device that lacks a tier, which an INSTRUCTION to get one is not — see
-     * [NO_TIER_SUBTITLE], where saying it the other way round was review r2's B1.
+     * [NO_TIER_SUBTITLE], where saying it the other way round was review r2's B1 and where saying
+     * it as a CONDITIONAL was review r3's.
      */
     const val NO_TIER_TITLE = "Live words need an on-device speech model"
 
@@ -361,23 +362,32 @@ object StreamingPackCopy {
      * ...and its body. It offers NOTHING — no tap, no size, no pack — because 73 MB buys this
      * device nothing at all, which is exactly the spend 4.4.1 pass 3's ITEM 1 closed one axis over.
      *
-     * **And it PROMISES nothing either: the second sentence is a conditional** (fix round 2,
-     * review r2's B1). It used to instruct — *"Download a speech model and live words follow the
-     * language you pick"* — and that instruction is false in the sub-cell this row's own axis
-     * cannot see: a device with no tier whose user HAS selected a cloud provider and saved a key
-     * ([PreviewUnreachable]'s KDoc, the cell *"no tier, a provider"*). Follow it and
-     * `decideEngineChoice` answers a CLOUD leaf, `localPreviewArms` refuses on `!isCloudSession`
-     * and no live word appears on any of their normal sessions — while this caveat vanishes with
-     * the tier that arrived, taking the one true sentence they were reading with it and returning
-     * every sentence [PreviewUnreachable] withdrew. An instruction can be followed into that; a
-     * conditional cannot. It states the same rule [NO_TIER] does, so it is true in BOTH sub-cells
-     * and stays true word for word if the open ruling ever widens this enum's input. The
-     * REQUIREMENT is still named — by [NO_TIER_TITLE], where it is a fact about the device rather
-     * than an errand.
+     * **And it PROMISES nothing either: it is the rule and the transcript, and no forward clause
+     * at all** (4.5.0 pass 2, Fix 3 — review r3's B1). Three rounds running, the blocker on this
+     * axis was this one sentence, and each round fixed the instance and kept the claim:
+     *
+     *  1. the REASON given for the rule was a sufficiency claim about the tier, and false;
+     *  2. *"Download a speech model and live words follow the language you pick"* — sufficiency
+     *     as an imperative, which a reader can follow into [PreviewUnreachable]'s *"a tier, a
+     *     provider"* cell, where no live word appears on any of their normal sessions;
+     *  3. *"Whenever transcription does run on this device, live words follow the language you
+     *     pick"* — the same claim with an antecedent, and the antecedent does not save it. It
+     *     holds while the *"Show live words"* switch is OFF (the one arming term
+     *     [PreviewUnreachable.of] does not read — six other decisions in this feature do); it
+     *     holds for a selection with no pack, because the tier arm answers for EVERY selection;
+     *     and it is satisfied by `FallbackTranscriptionEngine`'s on-device mirror, which
+     *     transcribes here under `"en"` in a session where `cloudWrapper != null` and the
+     *     previewer never armed — the very cell the antecedent was added for.
+     *
+     * **The rule that makes it hold by construction, rather than a fourth cell in a table: a
+     * sentence selected by a decision over N facts may assert only the NECESSITY of those N
+     * facts.** This decision reads two booleans, so this sentence states one necessary condition
+     * and stops. The REQUIREMENT is still named — by [NO_TIER_TITLE], where it is a fact about
+     * the device rather than an errand — and nothing is lost by the deletion, because a reader
+     * deciding whether the feature is broken needs the narrow true sentence and not a longer
+     * qualified one.
      */
-    const val NO_TIER_SUBTITLE =
-        "$NO_TIER Whenever transcription does run on this device, live words follow the " +
-            "language you pick. Your typed transcript is unchanged."
+    const val NO_TIER_SUBTITLE = "$NO_TIER Your typed transcript is unchanged."
 
     /**
      * WHAT THE PREVIEWER'S CAVEAT ROW SAYS, for whichever standing fact is in the way — one pair

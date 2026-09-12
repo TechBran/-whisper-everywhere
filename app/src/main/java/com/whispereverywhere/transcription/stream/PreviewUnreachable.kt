@@ -73,12 +73,21 @@ package com.whispereverywhere.transcription.stream
  * asked of each cell only *"does reason 1 still hold here?"* — and every cell passed that, which
  * is why the table sat next to the enum for a whole review round while the one sentence this axis
  * ADDED was false in the cell above. The brief's test is *true or absent*, and it is asked of each
- * sentence the cell SELECTS: `StreamingPackCopy.NO_TIER_SUBTITLE` instructed the reader to
- * download a speech model, which lands a user in *"a tier, a provider"* — where no live word
- * appears on any of their normal sessions and this caveat is gone, so the instruction moved them
- * from one true sentence to the whole 4.4.1 copy. It is a conditional now, true in both sub-cells
- * and in both directions of the open ruling. That is what this table is FOR, and it is next to the
- * function that selects those sentences so the two get read together.
+ * sentence the cell SELECTS.
+ *
+ * **AND THE SENTENCES MAY ONLY ASSERT NECESSITY — which is a rule about this object, not another
+ * cell in the table** (4.5.0 pass 2, Fix 3; review r3's B1 was the third round running to file
+ * this one sentence). [of] reads TWO booleans, and its tier arm answers for every selection, so a
+ * sentence it selects can see one term of `localPreviewArms` and nothing else. Necessity is all a
+ * one-term decision can honestly assert. Each round's blocker was a sufficiency claim beside the
+ * rule: an instruction (*"Download a speech model and live words follow the language you pick"*),
+ * then the same claim with an antecedent (*"Whenever transcription does run on this device…"*) —
+ * which holds with the switch OFF, holds for a selection with no pack, and is satisfied by
+ * `FallbackTranscriptionEngine`'s on-device mirror in a cloud session where the previewer never
+ * armed. `StreamingPackCopy.NO_TIER_SUBTITLE` is now the rule plus the additive promise and no
+ * forward clause at all; after that, this table's job per cell is to check ABSENCE rather than to
+ * re-verify a promise. It is next to the function that selects those sentences so the two get read
+ * together.
  *
  * **The dependency that fourth cell creates is pinned, not assumed.** Every sentence selected
  * here is true because the session dies at connect; if a later change let a modelless session
@@ -123,6 +132,13 @@ package com.whispereverywhere.transcription.stream
  * verdict are `PreviewAutoFetch.card`'s and `StreamingPackCopy.selectorLine`'s. The switch in
  * particular is NOT a third value: it is the user's own off, said by the control itself, and a
  * caveat row explaining a switch one row above it is a screen arguing with itself.
+ *
+ * That last argument is weaker than it reads, and saying so is cheaper than letting a future
+ * reader discover it (review r3's B1(i)): in [NO_LOCAL_TIER]'s own cell the switch row is INSIDE
+ * the branch this axis gates, so no control says it there, and Home's language card never had a
+ * switch at all. What the argument was propping up is gone instead — the sentence no longer makes
+ * a forward promise the switch could falsify, so the switch is not needed as an input to keep it
+ * true. If a later ruling wants a forward promise here, the switch becomes a term FIRST.
  *
  * **The one axis this cannot see is stated rather than hidden, and the question it asks is WHICH
  * DEVICES MAY BE TOLD ABOUT THIS FEATURE — not a cloud predicate** (fix round 1: the earlier
