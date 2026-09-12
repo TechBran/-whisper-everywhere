@@ -300,6 +300,14 @@ multilingual dataset"* phrase an earlier survey quoted appears nowhere in the re
 sherpa-onnx documentation's description.) A **named** restriction is a worse position than an unnamed
 unknown, because it converts *"we did not know"* into *"it was on the card"*.
 
+**What changes on a yes:** the three edits above — **and, if the clearance comes with an attribution
+or a notice condition, one credits line** in `app/src/main/assets/oss_licenses.html`. Today that
+page's Chinese entry names **no corpus at all**, deliberately: the page is an attribution surface,
+and publishing an admission about a restriction counsel has not yet ruled on belongs in the clearance
+record and in this section, which is where it is. The consequence is that nothing on that page points
+at this row, so if counsel attaches a condition the edit has to be made on purpose — nothing will
+prompt it.
+
 **Read this before deciding it row by row.** It is a **Chinese-lane** ruling, not a per-row one:
 every Chinese-**only** alternative carries WenetSpeech **plus** AISHELL-2 **plus** KeSpeech — three
 agreements where this bilingual row carries one, and one of those (KeSpeech) bars *"Adaptations"* and

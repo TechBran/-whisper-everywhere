@@ -559,8 +559,9 @@ class StreamingPackClearanceTest {
      *  - **The Play-prompt row exists and names Play's two statuses.** Play may interpose its own
      *    confirmation or wifi-wait for an on-demand pack this size, nothing in the app can suppress
      *    it, and a device session must not read that as 91's metered card surviving.
-     *  - **Every pack's own size badge appears**, derived here from the pack rather than typed, so a
-     *    re-pinned pack whose bytes changed leaves a visibly stale sheet instead of a quiet one.
+     *  - **Every pack's own size badge appears in §AL**, derived here from the pack rather than
+     *    typed, so a re-pinned pack whose bytes changed leaves a visibly stale sheet instead of a
+     *    quiet one. Scoped to §AL because §AF's prose names three of the same sizes.
      *  - **At least one of the app's own sentences is quoted verbatim** — French's, in full — which
      *    pins the convention that the sheet quotes the copy rather than paraphrasing it. A
      *    paraphrase is how a device session ends up passing a row the app does not satisfy.
@@ -578,6 +579,17 @@ class StreamingPackClearanceTest {
                 "say so, never delete it",
             sheet.contains("AF2.") && sheet.contains("REWRITTEN"),
         )
+        // And the PRESERVATION, not just the label (review round 1, nit 1). "Rewritten in place"
+        // means the text that passed on device is still readable; struck through, it is the only
+        // record of what 91 did, and a reader who deletes it leaves a row that says the opposite of
+        // what a device session once confirmed, with nothing to compare against.
+        assertTrue(
+            "AF2's struck-through 91 text is gone — the rule is that a row which once passed is " +
+                "rewritten with its old expectation still readable, and that sentence " +
+                "(\"nothing downloads until you tap it\") is the only record of what the device " +
+                "session actually confirmed",
+            sheet.contains("~~What it said in 91:") && sheet.contains("downloads until you tap it.**"),
+        )
         for (status in listOf("REQUIRES_USER_CONFIRMATION", "WAITING_FOR_WIFI")) {
             assertTrue(
                 "the sheet needs the Play-prompt row naming $status — nothing in the app can " +
@@ -586,12 +598,18 @@ class StreamingPackClearanceTest {
                 sheet.contains(status),
             )
         }
+        // Scoped to §AL, not to the whole document (review round 1, nit 2): §AF's own prose
+        // already contains "73 MB", "71 MB" and "128 MB" — it is where the unasked-cellular cost
+        // is stated — so a document-wide search would report green over a §AL row that had lost
+        // its badge, which is exactly the row a tester reads the size from.
+        val sectionAL = sheet.substringAfter("## AL —", "")
+        assertTrue("§AL is where the six language rows live and it is not in the sheet", sectionAL.isNotBlank())
         for (pack in StreamingPackCatalog.packs) {
             val badge = StreamingPackCatalog.sizeBadge(pack.totalBytes)
             assertTrue(
-                "the sheet never names '${pack.language}'s size ($badge) — a tester cannot check " +
-                    "a fetch whose size the sheet does not state",
-                sheet.contains(badge),
+                "§AL never names '${pack.language}'s size ($badge) — a tester cannot check a " +
+                    "fetch whose size the row does not state",
+                sectionAL.contains(badge),
             )
         }
         // Whitespace-collapsed, because the sheet wraps its prose at ~100 columns and a quoted
