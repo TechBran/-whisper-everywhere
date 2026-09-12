@@ -170,6 +170,23 @@ class PreviewCanaryClipsTest {
             text = "BANGSA SPANYOL MEMULAI PERIODE KOLONIALISASI",
             source = FLEURS + " id_id/validation id 1636 — truncated after a token boundary",
         ),
+        Clip(
+            language = "ko",
+            asset = "canary_ko_fleurs.wav",
+            bytes = 159_082L,
+            sha256 = "5c362a1cafb426c708f688c0cf29c02bd18f8c48bb79a02154b6196bd7b500ab",
+            samples = 79_519,
+            // The row this table exists for: the bare `▁` at id 3 comes back as its own token,
+            // once per word, and `text` below has lost every one of those spaces. Nine word
+            // tokens on the strip; one run in the text.
+            tokens = listOf(
+                " ", "스", "페", "인", " ", "사", "람", "들", "이", " ", "삼", " ", "세", "기",
+                " ", "동", "안", " ", "지", "속", "된", " ", "시", "민", "제", " ", "시", "대",
+                "를", " ", "시", "작", "했", "다",
+            ),
+            text = "스페인사람들이삼세기동안지속된시민제시대를시작했다",
+            source = FLEURS + " ko_kr/validation id 1636 — truncated after a token boundary",
+        ),
     )
 
     // ------------------------------------------------------------------ the catalogue agrees

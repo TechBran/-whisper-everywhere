@@ -452,14 +452,28 @@ class StreamingPackLanguagesTest {
         )
     }
 
-    @Test fun theKoreanRowHasNoCanaryYetAndTheReasonIsItsCLIPNotItsRule() {
-        // What this row needed was thought to be a different RULE: both its number series are
-        // single characters, `하나` and `다섯` are not whole pieces, and `result.text` collapses the
-        // whole utterance to one token. The last of those is real and measured — but it is a
-        // property of the TEXT, and the canary now scores the STRIP, where the tokens' word spaces
-        // survive `RemoveSpaceBetweenCjk`. So what is outstanding is only the clip, and it must
-        // NOT come from the k2-fsa mirror's `test_wavs`, which is AI-Hub audio.
-        assertNull(StreamingPackCatalog.KO.canary)
+    @Test fun theKoreanCanaryNeededAClipAndNotTheSecondRuleShapeItWasBookedFor() {
+        // This case read `assertNull(KO.canary)` and recorded the reason as a missing RULE: both
+        // number series are single characters, `하나` and `다섯` are not whole pieces, and the clip
+        // "collapses to one token so there are no positions to match". The collapse is real and
+        // measured — `result.text` comes back as one run — but it is a property of the TEXT, which
+        // `RemoveSpaceBetweenCjk` strips of every CJK-adjacent space. The TOKENS keep the spaces,
+        // the canary scores the STRIP, and this row therefore takes an ordinary positional rule
+        // over nine word tokens. The booked second shape (qualification table §6(3)) is still
+        // owed by a monolingual `zh` row, whose characters carry no word marker at all.
+        val canary = StreamingPackCatalog.KO.canary!!
+        assertEquals("canary_ko_fleurs.wav", canary.asset)
+        assertEquals(
+            "six reference words the decode reproduced WHOLE. `3세기` is not among them (the " +
+                "model says `삼 세기`) and neither is `식민지` (it says `시민제`): expecting either " +
+                "would be expecting something this model did not say.",
+            listOf("스페인", "사람들이", "동안", "지속된", "시대를", "시작했다"),
+            canary.rule.expected.map { it.single() },
+        )
+        assertEquals(5, canary.rule.minMatches)
+        // And the row still Keeps its case, which is what makes the strip's rendering the model's
+        // own: a Fold here would lowercase the Latin acronyms this vocabulary really emits.
+        assertEquals(CaseFold.Keep, StreamingPackCatalog.KO.caseFold)
     }
 
     // ---------------------------------------------------------------------------- the set

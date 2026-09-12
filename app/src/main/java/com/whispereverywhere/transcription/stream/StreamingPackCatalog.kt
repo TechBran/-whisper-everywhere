@@ -836,17 +836,53 @@ object StreamingPackCatalog {
         caseFold = CaseFold.Keep,
         emitsPunctuation = true,
         emitsDigits = true,
-        // T3 owns the clip, and this row needs a different RULE as well as a clip: both Korean
-        // number series are single characters in this vocabulary (`둘 492`, `셋 745`, `넷 467`;
-        // `일 29`, `이 4`, `삼 90`, `사 19`, `오 54`) while `하나` and `다섯` are not whole pieces
-        // at all — and positional matching cannot reach them, because a clip that collapses to
-        // one token has no positions. Character-set overlap plus a length band (일이삼사오) is the
-        // shape, which is a second implementation of the seam and not a different alias list.
-        // **And the clip must NOT come from the k2-fsa mirror's `test_wavs`: that is AI-Hub audio.**
-        // This row ARMS UNSCORED until both the clip AND that rule exist, so the FEAT_SME guard is
-        // unpaid for Korean — the longest-carried of the six, because it needs a rule and not just
-        // a WAV.
-        canary = null,
+        // **The clip is FLEURS, and it needed NO new rule shape** (4.5.0 T3).
+        // `canary_ko_fleurs.wav`, 159,082 B, 79,519 samples = 4.970 s — the longest clip in the
+        // catalogue, and the reason is stated below. `google/fleurs` `cc-by-4.0` (see the German
+        // row for where that licence was read), config `ko_kr`, split `validation`, row
+        // **id 1636**, revision `70bb2e84`; attributed on the licence page. MODIFIED: 16 kHz
+        // PCM16 mono via ffmpeg, truncated after a token boundary at 4.8 s + 250 ms from a 6.30 s
+        // original. **Not the k2-fsa mirror's `test_wavs`, which is AI-Hub audio.**
+        //
+        // **THE RULE-SHAPE PROBLEM THIS ROW RECORDED IS REAL AND IS NOT THIS ROW'S.** It said
+        // positional matching cannot reach Korean because the clip collapses to one token. The
+        // collapse is real and measured — `result.text` is `스페인사람들이삼세기동안지속된시민제시대를시작했다`,
+        // one run — but it is a property of the TEXT, which `RemoveSpaceBetweenCjk` strips of every
+        // CJK-adjacent space. The TOKENS keep the spaces: `[" ", "스", "페", "인", " ", "사", …]`,
+        // the bare `▁` at id 3 emitted once per word. The canary now scores
+        // [PreviewText.strip] — the same tokens-not-text rendering the strip paints — so this row
+        // gets nine word tokens and ordinary positional matching. The second rule shape the
+        // qualification table booked (§6(3)) is unnecessary HERE; a monolingual `zh` row, whose
+        // characters carry no word marker at all, would still need it.
+        //
+        // The six positions are reference words the decode reproduced WHOLE: `스페인 사람들이 동안
+        // 지속된 시대를 시작했다`, 6 of 6 in all nine (threads × gain) cells, the 34 tokens
+        // byte-identical in every cell. The two it does not reproduce are excluded and say why the
+        // clip is honest: `3세기` is spoken and written as `삼 세기` (the model spells the numeral
+        // as a word, which is what `emitsDigits` being true is about), and `식민지` comes back
+        // `시민제` — a genuine mis-decode, at 8.25 CER territory for this pack. Expecting either
+        // would be expecting something the model did not say.
+        //
+        // **Why 4.970 s and not 3.8.** At a 3.6 s cut this clip yields four positions, not six;
+        // 37 KB bought two more, and with `minMatches = 5` that is the difference between one drop
+        // of slack and none. Korean is also the row whose clearance is furthest out (AI-Hub/NIA is
+        // a counsel question), so if the bytes are ever wanted back, this is the clip to re-cut.
+        canary = PackCanary(
+            asset = "canary_ko_fleurs.wav",
+            rule = PreviewCanaryRule(
+                expected = listOf(
+                    setOf("스페인"),
+                    setOf("사람들이"),
+                    setOf("동안"),
+                    setOf("지속된"),
+                    setOf("시대를"),
+                    setOf("시작했다"),
+                ),
+                minMatches = 5,
+                // Four times the nine strip tokens measured — the English row's own ratio.
+                maxTokens = 36,
+            ),
+        ),
     )
 
     /**

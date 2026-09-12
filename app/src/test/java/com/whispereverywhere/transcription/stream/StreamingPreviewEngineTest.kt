@@ -149,19 +149,23 @@ class StreamingPreviewEngineTest {
         assertTrue(e.isWarmFor(unsourced))
     }
 
-    @Test fun EVERYCatalogueRowWithNoClipSourcedYetArmsRatherThanDisablingItself() {
-        // The brief's one HARD REQUIREMENT read back off the catalogue rather than off one fixture:
-        // all six new languages must be "fully usable on the internal track" while their clearance
-        // is outstanding, and all six carry `canary = null` today. A seventh row added with an
-        // unset canary — which the brief explicitly permits Task 3 to leave — is covered by the
-        // same loop without editing it.
-        val unsourced = StreamingPackCatalog.packs.filter { it.canary == null }
-        // Non-vacuity, not a census: the per-row `assertNull` pins live in StreamingPackLanguagesTest
-        // and Task 3 will retire them one clip at a time. This one line is what to relax on the day
-        // every row has a clip — and until then it guarantees the loop below actually ran.
-        assertTrue("the loop must have rows to run over", unsourced.isNotEmpty())
-        assertFalse("English's clip is bundled; a null there would be a regression", StreamingPackCatalog.EN in unsourced)
-        for (p in unsourced) {
+    @Test fun ANYRowWithNoClipSourcedYetArmsRatherThanDisablingItself() {
+        // **The day this case named has arrived.** It used to loop over the catalogue's rows with
+        // `canary == null` — all six new languages — and its own comment said the non-vacuity line
+        // was "what to relax on the day every row has a clip". 4.5.0 T3 gave the last of them one,
+        // so the census flips and the CONSEQUENCE is tested on synthetic rows instead.
+        //
+        // The consequence still matters: `canary = null` remains a legal state (PackCanary's
+        // docblock is the argument, and the brief explicitly permits a row to be left unset), and
+        // an eighth language would arrive in exactly this shape — a real row with no clip. What
+        // must never happen is the B1 regression, where such a row disabled itself on first warm
+        // and the owner could not hear ANY language work on his own device.
+        assertTrue(
+            "every catalogue row now carries a clip; if one goes null again, this test still " +
+                "covers it (the loop below is over copies), but say so deliberately",
+            StreamingPackCatalog.packs.none { it.canary == null },
+        )
+        for (p in StreamingPackCatalog.packs.map { it.copy(canary = null) }) {
             logs.clear()
             val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
             val e = engine(rec, clip = null)
