@@ -1,6 +1,7 @@
 package com.whispereverywhere.transcription.stream
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -166,7 +167,7 @@ class PreviewPackMetadataTest {
     }
 
     @Test fun theRecordedFlagsAreWhatThePacksOwnTokensFileSays() {
-        val tokens = payloadFile(pack.tokens.name, pack.tokens.bytes)
+        val tokens = payloadFile(pack, pack.tokens.name, pack.tokens.bytes)
         assumeTrue("the pack payload is absent from a clean clone", tokens != null)
         val facts = PackTokenFacts.of(tokens!!)
         // The census, line by line — and the correction to 4.4.0's pinned comment, which said
@@ -199,13 +200,121 @@ class PreviewPackMetadataTest {
         assertTrue("and the row takes it", pack.caseFold is CaseFold.Fold)
     }
 
-    /** The encoder under the pack module's payload directory, or null when it has not been placed. */
-    private fun payloadEncoder(): File? = payloadFile(pack.encoder.name, pack.encoder.bytes)
+    // ------------------------------------------------------- every row, not just the shipping one
 
-    /** One payload file at its pinned byte count, or null — the payload is a BUILD artifact. */
-    private fun payloadFile(name: String, bytes: Long): File? {
+    @Test fun everyRowsRecordedMetadataIsWhatItsOwnEncoderFileSays() {
+        // (4.5.0 T1) The same corroboration as the English arm above, over the whole catalogue —
+        // and it is the ONLY reader in the suite that can catch a literal typed wrong against
+        // bytes that are right, which is exactly the direction six new rows make easy. It runs
+        // wherever `tools/build_asset_packs.py` has placed a payload and is SKIPPED where it has
+        // not, so a clean clone is green and a machine that has built the packs is strict.
+        var checked = 0
+        for (p in StreamingPackCatalog.packs) {
+            val encoder = payloadFile(p, p.encoder.name, p.encoder.bytes) ?: continue
+            checked++
+            val meta = OnnxMetadata.read(encoder)
+            assertEquals("${p.language} model_type", p.modelType, meta["model_type"])
+            assertEquals("${p.language} decode_chunk_len", p.decodeChunkLen.toString(), meta["decode_chunk_len"])
+            assertEquals("${p.language} T", p.encoderT.toString(), meta["T"])
+            // The STREAMING tell, per family. A zipformer2 online export writes
+            // `comment = "streaming zipformer2"` and the two head-dims keys; its OFFLINE twin
+            // writes `comment = "non-streaming zipformer2"` and omits decode_chunk_len and both
+            // head-dims keys — one Range read separates them, and it is how four plausible ja/vi
+            // candidates a name search would have promoted were killed.
+            //
+            // A `zipformer` V1 export writes NEITHER a comment NOR the head-dims keys, and that
+            // is not a defect: `OnlineZipformerTransducerModel` does not read them. For v1 the
+            // tell is `decode_chunk_len` itself, asserted just above.
+            when (p.modelType) {
+                "zipformer2" -> {
+                    assertEquals("${p.language} comment", "streaming zipformer2", meta["comment"])
+                    for (key in listOf("query_head_dims", "value_head_dims", "num_heads")) {
+                        assertTrue("${p.language}: $key is present on a zipformer2 export", meta.containsKey(key))
+                    }
+                }
+                "zipformer" -> {
+                    // The keys the v1 encoder reader takes, all seven, each through a macro whose
+                    // miss path is `_Exit(-1)`. A row missing one of these is an uncatchable
+                    // process kill and not a caught load failure, which is why it is asserted
+                    // against the FILE and not remembered.
+                    for (key in listOf(
+                        "encoder_dims", "attention_dims", "num_encoder_layers",
+                        "cnn_module_kernels", "left_context_len", "T", "decode_chunk_len",
+                    )) {
+                        assertTrue("${p.language}: v1 encoder key $key is absent", meta.containsKey(key))
+                    }
+                    assertFalse("${p.language}: a v1 export carries no comment", meta.containsKey("comment"))
+                    assertFalse("${p.language}: a v1 export carries no query_head_dims", meta.containsKey("query_head_dims"))
+                }
+                else -> throw AssertionError("${p.language}: unhandled family '${p.modelType}'")
+            }
+        }
+        assumeTrue("no pack payload has been placed on this machine", checked > 0)
+    }
+
+    @Test fun everyRowsDECODERCarriesTheTwoKeysTheSameReaderTakesOffIt() {
+        // The half the qualification table did not check. The transducer readers take NINE keys,
+        // not seven: seven off the encoder and `vocab_size` + `context_size` off the DECODER,
+        // through the same `SHERPA_ONNX_READ_META_DATA` macro and therefore the same `_Exit(-1)`.
+        // A row whose encoder is complete and whose decoder is not dies the same uncatchable way.
+        var checked = 0
+        for (p in StreamingPackCatalog.packs) {
+            val decoder = payloadFile(p, p.decoder.name, p.decoder.bytes) ?: continue
+            checked++
+            val meta = OnnxMetadata.read(decoder)
+            assertTrue("${p.language}: the decoder must carry vocab_size", meta.containsKey("vocab_size"))
+            assertEquals("${p.language}: context_size", "2", meta["context_size"])
+        }
+        assumeTrue("no pack payload has been placed on this machine", checked > 0)
+    }
+
+    @Test fun everyRowsCopyFlagsAreWhatItsOwnTokensFileSays() {
+        // The flags are DERIVED, per row, from the row's own vocabulary — so adding a language is
+        // a mechanical read and not a judgement copied forward. The two booleans are computable
+        // from a token file; the case decision is not (English is 495 upper / 0 lower and MUST
+        // fold while the monolingual zh row is 0 / 0 and must NOT), so what is asserted for it is
+        // SUFFICIENCY, one-directionally.
+        var checked = 0
+        for (p in StreamingPackCatalog.packs) {
+            val tokens = payloadFile(p, p.tokens.name, p.tokens.bytes) ?: continue
+            checked++
+            val facts = PackTokenFacts.of(tokens)
+            assertEquals("${p.language} emitsPunctuation", p.emitsPunctuation, facts.emitsPunctuation)
+            assertEquals("${p.language} emitsDigits", p.emitsDigits, facts.emitsDigits)
+            when (p.caseFold) {
+                // No row in THIS catalogue overrides the suggestion: every folding row's own
+                // vocabulary proves the fold cannot lose a character. `tr` would be the first
+                // override (448 lower / 34 upper is mixed and the table rules Fold anyway), and
+                // this assertion is what would make that row have to carry its reason in writing.
+                CaseFold.Fold -> assertTrue(
+                    "${p.language}: a Fold row here must be one its own tokens.txt proves is " +
+                        "lossless — single-case AND no byte fallback",
+                    facts.foldIsProvablyLossless,
+                )
+                CaseFold.Keep -> assertFalse(
+                    "${p.language}: a Keep row's vocabulary must have case worth keeping",
+                    facts.foldIsProvablyLossless,
+                )
+            }
+        }
+        assumeTrue("no pack payload has been placed on this machine", checked > 0)
+    }
+
+    /** The encoder under the pack module's payload directory, or null when it has not been placed. */
+    private fun payloadEncoder(): File? = payloadFile(pack, pack.encoder.name, pack.encoder.bytes)
+
+    /**
+     * One payload file at its pinned byte count, or null — the payload is a BUILD artifact.
+     *
+     * The directory is the pack's OWN (`<packName>/src/main/assets/<packName>/`), because Play
+     * strips a `#group_` suffix on delivery and these packs carry none, so the delivered directory
+     * is the pack's name — and no two packs may ship the same entry path. A row with no pack
+     * module is fallback-only and has no payload directory to look in.
+     */
+    private fun payloadFile(pack: StreamingPack, name: String, bytes: Long): File? {
+        val module = pack.packName ?: return null
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
-        val relative = "${StreamingPackCatalog.PACK_EN}/src/main/assets/${StreamingPackCatalog.PACK_EN}/$name"
+        val relative = "$module/src/main/assets/$module/$name"
         while (dir != null) {
             val candidate = File(dir, relative)
             if (candidate.isFile && candidate.length() == bytes) return candidate
