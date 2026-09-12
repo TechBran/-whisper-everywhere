@@ -439,6 +439,68 @@ class StreamingPackClearanceTest {
         )
     }
 
+    // ------------------------------------------- 7. the sheet the promotion decision is made on
+
+    /**
+     * **The gate is only a gate if the promotion decision reads it.** The acceptance sheet is where
+     * a promotion is actually decided in this repo — §Z, §AF and now §AL each end in a "promote
+     * when…" line — so §AL0 names the record by its symbol, and this holds it there.
+     *
+     * The rest of what is asserted is the sheet's own honesty about the app:
+     *
+     *  - **AF2 survives and is marked REWRITTEN.** It passed on device in 91 and now describes the
+     *    opposite behaviour, after the owner ruled the metered test out of the feature. A deleted
+     *    row is how a regression gets mistaken for a fix, so the rule is that it is rewritten in
+     *    place with its old text still readable.
+     *  - **The Play-prompt row exists and names Play's two statuses.** Play may interpose its own
+     *    confirmation or wifi-wait for an on-demand pack this size, nothing in the app can suppress
+     *    it, and a device session must not read that as 91's metered card surviving.
+     *  - **Every pack's own size badge appears**, derived here from the pack rather than typed, so a
+     *    re-pinned pack whose bytes changed leaves a visibly stale sheet instead of a quiet one.
+     *  - **At least one of the app's own sentences is quoted verbatim** — French's, in full — which
+     *    pins the convention that the sheet quotes the copy rather than paraphrasing it. A
+     *    paraphrase is how a device session ends up passing a row the app does not satisfy.
+     */
+    @Test fun theAcceptanceSheetsPromotionGateReadsTheClearanceRecord() {
+        val sheet = repoFile("docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md")
+            .readText().replace("\r\n", "\n")
+        assertTrue(
+            "the acceptance sheet's promotion gate must name the record it consults",
+            sheet.contains("PackClearanceRecord.PRODUCTION_CLEARED"),
+        )
+        assertTrue("§AL must exist — the six languages need their own rows", sheet.contains("## AL —"))
+        assertTrue(
+            "AF2 passed on device in 91 and now describes the opposite: rewrite it in place and " +
+                "say so, never delete it",
+            sheet.contains("AF2.") && sheet.contains("REWRITTEN"),
+        )
+        for (status in listOf("REQUIRES_USER_CONFIRMATION", "WAITING_FOR_WIFI")) {
+            assertTrue(
+                "the sheet needs the Play-prompt row naming $status — nothing in the app can " +
+                    "suppress that dialog, and a device session must not read it as the metered " +
+                    "card surviving",
+                sheet.contains(status),
+            )
+        }
+        for (pack in StreamingPackCatalog.packs) {
+            val badge = StreamingPackCatalog.sizeBadge(pack.totalBytes)
+            assertTrue(
+                "the sheet never names '${pack.language}'s size ($badge) — a tester cannot check " +
+                    "a fetch whose size the sheet does not state",
+                sheet.contains(badge),
+            )
+        }
+        // Whitespace-collapsed, because the sheet wraps its prose at ~100 columns and a quoted
+        // sentence crosses a line break there. What is being pinned is the WORDS, not the wrapping.
+        val flowed = sheet.replace(Regex("""\s+"""), " ")
+        assertTrue(
+            "the sheet must quote the app's own per-pack sentence verbatim, not paraphrase it",
+            flowed.contains(
+                StreamingPackCopy.stripNote("French", StreamingPackCatalog.FR.stripShape),
+            ),
+        )
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private fun clearedForTest(): ClearanceVerdict.Cleared = ClearanceVerdict.Cleared(

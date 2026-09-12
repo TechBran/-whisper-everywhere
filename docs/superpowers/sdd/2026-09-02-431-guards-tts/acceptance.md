@@ -705,9 +705,31 @@ AF1. **The top-up, on wifi.** With the pack NOT installed, English picked, and a
     and live words then work. This is the row the whole release exists for — the user who had 4.4.0 and
     would never have found the setting.
     `[ ] PASS  [ ] FAIL`
-AF2. **The same on cellular.** EXPECTED: the card appears with a one-tap fetch naming the size, and
-    **nothing downloads until you tap it.** The app has never spent mobile data unasked and must not
-    start here.
+AF2. **The same on cellular — REWRITTEN in 4.5.0, and it now expects the OPPOSITE.** This row is
+    kept rather than deleted because it PASSED on device in 91, and a row that once passed and now
+    describes the opposite is how a regression gets mistaken for a fix.
+    ~~What it said in 91: "the card appears with a one-tap fetch naming the size, and **nothing
+    downloads until you tap it.** The app has never spent mobile data unasked and must not start
+    here."~~
+    That behaviour is deliberately **gone**. The owner ruled the metered test out of the feature
+    (2026-09-11: *"Yes. I wanted to silently download on cellular and Wi Fi"*, after the cellular
+    cost was put to him). `isUnmetered()` is deleted from the app — `NET_CAPABILITY_NOT_METERED`
+    appears nowhere in `src/main` — and `PreviewAutoFetch` has no metered term left; that file
+    carries the quote and the date in its own KDoc (`PreviewAutoFetch.kt:19-46`) so the cell cannot
+    be rewritten a fourth time by whichever scratch document a reader finds first.
+    EXPECTED now: **on cellular, with no card in the way and no tap, the model fetches exactly as it
+    does on wifi.** What survives is not a data gate but a working-network test
+    (`INTERNET && VALIDATED`), so a captive-portal wifi does not park the pack behind the 24 h
+    back-off.
+    The cost, stated rather than discovered later: this can spend **up to 128 MB** of mobile data
+    unasked (French is the largest pack; English 73 MB, German 71 MB), including for a language
+    picked before the last app update. That is the ruling, not a defect. What makes it a deal rather
+    than a surprise is the copy at the point of choice, and with no tap gate left those two
+    sentences are the ONLY disclosure the product has — **AL7**.
+    FAIL: a card that withholds the download until tapped on cellular. That is 91's behaviour
+    surviving, and it means the ruling did not land.
+    **Do not read a Google Play confirmation as this row failing — that is AL8, and it is Play's
+    dialog, not ours.**
     `[ ] PASS  [ ] FAIL`
 AF3. **A delete stays deleted.** Delete the model in Settings, then reopen the app. EXPECTED: it does
     NOT come back. A delete is a decision.
@@ -756,3 +778,188 @@ breakage. If you hit either, note it and move on — they are already scheduled.
 **Promote 91 when AF1, AF2, AF3, AF7, AF8 and AF9 pass.** AF1/AF2 are the delivery promise and the data
 promise; AF3 is the respect-a-decision promise; AF7/AF8/AF9 are the three sentences this build made
 literal. AF5/AF6/AF10/AF11 are informative — a failure there is a bug report, not a gate.
+
+---
+
+## AL — six languages (92 / 4.5.0)
+
+**What 4.5.0 adds.** Six more streaming Zipformer packs, one per language: **French, German, Russian,
+Indonesian, Korean and Chinese**. Each is a separate on-demand download that arrives when you pick
+that language, and each puts *its own language's* words on the bubble strip while you speak.
+
+**Nothing here touches your transcript.** The previewer is additive: whisper still cuts the
+utterances, its final still replaces the preview, and the final is what gets typed. That is the only
+reason it is defensible to ship a language nobody on this project speaks — a wrong preview costs
+throwaway words on a replace-only strip. **A failure in any AL row is a live-words failure only.**
+
+**Auto is unchanged and gets nothing**, in all six languages, exactly as AF7/AF9 already require.
+
+### AL0 — THE CLEARANCE GATE. Read this before promoting, not after
+
+**This is not a device row.** It is the reason the build exists in this shape, and it is the one row
+that gates the store.
+
+Your decision of 2026-09-12: *"Let's set up all 6 languages and before we publish to customers I will
+do the research and the email."* And: *"I still will need to be able to test on internal testing track
+before the legal stuff."*
+
+So:
+
+- **All six languages are in the bundle and fully usable on the internal track today**, with five
+  clearances still outstanding. There is no build-time exclusion and there must never be one; the
+  clearance state reaches nothing the build or the app reads, and a test proves that by reading the
+  sources (`StreamingPackClearanceTest.theClearanceStateReachesNothingTheAppRuns`).
+- **Production promotion is gated on the record.** Before promoting to production, read
+  `PackClearanceRecord.PRODUCTION_CLEARED` in
+  `app/src/main/java/com/whispereverywhere/transcription/stream/StreamingPackClearance.kt`. **It must
+  name every language in `StreamingPackCatalog.packs`.** Today it names `en` and `fr`, and the gate
+  reports `Withheld([de, ru, id, ko, zh])`.
+- **The checklist is `docs/LANGUAGE-CLEARANCE.md`** — one section per outstanding language, with the
+  exact question, where the evidence lives, and the three edits that record an answer. German is one
+  email; Russian is your own risk call on an undisclosed corpus; Indonesian, Korean and Chinese want
+  counsel.
+
+`[ ] the record names every shipped language — promotion may proceed`
+`[ ] it does not — INTERNAL TRACK ONLY`
+
+### The six rows
+
+Each row is the same four things: **it fetches, it arms, the words are its own language's, and your
+typed transcript is untouched.** Do them one language at a time, and pick the language in the app's
+own picker (onboarding's language step is AL7's other half).
+
+AL1. **French.** Pick French. EXPECTED: a **128 MB** fetch starts with no tap, the progress strip
+    shows above the selector, and after it installs a session puts French words on the bubble about
+    **0.4 s** behind your voice — the same cadence as English (320 ms), so the measured figure
+    transfers. The app's own sentence for this pack is *"The French preview is made of words: no
+    punctuation, no numerals and no capitals. The typed transcript is unchanged."* — check the strip
+    against it: ALL words, no `.` or `,`, no digits, and lowercase. Accents are correct French
+    (`é`, `ç`, `œ`). FAIL: English words on the strip, or a strip that stays blank through a whole
+    utterance while the transcript arrives.
+    `[ ] PASS  [ ] FAIL`
+AL2. **German.** Pick German. EXPECTED: a **71 MB** fetch, ~**0.4 s** lag (320 ms cadence), and
+    German words on the strip. This pack's sentence is the one that differs: *"…no punctuation, no
+    numerals and no capitals, **including nouns**."* **German nouns arriving lowercase is CORRECT
+    here and is not a failure** — the model's vocabulary has no capitals to give, and the sentence
+    says so before you see it, which is the whole reason it says "including nouns". FAIL: the
+    sentence in the app omits "including nouns" while the strip lowercases them.
+    `[ ] PASS  [ ] FAIL`
+AL3. **Russian.** Pick Russian. EXPECTED: a **29 MB** fetch — the smallest pack in the catalogue —
+    Cyrillic words on the strip, and no punctuation or numerals.
+    **THE JUDGEMENT THIS ROW ASKS OF YOU:** this pack decodes at **640 ms**, twice English's
+    cadence, so its word lag is an INFERRED **0.56-0.72 s** against the 0.401 s you validated for
+    English. Nobody has measured it on a device. **Say whether that still reads as "live" or whether
+    it reads as lag** — the answer applies to Indonesian too, and it is a product ruling, not a bug
+    report. Note it here with the device you judged it on:
+    `[ ] feels live  [ ] feels late  device: ____________`
+    `[ ] PASS  [ ] FAIL`
+AL4. **Indonesian.** Pick Indonesian. EXPECTED: a **71 MB** fetch, Latin words, no punctuation and
+    **no numerals at all** (this vocabulary is cleaner than English's on that point). Same **640 ms**
+    cadence as Russian, so AL3's judgement covers it — if the two disagree on your device, say so.
+    `[ ] PASS  [ ] FAIL`
+AL5. **Korean.** Pick Korean. EXPECTED: a **73 MB** fetch, ~**0.4 s** lag (320 ms), and Hangul on the
+    strip **with spaces between the words**. Two things this pack does that no other does, and both
+    are in its own sentence — *"made of words, exactly as the model writes them: punctuation and a
+    numeral can appear"*:
+    - **`.` `?` `,` `!` may appear on the strip.** Correct, not a defect.
+    - **A numeral may appear.** Also correct: this vocabulary has all ten standalone digits, which is
+      why the "no numerals" claim every other row makes is deliberately absent here.
+    FAIL: Hangul arriving as one unbroken run with no spaces (the strip is built from tokens
+    precisely to keep them), or an empty box / `?` glyph on the strip.
+    `[ ] PASS  [ ] FAIL`
+AL6. **Chinese.** Pick Chinese. EXPECTED: a **50 MB** fetch, ~**0.4 s** lag (320 ms), and **Chinese
+    characters** on the strip — this row's sentence names characters and not words, and adds *"with
+    any English in it as words"*. So the row to actually exercise: **say an English word or an
+    acronym in the middle of a Chinese sentence.** EXPECTED: the Chinese arrives as characters and
+    the English arrives as words, in the same strip. This is the only pack in the catalogue that can
+    do that. **The English half arrives lowercase** — this vocabulary's Latin is all-caps and
+    single-case, so the strip folds it exactly as the English pack does, which is why the row's
+    sentence says "no capitals". An acronym reading `nba` on the strip is correct here, and the
+    transcript underneath still types `NBA`.
+    `[ ] PASS  [ ] FAIL`
+
+### The two rows the route build owes
+
+AL7. **The disclosure, at BOTH selection sites.** With no tap gate left on cellular (AF2), these two
+    sentences are the only disclosure the product has, and a first-run user's first pick is an
+    onboarding pick — so both must be there.
+    - **In-app picker (Home).** Above the language field: *"Switch to a language with a preview
+      model and that model is downloaded and becomes your preview model. The menu names the size of
+      each language that has one; your typed transcript is the same either way."* Then **open the
+      menu**: each of the seven languages that has a pack carries its own badge —
+      `Live words · 128 MB` on French, `Live words · 29 MB` on Russian, `· 71 MB` on German and
+      Indonesian, `· 73 MB` on English and Korean, `· 50 MB` on Chinese — and **every other language
+      in the list carries none.** No two of these figures is a shared literal; each is rounded from
+      that pack's own byte count.
+    - **Onboarding's language step.** *"Live words on the bubble follow the language you pick: each
+      language with a preview model says so on its own row, and Auto-detect shows none at all. The
+      preview model for the language you pick is downloaded once setup finishes. Your typed
+      transcript is the same either way."* Here the seven rows carry the badge **and** that pack's
+      own sentence (AL1-AL6's wording), because this is the screen where the pick is made first. The
+      future tense is deliberate: nothing downloads while this step is on screen, since the engines
+      step comes after it.
+    **Deliberate, and not a failure:** on a device with **no on-device speech model installed**,
+    neither the picker sentence nor any badge renders — the claim would be false there, because
+    switching language downloads nothing without a local tier. The sentence under the field is what
+    that reader gets instead.
+    FAIL: either sentence missing on a device that HAS a local tier; a badge on a language with no
+    pack; or one shared figure repeated across rows of different sizes.
+    `[ ] PASS  [ ] FAIL`
+AL8. **THE GOOGLE PLAY PROMPT — and why it is not AF2 failing.** These are large on-demand packs, and
+    for a transfer this size **Google Play may raise its OWN dialog**: a cellular-data confirmation,
+    or a wait-for-wifi. Play's own statuses `REQUIRES_USER_CONFIRMATION` and `WAITING_FOR_WIFI` both
+    arrive as one phase in this app (`AWAITING_ANSWER`), and **nothing in the app can suppress
+    them.** *"Silently"* is as silent as Play allows; nothing of OURS asks for anything.
+    EXPECTED, if Play does interpose: the card and the Settings row say Play needs your confirmation
+    and end in *"tap to answer"*, the card offers **"Answer Google Play"**, and tapping it re-shows
+    **Play's** dialog — because Play raises that dialog once per entry into the state, so a user who
+    backed out of it would otherwise be stranded on an instruction with no gesture.
+    **Do not record this as the metered card surviving.** The 91 card was OURS and withheld the
+    download; this one is Play's and is asking about the same bytes we already decided to spend. If
+    you see it, note WHICH prompt and on which connection:
+    `[ ] Play asked (confirmation / wifi-wait): ____________  [ ] Play never asked`
+    `[ ] PASS  [ ] FAIL`
+
+### Two more worth doing once
+
+AL9. **One bad language does not take the others down.** Each pack has its own start-up canary — its
+    own clip, its own scoring rule, its own verdict — so a pack that fails on your device disables
+    **only that language**. Five new clips ride in the APK for this and two packs share the one that
+    was already there: French is synthesized in-repo from the read-aloud voice; German, Russian,
+    Indonesian and Korean are FLEURS utterances (attributed on the licences screen, as CC BY 4.0
+    requires); and Chinese reuses the bundled English digits clip unchanged, at zero added bytes.
+    EXPECTED: if any language shows no live words at all on this device, the other five still do.
+    Note which: `____________`
+    `[ ] PASS  [ ] FAIL  [ ] N/A — all six worked`
+AL10. **Auto, with six more packs available.** On Auto-detect: **no live words in any language**, no
+    card, no download, and the rows say live words need a chosen language. Your transcript still
+    arrives per utterance. This is AF7/AF9 re-run with six more ways to get it wrong.
+    `[ ] PASS  [ ] FAIL`
+
+### Known limitations of §AL, stated rather than discovered later
+
+- **The canary still has no user-visible voice** (§Z's own known limitation, unchanged and now
+  multiplied by seven): a device where one pack's canary fails shows a row saying the model is
+  installed, a switch saying live words are on, and no live words, with nothing explaining why. AL9
+  is the manual substitute for the sentence the app cannot yet say.
+- **The 640 ms pair (Russian, Indonesian) has never been timed on a device.** Their lag is inferred
+  from their cadence. AL3 is where that becomes a ruling.
+- **The Chinese pack's Chinese half is unguarded by its canary.** Its clip is the bundled English
+  one, which exercises only the English half; a Chinese clip needs a scoring rule this build does not
+  have (a Chinese decode collapses to one token, which positional matching cannot express). So AL6's
+  code-switch check is doing real work no test does.
+- **Korean's numerals and punctuation are in its sentence but not corroborated by its clip** — the
+  clip's expected pieces contain neither, so AL5 is where "a numeral can appear" is actually seen.
+- **Do not cite French's WER as 9.95.** The repository's `RESULTS.md` advertises 9.95 for a
+  *different* checkpoint, trained with GigaSpeech, whose terms are non-commercial-only. This export's
+  own number is **10.57**. The figure matters outside engineering: quoting 9.95 in a listing or to
+  counsel imports an encumbrance these bytes do not carry.
+
+**Promote 92 to the INTERNAL TRACK when AL1-AL6, AL7 and AL10 pass.** The six language rows are what
+the build is; AL7 is the whole of the disclosure now that the tap gate is gone; AL10 is the promise
+that Auto users were not changed. AL8 and AL9 are informative — a Play prompt is Play's, and a single
+failing canary is a per-language report rather than a gate.
+
+**Promote 92 to PRODUCTION only when AL0 also passes** — that is,
+`PackClearanceRecord.PRODUCTION_CLEARED` names every shipped language. Five of the six are outstanding
+today, so the honest state of this sheet is: **internal track yes, production no.**
