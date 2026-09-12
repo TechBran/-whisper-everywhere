@@ -230,8 +230,9 @@ class PreviewPackLayoutTest {
             // `src/main/assets/preview_fr/*.tmp` still CONTAINS `src/main/assets/preview_fr/*`, so
             // a substring count cannot tell a wall from a wall with a hole in it. Measured: that
             // one-word edit leaves 128 MB of French encoder committable and the substring form of
-            // this pin stays green. (preview_en's and tts_kokoro's own pins are still written the
-            // substring way — noted for their owners; this loop covers all seven preview packs.)
+            // this pin — which is the form it had when it covered preview_en alone — stays green.
+            // (TtsPackLayoutTest.kt:149 is still written the substring way over the voice pack's
+            // 350 MB. Not this loop's to fix, and left for its owner rather than reached into.)
             val lines = read("$module/.gitignore").lines().map { it.trim() }
             assertEquals(
                 "$module/.gitignore must wall the payload directory's contents with the LINE " +
