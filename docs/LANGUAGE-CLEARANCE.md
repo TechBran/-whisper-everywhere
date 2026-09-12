@@ -63,11 +63,12 @@ that puts anything on the strip when an English speaker talks mid-Chinese.
 
 ---
 
-## When an answer arrives: the three edits
+## When an answer arrives: the three edits, and one line nothing enforces
 
-Say the German author replies and confirms his Apache-2.0. Recording that takes **three** edits, and
-the third is friction on purpose — it is what makes an invented clearance show up as a diff. The
-list is exhaustive: applied as written, on this tree, the suite ends green.
+Say the German author replies and confirms his Apache-2.0. Recording that takes **three** edits that
+the suite enforces — the third is friction on purpose, it is what makes an invented clearance show up
+as a diff — **plus one sentence on the acceptance sheet that no test can see** (step 4). The list is
+exhaustive: applied as written, on this tree, the suite ends green.
 
 **1. The verdict**, in `StreamingPackClearance.kt`. Replace that row's
 `ClearanceVerdict.Outstanding(...)` with:
