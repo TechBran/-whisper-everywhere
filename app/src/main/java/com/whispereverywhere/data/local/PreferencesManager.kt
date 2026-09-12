@@ -173,12 +173,23 @@ class PreferencesManager(private val context: Context) {
      *
      * (4.5.0 Task 3b) It also RECORDS THE PICK, because it is the one place that can see a pick
      * happen: `selectedLanguage` answers *"which language is selected"* and can never answer
-     * *"did the user just choose it"*, and the owner's ruling of 2026-09-11 divides on exactly
-     * that — an unasked top-up waits for wifi, a pick downloads at once. Recording a FACT about a
-     * gesture is not owning a download: the 4.4.1 amendment's rule that *"a SharedPreferences
-     * writer called from Compose click handlers has no business owning a download"* still holds,
-     * and the decision that turns a pick into an arrival is where it always was
-     * (`PreviewAutoFetch.decide`, from Home's card).
+     * *"did the user just choose it"*, and the UNASKED path's two cautions divide on exactly
+     * that — a gesture this process watched skips the wait for a network that WORKS and the 24 h
+     * back-off after a failure, and a standing selection left over from an earlier launch does
+     * not. That, and `PreviewWork.starter` for Task 1's observable, is the whole of what the
+     * register buys; `PreviewPicks`' own KDoc is its home.
+     *
+     * **It is NOT a question about what the bytes COST** (4.5.0 pass 2, Fix 1). This paragraph
+     * used to hand the split to the owner by name and by date and state it as a wifi asymmetry,
+     * and that was the middle of three rulings rather than the settled one. The owner settled it
+     * the other way, asked directly and answered directly: *"Yes. I wanted to silently download
+     * on cellular and Wi Fi."* Both starters download on any connection, there is no metering
+     * test left anywhere in this feature, and `PreviewAutoFetch`'s KDoc is that ruling's home.
+     *
+     * Recording a FACT about a gesture is not owning a download: the 4.4.1 amendment's rule that
+     * *"a SharedPreferences writer called from Compose click handlers has no business owning a
+     * download"* still holds, and the decision that turns a pick into an arrival is where it
+     * always was (`PreviewAutoFetch.decide`, from Home's card).
      *
      * The pick is noted BEFORE the flow is written, and the order is DETERMINISM rather than
      * correctness (review r1's nit 1 — the first version of this comment claimed it was

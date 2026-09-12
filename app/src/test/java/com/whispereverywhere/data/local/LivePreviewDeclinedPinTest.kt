@@ -26,7 +26,9 @@ import org.junit.Test
  *    pass 2, Fix 1). The owner: *"Yes. I wanted to silently download on cellular and Wi Fi."* So
  *    the question *"may this app spend these bytes"* is not asked anywhere, and the question that
  *    survives — *"is there a network that works"* — has one spelling, because a doomed fetch
- *    parks the pack behind a 24 h back-off.
+ *    parks the pack behind a 24 h back-off. **And no SENTENCE in the main tree still states the
+ *    overruled rule either** (fix round 1, review r1's B1): the code walk is comment-blind by
+ *    design, so the prose gets its own walk, which is comment-inclusive by the same design.
  *  - **and *"the user has seen live words"* is written when the session OPENS** (4.5.0 T4 fix
  *    round 1, review r1's B1). It used to be written wherever the previewer's gate armed, and
  *    that gate has no tier term: on a device with no speech model and no configured provider it
@@ -146,6 +148,26 @@ class LivePreviewDeclinedPinTest {
     private fun mainSourcesSaying(needle: String): List<String> =
         everyMainSource
             .filter { liveLineCount(it.readText().replace("\r\n", "\n"), needle) > 0 }
+            .map { it.name }.distinct().sorted()
+
+    /**
+     * The files whose text contains [needle] ANYWHERE — **comments included**, which is the one
+     * place in this file that rule is inverted, deliberately (4.5.0 pass 2, fix round 1, review
+     * r1's B1).
+     *
+     * Its neighbour [mainSourcesSaying] hunts a READ and must be comment-blind, so the home of a
+     * deleted rule can still name what it deleted. This one hunts a SENTENCE: an overruled rule
+     * restated in the present tense, in prose, is the harm — and every instance of it found so
+     * far has been in a KDoc, where a comment-blind walk cannot reach by construction. A pin that
+     * skips comments is no pin at all for prose.
+     *
+     * The escape hatch for a legitimate historical note is the PAST tense, which is also the only
+     * honest tense for a rule that no longer holds: *"this comment used to say…"* passes, *"an
+     * unasked top-up waits for…"* does not.
+     */
+    private fun mainSourcesMentioning(needle: String): List<String> =
+        everyMainSource
+            .filter { it.readText().contains(needle, ignoreCase = true) }
             .map { it.name }.distinct().sorted()
 
     // ------------------------------------------------------------------ the flag
@@ -377,15 +399,58 @@ class LivePreviewDeclinedPinTest {
         // A WALK rather than a list of files, for the reason the mechanism walk in
         // `PreviewUnreachableTest` is one: a fix round that corrects the sites a reviewer happened
         // to name leaves the ones nobody cited.
+        //
+        // The last two needles are review r1's nit 1: the first three leave two holes a wifi gate
+        // would fall straight through. `NET_CAPABILITY_NOT_METERED` is not a substring of
+        // `NET_CAPABILITY_TEMPORARILY_NOT_METERED`, and against `DownloadManager` the gate would
+        // most naturally be written as `setAllowedNetworkTypes(...NETWORK_WIFI)` rather than by
+        // reading a capability at all. Neither spelling appears in the tree today.
         for (needle in listOf(
             "NET_CAPABILITY_NOT_METERED",
+            "NET_CAPABILITY_TEMPORARILY_NOT_METERED",
             "isActiveNetworkMetered",
             "setAllowedOverMetered(false)",
+            "setAllowedNetworkTypes(",
         )) {
             val found = mainSourcesSaying(needle)
             assertEquals(
                 "<<$needle>> is a question about what the bytes COST, and the owner ruled that " +
                     "this feature does not ask it. Found: $found",
+                emptyList<String>(),
+                found,
+            )
+        }
+    }
+
+    @Test fun noSentenceInMainSourceStillStatesTheRuleTheOwnerOverruled() {
+        // **THE OTHER HALF OF THE SAME INSTRUMENT** (4.5.0 pass 2, fix round 1 — review r1's B1),
+        // and the root cause it closes, stated once: the ruling's CODE got a whole-tree walk in
+        // pass 2 (the test above) while the ruling's PROSE got a hand-listed set of six files. So
+        // three sentences asserting the DELETED rule survived the sweep — one of them in
+        // `src/main`, in `PreferencesManager.setSelectedLanguage`'s KDoc, attributing the wifi
+        // asymmetry to the owner BY NAME and BY DATE, which is precisely the reversal mechanism
+        // `PreviewAutoFetch`'s KDoc quotes the owner in order to stop. The prose had no
+        // instrument and the code did. This is the prose's.
+        //
+        // Comment-INCLUSIVE, unlike every other pin in this file — see [mainSourcesMentioning].
+        // These four phrases cannot appear in Kotlin code, so a comment-blind version of this test
+        // would be vacuous forever, which is worse than no test: it would read as coverage.
+        //
+        // What is NOT forbidden: Play's own dialog. `STATUS_WAITING_FOR_WIFI` is Play's wait, not
+        // ours, and two KDocs describe it as *"a wait for wifi"* — still true, and deliberately
+        // not matched by the needle, which is the third-person present of OUR deleted rule.
+        for (needle in listOf(
+            "waits for wifi",
+            "waits for Wi-Fi",
+            "waits for Wi Fi",
+            "spends a metered connection",
+        )) {
+            val found = mainSourcesMentioning(needle)
+            assertEquals(
+                "<<$needle>> states the rule the owner overruled — *\"Yes. I wanted to silently " +
+                    "download on cellular and Wi Fi\"* — in the present tense. Both starters " +
+                    "download on any connection; what the unasked path alone waits for is a " +
+                    "network that WORKS and the 24 h back-off. Found: $found",
                 emptyList<String>(),
                 found,
             )

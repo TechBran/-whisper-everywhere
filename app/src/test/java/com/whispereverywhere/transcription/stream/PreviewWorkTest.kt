@@ -778,11 +778,18 @@ class PreviewWorkTest {
 
     @Test fun theThreeCausesMapToTwoStartersAndTwoLatchAnswersAndTheTableIsTotal() {
         // (4.5.0 Task 3b) `auto: Boolean` could carry one of these two questions, not both — and
-        // the row it could not express is the SELECTION, which spends a metered connection like a
-        // tap does (the pick IS the consent) and is latched like a top-up is (it is decided in
-        // composition, so an exempt pick whose transfer failed would retry itself for the life of
-        // the process). Three causes, two answers each, and both mappings live on the enum rather
-        // than at a call site, so no surface can spell either one differently.
+        // the row it could not express is the SELECTION, which skips the unasked path's two
+        // cautions like a tap does (the user just made this gesture) and is latched like a top-up
+        // is (it is decided in composition, so an exempt pick whose transfer failed would retry
+        // itself for the life of the process). Three causes, two answers each, and both mappings
+        // live on the enum rather than at a call site, so no surface can spell either one
+        // differently.
+        //
+        // The two cautions are the wait for a network that WORKS and the 24 h back-off after a
+        // failure — NOT a metering test, which the owner deleted from this feature in pass 2's
+        // Fix 1: *"Yes. I wanted to silently download on cellular and Wi Fi."* Until that sweep
+        // reached this comment it said the selection spent the user's metered bytes the way a tap
+        // does, which was the middle of three rulings and is not the live one.
         assertEquals(PreviewStarter.TOP_UP, PreviewTrigger.TOP_UP.starter)
         assertEquals(PreviewStarter.PICK, PreviewTrigger.SELECTION.starter)
         assertEquals(PreviewStarter.PICK, PreviewTrigger.TAP.starter)
@@ -803,7 +810,8 @@ class PreviewWorkTest {
             PreviewTrigger.entries.size,
         )
         assertEquals(
-            "exactly one cause is unasked, and it is the only one the metered silence applies to",
+            "exactly one cause is unasked, and it is the only one the two cautions apply to — " +
+                "the wait for a working network and the 24 h back-off, never a metering test",
             listOf(PreviewTrigger.TOP_UP),
             PreviewTrigger.entries.filter { it.starter == PreviewStarter.TOP_UP },
         )
