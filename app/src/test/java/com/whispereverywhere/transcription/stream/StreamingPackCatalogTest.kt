@@ -139,6 +139,8 @@ class StreamingPackCatalogTest {
         assertSame(StreamingPackCatalog.EN, StreamingPackCatalog.forLanguage("en"))
         assertSame(StreamingPackCatalog.FR, StreamingPackCatalog.forLanguage("fr"))
         assertSame(StreamingPackCatalog.DE, StreamingPackCatalog.forLanguage("de"))
+        assertSame(StreamingPackCatalog.RU, StreamingPackCatalog.forLanguage("ru"))
+        assertSame(StreamingPackCatalog.ID, StreamingPackCatalog.forLanguage("id"))
         assertNull("a language with no row is not sold another language's model", StreamingPackCatalog.forLanguage("es"))
         assertNull("auto (null) never resolves to a pack — the gate reads the RESOLVED language", StreamingPackCatalog.forLanguage(null))
         assertNull("nor does the raw picker code, if it ever reached here", StreamingPackCatalog.forLanguage("auto"))

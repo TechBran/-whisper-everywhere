@@ -492,7 +492,137 @@ object StreamingPackCatalog {
         canary = null,
     )
 
-    val packs: List<StreamingPack> = listOf(EN, FR, DE)
+    /**
+     * **Russian** — `csukuangfj/sherpa-onnx-streaming-zipformer-small-ru-vosk-int8-2025-08-16` at
+     * `31fa603e`. **28,572,945 B, badged "29 MB": the cheapest row in the catalogue**, and the one
+     * that proves the multi-pack machinery at the lowest byte cost anyone could ask for.
+     *
+     * **It is also the first `T = 77` row, and that is not polish.** `zipformer2`,
+     * `decode_chunk_len = 64`, `T = 77`, `comment = "streaming zipformer2"`, head-dims and
+     * `num_heads` present, a genuinely small encoder (`2,2,2,2,2,2` / `192,256,256,256,256,256`).
+     * One forward pass needs 77 frames = **770 ms** of feature, so the flat 500 ms pad 4.4.0
+     * measured on English is **270 ms short**: `isReady` stays false, the tail chunk is never
+     * decoded and **the last word of every utterance silently never emits** — and the canary Fails
+     * into a verdict behind a sentence the 4.4.0 acceptance sheet records as rendered nowhere.
+     * [StreamingPreviewTuning.padMsFor] returns **820 ms** here. Upstream agrees on the direction:
+     * Vosk's own Russian `decode.py` pads 600 ms, and 2.0 s for its 128-shift variant — nobody
+     * pads 500 for a Russian model. Decoder: `vocab_size = 500`, `context_size = 2`.
+     *
+     * **The cadence is 640 ms, so no copy on this row may quote the measured 0.401 s word lag.**
+     * That figure is a property of `decode_chunk_len = 32` and owner ruling O7 — *"is sub-second
+     * the bar, or same-as-English?"* — is open on whether 640 ms clears the bar at all. INFERRED
+     * ~0.56-0.72 s; UNMEASURED.
+     *
+     * **Licence — apache-2.0 at upstream, and the mirror is untagged, which is discharged
+     * CRYPTOGRAPHICALLY rather than argued.** This mirror's README is 111 bytes and says only
+     * *"Models in this directory are from
+     * https://huggingface.co/alphacep/vosk-model-small-streaming-ru"* — no front matter, and the
+     * API reports `license: null` with `cardData: null`, read both ways here. The grant lives on
+     * that upstream repo, platform-surfaced, and all four pack files are byte-identical to it
+     * (three LFS oids plus a `sha256` computed on `tokens.txt`) — a STRONGER position than
+     * German's, whose grant the platform cannot read at all. **What survives is the corpus: the
+     * card names none.** *"Trained with k2-fsa/icefall on Russian data"* is the whole of it ⇒ one
+     * optional email, not a gate, and NOT CLEARED here.
+     *
+     * Recorded so a disappointing rung-1 number costs 0.25 d and not a re-audit:
+     * `alphacep/vosk-model-streaming-ru` v0.56 is the zero-seam accuracy upgrade — apache-2.0
+     * platform-surfaced, four int8 files at 71,694,239 B, **byte-identical `tokens.txt`**, same
+     * 640 ms cadence, +43 MB.
+     */
+    val RU = StreamingPack(
+        language = "ru",
+        dirName = "ru-vosk-2025-08-16",
+        packName = PACK_RU,
+        baseUrl = "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-ru-vosk-int8-2025-08-16/resolve/31fa603e4f31279c6e1f7600fed13dc4312663ab/",
+        encoder = PackFile("encoder.int8.onnx", 26_214_060L, "e0db705e94ec35d803b1df4f40cda23d064e1142977c80ab288430b109777a9d"),
+        // The one pack in the catalogue whose decoder is NOT quantized — upstream ships no int8
+        // decoder, and `decoder.onnx` at 2,093,080 B is 1.6 MB more than an int8 one would be. It
+        // is still the smallest pack here by 42 MB.
+        decoder = PackFile("decoder.onnx", 2_093_080L, "89b3088a9e20e1ef7f2e85ce1a3478afe6a9c4ac57369cabcc4beb8e95328ea0"),
+        joiner = PackFile("joiner.int8.onnx", 259_417L, "b55784b071ab7512eab4c7c44e4f5478284ef33c83562cc6a249b972515a31e5"),
+        tokens = PackFile("tokens.txt", 6_388L, "93bbbc0bae6b78c0bbb743d4aa9fded3bb5ff3aac5f0200e3a769a5a05e0fdf6"),
+        modelType = "zipformer2",
+        decodeChunkLen = 64,
+        encoderT = 77,
+        // The census over the downloaded file: 502 lines, 497 emittable, **ZERO uppercase / 495
+        // lowercase-bearing / 0 digit-bearing** among them — already-lowercase Cyrillic, so the
+        // fold is a no-op on the characters and provably lossless on the census. 262 word-marker
+        // pieces, a bare `▁` at id 7, no byte fallback, all 33 Russian letters as single pieces.
+        //
+        // Its ONE punctuation-only piece is a standalone `-`, which does NOT set
+        // `emitsPunctuation`: какой-то and по-русски are words and the mark is inside them,
+        // exactly as `DON'T` is. `PackTokenFacts.JOINERS` is where that judgement is written.
+        caseFold = CaseFold.Fold,
+        emitsPunctuation = false,
+        emitsDigits = false,
+        // T3 owns the clip; Kokoro has no Russian voice, so it comes from FLEURS. This row is the
+        // one where the ORDER matters: the pad above must be right BEFORE a canary is run once,
+        // because a Fail on a 500 ms pad would be a verdict on a configuration the feature would
+        // never have run. The pad landed with the route; the clip lands with T3.
+        canary = null,
+    )
+
+    /**
+     * **Indonesian** — `spacewave/sherpa-onnx-streaming-zipformer2-id` at `4e5a13cb`.
+     * 70,908,694 B, badged "71 MB". The cleanest vocabulary in the survey and the strongest
+     * canary story of any non-English row.
+     *
+     * `zipformer2`, `decode_chunk_len = 64`, `T = 77` — the second 640 ms row, so the **820 ms**
+     * derived pad and the ban on quoting the 0.401 s lag both apply here too. `comment =
+     * "streaming zipformer2"`, head-dims and `num_heads` present, the English encoder's own shape
+     * (`2,2,3,4,3,2` / `192,256,384,512,384,256`) with a wider left context
+     * (`256,128,64,32,64,128`). Decoder: `vocab_size = 500`, `context_size = 2`.
+     *
+     * **Licence — MIT, READ in a 902-byte non-LFS front matter AND platform-surfaced** through
+     * `cardData.license` plus a `license:mit` tag. The API's **top-level `license` key is absent**
+     * here as well: the German trap in a second costume, by key naming rather than by Xet storage,
+     * so a sweep reading `model["license"]` reports "Not specified" for a perfectly readable MIT
+     * grant.
+     *
+     * **NOT CLEARED — the corpus is the counsel question, and the card names it.** Its front
+     * matter declares four datasets: `espnet/yodas2`, `mozilla-foundation/common_voice_17_0`,
+     * `google/fleurs` and `indonesian-nlp/librivox-indonesia`. YODAS2 is CC BY 3.0 and
+     * YouTube-derived, **85.6% of the Indonesian label hours are auto-captions** (8,463.61 of
+     * 9,883.70 h), and its `video_id` is deliberately not YouTube's, so attribution is
+     * structurally unsatisfiable at the item level; `librivox-indonesia` is tagged `cc` with no
+     * version. The licence CLASS is commercially permissive — no NC, no SA — and the question is
+     * reach and attribution, which is counsel's, not engineering's.
+     *
+     * Accuracy: the card publishes CV 11.58, FLEURS 8.96, YODAS 11.90, LibriVox-ID 6.79 and
+     * states *"all results are used with greedy-search decoding"* — the app's own mode. It ships
+     * **no decode log, no `test_wavs`, no eval script and no `exp/`**, so the decode MODE is
+     * stated and the numbers are UNVERIFIED.
+     */
+    val ID = StreamingPack(
+        language = "id",
+        dirName = "id-iter-100000",
+        packName = PACK_ID,
+        baseUrl = "https://huggingface.co/spacewave/sherpa-onnx-streaming-zipformer2-id/resolve/4e5a13cbe3e9cd4e3775447d86178ef51759096f/",
+        encoder = PackFile("encoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 70_103_186L, "3a6f85f5d199ad0d495562988af017a75d4ae81b51126db240d959b065d6eaad"),
+        decoder = PackFile("decoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 540_688L, "6544848ca80b557ec3c8569169522dc6243b5bc9b296ea73791728510caacb4a"),
+        joiner = PackFile("joiner-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 259_417L, "4b89d96292460a92dedcb39e0b17904f10dbad335a8ab11015e567b4864102e0"),
+        tokens = PackFile("tokens.txt", 5_403L, "f0b6f5bf602d96f60d79bb17192c51eeffb6189250f132b1dfdf72b130d66968"),
+        modelType = "zipformer2",
+        decodeChunkLen = 64,
+        encoderT = 77,
+        // The census over the downloaded file, and it is the cleanest in the catalogue: **500
+        // lines** — three fewer than every other `lang_bpe_500` row, because this file carries NO
+        // `#0`/`#1` placeholders at all — 497 emittable, **496 uppercase-bearing / 0 lowercase /
+        // 0 digit-bearing in the WHOLE FILE** (cleaner than English, whose placeholders are two
+        // digit-bearing pieces), 359 word-marker pieces, a bare `▁` at id 7, no byte fallback,
+        // and its only punctuation-shaped piece is `<sos/eos>`, a special no decode emits. So
+        // there is not one emittable mark or numeral anywhere in this vocabulary.
+        caseFold = CaseFold.Fold,
+        emitsPunctuation = false,
+        emitsDigits = false,
+        // T3 owns the clip and Kokoro has no Indonesian voice, so it comes from FLEURS — but the
+        // RULE is the easiest in the catalogue and is verified here: `▁SATU 134`, `▁DUA 164`,
+        // `▁TIGA 231`, `▁EMPAT 324`, `▁LIMA 320` are all WHOLE pieces, the vocabulary has no
+        // numeral so no digit aliases are needed, and a non-speaker can check all five positions.
+        canary = null,
+    )
+
+    val packs: List<StreamingPack> = listOf(EN, FR, DE, RU, ID)
 
     /** The pack for a RESOLVED session language; null for auto (null) and for every language without a row. */
     fun forLanguage(code: String?): StreamingPack? = packs.firstOrNull { it.language == code }

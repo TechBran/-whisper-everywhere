@@ -177,6 +177,104 @@ class StreamingPackLanguagesTest {
         assertNull(StreamingPackCatalog.DE.canary)
     }
 
+    // ---------------------------------------------------------------------------- Russian
+
+    @Test fun theRussianRowIsTheFourFilesAtCommit31fa603eAndIsTheCheapestInTheCatalogue() {
+        val p = StreamingPackCatalog.RU
+        assertEquals("ru", p.language)
+        assertEquals("ru-vosk-2025-08-16", p.dirName)
+        assertEquals("preview_ru", p.packName)
+        assertEquals(
+            "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-ru-vosk-int8-2025-08-16/resolve/31fa603e4f31279c6e1f7600fed13dc4312663ab/",
+            p.baseUrl,
+        )
+        assertEquals(PackFile("encoder.int8.onnx", 26_214_060L, "e0db705e94ec35d803b1df4f40cda23d064e1142977c80ab288430b109777a9d"), p.encoder)
+        // The one row whose decoder is not quantized — upstream ships no int8 decoder.
+        assertEquals(PackFile("decoder.onnx", 2_093_080L, "89b3088a9e20e1ef7f2e85ce1a3478afe6a9c4ac57369cabcc4beb8e95328ea0"), p.decoder)
+        assertEquals(PackFile("joiner.int8.onnx", 259_417L, "b55784b071ab7512eab4c7c44e4f5478284ef33c83562cc6a249b972515a31e5"), p.joiner)
+        assertEquals(PackFile("tokens.txt", 6_388L, "93bbbc0bae6b78c0bbb743d4aa9fded3bb5ff3aac5f0200e3a769a5a05e0fdf6"), p.tokens)
+        assertEquals(28_572_945L, p.totalBytes)
+        assertEquals("29 MB", StreamingPackCatalog.sizeBadge(p.totalBytes))
+        assertTrue(
+            "and it is the smallest pack in the catalogue — the cheapest possible proof of the " +
+                "multi-pack machinery",
+            StreamingPackCatalog.packs.minByOrNull { it.totalBytes } === p,
+        )
+    }
+
+    @Test fun theRussianRowIsTheFirstSixHundredFortyMillisecondRowAndItsPadIsEightHundredTwenty() {
+        val p = StreamingPackCatalog.RU
+        assertEquals("zipformer2", p.modelType)
+        assertEquals(64, p.decodeChunkLen)
+        assertEquals(77, p.encoderT)
+        assertEquals("640 ms per forward pass after the first", 640L, p.cadenceMs)
+        // The defect this row exists to force: 77 frames need 770 ms of feature, so the flat 500
+        // the shipping row measured is 270 ms SHORT — `isReady` stays false, the tail chunk never
+        // decodes, and the last word of every utterance silently never emits.
+        assertEquals(820L, p.padMs)
+        assertTrue("a flat 500 ms pad would not cover one forward pass", 500L < p.encoderT * 10L)
+        assertEquals(StreamingPreviewTuning.padMsFor(77), p.padMs)
+    }
+
+    @Test fun theRussianVocabularysONLYMarkIsTheJoinerHyphen() {
+        val p = StreamingPackCatalog.RU
+        // ZERO uppercase / 495 lowercase-bearing emittable, so the fold is a no-op on the
+        // characters; one punctuation-only piece and it is `-` (какой-то, по-русски), which is a
+        // word-internal joiner exactly as the apostrophe is — see PackTokenFacts.JOINERS.
+        assertEquals(CaseFold.Fold, p.caseFold)
+        assertFalse(p.emitsPunctuation)
+        assertFalse(p.emitsDigits)
+    }
+
+    // ---------------------------------------------------------------------------- Indonesian
+
+    @Test fun theIndonesianRowIsTheFourFilesAtCommit4e5a13cb() {
+        val p = StreamingPackCatalog.ID
+        assertEquals("id", p.language)
+        assertEquals("id-iter-100000", p.dirName)
+        assertEquals("preview_id", p.packName)
+        assertEquals(
+            "https://huggingface.co/spacewave/sherpa-onnx-streaming-zipformer2-id/resolve/4e5a13cbe3e9cd4e3775447d86178ef51759096f/",
+            p.baseUrl,
+        )
+        assertEquals(PackFile("encoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 70_103_186L, "3a6f85f5d199ad0d495562988af017a75d4ae81b51126db240d959b065d6eaad"), p.encoder)
+        assertEquals(PackFile("decoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 540_688L, "6544848ca80b557ec3c8569169522dc6243b5bc9b296ea73791728510caacb4a"), p.decoder)
+        assertEquals(PackFile("joiner-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 259_417L, "4b89d96292460a92dedcb39e0b17904f10dbad335a8ab11015e567b4864102e0"), p.joiner)
+        assertEquals(PackFile("tokens.txt", 5_403L, "f0b6f5bf602d96f60d79bb17192c51eeffb6189250f132b1dfdf72b130d66968"), p.tokens)
+        assertEquals(70_908_694L, p.totalBytes)
+        assertEquals("71 MB", StreamingPackCatalog.sizeBadge(p.totalBytes))
+    }
+
+    @Test fun theIndonesianRowIsTheSecondSixHundredFortyMillisecondRow() {
+        val p = StreamingPackCatalog.ID
+        assertEquals("zipformer2", p.modelType)
+        assertEquals(64, p.decodeChunkLen)
+        assertEquals(77, p.encoderT)
+        assertEquals(640L, p.cadenceMs)
+        assertEquals(820L, p.padMs)
+        // The two 640 ms rows agree on the pad because the pad is DERIVED from their shared T —
+        // not because someone wrote 820 twice.
+        assertEquals(StreamingPackCatalog.RU.padMs, p.padMs)
+    }
+
+    @Test fun theIndonesianVocabularyCarriesNoMarkAndNoNumeralAtAll() {
+        val p = StreamingPackCatalog.ID
+        // 500 lines — three fewer than every other lang_bpe_500 row, because this file has no
+        // `#0`/`#1` placeholders — and ZERO digit-bearing pieces in the whole file, which is one
+        // cleaner than English. Its only punctuation-shaped piece is `<sos/eos>`, a special.
+        assertEquals(CaseFold.Fold, p.caseFold)
+        assertFalse(p.emitsPunctuation)
+        assertFalse(p.emitsDigits)
+    }
+
+    @Test fun neitherSixHundredFortyMillisecondRowHasACanaryYetAndTheORDERIsWhyRuMatters() {
+        // The pad had to be right BEFORE either canary could be run once: a Fail on a 500 ms pad
+        // would be a verdict on a configuration the feature never runs. The pad landed with the
+        // route; the clips land with T3, from FLEURS (Kokoro has no ru or id voice).
+        assertNull(StreamingPackCatalog.RU.canary)
+        assertNull(StreamingPackCatalog.ID.canary)
+    }
+
     // ---------------------------------------------------------------------------- the set
 
     @Test fun everyRowsPackNameFollowsItsLanguageAndNoTwoRowsShareAnyIdentity() {
