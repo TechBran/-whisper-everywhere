@@ -93,11 +93,20 @@ class StreamingPackLanguagesTest {
         assertFalse(p.emitsDigits)
     }
 
-    @Test fun theFrenchRowHasNoCanaryYetAndThatIsRecordedRatherThanFilledIn() {
-        // T3's work. The vocabulary precondition is verified — `▁UN 50`, `▁DEUX 156`,
-        // `▁TROIS 304`, `▁QUATRE 353`, `▁CINQ 386` are all whole pieces — so the clip is a
-        // synthesis job from Kokoro's `ff_siwis`, not a hunt. Until it exists: NO VERDICT.
-        assertNull(StreamingPackCatalog.FR.canary)
+    @Test fun theFrenchCanaryIsSYNTHESIZEDFromTheVoiceModelThisAppAlreadyShips() {
+        // This case read `assertNull(FR.canary)` until 4.5.0 T3 — the row recorded "no clip yet"
+        // rather than inventing one, and the vocabulary precondition it recorded (`▁UN 50`,
+        // `▁DEUX 156`, `▁TROIS 304`, `▁QUATRE 353`, `▁CINQ 386` all whole pieces) is what made
+        // the clip a synthesis job instead of a hunt. It is now synthesized: kokoro-multi-lang-v1_0
+        // speaker 30 (`ff_siwis`), "un deux trois quatre cinq", 1.482 s, and the real pack decodes
+        // it exactly. `PreviewCanaryClipsTest` holds the clip's bytes, format and measurement.
+        val canary = StreamingPackCatalog.FR.canary!!
+        assertEquals("canary_fr_digits.wav", canary.asset)
+        assertEquals(
+            listOf(setOf("un"), setOf("deux"), setOf("trois"), setOf("quatre"), setOf("cinq")),
+            canary.rule.expected,
+        )
+        assertEquals("one drop of slack, the English row's own tolerance", 4, canary.rule.minMatches)
     }
 
     // ---------------------------------------------------------------------------- German

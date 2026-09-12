@@ -97,6 +97,23 @@ class PreviewCanaryClipsTest {
             // exact text in 8 of 8 runs.
             source = "owner recording, 3.6.0 Workstream C — no third-party licence",
         ),
+        Clip(
+            language = "fr",
+            asset = "canary_fr_digits.wav",
+            bytes = 47_498L,
+            sha256 = "4fcf2d1d3553f631840cd6883121d8cd245accbf66a8f5944b692aa6ff312443",
+            samples = 23_710,
+            tokens = listOf(" UN", " DEUX", " TROIS", " QUATRE", " CINQ"),
+            text = "UN DEUX TROIS QUATRE CINQ",
+            // SYNTHESIZED in-repo from the voice model this app already ships:
+            // kokoro-multi-lang-v1_0 (Apache-2.0 — the archive `tts_kokoro` delivers, and the
+            // licence page's "Kokoro-82M (hexgrad)" entry), speaker id 30 = ff_siwis
+            // (TtsVoices.kt:47), text "un deux trois quatre cinq", speed 1.0, phonemized by the
+            // archive's own espeak-ng-data under the voice name `fr`, resampled 24 → 16 kHz by
+            // ffmpeg. Kokoro's model card licenses the weights Apache-2.0 and the audio is that
+            // model's OUTPUT, so nothing here is third-party recorded speech.
+            source = "kokoro-multi-lang-v1_0 / ff_siwis (Apache-2.0) — synthesized, not recorded",
+        ),
     )
 
     // ------------------------------------------------------------------ the catalogue agrees

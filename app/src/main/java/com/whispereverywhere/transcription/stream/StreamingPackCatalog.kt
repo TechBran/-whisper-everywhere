@@ -406,13 +406,44 @@ object StreamingPackCatalog {
         caseFold = CaseFold.Fold,
         emitsPunctuation = false,
         emitsDigits = false,
-        // T3 owns the clip. Verified here so that task is a synthesis and not a hunt: `▁UN 50`,
-        // `▁DEUX 156`, `▁TROIS 304`, `▁QUATRE 353`, `▁CINQ 386` are all WHOLE pieces in this
-        // vocabulary, so "un deux trois quatre cinq" is checkable per position by a non-speaker.
-        // Kokoro's `ff_siwis` voice can synthesise it in-repo (TtsVoices.kt covers fr).
-        // Until it lands this row ARMS UNSCORED: French live words run, and the FEAT_SME guard is
-        // unpaid for French for as long as this stays null. Priced in [PackCanary]'s docblock.
-        canary = null,
+        // **The clip is SYNTHESIZED IN-REPO, from the voice model this app already ships**
+        // (4.5.0 T3). `canary_fr_digits.wav`, 47,498 B, 23,710 samples = 1.482 s — the smallest
+        // canary in the catalogue, against the English clip's 81,998 B.
+        //
+        // How, exactly, so it can be regenerated: `kokoro-multi-lang-v1_0` (the archive
+        // `tts_kokoro` delivers, Apache-2.0, digest-gated by TtsModelManager's own known-good
+        // set), speaker id **30 = `ff_siwis`** (TtsVoices.kt:47, "Siwis — French female"), text
+        // `un deux trois quatre cinq`, speed 1.0, phonemized by the archive's OWN espeak-ng-data
+        // under the voice name `fr`, then 24 kHz → **ffmpeg** → 16 kHz PCM16 mono, peak 0.80.
+        //
+        // **Use a real resampler or the clip lies.** A hand-rolled linear 24 → 16 kHz interpolation
+        // aliases everything above 8 kHz into the speech band, and the French pack answered `""`
+        // for the same words at speeds 0.85 and 0.75 and dropped `TROIS` at 1.0 — i.e. it produced
+        // the FEAT_SME signature from perfectly good audio. Through ffmpeg's swresample the same
+        // synthesis decodes exactly. A clip chosen by ear would have shipped the aliased one and
+        // disabled French on every device.
+        //
+        // Re-verified against this pack's own placed tokens.txt rather than copied from T1:
+        // `▁UN 50`, `▁DEUX 156`, `▁TROIS 304`, `▁QUATRE 353`, `▁CINQ 386` — all five WHOLE
+        // pieces, so every position is checkable by a non-speaker. And the decode is exact:
+        // `UN DEUX TROIS QUATRE CINQ`, five tokens, 5 of 5 positions in all nine
+        // (threads × gain) cells. `minMatches = 4` is therefore one drop of slack, the English
+        // row's own tolerance, and not the operating point.
+        canary = PackCanary(
+            asset = "canary_fr_digits.wav",
+            rule = PreviewCanaryRule(
+                expected = listOf(
+                    setOf("un"),
+                    setOf("deux"),
+                    setOf("trois"),
+                    setOf("quatre"),
+                    setOf("cinq"),
+                ),
+                minMatches = 4,
+                // Four times the five tokens measured — the English row's own ratio (5 → 20).
+                maxTokens = 20,
+            ),
+        ),
     )
 
     /**
