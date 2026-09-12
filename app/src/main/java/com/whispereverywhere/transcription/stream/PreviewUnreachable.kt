@@ -49,12 +49,28 @@ package com.whispereverywhere.transcription.stream
  *  - **a tier, a provider** — cloud sessions, so the gate refuses on `!isCloudSession`. This is
  *    the open ruling below, and it is reversible per session.
  *  - **a tier, no provider** — the validated happy path: the words appear.
- *  - **no tier, a provider** — reason 2, with reason 1 underneath it.
+ *  - **no tier, a provider** — reason 2, with reason 1 underneath it. **Its own enumeration row,
+ *    and not a footnote to the one below** (fix round 2, review r2's B1): it is plausibly the
+ *    MAJORITY of the no-tier population, because onboarding's ENGINES step is mandatory and
+ *    uncompletable without a tier, so a no-tier device is one a deliberate *"Delete <tier>"* made
+ *    — under a dialog warning that on-device transcription will stop — and the user for whom that
+ *    warning is acceptable is the one who transcribes in the cloud.
  *  - **no tier, NO provider** — **reason 1 ALONE, and the gate ARMS here**: `LOCAL_ONLY`,
  *    `cloudWrapper == null`, and no tier term to refuse on. Not an exotic cell — it is the
  *    DEFAULT shape of a modelless install (a tier deleted in Settings, an Auto-Backup restore) on
  *    a phone where no provider was ever configured, which is the population this whole axis was
  *    built for. The first enumeration of this axis declared it impossible.
+ *
+ * **A cell is checked by its SENTENCES, never by its reason.** The first version of this table
+ * asked of each cell only *"does reason 1 still hold here?"* — and every cell passed that, which
+ * is why the table sat next to the enum for a whole review round while the one sentence this axis
+ * ADDED was false in the cell above. The brief's test is *true or absent*, and it is asked of each
+ * sentence the cell SELECTS: `StreamingPackCopy.NO_TIER_SUBTITLE` instructed the reader to
+ * download a speech model, which lands a user in *"a tier, a provider"* — where no live word
+ * appears on any of their normal sessions and this caveat is gone, so the instruction moved them
+ * from one true sentence to the whole 4.4.1 copy. It is a conditional now, true in both sub-cells
+ * and in both directions of the open ruling. That is what this table is FOR, and it is next to the
+ * function that selects those sentences so the two get read together.
  *
  * **The dependency that fourth cell creates is pinned, not assumed.** Every sentence selected
  * here is true because the session dies at connect; if a later change let a modelless session

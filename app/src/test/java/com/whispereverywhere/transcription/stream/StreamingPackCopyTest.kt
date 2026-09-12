@@ -476,8 +476,8 @@ class StreamingPackCopyTest {
         )
         assertEquals(
             "Live words appear only while transcription runs on this device, and this device " +
-                "has no speech model. Download a speech model and live words follow the " +
-                "language you pick. Your typed transcript is unchanged.",
+                "has no speech model. Whenever transcription does run on this device, live " +
+                "words follow the language you pick. Your typed transcript is unchanged.",
             StreamingPackCopy.NO_TIER_SUBTITLE,
         )
         // IT NAMES THE RULE, NOT THE MISSING FILE — and the rule is true of BOTH mechanisms
@@ -492,14 +492,55 @@ class StreamingPackCopyTest {
                 "only while transcription runs on this device",
             ),
         )
+        // ...AND THAT PROPERTY IS NOW ASSERTED OF THE WHOLE SENTENCE AND NOT ONLY OF ITS FIRST
+        // CLAUSE (fix round 2, review r2's B1 — it was a comment here, and the clause the comment
+        // was written about was the only half that had it). The second sentence used to INSTRUCT:
+        // *"Download a speech model and live words follow the language you pick."* Following it
+        // lands a user in `PreviewUnreachable`'s cell *"a tier, a provider"* — `decideEngineChoice`
+        // answers a CLOUD leaf, `localPreviewArms` refuses on `!isCloudSession`, no live word
+        // appears on any of their normal sessions — and this caveat is withdrawn by the very tier
+        // that arrived, so the one true sentence they were reading is replaced by the whole 4.4.1
+        // copy. That sub-cell is plausibly the majority of the no-tier population (the ENGINES
+        // step is mandatory, so this state is reached by a deliberate delete, and the user for
+        // whom that delete is acceptable is the one who transcribes in the cloud).
+        //
+        // A conditional cannot be followed into a lie. It promises nothing about what a download
+        // would do, and it is true in both sub-cells — which is the property the sentence has to
+        // have, because this enum's input cannot see which of them the reader is in.
+        val promise = "live words follow the language you pick"
+        assertEquals(
+            "the pick's half is spelled once, so there is one place for this property to hold",
+            1, StreamingPackCopy.NO_TIER_SUBTITLE.split(promise).size - 1,
+        )
+        assertTrue(
+            "and it is SCOPED BY THE RULE rather than offered as the result of an errand: " +
+                "<<${StreamingPackCopy.NO_TIER_SUBTITLE}>>",
+            StreamingPackCopy.NO_TIER_SUBTITLE.contains(
+                "Whenever transcription does run on this device, $promise",
+            ),
+        )
+        assertFalse(
+            "the retired spelling must not come back — it is the one sentence this axis added " +
+                "that could be ACTED on, and acting on it produced six false ones",
+            StreamingPackCopy.NO_TIER_SUBTITLE.contains("Download a speech model and $promise"),
+        )
         // NOTHING IS FOR SALE ON THIS DEVICE — 4.4.1 pass 3's ITEM 1, one axis over: 73 MB buys
         // it nothing at all, so neither sentence carries a size, a pack or an instruction to get
-        // one.
+        // one. The last of those four is an ASSERTION now and not a claim in this comment: an
+        // imperative is the one shape of sentence whose truth depends on a fact this enum does
+        // not take, so the pair carries none.
         for (s in listOf(StreamingPackCopy.NO_TIER_TITLE, StreamingPackCopy.NO_TIER_SUBTITLE)) {
             assertFalse("<<$s>> must not name a size", s.contains("MB"))
             assertFalse("<<$s>> must not name the preview model as a thing to get", s.contains("preview model"))
             assertFalse("<<$s>> must not name a language", s.contains(en))
             assertFalse("nor Google Play", s.contains("Google Play"))
+            for (errand in listOf("Download", "download", "Get ", "Install", "install", "Add ")) {
+                assertFalse(
+                    "<<$s>> must not INSTRUCT: it carries <<$errand>>, and an instruction is " +
+                        "false wherever following it would not deliver the words (review r2's B1)",
+                    s.contains(errand),
+                )
+            }
         }
         assertTrue(
             "and the transcript stays out of the trade, like every other sentence here",

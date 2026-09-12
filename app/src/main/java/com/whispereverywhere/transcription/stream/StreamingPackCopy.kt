@@ -332,20 +332,36 @@ object StreamingPackCopy {
 
     /**
      * The previewer section's own heading on a device that can never arm. It names the REQUIREMENT
-     * rather than the refusal, because the requirement is the only actionable half — and the
-     * action is the app's own ([com.whispereverywhere.ui.screens.setupBannerState]'s *"Download a
-     * model to transcribe on-device"*, and the delete dialog's *"until you download a model
-     * again"*), so this sentence sends the reader nowhere new.
+     * rather than the refusal, and it names it as a fact about the device — *"live words NEED
+     * one"* — in the app's own terms ([com.whispereverywhere.ui.screens.setupBannerState]'s
+     * *"Download a model to transcribe on-device"*, and the delete dialog's *"until you download a
+     * model again"*), so this sentence sends the reader nowhere new. A necessary condition is true
+     * of every device that lacks a tier, which an INSTRUCTION to get one is not — see
+     * [NO_TIER_SUBTITLE], where saying it the other way round was review r2's B1.
      */
     const val NO_TIER_TITLE = "Live words need an on-device speech model"
 
     /**
      * ...and its body. It offers NOTHING — no tap, no size, no pack — because 73 MB buys this
      * device nothing at all, which is exactly the spend 4.4.1 pass 3's ITEM 1 closed one axis over.
+     *
+     * **And it PROMISES nothing either: the second sentence is a conditional** (fix round 2,
+     * review r2's B1). It used to instruct — *"Download a speech model and live words follow the
+     * language you pick"* — and that instruction is false in the sub-cell this row's own axis
+     * cannot see: a device with no tier whose user HAS selected a cloud provider and saved a key
+     * ([PreviewUnreachable]'s KDoc, the cell *"no tier, a provider"*). Follow it and
+     * `decideEngineChoice` answers a CLOUD leaf, `localPreviewArms` refuses on `!isCloudSession`
+     * and no live word appears on any of their normal sessions — while this caveat vanishes with
+     * the tier that arrived, taking the one true sentence they were reading with it and returning
+     * every sentence [PreviewUnreachable] withdrew. An instruction can be followed into that; a
+     * conditional cannot. It states the same rule [NO_TIER] does, so it is true in BOTH sub-cells
+     * and stays true word for word if the open ruling ever widens this enum's input. The
+     * REQUIREMENT is still named — by [NO_TIER_TITLE], where it is a fact about the device rather
+     * than an errand.
      */
     const val NO_TIER_SUBTITLE =
-        "$NO_TIER Download a speech model and live words follow the language you pick. " +
-            "Your typed transcript is unchanged."
+        "$NO_TIER Whenever transcription does run on this device, live words follow the " +
+            "language you pick. Your typed transcript is unchanged."
 
     /**
      * WHAT THE PREVIEWER'S CAVEAT ROW SAYS, for whichever standing fact is in the way — one pair
