@@ -367,12 +367,15 @@ object PreviewAutoFetch {
      *        as [packLanguage] being non-null and equal to [selectedLanguage].
      * @param installed `StreamingPackState.isInstalled`.
      * @param previewHasArmed the previewer has armed for at least one real session on this
-     *        install (`PreferencesManager.livePreviewArmedOnce`, written from the gate's own call
-     *        site). Silences the announcement and nothing else — it is not a "no", so it must
-     *        never suppress the offer or the working card.
+     *        install — `PreferencesManager.livePreviewArmedOnce`, whose own KDoc is the one home
+     *        for when it is written (`onOpen`, not where the gate answers) and why arming alone
+     *        is not enough. Silences the announcement and nothing else — it is not a "no", so it
+     *        must never suppress the offer or the working card.
      * @param localTierInstalled the same input [decide] reads: an on-device whisper tier exists.
-     *        Without one the previewer can never arm, so the announcement would be permanently
-     *        false. Silences the announcement and nothing else, for the reason above.
+     *        Without one no word reaches the bubble, so the announcement would be permanently
+     *        false; [PreviewUnreachable]'s KDoc is that fact's one home and states the mechanism,
+     *        which is NOT this gate. Silences the announcement and nothing else, for the reason
+     *        above.
      * @param userSaidNo the same persisted flag [decide] reads.
      * @param showLiveWords the same switch [decide] reads (`PreferencesManager.localPreviewEnabled`).
      * @param workInFlight a fetch or install of THIS pack is running — one read of the one

@@ -502,15 +502,29 @@ class PreferencesManager(private val context: Context) {
     }
 
     /**
-     * 4.4.1 — THE USER HAS SEEN LIVE WORDS. Set once, from the previewer gate's own call site in
-     * `FloatingBubbleService.startRecording` the first time it arms; read only by Home's card,
-     * which stops announcing the feature after it (CONTROLLER RULING 2026-09-11, CHANGE 4).
+     * 4.4.1 — THE USER HAS SEEN LIVE WORDS. Read only by Home's card, which stops announcing the
+     * feature after it (CONTROLLER RULING 2026-09-11, CHANGE 4).
+     *
+     * **THIS KDOC IS THE ONE HOME FOR WHEN IT IS WRITTEN, AND THE WRITE IS `onOpen`'s** (4.5.0 T4
+     * fix round 2, review r2's B2: it went on naming *"the previewer gate's own call site"* for a
+     * round after that call site stopped writing it — and a reader who trusted it would have
+     * restored the defect by moving the write back). Written once, from inside
+     * `FloatingBubbleService`'s `onOpen`, guarded by the previewer gate's own answer for that
+     * session: **the gate's answer is NECESSARY and it is NOT SUFFICIENT.** `localPreviewArms` has
+     * no tier term, so on a device with no speech model and no configured provider it ARMS — and
+     * that session then dies at connect with no word ever rendered
+     * ([com.whispereverywhere.transcription.stream.PreviewUnreachable]'s KDoc is the one home for
+     * why). Writing this flag where the gate answered marked such a user as having watched live
+     * words appear; the flag is global and permanent, so the day they installed a speech model
+     * *"Live words are on"* was suppressed forever, for exactly the reader the announcement exists
+     * for. `onOpen` is the first instant a word can have appeared: the bubble reaches `RECORDING`
+     * and the capture thread's startup ring begins draining into the tee.
      *
      * The brief asked for a ONE-TIME announcement — *"then it stops appearing"* — and that was
      * true only via the card's X, which is also [livePreviewDeclined], the permanent no. So a
      * 4.4.0 user who already had the pack had to choose between being told about live words on
-     * every single open and declining the feature for good. Once the previewer has armed for a
-     * real session the user has watched the words appear, and announcing them is noise.
+     * every single open and declining the feature for good. Once a session has OPENED with the
+     * previewer armed the user has watched the words appear, and announcing them is noise.
      *
      * DELIBERATELY NOT the declined flag and deliberately NOT per language: "I have seen this" is
      * not "I do not want this", and having seen live words once in any language is a fact about

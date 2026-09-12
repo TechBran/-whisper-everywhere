@@ -61,6 +61,14 @@ package com.whispereverywhere.transcription.stream
  *    a phone where no provider was ever configured, which is the population this whole axis was
  *    built for. The first enumeration of this axis declared it impossible.
  *
+ * **And this is where the feature's shorthand is defined.** The comments and pins across the
+ * previewer say *"a device that can never arm"* for the two no-tier cells, and taken literally
+ * that is wrong in the fourth: the gate arms, the previewer warms and the tee is built. What
+ * never happens is that audio REACHES it — the session is torn down out of `CONNECTING`, before
+ * `engineReady`, and the startup ring is discarded unread. The shorthand is kept because it is
+ * the user-visible fact (no word, ever, on this device) and defined here because that is the rule
+ * this KDoc exists to hold: one fact, one home.
+ *
  * **A cell is checked by its SENTENCES, never by its reason.** The first version of this table
  * asked of each cell only *"does reason 1 still hold here?"* — and every cell passed that, which
  * is why the table sat next to the enum for a whole review round while the one sentence this axis

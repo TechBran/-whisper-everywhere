@@ -928,10 +928,11 @@ private fun LiveWordsCard(
     var saidNo by remember(resumeTick, selectedLanguage) {
         mutableStateOf(app.preferencesManager.livePreviewDeclined(selectedLanguage))
     }
-    // (CONTROLLER RULING 2026-09-11, CHANGE 4) Has the user already SEEN live words? Written by
-    // the gate's own call site the first time the previewer arms, so it can become true while
-    // this screen is in the background — hence the resume key, the same one `saidNo` uses. It
-    // retires the announcement and nothing else.
+    // (CONTROLLER RULING 2026-09-11, CHANGE 4) Has the user already SEEN live words? Written from
+    // `onOpen`, the first time an armed session actually opens; `livePreviewArmedOnce`'s own KDoc
+    // is the one home for when and why. It can become true while this screen is in the background
+    // — hence the resume key, the same one `saidNo` uses — and it retires the announcement and
+    // nothing else.
     val hasArmed = remember(resumeTick) { app.preferencesManager.livePreviewArmedOnce }
     // ONE phase and ONE predicate where 4.4.1 had a status word plus a non-null line: the record
     // covers Play's fetch and our own install alike, so neither can be running unseen here.

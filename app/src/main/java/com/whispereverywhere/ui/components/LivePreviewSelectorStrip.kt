@@ -81,8 +81,10 @@ import com.whispereverywhere.transcription.stream.StreamingPackCopy
  *        something where re-picking would actually change the selection.
  * @param showLiveWords the *"Show live words"* switch. With it off no word will reach the bubble,
  *        so the READY receipt is a promise the feature cannot keep.
- * @param localTierInstalled an on-device whisper tier exists. Without one every session is a
- *        cloud session and the previewer can never arm, however installed the pack is.
+ * @param localTierInstalled an on-device whisper tier exists. Without one no word reaches the
+ *        bubble however installed the pack is — and the reason is NOT this feature's gate, which
+ *        has no tier term at all: `PreviewUnreachable`'s KDoc is that fact's one home and states
+ *        the mechanism (4.5.0 T4 fix round 2).
  * @param disabledLanguages the languages whose previewer this PROCESS has taken off
  *        (`PreviewDisabled`, written by the engine's own verdict — a load that threw, a failed
  *        canary, three decode throws). The bytes stay installed and the Settings row is still

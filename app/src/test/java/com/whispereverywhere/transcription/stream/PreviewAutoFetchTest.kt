@@ -173,7 +173,12 @@ class PreviewAutoFetchTest {
             assertFalse("$c: a damaged install is never silently re-fetched", c.state is StreamingPackState.Repair)
             assertFalse("$c: a delete or a dismissal is never undone", c.userSaidNo)
             assertTrue("$c: the switch must be on", c.showLiveWords)
-            assertTrue("$c: a cloud-only setup can never arm the previewer", c.localTierInstalled)
+            assertTrue(
+                "$c: a device with no on-device speech model gets nothing — no word reaches " +
+                    "its bubble at all (`PreviewUnreachable`'s KDoc for why, and it is not the " +
+                    "previewer's gate)",
+                c.localTierInstalled,
+            )
             assertFalse("$c: never during a session", c.sessionActive)
             assertFalse("$c: never while a batch job runs", c.batchJobActive)
             assertFalse("$c: never on top of work already in flight", c.packWorkInFlight)
@@ -207,7 +212,10 @@ class PreviewAutoFetchTest {
             assertFalse("$c: a damaged install is still the row's", c.state is StreamingPackState.Repair)
             assertFalse("$c: a delete or a dismissal is still never undone", c.userSaidNo)
             assertTrue("$c: the switch must still be on", c.showLiveWords)
-            assertTrue("$c: a cloud-only setup still gets nothing", c.localTierInstalled)
+            assertTrue(
+                "$c: a device with no on-device speech model still gets nothing",
+                c.localTierInstalled,
+            )
             assertFalse("$c: still never during a session", c.sessionActive)
             assertFalse("$c: still never while a batch job runs", c.batchJobActive)
             assertFalse("$c: still never on top of work in flight", c.packWorkInFlight)
@@ -681,7 +689,8 @@ class PreviewAutoFetchTest {
         // can be there anyway: the Settings row installs on demand, and a 4.4.0 user may have had
         // it before they went cloud-only.
         assertEquals(
-            "the model is installed and the previewer has never armed — but it never can",
+            "the model is installed and the flag is unwritten — and nothing can ever write it " +
+                "here, because the write is `onOpen`'s and this session never opens",
             PreviewAutoFetch.Card.NONE,
             card(installed = true, previewHasArmed = false, localTierInstalled = false),
         )

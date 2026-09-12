@@ -591,6 +591,16 @@ tasks.withType<Test>().configureEach {
         // and no crash sentinel can see. Without this entry the one edit that pin exists to catch
         // is the one that never re-runs it.
         "src/main/java/com/whispereverywhere/transcription/stream/SherpaPreviewRecognizer.kt",
+        // (4.5.0 Task 4 fix round 2, review r2's B2) The DEVICE axis's two facts and their one
+        // home each. `PreviewUnreachableTest` now reads these two files as source to hold them
+        // there — the mechanism (no word reaches the bubble, and the reason is NOT the previewer's
+        // gate) and the pointer from the announcement's own input to the flag's KDoc. Both files
+        // are pure Kotlin, so every mutation those pins exist to catch is COMMENT-SHAPED and
+        // compiles to a byte-identical class: without these entries the one edit each pin exists
+        // to catch is the one that leaves `:app:testDebugUnitTest` UP-TO-DATE. The refuted
+        // mechanism surviving a whole fix round in a `@param` is that edit, observed.
+        "src/main/java/com/whispereverywhere/transcription/stream/PreviewUnreachable.kt",
+        "src/main/java/com/whispereverywhere/transcription/stream/PreviewAutoFetch.kt",
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a
