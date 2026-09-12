@@ -121,13 +121,12 @@ fun OnboardingFlowScreen(
     // answer from the same tag (and the one-read pin in ChooserSteerWiringPinTest stays true).
     val languageTag = java.util.Locale.getDefault().toLanguageTag()
 
-    // 4.4.0: does the English row get the live-words chip? Read ONCE, beside the tag above and
-    // for the same reason — `isInstalled` is a marker plus four File.length() calls, and the
-    // language step recomposes on every tap.
-    val livePackInstalled = remember {
-        (context.applicationContext as WhisperEverywhereApp).streamingPackManager
-            .isInstalled(com.whispereverywhere.transcription.stream.StreamingPackCatalog.EN)
-    }
+    // (4.5.0 Task 4) NO PACK READ AT THIS STEP ANY MORE. 4.4.0 read `isInstalled(EN)` here for
+    // one row's *"preview model installed"* chip; the language rows now say what each
+    // language's model COSTS and what its live words look like, which is true whether the
+    // bytes are here or not and is the same sentence for all seven rows
+    // (`StreamingPackCopy.languageRowNote`). The chip it replaces was reachable only by a
+    // user re-entering onboarding with English already installed — see that function's KDoc.
 
     // (4.5.0 Task 3 fix round 1, review r1's B2) The two facts the progress strip's READY receipt
     // depends on, read ONCE here beside the chip above and for the same reason. At THIS step the
@@ -261,7 +260,6 @@ fun OnboardingFlowScreen(
                         languageTag = languageTag,
                         picked = pickedLanguage,
                         onPick = { pickedLanguage = it },
-                        livePackInstalled = livePackInstalled,
                         liveTierInstalled = liveTierInstalled,
                         liveWordsSwitchOn = liveWordsSwitchOn,
                         liveDisabledLanguages = liveDisabledLanguages,
@@ -624,7 +622,6 @@ private fun LanguageStep(
     languageTag: String,
     picked: String?,
     onPick: (String) -> Unit,
-    livePackInstalled: Boolean,
     liveTierInstalled: Boolean,
     liveWordsSwitchOn: Boolean,
     liveDisabledLanguages: Set<String>,
@@ -671,22 +668,36 @@ private fun LanguageStep(
             title = displayName,
             subtitle = when {
                 code == "auto" -> OnboardingLogic.AUTO_LANGUAGE_SUBTITLE
-                // Only where the model is actually on the device: the chip claims an INSTALLED
-                // model, and offering it without one is a promise the first session would break.
+                // (4.5.0 Task 4) EVERY LANGUAGE WITH A PREVIEW MODEL SAYS SO ON ITS OWN ROW —
+                // which is what the sentence above now points at, in place of the *"English has a
+                // preview model today"* that six new catalogue rows made false. The row names
+                // what the model costs (from that pack's OWN bytes: French is 128 MB where
+                // Russian is 29) and what its live words will look like, because how rough the
+                // strip is differs per pack: Korean carries punctuation and numerals the English
+                // strip never does, and the bilingual Chinese model puts CHARACTERS on the bubble.
                 //
-                // (4.5.0 Task 4) AND IT DELIBERATELY DOES **NOT** ASK THE TIER, which is the one
-                // place in the feature where that is the right answer. This step is reached only
-                // from `firstRunStartDestination`, whose sole rule is `installedModel() == null`
-                // — and the ENGINES step that follows is mandatory with no completable path
-                // without a tier (see this flow's KDoc). So at this step the tier is not merely
+                // A language with no model gets no subtitle at all, exactly as before — the
+                // predicate and the null are both the copy object's ([StreamingPackCopy
+                // .languageRowNote]), because a "no model" chip on the other forty-seven rows
+                // would collapse *"there is no model for this language"* into *"you have not
+                // picked one"*, which is two different facts about the world (ruling 3d).
+                //
+                // AND IT DELIBERATELY DOES **NOT** ASK THE TIER, which is the one place in the
+                // feature where that is the right answer. This step is reached only from
+                // `firstRunStartDestination`, whose sole rule is `installedModel() == null` — and
+                // the ENGINES step that follows is mandatory with no completable path without a
+                // tier (see this flow's KDoc). So at this step the tier is not merely
                 // undetermined: it is absent for EVERY reader and guaranteed to arrive before any
-                // of them reaches Home. A tier term here would make [StreamingPackCopy
-                // .LANGUAGE_CHIP] dead copy — rendered nowhere, ever — which is the smell this
-                // repo already cites against `SETTINGS_DISABLED_ON_DEVICE`. The same argument
-                // covers `LANGUAGE_STEP_SENTENCE` above, which is why it is untouched too.
-                code == "en" && livePackInstalled ->
-                    com.whispereverywhere.transcription.stream.StreamingPackCopy.LANGUAGE_CHIP
-                else -> null
+                // of them reaches Home. A tier term here would render these seven rows nowhere,
+                // ever: dead copy, the smell this repo already cites against
+                // `SETTINGS_DISABLED_ON_DEVICE`. The same argument covers
+                // `LANGUAGE_STEP_SENTENCE` above, which is why it is untouched too.
+                else -> com.whispereverywhere.transcription.stream.StreamingPackCopy
+                    .languageRowNote(
+                        displayName,
+                        com.whispereverywhere.transcription.stream.StreamingPackCatalog
+                            .forLanguage(code),
+                    )
             },
             badged = code == deviceCode,
             selected = picked == code,

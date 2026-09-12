@@ -530,25 +530,46 @@ class LivePreviewRowsPinTest {
     }
 
     @Test
-    fun theEnglishChipIsOfferedOnlyWhereThePackIsActuallyInstalled() {
+    fun everyLanguageWithAPreviewModelSaysSoOnItsOwnRowAndTheRestSayNothing() {
+        // (4.5.0 Task 4) The step's sentence now points at the ROWS — *"each language with a
+        // preview model says so on its own row"* — in place of the *"English has a preview model
+        // today"* that six catalogue rows made false. So the rows have to carry it, and they have
+        // to carry it from the CATALOGUE rather than from a language literal: seven packs today,
+        // and the row for any of the other forty-seven languages says nothing at all.
         val step = scopeOf(onboardingFlow, "private fun LanguageStep(", "private fun LanguageRow(")
         assertEquals(
-            1, liveLineCount(step, "StreamingPackCopy.LANGUAGE_CHIP"),
+            "one per-language row sentence, and it is the copy object's",
+            1, liveLineCount(step, ".languageRowNote("),
         )
         assertEquals(
-            "the chip claims an INSTALLED model — offering it on a device with no pack is a " +
-                "promise the first session would break",
-            1, liveLineCount(step, "code == \"en\" && livePackInstalled ->"),
+            "asked of the CATALOGUE per row — not of a hardcoded language, and not of one pack",
+            1, liveLineCount(step, ".forLanguage(code),"),
         )
-        // (4.5.0 Task 4) AND IT MUST NOT GROW A TIER TERM, which is the one surface in the
-        // feature where that is so. `firstRunStartDestination`'s sole rule is
+        assertEquals(
+            "the chip that claimed an INSTALLED model for one hardcoded language is gone, and " +
+                "with it the English-only `isInstalled` read at flow level: it asserted a fact " +
+                "seven rows cannot share, and it rendered only for a user re-entering onboarding " +
+                "with English already installed",
+            0,
+            liveLineCount(step, "StreamingPackCopy.LANGUAGE_CHIP") +
+                liveLineCount(step, "livePackInstalled") +
+                liveLineCount(onboardingFlow, "livePackInstalled"),
+        )
+        assertEquals(
+            "and no language literal decides a subtitle any more — Auto is the one row with a " +
+                "sentence of its own, because Auto is a CHOICE and not a gap",
+            1, liveLineCount(step, "code == \"auto\" -> OnboardingLogic.AUTO_LANGUAGE_SUBTITLE"),
+        )
+        // (4.5.0 Task 4) AND THE ROWS MUST NOT GROW A TIER TERM, which is the one surface in
+        // the feature where that is so. `firstRunStartDestination`'s sole rule is
         // `installedModel() == null`, and it is the ONLY route into this flow — so every reader
         // of this step has no tier, and the mandatory ENGINES step after it has no completable
-        // path without one. A tier term here would render this chip nowhere, ever: dead copy, the
-        // smell this repo already cites against `SETTINGS_DISABLED_ON_DEVICE`. Pinned so the
-        // sweep that correctly gated Home and Settings cannot be "finished" onto this step.
+        // path without one. A tier term here would render these seven rows nowhere, ever: dead
+        // copy, the smell this repo already cites against `SETTINGS_DISABLED_ON_DEVICE`. Pinned
+        // so the sweep that correctly gated Home and Settings cannot be "finished" onto this
+        // step.
         assertEquals(
-            "no tier term on the onboarding chip — it would make the sentence unreachable",
+            "no tier term on the per-language rows — it would make them unreachable",
             0, liveLineCount(step, "liveTierInstalled ->"),
         )
         assertEquals(
@@ -556,12 +577,10 @@ class LivePreviewRowsPinTest {
             1, liveLineCount(step, "StreamingPackCopy.LANGUAGE_STEP_SENTENCE,"),
         )
         assertEquals(
-            "and the pack is read ONCE, at flow level, like the language tag beside it: a read " +
-                "per recomposition is four File.length() calls on the composition thread",
-            1, liveLineCount(onboardingFlow, "streamingPackManager"),
-        )
-        assertEquals(
-            1, liveLineCount(onboardingFlow, "livePackInstalled = livePackInstalled"),
+            "and no pack is READ at this step at all any more: the rows describe what each " +
+                "language's model IS, which the catalogue knows, and not whether its bytes " +
+                "have arrived, which cost an isInstalled per row to answer",
+            0, liveLineCount(onboardingFlow, "streamingPackManager"),
         )
     }
 }

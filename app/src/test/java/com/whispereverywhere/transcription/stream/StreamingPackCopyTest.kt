@@ -54,7 +54,6 @@ class StreamingPackCopyTest {
             StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE,
             StreamingPackCopy.SWITCH_TITLE,
             StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
-            StreamingPackCopy.LANGUAGE_CHIP,
             StreamingPackCopy.AUTO_ROW_TITLE,
             StreamingPackCopy.AUTO_NO_LIVE_WORDS,
             // Rendered for a language the app has NO pack for, because that is the only way a
@@ -175,7 +174,12 @@ class StreamingPackCopyTest {
         )
         assertEquals("Show live words", StreamingPackCopy.SWITCH_TITLE)
         assertEquals(
-            "Live words on the bubble follow the language you pick: English has a preview model today, and Auto-detect shows none at all. The preview model for the language you pick is downloaded once setup finishes. Your typed transcript is the same either way.",
+            // (4.5.0 Task 4) It named ENGLISH while one row existed, and six rows made that
+            // false — Task 1's hand-off called it the one sentence on this branch that was
+            // wrong for a user. What replaces it names no language and no COUNT: it points at
+            // the rows, which now carry `languageRowNote` per pack, so a seventh row needs no
+            // edit here and no number here can go stale.
+            "Live words on the bubble follow the language you pick: each language with a preview model says so on its own row, and Auto-detect shows none at all. The preview model for the language you pick is downloaded once setup finishes. Your typed transcript is the same either way.",
             StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
         )
         assertEquals("Live words need a chosen language", StreamingPackCopy.AUTO_ROW_TITLE)
@@ -191,7 +195,11 @@ class StreamingPackCopyTest {
             "The bubble shows live words only for a language with a preview model, and there is none for Spanish yet. Your typed transcript in Spanish is unchanged.",
             StreamingPackCopy.noLiveWordsSubtitle(es),
         )
-        assertEquals("Live words on the bubble while you speak — preview model installed.", StreamingPackCopy.LANGUAGE_CHIP)
+        // `LANGUAGE_CHIP` is GONE (4.5.0 Task 4): it asserted INSTALLED and named no language,
+        // which is the pair of properties seven rows cannot carry, and it was reachable only by
+        // a user re-entering onboarding with English already installed. The rows say what each
+        // language's model costs and what its words look like instead —
+        // `languageRowNote`, pinned below.
         assertEquals("Delete the preview model", StreamingPackCopy.DELETE_TITLE)
     }
 

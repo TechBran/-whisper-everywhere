@@ -191,8 +191,15 @@ object StreamingPackCopy {
      * the pack list, and silent about the thing the user is about to decide. This one names what
      * the pick buys, what Auto costs, and the promise neither choice touches.
      *
-     * It names ONE language because one pack exists; when the language list lands this sentence is
-     * where it goes, and the badge in the picker replaces the card as the permanent signpost.
+     * ### AND IT NO LONGER NAMES ENGLISH (4.5.0 Task 4)
+     *
+     * *"English has a preview model today"* was true of a one-row catalogue and became FALSE the
+     * moment the six language rows landed — the one sentence on this branch that was wrong for a
+     * user rather than merely incomplete (Task 1's own hand-off named it). What replaces it names
+     * no language and no COUNT: *"each language with a preview model says so on its own row"*
+     * points at [languageRowNote], which the step now renders per row, so a seventh or an
+     * eighteenth row needs no edit here and no number here can go stale. (A count would also be a
+     * digit, and this sentence carries none — see [PICKER_DEAL] for that rule's reason.)
      *
      * ### AND IT STATES THE DEAL, because this is the other selection site (4.5.0 pass 2, Fix 1)
      *
@@ -209,10 +216,7 @@ object StreamingPackCopy {
      * belongs on the row.
      */
     const val LANGUAGE_STEP_SENTENCE =
-        "Live words on the bubble follow the language you pick: English has a preview model today, and Auto-detect shows none at all. The preview model for the language you pick is downloaded once setup finishes. Your typed transcript is the same either way."
-
-    /** Rendered in the English row's subtitle slot on the language step when the pack is installed. */
-    const val LANGUAGE_CHIP = "Live words on the bubble while you speak — preview model installed."
+        "Live words on the bubble follow the language you pick: each language with a preview model says so on its own row, and Auto-detect shows none at all. The preview model for the language you pick is downloaded once setup finishes. Your typed transcript is the same either way."
 
     // ------------------------------- what ONE language's strip will look like (4.5.0 Task 4)
 
@@ -325,6 +329,24 @@ object StreamingPackCopy {
      * **French 128** and Russian 29 — so there is no shared figure for a second row to inherit,
      * and the two halves are joined HERE rather than by a composable, because a call site that
      * assembles copy is a second wording held to the same rules by a second test.
+     *
+     * ### What it REPLACES, and why that string is gone rather than kept beside it
+     *
+     * 4.4.0's `LANGUAGE_CHIP` — *"Live words on the bubble while you speak — preview model
+     * installed."* — was rendered in one row's subtitle slot under `code == "en" &&
+     * livePackInstalled`. It asserted INSTALLED and named no language, which is the pair of
+     * properties that cannot survive seven rows: kept as it was it would claim an install for the
+     * one hardcoded language, and generalised it would need the installed state of all seven.
+     * **And it was reachable by almost nobody**: this step is entered only from
+     * `firstRunStartDestination`, whose sole rule is `installedModel() == null`, and a pack is
+     * only ever installed on a device that has a tier (`PreviewAutoFetch.decide` refuses without
+     * one, and the Settings offer is inside the tier gate) — so the chip rendered for a user
+     * re-entering onboarding with English already installed, and for no one else. This sentence
+     * is true whether the bytes are here or not, and it renders for every reader of the step, on
+     * every language that has a model. The installed fact itself is not lost: the Settings row
+     * says it ([installed]), the strip above these rows says it on arrival ([selectorReady]), and
+     * if the owner wants it back HERE it is one `StreamingPackManager.installedLanguages()` read
+     * and a second arm on this function.
      */
     fun languageRowNote(language: String, pack: StreamingPack?): String? = pack?.let {
         "${pickerRowBadge(it.totalBytes)}. ${stripNote(language, it.stripShape)}"
