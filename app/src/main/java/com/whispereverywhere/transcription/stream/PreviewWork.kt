@@ -110,8 +110,10 @@ enum class PreviewStarter {
  *    `DownloadManager` row on every exit. 4.4.1 set `keepRow = true` on a `CancellationException`
  *    and left the row transferring the rest of the 73 MB, while `delete()`'s
  *    `removeStaleDownloads` removed the same row — so the app both stopped and did not stop one
- *    transfer, depending on which control the user found (review r1's H1). The staging dir goes
- *    with it, so no partial bytes are left behind either.
+ *    transfer, depending on which control the user found (review r1's H1). **The bytes are swept
+ *    by `download`'s own `staging.deleteRecursively()` and not by that row removal** (pass 2's
+ *    Fix 2): one sweep takes the `.part` in flight and every file that had already landed, which
+ *    is more than a row could ever have reached.
  *  - **[DELIVERED_PACK] — NOTHING TO STOP, and the UI offers nothing.** Play has already put
  *    those bytes on the device; the route's only phase is a local verify + copy that touches no
  *    network and spends none of the user's data. It is also not cancellation-cooperative (see

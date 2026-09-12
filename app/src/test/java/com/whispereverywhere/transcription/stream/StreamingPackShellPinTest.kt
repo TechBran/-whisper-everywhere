@@ -266,12 +266,26 @@ class StreamingPackShellPinTest {
      * poll loop and left `DownloadManager` transferring the rest of the 73 MB — while `delete()`'s
      * `removeStaleDownloads` removed that very row. The app both stopped and did not stop the same
      * transfer, depending on which control the user found. `PreviewRoute.DIRECT_DOWNLOAD
-     * .stopsBeforeTheCopy` is now `true`, and these are the two lines that keep that promise: the
-     * row goes on every exit, and the staged files go with it.
+     * .stopsBeforeTheCopy` is now `true`, and these are the lines that keep that promise: the row
+     * goes on every exit, and `download`'s own sweep takes the staged files.
      *
-     * Neither is reachable from a JVM test — `DownloadManager` and `getExternalFilesDir` are both
-     * Android — and both are one-token edits that compile clean and change nothing any other test
-     * observes, which is exactly the shape this file exists for.
+     * **WHICH OF THOSE TWO FACTS SWEEPS THE BYTES IS PINNED HERE, because this file asserted the
+     * wrong one** (4.5.0 pass 2, Fix 2 — review r3's R3-B1). The removal's KDoc claimed *"the row
+     * (and with it the partial file) now goes on EVERY exit"*, and this test's own comment
+     * repeated it. `DownloadManager.remove` is documented that way, and that is exactly what made
+     * it dangerous: `fetchOne` set the DownloadManager destination to the path `dest` names, so
+     * the same-path guard skipped the move and the unconditional removal deleted the COMPLETE
+     * file — every non-Play install then failed `verify` as `Missing` after spending 73 MB.
+     * Invisible to every device session, because a Play install never takes this route.
+     *
+     * The fix is the `.part` sibling below: the bytes are out of DownloadManager's hands before
+     * the `finally` runs, the removal keeps its H1 meaning with no effect on a landed file, and
+     * the partial-byte sweep is `download`'s `staging.deleteRecursively()` — which is what this
+     * test now asserts, in the CANCELLATION arm specifically.
+     *
+     * None of it is reachable from a JVM test — `DownloadManager` and `getExternalFilesDir` are
+     * both Android — and all of it is one-token edits that compile clean and change nothing any
+     * other test observes, which is exactly the shape this file exists for.
      */
     @Test
     fun cancellingTheFallbackDownloadReallyStopsItAndSweepsWhatItStaged() {
@@ -295,24 +309,97 @@ class StreamingPackShellPinTest {
                 "it and leave the transfer running behind a UI that says it stopped",
             finallyArm in 0 until removed,
         )
-        // The staged files are OURS, unlike Play's delivered pack. fetchOne's removal takes the
-        // in-flight file with the row; the ones that already landed would otherwise park up to
-        // 73 MB in the external staging dir until the next attempt or a delete.
+        // THE STAGED FILES ARE SWEPT BY `download`, NOT BY THE ROW REMOVAL (Fix 2). They are
+        // OURS, unlike Play's delivered pack, and the ones that already landed would otherwise
+        // park up to 73 MB in the external staging dir until the next attempt or a delete. The
+        // in-flight `.part` is in that same dir, so one sweep answers for all of them — and the
+        // sweep asserted here is the CANCELLATION arm's, not the success path's (review r3's
+        // nit 5: `offsetOfLive` found the success one and then only asserted `>= 0`).
         val download = scopeOf(manager, "suspend fun download(", "private fun fail(")
         assertEquals(
             "the download sweeps its own staging dir when it is cancelled",
             1,
             liveLineCount(download, "catch (cancelled: CancellationException)"),
         )
-        val caught = offsetOfLive(download, "catch (cancelled: CancellationException)")
-        val swept = offsetOfLive(download, "staging.deleteRecursively()")
-        assertTrue("the sweep must exist", swept >= 0)
+        val cancelArm = scopeOf(download, "catch (cancelled: CancellationException)", "throw cancelled")
+        assertEquals(
+            "and the sweep is INSIDE that arm, so deleting it cannot leave this pin green",
+            1,
+            liveLineCount(cancelArm, "staging.deleteRecursively()"),
+        )
         assertTrue(
             "and the cancellation is RETHROWN: a user who cancelled has not hit a bad network, " +
                 "and the actuator's back-off must not record one",
             liveLineCount(download, "throw cancelled") == 1,
         )
-        assertTrue("the catch arm is in the download", caught >= 0)
+    }
+
+    /**
+     * THE DOWNLOADED FILE IS OUT OF `DownloadManager`'S HANDS BEFORE THE ROW IS REMOVED (4.5.0
+     * pass 2, Fix 2 — review r3's R3-B1).
+     *
+     * The defect this pins shut, in order: `fetchOne` asked `DownloadManager` to write straight to
+     * `stagingDir(pack)/<name>`, which is the absolute path `dest` names; the `STATUS_SUCCESSFUL`
+     * branch's `if (src.absolutePath != dest.absolutePath)` was therefore FALSE and skipped the
+     * move; the unconditional `finally { dm.remove(id) }` then deleted the complete file, because
+     * that is what `remove` documents itself as doing; and `download`'s
+     * `StreamingPackInstall.verify(staging, pack)` — which runs AFTER every `fetchOne` has
+     * returned — answered `Missing`, failed the install and wrote the 24 h back-off stamp, having
+     * spent 73 MB. Pre-existing in 4.4.1 (`keepRow` was false on success there too) and invisible
+     * to every device session, because a Play install never takes this route: only a debug build
+     * or a sideload does.
+     *
+     * The inherited shape does not have the bug — `TtsModelManager` consumes the download INSIDE
+     * the success branch, before its own `finally` — and this is the previewer's version of that:
+     * a sibling `.part` destination, so no guard can ever make the move conditional again.
+     */
+    @Test
+    fun theFallbackDownloadLandsOnASiblingAndIsMovedIntoPlaceBeforeTheRowGoes() {
+        val fetchOne = scopeOf(manager, "private suspend fun fetchOne(", "private fun stagingDir(")
+        assertEquals(
+            "the suffix has one spelling, in the companion",
+            1,
+            liveLineCount(manager, "const val PART_SUFFIX"),
+        )
+        assertEquals(
+            "the destination handed to DownloadManager is the `.part` sibling, never `dest`",
+            1,
+            liveLineCount(fetchOne, "val part = File(dest.parentFile, dest.name + PART_SUFFIX)"),
+        )
+        assertEquals(
+            "and it is that file's name in the request, so the two cannot drift apart",
+            1,
+            liveLineCount(fetchOne, "\${pack.dirName}/\${part.name}"),
+        )
+        assertEquals(
+            "a `.part` left by a killed process is cleared first: DownloadManager refuses a " +
+                "destination that already exists",
+            1,
+            liveLineCount(fetchOne, "if (part.exists()) part.delete()"),
+        )
+        // THE MOVE IS UNCONDITIONAL. The same-path guard is what skipped it, and a guard whose
+        // false branch is the defect is worse than no guard: with a `.part` destination the paths
+        // cannot be equal, so the condition only gave a future reader something to satisfy.
+        assertEquals(
+            "no same-path guard survives — that condition WAS the bug",
+            0,
+            liveLineCount(fetchOne, "src.absolutePath != dest.absolutePath"),
+        )
+        assertEquals(
+            "one rename attempt, with the copy+delete fallback for a cross-filesystem move",
+            1,
+            liveLineCount(fetchOne, "if (!src.renameTo(dest))"),
+        )
+        // ...and the ORDER is the whole of it: moved inside the success branch, removed in the
+        // `finally` afterwards.
+        val moved = offsetOfLive(fetchOne, "if (!src.renameTo(dest))")
+        val finallyArm = offsetOfLive(fetchOne, "} finally {")
+        val removed = offsetOfLive(fetchOne, "dm.remove(id)")
+        assertTrue("the move must exist", moved >= 0)
+        assertTrue(
+            "and happen BEFORE the row is removed, or `remove` takes the complete file with it",
+            moved in 0 until finallyArm && finallyArm in 0 until removed,
+        )
     }
 
     /**

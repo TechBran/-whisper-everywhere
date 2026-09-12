@@ -249,13 +249,15 @@ class StreamingPackManager(private val context: Context) {
                 StreamingPackInstall.install(staging, root(), pack)
                 staging.deleteRecursively()
             } catch (cancelled: CancellationException) {
-                // The OTHER half of the cancel promise (4.5.0 Task 1). [fetchOne]'s `finally` has
-                // already taken the in-flight row and its partial file; the files that ALREADY
-                // landed are ours, and leaving them would park up to 73 MB in the external staging
-                // dir until the next attempt or a delete. The route's contract is "the transfer
-                // stops and nothing is installed", and dead bytes on the user's storage are not
-                // that. The verify and install arms sweep on their own paths (`fail`, and
-                // `install`'s own `.tmp` teardown), so this arm only answers the cancellation.
+                // The OTHER half of the cancel promise (4.5.0 Task 1), and **THE LINE THAT
+                // ACTUALLY SWEEPS THE BYTES** (Fix 2). [fetchOne]'s `finally` has taken the row,
+                // which stops the transfer; what is left on disk is this dir — the `.part` that
+                // was in flight plus every file that had already landed — and all of it is ours.
+                // Leaving it would park up to 73 MB in the external staging dir until the next
+                // attempt or a delete, and the route's contract is "the transfer stops and
+                // nothing is installed". The verify and install arms sweep on their own paths
+                // (`fail`, and `install`'s own `.tmp` teardown), so this arm only answers the
+                // cancellation.
                 staging.deleteRecursively()
                 // A cancellation is NOT a failure: the actuator's back-off must not record one.
                 throw cancelled
@@ -267,12 +269,35 @@ class StreamingPackManager(private val context: Context) {
         throw StreamingPackException(message)
     }
 
+    /**
+     * One file, from the URL to [dest], through `DownloadManager`.
+     *
+     * **IT DOWNLOADS TO A SIBLING `.part` AND MOVES THE FILE ITSELF** (4.5.0 pass 2, Fix 2 —
+     * review r3's R3-B1). Until this fix the request's destination WAS [dest]'s own absolute path
+     * (`stagingDir(pack)/<name>`), so the success branch's `src.absolutePath != dest.absolutePath`
+     * guard was false, the move was skipped, and the unconditional `dm.remove(id)` in the
+     * `finally` then deleted the file — `remove` documents itself as taking *"the downloaded file,
+     * partial or complete"*. `download`'s `verify` runs after every `fetchOne` has returned, so it
+     * answered `Missing`, failed the install and wrote the 24 h back-off stamp, having spent
+     * 73 MB. Pre-existing in 4.4.1 and invisible on every device session, because a Play install
+     * never takes this route — only a debug build or a sideload does.
+     *
+     * So the bytes are out of `DownloadManager`'s hands BEFORE the row goes, which is the shape
+     * this route was copied from (`TtsModelManager` consumes its download inside the success
+     * branch, before its own `finally`). The move is unconditional: with a `.part` destination the
+     * two paths cannot be equal, and a guard whose false branch is the defect is worse than none.
+     */
     private suspend fun fetchOne(dm: DownloadManager, pack: StreamingPack, f: PackFile, dest: File, onSoFar: (Long) -> Unit) {
+        val part = File(dest.parentFile, dest.name + PART_SUFFIX)
+        // A `.part` from a process that was killed mid-transfer: DownloadManager refuses a
+        // destination that already exists, and `removeStaleDownloads` only reaches files that
+        // still have a row.
+        if (part.exists()) part.delete()
         val request = DownloadManager.Request(pack.urlOf(f).toUri())
             .setTitle("Live words preview model")
             .setDescription("Downloading ${f.name}")
             .setDestinationInExternalFilesDir(
-                context, Environment.DIRECTORY_DOWNLOADS, "${StreamingPackCatalog.ROOT_DIR}/${pack.dirName}/${f.name}",
+                context, Environment.DIRECTORY_DOWNLOADS, "${StreamingPackCatalog.ROOT_DIR}/${pack.dirName}/${part.name}",
             )
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setAllowedOverMetered(true)
@@ -291,12 +316,15 @@ class StreamingPackManager(private val context: Context) {
                             if (src == null || !src.exists()) {
                                 throw StreamingPackException("Cannot resolve downloaded file for ${f.name}")
                             }
-                            if (src.absolutePath != dest.absolutePath) {
-                                if (dest.exists()) dest.delete()
-                                if (!src.renameTo(dest)) {
-                                    src.copyTo(dest, overwrite = true)
-                                    src.delete()
-                                }
+                            // INTO PLACE, UNCONDITIONALLY, HERE — see the KDoc. `src` is read
+                            // from the row rather than assumed to be `part`, because
+                            // DownloadManager is the authority on where it actually wrote; it
+                            // can never be `dest`, which is what makes this safe to do without
+                            // a guard.
+                            if (dest.exists()) dest.delete()
+                            if (!src.renameTo(dest)) {
+                                src.copyTo(dest, overwrite = true)
+                                src.delete()
                             }
                         }
                         DownloadManager.STATUS_FAILED -> {
@@ -315,9 +343,16 @@ class StreamingPackManager(private val context: Context) {
             // cancellation arm set `keepRow = true` and the row was spared — so the X stopped the
             // poll loop and left `DownloadManager` transferring the rest of the 73 MB, while
             // `delete()`'s `removeStaleDownloads` removed that very row. The app both stopped and
-            // did not stop one transfer, depending on which control the user found. The row (and
-            // with it the partial file) now goes on EVERY exit, which is what
-            // `PreviewRoute.DIRECT_DOWNLOAD.stopsBeforeTheCopy` promises the UI it may offer.
+            // did not stop one transfer, depending on which control the user found. The row now
+            // goes on EVERY exit, which is what `PreviewRoute.DIRECT_DOWNLOAD.stopsBeforeTheCopy`
+            // promises the UI it may offer.
+            //
+            // WHAT THIS LINE DOES AND DOES NOT DO (Fix 2). It stops the TRANSFER. It is NOT what
+            // sweeps the partial bytes: `download`'s own `staging.deleteRecursively()` in the
+            // cancellation arm is, and it takes the whole staging dir — the `.part` still in
+            // flight and every file that had already landed, which the row removal could never
+            // have reached. This comment used to claim the row took "the partial file" with it,
+            // and that claim is what made downloading straight onto `dest` look safe.
             //
             // The inherited `TtsModelManager` behaviour this drops was "keep the row so the
             // transfer survives a screen change" — which is not a thing the previewer needs: its
@@ -351,5 +386,12 @@ class StreamingPackManager(private val context: Context) {
 
     private companion object {
         const val POLL_INTERVAL_MS = 300L
+
+        /**
+         * What `DownloadManager` writes to, beside the file the install will read — one spelling,
+         * because the request's destination and the file we move from have to be the same name
+         * (Fix 2; `fetchOne`'s KDoc for why the two must differ at all).
+         */
+        const val PART_SUFFIX = ".part"
     }
 }
