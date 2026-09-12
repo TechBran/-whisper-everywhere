@@ -666,6 +666,26 @@ tasks.withType<Test>().configureEach {
         // mechanism surviving a whole fix round in a `@param` is that edit, observed.
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewUnreachable.kt",
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewAutoFetch.kt",
+        // (4.5.0 Task 5) THE TWO DOCUMENTS THE CLEARANCE GATE LIVES IN — the only entries on this
+        // list that are prose, and they are here for the list's stated reason: membership follows
+        // what the tests READ. `StreamingPackClearanceTest` asserts that the acceptance sheet's
+        // promotion gate names `PackClearanceRecord.PRODUCTION_CLEARED`, that AF2 is rewritten
+        // rather than deleted, that the Play-prompt row names Play's two statuses, that every
+        // pack's own size badge appears, and that the owner's checklist carries a section for each
+        // outstanding language with the commit its evidence was read at.
+        //
+        // MEASURED, not assumed: with these two files absent from this list, mutating all three —
+        // the sheet's promotion gate, the Korean section's answerer and the Chinese commit — left
+        // `:app:testDebugUnitTest UP-TO-DATE / BUILD SUCCESSFUL in 13s` without running a single
+        // test. The clearance gate is the one thing in this build that a five-language legal
+        // question hangs on, and a pin over it that never re-runs is worse than no pin: it reports
+        // green over a document that has been edited out from under it.
+        //
+        // The price, stated: the acceptance sheet is hand-edited during a device session, so
+        // ticking a box re-runs the suite. That is the right trade for a gate on a store
+        // promotion, and the sheet is the place a promotion decision is actually made.
+        rootProject.file("docs/LANGUAGE-CLEARANCE.md"),
+        rootProject.file("docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md"),
     // RENAMED from `nativeSourceContract` (4.1 L2, Q7a M4(ii)). The list stopped being about
     // native sources several tasks ago: it holds two ASSETS, a manifest, a .gitignore and twelve
     // Kotlin files, and only four of its entries are C++ at all. A property name that describes a

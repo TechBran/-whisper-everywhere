@@ -36,6 +36,13 @@ import java.io.File
  * | a clearance is granted over BYTES, not over a repo name | [everyClearanceIsPinnedToTheCommitTheCatalogueDownloads] |
  * | the state must never reach the bundle or the app | [theClearanceStateReachesNothingTheAppRuns] |
  *
+ * **The two documents this class reads are in the test task's `sourcePinnedInputs`**
+ * (`app/build.gradle.kts`), and that entry is not a formality: measured before adding it, mutating
+ * the sheet's promotion gate, the Korean section's answerer and the Chinese commit all at once left
+ * `:app:testDebugUnitTest UP-TO-DATE / BUILD SUCCESSFUL in 13s` without running a single test. A
+ * pin over a document that never re-runs reports green over a document that has been edited out
+ * from under it.
+ *
  * **What this suite deliberately cannot do.** It cannot tell a true clearance from an invented one
  * — no test can read a lawyer's letter. What it can do is make an invention COST three separate
  * edits in three files and show up as a diff in a test that says why it exists
@@ -499,6 +506,71 @@ class StreamingPackClearanceTest {
                 StreamingPackCopy.stripNote("French", StreamingPackCatalog.FR.stripShape),
             ),
         )
+    }
+
+    // ------------------------------------------- 8. the document the owner actually fills in
+
+    /**
+     * **The checklist, held to the record.** `docs/LANGUAGE-CLEARANCE.md` is the document the
+     * owner works from: one section per outstanding language, the exact question to answer, where
+     * the evidence lives, and the three edits that record an answer. A record with no checklist is
+     * a record nobody can act on, and a checklist that has drifted from the record is worse than
+     * none — so what is pinned is the JOIN between them:
+     *
+     *  - every outstanding language has a section, found by its English name;
+     *  - every outstanding language's section names its answerer, so "who can close this" is never
+     *     a thing the reader has to infer;
+     *  - the commit each row's evidence was read at appears in the document, so the checklist and
+     *     the catalogue cannot disagree about which bytes are being cleared;
+     *  - both keys are named by symbol, because the instruction "flip the switch" is useless
+     *     without the switch's name.
+     *
+     * And the refusal path, which is the half a checklist usually omits: a NO is not a switch, it
+     * is the removal of a row, and the document has to say so — otherwise the first refusal gets
+     * implemented as the build-time exclusion the owner's ruling forbids.
+     */
+    @Test fun theOwnersChecklistNamesEveryOutstandingLanguageAndTheEditsThatCloseIt() {
+        val checklist = repoFile("docs/LANGUAGE-CLEARANCE.md").readText().replace("\r\n", "\n")
+        for (symbol in listOf("PackClearanceRecord", "PRODUCTION_CLEARED", "ClearanceVerdict.Cleared")) {
+            assertTrue("the checklist must name $symbol — a switch with no name cannot be flipped", checklist.contains(symbol))
+        }
+        assertTrue(
+            "the checklist must say that a REFUSAL removes the row rather than setting a flag — " +
+                "otherwise the first no gets built as the build-time exclusion the owner forbade",
+            checklist.contains("refusal") || checklist.contains("Refusal"),
+        )
+        val names = mapOf(
+            "de" to ("German" to ClearanceAnswerer.UPSTREAM_AUTHOR),
+            "ru" to ("Russian" to ClearanceAnswerer.OWNER),
+            "id" to ("Indonesian" to ClearanceAnswerer.COUNSEL),
+            "ko" to ("Korean" to ClearanceAnswerer.COUNSEL),
+            "zh" to ("Chinese" to ClearanceAnswerer.COUNSEL),
+        )
+        for (record in PackClearanceRecord.RECORD) {
+            if (record.verdict !is ClearanceVerdict.Outstanding) continue
+            val (name, answerer) = names[record.language]
+                ?: throw AssertionError(
+                    "'${record.language}' is outstanding and this test does not know its section " +
+                        "name — add it here and add its section to docs/LANGUAGE-CLEARANCE.md",
+                )
+            assertTrue("the checklist has no '## $name' section", checklist.contains("## $name"))
+            // Who can close it, in the words the document uses rather than the enum's.
+            val says = when (answerer) {
+                ClearanceAnswerer.UPSTREAM_AUTHOR -> "uploader"
+                ClearanceAnswerer.OWNER -> "your own risk call"
+                ClearanceAnswerer.COUNSEL -> "counsel"
+            }
+            assertTrue(
+                "$name's section must say who can answer it ('$says' — ${answerer.name})",
+                checklist.substringAfter("## $name").substringBefore("\n## ").contains(says),
+            )
+            assertTrue(
+                "$name's section must name the commit its evidence was read at " +
+                    "(${record.pinnedCommit}) — the checklist and the catalogue must not disagree " +
+                    "about which bytes are being cleared",
+                checklist.contains(record.pinnedCommit),
+            )
+        }
     }
 
     // ------------------------------------------------------------------ helpers
