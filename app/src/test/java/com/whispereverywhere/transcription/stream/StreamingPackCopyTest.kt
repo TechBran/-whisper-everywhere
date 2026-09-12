@@ -619,7 +619,7 @@ class StreamingPackCopyTest {
         assertEquals(
             "and those words, in the catalogue’s own order — the list is what the picker’s rows " +
                 "and the settings disclosure both render, so a reordering is a visible change",
-            listOf(en, "French", "German", "Russian", "Indonesian"),
+            listOf(en, "French", "German", "Russian", "Indonesian", "Korean", "Chinese"),
             StreamingPackCatalog.packs.map {
                 com.whispereverywhere.data.local.PreferencesManager.languageDisplayName(it.language)
             },

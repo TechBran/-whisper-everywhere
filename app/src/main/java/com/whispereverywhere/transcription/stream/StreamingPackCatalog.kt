@@ -622,7 +622,191 @@ object StreamingPackCatalog {
         canary = null,
     )
 
-    val packs: List<StreamingPack> = listOf(EN, FR, DE, RU, ID)
+    /**
+     * **Korean** — `kangkyu/icefall-asr-ko-streaming-zipformer-72m` at `db24b58d`, the **chunk-16**
+     * export. 72,969,700 B, badged "73 MB".
+     *
+     * `zipformer2`, `decode_chunk_len = 32`, `T = 45`, `comment = "streaming zipformer2"`,
+     * head-dims and `num_heads` present, and the English encoder's exact layer/dim vectors — so
+     * the 320 ms cadence and the 500 ms pad are the shipping row's. The repo also publishes
+     * chunk-32 and chunk-64 encoders whose decoder and joiner are **byte-identical** to these
+     * (one LFS oid each), which is the trap the export choice avoids: the 8.25 CER / RTF 0.038
+     * pair everyone quotes is the **chunk-64** export = 1.28 s cadence, a different model at 4×
+     * the word lag. Ours is the chunk-16 one. Decoder: `vocab_size = 2460`, `context_size = 2`.
+     *
+     * **Its digests are corroborated twice.** The repo ships its own `SHA256SUMS`, and its
+     * entries for these four files match both the tree API's LFS oids and the sha256 computed
+     * locally on the downloaded `tokens.txt` — the only row in the catalogue with an independent
+     * second source for its digests.
+     *
+     * **THE ROW WHOSE COPY CLAIM IS FALSE, and the reason the flags are not decoration.** The
+     * census over its real `tokens.txt`: 2,460 lines, 2,457 emittable, of which **2,456 are
+     * SINGLE characters** and 2,301 bear a Hangul syllable. Then: **10 standalone ASCII digits**,
+     * so `emitsDigits` is **TRUE** and *"no numerals"* is a false sentence for Korean; **58
+     * punctuation-only pieces** under this repo's own derivation — 31 of them pure Unicode-P
+     * (`. ? , ! ) ( % - : '` plus `‘ ’ “ ” – ·` and fullwidth forms), the rest symbols
+     * (`℃ ° ± × ÷ ㎠ ＋ －`) — so `emitsPunctuation` is **TRUE** and the Korean strip will carry
+     * marks the English strip never does. And the case counts are genuinely MIXED (27
+     * uppercase-bearing / 34 lowercase-bearing emittable pieces), so the fold is **not** provably
+     * lossless and this row is [CaseFold.Keep]: folding would paint `nba` over the `NBA` the model
+     * produced.
+     *
+     * `▁` appears **ONCE, as its own token at id 3, and never as a prefix** — so a strip built
+     * from `result.text` would lose every Korean word space to `RemoveSpaceBetweenCjk` (whose
+     * `IsCJK` range contains Hangul), and the route's tokens-not-text `strip` is what keeps
+     * *"Words appear"* true here verbatim.
+     *
+     * **7 unrenderable tokens** are recorded but NOT filtered by this row: U+FFFD, U+007F and five
+     * PUA code points (U+F188, U+F190, U+F191, U+F194, U+F19C). A deny-list in
+     * `PreviewText.normalize` keyed on `Cc`/`Cf`/`Co`/`Cn`/`Cs` + U+FFFD benefits every pack and
+     * belongs there, not on a row.
+     *
+     * **Licence — apache-2.0, READ in a 7,926-byte plain-blob front matter AND platform-surfaced**
+     * (`cardData.license` + a `license:apache-2.0` tag). **NOT CLEARED, and the question is not
+     * the licence.** KsponSpeech is **AI-Hub dataset 123 (NIA)**, whose policy reads
+     * *"※ 내국인만 데이터 신청이 가능합니다"*, requires a separate agreement for a party outside
+     * Korea and another for export, scopes use to *"training AI learning models"*, bars transfer
+     * or sale, and makes **attribution to NIA mandatory and extending to derivative works** —
+     * against an Apache-2.0 that disclaims warranty of title (§7), so the risk sits with the
+     * licensee. Two counsel questions. One of them (does the NIA attribution reach the app
+     * through the weights?) has a 0.1 d answer with no downside — the acknowledgement on the
+     * licences screen — and that is not this task's to write.
+     */
+    val KO = StreamingPack(
+        language = "ko",
+        dirName = "ko-72m-chunk-16",
+        packName = PACK_KO,
+        baseUrl = "https://huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m/resolve/db24b58d22736349eaeb34cc181ad0f3debf9903/",
+        encoder = PackFile("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 70_133_869L, "5f2b6e5e92834849cfdbda3aaa355e6f39ff993f067794e4ab9d5cb993b15311"),
+        decoder = PackFile("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_544_210L, "40c3c57ad27b45b59e27bec8bfc02f04d27c060aeb8e964ae2f87bd9f356bf7d"),
+        joiner = PackFile("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_270_777L, "7d3bd9c1e9cf60efa5d5fed728fbd52d0f08139775f9e9002fd088b4d78f3e73"),
+        tokens = PackFile("tokens.txt", 20_844L, "435dfb9e0a2b6a79124f1a4d8f0f33a951b25384726e2e0d854f081533e6ec9d"),
+        modelType = "zipformer2",
+        decodeChunkLen = 32,
+        encoderT = 45,
+        // The only row in the catalogue that Keeps its case and sets both copy flags — see the
+        // docblock's census. Nothing here is a judgement: all three follow the derivation over
+        // this pack's own tokens.txt.
+        caseFold = CaseFold.Keep,
+        emitsPunctuation = true,
+        emitsDigits = true,
+        // T3 owns the clip, and this row needs a different RULE as well as a clip: both Korean
+        // number series are single characters in this vocabulary (`둘 492`, `셋 745`, `넷 467`;
+        // `일 29`, `이 4`, `삼 90`, `사 19`, `오 54`) while `하나` and `다섯` are not whole pieces
+        // at all — and positional matching cannot reach them, because a clip that collapses to
+        // one token has no positions. Character-set overlap plus a length band (일이삼사오) is the
+        // shape, which is a second implementation of the seam and not a different alias list.
+        // **And the clip must NOT come from the k2-fsa mirror's `test_wavs`: that is AI-Hub audio.**
+        canary = null,
+    )
+
+    /**
+     * **Chinese** — the **bilingual zh-en** export, `csukuangfj/k2fsa-zipformer-bilingual-zh-en-t`
+     * at `e2382758`, `exp/32/`. **49,752,335 B, badged "50 MB"** — a quarter of the 198 MB
+     * sibling's bytes for a **byte-identical `tokens.txt`** (`a8e0e4ec…`, verified by hashing both
+     * rows' file), and an encoder **0.60× the English pack's**.
+     *
+     * **It serves the picker's Chinese (#10) and it is the only row in the catalogue that puts
+     * anything on the strip when an English speaker talks mid-Chinese.** A Chinese-only pack shows
+     * a blank strip at exactly that moment. Verified code-switch output on the shipped
+     * configuration is in the qualification table:
+     * `这是第一种第二种叫呃与 ALWAYS ALWAYS什么意思啊`.
+     *
+     * **A `zipformer` V1 export, which the table marked "verify" and this read settles.** Its
+     * encoder tail: `model_type = zipformer`, `version = 1`, `decode_chunk_len = 32`, `T = 39`,
+     * `num_encoder_layers = 2,2,2,2,2`, `encoder_dims = 256×5`, `attention_dims = 192×5` — and
+     * **no `comment`, no `query_head_dims`, no `value_head_dims`, no `num_heads`**, exactly the
+     * French shape. So the head-dims question is answered: they are ABSENT, the 198 MB sibling's
+     * v1 export is not the odd one out, and the empty `modelType` is what makes this row loadable
+     * at all. All seven v1 encoder keys are present; the decoder carries `vocab_size = 6254` and
+     * `context_size = 2`.
+     *
+     * `vocab_size = 6254` against **6,257** lines in `tokens.txt` is HARMLESS on this path: the
+     * literal *"number of lines in tokens.txt %d != %d (vocab_size)"* is in the shipped
+     * `libsherpa-onnx-jni.so`, but it appears only in NeMo/Canary/Parakeet sources at 1.13.7 and
+     * `online-recognizer-transducer-impl.h` has zero hits. The three extra lines are the `#0`,
+     * `#1`, `#2` placeholders.
+     *
+     * **Its four files are under `exp/32/` and `data/lang_char_bpe/`**, so this is the second row
+     * [PackFile.path] exists for — and the export directory matters: the repo also ships `exp/64/`
+     * and `exp/96/` encoders whose bytes differ by 11 and 12 bytes respectively, which is exactly
+     * the kind of neighbour a flat name cannot tell apart.
+     *
+     * **Licence — apache-2.0, READ in front matter AND platform-surfaced on every link of the
+     * chain. NOT CLEARED, and the reason is a NAMED restriction rather than an unknown.** This
+     * mirror's own 4,115-byte card says *"Forked from
+     * https://huggingface.co/pfluo/k2fsa-zipformer-chinese-english-mixed"* and its env dump reads
+     * `'training_subset': 'mix'`; the **fork parent's** card is where `'training_subset':
+     * '12k_hour'` appears — WenetSpeech's own name for its L subset, 12,000 h, *"available to
+     * download for non-commercial purposes"*, whose publisher **disclaims the audio copyright**
+     * and mails a `PASSWORD` through a Google Form. So the corpus attribution is real and is one
+     * hop upstream of the bytes we would ship, which is a fact the clearance record has to state
+     * precisely: it was read at `pfluo`, not on this row's card.
+     *
+     * Accuracy, from this row's own card (**UNVERIFIED**, `modified-beam-search` at
+     * `decode_chunk_len 64`, neither our decode mode nor our cadence): AiShell-1 4.79,
+     * TEST_NET 11.6, TEST_MEETING 12.64. The **English half is UNMEASURED anywhere**, and it is
+     * the number the owner's stated workflow turns on.
+     */
+    val ZH = StreamingPack(
+        language = "zh",
+        dirName = "zh-en-t-chunk-32",
+        packName = PACK_ZH,
+        baseUrl = "https://huggingface.co/csukuangfj/k2fsa-zipformer-bilingual-zh-en-t/resolve/e2382758de9a0219b4efe682b95af30b399db3b8/",
+        encoder = PackFile(
+            name = "encoder-epoch-99-avg-1.int8.onnx",
+            bytes = 42_980_793L,
+            sha256 = "db6f51551762e40e549166fe041ea3e45464370b595e9ad23f06478ec3794fbb",
+            path = "exp/32/encoder-epoch-99-avg-1.int8.onnx",
+        ),
+        decoder = PackFile(
+            name = "decoder-epoch-99-avg-1.int8.onnx",
+            bytes = 3_486_740L,
+            sha256 = "4b618d383af304cfae281dbf0a53e8bf442c2f0502256cd5694bd6567ebdd834",
+            path = "exp/32/decoder-epoch-99-avg-1.int8.onnx",
+        ),
+        joiner = PackFile(
+            name = "joiner-epoch-99-avg-1.int8.onnx",
+            bytes = 3_228_485L,
+            sha256 = "bdda356d6f9b8c2d7cee9ee0e26075fa537490f7fd06520be408d287073667b9",
+            path = "exp/32/joiner-epoch-99-avg-1.int8.onnx",
+        ),
+        tokens = PackFile(
+            name = "tokens.txt",
+            bytes = 56_317L,
+            sha256 = "a8e0e4ec53810e433789b54a5c0134a7eaa2ffca595a6334d54c00da858841d3",
+            path = "data/lang_char_bpe/tokens.txt",
+        ),
+        modelType = "zipformer",
+        decodeChunkLen = 32,
+        encoderT = 39,
+        // The census over the downloaded file: 6,257 lines, 6,251 emittable, **5,755 pieces bear a
+        // single Han character and 5,794 are single characters**, 494 are all-caps Latin BPE at
+        // ids 3-496 (`▁AS ▁ONE ▁OF ▁A ▁COMP AN Y` …), **ZERO lowercase**, **ZERO
+        // punctuation-only pieces at all**, and NO byte fallback — which is what separates this
+        // row from the monolingual `zh` one the table also priced. That row is 0 uppercase / 0
+        // lowercase WITH byte fallback and must therefore Keep its case, because its Latin
+        // acronyms arrive through `<0xNN>` where no census can see them. This row's Latin is in
+        // the vocabulary and single-case, so the fold is PROVABLY lossless and it takes the
+        // derivation's suggestion — the strip renders `always`, exactly as the English pack does.
+        caseFold = CaseFold.Fold,
+        emitsPunctuation = false,
+        // **TRUE by exactly one token: `2` at id 4883.** The shipping pack has zero emittable
+        // numerals and this pack breaks that property by one piece, which is a fact about what the
+        // user can SEE and so a sentence has to carry it.
+        emitsDigits = true,
+        // T3 owns the clip and this is the row where it is FREE — but the verification is
+        // recorded here rather than assumed. Against this pack's own tokens.txt: `▁ONE 4`,
+        // `▁TWO 376`, `▁THREE 377`, `▁FOUR 478` are whole pieces and `FIVE` splits `▁FI 13` +
+        // `VE 200`, which is the SAME split the English pack makes — so the bundled English digits
+        // clip is scoreable here unchanged, at zero canary cost, and `GpuCanaryPolicy`'s
+        // position-two alias set already contains `"2"` so this row's one numeral SCORES rather
+        // than fails. Two residual risks, named: the decode itself is UNRUN (rung 1), and an
+        // English-only clip exercises only the English half of a bilingual model.
+        canary = null,
+    )
+
+    val packs: List<StreamingPack> = listOf(EN, FR, DE, RU, ID, KO, ZH)
 
     /** The pack for a RESOLVED session language; null for auto (null) and for every language without a row. */
     fun forLanguage(code: String?): StreamingPack? = packs.firstOrNull { it.language == code }

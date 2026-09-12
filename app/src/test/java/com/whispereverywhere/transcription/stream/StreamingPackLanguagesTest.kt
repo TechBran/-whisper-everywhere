@@ -275,6 +275,138 @@ class StreamingPackLanguagesTest {
         assertNull(StreamingPackCatalog.ID.canary)
     }
 
+    // ---------------------------------------------------------------------------- Korean
+
+    @Test fun theKoreanRowIsTheChunk16ExportAtCommitDb24b58d() {
+        val p = StreamingPackCatalog.KO
+        assertEquals("ko", p.language)
+        assertEquals("ko-72m-chunk-16", p.dirName)
+        assertEquals("preview_ko", p.packName)
+        assertEquals(
+            "https://huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m/resolve/db24b58d22736349eaeb34cc181ad0f3debf9903/",
+            p.baseUrl,
+        )
+        // The chunk-16 trio, NOT chunk-32 or chunk-64: the repo ships all three, their decoders
+        // and joiners are byte-identical, and the 8.25 CER / RTF 0.038 pair everyone quotes is
+        // the chunk-64 export = 1.28 s cadence, a different model at 4× the word lag.
+        assertEquals(PackFile("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 70_133_869L, "5f2b6e5e92834849cfdbda3aaa355e6f39ff993f067794e4ab9d5cb993b15311"), p.encoder)
+        assertEquals(PackFile("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_544_210L, "40c3c57ad27b45b59e27bec8bfc02f04d27c060aeb8e964ae2f87bd9f356bf7d"), p.decoder)
+        assertEquals(PackFile("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_270_777L, "7d3bd9c1e9cf60efa5d5fed728fbd52d0f08139775f9e9002fd088b4d78f3e73"), p.joiner)
+        assertEquals(PackFile("tokens.txt", 20_844L, "435dfb9e0a2b6a79124f1a4d8f0f33a951b25384726e2e0d854f081533e6ec9d"), p.tokens)
+        assertEquals(72_969_700L, p.totalBytes)
+        assertEquals("73 MB", StreamingPackCatalog.sizeBadge(p.totalBytes))
+        // Its file names are the English pack's, to the character — which is safe only because
+        // every pack owns a directory: the install dir (`dirName`), the Play delivery dir
+        // (`packName`) and the AAB asset dir are all per-row.
+        assertEquals(
+            StreamingPackCatalog.EN.files.map { it.name },
+            p.files.map { it.name },
+        )
+        assertEquals(320L, p.cadenceMs)
+        assertEquals(500L, p.padMs)
+        assertEquals("zipformer2", p.modelType)
+        assertEquals(32, p.decodeChunkLen)
+        assertEquals(45, p.encoderT)
+    }
+
+    @Test fun koreanIsTheONLYRowThatKeepsItsCaseAndSetsBOTHCopyFlags() {
+        val p = StreamingPackCatalog.KO
+        // The census: 2,460 lines, 2,457 emittable of which 2,456 are single characters and 2,301
+        // bear Hangul; 10 standalone ASCII digits; 58 punctuation-only pieces (31 of them pure
+        // Unicode-P); 27 uppercase-bearing / 34 lowercase-bearing emittable pieces = genuinely
+        // MIXED, so the fold is not provably lossless.
+        assertEquals(CaseFold.Keep, p.caseFold)
+        assertTrue("the Korean strip carries . ? , ! that the English strip never does", p.emitsPunctuation)
+        assertTrue("and standalone numerals, so \"no numerals\" is a FALSE sentence here", p.emitsDigits)
+        // And it is the only such row, which is what makes those two `true` branches real rather
+        // than a free abstraction — the copy has to have a sentence for exactly this shape.
+        assertEquals(listOf("ko"), StreamingPackCatalog.packs.filter { it.emitsPunctuation }.map { it.language })
+        assertEquals(listOf("ko"), StreamingPackCatalog.packs.filter { it.caseFold == CaseFold.Keep }.map { it.language })
+    }
+
+    // ---------------------------------------------------------------------------- Chinese
+
+    @Test fun theChineseRowIsTheFiftyMegabyteBilingualExportAtCommitE2382758() {
+        val p = StreamingPackCatalog.ZH
+        assertEquals("the row serves the picker's Chinese, and carries the bilingual model", "zh", p.language)
+        assertEquals("zh-en-t-chunk-32", p.dirName)
+        assertEquals("preview_zh", p.packName)
+        assertEquals(
+            "https://huggingface.co/csukuangfj/k2fsa-zipformer-bilingual-zh-en-t/resolve/e2382758de9a0219b4efe682b95af30b399db3b8/",
+            p.baseUrl,
+        )
+        // The export directory is load-bearing: `exp/64/` and `exp/96/` hold encoders 11 and 12
+        // bytes larger, which is the kind of neighbour a flat name cannot tell apart.
+        assertEquals("exp/32/encoder-epoch-99-avg-1.int8.onnx", p.encoder.path)
+        assertEquals("exp/32/decoder-epoch-99-avg-1.int8.onnx", p.decoder.path)
+        assertEquals("exp/32/joiner-epoch-99-avg-1.int8.onnx", p.joiner.path)
+        assertEquals("data/lang_char_bpe/tokens.txt", p.tokens.path)
+        assertEquals(42_980_793L, p.encoder.bytes)
+        assertEquals("db6f51551762e40e549166fe041ea3e45464370b595e9ad23f06478ec3794fbb", p.encoder.sha256)
+        assertEquals(3_486_740L, p.decoder.bytes)
+        assertEquals("4b618d383af304cfae281dbf0a53e8bf442c2f0502256cd5694bd6567ebdd834", p.decoder.sha256)
+        assertEquals(3_228_485L, p.joiner.bytes)
+        assertEquals("bdda356d6f9b8c2d7cee9ee0e26075fa537490f7fd06520be408d287073667b9", p.joiner.sha256)
+        // Byte-identical to the 198 MB sibling's tokens.txt — one audit covers both rows, and the
+        // copy is identical, at a quarter of the bytes.
+        assertEquals(56_317L, p.tokens.bytes)
+        assertEquals("a8e0e4ec53810e433789b54a5c0134a7eaa2ffca595a6334d54c00da858841d3", p.tokens.sha256)
+        // NOT the 198 MB the first survey quoted for this language.
+        assertEquals(49_752_335L, p.totalBytes)
+        assertEquals("50 MB", StreamingPackCatalog.sizeBadge(p.totalBytes))
+    }
+
+    @Test fun theChineseRowIsTheSecondV1ExportAndItsHeadDimsAreABSENT() {
+        val p = StreamingPackCatalog.ZH
+        // The table said "verify"; the Range read settles it. model_type=zipformer, version=1,
+        // T = chunk + 7, and no comment / query_head_dims / value_head_dims / num_heads — the
+        // French shape exactly, which is why the empty `modelType` makes this row loadable.
+        assertEquals("zipformer", p.modelType)
+        assertEquals(32, p.decodeChunkLen)
+        assertEquals(39, p.encoderT)
+        assertEquals("the app's own cadence, so the measured lag is not disturbed", 320L, p.cadenceMs)
+        assertEquals(500L, p.padMs)
+        // The two v1 rows agree on the frame count because both exporters write `chunk + 7`.
+        assertEquals(StreamingPackCatalog.FR.encoderT, p.encoderT)
+        assertEquals(
+            "and they are the only two — every zipformer2 row here writes chunk + 13",
+            listOf("fr", "zh"),
+            StreamingPackCatalog.packs.filter { it.modelType == "zipformer" }.map { it.language },
+        )
+    }
+
+    @Test fun theChineseRowEmitsONENumeralAndFoldsItsCaseUnlikeTheMonolingualZhRow() {
+        val p = StreamingPackCatalog.ZH
+        // 494 all-caps Latin BPE pieces at ids 3-496, ZERO lowercase, ZERO punctuation-only
+        // pieces, NO byte fallback. That last conjunct is the whole difference from the
+        // monolingual `zh` row the table also priced: that one is 0 upper / 0 lower WITH byte
+        // fallback and must Keep, because its Latin acronyms arrive through `<0xNN>` where no
+        // census can see them. This row's Latin is IN the vocabulary and single-case, so the fold
+        // is provably lossless and the strip renders `always` exactly as the English pack does.
+        assertEquals(CaseFold.Fold, p.caseFold)
+        assertFalse(p.emitsPunctuation)
+        // `2` at id 4883 — the shipping pack has zero emittable numerals and this breaks that
+        // property by exactly one piece.
+        assertTrue(p.emitsDigits)
+        assertEquals(
+            "two rows can put a numeral on the strip, for very different reasons",
+            listOf("ko", "zh"),
+            StreamingPackCatalog.packs.filter { it.emitsDigits }.map { it.language },
+        )
+    }
+
+    @Test fun neitherCJKRowHasACanaryYetAndBothReasonsAreRecorded() {
+        // ko needs a different RULE as well as a clip (both its number series are single
+        // characters, `하나` and `다섯` are not whole pieces at all, and a clip that collapses to
+        // one token has no positions to match) — and its clip must NOT come from the k2-fsa
+        // mirror's test_wavs, which is AI-Hub audio. zh's clip is FREE and verified: `▁ONE 4`,
+        // `▁TWO 376`, `▁THREE 377`, `▁FOUR 478` are whole pieces and FIVE splits `▁FI`+`VE`
+        // exactly as the English pack splits it, so the bundled clip is scoreable unchanged. Both
+        // are T3's to set, and neither is set here, because the decode itself is still UNRUN.
+        assertNull(StreamingPackCatalog.KO.canary)
+        assertNull(StreamingPackCatalog.ZH.canary)
+    }
+
     // ---------------------------------------------------------------------------- the set
 
     @Test fun everyRowsPackNameFollowsItsLanguageAndNoTwoRowsShareAnyIdentity() {
