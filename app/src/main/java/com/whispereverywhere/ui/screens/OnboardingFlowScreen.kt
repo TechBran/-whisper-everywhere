@@ -692,6 +692,14 @@ private fun LanguageStep(
                 // ever: dead copy, the smell this repo already cites against
                 // `SETTINGS_DISABLED_ON_DEVICE`. The same argument covers
                 // `LANGUAGE_STEP_SENTENCE` above, which is why it is untouched too.
+                //
+                // (fix round 1, review r1's B1) And no OTHER arming term is a term here either,
+                // for the reason that ruling settles: the sentence this row renders DESCRIBES
+                // what the pack's preview is made of rather than promising that a word appears,
+                // so the switch, the canary's verdict and the installed state cannot falsify it.
+                // `StreamingPackCopy.stripNote`'s KDoc is that rule's one home; the step's own
+                // sentence above keeps the feature's NAME and its download tense, which is what
+                // a step introducing the feature is for and is not a promise about a word.
                 else -> com.whispereverywhere.transcription.stream.StreamingPackCopy
                     .languageRowNote(
                         displayName,

@@ -1276,10 +1276,21 @@ class StreamingPackCopyTest {
         // downloaded, and it will be used as your preview model."*
         assertEquals(
             "Switch to a language with a preview model and that model is downloaded and becomes " +
-                "your preview model — words appear on the bubble as you speak. The menu names " +
-                "the size of each language that has one; your typed transcript is the same " +
-                "either way.",
+                "your preview model. The menu names the size of each language that has one; " +
+                "your typed transcript is the same either way.",
             StreamingPackCopy.PICKER_DEAL,
+        )
+        // (fix round 1, review r1's B1) IT ENDED *"— words appear on the bubble as you speak"*,
+        // and that clause is in neither half of the ruling above. Home selects this sentence with
+        // `localTierInstalled` alone, which is one of six conjuncts in `localPreviewArms`, so the
+        // clause was false with the switch off, with the pack still arriving, after a failed
+        // canary and on a cloud session — the same four cells, on the same card, as the per-pack
+        // sentence this round fixed. What the preview LOOKS like belongs on the row for the
+        // language it is about (`languageRowNote`); this sentence names no language at all.
+        assertFalse(
+            "no forward promise about a word: <<${StreamingPackCopy.PICKER_DEAL}>>",
+            StreamingPackCopy.PICKER_DEAL.contains("appear") ||
+                StreamingPackCopy.PICKER_DEAL.contains("on the bubble"),
         )
         // THE FIGURE IS THE ONE THING THIS SENTENCE MUST NOT CARRY. The owner said "sixty
         // megabytes" twice; the real sizes are English 73 MB, German 71 and French 128, so a
@@ -1387,38 +1398,44 @@ class StreamingPackCopyTest {
         // The six new languages and the row that was already here, each read as the user reads
         // it. Every clause is derived from that pack's own token facts; what is pinned here is
         // the WORDING those facts select.
+        //
+        // (fix round 1, review r1's B1) ...and the MOOD is pinned with the wording. The subject
+        // is THE PACK'S PREVIEW and not the reader's next sentence, because the two booleans
+        // that select this line are not terms of `localPreviewArms`: it is read with the switch
+        // off, with the pack still arriving, after a failed canary and on a cloud session, so a
+        // *"words appear as you speak X"* here was false in four ordinary cells.
         assertEquals(
-            "Words appear on the bubble as you speak English: no punctuation, no numerals and " +
+            "The English preview is made of words: no punctuation, no numerals and " +
                 "no capitals. The typed transcript is unchanged.",
             note(StreamingPackCatalog.EN),
         )
         assertEquals(
-            "Words appear on the bubble as you speak French: no punctuation, no numerals and " +
+            "The French preview is made of words: no punctuation, no numerals and " +
                 "no capitals. The typed transcript is unchanged.",
             note(StreamingPackCatalog.FR),
         )
         assertEquals(
-            "Words appear on the bubble as you speak German: no punctuation, no numerals and " +
+            "The German preview is made of words: no punctuation, no numerals and " +
                 "no capitals, including nouns. The typed transcript is unchanged.",
             note(StreamingPackCatalog.DE),
         )
         assertEquals(
-            "Words appear on the bubble as you speak Russian: no punctuation, no numerals and " +
+            "The Russian preview is made of words: no punctuation, no numerals and " +
                 "no capitals. The typed transcript is unchanged.",
             note(StreamingPackCatalog.RU),
         )
         assertEquals(
-            "Words appear on the bubble as you speak Indonesian: no punctuation, no numerals " +
+            "The Indonesian preview is made of words: no punctuation, no numerals " +
                 "and no capitals. The typed transcript is unchanged.",
             note(StreamingPackCatalog.ID),
         )
         assertEquals(
-            "Words appear on the bubble as you speak Korean, exactly as the model writes them: " +
+            "The Korean preview is made of words, exactly as the model writes them: " +
                 "punctuation and a numeral can appear. The typed transcript is unchanged.",
             note(StreamingPackCatalog.KO),
         )
         assertEquals(
-            "Characters appear on the bubble as you speak Chinese, with any English in it as " +
+            "The Chinese preview is made of characters, with any English in it as " +
                 "words: no punctuation and no capitals, and a numeral can appear. The typed " +
                 "transcript is unchanged.",
             note(StreamingPackCatalog.ZH),
@@ -1467,11 +1484,11 @@ class StreamingPackCopyTest {
         assertTrue(
             "not one of its 5,755 Han-bearing pieces carries a word marker, so the Chinese half " +
                 "is characters: <<$zh>>",
-            zh.startsWith("Characters appear on the bubble"),
+            zh.startsWith("The Chinese preview is made of characters"),
         )
         assertFalse(
-            "...so it must NOT open with the claim every other row makes",
-            zh.startsWith("Words appear"),
+            "...so it must NOT make the claim every other row makes",
+            zh.contains("is made of words"),
         )
         assertTrue(
             "and its 327 marked pieces are all Latin, which is the reason this row exists at " +
@@ -1481,7 +1498,7 @@ class StreamingPackCopyTest {
         // Every other row keeps the promise verbatim, which is what the tokens-not-text strip
         // bought — including Korean, whose spaces `result.text` has lost.
         for (p in StreamingPackCatalog.packs.filter { it.stripUnit == StripUnit.WORDS }) {
-            assertTrue(note(p).startsWith("Words appear on the bubble as you speak "))
+            assertTrue(note(p).contains(" preview is made of words"))
         }
     }
 
@@ -1580,7 +1597,25 @@ class StreamingPackCopyTest {
                             assertEquals(digits, s.contains("a numeral"))
                             assertEquals(
                                 unit == StripUnit.CHARACTERS_AND_WORDS,
-                                s.startsWith("Characters appear"),
+                                s.contains("is made of characters"),
+                            )
+                            assertEquals(
+                                unit == StripUnit.WORDS,
+                                s.contains("is made of words"),
+                            )
+                            // (fix round 1, review r1's B1) AND NO SHAPE MAY PROMISE A WORD, at
+                            // any of the 32. This sentence is selected by standing facts that are
+                            // not terms of `localPreviewArms`, so it describes the pack: the only
+                            // "appear" it may carry is the modal one about what the preview can
+                            // CONTAIN, and it names neither the bubble nor the moment.
+                            assertFalse(
+                                "<<$s>> promises a word it cannot promise",
+                                s.replace("can appear", "").contains("appear"),
+                            )
+                            assertFalse("<<$s>> names the bubble", s.contains("on the bubble"))
+                            assertFalse(
+                                "<<$s>> names the moment",
+                                s.contains("as you speak") || s.contains("as you talk"),
                             )
                             // ...and there is always a clause to punctuate: the two lists cannot
                             // both be empty, because `punctuation` puts an item in exactly one of
@@ -1596,7 +1631,7 @@ class StreamingPackCopyTest {
         // single item each and is therefore the one a joiner gets wrong: `it` (Kroko) keeps its
         // case, emits punctuation, and has no digit piece at all.
         assertEquals(
-            "Words appear on the bubble as you speak Italian, exactly as the model writes them: " +
+            "The Italian preview is made of words, exactly as the model writes them: " +
                 "no numerals, and punctuation can appear. The typed transcript is unchanged.",
             StreamingPackCopy.stripNote(
                 "Italian",
@@ -1609,6 +1644,61 @@ class StreamingPackCopyTest {
                 ),
             ),
         )
+    }
+
+    @Test fun noSentenceAtASELECTIONSITEPromisesThatAWordWILLAppear() {
+        // (fix round 1, review r1's B1) THE RULE, carried across to the arm that renders when
+        // the previewer CAN serve a selection — its fourth home and the first positive one:
+        // **a sentence selected by a decision over N facts may assert only the NECESSITY of
+        // those N facts** (`NO_TIER_SUBTITLE`'s KDoc; r1's B2 on DELETE_SUBTITLE, r2's and r3's
+        // B1 on NO_TIER_SUBTITLE before it).
+        //
+        // Every sentence in this list is chosen by STANDING facts only — `PreviewUnreachable.of`
+        // on Home, the catalogue on the onboarding row, `localTierInstalled` for the deal — and
+        // none of those is a term of `localPreviewArms` (`sessionLanguage in
+        // installedPackLanguages && !isCloudSession && !batchJobActive && userEnabled &&
+        // previewReady`). So all of them are read in four cells where no word appears: the
+        // *"Show live words"* switch off, the pack still arriving, a language taken off by a
+        // failed canary, and a device with a configured cloud provider. None may say a word
+        // appears; each may describe what the pack's preview is MADE OF, which is what
+        // `StripShape`'s facts license.
+        val selectionSite = StreamingPackCatalog.packs.flatMap { p ->
+            listOf(note(p), StreamingPackCopy.languageRowNote(display(p), p)!!)
+        } + listOf(StreamingPackCopy.PICKER_DEAL, StreamingPackCopy.LANGUAGE_STEP_SENTENCE)
+        for (s in selectionSite) {
+            assertFalse(
+                "<<$s>> may not say a word APPEARS: the only 'appear' a selection-site sentence " +
+                    "may carry is the modal one about what the preview can CONTAIN",
+                s.replace("can appear", "").contains("appear"),
+            )
+        }
+        // ...and the per-pack sentence names neither the bubble nor the moment, because those
+        // are the two words that turn a description into the promise the gate would falsify.
+        for (p in StreamingPackCatalog.packs) {
+            val s = note(p)
+            assertFalse("<<$s>> names the bubble", s.contains("on the bubble"))
+            assertFalse(
+                "<<$s>> names the moment",
+                s.contains("as you speak") || s.contains("as you talk"),
+            )
+            assertTrue("<<$s>> describes the pack's preview", s.startsWith("The ${display(p)} preview"))
+        }
+        // THE ONBOARDING STEP'S OWN SENTENCE IS THE WEAKER INSTANCE AND IS RULED WITH THIS ONE
+        // (review r1's B1, second site): it keeps the feature's NAME and where the feature lives,
+        // which is what a step that must introduce the feature is for, and its forward claim is
+        // about the MODEL arriving, in that step's own tense. The tier axis really is closed
+        // there — `OnboardingLogic.enginesContinueEnabled(speechReady) = speechReady` makes the
+        // mandatory ENGINES step uncompletable without one — and the switch defaults on
+        // (`PreferencesManager`). What it does NOT do is say a word will appear, and that is the
+        // half this rule owns.
+        assertTrue(StreamingPackCopy.LANGUAGE_STEP_SENTENCE.contains("Live words on the bubble"))
+        assertTrue(
+            StreamingPackCopy.LANGUAGE_STEP_SENTENCE.contains("is downloaded once setup finishes"),
+        )
+        // And the deal keeps the owner's own two clauses (the download and what it becomes) and
+        // loses only the one that was never in the ruling.
+        assertTrue(StreamingPackCopy.PICKER_DEAL.contains("that model is downloaded"))
+        assertFalse(StreamingPackCopy.PICKER_DEAL.contains("on the bubble"))
     }
 
     @Test fun theBILINGUALRowsOWNNounReachesEverySentenceThatIsAboutItsPack() {

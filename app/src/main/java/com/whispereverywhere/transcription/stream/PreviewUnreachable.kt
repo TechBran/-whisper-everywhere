@@ -140,6 +140,16 @@ package com.whispereverywhere.transcription.stream
  * a forward promise the switch could falsify, so the switch is not needed as an input to keep it
  * true. If a later ruling wants a forward promise here, the switch becomes a term FIRST.
  *
+ * **A ruling came, on the POSITIVE arm, and it took the other road** (4.5.0 Task 4, fix round 1,
+ * review r1's B1). The `else` of [of] now renders a per-pack sentence at Home's picker, and the
+ * first draft of it promised *"words appear on the bubble as you speak French"* — which this
+ * decision cannot license, in either arm, for the reason above. Rather than grow terms, the
+ * sentence became a DESCRIPTION of the pack (*"The French preview is made of words: …"*), so both
+ * arms of this decision still assert only the necessity of these two facts and the inputs here
+ * are unchanged. `StreamingPackCopy.stripNote`'s KDoc holds that derivation; the same ruling
+ * deleted the identical clause from `StreamingPackCopy.PICKER_DEAL`, which Home gates on the
+ * tier alone.
+ *
  * **The one axis this cannot see is stated rather than hidden, and the question it asks is WHICH
  * DEVICES MAY BE TOLD ABOUT THIS FEATURE — not a cloud predicate** (fix round 1: the earlier
  * wording derived the open ruling from the same false axis THE MECHANISM corrects, so the ruling

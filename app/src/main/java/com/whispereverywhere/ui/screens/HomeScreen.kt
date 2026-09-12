@@ -1437,10 +1437,15 @@ fun UsageStatsCard(
  *        (4.5.0 Task 4) It now decides the other three previewer sentences on this card too, and
  *        they were the widest-read untrue ones the feature had: `PICKER_DEAL` rendered for every
  *        user with no gate at all (*"that model **is downloaded** and becomes your preview
- *        model — words appear on the bubble as you speak"*, both halves false with no tier),
+ *        model"* — false with no tier, because `PreviewAutoFetch.decide` refuses without one),
  *        `pickerRowBadge` priced a model whose words can never appear, and the caveat under the
  *        field named the SELECTION on a device where no selection helps. All three are now the
  *        one sentence `PreviewUnreachable` selects.
+ *
+ *        What this parameter may NOT buy is a forward promise: it is one of six conjuncts in
+ *        `localPreviewArms`, so no sentence gated on it may say a word will appear (fix round 1,
+ *        review r1's B1 — `StreamingPackCopy.stripNote`'s KDoc is that rule's home, and the
+ *        clause it cost `PICKER_DEAL` is named there too).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1526,12 +1531,19 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
             // (4.5.0 Task 4) AND NOT AT ALL ON A DEVICE THAT CAN NEVER ARM. This is the
             // widest-read sentence the previewer has — it renders for every user, on the app's
             // start destination, with no gate of any kind — and on a phone with no on-device
-            // speech model BOTH of its claims are false: `PreviewAutoFetch.decide` refuses on
-            // `!localTierInstalled`, so switching language downloads nothing, and nothing
-            // transcribes on this device at all, so no word would appear if it did
-            // (`PreviewUnreachable`'s KDoc for the mechanism, and for why it is not the gate).
-            // The truth for that reader is the sentence under the field (`unreachableSubtitle`),
-            // which renders in exactly the cells this one does not.
+            // speech model its claim is false: `PreviewAutoFetch.decide` refuses on
+            // `!localTierInstalled`, so switching language downloads nothing
+            // (`PreviewUnreachable`'s KDoc for why nothing transcribes there either, and for why
+            // that is not the previewer's gate). The truth for that reader is the sentence under
+            // the field (`unreachableSubtitle`), which renders in exactly the cells this one
+            // does not.
+            //
+            // (fix round 1, review r1's B1) AND IT NO LONGER PROMISES A WORD. The clause *"—
+            // words appear on the bubble as you speak"* is gone: this gate is ONE of the six
+            // conjuncts in `localPreviewArms`, so a sentence behind it may not assert the other
+            // five. `StreamingPackCopy.stripNote`'s KDoc is that rule's home; the per-language
+            // row below describes what each pack's preview is made of, which is the true half
+            // this sentence was carrying for a language it cannot name.
             if (localTierInstalled) {
                 Text(
                     text = StreamingPackCopy.PICKER_DEAL,
@@ -1674,15 +1686,20 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
             // they could pick. `pickedLanguage` is ignored by that arm and carried anyway, so the
             // two arms read from one call.
             //
-            // (4.5.0 Task 4) ...AND THE OTHER ARM OF THAT SAME DECISION IS THE DISCLOSURE FOR A
-            // SELECTION THE PREVIEWER CAN SERVE. `PreviewUnreachable.of` answers null exactly
-            // when this device has a tier and this selection has a pack — which is the only cell
-            // where live words really will appear, and therefore the only one where saying what
-            // they will LOOK like is true. How rough the strip is differs per pack, so the
-            // sentence is that pack's own (`StreamingPackCopy.stripNote`): Korean carries
-            // punctuation and numerals the English strip never does, and the bilingual Chinese
-            // model puts CHARACTERS on the bubble. The menu above names each language's size, so
-            // this line carries none — the deal at the top of the card says where the size is.
+            // (4.5.0 Task 4) ...AND THE OTHER ARM OF THAT SAME DECISION SAYS WHAT THIS PACK'S
+            // PREVIEW IS MADE OF. `PreviewUnreachable.of` answers null when this device has a
+            // tier and this selection has a pack, and that is TWO STANDING REASONS BEING ABSENT
+            // — it is NOT the arming gate: `localPreviewArms` is six conjuncts and neither of
+            // these booleans is one of them (fix round 1, review r1's B1). So this arm may
+            // DESCRIBE the pack and may not promise a word, because it is read with the switch
+            // off, with the 128 MB still arriving, with the language taken off by a failed
+            // canary, and with a cloud provider configured — four cells where nothing reaches
+            // the bubble and the sentence is still true. How rough the strip is differs per
+            // pack, so the sentence is that pack's own (`StreamingPackCopy.stripNote`, whose
+            // KDoc is that rule's home): Korean carries punctuation and numerals the English
+            // strip never does, and the bilingual Chinese model puts CHARACTERS on the bubble.
+            // The menu above names each language's size, so this line carries none — the deal at
+            // the top of the card says where the size is.
             //
             // Two arms of ONE decision, so a reader gets exactly one of them: the caveat when the
             // feature cannot serve their selection, this when it can.

@@ -179,13 +179,17 @@ class LivePreviewSelectorStripPinTest {
         )
     }
 
-    @Test fun thePickerTellsASelectionItCANServeWhatThatPacksStripWillLookLike() {
+    @Test fun thePickerTellsASelectionItCANServeWhatThatPacksPreviewIsMadeOf() {
         // (4.5.0 Task 4) The OTHER arm of the caveat's own decision. `PreviewUnreachable.of`
-        // answers null exactly where this device has a tier and this selection has a pack — the
-        // only cell in which live words really appear, and therefore the only one where saying
-        // what they will look like is a true sentence. It is the per-pack one, because how rough
-        // the strip is differs per pack: Korean carries punctuation and numerals the English strip
-        // never does, and the bilingual Chinese model puts characters on the bubble.
+        // answers null where this device has a tier and this selection has a pack — TWO STANDING
+        // REASONS BEING ABSENT, and NOT the arming gate: `localPreviewArms` is six conjuncts and
+        // neither of these booleans is one of them (fix round 1, review r1's B1). So this arm
+        // renders with the switch off, with the pack still arriving, after a failed canary and on
+        // a cloud session, and what it may say there is what the pack's preview is MADE OF —
+        // never that a word will appear. It is the per-pack sentence, because how rough the strip
+        // is differs per pack: Korean carries punctuation and numerals the English strip never
+        // does, and the bilingual Chinese model puts characters on the bubble. The wording and
+        // the mood are both pinned in `StreamingPackCopyTest`.
         val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
         assertEquals(
             "one per-pack sentence, and it is the copy object's",
@@ -219,9 +223,11 @@ class LivePreviewSelectorStripPinTest {
         // session dies at connect — `PreviewUnreachable`'s KDoc, not the previewer's gate) and
         // `PreviewAutoFetch.decide` refuses on `!localTierInstalled`, so:
         //
-        //  - `PICKER_DEAL` — *"that model IS DOWNLOADED and becomes your preview model — words
-        //    appear on the bubble as you speak"* — is false in BOTH halves. It was the
-        //    widest-read string in the feature: ungated, on the app's start destination.
+        //  - `PICKER_DEAL` — *"that model IS DOWNLOADED and becomes your preview model"* — is
+        //    false there. It was the widest-read string in the feature: ungated, on the app's
+        //    start destination. (Its *"— words appear on the bubble as you speak"* clause is gone
+        //    altogether in fix round 1, review r1's B1: this gate is one of `localPreviewArms`'
+        //    six conjuncts and may not buy a promise about the other five.)
         //  - `pickerRowBadge` prices a model whose words can never appear there.
         //  - the caveat under the field named the SELECTION, where no selection helps.
         //

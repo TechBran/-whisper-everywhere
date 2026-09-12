@@ -259,8 +259,8 @@ object StreamingPackCopy {
      *
      * | fact | clause |
      * |---|---|
-     * | [StripUnit.WORDS] | *"Words appear on the bubble as you speak X"* |
-     * | [StripUnit.CHARACTERS_AND_WORDS] | *"Characters appear …, with any English in it as words"* |
+     * | [StripUnit.WORDS] | *"The X preview is made of words"* |
+     * | [StripUnit.CHARACTERS_AND_WORDS] | *"…is made of characters, with any English in it as words"* |
      * | [StripShape.keepsCase] | *"…, exactly as the model writes them"* — no fold, so the case is the model's |
      * | `!keepsCase` | *"no capitals"* |
      * | + [StripShape.capitalisesEveryNoun] | *"…, including nouns"* |
@@ -282,23 +282,57 @@ object StreamingPackCopy {
      *    reads a spelling error, not a rough preview — [StripShape.capitalisesEveryNoun] is that
      *    fact and `de` is its only member.
      *
+     * ### Why the subject is THE PREVIEW and never the reader's next sentence
+     *
+     * (fix round 1, review r1's B1.) The first draft opened *"Words appear on the bubble as you
+     * speak French"*, and **that is a forward promise made by a sentence whose selectors cannot
+     * see the gate that decides whether a word ever appears.** Both of its sites choose it from
+     * standing facts only: Home asks [PreviewUnreachable.of] (a tier, and a pack for the
+     * selection) and the onboarding row asks the catalogue alone. `localPreviewArms`
+     * (`FloatingBubbleService`) is six conjuncts, and **neither of those booleans is one of
+     * them** — so the promise was false in four ordinary cells:
+     *
+     *  - the *"Show live words"* switch OFF: [PreviewAutoFetch.card] answers `Card.NONE` and the
+     *    strip withholds its READY receipt, while this line promised words;
+     *  - **the pack not installed yet** — the normal state in the seconds after a pick, the one
+     *    the progress strip a few dp above is rendering;
+     *  - the language in `PreviewDisabled.languages` after a failed canary: no word this process;
+     *  - a tier **and** a configured cloud provider — [PreviewUnreachable]'s own open cell, where
+     *    `!isCloudSession` refuses every session.
+     *
+     * The rule is [NO_TIER_SUBTITLE]'s, and this arm is its fourth instance: **a sentence
+     * selected by a decision over N facts may assert only the NECESSITY of those N facts.** It
+     * was written for the negative arm of the same decision, whose KDoc had already left the
+     * pre-condition on it — *"if a later ruling wants a forward promise here, the switch becomes
+     * a term FIRST"* — so this sentence describes the pack instead. What its preview is MADE OF
+     * and what it LACKS is exactly what [StripShape]'s four facts license, it is true in all four
+     * cells above, and it stays ONE sentence for both sites, which is what this object is for.
+     * WHETHER a word appears is said where the arming terms are read ([selectorReady]'s receipt,
+     * on the strip); WHAT it looks like is said here.
+     *
      * ### What it does NOT say
      *
      * No size (the row's badge carries that, from the pack's own bytes — [pickerRowBadge] and
      * [languageRowNote]), no lag (the measured 0.401 s is a 320 ms number and `ru`/`id` emit at
      * half that rate — `StreamingPack.cadenceMs` is where such a sentence would have to start, and
-     * owner ruling O7 is open on whether 640 ms clears the bar at all), and no promise about when
-     * the words arrive. **It keeps the additive promise**, and that is not decoration here: *"no
-     * capitals, no punctuation and no numerals"* is a sentence a reader can easily take to be
-     * about the text they are dictating, which is the one misreading this feature cannot afford.
+     * owner ruling O7 is open on whether 640 ms clears the bar at all), no bubble and no moment:
+     * not when the words arrive, and — since fix round 1 — not that they arrive at all. **It keeps
+     * the additive promise**, and that is not decoration here: *"no capitals, no punctuation and
+     * no numerals"* is a sentence a reader can easily take to be about the text they are
+     * dictating, which is the one misreading this feature cannot afford.
      */
     fun stripNote(language: String, shape: StripShape): String {
+        // THE SUBJECT IS THE PREVIEW, not the reader's next sentence (fix round 1, review r1's
+        // B1): what this pack's preview is MADE OF is true wherever this row can be read, where
+        // *"words appear on the bubble as you speak X"* was false in four cells — the switch off,
+        // the pack still arriving, a failed canary, a cloud session — that neither of this
+        // sentence's two selectors can see. The KDoc above is that rule's home.
         val opener = when (shape.unit) {
-            StripUnit.WORDS -> "Words appear on the bubble as you speak $language"
+            StripUnit.WORDS -> "The $language preview is made of words"
             // Both halves, in the order the user meets them: they are speaking Chinese, and the
             // English is what they mix into it.
             StripUnit.CHARACTERS_AND_WORDS ->
-                "Characters appear on the bubble as you speak $language, with any English in it as words"
+                "The $language preview is made of characters, with any English in it as words"
         }
         // The case clause rides the opener rather than joining the list, because it is about HOW
         // the strip is rendered rather than about what it lacks.
@@ -405,11 +439,31 @@ object StreamingPackCopy {
      * own tense (*"…once setup finishes"*, Fix 1): the ENGINES step comes after the language
      * step, so no pick made there downloads anything until setup finishes, and *"is downloaded"*
      * would be the wrong tense in the one place it would be read first.
+     *
+     * ### And why it no longer says A WORD WILL APPEAR
+     *
+     * (fix round 1, review r1's B1.) It ended *"— words appear on the bubble as you speak"*,
+     * which is in neither half of the ruling above and which Home selects with `localTierInstalled`
+     * alone. A tier is not the arming gate: `localPreviewArms` also wants the pack installed, the
+     * *"Show live words"* switch on, the language absent from `PreviewDisabled.languages` and a
+     * session that is not a cloud session — so that clause was false on the same card, in the same
+     * four cells, as the sentence [stripNote] replaced (its KDoc is the rule's home, and this is
+     * the sibling that ruling closes). **The clause is deleted rather than qualified**: what a
+     * language's preview looks like belongs on the row for the language it is about, which is
+     * where [languageRowNote] puts it, and this sentence names no language by design.
+     *
+     * The DOWNLOAD half stays, because it is the owner's own clause and the whole reason this
+     * sentence exists — the user is told before their bytes move. It has one cell of its own where
+     * it over-warns rather than over-promises: with the switch off [PreviewAutoFetch.decide]
+     * answers `Decision.NONE`, so a pick spends nothing, and the sentence then warns about a
+     * transfer that will not happen. That is the safe direction for a disclosure and the exact
+     * opposite of the promise this round deleted; a gate on the switch would hide the warning from
+     * the reader who is one tap away from turning it on.
      */
     const val PICKER_DEAL =
         "Switch to a language with a preview model and that model is downloaded and becomes your " +
-            "preview model — words appear on the bubble as you speak. The menu names the size of " +
-            "each language that has one; your typed transcript is the same either way."
+            "preview model. The menu names the size of each language that has one; your typed " +
+            "transcript is the same either way."
 
     /**
      * WHAT THIS ONE LANGUAGE'S PREVIEW MODEL COSTS, beside its row in the picker — the per-language
