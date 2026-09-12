@@ -159,6 +159,58 @@ enum class StripUnit {
 }
 
 /**
+ * WHAT A SENTENCE ABOUT ONE PACK'S STRIP MAY ASSERT — and the whole of what it can see
+ * ([StreamingPackCopy.stripNote] takes this and a language word, never a [StreamingPack]).
+ *
+ * The rule this type exists to keep is the one three review rounds cost on the tier axis: *a
+ * sentence selected by a decision over N facts may assert only the NECESSITY of those N facts*
+ * ([StreamingPackCopy.NO_TIER_SUBTITLE]'s KDoc). A function handed the pack could reach its WER,
+ * its corpus, its licence cell or its cadence — the 0.401 s measurement is a 320 ms number and
+ * **two rows emit at half that rate** — so what the sentence is handed is exactly the four facts
+ * its clauses are about, and nothing a later edit could be tempted by.
+ *
+ * Four of the five fields are the row's own, read off its `tokens.txt` by `PackTokenFacts`. The
+ * fifth is not a token fact at all, and says so.
+ *
+ * @property unit whether the strip carries words, or characters, or both — [StripUnit].
+ * @property keepsCase [CaseFold.Keep]: the strip is not folded, so the case is the model's own.
+ * @property punctuation [StreamingPack.emitsPunctuation] — the strip can carry `.` `?` `,` `!`.
+ * @property digits [StreamingPack.emitsDigits] — a numeral can appear on the strip.
+ * @property capitalisesEveryNoun **an orthography fact about the LANGUAGE, not about the pack**,
+ *   and the one clause in the sentence no token file can supply. German writes every noun with a
+ *   capital, so a German reader meets `festivals` and `campingbereiche` on the strip and reads
+ *   them as WRONG rather than as rough — which is a different reaction from the one *"no
+ *   capitals"* prepares an English or a French reader for (qualification table §4.1: *"one row of
+ *   its own … the sentence must say 'no capitals, **including nouns**'"*). It is derived from
+ *   [StreamingPack.language] against [CAPITALISES_EVERY_NOUN] rather than passed in by a caller,
+ *   because a call site that chooses a clause is how two surfaces come to describe one pack
+ *   differently — the defect `StreamingPackCopy` is one table for.
+ */
+data class StripShape(
+    val unit: StripUnit,
+    val keepsCase: Boolean,
+    val punctuation: Boolean,
+    val digits: Boolean,
+    val capitalisesEveryNoun: Boolean,
+) {
+    companion object {
+        /**
+         * The languages that capitalise EVERY noun, so that a lowercase strip reads as an error
+         * in the orthography rather than as a missing flourish.
+         *
+         * **`de` is the only member**, and the only one this catalogue can reach: German (with
+         * Luxembourgish, which no row uses) is the last standard orthography to capitalise common
+         * nouns. It is not "languages with capitals" — French, Indonesian and English all have
+         * capitals, and their readers are told *"no capitals"* without needing a rider, because a
+         * lowercase French noun is not a spelling mistake. Russian and Korean take no rider for a
+         * stronger reason: `ru`'s vocabulary has zero uppercase pieces, so the fold is a no-op on
+         * its characters, and `ko` does not fold at all.
+         */
+        val CAPITALISES_EVERY_NOUN = setOf("de")
+    }
+}
+
+/**
  * A streaming-previewer model pack: four raw files, delivered EITHER by a Play asset pack or —
  * where there is no Play to talk to — from ONE immutable Hugging Face commit (spec §6; the
  * 2026-09-10 amendment). Never the release tarball (310 MB of fp32 + int8 + wavs under a 73 MB
@@ -274,6 +326,20 @@ data class StreamingPack(
      * quote a lag has to start.
      */
     val cadenceMs: Long get() = decodeChunkLen * StreamingPreviewTuning.FRAME_SHIFT_MS
+
+    /**
+     * The four facts a sentence about this pack's STRIP may assert, plus the one orthography fact
+     * that is about the language — see [StripShape], and [StreamingPackCopy.stripNote] for the
+     * sentence they select. Derived here so no call site assembles it, and so a row cannot carry
+     * a shape that disagrees with its own flags.
+     */
+    val stripShape: StripShape get() = StripShape(
+        unit = stripUnit,
+        keepsCase = caseFold is CaseFold.Keep,
+        punctuation = emitsPunctuation,
+        digits = emitsDigits,
+        capitalisesEveryNoun = language in StripShape.CAPITALISES_EVERY_NOUN,
+    )
 
     /**
      * The zeros the commit hook pads before `inputFinished`, DERIVED from [encoderT] — see

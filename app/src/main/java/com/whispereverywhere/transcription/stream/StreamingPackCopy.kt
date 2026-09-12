@@ -214,6 +214,122 @@ object StreamingPackCopy {
     /** Rendered in the English row's subtitle slot on the language step when the pack is installed. */
     const val LANGUAGE_CHIP = "Live words on the bubble while you speak — preview model installed."
 
+    // ------------------------------- what ONE language's strip will look like (4.5.0 Task 4)
+
+    /**
+     * WHAT THIS LANGUAGE'S LIVE WORDS WILL LOOK LIKE — one sentence per pack, **derived from that
+     * pack's own token facts** and from nothing else ([StripShape] is the whole of what this
+     * function can see, and its KDoc says why it is not the pack).
+     *
+     * ### Why the previewer owes each language a sentence of its own
+     *
+     * The strip is rougher than the transcript, and HOW rough is a property of the pack rather
+     * than of the feature. Until this task the app said *"Words appear on the bubble"* and left it
+     * there, which was true of one pack and is now true of six — and the seventh row breaks it:
+     * the bilingual `zh-en` export's Chinese arrives as characters. So this is a table over the
+     * facts, not seven hand-written strings, and every clause in it is traceable to exactly one:
+     *
+     * | fact | clause |
+     * |---|---|
+     * | [StripUnit.WORDS] | *"Words appear on the bubble as you speak X"* |
+     * | [StripUnit.CHARACTERS_AND_WORDS] | *"Characters appear …, with any English in it as words"* |
+     * | [StripShape.keepsCase] | *"…, exactly as the model writes them"* — no fold, so the case is the model's |
+     * | `!keepsCase` | *"no capitals"* |
+     * | + [StripShape.capitalisesEveryNoun] | *"…, including nouns"* |
+     * | `!punctuation` / `punctuation` | *"no punctuation"* / *"punctuation … can appear"* |
+     * | `!digits` / `digits` | *"no numerals"* / *"a numeral can appear"* |
+     *
+     * ### The three things the six sentences get right that one sentence could not
+     *
+     *  - **Korean breaks *"no numerals"*.** Its vocabulary carries ten standalone ASCII digits and
+     *    58 punctuation-only pieces, so `emitsDigits` and `emitsPunctuation` are both TRUE and the
+     *    claim every other row makes is FALSE for it (qualification table §4.1). It is the one row
+     *    that reads *"punctuation and a numeral can appear"*, and `zh-en` is the other half of that
+     *    lesson: it breaks the same claim **by exactly one token**, `2` at id 4883.
+     *  - **`zh-en` changes the NOUN.** Not one of its 5,755 Han-bearing pieces carries a word
+     *    marker, so *"Words appear"* would be false for the half of the utterance the user is
+     *    actually speaking — and *"Characters appear"* alone would be false for the English in it,
+     *    which is the whole reason this row is in the catalogue. The sentence names both halves.
+     *  - **German needs the rider.** A German reader meets `festivals` and `campingbereiche` and
+     *    reads a spelling error, not a rough preview — [StripShape.capitalisesEveryNoun] is that
+     *    fact and `de` is its only member.
+     *
+     * ### What it does NOT say
+     *
+     * No size (the row's badge carries that, from the pack's own bytes — [pickerRowBadge] and
+     * [languageRowNote]), no lag (the measured 0.401 s is a 320 ms number and `ru`/`id` emit at
+     * half that rate — `StreamingPack.cadenceMs` is where such a sentence would have to start, and
+     * owner ruling O7 is open on whether 640 ms clears the bar at all), and no promise about when
+     * the words arrive. **It keeps the additive promise**, and that is not decoration here: *"no
+     * capitals, no punctuation and no numerals"* is a sentence a reader can easily take to be
+     * about the text they are dictating, which is the one misreading this feature cannot afford.
+     */
+    fun stripNote(language: String, shape: StripShape): String {
+        val opener = when (shape.unit) {
+            StripUnit.WORDS -> "Words appear on the bubble as you speak $language"
+            // Both halves, in the order the user meets them: they are speaking Chinese, and the
+            // English is what they mix into it.
+            StripUnit.CHARACTERS_AND_WORDS ->
+                "Characters appear on the bubble as you speak $language, with any English in it as words"
+        }
+        // The case clause rides the opener rather than joining the list, because it is about HOW
+        // the strip is rendered rather than about what it lacks.
+        val caseTail = if (shape.keepsCase) ", exactly as the model writes them" else ""
+        // CAPITALS LAST in the list, so German's rider lands at the end of the sentence where it
+        // reads as a rider and not as a third item wedged between two others.
+        val lacks = buildList {
+            if (!shape.punctuation) add("no punctuation")
+            if (!shape.digits) add("no numerals")
+            if (!shape.keepsCase) {
+                add(if (shape.capitalisesEveryNoun) "no capitals, including nouns" else "no capitals")
+            }
+        }
+        // The flags' own words: `emitsPunctuation` is *"whether the strip can carry . ? , !"* and
+        // `emitsDigits` is *"whether A NUMERAL can appear"* — singular, because one emittable digit
+        // (`zh-en`'s) satisfies the flag and "numerals" would claim more than the fact does.
+        val carries = buildList {
+            if (shape.punctuation) add("punctuation")
+            if (shape.digits) add("a numeral")
+        }
+        // THE TWO LISTS CANNOT BOTH BE EMPTY, so there is no dangling-colon branch here and no
+        // dead one either: `punctuation` puts an item in exactly one of them whichever way it
+        // points, and so does `digits`. (The case decision is the asymmetric one — `Keep` states
+        // itself in the tail above and contributes nothing to either list — which is why this is
+        // worth saying rather than assuming. `StreamingPackCopyTest` walks all 32 shapes.)
+        val clause = when {
+            carries.isEmpty() -> ": ${and(lacks)}"
+            lacks.isEmpty() -> ": ${and(carries)} can appear"
+            else -> ": ${and(lacks)}, and ${and(carries)} can appear"
+        }
+        return "$opener$caseTail$clause. The typed transcript is unchanged."
+    }
+
+    /** `a, b and c` — the list joiner the sentence above builds its two lists with. */
+    private fun and(items: List<String>): String = when (items.size) {
+        1 -> items[0]
+        else -> items.dropLast(1).joinToString(", ") + " and " + items.last()
+    }
+
+    /**
+     * THE PER-LANGUAGE ROW at a selection site: what this language's preview model costs and what
+     * its live words will look like — or **nothing at all for a language with no pack**.
+     *
+     * The null is the point, and it is answered here rather than at the call site for
+     * [noLiveWordsSubtitle]'s reason: the picker's rows are the app's 54 languages and seven of
+     * them have a model, so a badge reading "no model" on the other forty-seven would collapse
+     * *"there is no model for this language"* into *"you have not picked one"* — two different
+     * facts about the world (ruling 3d, and 4.4.1 pass 3's ITEM 1 before it). The row for a
+     * language with no pack says what it said before this task: nothing.
+     *
+     * The size is [pickerRowBadge]'s, from the pack's OWN `totalBytes` — English 73 MB, German 71,
+     * **French 128** and Russian 29 — so there is no shared figure for a second row to inherit,
+     * and the two halves are joined HERE rather than by a composable, because a call site that
+     * assembles copy is a second wording held to the same rules by a second test.
+     */
+    fun languageRowNote(language: String, pack: StreamingPack?): String? = pack?.let {
+        "${pickerRowBadge(it.totalBytes)}. ${stripNote(language, it.stripShape)}"
+    }
+
     // ------------------------------------- what the PICKER's own copy says (4.5.0 Task 3d)
 
     /**

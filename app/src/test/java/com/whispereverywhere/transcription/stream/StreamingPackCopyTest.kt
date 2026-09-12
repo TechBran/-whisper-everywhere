@@ -90,7 +90,17 @@ class StreamingPackCopyTest {
             // (4.5.0 Task 3d) The picker's own two: the deal, and one language's size badge.
             StreamingPackCopy.PICKER_DEAL,
             StreamingPackCopy.pickerRowBadge(StreamingPackCatalog.EN.totalBytes),
-        ) + everyState.map { StreamingPackCopy.settingsTitle(it, en) } +
+        ) + StreamingPackCatalog.packs.flatMap { p ->
+            // (4.5.0 Task 4) EVERY LANGUAGE'S OWN SENTENCE, and the row that carries it — seven
+            // of each, because the scan's contract is "everything the user can read, from every
+            // surface" and after this task a picker row for each pack language reads one.
+            val name = com.whispereverywhere.data.local.PreferencesManager
+                .languageDisplayName(p.language) ?: p.language
+            listOfNotNull(
+                StreamingPackCopy.stripNote(name, p.stripShape),
+                StreamingPackCopy.languageRowNote(name, p),
+            )
+        } + everyState.map { StreamingPackCopy.settingsTitle(it, en) } +
             everyState.map { StreamingPackCopy.settingsSubtitle(it, en, bytes) } +
             everyState.map { StreamingPackCopy.cardOffer(it, en, bytes) } +
             everyState.map { StreamingPackCopy.cardAction(it, en) } +
@@ -1356,7 +1366,245 @@ class StreamingPackCopyTest {
         )
     }
 
+    // ------------------- SEVEN LANGUAGES, SEVEN TRUE SENTENCES (4.5.0 Task 4)
+
+    @Test fun everyPacksOwnStripSentenceIsPinnedVerbatim() {
+        // The six new languages and the row that was already here, each read as the user reads
+        // it. Every clause is derived from that pack's own token facts; what is pinned here is
+        // the WORDING those facts select.
+        assertEquals(
+            "Words appear on the bubble as you speak English: no punctuation, no numerals and " +
+                "no capitals. The typed transcript is unchanged.",
+            note(StreamingPackCatalog.EN),
+        )
+        assertEquals(
+            "Words appear on the bubble as you speak French: no punctuation, no numerals and " +
+                "no capitals. The typed transcript is unchanged.",
+            note(StreamingPackCatalog.FR),
+        )
+        assertEquals(
+            "Words appear on the bubble as you speak German: no punctuation, no numerals and " +
+                "no capitals, including nouns. The typed transcript is unchanged.",
+            note(StreamingPackCatalog.DE),
+        )
+        assertEquals(
+            "Words appear on the bubble as you speak Russian: no punctuation, no numerals and " +
+                "no capitals. The typed transcript is unchanged.",
+            note(StreamingPackCatalog.RU),
+        )
+        assertEquals(
+            "Words appear on the bubble as you speak Indonesian: no punctuation, no numerals " +
+                "and no capitals. The typed transcript is unchanged.",
+            note(StreamingPackCatalog.ID),
+        )
+        assertEquals(
+            "Words appear on the bubble as you speak Korean, exactly as the model writes them: " +
+                "punctuation and a numeral can appear. The typed transcript is unchanged.",
+            note(StreamingPackCatalog.KO),
+        )
+        assertEquals(
+            "Characters appear on the bubble as you speak Chinese, with any English in it as " +
+                "words: no punctuation and no capitals, and a numeral can appear. The typed " +
+                "transcript is unchanged.",
+            note(StreamingPackCatalog.ZH),
+        )
+        // Seven sentences, seven distinct strings: the flags really do differ, and no row is
+        // describing another row's model.
+        val notes = StreamingPackCatalog.packs.map { note(it) }
+        assertEquals(notes.size, notes.distinct().size)
+    }
+
+    @Test fun koreanIsTheRowWhereNoNumeralsWouldBeAFalseSentence() {
+        // The qualification table's §4.1 finding, as copy: ko's `tokens.txt` carries TEN
+        // standalone ASCII digits and 58 punctuation-only pieces, so the claim the other five
+        // rows make is false for it — and a sentence that claimed it anyway would be the app
+        // telling a Korean user their own strip is broken.
+        val ko = note(StreamingPackCatalog.KO)
+        assertFalse("<<$ko>> may not claim no numerals", ko.contains("no numerals"))
+        assertFalse("nor no punctuation", ko.contains("no punctuation"))
+        assertTrue("it says what CAN appear instead", ko.contains("punctuation and a numeral can appear"))
+        // And it does not fold, so the case on the strip is the model's own — the clause that
+        // keeps `NBA` from arriving as `nba`.
+        assertTrue(ko.contains("exactly as the model writes them"))
+        assertFalse("a Keep row must not claim 'no capitals'", ko.contains("no capitals"))
+        // The other five rows DO make the claim, and it is provable for each of them: zero
+        // emittable digits and no punctuation piece but a word-internal joiner.
+        for (p in listOf(
+            StreamingPackCatalog.EN, StreamingPackCatalog.FR, StreamingPackCatalog.DE,
+            StreamingPackCatalog.RU, StreamingPackCatalog.ID,
+        )) {
+            val s = note(p)
+            assertTrue("<<$s>> must say it", s.contains("no punctuation") && s.contains("no numerals"))
+            assertFalse(p.emitsDigits)
+            assertFalse(p.emitsPunctuation)
+        }
+        // ...and the bilingual row is the other half of the lesson: it breaks the numeral claim
+        // by exactly ONE token (`2` at id 4883), so it reads like the five on punctuation and
+        // like Korean on numerals.
+        val zh = note(StreamingPackCatalog.ZH)
+        assertTrue(zh.contains("no punctuation"))
+        assertFalse(zh.contains("no numerals"))
+        assertTrue(zh.contains("a numeral can appear"))
+    }
+
+    @Test fun theBilingualRowChangesTheNOUNAndNamesBOTHHalves() {
+        val zh = note(StreamingPackCatalog.ZH)
+        assertTrue(
+            "not one of its 5,755 Han-bearing pieces carries a word marker, so the Chinese half " +
+                "is characters: <<$zh>>",
+            zh.startsWith("Characters appear on the bubble"),
+        )
+        assertFalse(
+            "...so it must NOT open with the claim every other row makes",
+            zh.startsWith("Words appear"),
+        )
+        assertTrue(
+            "and its 327 marked pieces are all Latin, which is the reason this row exists at " +
+                "all — a Chinese-only pack shows a blank strip when an English word arrives",
+            zh.contains("with any English in it as words"),
+        )
+        // Every other row keeps the promise verbatim, which is what the tokens-not-text strip
+        // bought — including Korean, whose spaces `result.text` has lost.
+        for (p in StreamingPackCatalog.packs.filter { it.stripUnit == StripUnit.WORDS }) {
+            assertTrue(note(p).startsWith("Words appear on the bubble as you speak "))
+        }
+    }
+
+    @Test fun germanGetsTheNounRiderAndNoOtherLanguageDoes() {
+        // *"German nouns arrive lowercase, which a German reader reads as WRONG rather than
+        // rough"* — the table's own row, and the only clause in this sentence that comes from an
+        // orthography rather than from a token file.
+        val de = note(StreamingPackCatalog.DE)
+        assertTrue("<<$de>>", de.contains("no capitals, including nouns"))
+        for (p in StreamingPackCatalog.packs.filter { it.language != "de" }) {
+            assertFalse(
+                "${p.language}: a rider on a language that does not capitalise its nouns would " +
+                    "be noise, and on a Keep row it would be false",
+                note(p).contains("including nouns"),
+            )
+        }
+        // It rides the CAPITALS clause, so a Keep row could never carry it: there is no capitals
+        // clause on a row that does not fold.
+        assertEquals(setOf("de"), StripShape.CAPITALISES_EVERY_NOUN)
+        assertTrue(StreamingPackCatalog.DE.stripShape.capitalisesEveryNoun)
+        assertFalse(StreamingPackCatalog.EN.stripShape.capitalisesEveryNoun)
+    }
+
+    @Test fun everyRowsSizeIsItsOwnAndNoSentenceCarriesAFigureItShouldNot() {
+        // *"Every size comes from `sizeBadge`"* — so the SENTENCE carries none at all (it is
+        // about what the strip looks like, and a figure there would be a second place to get one
+        // language's size wrong), and the ROW carries the pack's own.
+        for (p in StreamingPackCatalog.packs) {
+            val name = display(p)
+            assertFalse(
+                "the sentence names no size: <<${note(p)}>>",
+                note(p).contains("MB") || Regex("\\d").containsMatchIn(note(p)),
+            )
+            val row = StreamingPackCopy.languageRowNote(name, p)!!
+            assertTrue(
+                "${p.language}: the row's badge is this pack's OWN bytes through sizeBadge",
+                row.contains(StreamingPackCatalog.sizeBadge(p.totalBytes)),
+            )
+            assertEquals(
+                "and the row is the badge plus that language's sentence, joined once, here",
+                "${StreamingPackCopy.pickerRowBadge(p.totalBytes)}. ${note(p)}",
+                row,
+            )
+        }
+        // The figures the catalogue really holds — 128 MB for French against 29 for Russian —
+        // which is why no shared literal survives this task.
+        assertEquals("128 MB", StreamingPackCatalog.sizeBadge(StreamingPackCatalog.FR.totalBytes))
+        assertEquals("29 MB", StreamingPackCatalog.sizeBadge(StreamingPackCatalog.RU.totalBytes))
+        assertEquals("50 MB", StreamingPackCatalog.sizeBadge(StreamingPackCatalog.ZH.totalBytes))
+        assertEquals("73 MB", StreamingPackCatalog.sizeBadge(StreamingPackCatalog.KO.totalBytes))
+    }
+
+    @Test fun aLanguageWithNoPackGetsNoRowSentenceAtAll() {
+        // The picker's rows are the app's 54 languages and seven of them have a model. A badge
+        // reading "no model" on the other forty-seven would collapse *"there is no model for this
+        // language"* into *"you have not picked one"* — ruling 3d's own refusal, one surface over.
+        // The row for a language with no pack says what it said before this task: nothing.
+        assertNull(StreamingPackCopy.languageRowNote(es, null))
+        assertNull(StreamingPackCopy.languageRowNote("Thai", StreamingPackCatalog.forLanguage("th")))
+        assertNotNull(StreamingPackCopy.languageRowNote("Korean", StreamingPackCatalog.forLanguage("ko")))
+    }
+
+    @Test fun theSentenceIsTOTALOverEveryShapeAndNeverLeavesAnEmptyClause() {
+        // The table has to answer every shape, not the seven the catalogue happens to hold: `et`
+        // would be the first row to set all three flags true, and `it` (Kroko) is Keep with
+        // punctuation and no digits — a shape no row here has, and the one that puts a single
+        // item in BOTH lists at once.
+        var shapes = 0
+        for (unit in StripUnit.entries) {
+            for (keepsCase in listOf(false, true)) {
+                for (punctuation in listOf(false, true)) {
+                    for (digits in listOf(false, true)) {
+                        for (nouns in listOf(false, true)) {
+                            val shape = StripShape(unit, keepsCase, punctuation, digits, nouns)
+                            val s = StreamingPackCopy.stripNote("Xhosa", shape)
+                            shapes++
+                            assertTrue("<<$s>> must name its language", s.contains("Xhosa"))
+                            assertTrue(
+                                "<<$s>> must keep the additive promise: a reader can take " +
+                                    "\"no capitals\" to be about the text they are dictating, " +
+                                    "which is the one misreading this feature cannot afford",
+                                s.endsWith("The typed transcript is unchanged."),
+                            )
+                            for (artefact in listOf(": .", ", .", "  ", ", ,", ": ,")) {
+                                assertFalse("<<$s>> carries <<$artefact>>", s.contains(artefact))
+                            }
+                            // Every clause present if and only if its own fact is.
+                            assertEquals(!keepsCase, s.contains("no capitals"))
+                            assertEquals(
+                                "the rider rides the capitals clause, so a Keep row cannot wear it",
+                                !keepsCase && nouns, s.contains("including nouns"),
+                            )
+                            assertEquals(keepsCase, s.contains("exactly as the model writes them"))
+                            assertEquals(!punctuation, s.contains("no punctuation"))
+                            assertEquals(!digits, s.contains("no numerals"))
+                            assertEquals(digits, s.contains("a numeral"))
+                            assertEquals(
+                                unit == StripUnit.CHARACTERS_AND_WORDS,
+                                s.startsWith("Characters appear"),
+                            )
+                            // ...and there is always a clause to punctuate: the two lists cannot
+                            // both be empty, because `punctuation` puts an item in exactly one of
+                            // them whichever way it points, and so does `digits`.
+                            assertTrue("<<$s>> lost its clause", s.contains(": "))
+                        }
+                    }
+                }
+            }
+        }
+        assertEquals("two units × four flags, all answered", 32, shapes)
+        // The shape no row here has, pinned because it is the one that fills BOTH lists with a
+        // single item each and is therefore the one a joiner gets wrong: `it` (Kroko) keeps its
+        // case, emits punctuation, and has no digit piece at all.
+        assertEquals(
+            "Words appear on the bubble as you speak Italian, exactly as the model writes them: " +
+                "no numerals, and punctuation can appear. The typed transcript is unchanged.",
+            StreamingPackCopy.stripNote(
+                "Italian",
+                StripShape(
+                    StripUnit.WORDS,
+                    keepsCase = true,
+                    punctuation = true,
+                    digits = false,
+                    capitalisesEveryNoun = false,
+                ),
+            ),
+        )
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    /** One pack's own sentence, rendered with the word the picker spells its language with. */
+    private fun note(pack: StreamingPack): String =
+        StreamingPackCopy.stripNote(display(pack), pack.stripShape)
+
+    private fun display(pack: StreamingPack): String =
+        com.whispereverywhere.data.local.PreferencesManager.languageDisplayName(pack.language)
+            ?: pack.language
 
     /** The English pack's real size, so the delete sentences read as the user reads them. */
     private val bytes = StreamingPackCatalog.EN.totalBytes
