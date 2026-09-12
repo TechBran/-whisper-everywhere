@@ -77,7 +77,12 @@ class PreviewDisabledTest {
             localTierInstalled = true,
             disabledLanguages = PreviewDisabled.languages.value,
         )
-        assertEquals(StreamingPackCopy.selectorReady("English"), ready)
+        // The receipt names what the ARRIVED pack puts on the strip (4.5.0 Task 4), and the
+        // record above is English's, whose unit its own tokens.txt proves.
+        assertEquals(
+            StreamingPackCopy.selectorReady("English", StreamingPackCatalog.EN.stripUnit),
+            ready,
+        )
         PreviewDisabled.note("en")
         assertNull(
             "the same record, the same switch, the same tier — and now no promise, because no " +

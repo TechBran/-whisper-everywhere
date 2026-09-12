@@ -61,9 +61,27 @@ object StreamingPackCopy {
      * The one promise that matters, spelled ONCE and carried by every install sentence: the
      * previewer is ADDITIVE (spec §10). Whatever route the bytes take, the typed transcript is
      * still whisper's, word for word.
+     *
+     * **The NOUN is the pack's** (4.5.0 Task 4). This was a constant while every catalogue row
+     * put words on the strip; the bilingual `zh-en` row puts CHARACTERS there — not one of its
+     * 5,755 Han-bearing pieces carries a word boundary — so an install sentence rendered for that
+     * pack promised the wrong thing about the half of the utterance the user is actually speaking,
+     * one card away from [stripNote] saying the right one on the same screen. The [StripUnit.WORDS]
+     * text is 4.4.1's, byte for byte, so every string a `preview_en`, `preview_fr`, `preview_de`,
+     * `preview_ru`, `preview_id` or `preview_ko` reader sees is unmoved; only the one row that
+     * needed a different noun has one.
+     *
+     * It is a PARAMETER and not a default, here and on the four sentences that carry it: the
+     * default would be `WORDS`, which is the wrong answer for exactly the row this exists for, so
+     * a call site that forgot to answer would be silently wrong instead of red.
      */
-    private const val ADDITIVE =
-        "Words appear on the bubble as you talk; the typed transcript is still the speech model's."
+    private fun additive(unit: StripUnit): String = when (unit) {
+        StripUnit.WORDS ->
+            "Words appear on the bubble as you talk; the typed transcript is still the speech model's."
+        StripUnit.CHARACTERS_AND_WORDS ->
+            "Characters appear on the bubble as you talk, and words for any English in them; " +
+                "the typed transcript is still the speech model's."
+    }
 
     // ---------------------------------------------------------------- the state-free strings
 
@@ -161,9 +179,15 @@ object StreamingPackCopy {
     /**
      * @param sizeBytes the PACK's own byte count. See the class KDoc's SIZE section for why every
      *        sentence that carries a size takes one.
+     * @param unit what this pack puts on the strip — see [additive] for why the noun is the
+     *        pack's and not this object's. The `WORDS` rendering is 4.4.1's, byte for byte.
      */
-    fun installed(language: String, sizeBytes: Long): String =
-        "Installed (${StreamingPackCatalog.sizeBadge(sizeBytes)}). Words appear on the bubble as you speak $language; the typed transcript is unchanged."
+    fun installed(language: String, sizeBytes: Long, unit: StripUnit): String = when (unit) {
+        StripUnit.WORDS ->
+            "Installed (${StreamingPackCatalog.sizeBadge(sizeBytes)}). Words appear on the bubble as you speak $language; the typed transcript is unchanged."
+        StripUnit.CHARACTERS_AND_WORDS ->
+            "Installed (${StreamingPackCatalog.sizeBadge(sizeBytes)}). Characters appear on the bubble as you speak $language, and words for any English in it; the typed transcript is unchanged."
+    }
 
     /**
      * RULING ASSUMED (R1): the canary is the only SME guard; this is what the row says after it
@@ -553,8 +577,8 @@ object StreamingPackCopy {
     // ---------------------------------------------------------------- the offer, by source
 
     /** Play delivered the pack: verify + copy into `filesDir`, no network at any point. */
-    fun settingsInstallFromPack(sizeBytes: Long): String =
-        "Included with the app (${StreamingPackCatalog.sizeBadge(sizeBytes)}) and already on this device — nothing to fetch. $ADDITIVE"
+    fun settingsInstallFromPack(sizeBytes: Long, unit: StripUnit): String =
+        "Included with the app (${StreamingPackCatalog.sizeBadge(sizeBytes)}) and already on this device — nothing to fetch. ${additive(unit)}"
 
     /**
      * Play can serve this install: the ordinary on-demand fetch, and still not a third party.
@@ -573,9 +597,9 @@ object StreamingPackCopy {
      * keeping. The SOURCE promise — *"never from a third party"* — is untouched, because that one
      * is still true on every route this sentence is rendered for.
      */
-    fun settingsInstallFetch(sizeBytes: Long): String =
+    fun settingsInstallFetch(sizeBytes: Long, unit: StripUnit): String =
         "The app's own ${StreamingPackCatalog.sizeBadge(sizeBytes)} model, fetched from Google " +
-            "Play over your connection — never from a third party. $ADDITIVE"
+            "Play over your connection — never from a third party. ${additive(unit)}"
 
     /**
      * The NON-PLAY row, and the spec's original sentence verbatim. Reached only where
@@ -583,8 +607,8 @@ object StreamingPackCopy {
      * Play has already named as this install's own fault — which is exactly where a download
      * from the commit-pinned Hugging Face base is what the tap does.
      */
-    fun installDownload(language: String, sizeBytes: Long): String =
-        "Download a ${StreamingPackCatalog.sizeBadge(sizeBytes)} $language preview model. $ADDITIVE"
+    fun installDownload(language: String, sizeBytes: Long, unit: StripUnit): String =
+        "Download a ${StreamingPackCatalog.sizeBadge(sizeBytes)} $language preview model. ${additive(unit)}"
 
     // ---------------------------------------------------------------- the damaged install
 
@@ -631,11 +655,12 @@ object StreamingPackCopy {
         state: StreamingPackState,
         language: String,
         sizeBytes: Long,
+        unit: StripUnit,
     ): String = when (state) {
-        StreamingPackState.Installed -> installed(language, sizeBytes)
-        StreamingPackState.PackDelivered -> settingsInstallFromPack(sizeBytes)
-        StreamingPackState.PackFetchable -> settingsInstallFetch(sizeBytes)
-        StreamingPackState.Downloadable -> installDownload(language, sizeBytes)
+        StreamingPackState.Installed -> installed(language, sizeBytes, unit)
+        StreamingPackState.PackDelivered -> settingsInstallFromPack(sizeBytes, unit)
+        StreamingPackState.PackFetchable -> settingsInstallFetch(sizeBytes, unit)
+        StreamingPackState.Downloadable -> installDownload(language, sizeBytes, unit)
         is StreamingPackState.Repair -> when (state.via) {
             StreamingPackState.PackDelivered -> SETTINGS_REPAIR_FROM_PACK
             StreamingPackState.PackFetchable -> settingsRepairFetch(sizeBytes)
@@ -745,8 +770,12 @@ object StreamingPackCopy {
      * pack (fix round 1's B1, on the row) one edit later; delegating makes that unexpressible,
      * and `StreamingPackCopyTest` holds the two equal for every state.
      */
-    fun cardOffer(state: StreamingPackState, language: String, sizeBytes: Long): String =
-        settingsSubtitle(state, language, sizeBytes)
+    fun cardOffer(
+        state: StreamingPackState,
+        language: String,
+        sizeBytes: Long,
+        unit: StripUnit,
+    ): String = settingsSubtitle(state, language, sizeBytes, unit)
 
     /** The offer card's action label — the ACTION's own name, so it names the source it will use. */
     fun cardAction(state: StreamingPackState, language: String): String =
@@ -1030,12 +1059,22 @@ object StreamingPackCopy {
         // the language step's chip's. It is a PROMISE about the future ("words appear... whenever
         // you pick it"), so it is made only where every standing fact it depends on holds; the
         // facts that mean the arrival is no longer the case have already taken the record away.
-        PreviewPhase.INSTALLED ->
-            if (showLiveWords && localTierInstalled && work.language !in disabledLanguages) {
-                selectorReady(language)
+        PreviewPhase.INSTALLED -> {
+            // (4.5.0 Task 4) The receipt names what this pack puts on the strip, so the ROW is
+            // asked for its unit. A record with no catalogue row gets no receipt at all rather
+            // than a defaulted noun: the board is keyed by a pack's own language
+            // (`PreviewAutoFetchController` writes it), so this arm is unreachable — and a
+            // default here would be `WORDS`, the wrong answer for the one row that needs the
+            // question asked.
+            val arrived = StreamingPackCatalog.forLanguage(work.language)
+            if (arrived != null &&
+                showLiveWords && localTierInstalled && work.language !in disabledLanguages
+            ) {
+                selectorReady(language, arrived.stripUnit)
             } else {
                 null
             }
+        }
         // The user's own no. The strip is about arrivals; a withdrawn one is not one, and the
         // dismissal was itself the receipt.
         PreviewPhase.CANCELLED -> null
@@ -1077,9 +1116,17 @@ object StreamingPackCopy {
      * in this language right now and for one who has since moved to another — which is reachable,
      * because the record outlives the selection.
      */
-    fun selectorReady(language: String): String =
-        "$language is ready: words appear on the bubble whenever you pick it, and the typed " +
-            "transcript is unchanged."
+    fun selectorReady(language: String, unit: StripUnit): String = when (unit) {
+        StripUnit.WORDS ->
+            "$language is ready: words appear on the bubble whenever you pick it, and the typed " +
+                "transcript is unchanged."
+        // The noun is the pack's, for [additive]'s reason — and this receipt is rendered on the
+        // same screen as the picker's own [stripNote], which says the same thing about the same
+        // pack. One screen may not describe one fact two ways.
+        StripUnit.CHARACTERS_AND_WORDS ->
+            "$language is ready: characters appear on the bubble whenever you pick it, and words " +
+                "for any English in them; the typed transcript is unchanged."
+    }
 
     /**
      * Whether a TAP on the row showing [workLine] does anything — `TtsModelManager`'s B1 lesson,

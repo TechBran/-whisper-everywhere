@@ -489,7 +489,12 @@ class LiveWordsCardPinTest {
             "StreamingPackCopy.CARD_INSTALLED_TITLE",
             "StreamingPackCopy.cardInstalled(languageName)",
             "StreamingPackCopy.CARD_DISMISS",
-            "StreamingPackCopy.cardOffer(offered, languageName, p.totalBytes)",
+            // (4.5.0 Task 4) ...and the OFFER is handed the pack's UNIT, because the sentence
+            // it renders carries the additive promise and the bilingual Chinese row puts
+            // CHARACTERS on the strip — one scroll from the picker's own sentence saying so.
+            // The argument is on its own line, so the needle is the call's head.
+            "StreamingPackCopy.cardOffer(",
+            "                        p.stripUnit,",
             "StreamingPackCopy.cardAction(offered, languageName)",
             "StreamingPackCopy.cardLanguageNote(languageName)",
         )) {

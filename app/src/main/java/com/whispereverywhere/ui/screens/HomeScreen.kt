@@ -1145,7 +1145,16 @@ private fun LiveWordsCard(
                     title = StreamingPackCopy.CARD_TITLE,
                     // The SAME per-source table the Settings row reads, so this card cannot
                     // promise a route the tap will not take.
-                    body = StreamingPackCopy.cardOffer(offered, languageName, p.totalBytes),
+                    body = StreamingPackCopy.cardOffer(
+                        offered,
+                        languageName,
+                        p.totalBytes,
+                        // (4.5.0 Task 4) What this pack puts on the strip, so the offer's own
+                        // additive promise names the right noun — the bilingual Chinese model
+                        // puts CHARACTERS there, and this card sits one scroll from the picker's
+                        // sentence saying so.
+                        p.stripUnit,
+                    ),
                     // What the pick buys and what Auto costs, on the state where the note slot
                     // is free — the language step's sentence is for someone still choosing.
                     note = StreamingPackCopy.cardLanguageNote(languageName),

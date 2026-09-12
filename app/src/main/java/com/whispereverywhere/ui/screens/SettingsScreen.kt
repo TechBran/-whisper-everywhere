@@ -1281,6 +1281,7 @@ private fun LivePreviewRows(
                         previewState,
                         previewLanguage,
                         previewPack.totalBytes,
+                        previewPack.stripUnit,
                     ),
                 )
                 SettingsSwitchItem(
@@ -1311,6 +1312,7 @@ private fun LivePreviewRows(
                         previewState,
                         previewLanguage,
                         previewPack.totalBytes,
+                        previewPack.stripUnit,
                     ),
                 onClick = startPreviewInstall,
             )

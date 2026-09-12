@@ -109,8 +109,8 @@ sealed interface CaseFold {
 /**
  * WHAT THE STRIP IS MADE OF, for one pack — the NOUN every sentence about that pack has to get
  * right. *"Words appear on the bubble"* is the app's central promise
- * ([StreamingPackCopy.ADDITIVE]), and it is a claim about the pack rather than about the feature:
- * a model whose vocabulary is single Han characters puts characters there.
+ * (the additive promise every install sentence carries), and it is a claim about the PACK rather
+ * than about the feature: a model whose vocabulary is single Han characters puts characters there.
  *
  * ### How it is read, and where the file stops being able to answer
  *

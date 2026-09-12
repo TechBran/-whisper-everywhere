@@ -44,10 +44,10 @@ class StreamingPackCopyTest {
     private val all: List<String>
         get() = listOf(
             StreamingPackCopy.featureTitle(en),
-            StreamingPackCopy.installed(en, bytes),
-            StreamingPackCopy.settingsInstallFromPack(bytes),
-            StreamingPackCopy.settingsInstallFetch(bytes),
-            StreamingPackCopy.installDownload(en, bytes),
+            StreamingPackCopy.installed(en, bytes, words),
+            StreamingPackCopy.settingsInstallFromPack(bytes, words),
+            StreamingPackCopy.settingsInstallFetch(bytes, words),
+            StreamingPackCopy.installDownload(en, bytes, words),
             StreamingPackCopy.SETTINGS_REPAIR,
             StreamingPackCopy.SETTINGS_REPAIR_FROM_PACK,
             StreamingPackCopy.settingsRepairFetch(bytes),
@@ -85,11 +85,18 @@ class StreamingPackCopyTest {
             // (4.5.0 Task 3c) The strip above the language selector. Its running phases delegate
             // to `workLine` (already in the scan below), so what joins here is the one sentence
             // of its own — the READY receipt.
-            StreamingPackCopy.selectorReady(en),
+            StreamingPackCopy.selectorReady(en, words),
             // (4.5.0 Task 3d) The picker's own two: the deal, and one language's size badge.
             StreamingPackCopy.PICKER_DEAL,
             StreamingPackCopy.pickerRowBadge(StreamingPackCatalog.EN.totalBytes),
-        ) + StreamingPackCatalog.packs.flatMap { p ->
+        ) + everyState.map {
+            // (4.5.0 Task 4) EVERY ROUTE'S SENTENCE FOR THE ONE ROW WITH A DIFFERENT NOUN, so
+            // the banned-word scan and the promise scan read the characters renderings as well
+            // as the words ones.
+            StreamingPackCopy.settingsSubtitle(
+                it, "Chinese", StreamingPackCatalog.ZH.totalBytes, StreamingPackCatalog.ZH.stripUnit,
+            )
+        } + StreamingPackCatalog.packs.flatMap { p ->
             // (4.5.0 Task 4) EVERY LANGUAGE'S OWN SENTENCE, and the row that carries it — seven
             // of each, because the scan's contract is "everything the user can read, from every
             // surface" and after this task a picker row for each pack language reads one.
@@ -100,8 +107,8 @@ class StreamingPackCopyTest {
                 StreamingPackCopy.languageRowNote(name, p),
             )
         } + everyState.map { StreamingPackCopy.settingsTitle(it, en) } +
-            everyState.map { StreamingPackCopy.settingsSubtitle(it, en, bytes) } +
-            everyState.map { StreamingPackCopy.cardOffer(it, en, bytes) } +
+            everyState.map { StreamingPackCopy.settingsSubtitle(it, en, bytes, words) } +
+            everyState.map { StreamingPackCopy.cardOffer(it, en, bytes, words) } +
             everyState.map { StreamingPackCopy.cardAction(it, en) } +
             // (4.5.0 Task 1) The one observable's own sentences, from every route and every
             // phase, and the delete row's five. The scan's contract is "everything the user can
@@ -135,26 +142,26 @@ class StreamingPackCopyTest {
         assertEquals("Live words while you speak (English)", StreamingPackCopy.featureTitle(en))
         assertEquals(
             "Installed (73 MB). Words appear on the bubble as you speak English; the typed transcript is unchanged.",
-            StreamingPackCopy.installed(en, bytes),
+            StreamingPackCopy.installed(en, bytes, words),
         )
         assertEquals(
             "Included with the app (73 MB) and already on this device — nothing to fetch. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
-            StreamingPackCopy.settingsInstallFromPack(bytes),
+            StreamingPackCopy.settingsInstallFromPack(bytes, words),
         )
         assertEquals(
             // (Fix 1) *"when you ask for it"* is GONE: the owner ruled the metered tap away, so
             // on this route the bytes move unasked and a sentence promising otherwise — rendered
             // on the offer card as well as on the row — was the promise the ruling broke.
             "The app's own 73 MB model, fetched from Google Play over your connection — never from a third party. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
-            StreamingPackCopy.settingsInstallFetch(bytes),
+            StreamingPackCopy.settingsInstallFetch(bytes, words),
         )
         assertFalse(
             "no sentence in the feature may promise that nothing moves until a tap (Fix 1)",
-            StreamingPackCopy.settingsInstallFetch(bytes).contains("when you ask for it"),
+            StreamingPackCopy.settingsInstallFetch(bytes, words).contains("when you ask for it"),
         )
         assertEquals(
             "Download a 73 MB English preview model. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
-            StreamingPackCopy.installDownload(en, bytes),
+            StreamingPackCopy.installDownload(en, bytes, words),
         )
         assertEquals(
             "The preview model is damaged. Download it again to restore live words.",
@@ -206,10 +213,10 @@ class StreamingPackCopyTest {
     @Test fun theBadgeIsTheCatalogsNotARetypedNumber() {
         val badge = StreamingPackCatalog.sizeBadge(StreamingPackCatalog.EN.totalBytes)
         assertEquals("73 MB", badge)
-        assertTrue(StreamingPackCopy.settingsInstallFromPack(bytes).contains(badge))
-        assertTrue(StreamingPackCopy.settingsInstallFetch(bytes).contains(badge))
-        assertTrue(StreamingPackCopy.installDownload(en, bytes).contains(badge))
-        assertTrue(StreamingPackCopy.installed(en, bytes).contains(badge))
+        assertTrue(StreamingPackCopy.settingsInstallFromPack(bytes, words).contains(badge))
+        assertTrue(StreamingPackCopy.settingsInstallFetch(bytes, words).contains(badge))
+        assertTrue(StreamingPackCopy.installDownload(en, bytes, words).contains(badge))
+        assertTrue(StreamingPackCopy.installed(en, bytes, words).contains(badge))
         all.forEach { assertFalse("never the tarball's size under the small badge", it.contains("310")) }
     }
 
@@ -227,10 +234,10 @@ class StreamingPackCopyTest {
     @Test fun everyInstallStringSaysTheTypedTranscriptIsUntouched() {
         // The one promise that matters: the previewer is additive (spec §10). It is made on every
         // route, because every route ends in the same feature.
-        assertTrue(StreamingPackCopy.settingsInstallFromPack(bytes).contains("typed transcript"))
-        assertTrue(StreamingPackCopy.settingsInstallFetch(bytes).contains("typed transcript"))
-        assertTrue(StreamingPackCopy.installDownload(en, bytes).contains("typed transcript"))
-        assertTrue(StreamingPackCopy.installed(en, bytes).contains("typed transcript"))
+        assertTrue(StreamingPackCopy.settingsInstallFromPack(bytes, words).contains("typed transcript"))
+        assertTrue(StreamingPackCopy.settingsInstallFetch(bytes, words).contains("typed transcript"))
+        assertTrue(StreamingPackCopy.installDownload(en, bytes, words).contains("typed transcript"))
+        assertTrue(StreamingPackCopy.installed(en, bytes, words).contains("typed transcript"))
         assertTrue(StreamingPackCopy.SETTINGS_DISABLED_ON_DEVICE.contains("transcripts are unaffected"))
     }
 
@@ -242,7 +249,7 @@ class StreamingPackCopyTest {
         // about PROVENANCE, and naming Play is what keeps it: no Play row may offer a
         // third-party download.
         for (state in listOf(StreamingPackState.PackDelivered, StreamingPackState.PackFetchable)) {
-            val sub = StreamingPackCopy.settingsSubtitle(state, en, bytes)
+            val sub = StreamingPackCopy.settingsSubtitle(state, en, bytes, words)
             assertFalse(
                 "and must promise no third-party download: on a Play route the bytes are the " +
                     "app's own, which is the whole point of the amendment: $sub",
@@ -258,10 +265,10 @@ class StreamingPackCopyTest {
         // PackFetchable the pack rides the AAB we UPLOADED, not the install the user HAS: the
         // tap starts a real 73 MB transfer, which is exactly why this row has to answer
         // NeedsConfirmation. Only the DELIVERED row may say the bytes came with the app.
-        val delivered = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackDelivered, en, bytes)
+        val delivered = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackDelivered, en, bytes, words)
         assertTrue("the delivered row is the one that really is already here: $delivered", delivered.contains("Included with the app"))
         assertTrue(delivered.contains("already on this device"))
-        val fetchable = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackFetchable, en, bytes)
+        val fetchable = StreamingPackCopy.settingsSubtitle(StreamingPackState.PackFetchable, en, bytes, words)
         assertFalse(
             "an on-demand pack that has not been delivered is NOT included with the install the " +
                 "user has, and saying so hides 73 MB of their data: $fetchable",
@@ -277,7 +284,7 @@ class StreamingPackCopyTest {
         // The repair that re-fetches costs the same 73 MB and says so too.
         val repairFetch =
             StreamingPackCopy.settingsSubtitle(
-                StreamingPackState.Repair(StreamingPackState.PackFetchable), en, bytes,
+                StreamingPackState.Repair(StreamingPackState.PackFetchable), en, bytes, words,
             )
         assertTrue(repairFetch.contains("Google Play"))
         assertTrue(
@@ -290,10 +297,10 @@ class StreamingPackCopyTest {
         // "the fallback wording only on non-Play builds" — Downloadable is reached from exactly
         // one place (StreamingPackInstall.playCanDeliver: a debug build, a sideload, or a refusal
         // Play named as this install's own fault), so this is the only honest "Download" row.
-        val sub = StreamingPackCopy.settingsSubtitle(StreamingPackState.Downloadable, en, bytes)
+        val sub = StreamingPackCopy.settingsSubtitle(StreamingPackState.Downloadable, en, bytes, words)
         assertTrue("the fallback is honest about being one: $sub", sub.startsWith("Download a 73 MB"))
         val saysDownload = everyState.filter {
-            StreamingPackCopy.settingsSubtitle(it, en, bytes).lowercase().contains("download")
+            StreamingPackCopy.settingsSubtitle(it, en, bytes, words).lowercase().contains("download")
         }
         assertEquals(
             "exactly two rows may say 'download': the fallback offer and the repair that would " +
@@ -309,7 +316,7 @@ class StreamingPackCopyTest {
         // third-party download by accident.
         for (state in everyState) {
             assertTrue("$state has a title", StreamingPackCopy.settingsTitle(state, en).isNotBlank())
-            assertTrue("$state has a subtitle", StreamingPackCopy.settingsSubtitle(state, en, bytes).isNotBlank())
+            assertTrue("$state has a subtitle", StreamingPackCopy.settingsSubtitle(state, en, bytes, words).isNotBlank())
         }
         val offers = listOf(
             StreamingPackState.Installed,
@@ -320,14 +327,14 @@ class StreamingPackCopyTest {
         assertEquals(
             "the four sources read differently",
             offers.size,
-            offers.map { StreamingPackCopy.settingsSubtitle(it, en, bytes) }.distinct().size,
+            offers.map { StreamingPackCopy.settingsSubtitle(it, en, bytes, words) }.distinct().size,
         )
         assertEquals(
             "and so do the three repairs — a repair from the delivered pack costs no network " +
                 "and must not be offered as a download",
             3,
             offers.drop(1)
-                .map { StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(it), en, bytes) }
+                .map { StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(it), en, bytes, words) }
                 .distinct().size,
         )
     }
@@ -338,7 +345,7 @@ class StreamingPackCopyTest {
             StreamingPackState.PackFetchable,
             StreamingPackState.Downloadable,
         )) {
-            val sub = StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(via), en, bytes)
+            val sub = StreamingPackCopy.settingsSubtitle(StreamingPackState.Repair(via), en, bytes, words)
             assertTrue("a repair names the damage first: $sub", sub.startsWith("The preview model is damaged."))
         }
         assertEquals(
@@ -405,8 +412,8 @@ class StreamingPackCopyTest {
             StreamingPackCopy.cardInstalled(es),
             StreamingPackCopy.cardLanguageNote(es),
             StreamingPackCopy.featureTitle(es),
-            StreamingPackCopy.installed(es, bytes),
-            StreamingPackCopy.installDownload(es, bytes),
+            StreamingPackCopy.installed(es, bytes, words),
+            StreamingPackCopy.installDownload(es, bytes, words),
         ) + states.map { StreamingPackCopy.cardAction(it, es) } +
             states.map { StreamingPackCopy.settingsTitle(it, es) }
         for (s in rendered) {
@@ -653,8 +660,8 @@ class StreamingPackCopyTest {
         for (state in everyState) {
             assertEquals(
                 "the card's body for $state",
-                StreamingPackCopy.settingsSubtitle(state, en, bytes),
-                StreamingPackCopy.cardOffer(state, en, bytes),
+                StreamingPackCopy.settingsSubtitle(state, en, bytes, words),
+                StreamingPackCopy.cardOffer(state, en, bytes, words),
             )
             assertEquals(
                 "and its action names the source that action will actually use",
@@ -677,7 +684,7 @@ class StreamingPackCopyTest {
         )) {
             assertTrue(
                 "the offer body carries the additive promise for $state",
-                StreamingPackCopy.cardOffer(state, en, bytes).contains("typed transcript"),
+                StreamingPackCopy.cardOffer(state, en, bytes, words).contains("typed transcript"),
             )
             assertTrue(
                 "and its action names the language: ${StreamingPackCopy.cardAction(state, en)}",
@@ -1064,7 +1071,7 @@ class StreamingPackCopyTest {
                 PreviewPhase.CANCELLED -> assertNull("$phase must be silent here", line)
                 // The one sentence the work line has no phase for.
                 PreviewPhase.INSTALLED ->
-                    assertEquals(StreamingPackCopy.selectorReady(en), line)
+                    assertEquals(StreamingPackCopy.selectorReady(en, words), line)
                 // Everything else is the ONE work line, verbatim, in the form this SURFACE can
                 // honestly render — here the record's language is the selected one, which is the
                 // case an AWAITING_ANSWER record exists in, and the strip has no gesture at all.
@@ -1097,7 +1104,7 @@ class StreamingPackCopyTest {
         val installed = work(PreviewRoute.PLAY_FETCH, PreviewPhase.INSTALLED)
         assertEquals(
             "the ordinary case still says it",
-            StreamingPackCopy.selectorReady(en), strip(installed),
+            StreamingPackCopy.selectorReady(en, words), strip(installed),
         )
         assertNull(
             "the switch is OFF: no word will reach the bubble, so \"words appear\" is false — " +
@@ -1127,7 +1134,7 @@ class StreamingPackCopyTest {
         assertEquals(
             "and it is PER LANGUAGE, like the engine's own set: another language going off says " +
                 "nothing about this one",
-            StreamingPackCopy.selectorReady(en),
+            StreamingPackCopy.selectorReady(en, words),
             strip(installed, disabledLanguages = setOf("fr", "de")),
         )
         assertNull(
@@ -1231,33 +1238,33 @@ class StreamingPackCopyTest {
         assertEquals(
             "English is ready: words appear on the bubble whenever you pick it, and the typed " +
                 "transcript is unchanged.",
-            StreamingPackCopy.selectorReady(en),
+            StreamingPackCopy.selectorReady(en, words),
         )
         assertEquals(
             "Spanish is ready: words appear on the bubble whenever you pick it, and the typed " +
                 "transcript is unchanged.",
-            StreamingPackCopy.selectorReady(es),
+            StreamingPackCopy.selectorReady(es, words),
         )
         assertTrue(
             "it says the language is READY, which is the ruling's own word for the end of this " +
                 "strip's job",
-            StreamingPackCopy.selectorReady(en).contains("ready"),
+            StreamingPackCopy.selectorReady(en, words).contains("ready"),
         )
         assertFalse(
             "and it does not INSTRUCT: the pack only ever arrives for a language the user has " +
                 "already picked, so \"pick English\" would tell them to do what they just did " +
                 "(cardInstalled's own rule)",
-            StreamingPackCopy.selectorReady(en).startsWith("Pick "),
+            StreamingPackCopy.selectorReady(en, words).startsWith("Pick "),
         )
         assertTrue(
             "\"whenever you pick it\" is true for the user transcribing in it now AND for one " +
                 "who has since moved on — which is reachable, because the record outlives the " +
                 "selection",
-            StreamingPackCopy.selectorReady(en).contains("whenever you pick it"),
+            StreamingPackCopy.selectorReady(en, words).contains("whenever you pick it"),
         )
         assertTrue(
             "and it keeps the additive promise, like every other sentence in this object",
-            StreamingPackCopy.selectorReady(en).contains("typed transcript is unchanged"),
+            StreamingPackCopy.selectorReady(en, words).contains("typed transcript is unchanged"),
         )
     }
 
@@ -1604,6 +1611,77 @@ class StreamingPackCopyTest {
         )
     }
 
+    @Test fun theBILINGUALRowsOWNNounReachesEverySentenceThatIsAboutItsPack() {
+        // (4.5.0 Task 4) `stripNote` is not the only sentence that says what appears on the
+        // bubble: the additive promise says it on all three install routes, the installed row
+        // says it, and the strip's READY receipt says it. Home renders the offer card and the
+        // picker's note ON ONE SCREEN, so leaving those saying *"Words appear"* for this pack
+        // would be the defect this whole object is one table for — a screen describing one fact
+        // two ways — with the wrong half over the half of the utterance the user is speaking.
+        val zh = StreamingPackCatalog.ZH
+        val name = display(zh)
+        assertEquals(
+            "Installed (50 MB). Characters appear on the bubble as you speak Chinese, and words " +
+                "for any English in it; the typed transcript is unchanged.",
+            StreamingPackCopy.installed(name, zh.totalBytes, zh.stripUnit),
+        )
+        assertEquals(
+            "Included with the app (50 MB) and already on this device — nothing to fetch. " +
+                "Characters appear on the bubble as you talk, and words for any English in them; " +
+                "the typed transcript is still the speech model's.",
+            StreamingPackCopy.settingsInstallFromPack(zh.totalBytes, zh.stripUnit),
+        )
+        assertEquals(
+            "The app's own 50 MB model, fetched from Google Play over your connection — never " +
+                "from a third party. Characters appear on the bubble as you talk, and words for " +
+                "any English in them; the typed transcript is still the speech model's.",
+            StreamingPackCopy.settingsInstallFetch(zh.totalBytes, zh.stripUnit),
+        )
+        assertEquals(
+            "Download a 50 MB Chinese preview model. Characters appear on the bubble as you " +
+                "talk, and words for any English in them; the typed transcript is still the " +
+                "speech model's.",
+            StreamingPackCopy.installDownload(name, zh.totalBytes, zh.stripUnit),
+        )
+        assertEquals(
+            "Chinese is ready: characters appear on the bubble whenever you pick it, and words " +
+                "for any English in them; the typed transcript is unchanged.",
+            StreamingPackCopy.selectorReady(name, zh.stripUnit),
+        )
+        // NOT ONE of them may make the claim six rows can: this row's Han pieces carry no word
+        // boundary, so the noun is wrong for the Chinese half of every utterance.
+        for (state in everyState) {
+            val s = StreamingPackCopy.settingsSubtitle(state, name, zh.totalBytes, zh.stripUnit)
+            assertFalse("<<$s>> claims words for a row that shows characters", s.contains("Words appear"))
+            assertEquals(
+                "and the card says exactly what the row says, per state, as it did before",
+                s, StreamingPackCopy.cardOffer(state, name, zh.totalBytes, zh.stripUnit),
+            )
+        }
+        // ...and the SIX word rows are 4.4.1's strings, byte for byte: the unit is a parameter so
+        // that only the row which needed a different noun has one.
+        assertEquals(
+            "Installed (73 MB). Words appear on the bubble as you speak English; the typed " +
+                "transcript is unchanged.",
+            StreamingPackCopy.installed(en, bytes, StreamingPackCatalog.EN.stripUnit),
+        )
+        for (p in StreamingPackCatalog.packs.filter { it.stripUnit == StripUnit.WORDS }) {
+            assertEquals(
+                "${p.language}: a WORDS row renders the shipping sentence with its own size",
+                StreamingPackCopy.installed(display(p), p.totalBytes, words),
+                StreamingPackCopy.installed(display(p), p.totalBytes, p.stripUnit),
+            )
+        }
+        // The feature's NAME is not the noun and does not move: the qualification table's §4.2
+        // recommendation is *"keep it — and template only the descriptive sentence"*, so "Live
+        // words" stays the surface's name on every row (`featureTitle`, `SWITCH_TITLE`,
+        // `CARD_TITLE`, the delete row) and `cardInstalled`'s *"You'll see them"* points at that
+        // name rather than at a noun of its own.
+        assertEquals("Live words while you speak (Chinese)", StreamingPackCopy.featureTitle(name))
+        assertFalse(StreamingPackCopy.cardInstalled(name).contains("Words appear"))
+        assertTrue(StreamingPackCopy.cardInstalled(name).contains("You'll see them"))
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /** One pack's own sentence, rendered with the word the picker spells its language with. */
@@ -1616,6 +1694,13 @@ class StreamingPackCopyTest {
 
     /** The English pack's real size, so the delete sentences read as the user reads them. */
     private val bytes = StreamingPackCatalog.EN.totalBytes
+
+    /**
+     * What the shipping pack puts on the strip (4.5.0 Task 4) — the unit every sentence about
+     * a pack now takes, because the bilingual `zh-en` row puts CHARACTERS there. Six of the
+     * seven rows are this value, and every string pinned with it is 4.4.1's byte for byte.
+     */
+    private val words = StripUnit.WORDS
 
     private fun work(
         route: PreviewRoute,
