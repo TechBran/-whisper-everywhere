@@ -107,6 +107,58 @@ sealed interface CaseFold {
 }
 
 /**
+ * WHAT THE STRIP IS MADE OF, for one pack — the NOUN every sentence about that pack has to get
+ * right. *"Words appear on the bubble"* is the app's central promise
+ * ([StreamingPackCopy.ADDITIVE]), and it is a claim about the pack rather than about the feature:
+ * a model whose vocabulary is single Han characters puts characters there.
+ *
+ * ### How it is read, and where the file stops being able to answer
+ *
+ * A space reaches the strip exactly where a `▁` does — `SymbolTable::operator[]` rewrites a
+ * leading marker to a SPACE as it hands each piece back, and [PreviewText.strip] builds from those
+ * tokens — so the question is which pieces carry one. `PackTokenFacts` counts that
+ * (`wordsAreProvablyTheUnit`), and like the case decision it answers **only in the safe
+ * direction**: five of the seven rows it settles, and two it cannot.
+ *
+ * | row | marked pieces | unmarked single chars | answer, and what decided it |
+ * |---|---|---|---|
+ * | en fr de ru id | 338 238 228 261 358 | 5-9% of emittable | [WORDS] — the FILE proves it |
+ * | ko | **0** | **100%** | [WORDS] — the MEASURED decode: the bare `▁` at id 3 comes back nine times, once per word |
+ * | zh-en | 327, every one Latin | **92.5%**, and not one of the 5,755 Han-bearing pieces is marked | [CHARACTERS_AND_WORDS] — both halves off the file |
+ *
+ * **Korean is the row that makes this a decision and not a census.** Zero pieces carry the marker,
+ * so the only space its vocabulary can produce is the bare marker — and whether a decode emits one
+ * is a fact about the DECODE, which no token file can see. A space-less script's vocabulary looks
+ * identical. What settles it is the measurement recorded in `PreviewCanaryClipsTest`: nine bare
+ * markers in one utterance, one per word, `[" ", "스", "페", "인", " ", "사", …]`. (That same
+ * measurement is why the strip is built from tokens at all: `RemoveSpaceBetweenCjk` deletes every
+ * one of those spaces from `result.text`, whose Hangul comes back as a single run.)
+ *
+ * **There is deliberately no third value**, though the qualification table prices two rows that
+ * would need one: the monolingual `zh` (single Han pieces, no Latin in the vocabulary at all — its
+ * acronyms arrive through byte fallback) and `ja` (a character vocabulary with zero `▁`). Neither
+ * is a row here, and a value no row takes is a branch no test exercises — the same speculative
+ * generality a second canary rule shape was reset and thrown away for (4.5.0 T3). A `Characters`
+ * value is what those rows cost when one of them lands.
+ */
+enum class StripUnit {
+    /**
+     * Space-delimited words, because pieces that start a word carry the marker (or, on `ko`, the
+     * boundary arrives as its own token). *"Words appear"* is true verbatim.
+     */
+    WORDS,
+
+    /**
+     * **One row, two units** — the bilingual `zh-en` export. Its 5,755 Han-bearing pieces are
+     * every one a single character and not one of them is marked, so Chinese arrives as a run of
+     * characters; its 327 marked pieces are every one Latin, so English in the same utterance
+     * arrives as words. No single noun is true of both halves, which is why the sentence for this
+     * row names both ([StreamingPackCopy.stripNote]).
+     */
+    CHARACTERS_AND_WORDS,
+}
+
+/**
  * A streaming-previewer model pack: four raw files, delivered EITHER by a Play asset pack or —
  * where there is no Play to talk to — from ONE immutable Hugging Face commit (spec §6; the
  * 2026-09-10 amendment). Never the release tarball (310 MB of fp32 + int8 + wavs under a 73 MB
@@ -157,7 +209,13 @@ sealed interface CaseFold {
  *   and a lowercased German noun reads as WRONG rather than rough; **`Fold` for Turkish too**, and
  *   it is Turkish folding it gets, because [language] is `tr` — the one row where that changes a
  *   character (qualification table §4.1, §4.2). It is the one flag the strip's own rules branch on;
- *   the two below it are copy inputs.
+ *   the three below it are copy inputs.
+ * @property stripUnit what the strip is MADE OF for this pack — the noun *"Words appear on the
+ *   bubble"* asserts, and a claim about the PACK rather than about the feature. [StripUnit.WORDS]
+ *   here and on five other rows; **[StripUnit.CHARACTERS_AND_WORDS] on the bilingual `zh-en` row**,
+ *   whose 5,755 Han-bearing pieces are single characters and carry no word boundary at all. See
+ *   [StripUnit] for the per-row census, and for why `ko`'s answer is the one a token file cannot
+ *   give and a measurement had to.
  * @property emitsPunctuation whether the strip can carry `.` `?` `,` `!`. **False here**, and the
  *   judgement is deliberate: English has exactly ONE punctuation piece, the apostrophe at id 45,
  *   which is a word-internal joiner (`DON'T`) rather than punctuation, and the shipping sentence
@@ -196,6 +254,7 @@ data class StreamingPack(
     val decodeChunkLen: Int,
     val encoderT: Int,
     val caseFold: CaseFold,
+    val stripUnit: StripUnit,
     val emitsPunctuation: Boolean,
     val emitsDigits: Boolean,
     val canary: PackCanary?,
@@ -326,6 +385,9 @@ object StreamingPackCatalog {
         // from this row's `language`, and for English that is byte-identical to the `Locale.US`
         // 4.4.1 folded in, because String folds locale-sensitively for tr/az/lt only.
         caseFold = CaseFold.Fold,
+        // 338 pieces carry the word marker and 27 unmarked pieces are single characters (5.4% of
+        // the emittable vocabulary), so the file itself proves the strip's unit — see [StripUnit].
+        stripUnit = StripUnit.WORDS,
         emitsPunctuation = false,
         emitsDigits = false,
         // The bundled digits clip and the digits rule. The alias sets, the 4-of-5 tolerance and
@@ -404,6 +466,9 @@ object StreamingPackCatalog {
         // word). Single-case with no byte fallback ⇒ the fold is PROVABLY lossless, so this row
         // takes the derivation's suggestion; `É→é`, `Ç→ç`, `Œ→œ` are correct French.
         caseFold = CaseFold.Fold,
+        // 238 marked pieces against 42 unmarked single characters (8.5%) — the file's own
+        // proof, and `UN DEUX TROIS QUATRE CINQ` came back as five spaced tokens.
+        stripUnit = StripUnit.WORDS,
         emitsPunctuation = false,
         emitsDigits = false,
         // **The clip is SYNTHESIZED IN-REPO, from the voice model this app already ships**
@@ -521,6 +586,10 @@ object StreamingPackCatalog {
         // to a German reader as WRONG rather than rough. The sentence must say "no capitals,
         // INCLUDING nouns". That is a fact about this language's orthography, not about this file.
         caseFold = CaseFold.Fold,
+        // 228 marked pieces against 30 unmarked single characters (6.0%). The measured clip
+        // is the same proof from the other end: `MANCHE FESTIVALS HABEN SPEZIELLE
+        // CAMPINGBEREICHE` arrives as five spaced words out of 22 pieces.
+        stripUnit = StripUnit.WORDS,
         emitsPunctuation = false,
         emitsDigits = false,
         // **The clip is FLEURS** (4.5.0 T3) — German has no Kokoro voice (TtsVoices.kt covers es
@@ -624,6 +693,9 @@ object StreamingPackCatalog {
         // `emitsPunctuation`: какой-то and по-русски are words and the mark is inside them,
         // exactly as `DON'T` is. `PackTokenFacts.JOINERS` is where that judgement is written.
         caseFold = CaseFold.Fold,
+        // 261 marked pieces against 34 unmarked single characters (6.8%) — and Cyrillic is
+        // space-delimited, which the measured clip's eight spaced words show.
+        stripUnit = StripUnit.WORDS,
         emitsPunctuation = false,
         emitsDigits = false,
         // **The clip is FLEURS, and this row is where the 820 ms pad got its first measurement**
@@ -728,6 +800,9 @@ object StreamingPackCatalog {
         // and its only punctuation-shaped piece is `<sos/eos>`, a special no decode emits. So
         // there is not one emittable mark or numeral anywhere in this vocabulary.
         caseFold = CaseFold.Fold,
+        // 358 marked pieces — the most of any row — against 26 unmarked single characters
+        // (5.2%).
+        stripUnit = StripUnit.WORDS,
         emitsPunctuation = false,
         emitsDigits = false,
         // **The clip is FLEURS** (4.5.0 T3). `canary_id_fleurs.wav`, 114,282 B, 57,119 samples =
@@ -834,6 +909,15 @@ object StreamingPackCatalog {
         // docblock's census. Nothing here is a judgement: all three follow the derivation over
         // this pack's own tokens.txt.
         caseFold = CaseFold.Keep,
+        // **THE ONE ROW THIS VALUE IS A DECISION ON AND NOT A CENSUS.** Not one piece in
+        // this vocabulary carries the word marker and 2,456 of its 2,457 emittable pieces
+        // are single characters, so the file cannot tell Korean from a space-less script:
+        // the only boundary it has is the bare `▁` at id 3, and whether a decode emits one
+        // is a fact about the decode. The measurement settles it — nine bare markers in one
+        // utterance, one per word (`PreviewCanaryClipsTest`'s ko row, whose `text` has lost
+        // every one of them to `RemoveSpaceBetweenCjk` while its `tokens` keep them). So
+        // *"Words appear"* is true here, and it is true because of the tokens-not-text strip.
+        stripUnit = StripUnit.WORDS,
         emitsPunctuation = true,
         emitsDigits = true,
         // **The clip is FLEURS, and it needed NO new rule shape** (4.5.0 T3).
@@ -983,6 +1067,14 @@ object StreamingPackCatalog {
         // the vocabulary and single-case, so the fold is PROVABLY lossless and it takes the
         // derivation's suggestion — the strip renders `always`, exactly as the English pack does.
         caseFold = CaseFold.Fold,
+        // **THE ROW WITH TWO UNITS AT ONCE**, and both halves are read off this file:
+        // **not one of the 5,755 Han-bearing pieces carries the word marker and every
+        // one of them is a single character**, so Chinese arrives as a run of characters;
+        // all **327** marked pieces are Latin (`▁AS ▁ONE ▁OF ▁A ▁COMP` …), so English in
+        // the same utterance arrives as words — which the measured English clip shows
+        // spaced and lowercased. No single noun is true of both halves, so the sentence
+        // for this row names both ([StreamingPackCopy.stripNote]).
+        stripUnit = StripUnit.CHARACTERS_AND_WORDS,
         emitsPunctuation = false,
         // **TRUE by exactly one token: `2` at id 4883.** The shipping pack has zero emittable
         // numerals and this pack breaks that property by one piece, which is a fact about what the

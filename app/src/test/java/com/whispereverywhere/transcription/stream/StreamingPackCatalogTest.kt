@@ -186,6 +186,7 @@ class StreamingPackCatalogTest {
             tokens = PackFile("t", 1L, "3".repeat(64)),
             modelType = "zipformer2", decodeChunkLen = 64, encoderT = 77,
             caseFold = CaseFold.Fold,
+            stripUnit = StripUnit.WORDS,
             emitsPunctuation = false, emitsDigits = false,
             canary = StreamingPackCatalog.EN.canary,
         )

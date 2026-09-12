@@ -78,6 +78,9 @@ object PackTokenFacts {
         val digitsEmittable: Int,
         val punctuationOnly: List<String>,
         val hasByteFallback: Boolean,
+        val wordMarkedEmittable: Int,
+        val bareWordMarker: Boolean,
+        val unmarkedSingleCharEmittable: Int,
     ) {
         /**
          * Both cases present among the emittable pieces. **This is EVIDENCE, not the decision** —
@@ -119,6 +122,32 @@ object PackTokenFacts {
         val emitsDigits: Boolean get() = digitsEmittable > 0
         /** Every punctuation-only piece except a word-internal [JOINERS] — see this object's docblock. */
         val emitsPunctuation: Boolean get() = punctuationOnly.any { it !in JOINERS }
+
+        /**
+         * Whether a `tokens.txt` alone PROVES the strip's unit is [StripUnit.WORDS] — and, like
+         * [foldIsProvablyLossless], it says so **only in the safe direction**: `false` means "this
+         * file cannot prove it", never "words do not appear".
+         *
+         * A space reaches the strip exactly where a `▁` does (`SymbolTable::operator[]` rewrites a
+         * leading marker to a space, and [PreviewText.strip] builds from the tokens), so the
+         * question is which pieces carry one. Two conjuncts, and each excludes a real row:
+         *
+         *  - **[wordMarkedEmittable] > 0.** Without a marked piece the only space the vocabulary
+         *    can produce is the bare marker, and whether a decode emits it is a fact about the
+         *    DECODE. **`ko` is that row**: zero marked pieces, a bare `▁` at id 3, and its live
+         *    words are real — measured, nine of them (`PreviewCanaryClipsTest`'s ko row) — which
+         *    is exactly why this property answers "cannot prove" rather than "no".
+         *  - **characters are not the dominant unit.** **`zh-en` is that row**: 327 marked pieces,
+         *    all of them Latin, against 5,755 Han-bearing pieces of which **not one carries a
+         *    marker** and **every one is a single character**. Its Chinese arrives as characters
+         *    with no boundary and its English as marked words, which is one row and two units.
+         *
+         * The five word-marked rows clear both by a distance: 228-358 marked pieces each, and
+         * unmarked single characters are 5-9% of their emittable vocabulary against ko's 100% and
+         * zh-en's 92.5%.
+         */
+        val wordsAreProvablyTheUnit: Boolean
+            get() = wordMarkedEmittable > 0 && unmarkedSingleCharEmittable * 2 < emittable
     }
 
     /**
@@ -207,6 +236,17 @@ object PackTokenFacts {
             lowercaseEmittable = emit.count { b -> b.any { it.isLowerCase() } },
             digitsEmittable = emit.count { b -> b.any { it in '0'..'9' } },
             punctuationOnly = emit.filter { b -> b.isNotEmpty() && b.none { it.isLetterOrDigit() } },
+            // The word-boundary census, read off the PIECES rather than the bodies — this is the
+            // one question the marker is the answer to rather than noise, so it is the one place
+            // it must not be stripped. A piece that STARTS a word carries the marker and is not
+            // the bare marker itself; the bare marker is the boundary, not a word.
+            wordMarkedEmittable = emittable.count {
+                it.contains(WORD_MARKER) && it != WORD_MARKER.toString()
+            },
+            bareWordMarker = pieces.any { it == WORD_MARKER.toString() },
+            unmarkedSingleCharEmittable = emittable.count {
+                !it.contains(WORD_MARKER) && it.length == 1
+            },
             // Read off the WHOLE file, not the emittable set — byte fallback is excluded from
             // `emittable` precisely so it cannot inflate the digit count, so the case decision has
             // to ask the file directly or it would be asking a set defined to hide the answer.

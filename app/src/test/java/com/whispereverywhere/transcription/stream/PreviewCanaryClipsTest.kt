@@ -500,6 +500,60 @@ class PreviewCanaryClipsTest {
         assumeTrue("no pack payload has been placed on this machine", checked > 0)
     }
 
+    // ------------------------------------- the measurement is what settles Korean's NOUN (T4)
+
+    @Test fun theKOREANMeasurementIsTheONLYEvidenceItsStripIsMadeOfWords() {
+        // (4.5.0 Task 4) `StreamingPack.stripUnit` is what the copy's noun comes from, and for
+        // Korean no `tokens.txt` can supply it: **not one piece in that vocabulary carries the
+        // word marker**, so the only boundary it has is the bare `▁` at id 3 — and whether a
+        // decode emits one is a fact about the decode. A space-less script's vocabulary looks
+        // identical. THIS TABLE is the evidence, so the assertion lives here rather than in a
+        // comment: nine bare markers in one utterance, one per word.
+        val ko = clips.single { it.language == "ko" }
+        assertEquals(
+            "nine word boundaries, each the bare marker arriving as its own token",
+            9, ko.tokens.count { it == " " },
+        )
+        assertEquals(
+            "and every other token is a single character, which is why the strip is characters " +
+                "SEPARATED BY those markers rather than characters run together",
+            25, ko.tokens.count { it != " " && it.length == 1 },
+        )
+        assertEquals(StripUnit.WORDS, packOf(ko).stripUnit)
+        // ...and the fact that makes the measurement necessary AND the strip trustworthy: the
+        // same result's `text` has lost all nine spaces to `RemoveSpaceBetweenCjk`, so a strip
+        // built from `text` would have refuted the row it is meant to describe.
+        assertFalse("the text has no space left in it", ko.text.contains(" "))
+        assertTrue("the strip has them back", shown(ko).contains(" "))
+    }
+
+    @Test fun everyMEASUREDStripAgreesWithTheUnitItsRowClaims() {
+        for (clip in clips) {
+            val pack = packOf(clip)
+            val strip = shown(clip).trim()
+            when (pack.stripUnit) {
+                // Six rows, and each measurement is a spaced utterance of two words or more.
+                StripUnit.WORDS -> assertTrue(
+                    "${clip.language}: a WORDS row's own measured strip must be spaced — '$strip'",
+                    strip.contains(" "),
+                )
+                // The bilingual row's clip is the English one, so what it measures is this row's
+                // WORDS half: spaced, and lowercased by the fold. **Its CHARACTERS half is
+                // unmeasured** — that claim rests on the vocabulary read (5,755 single Han pieces,
+                // not one of them marked) and on nothing here, which is stated on the row and in
+                // the report rather than smoothed over. A Chinese clip is what would close it, and
+                // it needs the rule shape this build does not have.
+                StripUnit.CHARACTERS_AND_WORDS -> {
+                    assertTrue(
+                        "${clip.language}: the measured English half is words — '$strip'",
+                        strip.contains(" "),
+                    )
+                    assertEquals("one two three four five", strip)
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /**

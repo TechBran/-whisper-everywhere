@@ -494,6 +494,36 @@ class StreamingPackLanguagesTest {
         assertEquals(packs.size, packs.map { it.dirName }.distinct().size)
     }
 
+    @Test fun theBILINGUALRowIsTheONLYOneWhoseStripIsNotMadeOfWords() {
+        // (4.5.0 Task 4) The NOUN, per row. Five rows' own vocabularies prove it (238-358 marked
+        // pieces each, unmarked single characters 5-9% of emittable); Korean's cannot and its
+        // MEASUREMENT does (zero marked pieces, a bare `▁` at id 3 that the decode emits once per
+        // word — nine of them in `PreviewCanaryClipsTest`'s row); and the bilingual row is two
+        // units at once, both halves read off its file. `PreviewPackMetadataTest` re-derives all
+        // seven from the placed payloads; these are the literals.
+        assertEquals(StripUnit.WORDS, StreamingPackCatalog.EN.stripUnit)
+        assertEquals(StripUnit.WORDS, StreamingPackCatalog.FR.stripUnit)
+        assertEquals(StripUnit.WORDS, StreamingPackCatalog.DE.stripUnit)
+        assertEquals(StripUnit.WORDS, StreamingPackCatalog.RU.stripUnit)
+        assertEquals(StripUnit.WORDS, StreamingPackCatalog.ID.stripUnit)
+        assertEquals(
+            "Hangul keeps its spaces, and it is the tokens-not-text strip that keeps them",
+            StripUnit.WORDS, StreamingPackCatalog.KO.stripUnit,
+        )
+        assertEquals(
+            "5,755 Han-bearing pieces, not one of them marked, beside 327 marked Latin pieces",
+            StripUnit.CHARACTERS_AND_WORDS, StreamingPackCatalog.ZH.stripUnit,
+        )
+        assertEquals(
+            "one row in seven, which is what makes the second branch of the copy real rather " +
+                "than a free abstraction",
+            listOf("zh"),
+            StreamingPackCatalog.packs
+                .filter { it.stripUnit != StripUnit.WORDS }
+                .map { it.language },
+        )
+    }
+
     @Test fun everyRowsDerivedPadIsAtLeastOneForwardPassOfItsOwnFeature() {
         // The defect this closes, as an invariant over the whole catalogue rather than per row: a
         // pad shorter than `T × 10` ms leaves `isReady` false, the tail chunk never decodes and

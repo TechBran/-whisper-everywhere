@@ -185,6 +185,15 @@ class PreviewPackMetadataTest {
         assertEquals(0, facts.lowercaseEmittable)
         assertEquals(0, facts.digitsEmittable)
         assertEquals("one punctuation piece, the apostrophe", listOf("'"), facts.punctuationOnly)
+        // (4.5.0 T4) The word-boundary census the NOUN rests on: 338 pieces carry the marker and
+        // start a word, the bare marker is in the file (at id 34), and only 27 unmarked pieces are
+        // single characters — 5.4% of the emittable vocabulary, against ko's 100% and zh-en's
+        // 92.5%. So this file PROVES the strip shows words, which is the claim `ADDITIVE` makes.
+        assertEquals(338, facts.wordMarkedEmittable)
+        assertTrue(facts.bareWordMarker)
+        assertEquals(27, facts.unmarkedSingleCharEmittable)
+        assertTrue(facts.wordsAreProvablyTheUnit)
+        assertEquals(StripUnit.WORDS, pack.stripUnit)
         // And the derivation agrees with what the catalogue claims, for the two flags a token file
         // can actually compute.
         assertEquals(pack.emitsPunctuation, facts.emitsPunctuation)
@@ -281,6 +290,50 @@ class PreviewPackMetadataTest {
             val facts = PackTokenFacts.of(tokens)
             assertEquals("${p.language} emitsPunctuation", p.emitsPunctuation, facts.emitsPunctuation)
             assertEquals("${p.language} emitsDigits", p.emitsDigits, facts.emitsDigits)
+            // (4.5.0 T4) THE NOUN, held to the same rule as the case decision: the file proves
+            // it, or the row owes a measurement. `wordsAreProvablyTheUnit` is one-directional, so
+            // a `true` here is a `WORDS` row and nothing else, while a `false` leaves two shapes
+            // and each has to be the one the row claims.
+            if (facts.wordsAreProvablyTheUnit) {
+                assertEquals(
+                    "${p.language}: its own vocabulary proves the strip shows words — " +
+                        "${facts.wordMarkedEmittable} marked pieces and " +
+                        "${facts.unmarkedSingleCharEmittable} unmarked single characters of " +
+                        "${facts.emittable} emittable",
+                    StripUnit.WORDS, p.stripUnit,
+                )
+            } else when (p.stripUnit) {
+                // ko. The vocabulary has NO marked piece at all, so the only boundary it can
+                // produce is the bare marker — and that a decode emits one per word is the
+                // measurement in `PreviewCanaryClipsTest`, not anything this file can say. What
+                // is asserted here is the SHAPE that leaves the measurement as the only evidence
+                // available: a row claiming words while it has marked pieces AND a
+                // character-dominated vocabulary would be claiming both units and calling it one.
+                StripUnit.WORDS -> {
+                    assertEquals(
+                        "${p.language}: a WORDS row its own file cannot prove must have no " +
+                            "marked piece at all — its boundary is the bare marker, and the " +
+                            "measurement is what says the decode emits it",
+                        0, facts.wordMarkedEmittable,
+                    )
+                    assertTrue(
+                        "${p.language}: ...and that bare marker has to be IN the vocabulary",
+                        facts.bareWordMarker,
+                    )
+                }
+                // zh-en. Both halves are read off the file: marked pieces exist (the Latin word
+                // starts) and single characters dominate (the Han pieces, not one of them marked).
+                StripUnit.CHARACTERS_AND_WORDS -> {
+                    assertTrue(
+                        "${p.language}: the WORDS half needs marked pieces to come from",
+                        facts.wordMarkedEmittable > 0,
+                    )
+                    assertTrue(
+                        "${p.language}: and the CHARACTERS half needs the characters to dominate",
+                        facts.unmarkedSingleCharEmittable * 2 > facts.emittable,
+                    )
+                }
+            }
             when (p.caseFold) {
                 // No row in THIS catalogue overrides the suggestion: every folding row's own
                 // vocabulary proves the fold cannot lose a character. `tr` would be the first

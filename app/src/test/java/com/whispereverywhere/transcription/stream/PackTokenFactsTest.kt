@@ -165,6 +165,38 @@ class PackTokenFactsTest {
         assertEquals(listOf("."), f.punctuationOnly)
     }
 
+    // ------------------------------------------- the NOUN: words, or characters (4.5.0 Task 4)
+
+    @Test fun aWordMarkedVocabularyPROVESItsStripsUnitIsWords() {
+        // The five word-marked rows' shape: pieces that START a word carry the marker, the
+        // unmarked ones are BPE tails, and a space reaches the strip exactly where a marker does.
+        val de = facts(*specials, "▁", "▁HABEN", "▁MAN", "CH", "E", "ST")
+        assertTrue(de.wordMarkedEmittable > 0)
+        assertTrue(de.wordsAreProvablyTheUnit)
+    }
+
+    @Test fun aVocabularyWhoseONLYBoundaryIsTheBareMarkerCannotPROVEItsUnit() {
+        // ko's shape: every content piece a single character, NOT ONE of them marked, and a bare
+        // marker in the file. Its live words are real — nine of them, measured — but the space
+        // comes from a token the DECODE emits once per word, and no census can see a decode. So
+        // the answer here is "cannot prove", which is not the same answer as "no words".
+        val ko = facts(*specials, "▁", "스", "페", "인", "1", ".", "?")
+        assertEquals(0, ko.wordMarkedEmittable)
+        assertTrue(ko.bareWordMarker)
+        assertEquals(6, ko.unmarkedSingleCharEmittable)
+        assertFalse(ko.wordsAreProvablyTheUnit)
+    }
+
+    @Test fun aVocabularyOfUnmarkedSingleCharactersBESIDEMarkedWordsIsTwoUnitsAtOnce() {
+        // zh-en's shape, and the reason the noun is a THREE-row question rather than a boolean:
+        // marked Latin word-starts sit beside unmarked single characters, so one row puts
+        // characters AND words on the strip and no single noun is true of both halves.
+        val zh = facts(*specials, "▁", "▁ALWAYS", "▁ONE", "的", "是", "我", "会", "议", "2")
+        assertTrue("the Latin half is marked", zh.wordMarkedEmittable > 0)
+        assertTrue("and the character half dominates", zh.unmarkedSingleCharEmittable * 2 > zh.emittable)
+        assertFalse(zh.wordsAreProvablyTheUnit)
+    }
+
     @Test fun theWordMarkerIsStrippedBeforeClassifyingSoABareMarkerIsNotPunctuation() {
         // English's vocabulary contains a bare `▁` piece. `SymbolTable` rewrites a leading one to a
         // SPACE on the way out, so it is a word boundary and not a character the model emits — left

@@ -32,6 +32,7 @@ class StreamingPackInstallTest {
         tokens = PackFile("tokens.txt", tok.size.toLong(), sha(tok)),
         modelType = "zipformer2", decodeChunkLen = 32, encoderT = 45,
         caseFold = CaseFold.Fold,
+        stripUnit = StripUnit.WORDS,
         emitsPunctuation = false, emitsDigits = false,
         canary = StreamingPackCatalog.EN.canary,
     )
@@ -58,6 +59,7 @@ class StreamingPackInstallTest {
         tokens = PackFile("tokens.txt", tok.size.toLong(), sha(tok)),
         modelType = "zipformer2", decodeChunkLen = 32, encoderT = 45,
         caseFold = CaseFold.Fold,
+        stripUnit = StripUnit.WORDS,
         emitsPunctuation = false, emitsDigits = false,
         canary = StreamingPackCatalog.EN.canary,
     )
