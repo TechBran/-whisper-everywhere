@@ -649,6 +649,16 @@ class StreamingPackClearanceTest {
      * section, its answerer words and its commit have to be in the document *before* the day it is
      * withdrawn rather than written on it. That is the difference between a document whose
      * withdrawal path ends green and one that ends in this test throwing.
+     *
+     * **What the two joins may NOT do is disagree about which answerer applies** (fix round 2,
+     * B2). An outstanding row is asked for *its own* answerer's words — the reader needs to know
+     * who to go to. A cleared row is asked for *any* answerer's words, because which answerer a
+     * withdrawal would record is the owner's choice on the day and not this test's. Keyed to one
+     * answerer instead, the cleared join made the checklist's documented YES path red for four of
+     * the five outstanding languages the moment they crossed from one loop into the other, with a
+     * failure message naming a sentence the arriving language did not need. **The general rule for
+     * this test: an assertion about a row must not depend on which of the two loops the row is
+     * in, because a clearance and a withdrawal are exactly the transitions this document is for.**
      */
     @Test fun theOwnersChecklistNamesEveryOutstandingLanguageAndTheEditsThatCloseIt() {
         val checklist = repoFile("docs/LANGUAGE-CLEARANCE.md").readText().replace("\r\n", "\n")
@@ -685,12 +695,9 @@ class StreamingPackClearanceTest {
                 )
             assertTrue("the checklist has no '## $name' section", checklist.contains("## $name"))
             // Who can close it, read from the record's own answerer rather than retyped here, and
-            // in the words the document uses rather than the enum's.
-            val says = when (open.answerer) {
-                ClearanceAnswerer.UPSTREAM_AUTHOR -> "uploader"
-                ClearanceAnswerer.OWNER -> "your own risk call"
-                ClearanceAnswerer.COUNSEL -> "counsel"
-            }
+            // in the words the document uses rather than the enum's. One mapping, two readers:
+            // this loop wants THIS row's answerer, the cleared loop below wants any of them.
+            val says = answererWords(open.answerer)
             assertTrue(
                 "$name's section must say who can answer it ('$says' — ${open.answerer.name})",
                 checklist.substringAfter("## $name").substringBefore("\n## ").contains(says),
@@ -706,9 +713,27 @@ class StreamingPackClearanceTest {
         // clearance is a path this checklist itself documents (fix round 1, B1 — and this is the
         // assertion that would have caught what inspection did: English's section had the words
         // "your own risk call" split across a line break, so a withdrawal of English would have
-        // reddened the loop above over a document that looked right). What is required is what the
-        // withdrawal template produces: a section, the phrase for the answerer that template
-        // records (OWNER), and the commit the evidence was read at.
+        // reddened the loop above over a document that looked right).
+        //
+        // AND THE DEMAND IS ANSWERER-AGNOSTIC, which is the whole shape of it (fix round 2, B2).
+        // The first version of this loop asked every cleared row for OWNER's words — "your own
+        // risk call" — because OWNER is what the French withdrawal template happens to record.
+        // MEASURED, that turned the checklist's own YES path red for four of the five outstanding
+        // languages: a German yes moves `de` INTO this loop, German's section names "uploader" and
+        // "counsel" (its answerer is UPSTREAM_AUTHOR, which is also what a withdrawal of German
+        // would record), and the suite failed telling the reader that German's section lacked a
+        // sentence German does not need. An assertion keyed to ONE answerer, applied to a row
+        // whose answerer is a different one, is red on arrival — and it is red in the file that
+        // guards the one unrecoverable error, in front of an owner working alone off an edit list
+        // this document calls exhaustive.
+        //
+        // So what is required of a cleared row is: a section, the words of AT LEAST ONE answerer —
+        // whichever one a withdrawal of this row would record, which is the row's to choose on the
+        // day — and the commit the evidence was read at. The loop above keeps the sharper demand
+        // (a row's OWN answerer's words), which is the right one while the row is open and the
+        // reader needs to know who to go to. Neither loop changes which assertion applies when a
+        // row crosses between them, so no clearance and no withdrawal can move the goalposts.
+        val everyAnswerersWords = ClearanceAnswerer.values().map { answererWords(it) }
         for (record in PackClearanceRecord.RECORD) {
             if (record.verdict !is ClearanceVerdict.Cleared) continue
             val name = sectionNames[record.language]
@@ -723,11 +748,15 @@ class StreamingPackClearanceTest {
                 section.isNotBlank(),
             )
             assertTrue(
-                "$name's section must carry the words the withdrawal template needs ('your own " +
-                    "risk call', ClearanceAnswerer.OWNER) on one line — withdrawing this " +
-                    "clearance makes the row outstanding, and an outstanding row whose section " +
-                    "does not name its answerer is a red suite the checklist promised would be green",
-                section.contains("your own risk call"),
+                "$name's section must name an answerer in the document's own words — one of " +
+                    everyAnswerersWords.joinToString(" / ") { "'$it'" } +
+                    " — on one line. Withdrawing this clearance makes the row outstanding, and an " +
+                    "outstanding row whose section does not name its answerer is a red suite the " +
+                    "checklist promised would be green. WHICH answerer is not asserted here: it " +
+                    "is whichever the withdrawal records, and this assertion must not be the one " +
+                    "that decides that (see the comment above — a row's answerer is not this " +
+                    "test's to pick)",
+                everyAnswerersWords.any { section.contains(it) },
             )
             assertTrue(
                 "$name's section must name the commit its evidence was read at " +
@@ -739,6 +768,21 @@ class StreamingPackClearanceTest {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /**
+     * **The one mapping from an answerer to the words `docs/LANGUAGE-CLEARANCE.md` says it in**,
+     * and it is a single function on purpose (fix round 2, B2): the outstanding-row join asks a row
+     * for ITS answerer's words, the cleared-row join asks for any answerer's words, and if those
+     * two ever read from two copies of this table they will drift apart exactly the way the
+     * document and the suite did. The `when` is exhaustive with no `else`, so adding a fourth
+     * [ClearanceAnswerer] does not compile until the document has words for it — which is the
+     * right time to notice, rather than on the day a row is cleared.
+     */
+    private fun answererWords(answerer: ClearanceAnswerer): String = when (answerer) {
+        ClearanceAnswerer.UPSTREAM_AUTHOR -> "uploader"
+        ClearanceAnswerer.OWNER -> "your own risk call"
+        ClearanceAnswerer.COUNSEL -> "counsel"
+    }
 
     private fun clearedForTest(): ClearanceVerdict.Cleared = ClearanceVerdict.Cleared(
         grantedBy = "a fabricated grant, inside this test only",
