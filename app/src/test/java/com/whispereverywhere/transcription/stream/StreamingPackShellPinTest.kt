@@ -403,6 +403,78 @@ class StreamingPackShellPinTest {
     }
 
     /**
+     * **EVERY WAY OUT OF `download` SWEEPS THE STAGING DIR, BECAUSE SINCE FIX 2 THOSE BYTES ARE
+     * OURS** (4.5.0 pass 2, fix round 1 — review r1's B2).
+     *
+     * The move in [theFallbackDownloadLandsOnASiblingAndIsMovedIntoPlaceBeforeTheRowGoes] changed
+     * WHO owns a landed file: `DownloadManager`'s unconditional row removal used to take it — that
+     * was R3-B1's defect and, accidentally, the failure path's cleanup as well. After Fix 2 the
+     * row removal reaches only the `.part` still in flight, so the app has to sweep, and it did so
+     * on three exits of four. The one it missed was a throw out of `fetchOne` — `STATUS_FAILED`, a
+     * vanished row, an unresolvable local URI — which is the ordinary way a transfer dies.
+     *
+     * The leak is not merely untidy. `download`'s free-space gate reads `StatFs(staging)` BEFORE
+     * the loop deletes a stale `dest`, so leaked bytes are charged against the retry's own
+     * requirement: on a phone with free space between `1.1 x totalBytes` and
+     * `1.1 x totalBytes + leaked`, every retry refuses permanently with *"Not enough free
+     * storage"* — a message that diagnoses the user's phone for the app's own leak. Invisible on
+     * every device session, for the same reason R3-B1 was: a Play install never takes this route.
+     *
+     * So the pin is the PROPERTY rather than the arm: three live sweeps inside `download` (success,
+     * cancellation, any other throwable) plus `fail`'s own, each rethrowing, and the cancellation
+     * arm FIRST so it can never be swallowed by the general one.
+     */
+    @Test
+    fun everyWayOutOfTheFallbackDownloadSweepsTheStagingDirItOwnsSinceTheMove() {
+        val download = scopeOf(manager, "suspend fun download(", "private fun fail(")
+        assertEquals(
+            "three exits sweep inside `download` — the success path, the cancellation and any " +
+                "other throwable — and a fourth exit without one is how 60 MB gets parked for a " +
+                "day and then charged against the retry's free-space gate",
+            3,
+            liveLineCount(download, "staging.deleteRecursively()"),
+        )
+        assertEquals(
+            "the non-cancellation arm exists and is spelled once",
+            1,
+            liveLineCount(download, "catch (t: Throwable)"),
+        )
+        val failureArm = scopeOf(download, "catch (t: Throwable)", "throw t")
+        assertEquals(
+            "and its sweep is INSIDE it, so deleting the sweep cannot leave this pin green",
+            1,
+            liveLineCount(failureArm, "staging.deleteRecursively()"),
+        )
+        assertEquals(
+            "and it RETHROWS: this arm is a cleanup, not a handler — the actuator still has to " +
+                "see the failure and write its back-off stamp",
+            1,
+            liveLineCount(download, "throw t"),
+        )
+        // ORDER: Kotlin takes the first matching arm, and `CancellationException` IS a
+        // `Throwable`. Put the general arm first and a user's cancel becomes a recorded failure
+        // with a 24 h back-off behind it — the one thing the cancellation arm's own comment
+        // promises it is not.
+        val cancelAt = offsetOfLive(download, "catch (cancelled: CancellationException)")
+        val failureAt = offsetOfLive(download, "catch (t: Throwable)")
+        assertTrue("both arms must be present", cancelAt >= 0 && failureAt >= 0)
+        assertTrue(
+            "the cancellation arm must come FIRST, or the general one swallows it and a cancel " +
+                "is recorded as a failure",
+            cancelAt < failureAt,
+        )
+        // `fail` sweeps too, and that double-delete is deliberate: a second `deleteRecursively`
+        // on a dir that is gone is a no-op, and one sweep per exit reads better than one sweep
+        // whose single home a reader has to go and find.
+        val failFun = scopeOf(manager, "private fun fail(staging: File", "\n    /**")
+        assertEquals(
+            "the verify verdict keeps its own sweep",
+            1,
+            liveLineCount(failFun, "staging.deleteRecursively()"),
+        )
+    }
+
+    /**
      * THE CARD SPEAKS THE PREVIEWER'S WORDS, not the NPU model chooser's.
      *
      * `NpuPackFetch.FetchState.Failed`'s own contract is *"[reason] is user-facing copy, rendered

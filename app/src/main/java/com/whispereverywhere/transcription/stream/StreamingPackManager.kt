@@ -256,11 +256,39 @@ class StreamingPackManager(private val context: Context) {
                 // Leaving it would park up to 73 MB in the external staging dir until the next
                 // attempt or a delete, and the route's contract is "the transfer stops and
                 // nothing is installed". The verify and install arms sweep on their own paths
-                // (`fail`, and `install`'s own `.tmp` teardown), so this arm only answers the
-                // cancellation.
+                // (`fail`, and `install`'s own `.tmp` teardown) and every OTHER failure sweeps in
+                // the sibling arm below, so this arm only answers the cancellation — and it has
+                // to come first, because `CancellationException` is a `Throwable` too.
                 staging.deleteRecursively()
                 // A cancellation is NOT a failure: the actuator's back-off must not record one.
                 throw cancelled
+            } catch (t: Throwable) {
+                // THE FOURTH WAY OUT, and it leaked until this arm existed (4.5.0 pass 2, fix
+                // round 1 — review r1's B2). Fix 2 moved a landed file out of `DownloadManager`'s
+                // hands, which also moved OWNERSHIP of it to us: [fetchOne]'s `finally` now takes
+                // only the row and the `.part` still in flight, never a file that already
+                // arrived. So every exit from this function has to sweep, and three did —
+                // success above, the cancellation beside this, and `fail`'s verdict below — while
+                // a throw out of [fetchOne] itself (`STATUS_FAILED`, a vanished row, an
+                // unresolvable local URI) did not.
+                //
+                // What that cost, concretely: a four-file pack whose second transfer dies leaves
+                // the ~60 MB `encoder.onnx` parked in the external staging dir for at least the
+                // actuator's 24 h back-off. Worse, the retry's free-space gate above reads
+                // `StatFs(staging)` BEFORE the loop's `dest.delete()`, so those leaked bytes are
+                // counted against the space the retry needs — on a phone with free space between
+                // 1.1x and 1.1x + leaked, every retry refuses forever with *"Not enough free
+                // storage"*, for space this app is holding and would have deleted two statements
+                // later. Invisible on every device session, because a Play install never takes
+                // this route.
+                //
+                // `fail` keeps its own sweep: a second `deleteRecursively` on a gone dir is a
+                // no-op, and a sweep that happens twice is cheaper to read than a sweep whose
+                // one home you have to find. `dm.remove` and the cancellation arm's meaning are
+                // untouched, and the rethrow preserves the actuator's back-off — this arm is a
+                // cleanup, not a handler.
+                staging.deleteRecursively()
+                throw t
             }
         }
 
