@@ -1,0 +1,11 @@
+# The pack payload is a BUILD artifact (4.5.0 Task 2): `python tools/build_asset_packs.py preview`
+# places the four `kangkyu/icefall-asr-ko-streaming-zipformer-72m` files here from the pinned
+# Hugging Face commit (or a local mirror it re-hashes), every byte checked against
+# `StreamingPackCatalog.KO`'s own literals on the way in and re-hashed out of the directory
+# afterwards. 73 MB of model must never enter a repo with a public remote, and the root
+# .gitignore's blob walls (*.so, *.dlc, *.context, *.bin) do not cover .onnx — so this pattern IS
+# the wall. preview_en/.gitignore states the rest of the reasoning once: why the wall is written as
+# "everything EXCEPT the anchor" rather than as a list of the four names, why the `.gitkeep` is the
+# one TRACKED file here, and why the negation can only re-include a direct child.
+src/main/assets/preview_ko/*
+!src/main/assets/preview_ko/.gitkeep

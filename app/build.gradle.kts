@@ -245,7 +245,29 @@ android {
     // kokoro-multi-lang-v1_0.tar.bz2 carried AS-IS, on-demand, untargeted — so the 2026-09-08
     // rolling-tag incident cannot recur: the archive rides the AAB and a voice update becomes a
     // deliberate release. verifyTtsPack is its gate, wired below beside the other two.
-    assetPacks += listOf(":npu_turbo", ":npu_small", ":preview_en", ":tts_kokoro")
+    //
+    // (4.5.0 Task 2; owner ruling 2026-09-12, "let's set up all 6 languages") The six LANGUAGE
+    // packs join on :preview_en's exact terms — four raw files each, on-demand, untargeted,
+    // 421,369,659 B of new payload across the six, taking this bundle's asset packs from 4 of the
+    // 96 available slots to 10. verifyPreviewPack, extended below, gates all seven preview packs.
+    //
+    // They are APPENDED BY CONCATENATION rather than inserted into the list above, and that is
+    // mechanical rather than stylistic: the four names above are pinned as CONTIGUOUS TEXT by
+    // NpuPackLayoutTest, PreviewPackLayoutTest and TtsPackLayoutTest, so a name added inside that
+    // `listOf(` would retire three pins whose whole job is to catch a pack silently leaving the
+    // bundle. Concatenation adds names and disturbs none of the three. Still ONE assetPacks
+    // statement, for the reason stated above it.
+    //
+    // EVERY ONE OF THE SIX IS UNCONDITIONAL, and PreviewPackLayoutTest holds this expression to a
+    // flat literal to keep it that way: no build type, no flavour, no gradle property, no
+    // environment read and no per-language term of any kind may enter it. The owner tests all six
+    // languages on the internal track, so a language must be PRESENT and FETCHABLE in every bundle
+    // this repo can build; anything that gates PUBLICATION is a promotion decision and does not
+    // live where the bundle is assembled.
+    assetPacks += listOf(":npu_turbo", ":npu_small", ":preview_en", ":tts_kokoro") + listOf(
+        ":preview_fr", ":preview_de", ":preview_ru",
+        ":preview_id", ":preview_ko", ":preview_zh",
+    )
 
     bundle {
         // The census spelled for Play — committed, and byte-pinned to NpuFleetCensus by
@@ -547,6 +569,27 @@ tasks.withType<Test>().configureEach {
         // the voice pack's layout pins green against the files as they used to be.
         rootProject.file("tts_kokoro/build.gradle.kts"),
         rootProject.file("tts_kokoro/.gitignore"),
+        // (4.5.0 Task 2) The six LANGUAGE pack modules' twelve unbuilt files, by exactly the same
+        // rule, and PreviewPackLayoutTest now reads all fourteen (these plus preview_en's) in one
+        // loop over the catalogue. Neither half of a pack module is an input to any compile task:
+        // `packName.set("preview_ko")` changed to another language's name, or a `.gitignore` wall
+        // that stops walling 128 MB of French encoder, are both edits that leave
+        // :app:testDebugUnitTest UP-TO-DATE — the first ships a bundle whose Korean pack can never
+        // be fetched by the name the catalogue asks for, and the second puts model payload in a
+        // repo with a public remote. Without these entries the one edit each pin exists to catch is
+        // the one that never re-runs it.
+        rootProject.file("preview_fr/build.gradle.kts"),
+        rootProject.file("preview_fr/.gitignore"),
+        rootProject.file("preview_de/build.gradle.kts"),
+        rootProject.file("preview_de/.gitignore"),
+        rootProject.file("preview_ru/build.gradle.kts"),
+        rootProject.file("preview_ru/.gitignore"),
+        rootProject.file("preview_id/build.gradle.kts"),
+        rootProject.file("preview_id/.gitignore"),
+        rootProject.file("preview_ko/build.gradle.kts"),
+        rootProject.file("preview_ko/.gitignore"),
+        rootProject.file("preview_zh/build.gradle.kts"),
+        rootProject.file("preview_zh/.gitignore"),
         // (4.4.0) The previewer's FETCH SHELL, by the comment-only rule BatchTranscriber.kt is
         // here for: StreamingPackShellPinTest's pins include ORDER and ZERO-count assertions over
         // the whole file (registerListener before fetch, installFromPack before Installed, no

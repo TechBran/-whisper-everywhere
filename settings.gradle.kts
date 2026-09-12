@@ -33,3 +33,18 @@ include(":preview_en")
 // (tools/build_asset_packs.py tts places the archive; the committed tree carries the build file,
 // the wall and the .gitkeep anchor) and NOT device-targeted: one untargeted variant, every device.
 include(":tts_kokoro")
+// The six 4.5.0 LANGUAGE packs (Task 2; owner ruling 2026-09-12, "let's set up all 6 languages").
+// Identical terms to :preview_en — four raw files each, on-demand, NOT device-targeted, payload
+// placed by tools/build_asset_packs.py preview and gated by :app's verifyPreviewPack — so the
+// rationale is stated once, above, and not six times here.
+//
+// SIX STATEMENTS, not one line with six names, for the reason the three blocks above are separate
+// statements: a rewritten include list is how a pack silently stops shipping, and one statement per
+// pack is what makes "this language is in the build" a claim a single line can be checked against.
+// PreviewPackLayoutTest reads them that way, one `include(":<packName>")` per catalogue row.
+include(":preview_fr")
+include(":preview_de")
+include(":preview_ru")
+include(":preview_id")
+include(":preview_ko")
+include(":preview_zh")
