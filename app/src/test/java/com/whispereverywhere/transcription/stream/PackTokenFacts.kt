@@ -44,11 +44,14 @@ import java.io.File
  *
  * ### The one judgement, stated so it can be argued with
  *
- * **The apostrophe does not count as punctuation.** English has exactly one punctuation-only piece
- * and it is `'` (id 45); French has one too (id 7). It is a word-internal joiner — `DON'T` is a
- * word — the shipping install sentence already lives with it, and calling it punctuation would set
- * `emitsPunctuation` on the two rows whose copy the qualification table's own flag matrix marks
- * false (§4.1). Every other punctuation piece counts: ko's 32, et's 23, tr's 18.
+ * **A word-INTERNAL joiner does not count as punctuation.** English has exactly one
+ * punctuation-only piece and it is `'` (id 45); French has one too (id 7); **Russian has one and it
+ * is a standalone `-`** (`какой-то`, `по-русски`). They are joiners — `DON'T` is a word — the
+ * shipping install sentence already lives with the apostrophe, and calling either punctuation would
+ * set `emitsPunctuation` on three rows the qualification table's own flag matrix marks false
+ * (§4.1). The set is [JOINERS], with the reason for each member beside it. Every other punctuation
+ * piece counts, and a joiner sitting next to a real mark counts too: ko's 58 pieces, et's 23,
+ * tr's 18.
  *
  * A `tokens.txt` is `<piece><separator><id>` per line. The separator is a SPACE in every file this
  * repo ships or has audited, except the lyr Japanese/Portuguese exports, which use a TAB — both are
@@ -114,9 +117,28 @@ object PackTokenFacts {
         val foldIsProvablyLossless: Boolean get() = !vocabularyIsMixedCase && !hasByteFallback
 
         val emitsDigits: Boolean get() = digitsEmittable > 0
-        /** Every punctuation-only piece except the apostrophe — see this object's docblock. */
-        val emitsPunctuation: Boolean get() = punctuationOnly.any { it != "'" }
+        /** Every punctuation-only piece except a word-internal [JOINERS] — see this object's docblock. */
+        val emitsPunctuation: Boolean get() = punctuationOnly.any { it !in JOINERS }
     }
+
+    /**
+     * The word-INTERNAL marks: a piece that joins one word rather than ending a sentence, and
+     * therefore does not make [Facts.emitsPunctuation] true on its own. Two members, one per
+     * language family that has one, and each is a whole vocabulary's only mark:
+     *
+     *  - `'` — English (id 45) and French (id 7), where `DON'T` and `L'EAU` are words. The
+     *    shipping install sentence already lives with it.
+     *  - `-` — **Russian (4.5.0 T1)**, whose real `tokens.txt` at commit `31fa603e` carries
+     *    exactly one punctuation-only piece and it is a standalone hyphen. `какой-то`,
+     *    `по-русски` and `что-нибудь` are words; the mark is inside them. The qualification
+     *    table's flag matrix (§4.1) marks that row `emitsPunctuation` **false** and names the
+     *    reason: *"its one joiner is `-` (какой-то) where English has `'`"*.
+     *
+     * The exemption is per PIECE, never a subtraction from the row: a vocabulary carrying a
+     * joiner **and** a full stop still emits punctuation (`ko`'s 58 pieces, `et`'s 23, `tr`'s
+     * 18), because the strip will really carry those marks and a sentence has to say so.
+     */
+    private val JOINERS = setOf("'", "-")
 
     private val SPECIALS = setOf("<blk>", "<sos/eos>", "<unk>")
     private val BYTE_FALLBACK = Regex("<0x[0-9A-Fa-f]{2}>")

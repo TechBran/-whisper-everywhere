@@ -83,6 +83,38 @@ class PackTokenFactsTest {
         assertFalse("and it is a word-internal joiner, not punctuation", en.emitsPunctuation)
     }
 
+    // ------------------------------------------------------- the second joiner: ru
+
+    @Test fun aVocabularyWhoseONLYMarkIsTheRussianHyphenDoesNotEmitPunctuation() {
+        // (4.5.0 T1) ru's real `tokens.txt`, read at commit 31fa603e: 502 lines, ZERO uppercase,
+        // 498 lowercase-bearing, the two `#N` placeholders, and **exactly one punctuation-only
+        // piece — a standalone `-`**. The qualification table's flag matrix marks that row
+        // `emitsPunctuation` FALSE, and for the same reason the apostrophe does not count:
+        // `какой-то`, `по-русски` and `что-нибудь` are WORDS, and their hyphen is inside them.
+        //
+        // The judgement this object already states is "the apostrophe is a word-internal joiner",
+        // and this is that judgement's other half rather than a new one. It costs the shipping
+        // English row nothing — `en`'s only punctuation-only piece is `'`, so `en` derives false
+        // either way — and it is scoped to rows whose ONLY mark is a joiner: `ko`'s 58 pieces and
+        // `et`'s `.`/`?` still set the flag, because the strip will really carry those.
+        val ru = facts(*specials, "▁какой", "то", "▁по", "русски", "-", "#0", "#1")
+        assertEquals("the hyphen is the one punctuation-only piece", listOf("-"), ru.punctuationOnly)
+        assertFalse("and it is a word-internal joiner, exactly like the apostrophe", ru.emitsPunctuation)
+        assertEquals(0, ru.uppercaseEmittable)
+        assertFalse("already-lowercase Cyrillic: nothing is mixed", ru.vocabularyIsMixedCase)
+        assertTrue("so the fold is provably free — it is a no-op on this vocabulary", ru.foldIsProvablyLossless)
+        assertFalse(ru.emitsDigits)
+    }
+
+    @Test fun aJoinerNextToARealMarkStillSetsTheFlag() {
+        // The exemption is for a vocabulary whose ONLY marks are joiners, never a blanket
+        // subtraction: a file carrying `-` AND a full stop emits punctuation, and the sentence
+        // has to say so.
+        val both = facts(*specials, "▁word", "-", ".")
+        assertEquals(listOf("-", "."), both.punctuationOnly)
+        assertTrue(both.emitsPunctuation)
+    }
+
     // ------------------------------------------------------- the rows that must Keep: ko/et
 
     @Test fun aMixedCaseVocabularyIsNeverProvablySafeToFold() {
