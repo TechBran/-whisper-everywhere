@@ -145,13 +145,52 @@ object PackTokenFacts {
     private val PLACEHOLDER = Regex("#\\d+")
     private const val WORD_MARKER = '▁'
 
-    fun of(tokens: File): Facts {
-        val lines = tokens.readText(Charsets.UTF_8).lines().filter { it.isNotBlank() }
-        val pieces = lines.map { line ->
+    /**
+     * The `<piece>` column of every non-blank line, in file order — what [of] censuses and what
+     * [spellable] walks. Split out (4.5.0 T3) so the canary's clip gate reads the vocabulary
+     * through the same parser as the copy flags: one place that knows a `tokens.txt` line is
+     * `<piece><SPACE-or-TAB><id>`, so a second reader cannot disagree with the first about where
+     * a piece ends.
+     */
+    fun piecesOf(tokens: File): List<String> =
+        tokens.readText(Charsets.UTF_8).lines().filter { it.isNotBlank() }.map { line ->
             val trimmed = line.trimEnd('\r')
             val cut = maxOf(trimmed.lastIndexOf(' '), trimmed.lastIndexOf('\t'))
             if (cut <= 0) trimmed else trimmed.substring(0, cut)
         }
+
+    /**
+     * Can this vocabulary spell [target] EXACTLY, as some concatenation of its own pieces?
+     *
+     * This is the mechanical half of *"a canary clip's expected output must be checkable against
+     * `tokens.txt`, never by ear"*. A rule may expect a rendering only if the model can emit it,
+     * and a 500-piece BPE emits a word as one piece or as several — `▁HABEN` is whole in the
+     * German vocabulary while `▁CAMPINGBEREICHE` is not, and both arrive on the strip as one
+     * space-delimited word, so *"is it a whole piece"* is the wrong question and *"can this
+     * vocabulary spell it"* is the right one.
+     *
+     * A DP over the piece set rather than a greedy walk: BPE segmentation is not greedy-decidable
+     * (a longest-first match can consume a prefix that leaves an unspellable tail), and a greedy
+     * reader would answer "no" for words the model demonstrably produced.
+     */
+    fun spellable(pieces: Set<String>, target: String): Boolean {
+        if (target.isEmpty()) return false
+        val longest = pieces.maxOfOrNull { it.length } ?: return false
+        val reach = BooleanArray(target.length + 1)
+        reach[0] = true
+        for (end in 1..target.length) {
+            for (start in maxOf(0, end - longest) until end) {
+                if (reach[start] && target.substring(start, end) in pieces) {
+                    reach[end] = true
+                    break
+                }
+            }
+        }
+        return reach[target.length]
+    }
+
+    fun of(tokens: File): Facts {
+        val pieces = piecesOf(tokens)
         val emittable = pieces.filter {
             it !in SPECIALS && !BYTE_FALLBACK.matches(it) && !PLACEHOLDER.matches(it)
         }
@@ -159,7 +198,7 @@ object PackTokenFacts {
         val all = bodies(pieces)
         val emit = bodies(emittable)
         return Facts(
-            lines = lines.size,
+            lines = pieces.size,
             emittable = emittable.size,
             uppercaseInFile = all.count { b -> b.any { it.isUpperCase() } },
             lowercaseInFile = all.count { b -> b.any { it.isLowerCase() } },

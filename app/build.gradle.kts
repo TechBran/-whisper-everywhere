@@ -387,6 +387,16 @@ tasks.withType<Test>().configureEach {
         // reports UP-TO-DATE and every one of those assertions passes against the file as it used
         // to be. That is precisely the change being guarded against.
         "src/main/assets/melbank-128.bin",
+        // (4.5.0 T3) The canary CLIPS, by the melbank's reason and with a sharper consequence.
+        // They are binary assets that are inputs to no compile task, and each one is the input to
+        // a VERDICT: PreviewCanaryClipsTest holds every clip's length, sha256, PCM16/16 kHz/mono
+        // format and the text the real pack produced from it, and a `PreviewCanary` Fail switches
+        // that language's live words off for the process. Without these entries a re-encoded, a
+        // re-recorded or a truncated clip leaves :app:testDebugUnitTest UP-TO-DATE and every one
+        // of those pins passes against the audio as it used to be — which is precisely the change
+        // being guarded against. (canary_digits.wav has been shipping since 3.6.0 and joins now
+        // for the same reason: this is the first test that reads it off disk.)
+        "src/main/assets/canary_digits.wav",
         // (4.1 L4) The turbo vocabulary, for exactly the melbank's reason one asset over: a JSON
         // asset is an input to no compile task, so regenerating it wrongly — from the wrong base,
         // without <|yue|>, with HF's <|nospeech|> spelling — changes not one .class file.
