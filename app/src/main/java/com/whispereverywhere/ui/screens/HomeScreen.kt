@@ -1664,16 +1664,44 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
             // instruction to *"pick your transcription language"* is false for every language
             // they could pick. `pickedLanguage` is ignored by that arm and carried anyway, so the
             // two arms read from one call.
-            PreviewUnreachable.of(
+            //
+            // (4.5.0 Task 4) ...AND THE OTHER ARM OF THAT SAME DECISION IS THE DISCLOSURE FOR A
+            // SELECTION THE PREVIEWER CAN SERVE. `PreviewUnreachable.of` answers null exactly
+            // when this device has a tier and this selection has a pack — which is the only cell
+            // where live words really will appear, and therefore the only one where saying what
+            // they will LOOK like is true. How rough the strip is differs per pack, so the
+            // sentence is that pack's own (`StreamingPackCopy.stripNote`): Korean carries
+            // punctuation and numerals the English strip never does, and the bilingual Chinese
+            // model puts CHARACTERS on the bubble. The menu above names each language's size, so
+            // this line carries none — the deal at the top of the card says where the size is.
+            //
+            // Two arms of ONE decision, so a reader gets exactly one of them: the caveat when the
+            // feature cannot serve their selection, this when it can.
+            val unreachable = PreviewUnreachable.of(
                 localTierInstalled = localTierInstalled,
                 hasPackForSelection = StreamingPackCatalog.forLanguage(selectedLanguage) != null,
-            )?.let { unreachable ->
+            )
+            if (unreachable != null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = StreamingPackCopy.unreachableSubtitle(unreachable, pickedLanguage),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else {
+                // Both `?.let`s are null-unwraps of facts the branch has already established —
+                // the decision above answered null, so there IS a pack and the selection is not
+                // Auto — and not second conditions of this row's own.
+                StreamingPackCatalog.forLanguage(selectedLanguage)?.let { pack ->
+                    pickedLanguage?.let { name ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = StreamingPackCopy.stripNote(name, pack.stripShape),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }

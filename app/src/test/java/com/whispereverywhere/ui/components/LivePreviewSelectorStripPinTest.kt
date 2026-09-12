@@ -179,6 +179,40 @@ class LivePreviewSelectorStripPinTest {
         )
     }
 
+    @Test fun thePickerTellsASelectionItCANServeWhatThatPacksStripWillLookLike() {
+        // (4.5.0 Task 4) The OTHER arm of the caveat's own decision. `PreviewUnreachable.of`
+        // answers null exactly where this device has a tier and this selection has a pack — the
+        // only cell in which live words really appear, and therefore the only one where saying
+        // what they will look like is a true sentence. It is the per-pack one, because how rough
+        // the strip is differs per pack: Korean carries punctuation and numerals the English strip
+        // never does, and the bilingual Chinese model puts characters on the bubble.
+        val picker = scopeOf(home, "fun LanguageSelectionCard(", "fun StatItem(")
+        assertEquals(
+            "one per-pack sentence, and it is the copy object's",
+            1, liveLineCount(picker, "StreamingPackCopy.stripNote(name, pack.stripShape)"),
+        )
+        assertEquals(
+            "TWO ARMS OF ONE DECISION, so a reader gets exactly one of them — and the decision " +
+                "is still asked once, with the device before the selection",
+            1, liveLineCount(picker, "if (unreachable != null) {"),
+        )
+        assertEquals(1, liveLineCount(picker, "PreviewUnreachable.of("))
+        val caveatAt = offsetOfLive(
+            picker, "StreamingPackCopy.unreachableSubtitle(unreachable, pickedLanguage)",
+        )
+        val noteAt = offsetOfLive(picker, "StreamingPackCopy.stripNote(name, pack.stripShape)")
+        assertTrue("both sentences must be in this card", caveatAt >= 0 && noteAt >= 0)
+        assertTrue(
+            "and the caveat comes first, because it is the arm that answers the DEVICE",
+            caveatAt < noteAt,
+        )
+        assertEquals(
+            "the note carries no size: the menu above names each language's, from that pack's " +
+                "own bytes, and the deal at the top of the card points at the menu",
+            0, liveLineCount(picker, "sizeBadge(") + liveLineCount(picker, "\"73 MB\""),
+        )
+    }
+
     @Test fun aDeviceThatCanNeverArmIsSoldNothingInThePickerAndToldOnce() {
         // (4.5.0 Task 4) The three previewer sentences on this card, and the cells they may be
         // read in. With no on-device speech model nothing transcribes on this device at all (the
