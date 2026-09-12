@@ -67,6 +67,61 @@ class StreamingPackCatalogTest {
         p.files.forEach { assertTrue(it.sha256.matches(Regex("[0-9a-f]{64}"))) }
     }
 
+    // ------------------------------------------------- the REMOTE path vs the LOCAL name (T1)
+
+    @Test fun aFilesRemotePathDefaultsToItsLocalNameSoTheShippingRowIsUnchanged() {
+        // Every file of the English pack is flat at its repo root, so the two spellings coincide
+        // and the field is invisible on this row — which is the point of the default: the split
+        // exists for the rows whose upstream layout is NOT flat, and it must cost the shipping
+        // row nothing at all.
+        for (f in StreamingPackCatalog.EN.files) assertEquals(f.name, f.path)
+        assertEquals(
+            StreamingPackCatalog.EN.baseUrl + "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+            StreamingPackCatalog.EN.urlOf(StreamingPackCatalog.EN.encoder),
+        )
+    }
+
+    @Test fun theDownloadFollowsThePathAndTheDiskFollowsTheName() {
+        // The German trap, in one assertion. `daniel-dona`'s four files live under
+        // `exp/epoch-30/` and `lang_bpe_500/` with COMMAS in the ONNX filenames, while
+        // `StreamingPackInstall` writes ONE FLAT NAME per file (`File(dir, f.name)`) and
+        // `SherpaPreviewRecognizer` opens that same flat name. Before the split, `urlOf` was
+        // `baseUrl + name` — so a row could either download (path in `name`, and then the
+        // installer writes a subdirectory that does not exist) or load (flat `name`, and then
+        // the download 404s), never both.
+        val nested = PackFile(
+            name = "encoder-epoch-30-avg-5.int8.onnx",
+            bytes = 70_133_342L,
+            sha256 = "e0163b48f89a81fafc4eb1804a77cdd33646970160f5d954a82774dc86e93fa5",
+            path = "exp/epoch-30/encoder-epoch-30-avg-5-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx",
+        )
+        val row = StreamingPackCatalog.EN.copy(baseUrl = "https://example.invalid/resolve/abc/", encoder = nested)
+        assertEquals(
+            "https://example.invalid/resolve/abc/exp/epoch-30/encoder-epoch-30-avg-5-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx",
+            row.urlOf(nested),
+        )
+        assertEquals("encoder-epoch-30-avg-5.int8.onnx", nested.name)
+    }
+
+    @Test fun everyPackFilesLOCALNameIsFlatAndInTheConservativeAlphabet() {
+        // The local name is a filesystem entry, an AAB asset entry AND a line in the `.installed`
+        // marker, so it must be a single flat segment — and it is held to `[A-Za-z0-9._-]`
+        // deliberately, one alphabet narrower than any of those three actually requires. The
+        // reason is that the widest of the three is the one this repo CANNOT test: a comma in an
+        // asset-pack entry path would first be exercised by `bundleRelease`, a 5.5 GB build that
+        // happens once, at upload time, on the controller's machine. Keeping the upstream comma
+        // in `path` (where it is only ever a URL) and off `name` (where it would be an AAB entry)
+        // removes that risk instead of betting on it.
+        for (p in StreamingPackCatalog.packs) for (f in p.files) {
+            assertTrue(
+                "${p.language}: '${f.name}' must be one flat path segment in [A-Za-z0-9._-] — " +
+                    "the upstream path belongs in `path`, which only ever becomes a URL",
+                f.name.matches(Regex("[A-Za-z0-9._-]+")),
+            )
+            assertTrue("${p.language}: '${f.path}' must be a relative path", !f.path.startsWith("/"))
+        }
+    }
+
     @Test fun theBadgeFollowsTheHouseDecimalConvention() {
         // ModelTierCopy says "190 MB" for 190,085,487 B; 72,654,782 B is "73 MB", never "70 MB".
         assertEquals("73 MB", StreamingPackCatalog.sizeBadge(72_654_782L))

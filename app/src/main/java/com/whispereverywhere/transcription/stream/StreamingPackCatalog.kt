@@ -2,8 +2,33 @@ package com.whispereverywhere.transcription.stream
 
 import com.whispereverywhere.transcription.CanaryAudio
 
-/** One pinned file of a streaming pack: its name at the commit, its EXACT byte count, its sha256. */
-data class PackFile(val name: String, val bytes: Long, val sha256: String)
+/**
+ * One pinned file of a streaming pack: the flat name it takes ON DISK, its EXACT byte count, its
+ * sha256, and — where upstream does not keep it flat — the [path] it lives at in the pinned commit.
+ *
+ * @property name the ONE flat name this file has everywhere the app touches it: the entry in the
+ *   pack module's asset directory, the file `StreamingPackInstall` writes under `filesDir`, the
+ *   name `SherpaPreviewRecognizer` opens, and the second column of the `.installed` marker. It is
+ *   held to `[A-Za-z0-9._-]` by `StreamingPackCatalogTest`.
+ * @property path where the same bytes live in the pinned upstream commit, RELATIVE to
+ *   [StreamingPack.baseUrl] — defaulting to [name], because every file of the shipping English
+ *   pack is flat at its repo root and the two spellings coincide there.
+ *
+ *   **Why this is a second field and not a cleverer `name`.** Two of the qualification table's six
+ *   new rows are not flat upstream: German's four files are under `exp/epoch-30/` and
+ *   `lang_bpe_500/` **with commas in the ONNX filenames**, and the bilingual zh-en row's are under
+ *   `exp/32/` and `data/lang_char_bpe/`. `urlOf` used to be `baseUrl + name`, so such a row could
+ *   either download (put the path in `name`, and the installer then writes a subdirectory that
+ *   does not exist) or load (keep `name` flat, and the download 404s) — never both. The split also
+ *   keeps the comma where it is harmless: in a URL, never in an AAB asset entry, which is the one
+ *   of the three spellings this repo cannot test without a 5.5 GB `bundleRelease`.
+ */
+data class PackFile(
+    val name: String,
+    val bytes: Long,
+    val sha256: String,
+    val path: String = name,
+)
 
 /**
  * What the strip does with the case the model emitted — the decision [PreviewText.normalize]
@@ -172,7 +197,8 @@ data class StreamingPack(
 ) {
     val files: List<PackFile> get() = listOf(encoder, decoder, joiner, tokens)
     val totalBytes: Long get() = files.sumOf { it.bytes }
-    fun urlOf(file: PackFile): String = baseUrl + file.name
+    /** The commit-pinned download URL: the base plus the file's UPSTREAM path, never its flat local name. */
+    fun urlOf(file: PackFile): String = baseUrl + file.path
 
     /**
      * The pack's cadence in milliseconds — how often the strip can repaint once a stream is
