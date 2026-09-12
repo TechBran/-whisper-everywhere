@@ -135,11 +135,21 @@ class StreamingPackCatalogTest {
         assertEquals(4, StreamingPackCatalog.markerText(p).lines().count { it.isNotBlank() })
     }
 
-    @Test fun onlyEnglishHasAPackAndAutoHasNone() {
+    @Test fun aLanguageResolvesToItsOwnRowAndAutoResolvesToNone() {
         assertSame(StreamingPackCatalog.EN, StreamingPackCatalog.forLanguage("en"))
-        assertNull(StreamingPackCatalog.forLanguage("es"))
+        assertSame(StreamingPackCatalog.FR, StreamingPackCatalog.forLanguage("fr"))
+        assertSame(StreamingPackCatalog.DE, StreamingPackCatalog.forLanguage("de"))
+        assertNull("a language with no row is not sold another language's model", StreamingPackCatalog.forLanguage("es"))
         assertNull("auto (null) never resolves to a pack — the gate reads the RESOLVED language", StreamingPackCatalog.forLanguage(null))
-        assertEquals(listOf(StreamingPackCatalog.EN), StreamingPackCatalog.packs)
+        assertNull("nor does the raw picker code, if it ever reached here", StreamingPackCatalog.forLanguage("auto"))
+        // English stays FIRST: `installedLanguages()` and every ordered surface read this list, and
+        // the shipping row is the one whose position has been validated on a device.
+        assertSame(StreamingPackCatalog.EN, StreamingPackCatalog.packs.first())
+        assertEquals(
+            "the catalogue is exactly its declared rows — a row added to the object and not to " +
+                "this list is a language that silently never arms",
+            StreamingPackCatalog.packs.size, StreamingPackCatalog.packs.map { it.language }.distinct().size,
+        )
     }
 
     @Test fun theLayoutConstantsAreFixed() {

@@ -221,10 +221,36 @@ data class StreamingPack(
 }
 
 /**
- * The packs the previewer can run. One row today: `streaming-zipformer-en-2023-06-26`
+ * The packs the previewer can run. The first row is `streaming-zipformer-en-2023-06-26`
  * (**72,654,782 B — badged "73 MB"**, int8, Apache-2.0, LibriSpeech), the four files re-hashed on
  * the PC (rung 1 §1.2) and on the Tab (rung 3 §1.2, §7). A second language is a second row whose
  * licence cell is green first (research §2.5) — no per-language cards, no chooser change.
+ *
+ * ### Where the numbers on the six 4.5.0 rows come from
+ *
+ * Every byte count, digest and metadata value below was READ from source on **2026-09-12**, not
+ * copied from the qualification table that recommended the rows — a digest typed from a document
+ * is a digest nobody checked. The method, per row:
+ *
+ *  - **bytes and digests** — `api/models/<repo>/tree/main?recursive=true&expand=true`, taking the
+ *    `size` and the **LFS oid** (which IS the file's sha256) of each of the four files. Never a
+ *    release tar: the shipped English pack is 72,654,782 B on disk against a 310,414,022 B tar.
+ *    A non-LFS file has no oid, so every `tokens.txt` was DOWNLOADED and hashed here; the method
+ *    is proved by the English one, which came back `49e3c264…` at 5,048 B — this catalogue's own
+ *    pinned literals. Korean corroborates independently: the repo ships its own `SHA256SUMS`, and
+ *    all four of its digests match the tree API and the local hash.
+ *  - **`modelType`, `decodeChunkLen`, `encoderT`** — an HTTP **Range read of the last 512 KiB** of
+ *    each int8 encoder, with `metadata_props` PARSED as protobuf (`OnnxMetadata`'s algorithm,
+ *    field 14, `StringStringEntryProto`), never string-scanned: a naive 4-character scan aligns
+ *    `decode_chunk_len` to `77`, because the real value `64` is two characters and the key `T` is
+ *    one. Proved the same way — the English encoder's tail returns exactly the `zipformer2` / 32 /
+ *    45 this file already pins.
+ *  - **the copy flags** — `PackTokenFacts`' own derivation, run over each downloaded `tokens.txt`.
+ *
+ * One thing the table did not check and this catalogue does: the **decoder's** metadata. The v1
+ * reader takes nine keys, not seven — seven off the encoder and `vocab_size` + `context_size` off
+ * the decoder, each through the same `_Exit(-1)` macro — so all six decoders were Range-read too
+ * (fr 500, de 500, ru 500, id 500, ko 2460, zh-en 6254; `context_size = 2` on every one).
  *
  * (The "66 M" this docblock used to claim was the research doc's estimate and is wrong by 7 MB;
  * the verified sum of the four `PackFile` byte counts is 72,654,782 and every sentence the user
@@ -249,6 +275,25 @@ object StreamingPackCatalog {
 
     /** The English pack module's Play name — also the module directory and the delivered dir. */
     const val PACK_EN = "preview_en"
+
+    /**
+     * The 4.5.0 language packs' Play names. `preview_<language>` on every row, which
+     * `StreamingPackLanguagesTest` holds as a rule rather than a coincidence: the string is the
+     * Play-side identity (`fetch()`, `getPackLocation()`) AND the delivered directory name AND the
+     * module directory, and a row whose pack name did not follow its language would be four
+     * separate places to get one language wrong.
+     *
+     * `preview_zh` carries the **bilingual zh-en** export, because the row it serves is the
+     * picker's Chinese (#10) and it is the only row in the catalogue that puts anything on the
+     * strip when an English speaker talks mid-Chinese. The pack is named after the language it is
+     * SELECTED by, not after the corpora it was trained on.
+     */
+    const val PACK_FR = "preview_fr"
+    const val PACK_DE = "preview_de"
+    const val PACK_RU = "preview_ru"
+    const val PACK_ID = "preview_id"
+    const val PACK_KO = "preview_ko"
+    const val PACK_ZH = "preview_zh"
 
     val EN = StreamingPack(
         language = "en",
@@ -300,7 +345,154 @@ object StreamingPackCatalog {
         ),
     )
 
-    val packs: List<StreamingPack> = listOf(EN)
+    /**
+     * **French** — `shaojieli/sherpa-onnx-streaming-zipformer-fr-2023-04-14` at `3db9565d`.
+     * 128,227,451 B, badged "128 MB". The heaviest row in the catalogue and the one that pays for
+     * the seam's crash fix.
+     *
+     * **`zipformer` V1, and that is the whole reason the loader passes `modelType = ""`.** Read
+     * off its encoder tail: `model_type = zipformer`, `version = 1`, `decode_chunk_len = 32`,
+     * `T = 39`, and **no `comment`, no `query_head_dims`, no `value_head_dims`, no `num_heads`**.
+     * A non-empty config string forces `OnlineZipformer2TransducerModel`, which reads
+     * `query_head_dims` through a macro whose miss path is `_Exit(-1)` — an uncatchable process
+     * kill. Empty hands the choice to the file, and `OnlineZipformerTransducerModel` (v1) reads
+     * exactly seven encoder keys: `encoder_dims`, `attention_dims`, `num_encoder_layers`,
+     * `cnn_module_kernels`, `left_context_len`, `T`, `decode_chunk_len` — **all seven present**
+     * (`2,4,3,2,4` / `384×5` / `192×5` / `31×5` / `64,32,16,8,32`). Plus the two the same reader
+     * takes off the DECODER, also Range-read here: `vocab_size = 500`, `context_size = 2`.
+     *
+     * `T = 39` is not `decodeChunkLen + 13`: the v1 exporter writes `+ 7`. Arithmetically that
+     * asks for 440 ms of pad, and `padMsFor` returns **500** anyway, because the one pad a device
+     * has ever confirmed is a floor and never a default.
+     *
+     * **Licence — apache-2.0, READ twice.** The repo's own 204-byte non-LFS `README.md` front
+     * matter says `license: apache-2.0`, and the platform surfaces it through `cardData.license`
+     * and a `license:apache-2.0` tag — note the API's **top-level `license` key is absent**, so a
+     * sweep reading `model["license"]` reports "Not specified" for a perfectly readable grant.
+     * Corpus: CommonVoice 12.0 fr (CC0) on a LibriSpeech (CC BY 4.0) pretrain.
+     *
+     * **THE NUMBER THIS ROW MUST NOT CARRY FORWARD: its WER is 10.57, not the 9.95 icefall's
+     * `RESULTS.md` advertises.** 9.95 is the **epoch-30** checkpoint, trained with **GigaSpeech**,
+     * whose gated terms are non-commercial-only. This export is **epoch 29** — the repo's own
+     * `export-onnx-stateless7-streaming.sh`, read here, runs `--epoch 29 --avg 1
+     * --use-averaged-model 0` against `icefall-asr-commonvoice-fr-pruned-transducer-stateless7-streaming-2023-04-02`
+     * — so citing 9.95 would import an encumbrance these bytes do not carry. 10.57 is the
+     * qualification table's read of that checkpoint's own greedy `wer-summary`; this mirror ships
+     * no decode log of its own, so the number is the table's and not this file's.
+     */
+    val FR = StreamingPack(
+        language = "fr",
+        dirName = "fr-2023-04-14",
+        packName = PACK_FR,
+        baseUrl = "https://huggingface.co/shaojieli/sherpa-onnx-streaming-zipformer-fr-2023-04-14/resolve/3db9565d9633758d6b87b9a7b3dc09ebfb6b2c73/",
+        encoder = PackFile("encoder-epoch-29-avg-9-with-averaged-model.int8.onnx", 126_655_903L, "47a94a7fdc8dff63d708be4ea0535747640224467f91e238311f1ddbdd09327e"),
+        decoder = PackFile("decoder-epoch-29-avg-9-with-averaged-model.int8.onnx", 1_307_157L, "e72b2b9ed36355bd0dd43433f7dd258e7226ab54c9ef42b28c73ebb785805623"),
+        joiner = PackFile("joiner-epoch-29-avg-9-with-averaged-model.int8.onnx", 259_572L, "fc2f3bb851a15a532c6f2422d53eecd1ca949f12b0897e07a852021c30481711"),
+        tokens = PackFile("tokens.txt", 4_819L, "37fb3f2a7bcb85e5fff3f1f66be04e6fbb05077a22f56d177fe85704e945fb31"),
+        modelType = "zipformer",
+        decodeChunkLen = 32,
+        encoderT = 39,
+        // The census, run over this pack's own downloaded tokens.txt: 502 lines, 497 emittable,
+        // **495 uppercase-bearing / 0 lowercase / 0 digit-bearing among them** — identical counts
+        // to the shipping English file, which is exactly why 4.4.0's wrong pinned comment was one
+        // row away from being inherited. 239 pieces carry the word marker, a bare `▁` sits at id
+        // 4, no byte fallback, and the one punctuation-only piece is the apostrophe (`L'EAU` is a
+        // word). Single-case with no byte fallback ⇒ the fold is PROVABLY lossless, so this row
+        // takes the derivation's suggestion; `É→é`, `Ç→ç`, `Œ→œ` are correct French.
+        caseFold = CaseFold.Fold,
+        emitsPunctuation = false,
+        emitsDigits = false,
+        // T3 owns the clip. Verified here so that task is a synthesis and not a hunt: `▁UN 50`,
+        // `▁DEUX 156`, `▁TROIS 304`, `▁QUATRE 353`, `▁CINQ 386` are all WHOLE pieces in this
+        // vocabulary, so "un deux trois quatre cinq" is checkable per position by a non-speaker.
+        // Kokoro's `ff_siwis` voice can synthesise it in-repo (TtsVoices.kt covers fr).
+        canary = null,
+    )
+
+    /**
+     * **German** — `daniel-dona/icefall-asr-commonvoice-zipformer-streaming-de` at `322557b0`.
+     * 70,938,534 B, badged "71 MB". The cheapest row in the survey and the one with the awkward
+     * upstream layout.
+     *
+     * `zipformer2`, `decode_chunk_len = 32`, `T = 45`, `comment = "streaming zipformer2"`, both
+     * head-dims keys and `num_heads` present — architecturally the shipping English encoder's twin
+     * (`2,2,3,4,3,2` / `192,256,384,512,384,256`), so **the measured 320 ms cadence and 500 ms pad
+     * transfer unchanged**. Decoder: `vocab_size = 500`, `context_size = 2`.
+     *
+     * **Its four files are NOT flat upstream, and three of them have COMMAS in the filename** —
+     * `exp/epoch-30/…-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx` and
+     * `lang_bpe_500/tokens.txt`. That is what [PackFile.path] is for: the comma stays in the URL,
+     * where it is a legal path character, and the flat `name` this pack writes to disk and ships
+     * as an AAB asset entry stays in `[A-Za-z0-9._-]`. The commas are dropped from the local name
+     * rather than translated, because the graph supports all four chunk sizes and a name claiming
+     * one of them would be a claim the file does not make — the checkpoint (`epoch-30-avg-5`)
+     * identifies the bytes, the metadata identifies the cadence, and the sha256 identifies both.
+     *
+     * **Licence — apache-2.0, author-declared in a file the platform does NOT parse, so this row
+     * needs ONE EMAIL and is NOT CLEARED here.** Read directly at `resolve/main`: a 180-byte
+     * README whose front matter says `license: apache-2.0` and
+     * `datasets: mozilla-foundation/common_voice_17_0`. Read the other way too: the API reports
+     * `license: null` AND `cardData: null`, because that README is an LFS/Xet blob (it has an LFS
+     * oid, which a plain README does not). Corpus CommonVoice 17.0, declared on the card, with no
+     * third-party agreement — so the outstanding item is a confirmation of a grant that is already
+     * declared, not a request for one.
+     *
+     * Accuracy, READ from the repo's own summary files rather than a card: `wer-summary-test-…`
+     * says `greedy_search 10.58` and `wer-summary-dev-…` says `8.58`, both at
+     * `chunk-32-left-context-128`, both greedy — the app's own decode mode.
+     */
+    val DE = StreamingPack(
+        language = "de",
+        dirName = "de-cv17-epoch-30",
+        packName = PACK_DE,
+        baseUrl = "https://huggingface.co/daniel-dona/icefall-asr-commonvoice-zipformer-streaming-de/resolve/322557b0f88fc5a9823bc71027d4160f0c7612cc/",
+        encoder = PackFile(
+            name = "encoder-epoch-30-avg-5.int8.onnx",
+            bytes = 70_133_342L,
+            sha256 = "e0163b48f89a81fafc4eb1804a77cdd33646970160f5d954a82774dc86e93fa5",
+            path = "exp/epoch-30/encoder-epoch-30-avg-5-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx",
+        ),
+        decoder = PackFile(
+            name = "decoder-epoch-30-avg-5.int8.onnx",
+            bytes = 540_689L,
+            sha256 = "8e787f64f765d2d4d1e17315879bc3cc1c2f517532799d78be034a03a9bcacda",
+            path = "exp/epoch-30/decoder-epoch-30-avg-5-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx",
+        ),
+        joiner = PackFile(
+            name = "joiner-epoch-30-avg-5.int8.onnx",
+            bytes = 259_417L,
+            sha256 = "d58379fa169af64034c127558230af63d0c08cda97a4a310b04af4b6ceb68956",
+            path = "exp/epoch-30/joiner-epoch-30-avg-5-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx",
+        ),
+        tokens = PackFile(
+            name = "tokens.txt",
+            bytes = 5_086L,
+            sha256 = "ad2da0c993128b66cead1d78adddc359bef69c50fca890bb5ca0500c97b6d23d",
+            path = "lang_bpe_500/tokens.txt",
+        ),
+        modelType = "zipformer2",
+        decodeChunkLen = 32,
+        encoderT = 45,
+        // The census over the downloaded file: 502 lines, 497 emittable, **496 uppercase-bearing /
+        // 0 lowercase / 0 digit-bearing** among them, 229 word-marker pieces, a bare `▁` at id 3,
+        // no byte fallback, and **ZERO punctuation-only pieces at all** — a cleaner file than
+        // English's on that axis, which has one. So the fold is provably lossless and both copy
+        // flags are false.
+        //
+        // The COPY consequence is T4's and is the reason this row cannot share English's
+        // sentence: folding is what makes the strip lowercase, and a lowercased German noun reads
+        // to a German reader as WRONG rather than rough. The sentence must say "no capitals,
+        // INCLUDING nouns". That is a fact about this language's orthography, not about this file.
+        caseFold = CaseFold.Fold,
+        emitsPunctuation = false,
+        emitsDigits = false,
+        // T3 owns the clip, and German has no Kokoro voice (TtsVoices.kt covers es fr hi it ja pt
+        // zh), so it comes from FLEURS with its published reference transcript and its licence
+        // recorded beside it. Nothing here is guessed in the meantime: null is NO VERDICT.
+        canary = null,
+    )
+
+    val packs: List<StreamingPack> = listOf(EN, FR, DE)
 
     /** The pack for a RESOLVED session language; null for auto (null) and for every language without a row. */
     fun forLanguage(code: String?): StreamingPack? = packs.firstOrNull { it.language == code }
