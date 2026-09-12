@@ -190,9 +190,14 @@ class StreamingPackClearanceTest {
             PackClearanceRecord.state(shipped.toSet(), shipped, allCleared),
         )
         // Evidence in, authorisation not yet given: still WITHHELD. Research does not publish.
+        // The authorised code is DERIVED, not typed (review round 2, nit 1): as the literal "en"
+        // this cell became Overreached(["en"]) the day the English row was deleted — a red test
+        // the refusal path's step 6 does not name and the checklist does not price, which is the
+        // family of defect this class spent two fix rounds removing.
+        val oneAuthorised = shipped.first()
         assertEquals(
-            PromotionState.Withheld(shipped.filterNot { it == "en" }),
-            PackClearanceRecord.state(setOf("en"), shipped, allCleared),
+            PromotionState.Withheld(shipped.filterNot { it == oneAuthorised }),
+            PackClearanceRecord.state(setOf(oneAuthorised), shipped, allCleared),
         )
     }
 
