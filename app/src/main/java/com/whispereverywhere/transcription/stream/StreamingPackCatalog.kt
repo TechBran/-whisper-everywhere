@@ -839,17 +839,41 @@ object StreamingPackCatalog {
         // numerals and this pack breaks that property by one piece, which is a fact about what the
         // user can SEE and so a sentence has to carry it.
         emitsDigits = true,
-        // T3 owns the clip and this is the row where it is FREE — but the verification is
-        // recorded here rather than assumed. Against this pack's own tokens.txt: `▁ONE 4`,
-        // `▁TWO 376`, `▁THREE 377`, `▁FOUR 478` are whole pieces and `FIVE` splits `▁FI 13` +
-        // `VE 200`, which is the SAME split the English pack makes — so the bundled English digits
-        // clip is scoreable here unchanged, at zero canary cost, and `GpuCanaryPolicy`'s
-        // position-two alias set already contains `"2"` so this row's one numeral SCORES rather
-        // than fails. Two residual risks, named: the decode itself is UNRUN (rung 1), and an
-        // English-only clip exercises only the English half of a bilingual model.
-        // It is null only because T3 owns the wiring, not because anything is missing: this row
-        // ARMS UNSCORED meanwhile, and it is the one row whose guard costs nothing to pay.
-        canary = null,
+        // **The one canary that cost nothing: the BUNDLED ENGLISH CLIP, unchanged — and now RUN
+        // rather than reasoned about** (4.5.0 T3). Fed `canary_digits.wav`, this pack answers
+        // `ONE TWO THREE FOUR FIVE` — exact, five tokens, 5 of 5 positions in all nine
+        // (threads × gain) cells. So the row adds **0 B** of asset while paying the same FEAT_SME
+        // guard every other language pays, which is why the rule below is the English one's values
+        // restated.
+        //
+        // **One correction to the prediction this row carried.** The vocabulary facts were right —
+        // `▁ONE 4`, `▁TWO 376`, `▁THREE 377`, `▁FOUR 478` are whole pieces (re-read here) — but
+        // the claim that `FIVE` splits `▁FI 13` + `VE 200` "exactly as the English pack does" is
+        // what greedy search did NOT do: it emitted `▁F 273` + `IVE 361`. Both decompositions
+        // exist in this vocabulary and both render `FIVE`, so the conclusion held; the prediction
+        // of WHICH one a decode takes did not, and that is the difference between a fact read off
+        // a file and a fact read off a decode.
+        //
+        // `GpuCanaryPolicy`'s position-two alias set contains `"2"`, so this row's single numeral
+        // (`2` at id 4883, the token that makes `emitsDigits` true) SCORES rather than fails.
+        // One residual risk, stated: an English-only clip exercises only the English half of a
+        // bilingual model. The Chinese half is unguarded, and closing that needs a Chinese clip —
+        // whose decode collapses to one token (see [PreviewCanaryRule] for the Korean measurement
+        // of the same mechanism) and so needs a rule shape this build does not have.
+        canary = PackCanary(
+            asset = CanaryAudio.ASSET,
+            rule = PreviewCanaryRule(
+                expected = listOf(
+                    setOf("one", "1"),
+                    setOf("two", "2"),
+                    setOf("three", "3"),
+                    setOf("four", "4"),
+                    setOf("five", "5"),
+                ),
+                minMatches = 4,
+                maxTokens = 20,
+            ),
+        ),
     )
 
     val packs: List<StreamingPack> = listOf(EN, FR, DE, RU, ID, KO, ZH)

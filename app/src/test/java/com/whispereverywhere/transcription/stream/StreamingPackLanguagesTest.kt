@@ -404,16 +404,35 @@ class StreamingPackLanguagesTest {
         )
     }
 
-    @Test fun neitherCJKRowHasACanaryYetAndBothReasonsAreRecorded() {
-        // ko needs a different RULE as well as a clip (both its number series are single
-        // characters, `하나` and `다섯` are not whole pieces at all, and a clip that collapses to
-        // one token has no positions to match) — and its clip must NOT come from the k2-fsa
-        // mirror's test_wavs, which is AI-Hub audio. zh's clip is FREE and verified: `▁ONE 4`,
-        // `▁TWO 376`, `▁THREE 377`, `▁FOUR 478` are whole pieces and FIVE splits `▁FI`+`VE`
-        // exactly as the English pack splits it, so the bundled clip is scoreable unchanged. Both
-        // are T3's to set, and neither is set here, because the decode itself is still UNRUN.
+    @Test fun theBilingualRowsCanaryIsTheBUNDLEDEnglishClipAtZeroAssetCost() {
+        // This case read `assertNull(ZH.canary)` and recorded a PREDICTION: that the clip was free
+        // because the vocabulary carries `▁ONE 4`, `▁TWO 376`, `▁THREE 377`, `▁FOUR 478` whole and
+        // splits FIVE as `▁FI`+`VE` "exactly as the English pack does". 4.5.0 T3 ran the decode.
+        // The conclusion held — `ONE TWO THREE FOUR FIVE`, exact, 5 of 5 positions in nine cells —
+        // and the split prediction did not: this pack emits `▁F 273`+`IVE 361`. Both spell FIVE,
+        // which is why the shared clip works; that the file CAN spell a rendering and that a
+        // decode DOES are two different facts, and only the second one is a canary.
+        val canary = StreamingPackCatalog.ZH.canary!!
+        assertEquals(
+            "the same asset the English row names — this row adds zero bytes",
+            StreamingPackCatalog.EN.canary!!.asset, canary.asset,
+        )
+        assertEquals(
+            "and the English rule's values, RESTATED on this row: the alias set for position two " +
+                "carries \"2\", which is this pack's single emittable numeral (id 4883) and would " +
+                "otherwise be scored a miss",
+            StreamingPackCatalog.EN.canary!!.rule, canary.rule,
+        )
+    }
+
+    @Test fun theKoreanRowHasNoCanaryYetAndTheReasonIsItsCLIPNotItsRule() {
+        // What this row needed was thought to be a different RULE: both its number series are
+        // single characters, `하나` and `다섯` are not whole pieces, and `result.text` collapses the
+        // whole utterance to one token. The last of those is real and measured — but it is a
+        // property of the TEXT, and the canary now scores the STRIP, where the tokens' word spaces
+        // survive `RemoveSpaceBetweenCjk`. So what is outstanding is only the clip, and it must
+        // NOT come from the k2-fsa mirror's `test_wavs`, which is AI-Hub audio.
         assertNull(StreamingPackCatalog.KO.canary)
-        assertNull(StreamingPackCatalog.ZH.canary)
     }
 
     // ---------------------------------------------------------------------------- the set

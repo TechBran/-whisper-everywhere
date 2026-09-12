@@ -114,6 +114,23 @@ class PreviewCanaryClipsTest {
             // model's OUTPUT, so nothing here is third-party recorded speech.
             source = "kokoro-multi-lang-v1_0 / ff_siwis (Apache-2.0) — synthesized, not recorded",
         ),
+        Clip(
+            language = "zh",
+            // The SAME asset as the English row, which is the whole point: this row's canary is
+            // free. `noRowsMeasuredOutputSatisfiesAnotherRowsRule` skips the en/zh pair for
+            // exactly this reason — two rows naming one clip are expected to agree.
+            asset = "canary_digits.wav",
+            bytes = 81_998L,
+            sha256 = "a3079109f735d4acea2756ce5398c67119ab36fa832571f5a5b45b616a7a5cd4",
+            samples = 40_960,
+            // The bilingual pack's OWN decomposition of the same audio, and it is not the English
+            // pack's: `▁F` + `IVE` where English emits `▁FI` + `VE`. Both render FIVE, which is
+            // why the shared clip works — and why the row's old prediction of the split was wrong
+            // while its conclusion was right.
+            tokens = listOf(" ONE", " TWO", " THREE", " FOUR", " F", "IVE"),
+            text = "ONE TWO THREE FOUR FIVE",
+            source = "owner recording, 3.6.0 Workstream C — shared with the en row at zero cost",
+        ),
     )
 
     // ------------------------------------------------------------------ the catalogue agrees
