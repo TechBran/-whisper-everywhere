@@ -90,6 +90,27 @@ class PreviewCanaryTest {
         assertTrue("no stream is opened for no clip", rec.streams.isEmpty())
     }
 
+    @Test fun aPackWithNoCanarySOURCEDYetIsNoVerdictAndNeverAFailure() {
+        // (4.5.0 T1) A row whose clip has not been sourced is `canary = null`, and the ONLY safe
+        // answer for it is NoClip — never Fail. A Fail is a verdict, it switches live words off
+        // for that language for the process, and a language cannot be found guilty of a clip
+        // nobody has made yet. The alternative the type refuses is worse: a sentinel rule
+        // (`expected = emptyList()`) either passes everything (minMatches 0) or fails everything
+        // (minMatches 1), and both are lies dressed as verdicts.
+        val rec = ScriptedRecognizer(listOf("ONE TWO THREE FOUR FIVE"))
+        val unsourced = pack.copy(language = "xx", canary = null)
+        assertEquals(CanaryVerdict.NoClip, PreviewCanary.run(rec, clip, unsourced))
+        assertTrue("and no stream is opened for a pack with nothing to score", rec.streams.isEmpty())
+    }
+
+    @Test fun theEnglishRowStillCarriesItsClipAndItsRuleTogether() {
+        // One nullable field, not two: an asset without a rule (or a rule without an asset) is a
+        // state nothing in the app could act on, so it is not representable.
+        val canary = pack.canary!!
+        assertEquals("canary_digits.wav", canary.asset)
+        assertEquals(5, canary.rule.expected.size)
+    }
+
     @Test fun theStreamIsReleasedEvenWhenDecodeThrows() {
         val rec = ScriptedRecognizer(listOf("ONE"), failDecodesFrom = 2)
         val thrown = runCatching { PreviewCanary.run(rec, clip, pack) }.exceptionOrNull()
@@ -102,9 +123,9 @@ class PreviewCanaryTest {
         // it must not acquire a second caller who can move it. The English pack therefore carries
         // its own copy of the values — and these two assertions are what make "a copy" safe: a
         // change on either side is a red test rather than a silent re-scoring of the other.
-        assertEquals(GpuCanaryPolicy.EXPECTED_TOKENS, pack.canaryRule.expected)
-        assertEquals(GpuCanaryPolicy.MIN_MATCHES, pack.canaryRule.minMatches)
-        assertEquals(20, pack.canaryRule.maxTokens)
+        assertEquals(GpuCanaryPolicy.EXPECTED_TOKENS, pack.canary!!.rule.expected)
+        assertEquals(GpuCanaryPolicy.MIN_MATCHES, pack.canary!!.rule.minMatches)
+        assertEquals(20, pack.canary!!.rule.maxTokens)
     }
 
     @Test fun theTwoRulesAGREEOnEveryShapeTheGpuCanarysOwnTestsPin() {
@@ -122,7 +143,7 @@ class PreviewCanaryTest {
             assertEquals(
                 "the previewer's rule and the GPU canary's disagree on: '$text'",
                 GpuCanaryPolicy.canaryPasses(text),
-                PreviewCanary.passes(text, pack.canaryRule),
+                PreviewCanary.passes(text, pack.canary!!.rule),
             )
         }
     }

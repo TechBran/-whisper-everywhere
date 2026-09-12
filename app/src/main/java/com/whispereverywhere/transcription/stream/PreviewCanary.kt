@@ -45,6 +45,40 @@ data class PreviewCanaryRule(
 )
 
 /**
+ * A pack's canary: the clip in main assets and the rule that scores it, which are ONE thing —
+ * [StreamingPack.canary], nullable, so that "this language's clip has not been sourced yet" is a
+ * state the catalogue can SAY rather than fake.
+ *
+ * ### Why nullable, and why one field rather than two
+ *
+ * 4.5.0 adds six languages. Two of them have a canary that is free today: the bilingual zh-en row
+ * runs the **bundled English clip unchanged** (its vocabulary carries `▁ONE ▁TWO ▁THREE ▁FOUR` as
+ * whole pieces and splits `FIVE` into `▁FI`+`VE` exactly as the English pack does — verified
+ * against its own `tokens.txt`), and French is synthesizable in-repo from Kokoro's `ff_siwis`
+ * voice. The other four have **no Kokoro voice at all** (`TtsVoices.kt` covers es fr hi it ja pt
+ * zh), so their clips come from FLEURS and are a sourcing job with a licence to record per clip.
+ *
+ * A catalogue that cannot express "not yet" would have to invent one of two lies instead:
+ *
+ *  - **a clip filename that does not exist** — which reads as a promise, and is only harmless by
+ *    accident (`CanaryAudio.samples` happens to return null for a missing asset); or
+ *  - **a sentinel rule** — `expected = emptyList()`, which either passes every text (`minMatches`
+ *    0) or fails every text (`minMatches` 1). Both are verdicts about a model nobody has listened
+ *    to, and a Fail switches live words off for that language for the process.
+ *
+ * `null` is the third answer and the true one: **no verdict**, which is exactly what
+ * [CanaryVerdict.NoClip] already means for a clip that will not load. One field rather than two
+ * because an asset without a rule (or a rule without an asset) is a state nothing could act on.
+ *
+ * @property asset the WAV in main assets — PCM16 mono 16 kHz, read by `CanaryAudio.samples`.
+ * @property rule what a PASS means for that clip.
+ */
+data class PackCanary(
+    val asset: String,
+    val rule: PreviewCanaryRule,
+)
+
+/**
  * The load-time canary (spec §7.2) — RULING ASSUMED (R1): the ONLY guard against the FEAT_SME
  * silent-miscompute class. sherpa-onnx #3845 (SM8850, ORT 1.27.0): EMPTY text for the whole
  * stream, no crash, no NaN; #3791 (M4): `"MY WOMAN"` for a five-word clip. Neither test device
@@ -70,6 +104,9 @@ data class PreviewCanaryRule(
 object PreviewCanary {
 
     fun run(recognizer: PreviewRecognizer, clip: FloatArray?, pack: StreamingPack): CanaryVerdict {
+        // Two ways to have nothing to score, and both are NO VERDICT rather than a failure: the
+        // clip would not load, or the row has no canary sourced yet ([PackCanary]'s docblock).
+        val rule = pack.canary?.rule ?: return CanaryVerdict.NoClip
         if (clip == null || clip.isEmpty()) return CanaryVerdict.NoClip
         val stream = recognizer.createStream()
         var decodes = 0
@@ -91,7 +128,7 @@ object PreviewCanary {
                 decodes++
             }
             val text = recognizer.result(stream).text
-            return if (passes(text, pack.canaryRule)) CanaryVerdict.Pass(text.length, decodes)
+            return if (passes(text, rule)) CanaryVerdict.Pass(text.length, decodes)
             else CanaryVerdict.Fail(text.length, decodes)
         } finally {
             stream.release()

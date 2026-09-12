@@ -198,11 +198,11 @@ class StreamingPreviewEngineTest {
         val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
         val e = StreamingPreviewEngine(
             factory = ScriptedFactory(rec),
-            canaryClip = { p -> asked += p.canaryAsset; FloatArray(40_960) },
+            canaryClip = { p -> p.canary?.let { asked += it.asset }; FloatArray(40_960) },
             executor = SameThreadExecutorService(), clock = { now }, nanoClock = { 0L },
             log = { logs += it }, enterExecutorThread = {},
         )
-        val fr = pack.copy(language = "fr", canaryAsset = "canary_fr.wav")
+        val fr = pack.copy(language = "fr", canary = pack.canary!!.copy(asset = "canary_fr.wav"))
         e.warm(dir, fr)
         assertEquals(listOf("canary_fr.wav"), asked)
     }

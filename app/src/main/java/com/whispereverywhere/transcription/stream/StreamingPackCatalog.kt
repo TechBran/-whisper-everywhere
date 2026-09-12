@@ -168,14 +168,16 @@ sealed interface CaseFold {
  *   digit-bearing pieces are `#0` and `#1`, the two placeholder slots icefall appends after the
  *   500 BPE pieces, which no decode emits. **True for ko (10 standalone digits), et (9), nl (all
  *   ten) and — by exactly one token — the bilingual zh-en row (`2` at id 4883).**
- * @property canaryAsset the clip in main assets this pack's load-time canary transcribes. **The
- *   English digits clip cannot pass for a non-English model** — a French recognizer fed "one two
- *   three four five" answers something matching none of the five positions, which is
- *   indistinguishable from the SME silent-miscompute signature the canary exists to catch — so the
- *   clip is the pack's. Recorded cost: one WAV per language, **81,998 B** (the English one's size).
- * @property canaryRule what a PASS means for this pack — see [PreviewCanaryRule], including what
- *   positional matching cannot express (zh and ko collapse the clip to one token and need a
- *   different rule, not a different alias list).
+ * @property canary the clip in main assets this pack's load-time canary transcribes AND the rule
+ *   that scores it — one thing, and **nullable**. **The English digits clip cannot pass for a
+ *   non-English model** — a French recognizer fed "one two three four five" answers something
+ *   matching none of the five positions, which is indistinguishable from the SME
+ *   silent-miscompute signature the canary exists to catch — so the clip is the pack's. Recorded
+ *   cost: one WAV per language, **81,998 B** (the English one's size). `null` means the clip has
+ *   not been SOURCED yet and the verdict is [CanaryVerdict.NoClip] — **no verdict, never a
+ *   failure**; [PackCanary]'s docblock says why that is a third answer rather than a missing
+ *   value. See also [PreviewCanaryRule] for what positional matching cannot express (zh and ko
+ *   collapse the clip to one token and need a different RULE, not a different alias list).
  */
 data class StreamingPack(
     val language: String,
@@ -192,8 +194,7 @@ data class StreamingPack(
     val caseFold: CaseFold,
     val emitsPunctuation: Boolean,
     val emitsDigits: Boolean,
-    val canaryAsset: String,
-    val canaryRule: PreviewCanaryRule,
+    val canary: PackCanary?,
 ) {
     val files: List<PackFile> get() = listOf(encoder, decoder, joiner, tokens)
     val totalBytes: Long get() = files.sumOf { it.bytes }
@@ -283,17 +284,19 @@ object StreamingPackCatalog {
         // referenced: that object's verdict is a persisted whisper-GPU latch and must not acquire
         // a second caller who can move it. PreviewCanaryTest holds the two ANSWERS equal, so a
         // change to either side is a red test instead of a silent re-scoring of the other.
-        canaryAsset = CanaryAudio.ASSET,
-        canaryRule = PreviewCanaryRule(
-            expected = listOf(
-                setOf("one", "1"),
-                setOf("two", "2"),
-                setOf("three", "3"),
-                setOf("four", "4"),
-                setOf("five", "5"),
+        canary = PackCanary(
+            asset = CanaryAudio.ASSET,
+            rule = PreviewCanaryRule(
+                expected = listOf(
+                    setOf("one", "1"),
+                    setOf("two", "2"),
+                    setOf("three", "3"),
+                    setOf("four", "4"),
+                    setOf("five", "5"),
+                ),
+                minMatches = 4,
+                maxTokens = 20,
             ),
-            minMatches = 4,
-            maxTokens = 20,
         ),
     )
 

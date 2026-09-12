@@ -57,7 +57,7 @@ interface LocalPreview {
 class StreamingPreviewEngine(
     private val factory: PreviewRecognizerFactory,
     /**
-     * The clip THIS pack's canary transcribes ([StreamingPack.canaryAsset]). Per-pack because the
+     * The clip THIS pack's canary transcribes ([StreamingPack.canary]). Per-pack because the
      * English digits clip cannot pass for a non-English model, and a non-pass is indistinguishable
      * from the SME signature the canary exists to catch — so a shared clip would refuse every
      * non-English pack for a reason the log would report as corruption.

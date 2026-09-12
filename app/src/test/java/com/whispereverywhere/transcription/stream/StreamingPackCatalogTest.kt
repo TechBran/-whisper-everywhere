@@ -173,8 +173,7 @@ class StreamingPackCatalogTest {
             modelType = "zipformer2", decodeChunkLen = 64, encoderT = 77,
             caseFold = CaseFold.Fold,
             emitsPunctuation = false, emitsDigits = false,
-            canaryAsset = StreamingPackCatalog.EN.canaryAsset,
-            canaryRule = StreamingPackCatalog.EN.canaryRule,
+            canary = StreamingPackCatalog.EN.canary,
         )
         assertNull(fallbackOnly.packName)
     }

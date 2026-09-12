@@ -33,8 +33,7 @@ class StreamingPackInstallTest {
         modelType = "zipformer2", decodeChunkLen = 32, encoderT = 45,
         caseFold = CaseFold.Fold,
         emitsPunctuation = false, emitsDigits = false,
-        canaryAsset = StreamingPackCatalog.EN.canaryAsset,
-        canaryRule = StreamingPackCatalog.EN.canaryRule,
+        canary = StreamingPackCatalog.EN.canary,
     )
 
     private fun stage(vararg overrides: Pair<String, ByteArray>): File {
@@ -60,8 +59,7 @@ class StreamingPackInstallTest {
         modelType = "zipformer2", decodeChunkLen = 32, encoderT = 45,
         caseFold = CaseFold.Fold,
         emitsPunctuation = false, emitsDigits = false,
-        canaryAsset = StreamingPackCatalog.EN.canaryAsset,
-        canaryRule = StreamingPackCatalog.EN.canaryRule,
+        canary = StreamingPackCatalog.EN.canary,
     )
 
     // ------------------------------------------------------------- the store is a SET, not a slot

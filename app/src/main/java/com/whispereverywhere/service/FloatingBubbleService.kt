@@ -3203,7 +3203,10 @@ class FloatingBubbleService : Service(),
             // a non-English model, and a non-pass reads exactly like the corruption signature the
             // canary exists to catch — so a shared clip would refuse every non-English pack and
             // report it as a failure. One WAV per language in main assets, 81,998 B each.
-            canaryClip = { p -> com.whispereverywhere.transcription.CanaryAudio.samples(p.canaryAsset) },
+            // A row whose clip has not been sourced yet carries `canary = null`, and that is NO
+            // VERDICT (PackCanary's docblock) — never a Fail, which would switch live words off
+            // for that language on a clip nobody has made.
+            canaryClip = { p -> p.canary?.let { com.whispereverywhere.transcription.CanaryAudio.samples(it.asset) } },
             // The pack whose load actually failed, HANDED OVER by the engine. Neither a closure
             // over `pack` (the engine is built once and outlives any one language, so that would
             // mark ENGLISH corrupt for a Spanish failure) nor a read of `streamingPreviewPack`
