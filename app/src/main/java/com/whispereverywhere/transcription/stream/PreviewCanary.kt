@@ -66,6 +66,14 @@ sealed class CanaryVerdict {
  * nowhere. The verdict does not move for any other row, because tokens-joined equals text wherever
  * no CJK-adjacent space was removed, and [passes] lowercases before it matches.
  *
+ * **One consequence to know before adding a `tr`, `az` or `lt` row.** [PreviewText.strip] applies
+ * that row's [CaseFold], and a folding row folds in its OWN language — so a Turkish row's strip
+ * renders `ısparta` for `ISPARTA`, and its [expected] alias has to be spelled with the dotless
+ * `ı`. `String.lowercase()` in [normalize] is locale-independent and will not rescue an alias
+ * spelled `isparta`. The clip gate catches it the day such a row lands
+ * (`PreviewCanaryClipsTest.everyPositionsRenderingIsOneTheMeasurementActuallyProduced` compares
+ * the aliases against the measured strip), but it is cheaper to know than to debug.
+ *
  * @property expected one alias set per spoken position, in the clip's order. A position counts as
  *   matched when ANY of its renderings appears.
  * @property minMatches how many positions must appear. One dropped item on a short clip is
