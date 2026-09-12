@@ -93,9 +93,12 @@ class PreviewUnreachableTest {
         throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
     }
 
-    private val unreachable = "src/main/java/com/whispereverywhere/transcription/stream/PreviewUnreachable.kt"
-    private val autoFetch = "src/main/java/com/whispereverywhere/transcription/stream/PreviewAutoFetch.kt"
-    private val strip = "src/main/java/com/whispereverywhere/ui/components/LivePreviewSelectorStrip.kt"
+    private val unreachable =
+        "src/main/java/com/whispereverywhere/transcription/stream/PreviewUnreachable.kt"
+    private val autoFetch =
+        "src/main/java/com/whispereverywhere/transcription/stream/PreviewAutoFetch.kt"
+    private val strip =
+        "src/main/java/com/whispereverywhere/ui/components/LivePreviewSelectorStrip.kt"
     private val prefs = "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt"
     private val home = "src/main/java/com/whispereverywhere/ui/screens/HomeScreen.kt"
 

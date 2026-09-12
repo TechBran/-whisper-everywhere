@@ -107,9 +107,10 @@ object StreamingPackCopy {
      *  - **there is no on-device speech model** (4.5.0 Task 4) — nothing transcribes on this
      *    device at all (the session dies at connect with *"No speech model installed"*; the
      *    mechanism is `PreviewUnreachable`'s KDoc and it is NOT a term of `localPreviewArms`),
-     *    and no pick, switch or repair on this screen can change it. Reachable in one gesture from this very screen: the *"Delete
-     *    <tier>"* dialog three sections up clears `selectedModelId` and says *"On-device
-     *    transcription will stop working until you download a model again"*;
+     *    and no pick, switch or repair on this screen can change it. Reachable in one gesture
+     *    from this very screen: the *"Delete <tier>"* dialog three sections up clears
+     *    `selectedModelId` and says *"On-device transcription will stop working until you
+     *    download a model again"*;
      *  - **a write is in flight**, where *"Frees …"* frees nothing at all: `delete` clears
      *    the install dir under a verify + copy that is not cancellation-cooperative, so the copy
      *    finishes, the marker lands, and the user gets *"Installed"* from pressing *"Frees"* —

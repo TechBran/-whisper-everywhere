@@ -1232,11 +1232,11 @@ private fun LivePreviewRows(
     // it. With no on-device speech model nothing transcribes on this device at all — the session
     // dies at connect with *"No speech model installed"*, and `PreviewUnreachable`'s KDoc has the
     // rest (it is NOT the previewer's gate, which has no tier term) — and the pack, the pick, the
-    // switch and the connection are all beside the point. `PreviewUnreachable` is that order — the tier before the selection,
-    // because Auto's own sentence INSTRUCTS a pick (*"pick your transcription language to see
-    // words on the bubble"*) and that instruction is false here for every language they could
-    // pick. One pure decision, asked by this section and by Home's language card, so two surfaces
-    // cannot answer one pair of facts differently.
+    // switch and the connection are all beside the point. `PreviewUnreachable` is that order —
+    // the tier before the selection, because Auto's own sentence INSTRUCTS a pick (*"pick your
+    // transcription language to see words on the bubble"*) and that instruction is false here for
+    // every language they could pick. One pure decision, asked by this section and by Home's
+    // language card, so two surfaces cannot answer one pair of facts differently.
     PreviewUnreachable.of(
         localTierInstalled = localTierInstalled,
         hasPackForSelection = selectedPack != null,
@@ -1422,12 +1422,11 @@ private fun LivePreviewRows(
     // (4.5.0 Task 4) ...AND THE DEVICE IS THE THIRD ARMING FACT, the one whose remedy is NOT on
     // this row. With no on-device speech model nothing transcribes on this device at all
     // (`PreviewUnreachable`'s KDoc, and it is not the previewer's gate), and the case was LIVE —
-    // *"Frees 73 MB.
-    // Live words stop"* — on a device where no word has ever appeared. Reachable in one gesture
-    // from THIS screen: the *"Delete <tier>"* dialog three sections up clears `selectedModelId`
-    // and says so in its own words. The value is the same `installedModel` that dialog is drawn
-    // from and it is keyed on the same `modelRefreshKey`, so this section answers the moment the
-    // tier goes rather than on the next resume.
+    // *"Frees 73 MB. Live words stop"* — on a device where no word has ever appeared. Reachable
+    // in one gesture from THIS screen: the *"Delete <tier>"* dialog three sections up clears
+    // `selectedModelId` and says so in its own words. The value is the same `installedModel` that
+    // dialog is drawn from and it is keyed on the same `modelRefreshKey`, so this section answers
+    // the moment the tier goes rather than on the next resume.
     PreviewDeleteCase.of(
         state = previewState,
         selectedForThisPack = selectedPack == previewPack,
