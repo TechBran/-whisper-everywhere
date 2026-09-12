@@ -970,64 +970,116 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
 tasks.matching { it.name.startsWith("package") && it.name.endsWith("Bundle") }
     .configureEach { dependsOn(verifyNpuPacks) }
 
-// (4.4.0, the 2026-09-10 amendment) The SAME gate, one pack over: the streaming previewer's four
-// files are a BUILD artifact placed by `python tools/build_asset_packs.py preview`, and an AAB
-// whose preview_en payload is missing or stale would ship a previewer that can never install —
-// invisible in every APK build, because an APK carries no packs at all.
+// (4.4.0, the 2026-09-10 amendment; ALL SEVEN packs since 4.5.0 Task 2) The SAME gate, seven packs
+// over: each preview pack's four files are a BUILD artifact placed by `python
+// tools/build_asset_packs.py preview`, and an AAB whose payload for ANY of them is missing or stale
+// would ship a language that can never install — invisible in every APK build, because an APK
+// carries no packs at all. The 2026-09-12 ruling makes that the likeliest way to fail the owner:
+// all six new languages must be fetchable on the internal track, and a language whose 71 MB never
+// made it into the bundle looks, on a device, exactly like a language that is broken.
 //
-// THE PLACEMENT TABLE: one row per pinned file, name and byte count. The literals are
-// StreamingPackCatalog.EN's own, restated because a build script cannot read the app's classes,
-// and pinned EQUAL to the catalog by PreviewPackLayoutTest (the verifyNpuPacks discipline).
-// sha256 of 73 MB per bundle build is deliberately NOT taken here: the script hash-verifies what
+// THE PLACEMENT TABLE: one row per pinned file, name and byte count, grouped by pack. The literals
+// are each catalogue row's own, restated because a build script cannot read the app's classes, and
+// pinned EQUAL to the catalog by PreviewPackLayoutTest (the verifyNpuPacks discipline).
+// sha256 of 494 MB per bundle build is deliberately NOT taken here: the script hash-verifies what
 // it places, StreamingPackInstall.verify re-hashes on the device before a byte is installed, and
 // this gate's job is a MISSING or wrong-sized payload, which exact byte counts catch instantly.
 //
-// The payload directory is UNTARGETED — one variant, every device — so unlike the NPU gate there
+// TWO PACKS CANNOT BE TOLD APART BY SIZE ALONE, and this gate knows it does not try to: the Korean
+// repo's chunk-32 and chunk-64 exports ship decoder and joiner files byte-identical to the
+// chunk-16 ones, and every row's joiner is within a kilobyte of two others'. Byte counts catch the
+// missing and the truncated; the digest, taken by the script and again on the device, is what
+// catches the WRONG file. Neither gate is the other's substitute.
+//
+// Every payload directory is UNTARGETED — one variant, every device — so unlike the NPU gate there
 // is no empty-default rule to hold here: there is no default variant to keep empty, and the
-// .gitkeep anchor is the only non-payload entry the directory may carry.
-val previewPackFiles = listOf(
-    listOf("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 71_083_163L),
-    listOf("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_307_236L),
-    listOf("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 259_335L),
-    listOf("tokens.txt", 5_048L),
+// .gitkeep anchor is the only non-payload entry any of these directories may carry.
+val previewPackPayloads = mapOf(
+    "preview_en" to listOf(
+        listOf("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 71_083_163L),
+        listOf("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_307_236L),
+        listOf("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 259_335L),
+        listOf("tokens.txt", 5_048L),
+    ),
+    "preview_fr" to listOf(
+        listOf("encoder-epoch-29-avg-9-with-averaged-model.int8.onnx", 126_655_903L),
+        listOf("decoder-epoch-29-avg-9-with-averaged-model.int8.onnx", 1_307_157L),
+        listOf("joiner-epoch-29-avg-9-with-averaged-model.int8.onnx", 259_572L),
+        listOf("tokens.txt", 4_819L),
+    ),
+    "preview_de" to listOf(
+        listOf("encoder-epoch-30-avg-5.int8.onnx", 70_133_342L),
+        listOf("decoder-epoch-30-avg-5.int8.onnx", 540_689L),
+        listOf("joiner-epoch-30-avg-5.int8.onnx", 259_417L),
+        listOf("tokens.txt", 5_086L),
+    ),
+    "preview_ru" to listOf(
+        listOf("encoder.int8.onnx", 26_214_060L),
+        listOf("decoder.onnx", 2_093_080L),
+        listOf("joiner.int8.onnx", 259_417L),
+        listOf("tokens.txt", 6_388L),
+    ),
+    "preview_id" to listOf(
+        listOf("encoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 70_103_186L),
+        listOf("decoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 540_688L),
+        listOf("joiner-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 259_417L),
+        listOf("tokens.txt", 5_403L),
+    ),
+    "preview_ko" to listOf(
+        listOf("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 70_133_869L),
+        listOf("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_544_210L),
+        listOf("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_270_777L),
+        listOf("tokens.txt", 20_844L),
+    ),
+    "preview_zh" to listOf(
+        listOf("encoder-epoch-99-avg-1.int8.onnx", 42_980_793L),
+        listOf("decoder-epoch-99-avg-1.int8.onnx", 3_486_740L),
+        listOf("joiner-epoch-99-avg-1.int8.onnx", 3_228_485L),
+        listOf("tokens.txt", 56_317L),
+    ),
 )
 val verifyPreviewPack = tasks.register("verifyPreviewPack") {
-    description = "Verifies the preview_en asset pack's payload against the streaming catalog's " +
-        "byte counts. Runs before every bundle packaging task."
+    description = "Verifies all ${previewPackPayloads.size} preview asset packs' payloads against " +
+        "the streaming catalog's byte counts. Runs before every bundle packaging task."
     doLast {
         val problems = mutableListOf<String>()
-        val payloadDir = rootProject.file("preview_en/src/main/assets/preview_en")
-        if (!payloadDir.isDirectory) {
-            problems += "preview_en: assets/preview_en/ is MISSING"
-        } else {
+        // EVERY pack is checked before anything is reported, rather than failing on the first:
+        // the person reading this is about to re-run a placement that takes minutes, and one
+        // message naming all seven states is worth six re-runs.
+        for ((module, rows) in previewPackPayloads) {
+            val payloadDir = rootProject.file("$module/src/main/assets/$module")
+            if (!payloadDir.isDirectory) {
+                problems += "$module: assets/$module/ is MISSING"
+                continue
+            }
             val listed = (payloadDir.listFiles() ?: emptyArray()).map { it.name }.sorted()
-            val expected = (previewPackFiles.map { it[0] as String } + ".gitkeep").sorted()
+            val expected = (rows.map { it[0] as String } + ".gitkeep").sorted()
             if (listed != expected) {
-                problems += "preview_en/assets/preview_en: carries $listed; the pack is exactly " +
-                    "$expected"
-            } else {
-                for (row in previewPackFiles) {
-                    val name = row[0] as String
-                    val bytes = row[1] as Long
-                    val placed = File(payloadDir, name)
-                    if (placed.length() != bytes) {
-                        problems += "preview_en/assets/preview_en: $name is ${placed.length()} B, " +
-                            "the catalog says $bytes"
-                    }
+                problems += "$module/assets/$module: carries $listed; the pack is exactly $expected"
+                continue
+            }
+            for (row in rows) {
+                val name = row[0] as String
+                val bytes = row[1] as Long
+                val placed = File(payloadDir, name)
+                if (placed.length() != bytes) {
+                    problems += "$module/assets/$module: $name is ${placed.length()} B, " +
+                        "the catalog says $bytes"
                 }
             }
         }
         if (problems.isNotEmpty()) {
             throw GradleException(
-                "verifyPreviewPack: the preview pack's payload is not the catalog — a bundle " +
-                    "built now would ship a previewer that can never install.\n  " +
+                "verifyPreviewPack: a preview pack's payload is not the catalog — a bundle " +
+                    "built now would ship a language that can never install.\n  " +
                     problems.joinToString("\n  ") +
                     "\n  Place the payload with: python tools/build_asset_packs.py preview"
             )
         }
+        val files = previewPackPayloads.values.sumOf { it.size }
         logger.lifecycle(
-            "verifyPreviewPack: all ${previewPackFiles.size} preview pack files match the " +
-                "streaming catalog's byte counts."
+            "verifyPreviewPack: all $files files across ${previewPackPayloads.size} preview " +
+                "packs match the streaming catalog's byte counts."
         )
     }
 }

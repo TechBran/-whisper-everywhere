@@ -313,25 +313,41 @@ class PreviewPackLayoutTest {
     // ------------------------------------------------------------------ the bundle gate
 
     @Test
-    fun verifyPreviewPackHoldsThePayloadToTheCatalogBytesAndGatesOnlyBundleBuilds() {
-        val pack = StreamingPackCatalog.EN
-        val module = StreamingPackCatalog.PACK_EN
+    fun verifyPreviewPackHoldsEveryPacksPayloadToTheCatalogBytesAndGatesOnlyBundleBuilds() {
         assertEquals(1, count(appGradle, "tasks.register(\"verifyPreviewPack\")"))
-        // The placement table: one row per pinned file, byte literals the catalog's own —
-        // restated in the build script because it cannot read the app's classes, and pinned
-        // equal here (the verifyNpuPacks discipline, one pack over).
-        for (f in pack.files) {
+        // The placement table: one row per pinned file, grouped by pack, byte literals the
+        // catalog's own — restated in the build script because it cannot read the app's classes,
+        // and pinned equal here (the verifyNpuPacks discipline, seven packs over).
+        for ((pack, module) in modules) {
             assertEquals(
-                "verifyPreviewPack carries ${f.name}'s catalog byte count in one literal row",
-                1, count(appGradle, "listOf(\"${f.name}\", ${grouped(f.bytes)}L),"),
+                "the gate carries a table for $module, keyed by the pack name, which is also the " +
+                    "directory it reads",
+                1, count(appGradle, "\"$module\" to listOf("),
             )
+            for (f in pack.files) {
+                assertEquals(
+                    "verifyPreviewPack carries ${f.name}'s ${pack.language} byte count in one " +
+                        "literal row. (name+bytes is unique across all 28 rows even though the " +
+                        "English and Korean packs share three FILE NAMES — their bytes differ, " +
+                        "which is exactly the confusion the gate has to survive.)",
+                    1, count(appGradle, "listOf(\"${f.name}\", ${grouped(f.bytes)}L),"),
+                )
+            }
         }
         assertEquals(
-            "the gate reads the pack module's one untargeted payload directory",
-            1, count(appGradle, "\"$module/src/main/assets/$module\""),
+            "the gate derives every payload directory from the pack name it is keyed by, in ONE " +
+                "expression — seven hand-written paths would be seven chances to point a check " +
+                "at the wrong pack, and a check that reads the English directory while claiming " +
+                "to verify Korean is a green gate over a missing 73 MB",
+            1, count(appGradle, "rootProject.file(\"\$module/src/main/assets/\$module\")"),
+        )
+        assertEquals(
+            "and it reports EVERY pack's state in one message rather than failing on the first: " +
+                "the reader is about to re-run a placement that takes minutes",
+            1, count(appGradle, "for ((module, rows) in previewPackPayloads)"),
         )
         // Wired before bundle PACKAGING only, in its OWN clause: assembleDebug must never
-        // demand 73 MB of payload (an APK build carries no packs at all), and the NPU gate's
+        // demand 494 MB of payload (an APK build carries no packs at all), and the NPU gate's
         // single wiring line stays exactly as it was.
         assertEquals(1, count(appGradle, "dependsOn(verifyPreviewPack)"))
         assertEquals(
@@ -339,9 +355,9 @@ class PreviewPackLayoutTest {
             1, count(appGradle, "dependsOn(verifyNpuPacks)"),
         )
         assertEquals(
-            "and no gate hangs off preBuild or assemble — three packs' worth of payload " +
-                "(4.2 F4's two, this one, and Task 2b's voice archive) must never be demanded " +
-                "by the everyday APK build, which carries no packs at all",
+            "and no gate hangs off preBuild or assemble — three gates' worth of payload " +
+                "(4.2 F4's two NPU packs, the seven preview packs, and Task 2b's voice archive) " +
+                "must never be demanded by the everyday APK build, which carries no packs at all",
             3, count(appGradle, "it.name.startsWith(\"package\") && it.name.endsWith(\"Bundle\")"),
         )
     }
