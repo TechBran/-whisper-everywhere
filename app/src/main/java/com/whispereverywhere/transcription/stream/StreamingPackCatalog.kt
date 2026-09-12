@@ -858,10 +858,18 @@ object StreamingPackCatalog {
         // The six positions are reference words the decode reproduced WHOLE: `스페인 사람들이 동안
         // 지속된 시대를 시작했다`, 6 of 6 in all nine (threads × gain) cells, the 34 tokens
         // byte-identical in every cell. The two it does not reproduce are excluded and say why the
-        // clip is honest: `3세기` is spoken and written as `삼 세기` (the model spells the numeral
-        // as a word, which is what `emitsDigits` being true is about), and `식민지` comes back
-        // `시민제` — a genuine mis-decode, at 8.25 CER territory for this pack. Expecting either
-        // would be expecting something the model did not say.
+        // clip is honest: `3세기` comes back as the Hangul words `삼 세기` — this model can spell a
+        // spoken numeral out as a word instead of writing the digit, which is why `3세기` is not
+        // one of the positions — and `식민지` comes back `시민제`, a genuine mis-decode, at 8.25 CER
+        // territory for this pack. Expecting either would be expecting something the model did not
+        // say.
+        //
+        // **Neither of those two says anything about `emitsDigits`, and this clip is not what that
+        // flag rests on.** Its basis is the census over this pack's own tokens.txt — 10 standalone
+        // ASCII digit pieces, the docblock above — held equal to the flag by
+        // `PreviewPackMetadataTest.everyRowsCopyFlagsAreWhatItsOwnTokensFileSays`. What the clip
+        // shows is the one numeral in THIS utterance reaching the strip as words rather than as a
+        // digit, which is neutral evidence for "a digit character can appear" at best.
         //
         // **Why 4.970 s and not 3.8.** At a 3.6 s cut this clip yields four positions, not six;
         // 37 KB bought two more, and with `minMatches = 5` that is the difference between one drop
