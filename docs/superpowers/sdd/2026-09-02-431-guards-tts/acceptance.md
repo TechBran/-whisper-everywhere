@@ -781,7 +781,7 @@ literal. AF5/AF6/AF10/AF11 are informative — a failure there is a bug report, 
 
 ---
 
-## AL — six languages (92 / 4.5.0)
+## AL — six languages (4.5.0; identity untouched on the branch, the controller bumps it at merge)
 
 **What 4.5.0 adds.** Six more streaming Zipformer packs, one per language: **French, German, Russian,
 Indonesian, Korean and Chinese**. Each is a separate on-demand download that arrives when you pick
@@ -847,9 +847,9 @@ AL2. **German.** Pick German. EXPECTED: a **71 MB** fetch, ~**0.4 s** lag (320 m
 AL3. **Russian.** Pick Russian. EXPECTED: a **29 MB** fetch — the smallest pack in the catalogue —
     Cyrillic words on the strip, and no punctuation or numerals.
     **THE JUDGEMENT THIS ROW ASKS OF YOU:** this pack decodes at **640 ms**, twice English's
-    cadence, so its word lag is an INFERRED **0.56-0.72 s** against the 0.401 s you validated for
-    English. Nobody has measured it on a device. **Say whether that still reads as "live" or whether
-    it reads as lag** — the answer applies to Indonesian too, and it is a product ruling, not a bug
+    cadence, so its word lag is an INFERRED **0.56-0.72 s** against English's MEASURED p50 **0.401 s**
+    / p95 **0.523 s** at 320 ms. Nobody has measured the 640 ms pair on anything. **Say whether that
+    still reads as "live" or whether it reads as lag** — the answer applies to Indonesian too, and it is a product ruling, not a bug
     report. Note it here with the device you judged it on:
     `[ ] feels live  [ ] feels late  device: ____________`
     `[ ] PASS  [ ] FAIL`
@@ -894,8 +894,9 @@ AL7. **The disclosure, at BOTH selection sites.** With no tap gate left on cellu
       menu**: each of the seven languages that has a pack carries its own badge —
       `Live words · 128 MB` on French, `Live words · 29 MB` on Russian, `· 71 MB` on German and
       Indonesian, `· 73 MB` on English and Korean, `· 50 MB` on Chinese — and **every other language
-      in the list carries none.** No two of these figures is a shared literal; each is rounded from
-      that pack's own byte count.
+      in the list carries none.** Two pairs round to the same badge — English and Korean at 73 MB,
+      German and Indonesian at 71 MB — and that is arithmetic rather than a shared literal: every
+      badge is rounded from its own pack's byte count.
     - **Onboarding's language step.** *"Live words on the bubble follow the language you pick: each
       language with a preview model says so on its own row, and Auto-detect shows none at all. The
       preview model for the language you pick is downloaded once setup finishes. Your typed
@@ -933,7 +934,7 @@ AL9. **One bad language does not take the others down.** Each pack has its own s
     was already there: French is synthesized in-repo from the read-aloud voice; German, Russian,
     Indonesian and Korean are FLEURS utterances (attributed on the licences screen, as CC BY 4.0
     requires); and Chinese reuses the bundled English digits clip unchanged, at zero added bytes.
-    EXPECTED: if any language shows no live words at all on this device, the other five still do.
+    EXPECTED: if any language shows no live words at all on this device, the others still do.
     Note which: `____________`
     `[ ] PASS  [ ] FAIL  [ ] N/A — all six worked`
 AL10. **Auto, with six more packs available.** On Auto-detect: **no live words in any language**, no
@@ -964,11 +965,11 @@ AL10. **Auto, with six more packs available.** On Auto-detect: **no live words i
   own number is **10.57**. The figure matters outside engineering: quoting 9.95 in a listing or to
   counsel imports an encumbrance these bytes do not carry.
 
-**Promote 92 to the INTERNAL TRACK when AL1-AL6, AL7 and AL10 pass.** The six language rows are what
+**Promote 4.5.0 to the INTERNAL TRACK when AL1-AL6, AL7 and AL10 pass.** The six language rows are what
 the build is; AL7 is the whole of the disclosure now that the tap gate is gone; AL10 is the promise
 that Auto users were not changed. AL8 and AL9 are informative — a Play prompt is Play's, and a single
 failing canary is a per-language report rather than a gate.
 
-**Promote 92 to PRODUCTION only when AL0 also passes** — that is,
+**Promote 4.5.0 to PRODUCTION only when AL0 also passes** — that is,
 `PackClearanceRecord.PRODUCTION_CLEARED` names every shipped language. Five of the six are outstanding
 today, so the honest state of this sheet is: **internal track yes, production no.**
