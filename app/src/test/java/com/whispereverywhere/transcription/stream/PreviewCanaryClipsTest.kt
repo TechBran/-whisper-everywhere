@@ -408,6 +408,60 @@ class PreviewCanaryClipsTest {
         }
     }
 
+    // ------------------------------------------------------------------ the build script
+
+    @Test fun theBuildScriptRegeneratesExactlyTheClipsThisTablePins() {
+        // `tools/build_canary_clips.py` is to these five clips what `build_asset_packs.py` is to
+        // the pack payload: the record of where each one came from, and the way to get it back.
+        // It was RUN — all four FLEURS clips regenerate byte-identically from the pinned dataset
+        // revision and item, and all five reproduce their pinned decode — and the two tables are
+        // held equal here so neither can drift from the other.
+        //
+        // (`fr` is the one clip whose BYTES do not reproduce: the kokoro synthesis is not
+        // bit-deterministic, measured over three runs. The script says so on the row and checks
+        // that clip on its decode instead, which is stable. That asymmetry is the script's own
+        // and is not restated here — what this test holds is that the tables agree.)
+        val script = repoFile("tools/build_canary_clips.py").readText().replace("\r\n", "\n")
+        // Parsed per ENTRY rather than grepped over the whole file: two clips share a byte count
+        // (de and ru are both 107,882 B), so a whole-file `contains` lets either one's number be
+        // wrong while the other's masks it. Measured: changing de's count to 107_883 left a
+        // whole-file pin green.
+        val entries = Regex("\"(\\w+)\": dict\\((.*?)\\n    \\),", RegexOption.DOT_MATCHES_ALL)
+            .findAll(script).associate { it.groupValues[1] to it.groupValues[2] }
+        for (clip in clips) {
+            // The zh row shares the English clip, and the English one is the owner's recording
+            // with nothing to regenerate it from: the script carries it as OWNER_CLIP, asserted
+            // below, because `verify` must still re-hash it.
+            if (clip.language == "zh") continue
+            if (clip.language == "en") {
+                assertTrue(
+                    "the owner's clip must still be in the script's verify set",
+                    script.contains("OWNER_CLIP = (\"${clip.asset}\", ${underscored(clip.bytes)},")
+                        && script.contains(clip.sha256),
+                )
+                continue
+            }
+            val entry = entries[clip.language]
+                ?: throw AssertionError("${clip.language} has no entry in the script's CLIPS table")
+            assertTrue("${clip.language}: asset name", entry.contains("asset=\"${clip.asset}\""))
+            assertTrue(
+                "${clip.language}: the script must pin the same byte count, " +
+                    "${underscored(clip.bytes)} — found in: $entry",
+                entry.contains("bytes=${underscored(clip.bytes)},"),
+            )
+            assertTrue("${clip.language}: digest", entry.contains("sha256=\"${clip.sha256}\""))
+            assertTrue(
+                "${clip.language}: the script must pin the same measured decode, so that " +
+                    "regenerating a clip checks the thing the canary depends on",
+                entry.contains("text=\"${clip.text}\""),
+            )
+        }
+        // The corpus identity, in the script as well as in this table: an unpinned revision is a
+        // verdict input that upstream can move.
+        assertTrue(script.contains("70bb2e84b976b7e960aa89f1c648e09c59f894dd"))
+        assertTrue(script.contains("cc-by-4.0"))
+    }
+
     // --------------------------------------------- the renderings are checkable against tokens.txt
 
     @Test fun everyPositionHasARenderingItsOwnVocabularyCanSpell() {
@@ -469,17 +523,24 @@ class PreviewCanaryClipsTest {
         MessageDigest.getInstance("SHA-256").digest(of).joinToString("") { "%02x".format(it) }
 
     /** A committed main asset, found by walking up from the test's working directory. */
-    private fun asset(name: String): File {
-        val relative = "src/main/assets/$name"
+    private fun asset(name: String): File = repoFile("app/src/main/assets/$name")
+
+    /** A repo file, found by walking up from the test's working directory (the module or the root). */
+    private fun repoFile(relative: String): File {
+        val alsoWithoutApp = relative.removePrefix("app/")
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
         while (dir != null) {
-            for (candidate in listOf(File(dir, relative), File(dir, "app/$relative"))) {
+            for (candidate in listOf(File(dir, relative), File(dir, alsoWithoutApp))) {
                 if (candidate.isFile) return candidate
             }
             dir = dir.parentFile
         }
         throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
     }
+
+    /** `107882` as the build script spells it — `107_882` — so one grep matches both tables. */
+    private fun underscored(n: Long): String =
+        n.toString().reversed().chunked(3).joinToString("_").reversed()
 
     /** A pack's placed `tokens.txt`, or null — the payload is a build artifact. */
     private fun payloadTokens(pack: StreamingPack): File? {

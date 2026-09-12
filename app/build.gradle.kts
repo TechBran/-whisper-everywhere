@@ -554,6 +554,13 @@ tasks.withType<Test>().configureEach {
         // (4.2 F4) NpuPackLayoutTest joins its readers: the FAMILIES htp↔packGroup pairing, the
         // metadata-first and declared-size writer pins, and the self-verification needles.
         rootProject.file("tools/build_asset_packs.py"),
+        // (4.5.0 T3) The canary-clip builder, same rule as the four scripts above it: it lives
+        // outside the app module, PreviewCanaryClipsTest holds its table equal to the Kotlin
+        // one (each clip's asset name, byte count, digest and MEASURED DECODE, plus the pinned
+        // FLEURS revision and licence), and every one of those is a pure-Python edit no compile
+        // task would notice. A clip is a verdict input: if the two tables drift, the record of
+        // where a verdict input came from stops describing the file that is shipping.
+        rootProject.file("tools/build_canary_clips.py"),
         // (4.2 F4) The device-group XML — the sharpest asset case since the melbank: it is an
         // input to no compile task (it enters the AAB, not the APK), and NpuPackLayoutTest holds
         // it byte-equal to the census rendering. Without this entry, an edit confined to the XML
