@@ -902,9 +902,10 @@ private fun LiveWordsCard(
     // only one of which the Settings row collected.
     val previewWorkboard by PreviewWorkboard.work.collectAsState()
     val previewWork = pack?.let { previewWorkboard[it.language] }
-    // (4.5.0 Task 3b) WHY a transfer would be starting, which is the one input the connection
-    // rule branches on: *"an unasked background transfer waits for wifi; a transfer the user just
-    // caused by picking a language happens at once, because the pick IS the consent."* The
+    // (4.5.0 Task 3b) WHY a transfer would be starting. It no longer decides anything about what
+    // the bytes COST — the owner ruled the metered test away (*"Yes. I wanted to silently
+    // download on cellular and Wi Fi"*) — and what it still decides is the two rules that protect
+    // an UNASKED transfer: the wait for a network that works, and the 24 h back-off. The
     // selection flow cannot answer it — it replays its current value to every new collector, so a
     // language chosen ten seconds ago and one chosen before the last update arrive identically —
     // and `PreviewPicks` is the process-scoped record of the gesture itself, written by the one
@@ -940,8 +941,8 @@ private fun LiveWordsCard(
     val working = previewWork?.inFlight == true
     // BOTH SYSTEM READS OFF THE COMPOSITION THREAD, on the app's start destination (review r1,
     // B4): state() is nine File stats plus a Play getPackLocation through PlayPacks.assetsPath,
-    // and isUnmetered() is a getSystemService plus a getNetworkCapabilities. The Settings row's
-    // own comment says that read is too expensive for a recomposition; here it would also be
+    // and hasValidatedNetwork() is a getSystemService plus a getNetworkCapabilities. The Settings
+    // row's own comment says that read is too expensive for a recomposition; here it would also be
     // paid on the first frame and on every resume by every user — one who deleted the model, one
     // who dismissed the card, one with no local tier — for an answer that is then discarded.
     // HomeScreen's own pattern for exactly this shape of read is produceState + Dispatchers.IO
@@ -968,18 +969,22 @@ private fun LiveWordsCard(
         // not-yet-known branch is also the AUTO branch: nothing decided, nothing said.
         value = pack?.let { withContext(Dispatchers.IO) { app.streamingPackManager.state(it) } }
     }
+    // (Fix 1) ...and this read is NO LONGER A METERING QUESTION. `isUnmetered()` is deleted from
+    // the app with the owner's ruling; what is left is "is there a network that works at all",
+    // which the previewer still needs so an unasked fetch cannot fail on a captive portal and
+    // park the pack behind the 24 h back-off. Same monitor, same one call per foreground.
     @Suppress("ProduceStateDoesNotAssignValue")
-    val unmeteredSnapshot by produceState<Boolean?>(null, resumeTick) {
-        value = withContext(Dispatchers.IO) { ConnectivityMonitor(context).isUnmetered() }
+    val networkSnapshot by produceState<Boolean?>(null, resumeTick) {
+        value = withContext(Dispatchers.IO) { ConnectivityMonitor(context).hasValidatedNetwork() }
     }
     // Plain locals, so the "not yet known" check below reads as one null test (a delegated
     // property cannot be smart-cast) and so the decision and the card see the same snapshot.
     val packState = packStateSnapshot
-    val unmetered = unmeteredSnapshot
+    val workingNetwork = networkSnapshot
     // Until both snapshots have landed there is nothing to decide and nothing true to say, so
     // the answer is NONE for that one frame — the same flicker the cloud-key note's own resume
     // snapshot has. The other default would be a 73 MB transfer decided on inputs not yet read.
-    val decision = if (packState == null || unmetered == null) {
+    val decision = if (packState == null || workingNetwork == null) {
         PreviewAutoFetch.Decision.NONE
     } else {
         PreviewAutoFetch.decide(
@@ -990,9 +995,10 @@ private fun LiveWordsCard(
             showLiveWords = showLiveWords,
             localTierInstalled = localTierInstalled,
             // (4.5.0 Task 3b) The cause, mapped to the starter by the enum rather than by a
-            // literal here: this is the ONE input the metered rule and the back-off branch on.
+            // literal here: this is the ONE input the working-network wait and the back-off
+            // branch on, and since Fix 1 that is all it branches anything on.
             starter = trigger.starter,
-            unmetered = unmetered,
+            workingNetwork = workingNetwork,
             sessionActive = AudioArbiter.isCapturing(),
             batchJobActive = BatchJobController.active != null,
             packWorkInFlight = PreviewAutoFetchController.busy(),
@@ -1025,8 +1031,9 @@ private fun LiveWordsCard(
     val playAwaitsAnAnswer = previewPhase == PreviewPhase.AWAITING_ANSWER
     // ...and the SAME gesture, offered on the card. Raising it once per entry is right (a dialog
     // re-raised on every recomposition is unusable), but it left a user who back-pressed out of
-    // Play's dialog on a note reading "tap to answer" with nothing to tap but the permanent-no X
-    // — the metered path's own state. The Settings row's workLineTappable + previewRowTap
+    // Play's dialog on a note reading "tap to answer" with nothing to tap but the permanent-no X.
+    // (It is PLAY's dialog, and it is the one consent this feature does not own: nothing of ours
+    // asks about the connection any more.) The Settings row's workLineTappable + previewRowTap
     // lesson, inherited rather than re-learned (review r1, B3).
     val answerPlay: () -> Unit = {
         (context as? android.app.Activity)?.let { StreamingPackController.confirm(it) }

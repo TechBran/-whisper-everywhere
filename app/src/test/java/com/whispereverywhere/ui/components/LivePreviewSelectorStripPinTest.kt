@@ -312,7 +312,7 @@ class LivePreviewSelectorStripPinTest {
             "PreviewAutoFetch.card(",
             "PreviewAutoFetchController",
             "PreviewPicks",
-            "isUnmetered",
+            "ConnectivityMonitor",
             "setSelectedLanguage",
             "clickable",
             "onClick",

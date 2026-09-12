@@ -7,22 +7,29 @@ import kotlinx.coroutines.flow.update
 
 /**
  * THE LANGUAGES THIS PROCESS HAS WATCHED THE USER PICK — the one fact
- * [PreviewAutoFetch.decide] cannot read off a preference, and the whole of ruling 3b's *"a
- * SELECTION downloads on ANY connection, at once"* (owner, 2026-09-11).
+ * [PreviewAutoFetch.decide] cannot read off a preference.
  *
  * `PreferencesManager.selectedLanguage` answers *"which language is selected"*. It cannot answer
  * *"did the user just choose it"*: a `StateFlow` replays its current value to every new collector,
  * so a language chosen ten seconds ago and one chosen before the app was last updated arrive at
- * the decision identically. That difference is exactly what ruling 3a and ruling 3b divide on —
- * an unasked top-up waits for wifi, a pick spends the connection at once — so it has to be
- * recorded when it happens, by the one writer that sees it happen.
+ * the decision identically. That difference is what the UNASKED path's two cautions hang on — a
+ * top-up waits for a network that works and defers to the 24 h back-off, and a pick does
+ * neither — so it has to be recorded when it happens, by the one writer that sees it happen.
+ *
+ * **It is no longer a SPENDING distinction** (4.5.0 pass 2, Fix 1). This object was written for
+ * ruling 3b's *"a SELECTION downloads on ANY connection, at once"*, whose other half was a card
+ * with a tap for the unasked top-up on cellular. The owner settled that both paths simply
+ * download — *"Yes. I wanted to silently download on cellular and Wi Fi"* — so the metered test
+ * is gone and the register's remaining decision role is the narrower one above. It also feeds
+ * `PreviewWork.starter`, which is Task 1's observable answering *"who started this"*, so it is
+ * read by the copy as well as by the decision.
  *
  * ### Why it is PROCESS-scoped and not a preference
  *
- * A pick made yesterday is a standing SELECTION, not a live consent to spend today's data. The
- * brief states the consequence it is chosen for: *"a cellular user who already had that language
- * selected still gets the 4.4.1 card and has to tap it"*. Persisting this set would turn every
- * launch into a pick and delete ruling 3a's unasked half.
+ * A pick made yesterday is a standing SELECTION, not a gesture this process watched. Persisting
+ * this set would make every launch a pick, which would retire the unasked path's two cautions —
+ * and, worse for the copy, would make a progress line for a transfer nobody asked for read as
+ * one the user started.
  *
  * ### Why a StateFlow and not a plain set
  *
@@ -34,8 +41,8 @@ import kotlinx.coroutines.flow.update
  *
  * It also answers the one case the selection flow cannot, because a `StateFlow` conflates equal
  * values: a user who re-picks the language ALREADY selected writes no new selection, but does add
- * to this set the first time — so tapping your own language in the picker, on cellular, starts
- * the pack the top-up was waiting for wifi to fetch. Tapping it a second time changes neither and
+ * to this set the first time — so tapping your own language in the picker starts a pack a
+ * backed-off top-up would have stayed quiet about. Tapping it a second time changes neither and
  * does nothing, which is the honest answer to a gesture that changed nothing.
  *
  * ### Why nothing is ever REMOVED from it

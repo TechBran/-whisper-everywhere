@@ -193,9 +193,23 @@ object StreamingPackCopy {
      *
      * It names ONE language because one pack exists; when the language list lands this sentence is
      * where it goes, and the badge in the picker replaces the card as the permanent signpost.
+     *
+     * ### AND IT STATES THE DEAL, because this is the other selection site (4.5.0 pass 2, Fix 1)
+     *
+     * With the metered tap gone, the two sentences at the two selection sites are the ONLY place
+     * a user is told anything before the bytes move — and the disclosure was present at one of
+     * them. [PICKER_DEAL] covers the in-app picker; a first-run user never reads it, because
+     * their first pick is made here, and the pick made here is recorded by the same one writer
+     * and honoured on Home the moment a tier exists.
+     *
+     * **The tense is why this is not [PICKER_DEAL] pasted in.** The ENGINES step comes AFTER this
+     * one, so nothing downloads while these rows are on screen — *"is downloaded"* would be
+     * wrong in the one place it would be read first. *"…once setup finishes"* is the true form,
+     * and it carries no figure for [PICKER_DEAL]'s own reason: the size is per language and
+     * belongs on the row.
      */
     const val LANGUAGE_STEP_SENTENCE =
-        "Live words on the bubble follow the language you pick: English has a preview model today, and Auto-detect shows none at all. Your typed transcript is the same either way."
+        "Live words on the bubble follow the language you pick: English has a preview model today, and Auto-detect shows none at all. The preview model for the language you pick is downloaded once setup finishes. Your typed transcript is the same either way."
 
     /** Rendered in the English row's subtitle slot on the language step when the pack is installed. */
     const val LANGUAGE_CHIP = "Live words on the bubble while you speak — preview model installed."
@@ -209,9 +223,10 @@ object StreamingPackCopy {
      * > could just say that when you switch language, a new light model will be downloaded, and it
      * > will be used as your preview model."*
      *
-     * Under ruling 3b a pick spends the user's data at once, on any connection. This is the
-     * sentence that makes that a deal rather than a surprise, and it sits at the control that
-     * makes it.
+     * A pick spends the user's data at once, on any connection — and since Fix 1 so does an
+     * unasked top-up, so there is no tap anywhere in the feature that a user could read a caveat
+     * before. This is the sentence that makes that a deal rather than a surprise, and it sits at
+     * the control that makes it.
      *
      * ### Why it carries NO NUMBER
      *
@@ -223,11 +238,11 @@ object StreamingPackCopy {
      * own `totalBytes`, and this sentence points at it. A figure here would be the one thing the
      * ruling names as forbidden, dressed as helpfulness.
      *
-     * It is deliberately NOT added to the onboarding language step, whose
-     * [LANGUAGE_STEP_SENTENCE] owns that moment's copy: the ENGINES step comes after the language
-     * step, so no pick made there downloads anything until setup finishes, and "is downloaded"
-     * would be the wrong tense in the one place it would be read first. Flagged for a controller
-     * rather than decided here.
+     * It is deliberately NOT PASTED into the onboarding language step, whose
+     * [LANGUAGE_STEP_SENTENCE] owns that moment's copy and now carries the deal in that moment's
+     * own tense (*"…once setup finishes"*, Fix 1): the ENGINES step comes after the language
+     * step, so no pick made there downloads anything until setup finishes, and *"is downloaded"*
+     * would be the wrong tense in the one place it would be read first.
      */
     const val PICKER_DEAL =
         "Switch to a language with a preview model and that model is downloaded and becomes your " +
@@ -400,10 +415,19 @@ object StreamingPackCopy {
      * tap costs the user 73 MB of their data. It does NOT borrow
      * [settingsInstallFromPack]'s "included with the app": the pack is `on-demand`, so on this
      * row the bytes are not on the device yet (fix round 1, B1 — see the class KDoc).
+     *
+     * **AND IT NO LONGER SAYS *"when you ask for it"*** (4.5.0 pass 2, Fix 1). That clause was
+     * true while the auto-fetch waited for an unmetered network and offered a card with a tap
+     * otherwise; the owner ruled the metered test away (*"Yes. I wanted to silently download on
+     * cellular and Wi Fi"*), so on this route the bytes now also move without anyone asking — and
+     * this sentence is rendered on the offer CARD as well as on the row ([cardOffer] delegates to
+     * the same table). A promise that nothing moves until a tap is a promise the feature stopped
+     * keeping. The SOURCE promise — *"never from a third party"* — is untouched, because that one
+     * is still true on every route this sentence is rendered for.
      */
     fun settingsInstallFetch(sizeBytes: Long): String =
         "The app's own ${StreamingPackCatalog.sizeBadge(sizeBytes)} model, fetched from Google " +
-            "Play over your connection when you ask for it — never from a third party. $ADDITIVE"
+            "Play over your connection — never from a third party. $ADDITIVE"
 
     /**
      * The NON-PLAY row, and the spec's original sentence verbatim. Reached only where

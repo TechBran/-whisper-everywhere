@@ -135,8 +135,8 @@ object PreviewAutoFetchController {
      *        needs, and neither is a boolean: [PreviewTrigger.starter] is what the board records,
      *        and [PreviewTrigger.latchedForTheLaunch] is whether this attempt spends the
      *        once-per-launch latch. It replaced `auto: Boolean`, which could not express the third
-     *        cause — a language SELECTION, which spends a metered connection like a tap does and
-     *        is latched like a top-up is.
+     *        cause — a language SELECTION, which skips the unasked path's two cautions like a tap
+     *        does and is latched like a top-up is.
      */
     fun start(
         app: WhisperEverywhereApp,

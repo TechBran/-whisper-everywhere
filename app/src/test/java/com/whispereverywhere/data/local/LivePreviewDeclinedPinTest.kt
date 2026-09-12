@@ -22,9 +22,11 @@ import org.junit.Test
  *  - **a DELETE sets it.** The brief's own words: *"a DELETE is a decision and must not be undone
  *    by an auto-fetch"*. The delete lives in the Settings row, so this is where that coupling is
  *    held; `PreviewAutoFetchTest` holds the other half (the flag is absolute, in all 3,584 cells).
- *  - **the metered reading has ONE home and ONE default.** The CONTROLLER RULING hangs on this
- *    single predicate: no active network reads as METERED, so a phone with no connection shows
- *    the card instead of starting a transfer that would fail.
+ *  - **there is NO metering read in the app at all, and the VALIDATED one has one home** (4.5.0
+ *    pass 2, Fix 1). The owner: *"Yes. I wanted to silently download on cellular and Wi Fi."* So
+ *    the question *"may this app spend these bytes"* is not asked anywhere, and the question that
+ *    survives — *"is there a network that works"* — has one spelling, because a doomed fetch
+ *    parks the pack behind a 24 h back-off.
  *  - **and *"the user has seen live words"* is written when the session OPENS** (4.5.0 T4 fix
  *    round 1, review r1's B1). It used to be written wherever the previewer's gate armed, and
  *    that gate has no tier term: on a device with no speech model and no configured provider it
@@ -101,6 +103,50 @@ class LivePreviewDeclinedPinTest {
     private val service: String by lazy {
         source("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt")
     }
+
+    private fun repoFile(relative: String): File {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(File(dir, relative), File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
+    }
+
+    /**
+     * Every Kotlin source under the app's MAIN tree — anchored on a FILE rather than on a
+     * directory name, so a moved tree fails here loudly instead of walking an empty tree to a
+     * vacuous pass (`PreviewUnreachableTest`'s own rule for the same instrument).
+     *
+     * MAIN only, deliberately: this file has to be able to spell the needles it forbids.
+     * `sourcePinnedInputs` is not needed for it either — the absences it asserts are CODE, so
+     * adding one changes `compileDebugKotlin`'s output and this task re-runs. (That is exactly
+     * what the pinned-input list is for the other, comment-shaped pins in this project.)
+     */
+    private val everyMainSource: List<File> by lazy {
+        val root = repoFile("src/main/java/com/whispereverywhere/net/ConnectivityMonitor.kt")
+            .parentFile?.parentFile
+        assertTrue("cannot reach the app's package root", root?.isDirectory == true)
+        val files = requireNotNull(root).walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }.toList()
+        assertTrue(
+            "the main tree must be walked, and it is ~200 files: found ${files.size}",
+            files.size > 100,
+        )
+        files
+    }
+
+    /**
+     * The files with a LIVE line matching [needle] — comment-blind, like every other pin here.
+     * The home of a deleted rule has to be able to name what it deleted and why; what may not
+     * come back is the READ.
+     */
+    private fun mainSourcesSaying(needle: String): List<String> =
+        everyMainSource
+            .filter { liveLineCount(it.readText().replace("\r\n", "\n"), needle) > 0 }
+            .map { it.name }.distinct().sorted()
 
     // ------------------------------------------------------------------ the flag
 
@@ -283,7 +329,7 @@ class LivePreviewDeclinedPinTest {
         for (needle in listOf(
             "PreviewAutoFetch.decide(",
             "PreviewAutoFetch.card(",
-            "isUnmetered(",
+            "ConnectivityMonitor(",
         )) {
             assertEquals(
                 "<<$needle>> belongs to the Home card's hook, not to the manual path",
@@ -303,7 +349,7 @@ class LivePreviewDeclinedPinTest {
         assertEquals(
             "declared a TAP, never an unasked top-up and never a selection: a tap is consent " +
                 "that may be repeated, so it is the one cause exempt from the once-per-launch " +
-                "latch, and it spends the connection whatever the connection reads (4.5.0 T3)",
+                "latch, and it never waits for anything the unasked path waits for (4.5.0 T3)",
             1, liveLineCount(settings, "PreviewTrigger.TAP"),
         )
         assertEquals(
@@ -314,50 +360,71 @@ class LivePreviewDeclinedPinTest {
         )
     }
 
-    // ------------------------------------------------------------------ the metered reading
+    // --------------------------------------------------------- the connectivity reading (Fix 1)
 
-    @Test fun theMeteredReadingHasOneHomeAndOneSpelling() {
-        val scope = scopeOf(connectivity, "fun isUnmetered()", "\n}")
-        assertEquals(
-            "the platform's own NOT_METERED capability, read once",
-            1, liveLineCount(scope, "NetworkCapabilities.NET_CAPABILITY_NOT_METERED"),
-        )
-        assertEquals(
-            "one spelling of the question in the whole app: the other API " +
-                "(isActiveNetworkMetered) inverts the sense, and two readings of a consent " +
-                "predicate is one reading too many",
-            0, liveLineCount(connectivity, "isActiveNetworkMetered"),
-        )
+    @Test fun theAppHasNoMeteringReadAtAllAnywhereInItsMainSource() {
+        // **THE OWNER'S RULING, AS A PROPERTY OF THE TREE** (4.5.0 pass 2, Fix 1). Asked directly
+        // whether both acquisition paths should simply download: *"Yes. I wanted to silently
+        // download on cellular and Wi Fi."*
+        //
+        // This replaces three pins that held the OTHER side of it — they asserted
+        // `isUnmetered()`'s body line by line, and they were right against the CONTROLLER ruling
+        // they were written for. That ruling is overruled, the predicate is deleted, and the
+        // whole-product walk is what stops it being reinvented: a metering read anywhere is a
+        // consent question this feature is not allowed to ask, and the one place it would
+        // reappear is a helper somebody adds beside the one that survived.
+        //
+        // A WALK rather than a list of files, for the reason the mechanism walk in
+        // `PreviewUnreachableTest` is one: a fix round that corrects the sites a reviewer happened
+        // to name leaves the ones nobody cited.
+        for (needle in listOf(
+            "NET_CAPABILITY_NOT_METERED",
+            "isActiveNetworkMetered",
+            "setAllowedOverMetered(false)",
+        )) {
+            val found = mainSourcesSaying(needle)
+            assertEquals(
+                "<<$needle>> is a question about what the bytes COST, and the owner ruled that " +
+                    "this feature does not ask it. Found: $found",
+                emptyList<String>(),
+                found,
+            )
+        }
     }
 
-    @Test fun theMeteredReadingAlsoRequiresAValidatedNetwork() {
-        // CONTROLLER RULING 2026-09-11, CHANGE 1 (the auto-fetch round's C6). A captive-portal
-        // wifi — a hotel, an airport, a coffee shop — reports NOT_METERED while every request
-        // fails. Without VALIDATED the auto-fetch starts there, fails, and the 24 h back-off then
-        // withholds the model for a DAY after the user reaches a network that would have worked.
-        // One `&&` turns a day-long silent failure into a correct wait.
-        val scope = scopeOf(connectivity, "fun isUnmetered()", "\n}")
+    @Test fun theValidatedReadingHasOneHomeAndOneSpellingAndSaysWhyItSurvived() {
+        // The half that DELIBERATELY SURVIVES, and the line that stops the next reader concluding
+        // the ruling was applied by halves: a captive-portal wifi — a hotel, an airport, a coffee
+        // shop — reports connected while every request fails, so an unasked fetch started there
+        // fails and the 24 h back-off then withholds the model for a DAY after the user reaches a
+        // network that would have worked.
+        val scope = scopeOf(connectivity, "fun hasValidatedNetwork()", "\n}")
         assertEquals(
-            "the same capability hasValidatedNetwork above it requires, for the same reason",
+            "the platform's own VALIDATED capability, read once",
             1, liveLineCount(scope, "NetworkCapabilities.NET_CAPABILITY_VALIDATED"),
         )
         assertEquals(
-            "and it is an AND with the metering read, not a second branch that could answer " +
-                "unmetered on its own",
-            1, liveLineCount(scope, "caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) &&"),
+            "and INTERNET with it, so 'a network that works' is not merely 'a network'",
+            1, liveLineCount(scope, "NetworkCapabilities.NET_CAPABILITY_INTERNET"),
         )
-    }
-
-    @Test fun noNetworkAtAllReadsAsMeteredSoNothingStartsOnAPhoneThatCannotFinishIt() {
-        val scope = scopeOf(connectivity, "fun isUnmetered()", "\n}")
         assertEquals(
-            "no active network / no capabilities => not unmetered",
+            "no active network / no capabilities => no working network",
             1, liveLineCount(scope, "?: return false"),
         )
         assertEquals(
-            "and a throwing ConnectivityManager reads the same way — the monitor's own " +
-                "hasValidatedNetwork shape, matched rather than invented",
+            "and a throwing ConnectivityManager reads the same way",
             1, liveLineCount(scope, ".getOrDefault(false)"),
+        )
+        assertTrue(
+            "the class KDoc must record that the metered half was removed by owner ruling and " +
+                "that this half survives on purpose",
+            connectivity.contains("silently download on cellular and Wi Fi") &&
+                connectivity.contains("metered went, validated stayed"),
+        )
+        assertEquals(
+            "one predicate, not two: `isUnmetered` is gone rather than renamed beside it, " +
+                "because two spellings of one platform question is one too many",
+            0, liveLineCount(connectivity, "fun isUnmetered("),
         )
     }
 }

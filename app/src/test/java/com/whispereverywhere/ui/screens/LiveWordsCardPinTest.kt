@@ -17,7 +17,7 @@ import java.io.File
  * that would be invisible to every behavioural test and wrong on a device:
  *
  *  - **a second decision.** The whole safety of a silent 73 MB transfer is that ONE pure function
- *    answers whether it may happen. A composable that re-tested `unmetered` itself, or an
+ *    answers whether it may happen. A composable that re-tested the connection itself, or an
  *    actuator that decided to "just go ahead" on a route the decision refused, is a consent rule
  *    with two readings — and the second one is the one no test covers.
  *  - **a hook that decides.** The hook exists to PERFORM the decision. An `if` of its own beside
@@ -25,7 +25,8 @@ import java.io.File
  *  - **a hand-written sentence on the card.** The card is the surface most users will ever read
  *    about the previewer; a literal here is a sentence `StreamingPackCopyTest` cannot reach, on
  *    the surface that actually ships.
- *  - **a metered read of its own.** Two spellings of the consent question is one too many.
+ *  - **a connectivity read of its own.** Two spellings of one platform question is one too many —
+ *    and since Fix 1 there is no METERING read anywhere in the app to spell twice.
  *  - **a `state()` read per recomposition.** It is a Play `getPackLocation` plus five `File`
  *    reads, and a `Downloading` tick arrives several times a second for the whole 73 MB (the
  *    voice row's review nit 2, which the Settings row already learned).
@@ -352,9 +353,16 @@ class LiveWordsCardPinTest {
         }
     }
 
-    @Test fun theMeteredReadingIsTheMonitorsOneCallMadeOncePerForeground() {
+    @Test fun theConnectivityReadingIsTheMonitorsOneCallMadeOncePerForeground() {
+        // (Fix 1) It reads `hasValidatedNetwork()` and not `isUnmetered()`, which no longer
+        // exists: the owner ruled the metered test away, and what the previewer still needs from
+        // the platform is "is there a network that works at all".
         assertEquals(
-            1, liveLineCount(card, "ConnectivityMonitor(context).isUnmetered()"),
+            1, liveLineCount(card, "ConnectivityMonitor(context).hasValidatedNetwork()"),
+        )
+        assertEquals(
+            "and the deleted predicate is not read from anywhere on this screen",
+            0, liveLineCount(home, "isUnmetered"),
         )
         assertTrue(
             "keyed on the resume tick: a system call on every recomposition of the dashboard is " +
@@ -399,8 +407,8 @@ class LiveWordsCardPinTest {
         // on the first frame and on every resume by EVERY user — including one who deleted the
         // model, dismissed the card, or has no local tier, for an answer that is discarded.
         // state() is nine File stats plus a Play getPackLocation (PlayPacks.assetsPath);
-        // isUnmetered() is a getSystemService plus a getNetworkCapabilities. HomeScreen's own
-        // pattern for this shape of read is produceState + Dispatchers.IO (the keystore and
+        // hasValidatedNetwork() is a getSystemService plus a getNetworkCapabilities. HomeScreen's
+        // own pattern for this shape of read is produceState + Dispatchers.IO (the keystore and
         // installedModel snapshots, 700 lines above), and the Settings row's own comment says
         // the pack read is too expensive even for a recomposition.
         assertEquals(
@@ -419,7 +427,7 @@ class LiveWordsCardPinTest {
         assertEquals(
             "the not-yet-known frame answers NONE rather than defaulting to a 73 MB transfer " +
                 "decided on inputs that have not been read",
-            1, liveLineCount(card, "if (packState == null || unmetered == null)"),
+            1, liveLineCount(card, "if (packState == null || workingNetwork == null)"),
         )
     }
 
@@ -444,10 +452,10 @@ class LiveWordsCardPinTest {
             cleared in 0 until read,
         )
         assertEquals(
-            "exactly once: the metered snapshot deliberately keeps its previous value, because a " +
-                "stale Boolean there cannot spell a false sentence — it only decides whether the " +
-                "offer or the silent fetch is reached, and the not-yet-known guard covers the " +
-                "first frame",
+            "exactly once: the CONNECTIVITY snapshot deliberately keeps its previous value, " +
+                "because a stale Boolean there cannot spell a false sentence — it only decides " +
+                "whether an unasked top-up waits, and the not-yet-known guard covers the first " +
+                "frame",
             1, liveLineCount(card, "value = null"),
         )
     }
@@ -549,9 +557,9 @@ class LiveWordsCardPinTest {
     @Test fun theDismissalAbandonsTheArrivalItWasPressedOn() {
         // CONTROLLER RULING 2026-09-11, CHANGE 2 (the auto-fetch round's C4). The X is the same
         // gesture that writes the permanent no, and a "no" that lets 73 MB finish landing is not
-        // a no. A metered connection is what makes this reachable and deliberate: since Task 3b a
-        // WORKING card on cellular exists only because the user PICKED a language or tapped an
-        // offer, so the X is them changing their mind about their own data.
+        // a no. Cellular is what makes this reachable and deliberate: since Fix 1 a WORKING card
+        // on cellular is the ORDINARY case — nobody was asked — so the X is the one place a user
+        // changes their mind about their own data.
         assertEquals(
             "one cancel, and it is the actuator's — the card owns no route and no transfer",
             1, liveLineCount(card, "PreviewAutoFetchController.cancel(selectedLanguage)"),

@@ -10,45 +10,27 @@ import android.net.NetworkCapabilities
  *
  * VALIDATED rather than merely connected: a captive-portal wifi reports connected while every
  * request fails, which would otherwise present to the user as "your key is broken".
+ *
+ * **ONE PREDICATE, AND IT IS NOT A CONSENT QUESTION (4.5.0 pass 2, Fix 1).** This class also held
+ * `isUnmetered()` — `NOT_METERED && VALIDATED` — for the previewer pack's auto-fetch, under a
+ * CONTROLLER ruling that a metered connection should become a card with a tap. **The owner
+ * overruled that: *"Yes. I wanted to silently download on cellular and Wi Fi."*** (2026-09-11,
+ * asked directly whether both acquisition paths should simply download.) So the metering read is
+ * deleted from the app entirely — `NET_CAPABILITY_NOT_METERED` appears nowhere in `src/main`, and
+ * `LivePreviewDeclinedPinTest` walks the tree to keep it that way.
+ *
+ * **The VALIDATED half deliberately survives, in this function, and it is a different question.**
+ * "May this app spend these bytes" is gone; "is there a network at all" remains, because a fetch
+ * started on a captive portal fails and then parks the previewer pack behind its 24 h back-off —
+ * withholding the model for a day after the user reaches a network that would have worked. So a
+ * reader who finds `ConnectivityMonitor` still referenced from the previewer has not found a
+ * half-applied ruling: metered went, validated stayed, and this is the line that says so.
  */
 class ConnectivityMonitor(private val context: Context) {
     fun hasValidatedNetwork(): Boolean = runCatching {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
         caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }.getOrDefault(false)
-
-    /**
-     * Whether the active network is one this app may spend WITHOUT ASKING — 4.4.1's auto-fetch of
-     * the previewer pack, and the only predicate the CONTROLLER RULING on data hangs on
-     * (`PreviewAutoFetch`'s `unmetered`). The platform's own `NET_CAPABILITY_NOT_METERED`, in the
-     * same shape as [hasValidatedNetwork] above rather than a second idiom.
-     *
-     * THE DEFAULT IS THE SAFE SIDE, twice over: no active network, no capabilities, or a throwing
-     * `ConnectivityManager` all read as METERED, so the card shows its tap-to-fetch instead of a
-     * silent 73 MB transfer starting on a phone that could not finish it.
-     *
-     * `NET_CAPABILITY_NOT_METERED`, not `isActiveNetworkMetered()`: the capability is the reading
-     * Play's own asset-delivery consent uses, it does not invert the sense, and one spelling of a
-     * consent question is one more than this app needs to be able to disagree with itself about.
-     *
-     * AND VALIDATED, by the CONTROLLER RULING of 2026-09-11 (CHANGE 1, answering the auto-fetch
-     * round's own C6). A captive-portal wifi — a hotel, an airport, a coffee shop — reports
-     * NOT_METERED while every request fails. Reading that as "spend freely" starts a transfer
-     * that cannot finish, and the 24 h back-off that failure writes then withholds the model for
-     * a DAY after the user reaches a network that would have worked. The cost of requiring
-     * VALIDATED is that an unvalidated wifi shows the card's tap instead of fetching silently —
-     * a correct wait. The cost of not requiring it was a day of silence.
-     *
-     * (4.5.0 Task 3b) It is read on the UNASKED path only. A transfer the user caused by picking
-     * a language never consults it — the pick IS the consent — so a `false` here still means
-     * *"ask before you spend"* and never *"say nothing"*.
-     */
-    fun isUnmetered(): Boolean = runCatching {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) &&
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }.getOrDefault(false)
 }

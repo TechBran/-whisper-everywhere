@@ -1210,9 +1210,9 @@ private fun LivePreviewRows(
     //
     // `PreviewTrigger.TAP` because a tap is a PICK, not an unasked top-up: it is exempt from the
     // once-per-launch latch (a tap is consent and may be repeated) and it is recorded on the board
-    // as the user's own, which is what lets the copy state the deal honestly. It is also the one
-    // cause that spends the user's connection whatever the connection reads — this row has never
-    // been gated on metering, and the unasked top-up's wait for wifi is that path's alone.
+    // as the user's own, which is what lets the copy state the deal honestly. This row has never
+    // been gated on the connection at all, and since Fix 1 nothing in the feature is gated on
+    // what the bytes COST: what the unasked path still waits for is a network that works.
     val startPreviewInstall: () -> Unit = {
         PreviewAutoFetchController.start(app, previewPack, previewState, PreviewTrigger.TAP)
     }

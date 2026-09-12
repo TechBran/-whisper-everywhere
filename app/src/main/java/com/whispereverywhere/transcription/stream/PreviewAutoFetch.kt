@@ -16,47 +16,70 @@ package com.whispereverywhere.transcription.stream
  * [decide]; the actuator ([PreviewAutoFetchController]) performs whatever it answered. Neither
  * decides anything of its own — `LiveWordsCardPinTest` holds them to that as source.
  *
- * ### The CONTROLLER RULING on data (2026-09-11), and where it lives
+ * ### THE OWNER'S RULING ON DATA (2026-09-11, settled) — THERE IS NO METERED TEST HERE
  *
- * The owner's *"it's nothing, everyone's phone can handle that"* is about STORAGE, and it is
- * accepted: 73 MB of `filesDir` is nothing on a modern phone. It is not nothing on a capped
- * plan, and this app has never moved a byte the user did not ask for. So the auto-fetch is
- * silent on an UNMETERED connection and becomes a CARD WITH A TAP on a metered one — the user's
- * consent, once, for their own data. One predicate ([unmetered]'s reading at the one call site)
- * is the whole flip if that ruling is ever overruled.
+ * Asked directly whether BOTH acquisition paths should simply download, the owner answered:
  *
- * **RULING 3a, 2026-09-11, KEEPS THIS EXACTLY AS 4.4.1 SHIPPED IT — do not delete it.** The
- * owner validated AF1 *and* AF2 on device that day, and then ruled only on the SELECTION path
- * (the section below). An earlier reading of that ruling deleted the OFFER-because-metered
- * branch, which turned a metered unasked top-up into a card-less, tap-less silence; the owner
- * withdrew that instruction (4.5.0 Task 3 review r1, B1). He has never ruled on the unasked
- * top-up's metered behaviour, so the metered case stays an OFFER: *"a cellular user who already
- * had that language selected still gets the 4.4.1 card and has to tap it."*
+ * > *"Yes. I wanted to silently download on cellular and Wi Fi."*
  *
- * ### AND ITS OTHER HALF: A PICK IS A CONSENT (owner, 2026-09-11 — Task 3b)
+ * Earlier in the same exchange: *"You switch a language, it downloads the model"*, and *"not make
+ * the users tap anything"*. So **both starters — a language the user just picked
+ * ([PreviewStarter.PICK]) and the unasked foreground top-up ([PreviewStarter.TOP_UP]) — fetch on
+ * any connection, with no tap, no card in the way and no confirmation.**
  *
- * > *"And if you select a different language, then automatically download and set up the language
- * > pack for that language automatically. … No one's gonna care about sixty more megabytes."*
+ * The quote and the date are IN THE CODE deliberately. Three consecutive review rounds rewrote
+ * this one cell in three directions, each of them correct against the document it could see, and
+ * a decision whose only authority is a scratch file that keeps moving gets reversed a fourth time.
+ * What this replaces, by name so nobody restores it: a CONTROLLER ruling that a metered
+ * connection should become *"a card with a tap — the user's consent, once, for their own data"*,
+ * and 4.4.1's **AF2** acceptance row, which that ruling produced and which the owner validated on
+ * his own device. AF2 describes behaviour this build deliberately removes; it is REWRITTEN on the
+ * sheet rather than deleted, because a row that once passed and now describes the opposite is how
+ * a regression gets mistaken for a fix.
  *
- * **AN UNASKED BACKGROUND TRANSFER WAITS FOR WIFI; A TRANSFER THE USER JUST CAUSED BY PICKING A
- * LANGUAGE HAPPENS AT ONCE, BECAUSE THE PICK IS THE CONSENT.** That sentence is the whole of the
- * asymmetry, it is deliberate, and [decide]'s [PreviewStarter] parameter is where it lives —
- * written down here and there because someone reading either half alone will otherwise "fix" it
- * into symmetry, in one of the two directions that each undo a ruling.
+ * **What it costs, surfaced rather than hidden:** this feature can now spend up to 128 MB of a
+ * user's mobile data unasked (French is the largest pack; English 73 MB, German 71 MB), including
+ * for a language the user selected before the last app update and has not touched today. The owner
+ * ruled that three times, the last time explicitly after the cellular cost was put to him. It is
+ * his call about his users and it is not re-litigated here.
  *
- * The consequence, surfaced rather than hidden: **a cellular user who PICKS a language gets an
- * immediate download with no tap, while a cellular user who already had that language selected
- * still gets 4.4.1's offer card and has to tap it.** Both are the ruling — the brief states this
- * cost in those words and forbids the copy from pretending otherwise. What tells the two apart is
- * [PreviewPicks] — a pick is an event this process watched happen, not a value a preference can
- * report.
+ * **What makes it a deal rather than a surprise is the copy at the point of choice**, and with no
+ * tap gate left those sentences are the ONLY disclosure the product has: `StreamingPackCopy
+ * .PICKER_DEAL` above the in-app picker and `StreamingPackCopy.LANGUAGE_STEP_SENTENCE` on
+ * onboarding's language step. They are required at BOTH selection sites for that reason — a
+ * first-run user's first pick is an onboarding pick.
  *
- * The exception is [StreamingPackState.PackDelivered]: Google Play has already delivered those
- * bytes to the device and the install is a local verify + copy that touches no network at all
- * (`StreamingPackManager.installFromPack`). Metering cannot apply to a transfer that does not
- * happen, so that one route auto-installs on any connection — which is also the literal reading
- * of the brief's *"Installed/PackDelivered/in-flight never re-fetch"*: a delivered pack never
- * FETCHES, it installs.
+ * One thing the app does not control: for an on-demand fetch this size Google Play may raise its
+ * OWN confirmation or wifi-wait dialog ([PreviewPhase.AWAITING_ANSWER], `CARD_ANSWER_PLAY`).
+ * *"Silently"* is as silent as Play allows; nothing of OURS asks for anything.
+ *
+ * ### What survives the ruling, and it is NOT a data gate: the network has to WORK
+ *
+ * [workingNetwork] is `NET_CAPABILITY_INTERNET && NET_CAPABILITY_VALIDATED`
+ * (`ConnectivityMonitor.hasValidatedNetwork`). The predicate it replaces — `isUnmetered`, deleted
+ * from the app with this ruling — asked *"may this app spend these bytes"*. This one asks *"is
+ * there a network at all"*, which is a different question, and it is the reason the previewer
+ * still references `ConnectivityMonitor`: a captive-portal wifi (a hotel, an airport, a coffee
+ * shop) reports connected while every request fails, and an unasked fetch started there fails and
+ * then parks the pack behind the 24 h [BACK_OFF_MS] stamp — withholding the model for a DAY after
+ * the user reaches a network that would have worked. **Metered goes; validated stays.**
+ *
+ * ### What the STARTER still buys, now that it does not buy the bytes
+ *
+ * Two things, both on the unasked path and neither about money: the working-network wait above,
+ * and the 24 h back-off. A [PreviewStarter.PICK] consults neither — a pick is a gesture the user
+ * just made, not the across-launch loop the back-off exists for — and is bounded instead by
+ * [attemptedThisLaunch], which binds on both starters. What tells the two apart is [PreviewPicks]:
+ * a pick is an event this process watched happen, not a value a preference can report. (So the
+ * register is NOT dead after this ruling. It also feeds `PreviewWork.starter`, which is Task 1's
+ * observable answering *"who started this"*.)
+ *
+ * [StreamingPackState.PackDelivered] is exempt from even that: Google Play has already delivered
+ * those bytes to the device and the install is a local verify + copy that touches no network at
+ * all (`StreamingPackManager.installFromPack`), so a wait for a network cannot apply to a transfer
+ * that does not happen. That is also the literal reading of the brief's
+ * *"Installed/PackDelivered/in-flight never re-fetch"*: a delivered pack never FETCHES, it
+ * installs.
  *
  * ### Why [StreamingPackState.Downloadable] is never silent, on any connection (review r1, B1)
  *
@@ -127,7 +150,15 @@ object PreviewAutoFetch {
         /** The fetch or the install is running; the card carries its progress line. */
         WORKING,
 
-        /** The metered (or backed-off) case: the offer, with the action that starts it. */
+        /**
+         * The offer, with the action that starts it — and since Fix 1 **never because of what the
+         * bytes cost**. Its KDoc said *"the metered (or backed-off) case"*; the metered half is
+         * gone with the owner's ruling and what is left is the cases where the app has nothing
+         * more to try silently and a tap is the way on: the third-party route
+         * ([StreamingPackState.Downloadable], whose consent is about WHO serves the bytes), this
+         * launch's one attempt already spent ([PreviewAutoFetchController.attemptedThisLaunch]),
+         * the 24 h back-off after a failure, and the unasked path's wait for a network that works.
+         */
         OFFER,
 
         /** The one-time announcement that live words are on and English shows them. */
@@ -194,18 +225,20 @@ object PreviewAutoFetch {
      * @param localTierInstalled an on-device whisper tier exists. See the class KDoc: without one
      *        nothing transcribes on this device at all and no word can reach the bubble.
      * @param starter WHO caused this look — [PreviewTrigger.starter] at the one call site, never a
-     *        literal. **The asymmetry of rulings 3a and 3b hangs on this one input, and on nothing
-     *        else**: an unasked [PreviewStarter.TOP_UP] waits for an unmetered network — offering
-     *        4.4.1's card with a tap while it waits — and is held to that offer by the 24 h
-     *        back-off, while a [PreviewStarter.PICK] spends the connection at once and ignores
-     *        that back-off, *because the pick IS the consent*. The one rule they
-     *        SHARE is [attemptedThisLaunch]: both are re-decided by a recomposition, so both are
-     *        latched, or a failed pick retries itself for the life of the process.
-     * @param unmetered the platform's own NOT_METERED *and* VALIDATED reading
-     *        (`ConnectivityMonitor.isUnmetered`, false when there is no active network at all and
-     *        false on a captive portal — CONTROLLER RULING 2026-09-11, CHANGE 1). The CONTROLLER
-     *        RULING's one predicate, and it is read on the UNASKED path only: a [starter] of
-     *        [PreviewStarter.PICK] never consults it (ruling 3b).
+     *        literal. **It no longer decides anything about the COST of the bytes** (Fix 1: there
+     *        is no metered test in this feature). What is left is two rules, both on the unasked
+     *        path: an unasked [PreviewStarter.TOP_UP] waits for a [workingNetwork] and is held to
+     *        the offer by the 24 h back-off, while a [PreviewStarter.PICK] consults neither. The
+     *        rule they SHARE is [attemptedThisLaunch]: both are re-decided by a recomposition, so
+     *        both are latched, or a failed pick retries itself for the life of the process.
+     * @param workingNetwork the platform says there is a network that WORKS —
+     *        `NET_CAPABILITY_INTERNET && NET_CAPABILITY_VALIDATED`
+     *        (`ConnectivityMonitor.hasValidatedNetwork`, false when there is no active network at
+     *        all and false on a captive portal). **Not a metering read and not a consent
+     *        question** — see the class KDoc: the metered half of what it replaces was deleted by
+     *        the owner's ruling, and the validated half deliberately survives so a doomed fetch
+     *        cannot park the pack behind the 24 h back-off. Read on the UNASKED path only, exactly
+     *        where it was.
      * @param sessionActive a dictation session is being set up, recording, or finishing
      *        (`AudioArbiter.isCapturing` — the house's single owner of that question). A 73 MB
      *        transfer and a sha256 of it beside a live transcription is the same CPU contention
@@ -233,7 +266,7 @@ object PreviewAutoFetch {
         showLiveWords: Boolean,
         localTierInstalled: Boolean,
         starter: PreviewStarter,
-        unmetered: Boolean,
+        workingNetwork: Boolean,
         sessionActive: Boolean,
         batchJobActive: Boolean,
         packWorkInFlight: Boolean,
@@ -253,37 +286,40 @@ object PreviewAutoFetch {
         if (!localTierInstalled) return Decision.NONE
         if (sessionActive || batchJobActive) return Decision.NONE
         if (packWorkInFlight) return Decision.NONE
-        val wouldSpendTheUsersData = when (state) {
+        val needsTheNetwork = when (state) {
             // Play has already put these bytes on the device: the install is a local verify +
-            // copy and no connection is touched, so metering cannot apply to it.
+            // copy and no connection is touched at all.
             StreamingPackState.PackDelivered -> false
             // 73 MB of the APP'S OWN asset pack, from Google Play, over the user's connection.
             StreamingPackState.PackFetchable -> true
             // 73 MB from a THIRD PARTY (the catalog's commit-pinned base), which this app never
-            // moves unasked however cheap the connection: OFFER, and the card carries the
+            // moves unasked however good the connection: OFFER, and the card carries the
             // download's own sentence for the user to answer. See the class KDoc.
             //
-            // (4.5.0 Task 3b) AND A PICK DOES NOT CHANGE IT, deliberately. Ruling 3b is about
-            // what a transfer COSTS — "no one's gonna care about sixty more megabytes" — and this
-            // route's consent is about WHO serves the bytes: the pick says nothing about Hugging
-            // Face, and `installDownload` is the one sentence in the feature that admits a third
-            // party. Unreachable on a Play install; see the report's concern.
+            // (4.5.0 Task 3b) AND A PICK DOES NOT CHANGE IT, deliberately. The owner's ruling is
+            // about what a transfer COSTS — "no one's gonna care about sixty more megabytes" —
+            // and this route's consent is about WHO serves the bytes: the pick says nothing about
+            // Hugging Face, and `installDownload` is the one sentence in the feature that admits
+            // a third party. Unreachable on a Play install; see the report's concern.
             StreamingPackState.Downloadable -> return Decision.OFFER
             // Both answered above; spelled so this `when` is total over the machine rather than
             // wildcarding a future state into a silent transfer.
             StreamingPackState.Installed -> return Decision.NONE
             is StreamingPackState.Repair -> return Decision.NONE
         }
-        // (4.5.0 Task 3a + 3b) THE ASYMMETRY, AND IT IS DELIBERATE: AN UNASKED BACKGROUND
-        // TRANSFER WAITS FOR WIFI; A TRANSFER THE USER JUST CAUSED BY PICKING A LANGUAGE HAPPENS
-        // AT ONCE, BECAUSE THE PICK IS THE CONSENT.
+        // THE ONE CONNECTION TERM LEFT, AND IT IS NOT ABOUT MONEY (Fix 1). The owner, 2026-09-11,
+        // asked directly whether both paths should simply download: *"Yes. I wanted to silently
+        // download on cellular and Wi Fi."* **THERE IS NO METERED TEST IN THIS FEATURE.** The
+        // line that stood here was `!unmetered && starter == TOP_UP -> OFFER`, i.e. 4.4.1's card
+        // with a sized one-tap fetch on cellular (AF2, owner-validated, now rewritten), and the
+        // CONTROLLER ruling behind it is overruled.
         //
-        // 3a KEEPS 4.4.1's answer for the unasked half, unchanged and by name: the card with a
-        // sized one-tap fetch, which the owner validated on device as AF2. What 3b adds is the
-        // starter term — *"if you select a different language, then automatically download and
-        // set up the language pack for that language automatically"* — so a PICK falls through to
-        // FETCH here instead of being offered a card it has already answered.
-        if (wouldSpendTheUsersData && !unmetered && starter == PreviewStarter.TOP_UP) {
+        // What this tests instead is whether the network WORKS — VALIDATED, never NOT_METERED,
+        // which `ConnectivityMonitor` no longer reads at all. A captive portal reports connected
+        // while every request fails, and an unasked fetch started there fails and then parks the
+        // pack behind the 24 h back-off: a day of silence bought by asking the wrong question. So
+        // metered went and validated stayed, on the unasked path only, exactly where it was.
+        if (needsTheNetwork && !workingNetwork && starter == PreviewStarter.TOP_UP) {
             return Decision.OFFER
         }
         // THE LOOP GUARD BINDS ON BOTH STARTERS. A pick is decided in composition and the effect

@@ -10,10 +10,12 @@ import org.junit.Test
 /**
  * THE PICK REGISTER (4.5.0 Task 3b) — the process-scoped record of *"the user chose this
  * language while this process was running"*, which is the one fact
- * `PreferencesManager.selectedLanguage` can never report and the one the 3a/3b asymmetry turns on.
+ * `PreferencesManager.selectedLanguage` can never report.
  *
  * Small enough to read in one screen and load-bearing enough to spend a 73 MB cellular transfer,
- * so every property it has is asserted here rather than argued in its KDoc.
+ * so every property it has is asserted here rather than argued in its KDoc. (Fix 1 narrowed what
+ * it buys — there is no metered test left for it to gate — but it did not retire it: the unasked
+ * path still waits for a working network and still defers to the back-off.)
  */
 class PreviewPicksTest {
 
@@ -23,10 +25,10 @@ class PreviewPicksTest {
 
     @Test fun nothingIsPickedInAFreshProcess() {
         // The default is what decides a cold start, and it must be "nobody asked": the language
-        // already in the preference at launch is a standing SELECTION, not a live consent to
-        // spend today's data. The brief's own consequence — "a cellular user who already had that
-        // language selected still gets the 4.4.1 card and has to tap it" — is exactly this
-        // emptiness: an empty register means TOP_UP, which is the path that offers the card.
+        // already in the preference at launch is a standing SELECTION and not a gesture this
+        // process watched happen. An empty register means TOP_UP — which since Fix 1 fetches on
+        // any network that works, and differs from a pick only in waiting for one at all and in
+        // deferring to the 24 h back-off.
         assertEquals(emptySet<String>(), PreviewPicks.picked.value)
         assertFalse(PreviewPicks.wasPicked("en"))
         assertFalse(PreviewPicks.wasPicked("auto"))
@@ -72,8 +74,8 @@ class PreviewPicksTest {
     @Test fun aRepeatedPickOfTheSameLanguageChangesTheStateExactlyOnce() {
         // This is the case the selection flow itself cannot see: a `StateFlow` conflates equal
         // values, so re-picking the language ALREADY selected emits no new selection at all. The
-        // first such tap DOES change this set — which is what makes "tap your own language on
-        // cellular" start the pack the top-up was waiting for wifi to fetch — and the second
+        // first such tap DOES change this set — which is what makes "tap your own language again"
+        // start the pack a backed-off top-up would have stayed quiet about — and the second
         // changes neither, which is the honest answer to a gesture that changed nothing.
         val before = PreviewPicks.picked.value
         PreviewPicks.note("en")
@@ -106,7 +108,7 @@ class PreviewPicksTest {
                 showLiveWords = true,
                 localTierInstalled = true,
                 starter = PreviewStarter.PICK,
-                unmetered = false,
+                workingNetwork = false,
                 sessionActive = false,
                 batchJobActive = false,
                 packWorkInFlight = false,
@@ -117,10 +119,15 @@ class PreviewPicksTest {
     }
 
     @Test fun theRegisterIsWhatTurnsATopUpIntoAPickAndNothingElseDoes() {
-        // The seam, end to end on the pure side: the same inputs, the same metered connection, and
+        // The seam, end to end on the pure side: the same inputs, the same unusable network, and
         // the answer turns on membership in this set. This is the assertion that would fail if a
         // future edit derived the starter from the preference instead — the mistake the register
         // exists to make unnecessary.
+        //
+        // (Fix 1) The cell that tells the two apart is no longer a METERED connection — the owner
+        // ruled that test away — but the register is still a live decision input, because the
+        // unasked path still waits for a network that works and still defers to the 24 h
+        // back-off, and a pick does neither.
         fun decide(picked: Boolean) = PreviewAutoFetch.decide(
             selectedLanguage = "en",
             packLanguage = "en",
@@ -129,7 +136,7 @@ class PreviewPicksTest {
             showLiveWords = true,
             localTierInstalled = true,
             starter = if (picked) PreviewStarter.PICK else PreviewStarter.TOP_UP,
-            unmetered = false,
+            workingNetwork = false,
             sessionActive = false,
             batchJobActive = false,
             packWorkInFlight = false,
@@ -137,7 +144,7 @@ class PreviewPicksTest {
             backedOff = false,
         )
         assertEquals(
-            "unpicked: the unasked top-up gets 4.4.1's card with a tap, which ruling 3a keeps",
+            "unpicked: the unasked top-up waits for a network that works, and offers meanwhile",
             PreviewAutoFetch.Decision.OFFER,
             decide(PreviewPicks.wasPicked("en")),
         )

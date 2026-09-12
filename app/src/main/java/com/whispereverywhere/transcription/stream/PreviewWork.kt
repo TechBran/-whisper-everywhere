@@ -8,22 +8,29 @@ import kotlinx.coroutines.flow.update
 
 /**
  * WHY an arrival is being started — the CAUSE, as the one call site that knows it spells it, and
- * the input both the connection rule and the once-per-launch latch branch on (4.5.0 Task 3b).
+ * the input the unasked path's two cautions and the once-per-launch latch branch on (Task 3b).
  *
  * Three values rather than [PreviewStarter]'s two, because the two questions they answer split
  * differently and a boolean cannot carry both:
  *
- * | | [starter] — may it spend a metered connection? | [latchedForTheLaunch] — is it once per launch? |
+ * | | [starter] — the unasked path's two cautions? | [latchedForTheLaunch] — once per launch? |
  * |---|---|---|
- * | [TOP_UP] | no: nobody asked | yes |
- * | [SELECTION] | **yes: the pick IS the consent** | **yes** |
- * | [TAP] | yes: the tap IS the consent | no: consent may be repeated |
+ * | [TOP_UP] | yes: nobody asked for this one | yes |
+ * | [SELECTION] | **no: the user just made this gesture** | **yes** |
+ * | [TAP] | no: the user just made this gesture | no: consent may be repeated |
  *
- * [SELECTION] is the row the 4.4.1 `auto: Boolean` could not express, and it is the whole of
- * ruling 3b: a pick spends the connection like a tap does, and is latched like a top-up is —
- * because a pick that FAILED must not retry itself on the next recomposition, which a
- * latch-exempt selection would (`decision` returns to FETCH the instant `busy()` goes false, and
- * the effect is keyed on `decision`).
+ * The two cautions are a wait for a network that WORKS and the 24 h back-off after a failure:
+ * both exist so a transfer nobody asked for cannot fail and then park the pack for a day.
+ *
+ * **Neither column is about METERING** (4.5.0 pass 2, Fix 1). The [starter] column used to read
+ * *"may it spend a metered connection?"*, and the owner deleted that question from the feature:
+ * *"Yes. I wanted to silently download on cellular and Wi Fi."* `PreviewAutoFetch`'s KDoc is that
+ * ruling's home.
+ *
+ * [SELECTION] is the row the 4.4.1 `auto: Boolean` could not express: it skips the unasked path's
+ * two cautions like a tap does, and is latched like a top-up is — because a pick that FAILED must
+ * not retry itself on the next recomposition, which a latch-exempt selection would (`decision`
+ * returns to FETCH the instant `busy()` goes false, and the effect is keyed on `decision`).
  */
 enum class PreviewTrigger {
     /** The foreground hook's unasked look at a pack the user has not touched. */
@@ -62,10 +69,14 @@ enum class PreviewTrigger {
 /**
  * WHO caused a transfer — the one distinction the copy cannot derive from anything else.
  *
- * The asymmetry the 2026-09-11 acquisition rulings turn on: an UNASKED top-up spends the user's
- * data without being asked and must therefore behave differently from a transfer the user caused
- * by picking a language, where the pick IS the consent. A surface that cannot tell the two apart
- * cannot state that deal honestly.
+ * An UNASKED top-up is one nobody asked for, so the two cautions that protect it (a wait for a
+ * working network, and the 24 h back-off) apply to it and not to a gesture the user just made.
+ * The surfaces need the distinction for a second reason and it is the durable one: a progress line
+ * over a transfer the user started reads differently from one over a transfer they did not.
+ *
+ * It is NOT a spending distinction. The 2026-09-11 acquisition rulings once divided the two on a
+ * metered connection; the owner settled that the other way (*"Yes. I wanted to silently download
+ * on cellular and Wi Fi"*) and `PreviewAutoFetch`'s KDoc is that ruling's home.
  *
  * Derived from [PreviewTrigger], never written at a call site: the cause is what a caller knows,
  * and the mapping from three causes to two starters is a rule with one home.

@@ -133,8 +133,15 @@ class StreamingPackCopyTest {
             StreamingPackCopy.settingsInstallFromPack(bytes),
         )
         assertEquals(
-            "The app's own 73 MB model, fetched from Google Play over your connection when you ask for it — never from a third party. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
+            // (Fix 1) *"when you ask for it"* is GONE: the owner ruled the metered tap away, so
+            // on this route the bytes move unasked and a sentence promising otherwise — rendered
+            // on the offer card as well as on the row — was the promise the ruling broke.
+            "The app's own 73 MB model, fetched from Google Play over your connection — never from a third party. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
             StreamingPackCopy.settingsInstallFetch(bytes),
+        )
+        assertFalse(
+            "no sentence in the feature may promise that nothing moves until a tap (Fix 1)",
+            StreamingPackCopy.settingsInstallFetch(bytes).contains("when you ask for it"),
         )
         assertEquals(
             "Download a 73 MB English preview model. Words appear on the bubble as you talk; the typed transcript is still the speech model's.",
@@ -158,7 +165,7 @@ class StreamingPackCopyTest {
         )
         assertEquals("Show live words", StreamingPackCopy.SWITCH_TITLE)
         assertEquals(
-            "Live words on the bubble follow the language you pick: English has a preview model today, and Auto-detect shows none at all. Your typed transcript is the same either way.",
+            "Live words on the bubble follow the language you pick: English has a preview model today, and Auto-detect shows none at all. The preview model for the language you pick is downloaded once setup finishes. Your typed transcript is the same either way.",
             StreamingPackCopy.LANGUAGE_STEP_SENTENCE,
         )
         assertEquals("Live words need a chosen language", StreamingPackCopy.AUTO_ROW_TITLE)
@@ -1251,6 +1258,28 @@ class StreamingPackCopyTest {
             "it says the switch DOWNLOADS something, which is the half of ruling 3b a user has " +
                 "to be told before they tap",
             StreamingPackCopy.PICKER_DEAL.contains("downloaded"),
+        )
+        // THE DISCLOSURE IS AT BOTH SELECTION SITES, AND FIX 1 IS WHY IT HAS TO BE. With the
+        // metered tap gone there is no gesture left anywhere that a caveat could precede, so
+        // these two sentences are the whole of what the user is told before the bytes move — and
+        // a first-run user only ever reads the onboarding one, because their first pick is made
+        // there. The tense differs deliberately: the ENGINES step comes AFTER the language step,
+        // so at that moment nothing has downloaded yet.
+        assertTrue(
+            "the onboarding step states the deal too: " +
+                "<<${StreamingPackCopy.LANGUAGE_STEP_SENTENCE}>>",
+            StreamingPackCopy.LANGUAGE_STEP_SENTENCE.contains(
+                "is downloaded once setup finishes",
+            ),
+        )
+        assertFalse(
+            "and it carries no figure either, for this sentence's own reason",
+            Regex("\\d").containsMatchIn(StreamingPackCopy.LANGUAGE_STEP_SENTENCE),
+        )
+        assertFalse(
+            "and it is not PICKER_DEAL pasted in: that sentence's tense is wrong at a step that " +
+                "downloads nothing while it is on screen",
+            StreamingPackCopy.LANGUAGE_STEP_SENTENCE.contains(StreamingPackCopy.PICKER_DEAL),
         )
         assertTrue(
             "and that the thing downloaded becomes their preview model, which is the owner's own " +
