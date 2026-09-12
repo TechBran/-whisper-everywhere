@@ -349,33 +349,52 @@ class PreviewPackLayoutTest {
     // ------------------------------------------------------------------ the pack builder
 
     @Test
-    fun theBuildScriptPlacesTheCatalogsOwnFourFilesAndReVerifiesWhatLanded() {
-        val pack = StreamingPackCatalog.EN
-        val module = StreamingPackCatalog.PACK_EN
-        assertEquals(
-            "the script names the module it fills",
-            1, count(script, "PREVIEW_MODULE = \"$module\""),
-        )
-        assertEquals(
-            "and the commit-pinned base URL — resolve/<sha>/, never resolve/main",
-            1, count(script, pack.baseUrl),
-        )
-        for (f in pack.files) {
+    fun theBuildScriptPlacesEveryRowsFourFilesAndReVerifiesWhatLanded() {
+        for ((pack, module) in modules) {
             assertEquals(
-                "the placement table carries ${f.name} with the catalog's byte count and " +
-                    "sha256 as literals — the cross-pin that stops the committed catalog and " +
-                    "the instrument that fills the pack drifting apart",
-                1,
-                count(script, "(\"${f.name}\", ${grouped(f.bytes)}, \"${f.sha256}\")"),
+                "the script names $module as a pack it fills",
+                1, count(script, "module=\"$module\","),
             )
+            assertEquals(
+                "and ${pack.language}'s commit-pinned base URL — resolve/<sha>/, never " +
+                    "resolve/main, because a mutable ref would rebuild a DIFFERENT pack under " +
+                    "the same name",
+                1, count(script, pack.baseUrl),
+            )
+            assertEquals(
+                "and the mirror subdirectory is the catalogue's own dirName, so the cache, the " +
+                    "mirror and the installed directory on the device all follow ONE naming rule",
+                1, count(script, "mirror_dir=\"${pack.dirName}\","),
+            )
+            for (f in pack.files) {
+                assertEquals(
+                    "the placement table carries ${f.name} with ${pack.language}'s byte count, " +
+                        "sha256 AND upstream path as literals, in one contiguous tuple — the " +
+                        "cross-pin that stops the committed catalog and the instrument that " +
+                        "fills the pack drifting apart",
+                    1,
+                    count(
+                        script,
+                        "(\"${f.name}\", ${grouped(f.bytes)}, \"${f.sha256}\", \"${f.path}\")",
+                    ),
+                )
+            }
         }
         assertEquals(
-            "the placement re-verifies its own output through one function",
+            "the script builds the download URL from the file's UPSTREAM path and never from its " +
+                "flat local name. The two differ on de and zh, and each way round fails " +
+                "differently: `name` in the URL is a 404, and `path` on disk is a subdirectory " +
+                "the installer never writes and sherpa never opens. There is one expression, and " +
+                "this is it.",
+            1, count(script, "pack.base_url + path"),
+        )
+        assertEquals(
+            "the placement re-verifies its own output through one function, per pack",
             1, count(script, "def verify_preview_dir("),
         )
-        assertTrue(
+        assertEquals(
             "and a failed self-verification is a named FATAL, not a warning",
-            count(script, "the placed preview pack failed its own verification") == 1,
+            1, count(script, "the placed preview pack failed its own verification"),
         )
     }
 }

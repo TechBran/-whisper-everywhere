@@ -57,28 +57,36 @@ binaries under the census's delivery names. Same verification, then the zip's ow
 publishing beside the file. ``tools/pack_npu_zip.py`` is untouched: its pins stand, and it
 remains the 8gen3 recipe the 4.1 acceptance used.
 
-``preview`` (4.4.0, owner ruling 2026-09-10) places the STREAMING PREVIEWER's pack payload: the
-four ``streaming-zipformer-en-2023-06-26`` files into ``preview_en/src/main/assets/preview_en/``,
-each streamed with sha256 riding the copy and ASSERTED against ``StreamingPackCatalog.EN``'s own
-byte counts and digests (restated here as literals; ``PreviewPackLayoutTest`` pins the two tables
-equal), then the whole directory re-verified from disk. Files are taken from a local mirror when
-one has them at the right size and hash, and otherwise downloaded from the COMMIT-PINNED Hugging
-Face base — ``resolve/<sha>/``, never ``resolve/main`` — so a clean clone reproduces the pack.
-Unlike the NPU packs this one is NOT device-targeted: one untargeted directory, every device, no
-``#group_`` variants and no empty default to keep empty.
+``preview`` (4.4.0, owner ruling 2026-09-10; ALL SEVEN packs since the 2026-09-12 ruling "let's
+set up all 6 languages") places the STREAMING PREVIEWER's pack payloads: four raw files per pack
+into ``preview_<lang>/src/main/assets/preview_<lang>/``, each streamed with sha256 riding the copy
+and ASSERTED against that row's own ``StreamingPackCatalog`` byte count and digest (restated here
+as literals; ``PreviewPackLayoutTest`` pins the two tables equal, row by row), then each directory
+re-verified from disk before the next pack is touched. Files are taken from that pack's local
+mirror when it has them at the right size and hash, and otherwise downloaded from the
+COMMIT-PINNED Hugging Face base — ``resolve/<sha>/``, never ``resolve/main`` — so a clean clone
+reproduces every pack. A file's UPSTREAM path is not always its flat name: German's four files and
+the bilingual zh-en row's live in subdirectories (German's with commas in the ONNX filenames), so
+the download reads ``path`` and the placement writes ``name``. Unlike the NPU packs these are NOT
+device-targeted: one untargeted directory each, every device, no ``#group_`` variants and no empty
+default to keep empty.
 
 Usage:
     python build_asset_packs.py measure [workspace]
     python build_asset_packs.py build [workspace]
     python build_asset_packs.py delivery-zip <familyId> <tierId> [workspace]
-    python build_asset_packs.py preview [mirror]
+    python build_asset_packs.py preview [mirror-root]
 
     workspace   defaults to C:\\Users\\bastr\\.androidbuild\\fleet-packs
-    mirror      defaults to C:\\Users\\bastr\\.androidbuild\\streaming-models\\en-2023-06-26
-                (a directory that need not exist: missing files are fetched from the pinned
-                commit instead)
+    mirror-root defaults to C:\\Users\\bastr\\.androidbuild\\streaming-models, with one
+                subdirectory per pack named after that row's own catalogue `dirName`
+                (en-2023-06-26, fr-2023-04-14, de-cv17-epoch-30, ru-vosk-2025-08-16,
+                id-iter-100000, ko-72m-chunk-16, zh-en-t-chunk-32), each holding the FLAT
+                file names. Neither the root nor any subdirectory need exist: a missing
+                file is fetched from that pack's pinned commit instead
 """
 
+import collections
 import hashlib
 import os
 import sys
@@ -727,56 +735,156 @@ def delivery_zip(workspace: str, family: str, tier: str) -> None:
     print(f"  sha256 {sha256_file(out)}")
 
 
-# ---------------------------------------------------------------------------- preview_en (4.4.0)
-# The streaming previewer's pack (owner ruling 2026-09-10, the amendment pad): four raw files at
-# ONE immutable Hugging Face commit, placed into the pack module's single UNTARGETED directory.
+# --------------------------------------------------------------- the preview packs (4.4.0, 4.5.0)
+# The streaming previewer's model packs: FOUR raw files per pack at ONE immutable Hugging Face
+# commit each, placed into that pack module's single UNTARGETED directory. `preview_en` landed with
+# the owner's 2026-09-10 ruling (the amendment pad); the six LANGUAGE packs land with his
+# 2026-09-12 one -- "let's set up all 6 languages" -- on identical terms.
 #
-# Why the table is here as literals, again: this script cannot read the app's classes, so the
-# byte counts and digests are restated -- and PreviewPackLayoutTest pins each row equal to
-# StreamingPackCatalog.EN, so a re-pin on either side is a red test rather than a silent drift.
-# The names are the upstream file names at the commit; verifyPreviewPack (in app/build.gradle.kts)
-# re-checks the placed sizes before every bundle build, and StreamingPackInstall re-hashes on the
-# device before a byte is installed. Three gates, one census.
-PREVIEW_MODULE = "preview_en"
+# Why the table is here as literals, again: this script cannot read the app's classes, so the byte
+# counts and digests are restated -- and PreviewPackLayoutTest pins every row equal to
+# StreamingPackCatalog, so a re-pin on either side is a red test rather than a silent drift.
+# verifyPreviewPack (in app/build.gradle.kts) re-checks the placed sizes of all seven packs before
+# every bundle build, and StreamingPackInstall re-hashes on the device before a byte is installed.
+# Three gates, one census.
+#
+# THE TWO SPELLINGS OF A FILE, and why every row carries both. `name` is the flat name the file has
+# everywhere the app touches it: the AAB asset entry, the file the installer writes, the name sherpa
+# opens, the second column of the `.installed` marker. `path` is where the same bytes live in the
+# pinned commit. They coincide for five packs and they do NOT for two -- German's four files are
+# under `exp/epoch-30/` and `lang_bpe_500/` with COMMAS in the ONNX filenames, and the bilingual
+# zh-en row's are under `exp/32/` and `data/lang_char_bpe/`. So the DOWNLOAD reads `path` and the
+# PLACEMENT writes `name`, which is the only arrangement in which such a pack can both download and
+# load. (StreamingPackCatalog.PackFile's KDoc owns that argument; this is the half of it a script
+# has to act on.)
+#
+# AND WHY THE DIGEST IS THE AUTHORITY, NOT THE NAME. Two of these repos publish sibling exports
+# whose files are nearly indistinguishable by name or size: the Korean repo's chunk-32 and chunk-64
+# exports carry decoder and joiner files BYTE-IDENTICAL to the chunk-16 ones we place, and the
+# bilingual repo's `exp/64/` and `exp/96/` encoders are ELEVEN and TWELVE bytes larger than
+# `exp/32/`'s. A size check alone would accept the wrong export; the sha256 is what refuses it.
 
-# resolve/<commit sha>/, the catalog's own rule (WhisperModel.kt:103-108): resolve/main is a
-# MUTABLE ref, and a replaced upstream file would rebuild a DIFFERENT pack under the same name.
-PREVIEW_BASE_URL = "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/"
+# One row per pack. `mirror_dir` is the catalogue's own `dirName`, so a mirror laid out as
+# <root>/<dirName>/<flat name> is the same shape the installer writes under filesDir -- one naming
+# rule for the cache, the mirror and the device.
+PreviewPack = collections.namedtuple("PreviewPack", "module base_url mirror_dir files")
 
-# (name, bytes, sha256) -- re-hashed on the PC (rung 1 section 1.2) and on the Tab (rung 3).
-PREVIEW_FILES = (
-    ("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 71_083_163, "563fde436d16cf7607cf408cd6b30909819d03162652ef389c2450ced3f45ac1"),
-    ("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_307_236, "98da299f471e38bb4e1a8df579b8cc9122d6039576a77e357b3c60f17dd83b02"),
-    ("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 259_335, "d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297"),
-    ("tokens.txt", 5_048, "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb"),
+# resolve/<commit sha>/ on every row, the catalog's own rule (WhisperModel.kt:103-108):
+# resolve/main is a MUTABLE ref, and a replaced upstream file would rebuild a DIFFERENT pack under
+# the same name -- which is not a hypothetical here, it is the 2026-09-08 voice incident one
+# directory over.
+#
+# (name, bytes, sha256, path) -- each tuple on ONE line, deliberately: PreviewPackLayoutTest pins
+# them as contiguous text, and a wrapped tuple is a pin that a re-indent can silently retire.
+PREVIEW_PACKS = (
+    PreviewPack(
+        module="preview_en",
+        base_url="https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/",
+        mirror_dir="en-2023-06-26",
+        files=(
+            ("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 71_083_163, "563fde436d16cf7607cf408cd6b30909819d03162652ef389c2450ced3f45ac1", "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"),
+            ("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_307_236, "98da299f471e38bb4e1a8df579b8cc9122d6039576a77e357b3c60f17dd83b02", "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"),
+            ("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 259_335, "d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297", "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx"),
+            ("tokens.txt", 5_048, "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb", "tokens.txt"),
+        ),
+    ),
+    PreviewPack(
+        module="preview_fr",
+        base_url="https://huggingface.co/shaojieli/sherpa-onnx-streaming-zipformer-fr-2023-04-14/resolve/3db9565d9633758d6b87b9a7b3dc09ebfb6b2c73/",
+        mirror_dir="fr-2023-04-14",
+        files=(
+            ("encoder-epoch-29-avg-9-with-averaged-model.int8.onnx", 126_655_903, "47a94a7fdc8dff63d708be4ea0535747640224467f91e238311f1ddbdd09327e", "encoder-epoch-29-avg-9-with-averaged-model.int8.onnx"),
+            ("decoder-epoch-29-avg-9-with-averaged-model.int8.onnx", 1_307_157, "e72b2b9ed36355bd0dd43433f7dd258e7226ab54c9ef42b28c73ebb785805623", "decoder-epoch-29-avg-9-with-averaged-model.int8.onnx"),
+            ("joiner-epoch-29-avg-9-with-averaged-model.int8.onnx", 259_572, "fc2f3bb851a15a532c6f2422d53eecd1ca949f12b0897e07a852021c30481711", "joiner-epoch-29-avg-9-with-averaged-model.int8.onnx"),
+            ("tokens.txt", 4_819, "37fb3f2a7bcb85e5fff3f1f66be04e6fbb05077a22f56d177fe85704e945fb31", "tokens.txt"),
+        ),
+    ),
+    PreviewPack(
+        module="preview_de",
+        base_url="https://huggingface.co/daniel-dona/icefall-asr-commonvoice-zipformer-streaming-de/resolve/322557b0f88fc5a9823bc71027d4160f0c7612cc/",
+        mirror_dir="de-cv17-epoch-30",
+        files=(
+            ("encoder-epoch-30-avg-5.int8.onnx", 70_133_342, "e0163b48f89a81fafc4eb1804a77cdd33646970160f5d954a82774dc86e93fa5", "exp/epoch-30/encoder-epoch-30-avg-5-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx"),
+            ("decoder-epoch-30-avg-5.int8.onnx", 540_689, "8e787f64f765d2d4d1e17315879bc3cc1c2f517532799d78be034a03a9bcacda", "exp/epoch-30/decoder-epoch-30-avg-5-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx"),
+            ("joiner-epoch-30-avg-5.int8.onnx", 259_417, "d58379fa169af64034c127558230af63d0c08cda97a4a310b04af4b6ceb68956", "exp/epoch-30/joiner-epoch-30-avg-5-chunk-16,32,64,-1-left-64,128,256,-1.int8.onnx"),
+            ("tokens.txt", 5_086, "ad2da0c993128b66cead1d78adddc359bef69c50fca890bb5ca0500c97b6d23d", "lang_bpe_500/tokens.txt"),
+        ),
+    ),
+    PreviewPack(
+        module="preview_ru",
+        base_url="https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-ru-vosk-int8-2025-08-16/resolve/31fa603e4f31279c6e1f7600fed13dc4312663ab/",
+        mirror_dir="ru-vosk-2025-08-16",
+        files=(
+            ("encoder.int8.onnx", 26_214_060, "e0db705e94ec35d803b1df4f40cda23d064e1142977c80ab288430b109777a9d", "encoder.int8.onnx"),
+            ("decoder.onnx", 2_093_080, "89b3088a9e20e1ef7f2e85ce1a3478afe6a9c4ac57369cabcc4beb8e95328ea0", "decoder.onnx"),
+            ("joiner.int8.onnx", 259_417, "b55784b071ab7512eab4c7c44e4f5478284ef33c83562cc6a249b972515a31e5", "joiner.int8.onnx"),
+            ("tokens.txt", 6_388, "93bbbc0bae6b78c0bbb743d4aa9fded3bb5ff3aac5f0200e3a769a5a05e0fdf6", "tokens.txt"),
+        ),
+    ),
+    PreviewPack(
+        module="preview_id",
+        base_url="https://huggingface.co/spacewave/sherpa-onnx-streaming-zipformer2-id/resolve/4e5a13cbe3e9cd4e3775447d86178ef51759096f/",
+        mirror_dir="id-iter-100000",
+        files=(
+            ("encoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 70_103_186, "3a6f85f5d199ad0d495562988af017a75d4ae81b51126db240d959b065d6eaad", "encoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx"),
+            ("decoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 540_688, "6544848ca80b557ec3c8569169522dc6243b5bc9b296ea73791728510caacb4a", "decoder-iter-100000-avg-15-chunk-32-left-256.int8.onnx"),
+            ("joiner-iter-100000-avg-15-chunk-32-left-256.int8.onnx", 259_417, "4b89d96292460a92dedcb39e0b17904f10dbad335a8ab11015e567b4864102e0", "joiner-iter-100000-avg-15-chunk-32-left-256.int8.onnx"),
+            ("tokens.txt", 5_403, "f0b6f5bf602d96f60d79bb17192c51eeffb6189250f132b1dfdf72b130d66968", "tokens.txt"),
+        ),
+    ),
+    PreviewPack(
+        module="preview_ko",
+        base_url="https://huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m/resolve/db24b58d22736349eaeb34cc181ad0f3debf9903/",
+        mirror_dir="ko-72m-chunk-16",
+        files=(
+            ("encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 70_133_869, "5f2b6e5e92834849cfdbda3aaa355e6f39ff993f067794e4ab9d5cb993b15311", "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"),
+            ("decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_544_210, "40c3c57ad27b45b59e27bec8bfc02f04d27c060aeb8e964ae2f87bd9f356bf7d", "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"),
+            ("joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", 1_270_777, "7d3bd9c1e9cf60efa5d5fed728fbd52d0f08139775f9e9002fd088b4d78f3e73", "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx"),
+            ("tokens.txt", 20_844, "435dfb9e0a2b6a79124f1a4d8f0f33a951b25384726e2e0d854f081533e6ec9d", "tokens.txt"),
+        ),
+    ),
+    PreviewPack(
+        module="preview_zh",
+        base_url="https://huggingface.co/csukuangfj/k2fsa-zipformer-bilingual-zh-en-t/resolve/e2382758de9a0219b4efe682b95af30b399db3b8/",
+        mirror_dir="zh-en-t-chunk-32",
+        files=(
+            ("encoder-epoch-99-avg-1.int8.onnx", 42_980_793, "db6f51551762e40e549166fe041ea3e45464370b595e9ad23f06478ec3794fbb", "exp/32/encoder-epoch-99-avg-1.int8.onnx"),
+            ("decoder-epoch-99-avg-1.int8.onnx", 3_486_740, "4b618d383af304cfae281dbf0a53e8bf442c2f0502256cd5694bd6567ebdd834", "exp/32/decoder-epoch-99-avg-1.int8.onnx"),
+            ("joiner-epoch-99-avg-1.int8.onnx", 3_228_485, "bdda356d6f9b8c2d7cee9ee0e26075fa537490f7fd06520be408d287073667b9", "exp/32/joiner-epoch-99-avg-1.int8.onnx"),
+            ("tokens.txt", 56_317, "a8e0e4ec53810e433789b54a5c0134a7eaa2ffca595a6334d54c00da858841d3", "data/lang_char_bpe/tokens.txt"),
+        ),
+    ),
 )
 
-DEFAULT_PREVIEW_MIRROR = r"C:\Users\bastr\.androidbuild\streaming-models\en-2023-06-26"
+# The mirror ROOT. Each pack's mirror is <root>/<mirror_dir>/, holding the FLAT names -- a directory
+# that need not exist: a missing file is fetched from that pack's pinned commit instead.
+DEFAULT_PREVIEW_MIRROR_ROOT = r"C:\Users\bastr\.androidbuild\streaming-models"
 
-# The one file in the payload directory that is NOT payload: the tracked anchor that proves the
-# directory exists in a clean clone (the module's .gitignore re-includes it by name).
+# The one file in a payload directory that is NOT payload: the tracked anchor that proves the
+# directory exists in a clean clone (each module's .gitignore re-includes it by name).
 PREVIEW_ANCHOR = ".gitkeep"
 
 
-def preview_payload_dir() -> str:
-    """The pack module's single untargeted asset directory, named after the PACK (4.2 F8: no two
-    modules may ship the same entry path, and Play strips a group suffix on delivery, so the
-    device sees assets/preview_en/ -- which is what StreamingPackInstall.packSourceDir opens)."""
-    return os.path.join(repo_root(), PREVIEW_MODULE, "src", "main", "assets", PREVIEW_MODULE)
+def preview_payload_dir(module: str) -> str:
+    """A pack module's single untargeted asset directory, named after the PACK (4.2 F8: no two
+    modules may ship the same entry path, and Play strips a group suffix on delivery, so the device
+    sees assets/<module>/ -- which is what StreamingPackInstall.packSourceDir opens)."""
+    return os.path.join(repo_root(), module, "src", "main", "assets", module)
 
 
-def verify_preview_dir(out_dir: str) -> "str | None":
-    """What LANDED, re-read from disk: exactly the four files plus the anchor, every byte count
-    the catalog's, every digest re-hashed to the catalog's. None when green, else the first
-    problem as one sentence. Everything in this directory rides into the AAB and onto every
-    device (the pack is untargeted), so 'nothing else is in here' is part of the verdict."""
+def verify_preview_dir(pack: "PreviewPack", out_dir: str) -> "str | None":
+    """What LANDED for ONE pack, re-read from disk: exactly its four files plus the anchor, every
+    byte count the catalog's, every digest re-hashed to the catalog's. None when green, else the
+    first problem as one sentence. Everything in this directory rides into the AAB and onto every
+    device that fetches the pack (it is untargeted), so 'nothing else is in here' is part of the
+    verdict."""
     if not os.path.isdir(out_dir):
         return f"{out_dir} does not exist"
     names = sorted(os.listdir(out_dir))
-    want = sorted([name for name, _, _ in PREVIEW_FILES] + [PREVIEW_ANCHOR])
+    want = sorted([name for name, _, _, _ in pack.files] + [PREVIEW_ANCHOR])
     if names != want:
-        return f"carries {names}; the preview pack is exactly {want}"
-    for name, want_bytes, want_sha in PREVIEW_FILES:
+        return f"carries {names}; {pack.module} is exactly {want}"
+    for name, want_bytes, want_sha, _ in pack.files:
         path = os.path.join(out_dir, name)
         got = os.path.getsize(path)
         if got != want_bytes:
@@ -792,8 +900,9 @@ def stream_pinned(reader, dest: str, name: str, want_bytes: int, want_sha: str,
     """Stream ONE pinned artefact from an open reader into dest with sha256 riding the copy. The
     .part is promoted only after BOTH the length and the digest match the caller's literals, so a
     truncated transfer or a replaced upstream file leaves nothing behind that a later run could
-    mistake for the real thing. Shared by the two untargeted packs -- preview_en's four files and
-    tts_kokoro's one archive -- so "the bytes are the ones we pinned" is decided in ONE place."""
+    mistake for the real thing. Shared by the untargeted packs -- the seven preview packs' four
+    files each and tts_kokoro's one archive -- so "the bytes are the ones we pinned" is decided in
+    ONE place."""
     part = dest + ".part"
     digest = hashlib.sha256()
     copied = 0
@@ -818,54 +927,74 @@ def stream_pinned(reader, dest: str, name: str, want_bytes: int, want_sha: str,
     os.replace(part, dest)
 
 
-def place_preview_file(name: str, want_bytes: int, want_sha: str, out_dir: str,
-                       mirror: str) -> str:
-    """Place ONE pinned file into out_dir, from the local mirror when it already holds those exact
-    bytes and from the commit-pinned URL otherwise. The length/digest gate is stream_pinned's."""
-    local = os.path.join(mirror, name)
+def place_preview_file(pack: "PreviewPack", name: str, want_bytes: int, want_sha: str, path: str,
+                       out_dir: str, mirror_root: str) -> str:
+    """Place ONE pinned file into out_dir under its FLAT name, from this pack's local mirror when it
+    already holds those exact bytes and from the pack's commit-pinned URL otherwise. The URL is
+    built from `path`, which is not always `name` (German and the bilingual zh-en row keep theirs in
+    subdirectories, German's with commas in the filename); the length/digest gate is
+    stream_pinned's."""
+    local = os.path.join(mirror_root, pack.mirror_dir, name)
     source = "mirror"
     if os.path.isfile(local) and os.path.getsize(local) == want_bytes:
         reader = open(local, "rb")
     else:
         source = "pinned commit"
-        reader = urllib.request.urlopen(PREVIEW_BASE_URL + name, timeout=120)
+        reader = urllib.request.urlopen(pack.base_url + path, timeout=120)
     stream_pinned(reader, os.path.join(out_dir, name), name, want_bytes, want_sha, source)
     return source
 
 
-def place_preview_pack(mirror: str) -> None:
-    """Assemble the preview_en payload, then re-verify the whole directory from disk."""
-    out_dir = preview_payload_dir()
+def place_preview_pack(pack: "PreviewPack", mirror_root: str) -> int:
+    """Assemble ONE pack's payload, then re-verify its whole directory from disk. Returns how many
+    files this call actually transferred."""
+    out_dir = preview_payload_dir(pack.module)
     os.makedirs(out_dir, exist_ok=True)
     anchor = os.path.join(out_dir, PREVIEW_ANCHOR)
     if not os.path.isfile(anchor):
         with open(anchor, "w", encoding="utf-8"):
             pass
-    print(f"PREVIEW module={PREVIEW_MODULE} -> "
-          f"{PREVIEW_MODULE}/src/main/assets/{PREVIEW_MODULE}")
-    if verify_preview_dir(out_dir) is None:
+    print(f"PREVIEW module={pack.module} -> {pack.module}/src/main/assets/{pack.module}")
+    if verify_preview_dir(pack, out_dir) is None:
         print("  already the catalog (re-hashed from disk), rewrite skipped")
-        return
+        return 0
     # Anything that is neither payload nor the anchor would ride into the AAB: cleared, not kept.
-    keep = {name for name, _, _ in PREVIEW_FILES} | {PREVIEW_ANCHOR}
+    keep = {name for name, _, _, _ in pack.files} | {PREVIEW_ANCHOR}
     for stale in os.listdir(out_dir):
         if stale not in keep:
             os.remove(os.path.join(out_dir, stale))
     placed = 0
-    for name, want_bytes, want_sha in PREVIEW_FILES:
-        path = os.path.join(out_dir, name)
-        if os.path.isfile(path) and os.path.getsize(path) == want_bytes and \
-                sha256_file(path) == want_sha:
+    for name, want_bytes, want_sha, path in pack.files:
+        dest = os.path.join(out_dir, name)
+        if os.path.isfile(dest) and os.path.getsize(dest) == want_bytes and \
+                sha256_file(dest) == want_sha:
             print(f"  {name}: already the catalog, kept")
             continue
-        source = place_preview_file(name, want_bytes, want_sha, out_dir, mirror)
-        print(f"  {name}: {want_bytes} B from the {source}, catalog digest reproduced")
+        source = place_preview_file(pack, name, want_bytes, want_sha, path, out_dir, mirror_root)
+        note = "" if path == name else f" (upstream {path})"
+        print(f"  {name}: {want_bytes} B from the {source}{note}, catalog digest reproduced")
         placed += 1
-    problem = verify_preview_dir(out_dir)
+    problem = verify_preview_dir(pack, out_dir)
     if problem is not None:
-        raise fail(f"the placed preview pack failed its own verification: {problem}")
-    total = sum(b for _, b, _ in PREVIEW_FILES)
-    print(f"preview OK: {placed} file(s) placed, four files verified from disk, {total} B total")
+        raise fail(f"the placed preview pack failed its own verification: {pack.module}: {problem}")
+    total = sum(b for _, b, _, _ in pack.files)
+    print(f"  {pack.module} OK: {placed} file(s) placed, four files verified from disk, {total} B")
+    return placed
+
+
+def place_preview_packs(mirror_root: str) -> None:
+    """ALL SEVEN preview packs, each re-verified from disk before the next is touched. Fails on the
+    FIRST pack that cannot be reproduced rather than reporting six successes and a footnote -- a
+    bundle is only shippable when every pack in it is the catalog, so a partial run has no
+    meaningful success to report. Re-running is cheap: a pack that already verifies is skipped."""
+    placed = 0
+    total = 0
+    for pack in PREVIEW_PACKS:
+        placed += place_preview_pack(pack, mirror_root)
+        total += sum(b for _, b, _, _ in pack.files)
+    files = sum(len(p.files) for p in PREVIEW_PACKS)
+    print(f"preview OK: {len(PREVIEW_PACKS)} packs, {placed} file(s) transferred, {files} files "
+          f"verified from disk, {total} B total")
 
 
 # ---------------------------------------------------------------------------- tts_kokoro (4.4.0)
@@ -983,13 +1112,13 @@ def main(argv: list) -> None:
         f"usage: python {os.path.basename(argv[0])} measure [workspace]\n"
         f"       python {os.path.basename(argv[0])} build [workspace]\n"
         f"       python {os.path.basename(argv[0])} delivery-zip <familyId> <tierId> [workspace]\n"
-        f"       python {os.path.basename(argv[0])} preview [mirror]\n"
+        f"       python {os.path.basename(argv[0])} preview [mirror-root]\n"
         f"       python {os.path.basename(argv[0])} tts [mirror]"
     )
     if len(argv) < 2 or argv[1] not in ("measure", "build", "delivery-zip", "preview", "tts"):
         raise SystemExit(usage)
     if argv[1] == "preview":
-        place_preview_pack(argv[2] if len(argv) > 2 else DEFAULT_PREVIEW_MIRROR)
+        place_preview_packs(argv[2] if len(argv) > 2 else DEFAULT_PREVIEW_MIRROR_ROOT)
         return
     if argv[1] == "tts":
         place_tts_pack(argv[2] if len(argv) > 2 else DEFAULT_TTS_MIRROR)
