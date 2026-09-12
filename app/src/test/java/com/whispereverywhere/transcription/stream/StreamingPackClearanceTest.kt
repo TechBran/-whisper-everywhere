@@ -643,6 +643,12 @@ class StreamingPackClearanceTest {
      * And the refusal path, which is the half a checklist usually omits: a NO is not a switch, it
      * is the removal of a row, and the document has to say so — otherwise the first refusal gets
      * implemented as the build-time exclusion the owner's ruling forbids.
+     *
+     * **The cleared rows are held to the same join** (fix round 1, B1), because a clearance can be
+     * WITHDRAWN and the checklist documents how: a withdrawn row is an outstanding row, so its
+     * section, its answerer words and its commit have to be in the document *before* the day it is
+     * withdrawn rather than written on it. That is the difference between a document whose
+     * withdrawal path ends green and one that ends in this test throwing.
      */
     @Test fun theOwnersChecklistNamesEveryOutstandingLanguageAndTheEditsThatCloseIt() {
         val checklist = repoFile("docs/LANGUAGE-CLEARANCE.md").readText().replace("\r\n", "\n")
@@ -693,6 +699,40 @@ class StreamingPackClearanceTest {
                 "$name's section must name the commit its evidence was read at " +
                     "(${record.pinnedCommit}) — the checklist and the catalogue must not disagree " +
                     "about which bytes are being cleared",
+                checklist.contains(record.pinnedCommit),
+            )
+        }
+        // A CLEARED row has to be ready to become an outstanding one, because withdrawing a
+        // clearance is a path this checklist itself documents (fix round 1, B1 — and this is the
+        // assertion that would have caught what inspection did: English's section had the words
+        // "your own risk call" split across a line break, so a withdrawal of English would have
+        // reddened the loop above over a document that looked right). What is required is what the
+        // withdrawal template produces: a section, the phrase for the answerer that template
+        // records (OWNER), and the commit the evidence was read at.
+        for (record in PackClearanceRecord.RECORD) {
+            if (record.verdict !is ClearanceVerdict.Cleared) continue
+            val name = sectionNames[record.language]
+                ?: throw AssertionError(
+                    "'${record.language}' is cleared and this test does not know its section " +
+                        "name — add it here and add its section to docs/LANGUAGE-CLEARANCE.md",
+                )
+            val section = checklist.substringAfter("## $name", "").substringBefore("\n## ")
+            assertTrue(
+                "'${record.language}' is cleared, and a clearance can be WITHDRAWN — its '## $name' " +
+                    "section has to exist before that day, not be written on it",
+                section.isNotBlank(),
+            )
+            assertTrue(
+                "$name's section must carry the words the withdrawal template needs ('your own " +
+                    "risk call', ClearanceAnswerer.OWNER) on one line — withdrawing this " +
+                    "clearance makes the row outstanding, and an outstanding row whose section " +
+                    "does not name its answerer is a red suite the checklist promised would be green",
+                section.contains("your own risk call"),
+            )
+            assertTrue(
+                "$name's section must name the commit its evidence was read at " +
+                    "(${record.pinnedCommit}), for the same reason: a withdrawn row is an " +
+                    "outstanding row, and that is checked above",
                 checklist.contains(record.pinnedCommit),
             )
         }

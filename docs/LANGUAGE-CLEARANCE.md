@@ -332,8 +332,8 @@ before it is needed rather than as the surprise fourth edit of a withdrawal.
 
 Apache-2.0 (`cardData.license` plus the `license:apache-2.0` tag, re-read 2026-09-12), LibriSpeech
 (CC BY 4.0), no agreement anywhere in the lineage. It has been in the built product since 4.4.0; the
-grantor of record is you, by shipping it — so if this one is ever reopened it is **your own risk
-call**, not counsel's and not the uploader's.
+grantor of record is you, by shipping it. If this one is ever reopened it is
+**your own risk call** — not counsel's, and not the uploader's.
 
 ## French — `fr`
 
