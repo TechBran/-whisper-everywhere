@@ -386,6 +386,59 @@ class StreamingPackClearanceTest {
         }
     }
 
+    // ---------------------------------------------- 6. the obligations the record names, discharged
+
+    /**
+     * **The licence page is where a clearance stops being paperwork.** `oss_licenses.html` is a
+     * ship gate in this repo (the 4.0 Q5 review's I1, and `PreviewCanaryClipsTest`'s own precedent
+     * for the canary clips), and the previewer's weights had no entry on it at all — not even
+     * English's, which has been distributed since 4.4.0. Seven sets of model weights now ride in
+     * the bundle under an Apache-2.0 or MIT grant, and both of those licences ask for their notice
+     * to travel with the thing they cover.
+     *
+     * Pinned **per language, against that language's own evidence**, so the page cannot drift from
+     * the record: the URL asserted here is the record's [PackClearance.readAt] — the place the
+     * grant was actually read — which is why Russian's entry names the tagged upstream rather than
+     * the untagged mirror the bytes come from.
+     *
+     * Korean's line carries one thing more, and it is the half of a counsel question that is
+     * answered by doing rather than by asking: the **NIA** acknowledgement. AI-Hub's terms of use
+     * require attribution to NIA *and* require it of derivative works; whether that obligation
+     * reaches this app through the weights is question (ii) of the Korean row, and the
+     * qualification table's instruction is to act on it regardless, at 0.1 d with no downside. The
+     * record's own `action` string says the acknowledgement is on the licences screen — this is
+     * what stops that from being a claim nobody checked.
+     */
+    @Test fun theLicencePageNamesTheWeightsOfEveryLanguageTheAppCanFetch() {
+        val page = repoFile("app/src/main/assets/oss_licenses.html").readText().replace("\r\n", "\n")
+        assertTrue(
+            "the previewer's weights need a section of their own: they are neither the " +
+                "transcription model above them nor the bundled audio below",
+            page.contains("<h2>Live words (the streaming preview)</h2>"),
+        )
+        // The spelling each licence asks to be named by, not our shorthand for it.
+        val spelling = mapOf("apache-2.0" to "Apache License 2.0", "mit" to "MIT License")
+        for (record in PackClearanceRecord.RECORD) {
+            val cited = record.readAt.removePrefix("https://")
+            assertTrue(
+                "the licence page does not cite $cited, which is where '${record.language}'s " +
+                    "grant was read — an Apache-2.0 or MIT notice has to travel with the weights " +
+                    "it covers, and the page had no entry for these at all before 4.5.0",
+                page.contains(cited),
+            )
+            val named = spelling[record.licence]
+                ?: throw AssertionError("no page spelling recorded for licence '${record.licence}'")
+            assertTrue("the page must name the $named that '${record.language}' ships under", page.contains(named))
+        }
+        // Korean's mandatory attribution, in the language the policy is written in.
+        assertTrue(
+            "the NIA acknowledgement is missing — AI-Hub's terms make attribution mandatory and " +
+                "extend it to derivative works, and the Korean clearance record says this page " +
+                "carries it",
+            page.contains("한국지능정보사회진흥원") && page.contains("KsponSpeech"),
+        )
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private fun clearedForTest(): ClearanceVerdict.Cleared = ClearanceVerdict.Cleared(

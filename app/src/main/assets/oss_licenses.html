@@ -76,6 +76,46 @@
     <div class="license"><b>Silero VAD</b> — MIT License. Voice-activity detection model.
         <a href="https://github.com/snakers4/silero-vad">github.com/snakers4/silero-vad</a></div>
 
+    <h2>Live words (the streaming preview)</h2>
+    <p>When you pick a language, a second, small speech model can run beside the one above and put
+        words on the bubble as you speak. It never writes your transcript — the model above does
+        that. Each language is a separate download; the licence below is the one its publisher
+        declares for those weights, and the runtime is the sherpa-onnx listed under Read-aloud.</p>
+    <div class="license"><b>Streaming Zipformer — English</b> (k2-fsa / csukuangfj) — Apache
+        License 2.0. Trained on LibriSpeech, which is licensed CC BY 4.0 — attribution to its
+        authors, Vassil Panayotov, Guoguo Chen, Daniel Povey and Sanjeev Khudanpur.
+        <a href="https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26">huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26</a></div>
+    <div class="license"><b>Streaming Zipformer — French</b> (Shaojie Li) — Apache License 2.0.
+        Trained on Common Voice 12.0 French (CC0) over a LibriSpeech (CC BY 4.0) pre-training, with
+        attribution to the authors named above.
+        <a href="https://huggingface.co/shaojieli/sherpa-onnx-streaming-zipformer-fr-2023-04-14">huggingface.co/shaojieli/sherpa-onnx-streaming-zipformer-fr-2023-04-14</a></div>
+    <div class="license"><b>Streaming Zipformer — German</b> (daniel-dona) — Apache License 2.0, as
+        declared by its publisher. Trained on Common Voice 17.0 German.
+        <a href="https://huggingface.co/daniel-dona/icefall-asr-commonvoice-zipformer-streaming-de">huggingface.co/daniel-dona/icefall-asr-commonvoice-zipformer-streaming-de</a></div>
+    <div class="license"><b>Streaming Zipformer — Russian</b> (alphacep) — Apache License 2.0.
+        The files are the ONNX export mirrored by csukuangfj; they are byte-for-byte the weights
+        published as <code>vosk-model-small-streaming-ru</code>, which is where that licence is
+        declared.
+        <a href="https://huggingface.co/alphacep/vosk-model-small-streaming-ru">huggingface.co/alphacep/vosk-model-small-streaming-ru</a></div>
+    <div class="license"><b>Streaming Zipformer — Indonesian</b> (spacewave) — MIT License.
+        Trained on <b>YODAS2</b> (<code>espnet/yodas2</code>), licensed CC BY 3.0 — attribution to
+        the ESPnet YODAS authors, and to the creators of the source recordings at the level that
+        dataset makes possible, which is the channel; on <b>Librivox-Indonesia</b>
+        (<code>indonesian-nlp/librivox-indonesia</code>, Creative Commons); on Common Voice 17.0
+        Indonesian (CC0); and on <b>FLEURS</b> (Google, CC BY 4.0).
+        <a href="https://huggingface.co/spacewave/sherpa-onnx-streaming-zipformer2-id">huggingface.co/spacewave/sherpa-onnx-streaming-zipformer2-id</a></div>
+    <div class="license"><b>Streaming Zipformer — Korean</b> (Ken / kangkyu) — Apache License 2.0.
+        Trained on <b>KsponSpeech</b>, which is AI-Hub dataset 123, published by the
+        <b>National Information Society Agency of Korea</b> (NIA, 한국지능정보사회진흥원). That
+        dataset's terms of use require attribution to NIA, and require it of derivative works, so it
+        is given here: 본 모델은 한국지능정보사회진흥원(NIA)이 AI 허브(aihub.or.kr)를 통해 공개한
+        한국어 음성 데이터(KsponSpeech, 데이터셋 123)로 학습되었습니다.
+        <a href="https://huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m">huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m</a></div>
+    <div class="license"><b>Streaming Zipformer — Chinese and English</b> (k2-fsa / csukuangfj) —
+        Apache License 2.0. A single bilingual model, so English spoken inside a Chinese sentence
+        still reaches the bubble.
+        <a href="https://huggingface.co/csukuangfj/k2fsa-zipformer-bilingual-zh-en-t">huggingface.co/csukuangfj/k2fsa-zipformer-bilingual-zh-en-t</a></div>
+
     <h2>Read-aloud (text-to-speech)</h2>
     <div class="license"><b>sherpa-onnx</b> (k2-fsa / Xiaomi Corporation) — Apache License 2.0.
         On-device TTS runtime.
