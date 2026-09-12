@@ -864,8 +864,13 @@ AL5. **Korean.** Pick Korean. EXPECTED: a **73 MB** fetch, ~**0.4 s** lag (320 m
     - **`.` `?` `,` `!` may appear on the strip.** Correct, not a defect.
     - **A numeral may appear.** Also correct: this vocabulary has all ten standalone digits, which is
       why the "no numerals" claim every other row makes is deliberately absent here.
-    FAIL: Hangul arriving as one unbroken run with no spaces (the strip is built from tokens
-    precisely to keep them), or an empty box / `?` glyph on the strip.
+    FAIL: Hangul arriving as one unbroken run with no spaces — the strip is built from tokens
+    precisely to keep them, and `result.text` would have lost every one of those spaces.
+    **NOT a failure, and known:** an occasional empty box or `?` on the Korean strip. This
+    vocabulary contains seven tokens nothing can render — U+FFFD, U+007F and five private-use code
+    points — and **4.5.0 does not filter them.** The fix is a deny-list in `PreviewText.normalize`
+    keyed on the control / private-use / unassigned categories, which benefits every pack and is
+    not in this build. If you see one, note it and move on.
     `[ ] PASS  [ ] FAIL`
 AL6. **Chinese.** Pick Chinese. EXPECTED: a **50 MB** fetch, ~**0.4 s** lag (320 ms), and **Chinese
     characters** on the strip — this row's sentence names characters and not words, and adds *"with
@@ -950,6 +955,10 @@ AL10. **Auto, with six more packs available.** On Auto-detect: **no live words i
   code-switch check is doing real work no test does.
 - **Korean's numerals and punctuation are in its sentence but not corroborated by its clip** — the
   clip's expected pieces contain neither, so AL5 is where "a numeral can appear" is actually seen.
+- **Seven unrenderable tokens in the Korean vocabulary are recorded and NOT filtered** (U+FFFD,
+  U+007F, five private-use code points). The deny-list that closes it belongs in
+  `PreviewText.normalize`, benefits every pack, and is deliberately not in 4.5.0 — so an empty box
+  on the Korean strip is a known gap and not an AL5 failure.
 - **Do not cite French's WER as 9.95.** The repository's `RESULTS.md` advertises 9.95 for a
   *different* checkpoint, trained with GigaSpeech, whose terms are non-commercial-only. This export's
   own number is **10.57**. The figure matters outside engineering: quoting 9.95 in a listing or to

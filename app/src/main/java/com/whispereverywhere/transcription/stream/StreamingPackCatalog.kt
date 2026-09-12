@@ -957,7 +957,10 @@ object StreamingPackCatalog {
      * against an Apache-2.0 that disclaims warranty of title (§7), so the risk sits with the
      * licensee. Two counsel questions. One of them (does the NIA attribution reach the app
      * through the weights?) has a 0.1 d answer with no downside — the acknowledgement on the
-     * licences screen — and that is not this task's to write.
+     * licences screen — and that is not this task's to write. **Task 5 wrote it**: the NIA
+     * acknowledgement is in `app/src/main/assets/oss_licenses.html` and is held there by
+     * `StreamingPackClearanceTest`, and this row's outstanding question is recorded with its
+     * evidence in `PackClearanceRecord.KO`.
      */
     val KO = StreamingPack(
         language = "ko",
