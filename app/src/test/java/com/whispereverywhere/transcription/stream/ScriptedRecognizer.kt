@@ -14,6 +14,12 @@ class ScriptedRecognizer(
     private val timestampsOf: (String) -> FloatArray = { t -> FloatArray(tokensOf(t).size) { i -> 0.32f * (i + 1) } },
     private val failDecodesFrom: Int = Int.MAX_VALUE,   // every decode whose 1-based global index >= this throws
     private val canaryText: String? = null,             // when set, the FIRST stream ever created answers this text (the canary's)
+    // (4.5.0 T3) The tokens are a SEPARATE answer from the text, because on a CJK-classified pack
+    // the AAR's two answers are different strings: the tokens carry a space per word and
+    // `RemoveSpaceBetweenCjk` takes those spaces out of the text. The default derives one from
+    // the other — right for every Latin/Cyrillic pack — and the Korean tests override it, which
+    // is the only way a test can tell which of the two the reader under test actually read.
+    private val tokensFor: (String) -> List<String> = { t -> tokensOf(t) },
 ) : PreviewRecognizer {
 
     class Stream : PreviewStream {
@@ -56,11 +62,11 @@ class ScriptedRecognizer(
         if (s.decodes == 0) return PreviewResult.EMPTY
         // NOTHING may remove from [streams]: this identifies the first stream STILL IN THE LIST.
         if (canaryText != null && s === streams.firstOrNull()) {
-            return PreviewResult(canaryText, tokensOf(canaryText), timestampsOf(canaryText))
+            return PreviewResult(canaryText, tokensFor(canaryText), timestampsOf(canaryText))
         }
         if (texts.isEmpty()) return PreviewResult.EMPTY
         val text = texts[minOf(s.decodes, texts.size) - 1]
-        return PreviewResult(text, tokensOf(text), timestampsOf(text))
+        return PreviewResult(text, tokensFor(text), timestampsOf(text))
     }
 
     override fun release() { released = true }

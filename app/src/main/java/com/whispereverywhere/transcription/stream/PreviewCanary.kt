@@ -45,15 +45,26 @@ sealed class CanaryVerdict {
  * carries its own values and its own scoring, and `PreviewCanaryTest` holds the two ANSWERS equal
  * on the English clip so neither can drift without a red test.
  *
- * ### What it cannot express, named so nobody assumes it can
+ * ### What it needs from the string it scores, and why that string is the STRIP (4.5.0 T3)
  *
- * Positional alias matching needs the model to emit separable pieces per spoken position. **zh and
- * ko collapse the whole clip to ONE token** — `RemoveSpaceBetweenCjk` joins the characters and any
- * word-splitting normaliser then sees a single run — so per-position matching is structurally
- * impossible there and [maxTokens] is unreachable rather than protective. Those packs need a
- * different RULE (character-set overlap plus a length band: 一二三四五 / 일이삼사오), which is a
- * second implementation of this seam and not a different [expected] list. The qualification table
- * books that as shared work for both languages (§6(3)); this build ships the route, not the rule.
+ * Positional alias matching needs word boundaries, and those live in the TOKENS — not always in
+ * the text. `SymbolTable::operator[]` rewrites a leading `▁` to a SPACE per piece, and the
+ * recognizer's `Convert()` then runs `RemoveSpaceBetweenCjk` over the ASSEMBLED text
+ * (`online-recognizer-transducer-impl.h:69`), whose `IsCJK` range `0xA840-0xD7AF` **contains
+ * Hangul** `U+AC00-U+D7A3`.
+ *
+ * Measured on the real Korean pack (sherpa-onnx 1.13.7, its own placed payload): `result.tokens`
+ * comes back `[" ", "스", "페", "인", " ", "사", "람", "들", "이", " ", …]` — the word marker, a
+ * standalone piece at id 3, **is** emitted, once per word — while `result.text` is
+ * `스페인사람들이삼세기…`, ONE run with every word space gone. Scoring the text would therefore give
+ * Korean a single token, leaving [expected] unable to name anything smaller than the whole
+ * utterance and [maxTokens] unable to see a runaway at all.
+ *
+ * So [PreviewCanary.run] scores [PreviewText.strip] — the tokens-not-text rendering the STRIP
+ * paints — and every row's positions are words. That is also the more faithful guard: the strip is
+ * what the user sees, so a canary reading `result.text` was scoring a string this app renders
+ * nowhere. The verdict does not move for any other row, because tokens-joined equals text wherever
+ * no CJK-adjacent space was removed, and [passes] lowercases before it matches.
  *
  * @property expected one alias set per spoken position, in the clip's order. A position counts as
  *   matched when ANY of its renderings appears.
@@ -127,12 +138,16 @@ data class PackCanary(
  * `CanaryAudio`: 2.560 s of "one two three four five") in the app's 512-sample chunks, pads the
  * pack's own [StreamingPack.padMs] — the same derived pad the commit hook uses, because a canary
  * padded shorter than the stream is a verdict on a configuration the feature never runs —
- * finishes, drains, and scores against the pack's own [PackCanary.rule].
+ * finishes, drains, and scores the STRIP ([PreviewText.strip], not `result.text`) against the
+ * pack's own [PackCanary.rule].
  *
- * **The clip is per-pack because the English one cannot pass for a non-English model**: a French
- * or Russian recognizer fed "one two three four five" answers something that matches none of the
- * five positions, which is indistinguishable here from the SME signature it exists to catch. The
- * recorded cost is one WAV in main assets per language — **81,998 B**, the size of the English one.
+ * **The clip is per-pack because the English one cannot pass for a non-English model**, and
+ * 4.5.0 T3 measured it rather than assuming it: fed `canary_digits.wav`, the French pack answers
+ * `TH TREE FORFACE`, the German one `VORFALL` and the Indonesian one `TWI FOR` — none of which
+ * matches a single English position, so a shared clip would refuse three healthy packs as corrupt.
+ * The recorded cost is one WAV in main assets per language: 47,498 B (fr) to 159,082 B (ko),
+ * **536,626 B for the five new ones**, against the English clip's 81,998 B. The bilingual zh-en
+ * row pays nothing — it runs the English clip, and its decode of it is exact.
  *
  * **A clip that will not load is [CanaryVerdict.NoClip] and still disables; a row that names no
  * clip yet is [CanaryVerdict.Unscored] and arms.** Neither is a Fail, but only one of them is a
@@ -173,9 +188,12 @@ object PreviewCanary {
                 recognizer.decode(stream)
                 decodes++
             }
-            val text = recognizer.result(stream).text
-            return if (passes(text, rule)) CanaryVerdict.Pass(text.length, decodes)
-            else CanaryVerdict.Fail(text.length, decodes)
+            // The STRIP, not `result.text` — the tokens-not-text rendering this app actually
+            // paints. On a CJK-classified pack the two are different strings and only this one
+            // has word boundaries; see [PreviewCanaryRule]'s docblock for the measurement.
+            val shown = PreviewText.strip(recognizer.result(stream), pack)
+            return if (passes(shown, rule)) CanaryVerdict.Pass(shown.length, decodes)
+            else CanaryVerdict.Fail(shown.length, decodes)
         } finally {
             stream.release()
         }

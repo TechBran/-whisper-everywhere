@@ -167,6 +167,52 @@ class PreviewCanaryTest {
         }
     }
 
+    @Test fun theCanaryScoresTheSTRIPAndNotResultText() {
+        // (4.5.0 T3) The two answers the AAR hands back are DIFFERENT STRINGS on a
+        // CJK-classified pack: the tokens carry a space per word (`SymbolTable` rewrites a leading
+        // `▁` to a space) and `RemoveSpaceBetweenCjk` then takes those spaces out of the assembled
+        // text (`online-recognizer-transducer-impl.h:69`, whose `IsCJK` range 0xA840-0xD7AF
+        // CONTAINS Hangul). Measured on the real Korean pack: tokens
+        // `[" ", "스", "페", "인", " ", "사", …]`, text `스페인사람들이…` — one run.
+        //
+        // So a canary reading `result.text` gives such a pack ONE token, every position has to
+        // equal the whole utterance, and `maxTokens` cannot see a runaway. Reading the strip —
+        // which is what the app paints — gives it words. This double answers the two differently,
+        // which is the only way to tell which one the canary read.
+        val spaced = listOf(" 스페인", " 사람들이", " 동안")
+        val rec = ScriptedRecognizer(
+            texts = listOf("스페인사람들이동안"),
+            tokensFor = { spaced },
+        )
+        val korean = pack.copy(
+            language = "ko",
+            caseFold = CaseFold.Keep,
+            canary = PackCanary(
+                asset = "x.wav",
+                rule = PreviewCanaryRule(
+                    expected = listOf(setOf("스페인"), setOf("사람들이"), setOf("동안")),
+                    minMatches = 3,
+                    maxTokens = 20,
+                ),
+            ),
+        )
+        assertEquals(
+            "the text has no word boundaries at all, so scoring it can only ever see one token",
+            1, PreviewCanary.normalize("스페인사람들이동안").size,
+        )
+        assertTrue(
+            "the canary must score the strip: three positions are reachable there and none is " +
+                "reachable in result.text",
+            PreviewCanary.run(rec, clip, korean) is CanaryVerdict.Pass,
+        )
+        // And the reported length is the strip's, so the `stream-open:` line's outLen describes
+        // the string the user saw rather than one this app renders nowhere.
+        assertEquals(
+            PreviewText.strip(PreviewResult("스페인사람들이동안", spaced, FloatArray(3)), korean).length,
+            (PreviewCanary.run(rec, clip, korean) as CanaryVerdict.Pass).outLen,
+        )
+    }
+
     @Test fun aPacksOwnRuleIsWhatScoresItsOwnClip() {
         // The route: a pack whose clip says "un deux trois quatre cinq" scores against ITS
         // positions, and the English text that passes above fails there. (No such pack exists in
