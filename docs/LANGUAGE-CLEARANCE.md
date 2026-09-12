@@ -3,7 +3,13 @@
 **Who fills this in: the owner.** Nobody else may mark a language cleared. A subagent inventing a
 clearance is the one unrecoverable error in the 4.5.0 languages build, which is why the record is
 pinned by a test that names exactly two cleared languages and why granting a third costs three
-deliberate edits in three files.
+deliberate edits — the third of them in a test whose docblock says why a subagent must not write it.
+
+**Every edit list in this document was walked against the suite rather than reasoned about.** A yes
+(German), and a withdrawal (French), were each applied exactly as written below and the suite run;
+where the list was short, the list was fixed, not the claim. If you follow one of these lists and the
+suite is red, the document is wrong — say so, and do not start editing clearance assertions to make
+it green.
 
 **What it gates, and what it does not.**
 
@@ -60,7 +66,8 @@ that puts anything on the strip when an English speaker talks mid-Chinese.
 ## When an answer arrives: the three edits
 
 Say the German author replies and confirms his Apache-2.0. Recording that takes **three** edits, and
-the third is friction on purpose — it is what makes an invented clearance show up as a diff.
+the third is friction on purpose — it is what makes an invented clearance show up as a diff. The
+list is exhaustive: applied as written, on this tree, the suite ends green.
 
 **1. The verdict**, in `StreamingPackClearance.kt`. Replace that row's
 `ClearanceVerdict.Outstanding(...)` with:
@@ -87,13 +94,39 @@ val PRODUCTION_CLEARED: Set<String> = setOf("en", "fr", "de")
 
 **3. The pin**, in
 `app/src/test/java/com/whispereverywhere/transcription/stream/StreamingPackClearanceTest.kt` —
-`onlyEnglishAndFrenchAreClearedOnThisBranch`. Add the language to both literals and rename the test
-to say what it now pins. Its docblock explains why this edit exists; do not delete the explanation
-along with the literal.
+`onlyEnglishAndFrenchAreClearedOnThisBranch`. That is **the only test in the file that retypes the
+state of the record**, and it holds **three** literals. A clearance moves all three:
 
-Then run the suite. It must be green, and
-`PackClearanceRecord.stateOfRecord(StreamingPackCatalog.packs.map { it.language })` will report one
-fewer name in its `Withheld` list.
+- the **cleared list** — add the language, in the order `PackClearanceRecord.RECORD` uses
+  (`en, fr, de, ru, id, ko, zh`), **not** alphabetically;
+- the **switch** — the same set as edit 2 above;
+- the **outstanding census** at the end of the test, the `"de" to ClearanceAnswerer.…` pairs —
+  **delete the row you have just cleared from it.** This is the line that makes "one fewer question"
+  visible in a diff.
+
+Then rename the test to say what it now pins, and keep the docblock: it explains why the edit exists,
+and the explanation is the part that makes a forged clearance visible.
+
+Then run the suite. It must be green:
+
+```
+./gradlew.bat :app:testDebugUnitTest
+```
+
+and `PackClearanceRecord.stateOfRecord(StreamingPackCatalog.packs.map { it.language })` will report
+one fewer name in its `Withheld` list. **Nothing else in that file moves** — every other test in it
+derives what it expects from the record, on purpose. (It was not always so. The first draft of this
+document priced a yes at "both literals" in one test; applied to a German yes, the suite came back
+red in **three** tests, one of them the positive control that stops the switch outrunning the
+evidence — which is the last assertion anyone should be editing on the strength of a document that
+said the suite would be green. The derivations were the fix; this list is the measurement.)
+
+**4. One line nothing enforces**, worth thirty seconds because it is the line a promotion is actually
+read from: §AL0 of `docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md` says *"Today it
+names `en` and `fr`, and the gate reports `Withheld([de, ru, id, ko, zh])`"*. No test pins that
+sentence — pinning it would add an edit to every clearance and protect nothing, since the record is
+the authority and the sheet only quotes it — so it goes stale silently. Update it, or read it against
+`PackClearanceRecord` on the day.
 
 ## When the answer is NO: the refusal path
 
@@ -105,7 +138,18 @@ A refusal is **not** a switch — it is the removal of a row, and it is a code c
 3. delete its rows from `tools/build_asset_packs.py` and from the `verifyPreviewPack` payload table,
 4. delete its canary clip from `app/src/main/assets/` and its licence entry from
    `app/src/main/assets/oss_licenses.html`,
-5. update the picker copy tests, which assert which languages have packs.
+5. delete its section from this document, and mark its §AL row on the acceptance sheet **REMOVED**
+   with the date and the reason — that sheet's rule is that a row which once passed is rewritten in
+   place and never deleted (see AF2, which is the worked example),
+6. update the tests that hold a language list as a **literal**. By inspection of this tree those are:
+   `PreviewPackLayoutTest` (the `assetPacks` expression, held as exact text — the pin that makes "all
+   six ship" true, so it is meant to cost an edit), the picker copy tests (which assert which
+   languages have packs), the per-language flag lists in `StreamingPackLanguagesTest`, and in
+   `StreamingPackClearanceTest` the **outstanding census** in
+   `onlyEnglishAndFrenchAreClearedOnThisBranch` — that last one only if the refused row was still
+   outstanding, which after a refusal it always is. Nothing else in the clearance suite names a
+   language: the record-to-catalogue one-to-one, the promotion state, the pack-module scan and the
+   licence-page check all derive from the catalogue, so deleting a row is silent in all four.
 
 That is a real half-day, and it is deliberately not a flag: a language that may not be published is a
 language the product does not have, and a switch that hid it would leave the bytes in the bundle and
@@ -265,16 +309,30 @@ cannot even be read. Refusing this row does not open a cheaper door. The table's
 
 ---
 
-## English and French, for completeness
+# The two cleared languages
 
 Neither needs anything, and both are recorded with their evidence in `PackClearanceRecord` so the
-record is a complete census rather than a list of problems.
+record is a complete census rather than a list of problems. **They get their own sections for the
+same reason the five above do:** a clearance can be withdrawn, a withdrawn row is an outstanding row,
+and an outstanding row the suite cannot find a section for is a red suite — so the section exists
+before it is needed rather than as the surprise fourth edit of a withdrawal.
 
-**English** — Apache-2.0 (`cardData.license` plus the `license:apache-2.0` tag, re-read 2026-09-12),
-LibriSpeech (CC BY 4.0), no agreement anywhere in the lineage. It has been in the built product since
-4.4.0; the grantor of record is you, by shipping it.
+## English — `en`
 
-**French** — Apache-2.0 read **twice**: the repository's own 204-byte non-LFS README front matter, and
+**The pack:** `csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26` at
+`672fbf1b30579d6585301139bb363f42a0ad4a24`, 72,654,782 B.
+
+Apache-2.0 (`cardData.license` plus the `license:apache-2.0` tag, re-read 2026-09-12), LibriSpeech
+(CC BY 4.0), no agreement anywhere in the lineage. It has been in the built product since 4.4.0; the
+grantor of record is you, by shipping it — so if this one is ever reopened it is **your own risk
+call**, not counsel's and not the uploader's.
+
+## French — `fr`
+
+**The pack:** `shaojieli/sherpa-onnx-streaming-zipformer-fr-2023-04-14` at
+`3db9565d9633758d6b87b9a7b3dc09ebfb6b2c73`, 128,227,451 B.
+
+Apache-2.0 read **twice**: the repository's own 204-byte non-LFS README front matter, and
 platform-surfaced through `cardData.license` and the `license:apache-2.0` tag. Note that the API's
 *top-level* `license` key is absent, so a sweep reading `model["license"]` reports "Not specified"
 for a perfectly readable grant; five of these seven repositories have that shape. CommonVoice 12.0 fr
@@ -290,7 +348,36 @@ bytes do not carry. The catalogue row's comment says so too, because 9.95 is the
 reader will find first.
 
 **The clearance of French is the controller's reading of the qualification table, not a lawyer's
-opinion**, and it is yours to withdraw. If you would rather it waited for the same research the other
-five are getting, remove `"fr"` from `PRODUCTION_CLEARED` and set its verdict back to
-`Outstanding` — the suite will stay green, and production will simply be withheld on six languages
-instead of five.
+opinion**, and it is yours to withdraw. Keeping it is **your own risk call** in exactly the way
+Russian's is; if you would rather it waited for the same research the other five are getting — a
+**counsel** read, or your own — withdrawing it is the mirror of the three edits above, in the same
+three places:
+
+**1. The verdict** — `FR` in `StreamingPackClearance.kt`, back to an open question. Everything else
+in the row (licence, `readAt`, `readOn`, `provenance`, `corpora`, `pinnedCommit`) stays; only the
+verdict changes, and it may not be blank — a row that says "not cleared" without saying what is
+missing leaves you nothing to do, and the suite checks both fields:
+
+```kotlin
+verdict = ClearanceVerdict.Outstanding(
+    question = "the apache-2.0 grant and the CC0/CC BY 4.0 corpus lineage were read by the " +
+        "controller, not by a lawyer — is that read enough to publish on?",
+    action = "decide it on the same terms as Russian, or send it to counsel with the other three",
+    answerer = ClearanceAnswerer.OWNER,
+),
+```
+
+**2. The switch** — `PRODUCTION_CLEARED` back to `setOf("en")`.
+
+**3. The pin** — `onlyEnglishAndFrenchAreClearedOnThisBranch`, all three literals, the reverse of a
+clearance: `"fr"` out of the cleared list, out of the switch, and **into** the outstanding census as
+`"fr" to ClearanceAnswerer.OWNER` (in the record's order — `fr` is the second row, so the pair goes
+**first**, ahead of `"de"`). Rename the test. If you record `COUNSEL` instead of `OWNER` in edit 1, the census pair takes `COUNSEL` too — the
+suite reads the answerer from the record and asks this document for the matching words, and the
+French section above says both.
+
+Then the suite is green again, and production is simply withheld on six languages instead of five.
+(Withdrawal was measured too: the earlier version of this paragraph named two edits and claimed the
+suite would stay green; applied, it was **four failures**, one of them an assertion that this
+document had no French section to point at. It has one now — that is why the two cleared languages
+are written up like the outstanding five.)

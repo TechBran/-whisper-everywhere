@@ -23,7 +23,7 @@ import java.io.File
  *     [theClearanceStateReachesNothingTheAppRuns], which is the only test that can prove a negative
  *     about it.
  *  2. **A promotion to PRODUCTION with that work unfinished must fail the build.** That is
- *     [thePromotionGateIsWithheldTodayAndNamesTheFiveLanguagesHoldingIt] and
+ *     [theCommittedPromotionStateWithholdsProductionAndNeverOverreaches] and
  *     [authorisingALanguageWhoseRecordIsNotClearedIsARedSuite].
  *
  * Four tests carry the four brief requirements, and the fifth is the one that keeps them honest:
@@ -32,7 +32,7 @@ import java.io.File
  * |---|---|
  * | no catalogue row may have a blank verdict | [everyShippedLanguageHasARecordedVerdictAndNoBlankEvidence] |
  * | the record may not claim production-readiness while a row is uncleared | [authorisingALanguageWhoseRecordIsNotClearedIsARedSuite] |
- * | the promotion gate blocks production and NOT the internal track | [thePromotionGateIsWithheldTodayAndNamesTheFiveLanguagesHoldingIt] |
+ * | the promotion gate blocks production and NOT the internal track | [theCommittedPromotionStateWithholdsProductionAndNeverOverreaches] |
  * | a clearance is granted over BYTES, not over a repo name | [everyClearanceIsPinnedToTheCommitTheCatalogueDownloads] |
  * | the state must never reach the bundle or the app | [theClearanceStateReachesNothingTheAppRuns] |
  *
@@ -45,9 +45,22 @@ import java.io.File
  *
  * **What this suite deliberately cannot do.** It cannot tell a true clearance from an invented one
  * — no test can read a lawyer's letter. What it can do is make an invention COST three separate
- * edits in three files and show up as a diff in a test that says why it exists
+ * edits and show up as a diff in a test that says why it exists
  * ([onlyEnglishAndFrenchAreClearedOnThisBranch]). That is the whole of the protection against the
  * one unrecoverable error in this build, and it is stated rather than implied.
+ *
+ * **WHERE THE LITERALS LIVE, and why it is exactly one test** (fix round 1, blocker B1).
+ * [onlyEnglishAndFrenchAreClearedOnThisBranch] is the only test here that retypes the state of the
+ * record: its three literals — the cleared list, the switch, and the outstanding rows with their
+ * answerers — ARE the friction, and `docs/LANGUAGE-CLEARANCE.md` prices all three. Every other
+ * test in this class derives what it expects FROM the record, because a literal that is merely
+ * incidental costs the owner an unpriced edit months from now with no session open: measured, the
+ * checklist's three documented edits for a German yes left this suite **red in three tests**, one
+ * of them the positive control for [PromotionState.Overreached] — the single assertion that keeps
+ * the switch from outrunning the evidence, and the last thing that should be edited by a reader
+ * who was told the suite would be green. The rule for anything added here: **if an assertion would
+ * have to change when a clearance legitimately arrives, either it is in
+ * [onlyEnglishAndFrenchAreClearedOnThisBranch] and the checklist names it, or it is derived.**
  */
 class StreamingPackClearanceTest {
 
@@ -126,20 +139,48 @@ class StreamingPackClearanceTest {
      * Both directions are exercised against fabricated records, because the committed switch is
      * `{en, fr}` and a test that only ever saw the committed values would pass on a gate that did
      * nothing at all.
+     *
+     * **Every example here is DERIVED from the record** (fix round 1, B1). The first draft named
+     * German as *the* unauthorised language, so the first real clearance turned this — the positive
+     * control for [PromotionState.Overreached] — red, in a file the owner had been told would be
+     * green. The uncleared examples are now every outstanding row there is, and the cell is
+     * exercised against a fabricated record as well, so it keeps working on the day the last
+     * clearance lands and there is no outstanding row left to borrow.
      */
     @Test fun authorisingALanguageWhoseRecordIsNotClearedIsARedSuite() {
         val record = PackClearanceRecord.RECORD
-        // The real record with a switch that authorises German — exactly the edit the owner must
-        // not be able to make before the email comes back.
+        val clearedNow = record
+            .filter { it.verdict is ClearanceVerdict.Cleared }
+            .map { it.language }
+            .toSet()
+        // The real record with a switch that authorises one row whose research is unfinished —
+        // exactly the edit the owner must not be able to make before the answer comes back. Taken
+        // from the record rather than named, and taken for EVERY outstanding row rather than one.
+        for (row in record.filter { it.verdict is ClearanceVerdict.Outstanding }) {
+            assertEquals(
+                "authorising '${row.language}' while its verdict is Outstanding must be a red " +
+                    "suite — that is the one unrecoverable error in this build",
+                PromotionState.Overreached(listOf(row.language)),
+                PackClearanceRecord.state(clearedNow + row.language, shipped, record),
+            )
+        }
+        // The same cell against a FABRICATED record, so it is exercised in every state the real
+        // record can reach — including the one where every row is cleared and the loop above is
+        // empty.
+        val lastShipped = shipped.last()
+        val allButOneCleared = record.map {
+            it.copy(verdict = if (it.language == lastShipped) outstandingForTest() else clearedForTest())
+        }
         assertEquals(
-            PromotionState.Overreached(listOf("de")),
-            PackClearanceRecord.state(setOf("en", "fr", "de"), shipped, record),
+            PromotionState.Overreached(listOf(lastShipped)),
+            PackClearanceRecord.state(shipped.toSet(), shipped, allButOneCleared),
         )
         // And a switch naming a language that is not in the bundle at all: a stale authorisation,
         // the same defect from the other side.
+        assertTrue("this case needs a code the catalogue does not ship", "tr" !in shipped)
         assertEquals(
             PromotionState.Overreached(listOf("tr")),
-            PackClearanceRecord.state(setOf("en", "fr", "tr"), shipped, record),
+            PackClearanceRecord.state(clearedNow + "tr", shipped, record),
         )
         // The positive control: with every row cleared AND every row authorised, the gate opens.
         // Without this cell the gate could be a constant `false` and nothing here would notice.
@@ -161,44 +202,81 @@ class StreamingPackClearanceTest {
      * missing record rather than a reassuring "withheld".
      */
     @Test fun aShippedLanguageWithNoRecordIsNeitherClearedNorMerelyWithheld() {
-        val withoutKorean = PackClearanceRecord.RECORD.filterNot { it.language == "ko" }
+        // Which row is dropped is derived, not named: a refused language is DELETED from both the
+        // catalogue and the record (`docs/LANGUAGE-CLEARANCE.md`, the refusal path), and a named
+        // row here would make that deletion redden a test the checklist does not price.
+        val dropped = PackClearanceRecord.RECORD.last().language
+        val incomplete = PackClearanceRecord.RECORD.filterNot { it.language == dropped }
         assertEquals(
-            PromotionState.Unrecorded(listOf("ko")),
-            PackClearanceRecord.state(setOf("en", "fr"), shipped, withoutKorean),
+            PromotionState.Unrecorded(listOf(dropped)),
+            PackClearanceRecord.state(PackClearanceRecord.PRODUCTION_CLEARED, shipped, incomplete),
         )
         // Even an empty switch does not excuse it — the record is incomplete either way.
         assertEquals(
-            PromotionState.Unrecorded(listOf("ko")),
-            PackClearanceRecord.state(emptySet(), shipped, withoutKorean),
+            PromotionState.Unrecorded(listOf(dropped)),
+            PackClearanceRecord.state(emptySet(), shipped, incomplete),
         )
     }
 
     // ------------------------------------------------------ 3. what the committed state actually is
 
     /**
-     * **The committed state, pinned.** Today the gate is WITHHELD and it names the five languages
-     * holding it. The two things this asserts are the two halves of the owner's order:
+     * **The committed state, checked in every state it can reach.** Today the gate is WITHHELD and
+     * the languages holding it are named in the failure message. The two things this asserts are
+     * the two halves of the owner's order:
      *
      *  - `Withheld` is **not** a failure and **not** a build-time exclusion. Every one of the six
      *    languages is in `StreamingPackCatalog.packs`, in `assetPacks`, in the bundle and fetchable
      *    on the internal track while this says Withheld. That is the whole point.
-     *  - It is **not** `Promotable`, and it cannot become `Promotable` until the five names below
-     *    have a Cleared verdict AND appear in the switch.
+     *  - It is **not** `Promotable`, and it cannot become `Promotable` until every shipped row has
+     *    a Cleared verdict AND appears in the switch.
      *
      * If this test ever reports `Overreached`, someone has authorised a language whose research is
      * unfinished; that is the one unrecoverable error in this build and the message says so.
+     * `Unrecorded` means a shipped language has no record at all. **Both are defects and neither
+     * may be committed, in any state** — which is why what this test expects is DERIVED from the
+     * switch rather than pinned as one value (fix round 1, B1): a pinned
+     * `Withheld([de, ru, id, ko, zh])` turns red on the first legitimate clearance, in a file the
+     * owner has just been told by `docs/LANGUAGE-CLEARANCE.md` would be green. Derived, it stays
+     * green through every clearance and through the last one — where the correct answer becomes
+     * `Promotable` — and red on either defect in every one of those states. Measured both ways: the
+     * checklist's three edits for a German yes leave it green, and authorising German without
+     * clearing it leaves it red naming `Overreached(de)`.
      */
-    @Test fun thePromotionGateIsWithheldTodayAndNamesTheFiveLanguagesHoldingIt() {
+    @Test fun theCommittedPromotionStateWithholdsProductionAndNeverOverreaches() {
+        val outstanding = PackClearanceRecord.RECORD
+            .filter { it.verdict is ClearanceVerdict.Outstanding }
+            .map { it.language }
+        val unauthorised = shipped.filterNot { it in PackClearanceRecord.PRODUCTION_CLEARED }
+        val census = "shipped: $shipped; authorised: ${PackClearanceRecord.PRODUCTION_CLEARED}; " +
+            "research outstanding: $outstanding"
+        // FIRST, because it is the sharpest diagnosis of the one unrecoverable error and the
+        // reader of a red suite should meet it before anything else: the switch names nothing the
+        // evidence has not cleared. Stated on the committed values, not on a fabricated record.
         assertEquals(
-            "the committed clearance state over the SHIPPED catalogue — five languages hold " +
-                "production and all six ship to the internal track regardless",
-            PromotionState.Withheld(listOf("de", "ru", "id", "ko", "zh")),
+            "the switch authorises a language whose verdict is not Cleared — the switch is the " +
+                "AUTHORISATION and the verdicts are the EVIDENCE, and it may never outrun them " +
+                "($census)",
+            emptyList<String>(),
+            PackClearanceRecord.PRODUCTION_CLEARED
+                .filterNot { PackClearanceRecord.forLanguage(it)?.verdict is ClearanceVerdict.Cleared },
+        )
+        assertEquals(
+            "the committed clearance state over the SHIPPED catalogue must withhold production " +
+                "from every language the switch does not name, and every language ships to the " +
+                "internal track regardless ($census)",
+            if (unauthorised.isEmpty()) PromotionState.Promotable else PromotionState.Withheld(unauthorised),
             PackClearanceRecord.stateOfRecord(shipped),
         )
-        // The catalogue's own order, restated so the list above is read as a census and not as a
-        // sorted set: `zh` is the row the brief calls `zh-en`, and its language code is the one the
-        // picker selects by (`StreamingPackCatalog.kt:1095`).
-        assertEquals(listOf("en", "fr", "de", "ru", "id", "ko", "zh"), shipped)
+        // And the gate may only open when nothing is outstanding — the same thing from the other
+        // side, so that neither half can be satisfied by a `state()` that lost a check.
+        if (PackClearanceRecord.stateOfRecord(shipped) == PromotionState.Promotable) {
+            assertEquals(
+                "the gate reports Promotable while a row is still outstanding ($census)",
+                emptyList<String>(),
+                outstanding,
+            )
+        }
     }
 
     /**
@@ -206,12 +284,20 @@ class StreamingPackClearanceTest {
      * global constraint, as a test.
      *
      * This is the pin that makes an invented clearance expensive. Granting one takes three edits:
-     * the verdict in `StreamingPackClearance.kt`, the switch beside it, and this literal — and the
+     * the verdict in `StreamingPackClearance.kt`, the switch beside it, and this test — and the
      * third shows up in a diff under a docblock explaining why a subagent must not write it. The
      * suite cannot read a lawyer's letter; it can make the forgery visible.
      *
-     * When a real clearance arrives, `docs/LANGUAGE-CLEARANCE.md` names all three edits for that
-     * language and the evidence each one needs.
+     * **THIS TEST IS THE ONLY ONE IN THE CLASS THAT RETYPES THE RECORD, and it holds THREE
+     * literals** — deliberately, and all three are priced in `docs/LANGUAGE-CLEARANCE.md`:
+     *
+     *  1. the cleared languages, **in the record's own order** (not sorted),
+     *  2. the switch,
+     *  3. the outstanding rows with their answerers — a row that stops being outstanding leaves
+     *     this list, which is the edit that makes "one fewer question" visible in a diff.
+     *
+     * Everything else here derives from the record. If you add a fourth literal to this class, put
+     * it in this test and price it in the checklist, or derive it (fix round 1, B1).
      */
     @Test fun onlyEnglishAndFrenchAreClearedOnThisBranch() {
         assertEquals(
@@ -368,11 +454,22 @@ class StreamingPackClearanceTest {
      * `assetPacks` literal intact, every layout pin green, and the payload absent.
      */
     @Test fun theBundleIsBuiltWithoutAskingWhetherALanguageIsCleared() {
+        // The pack modules come from the CATALOGUE, not from a typed list of language codes: a
+        // refused language is deleted from the catalogue and its module goes with it (the refusal
+        // path in `docs/LANGUAGE-CLEARANCE.md`), and a typed list would turn that deletion into a
+        // failure in a file the checklist does not mention — and an eighth language's module would
+        // be scanned by nobody (fix round 1, B1).
+        val modules = StreamingPackCatalog.packs.mapNotNull { it.packName }.map { "$it/build.gradle.kts" }
+        assertEquals(
+            "every shipped language has a pack module and this scan must cover all of them",
+            shipped.size,
+            modules.size,
+        )
         val buildFiles = listOf(
             "app/build.gradle.kts",
             "settings.gradle.kts",
             "tools/build_asset_packs.py",
-        ) + listOf("en", "fr", "de", "ru", "id", "ko", "zh").map { "preview_$it/build.gradle.kts" }
+        ) + modules
         for (relative in buildFiles) {
             val text = repoFile(relative).readText().replace("\r\n", "\n")
             for (needle in listOf("Clearance", "PRODUCTION_CLEARED")) {
@@ -539,29 +636,39 @@ class StreamingPackClearanceTest {
                 "otherwise the first no gets built as the build-time exclusion the owner forbade",
             checklist.contains("refusal") || checklist.contains("Refusal"),
         )
-        val names = mapOf(
-            "de" to ("German" to ClearanceAnswerer.UPSTREAM_AUTHOR),
-            "ru" to ("Russian" to ClearanceAnswerer.OWNER),
-            "id" to ("Indonesian" to ClearanceAnswerer.COUNSEL),
-            "ko" to ("Korean" to ClearanceAnswerer.COUNSEL),
-            "zh" to ("Chinese" to ClearanceAnswerer.COUNSEL),
+        // The English section name of every language the catalogue ships — all seven, not only the
+        // five outstanding today (fix round 1, B1). WITHDRAWING a clearance is a documented path in
+        // this very checklist (French's, at the end of it), and it makes a cleared row outstanding:
+        // the first draft answered that with `throw AssertionError("'fr' is outstanding and this
+        // test does not know its section name")`, which is a red suite where the document promised
+        // a green one. Every language has a section, so a withdrawal costs the edits the checklist
+        // names and nothing else.
+        val sectionNames = mapOf(
+            "en" to "English",
+            "fr" to "French",
+            "de" to "German",
+            "ru" to "Russian",
+            "id" to "Indonesian",
+            "ko" to "Korean",
+            "zh" to "Chinese",
         )
         for (record in PackClearanceRecord.RECORD) {
-            if (record.verdict !is ClearanceVerdict.Outstanding) continue
-            val (name, answerer) = names[record.language]
+            val open = record.verdict as? ClearanceVerdict.Outstanding ?: continue
+            val name = sectionNames[record.language]
                 ?: throw AssertionError(
                     "'${record.language}' is outstanding and this test does not know its section " +
                         "name — add it here and add its section to docs/LANGUAGE-CLEARANCE.md",
                 )
             assertTrue("the checklist has no '## $name' section", checklist.contains("## $name"))
-            // Who can close it, in the words the document uses rather than the enum's.
-            val says = when (answerer) {
+            // Who can close it, read from the record's own answerer rather than retyped here, and
+            // in the words the document uses rather than the enum's.
+            val says = when (open.answerer) {
                 ClearanceAnswerer.UPSTREAM_AUTHOR -> "uploader"
                 ClearanceAnswerer.OWNER -> "your own risk call"
                 ClearanceAnswerer.COUNSEL -> "counsel"
             }
             assertTrue(
-                "$name's section must say who can answer it ('$says' — ${answerer.name})",
+                "$name's section must say who can answer it ('$says' — ${open.answerer.name})",
                 checklist.substringAfter("## $name").substringBefore("\n## ").contains(says),
             )
             assertTrue(
@@ -579,6 +686,19 @@ class StreamingPackClearanceTest {
         grantedBy = "a fabricated grant, inside this test only",
         because = "the positive control for the gate",
         grantedOn = "2026-09-12",
+    )
+
+    /**
+     * The other half of the fabricated record: an unfinished row. It exists so the
+     * [PromotionState.Overreached] control keeps working on the day the committed record has no
+     * outstanding row left to borrow — a gate whose defect cell is only ever exercised while the
+     * defect happens to exist in the committed values is a gate that stops being tested exactly
+     * when it matters most.
+     */
+    private fun outstandingForTest(): ClearanceVerdict.Outstanding = ClearanceVerdict.Outstanding(
+        question = "a fabricated open question, inside this test only",
+        action = "the negative control for the gate",
+        answerer = ClearanceAnswerer.OWNER,
     )
 
     private fun repoRoot(): File {
