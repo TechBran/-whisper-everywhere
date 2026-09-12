@@ -79,6 +79,15 @@ import org.junit.Test
  * still re-arms GpuPolicy's canary latches (below); the previewer's own load-time canary is a
  * SECOND, unrelated canary and is not persisted at all.
  *
+ * **versionCode 92 = 4.5.0 — the MINOR moves, because the previewer stops being English.** 91 went
+ * to the internal track as 4.4.1 and is spent there. 92 adds six languages as on-demand packs and,
+ * more to the point, the seam that makes a language a catalogue row instead of an architecture
+ * change: per-pack model family, per-pack derived pad, per-pack canary and disabled latch, a strip
+ * built from tokens, and one per-language observable both screens read. The previewer's canary is
+ * now PER PACK, so a failed canary in one language can no longer refuse a load in another — the
+ * process-wide latch this KDoc described at 90 is gone. Every bump still re-arms GpuPolicy's own
+ * latches (below), unchanged.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -99,15 +108,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_4_1_at_version_code_91() {
+    fun release_identity_is_4_5_0_at_version_code_92() {
         assertEquals(
-            "versionName must be 4.4.1 for this release (app/build.gradle.kts defaultConfig)",
-            "4.4.1",
+            "versionName must be 4.5.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.5.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 91 for this release (app/build.gradle.kts defaultConfig)",
-            91,
+            "versionCode must be 92 for this release (app/build.gradle.kts defaultConfig)",
+            92,
             BuildConfig.VERSION_CODE,
         )
     }
