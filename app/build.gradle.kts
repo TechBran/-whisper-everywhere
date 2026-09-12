@@ -398,6 +398,9 @@ tasks.withType<Test>().configureEach {
         // for the same reason: this is the first test that reads it off disk.)
         "src/main/assets/canary_digits.wav",
         "src/main/assets/canary_fr_digits.wav",
+        "src/main/assets/canary_de_fleurs.wav",
+        "src/main/assets/canary_ru_fleurs.wav",
+        "src/main/assets/canary_id_fleurs.wav",
         // (4.1 L4) The turbo vocabulary, for exactly the melbank's reason one asset over: a JSON
         // asset is an input to no compile task, so regenerating it wrongly — from the wrong base,
         // without <|yue|>, with HF's <|nospeech|> spelling — changes not one .class file.

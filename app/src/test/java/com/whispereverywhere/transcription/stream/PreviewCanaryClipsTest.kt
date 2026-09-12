@@ -131,6 +131,45 @@ class PreviewCanaryClipsTest {
             text = "ONE TWO THREE FOUR FIVE",
             source = "owner recording, 3.6.0 Workstream C — shared with the en row at zero cost",
         ),
+        Clip(
+            language = "de",
+            asset = "canary_de_fleurs.wav",
+            bytes = 107_882L,
+            sha256 = "e47f17126979f97e2e34ff88e57087ac3b98b63e5d85070005f24bc6524e3c3c",
+            samples = 53_919,
+            tokens = listOf(
+                " MAN", "CH", "E", " F", "E", "ST", "IV", "AL", "S", " HABEN",
+                " SP", "E", "ZI", "ELL", "E", " CA", "M", "P", "ING", "BE", "REICH", "E",
+            ),
+            text = "MANCHE FESTIVALS HABEN SPEZIELLE CAMPINGBEREICHE",
+            source = FLEURS + " de_de/validation id 1528 — truncated after a token boundary",
+        ),
+        Clip(
+            language = "ru",
+            asset = "canary_ru_fleurs.wav",
+            bytes = 107_882L,
+            sha256 = "03f6640621ecf97f3d510720012fb96538d37894b6da3dc3ac40033890e4f2ac",
+            samples = 53_919,
+            tokens = listOf(
+                " о", " пер", "в", "ых", " с", "лу", "ча", "я", "х", " за", "бо", "ле", "в",
+                "ания", " в", " это", "м", " сезон", "е", " было",
+            ),
+            text = "о первых случаях заболевания в этом сезоне было",
+            source = FLEURS + " ru_ru/validation id 1587 — truncated after a token boundary",
+        ),
+        Clip(
+            language = "id",
+            asset = "canary_id_fleurs.wav",
+            bytes = 114_282L,
+            sha256 = "bfb7c32e6393eaabc2c9dbf892ad4273cbd1850a15cd7820693cf8e4c9cb3673",
+            samples = 57_119,
+            tokens = listOf(
+                " BA", "NG", "SA", " S", "PAN", "Y", "O", "L", " ME", "MU", "LA", "I",
+                " PER", "I", "O", "DE", " KO", "LO", "NI", "A", "LI", "SA", "SI",
+            ),
+            text = "BANGSA SPANYOL MEMULAI PERIODE KOLONIALISASI",
+            source = FLEURS + " id_id/validation id 1636 — truncated after a token boundary",
+        ),
     )
 
     // ------------------------------------------------------------------ the catalogue agrees
@@ -314,6 +353,44 @@ class PreviewCanaryClipsTest {
         }
     }
 
+    // ------------------------------------------------------------------ the licence page
+
+    @Test fun theShippedLicencePageAttributesEveryClipTheAppDistributes() {
+        // `oss_licenses.html` is a SHIP GATE (the 4.0 Q5 review's I1, and MelbankAssetTest's own
+        // precedent: a derived asset must be attributed there, with the derivation named). These
+        // clips raise the stakes, because CC BY 4.0 is not a permission the repo can record
+        // privately — it REQUIRES attribution in the distributed work, and the distributed work is
+        // the APK. Four of these clips are FLEURS utterances, so four attributions are an
+        // obligation that arrived with the bytes.
+        //
+        // Pinned per CLIP rather than per corpus, so adding a fifth FLEURS clip and forgetting its
+        // line is a red test rather than a quiet licence breach.
+        val page = asset("oss_licenses.html").readText().replace("\r\n", "\n")
+        assertTrue(
+            "the page must have a section for the audio it bundles — the clips are neither code " +
+                "nor model weights, and no existing section covers them",
+            page.contains("<h2>Bundled audio</h2>"),
+        )
+        for (clip in clips) {
+            assertTrue(
+                "${clip.asset} is distributed in the APK and is not named on the licence page",
+                page.contains(clip.asset),
+            )
+            if (FLEURS in clip.source) {
+                assertTrue("the FLEURS attribution must name the corpus", page.contains("FLEURS"))
+                assertTrue(
+                    "…and its licence, in the form the licence itself asks to be named by",
+                    page.contains("CC BY 4.0"),
+                )
+                assertTrue(
+                    "…and must state that the clips were MODIFIED, which CC BY 4.0 §3(a)(1)(B) " +
+                        "requires of an adaptation. Ours are re-encoded and truncated.",
+                    page.contains("Changes were made"),
+                )
+            }
+        }
+    }
+
     // --------------------------------------------- the renderings are checkable against tokens.txt
 
     @Test fun everyPositionHasARenderingItsOwnVocabularyCanSpell() {
@@ -403,5 +480,21 @@ class PreviewCanaryClipsTest {
     private companion object {
         /** U+2581, the word marker sherpa rewrites to a space on the way out. */
         const val MARKER = "▁"
+
+        /**
+         * The corpus the four non-Kokoro clips come from, and its licence — one string so four
+         * rows cannot disagree about it.
+         *
+         * `cc-by-4.0` was read in the dataset card's own front matter (`README.md:112-113`, and
+         * the body line *"All datasets are licensed under the Creative Commons license (CC-BY)"*)
+         * AND platform-surfaced (`cardData.license` = `["cc-by-4.0"]` plus the tag
+         * `license:cc-by-4.0`). The API's TOP-LEVEL `license` key is absent, which is the same
+         * trap the fr, de and id MODEL cards carry: a sweep reading `dataset["license"]` reports
+         * "Not specified" for a perfectly readable grant.
+         *
+         * `70bb2e84` is the dataset revision the audio was served from, pinned for the same
+         * reason a model commit is pinned: `main` is mutable.
+         */
+        const val FLEURS = "google/fleurs @70bb2e84, cc-by-4.0"
     }
 }

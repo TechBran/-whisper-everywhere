@@ -523,11 +523,44 @@ object StreamingPackCatalog {
         caseFold = CaseFold.Fold,
         emitsPunctuation = false,
         emitsDigits = false,
-        // T3 owns the clip, and German has no Kokoro voice (TtsVoices.kt covers es fr hi it ja pt
-        // zh), so it comes from FLEURS with its published reference transcript and its licence
-        // recorded beside it. Nothing here is guessed in the meantime: null is NO VERDICT, this
-        // row ARMS UNSCORED, and the FEAT_SME guard is unpaid for German until the clip lands.
-        canary = null,
+        // **The clip is FLEURS** (4.5.0 T3) — German has no Kokoro voice (TtsVoices.kt covers es
+        // fr hi it ja pt zh), so it comes from a corpus that publishes a reference transcript
+        // beside its audio, which is what makes the expected output checkable by a non-speaker.
+        //
+        // `canary_de_fleurs.wav`, 107,882 B, 53,919 samples = 3.370 s.
+        // **`google/fleurs`, licence `cc-by-4.0`** — read in the dataset card's own front matter
+        // (`README.md:112-113`) AND platform-surfaced (`cardData.license`, plus the tag
+        // `license:cc-by-4.0`); note the API's top-level `license` key is absent here too, the
+        // same trap this row's and the Indonesian row's model cards carry. Config `de_de`, split
+        // `validation`, row **id 1528**, dataset revision `70bb2e84`. Attribution is on the
+        // licence page (`oss_licenses.html`, "Bundled audio"), which CC BY 4.0 requires and which
+        // `PreviewCanaryClipsTest` pins.
+        //
+        // **MODIFIED, and CC BY 4.0 requires saying so**: container normalised to 16 kHz PCM16
+        // mono by ffmpeg, then TRUNCATED after a decoder token boundary at 3.2 s + 250 ms. The
+        // full utterance is 5.28 s / 169,038 B and decodes all ten reference words; the cut is
+        // paid for twice over, in the APK and on every warm, and the truncated clip was RE-DECODED
+        // rather than assumed — `MANCHE FESTIVALS HABEN SPEZIELLE CAMPINGBEREICHE`, the first five
+        // reference words, exact, 5 of 5 positions in all nine (threads × gain) cells.
+        //
+        // The positions are the words the decode PRODUCED, not the ones the transcript promises:
+        // only `▁HABEN 263` is a whole piece here, and `▁MANCHE`, `▁FESTIVALS`, `▁SPEZIELLE`,
+        // `▁CAMPINGBEREICHE` are each spellable from this vocabulary's pieces (`PackTokenFacts`
+        // .spellable, pinned) and arrive as one space-delimited word on the strip either way.
+        canary = PackCanary(
+            asset = "canary_de_fleurs.wav",
+            rule = PreviewCanaryRule(
+                expected = listOf(
+                    setOf("manche"),
+                    setOf("festivals"),
+                    setOf("haben"),
+                    setOf("spezielle"),
+                    setOf("campingbereiche"),
+                ),
+                minMatches = 4,
+                maxTokens = 20,
+            ),
+        ),
     )
 
     /**
@@ -593,12 +626,55 @@ object StreamingPackCatalog {
         caseFold = CaseFold.Fold,
         emitsPunctuation = false,
         emitsDigits = false,
-        // T3 owns the clip; Kokoro has no Russian voice, so it comes from FLEURS. This row is the
-        // one where the ORDER matters: the pad above must be right BEFORE a canary is run once,
-        // because a Fail on a 500 ms pad would be a verdict on a configuration the feature would
-        // never have run. The pad landed with the route; the clip lands with T3. Until then this
-        // row ARMS UNSCORED and the FEAT_SME guard is unpaid for Russian.
-        canary = null,
+        // **The clip is FLEURS, and this row is where the 820 ms pad got its first measurement**
+        // (4.5.0 T3). `canary_ru_fleurs.wav`, 107,882 B, 53,919 samples = 3.370 s.
+        // `google/fleurs` `cc-by-4.0` (see the German row for where that licence was read),
+        // config `ru_ru`, split `validation`, row **id 1587**, revision `70bb2e84`; attributed on
+        // the licence page. MODIFIED: 16 kHz PCM16 mono via ffmpeg, truncated after a token
+        // boundary at 3.2 s + 250 ms from a 4.80 s original.
+        //
+        // **THE ORDER MATTERED, AND THIS CLIP IS THE FIRST MEASUREMENT OF IT.** The derived pad
+        // had to be right before any canary could run here, and a pad sweep on the SHIPPED clip
+        // shows why, on the real payload:
+        //
+        //     pad   0 / 300 / 500 ms → `… в этом сезоне`          ← the last word never emits
+        //     pad 700 / 820 ms       → `… в этом сезоне было`     ← `padMsFor(77)` = 820
+        //
+        // Before this the 820 ms was an arithmetic derivation (`T = 77` frames = 770 ms of
+        // feature) corroborated only by Vosk's own `decode.py` padding 600. It is now a decode:
+        // **a flat 500 ms pad silently drops the last word of this utterance on this pack**, which
+        // is the defect `padMsFor` exists to close, and the derivation recovers it. (The pad's own
+        // value stays pinned by `PreviewCanaryTest.thePadIsThePacksOwnAndNotAConstant` — the
+        // canary is not the regression test for it. With `minMatches = 5` a short pad would COST
+        // this row's slack rather than fail it, which is the graceful direction.)
+        //
+        // The full 4.80 s utterance decodes all eleven words at either pad, because it carries its
+        // own trailing silence — so the untruncated clip would NOT have shown this. The cut is
+        // what put the last word against the pad boundary.
+        //
+        // The truncated clip decodes `о первых случаях заболевания в этом сезоне было` — eight
+        // tokens, the first eight reference words, exact in all nine (threads × gain) cells.
+        // **The two single-letter words are NOT positions**: `о` and `в` are one Cyrillic
+        // character each, which is a rendering a corruption could produce by accident, so the six
+        // positions are the multi-character words and `minMatches = 5` is one drop of slack.
+        // Only `▁было 253` is a whole piece; the other five are spellable from this vocabulary
+        // (pinned) and reach the strip as whole words regardless.
+        canary = PackCanary(
+            asset = "canary_ru_fleurs.wav",
+            rule = PreviewCanaryRule(
+                expected = listOf(
+                    setOf("первых"),
+                    setOf("случаях"),
+                    setOf("заболевания"),
+                    setOf("этом"),
+                    setOf("сезоне"),
+                    setOf("было"),
+                ),
+                minMatches = 5,
+                // Four times the eight tokens measured — the English row's ratio on a longer clip.
+                maxTokens = 32,
+            ),
+        ),
     )
 
     /**
@@ -654,13 +730,42 @@ object StreamingPackCatalog {
         caseFold = CaseFold.Fold,
         emitsPunctuation = false,
         emitsDigits = false,
-        // T3 owns the clip and Kokoro has no Indonesian voice, so it comes from FLEURS — but the
-        // RULE is the easiest in the catalogue and is verified here: `▁SATU 134`, `▁DUA 164`,
-        // `▁TIGA 231`, `▁EMPAT 324`, `▁LIMA 320` are all WHOLE pieces, the vocabulary has no
-        // numeral so no digit aliases are needed, and a non-speaker can check all five positions.
-        // Until the WAV lands this row ARMS UNSCORED and the FEAT_SME guard is unpaid for
-        // Indonesian — the cheapest of the six to close, and the first that should be.
-        canary = null,
+        // **The clip is FLEURS** (4.5.0 T3). `canary_id_fleurs.wav`, 114,282 B, 57,119 samples =
+        // 3.570 s. `google/fleurs` `cc-by-4.0` (see the German row for where that licence was
+        // read), config `id_id`, split `validation`, row **id 1636**, revision `70bb2e84`;
+        // attributed on the licence page. MODIFIED: 16 kHz PCM16 mono via ffmpeg, truncated after
+        // a token boundary at 3.4 s + 250 ms from a 6.84 s original.
+        //
+        // **Why not the counting clip this row planned.** The row recorded that `▁SATU 134`,
+        // `▁DUA 164`, `▁TIGA 231`, `▁EMPAT 324`, `▁LIMA 320` are whole pieces and called that the
+        // easiest canary in the catalogue — and it would be, if anything could SAY them. Kokoro
+        // has no Indonesian voice, FLEURS' sentences are FLoRes translations and none of them
+        // counts to five, and a clip nobody can produce is not a rule. What a published corpus
+        // gives instead is a reference transcript beside its audio, which is the same property
+        // ("checkable by a non-speaker") arrived at from the other side.
+        //
+        // The truncated clip decodes `BANGSA SPANYOL MEMULAI PERIODE KOLONIALISASI` — the first
+        // five reference words, exact, 5 of 5 positions in all nine (threads × gain) cells. No
+        // digit aliases are needed: this vocabulary has no emittable numeral at all (500 lines, no
+        // `#N` placeholders), which is the cleanest census in the catalogue.
+        //
+        // This is the second `T = 77` row, and its pad sweep agrees with Russian's: the clip's
+        // last word arrives as `KOLONIA` at a 300 ms pad and whole at 500 and above, so the
+        // derived 820 ms is above the cliff here rather than on it.
+        canary = PackCanary(
+            asset = "canary_id_fleurs.wav",
+            rule = PreviewCanaryRule(
+                expected = listOf(
+                    setOf("bangsa"),
+                    setOf("spanyol"),
+                    setOf("memulai"),
+                    setOf("periode"),
+                    setOf("kolonialisasi"),
+                ),
+                minMatches = 4,
+                maxTokens = 20,
+            ),
+        ),
     )
 
     /**

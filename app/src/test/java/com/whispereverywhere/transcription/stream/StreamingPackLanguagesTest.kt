@@ -180,10 +180,20 @@ class StreamingPackLanguagesTest {
         assertFalse(p.emitsDigits)
     }
 
-    @Test fun theGermanRowHasNoCanaryYetBecauseKokoroHasNoGermanVoice() {
-        // TtsVoices.kt covers es fr hi it ja pt zh. German's clip comes from FLEURS in T3, with
-        // its licence recorded beside it; nothing is invented in the meantime.
-        assertNull(StreamingPackCatalog.DE.canary)
+    @Test fun theGermanCanaryComesFromFLEURSBecauseKokoroHasNoGermanVoice() {
+        // This case read `assertNull(DE.canary)`: TtsVoices.kt covers es fr hi it ja pt zh, so
+        // German could not be synthesized and its clip had to be SOURCED. 4.5.0 T3 sourced it
+        // from google/fleurs (cc-by-4.0), which publishes a reference transcript beside its audio
+        // — the property that makes the expected output checkable by a non-speaker, arrived at
+        // from the other side than a counting clip would have reached it.
+        val canary = StreamingPackCatalog.DE.canary!!
+        assertEquals("canary_de_fleurs.wav", canary.asset)
+        assertEquals(
+            "the FIRST FIVE reference words, which is what the truncated clip decodes to",
+            listOf("manche", "festivals", "haben", "spezielle", "campingbereiche"),
+            canary.rule.expected.map { it.single() },
+        )
+        assertEquals(4, canary.rule.minMatches)
     }
 
     // ---------------------------------------------------------------------------- Russian
@@ -276,12 +286,29 @@ class StreamingPackLanguagesTest {
         assertFalse(p.emitsDigits)
     }
 
-    @Test fun neitherSixHundredFortyMillisecondRowHasACanaryYetAndTheORDERIsWhyRuMatters() {
-        // The pad had to be right BEFORE either canary could be run once: a Fail on a 500 ms pad
-        // would be a verdict on a configuration the feature never runs. The pad landed with the
-        // route; the clips land with T3, from FLEURS (Kokoro has no ru or id voice).
-        assertNull(StreamingPackCatalog.RU.canary)
-        assertNull(StreamingPackCatalog.ID.canary)
+    @Test fun bothSixHundredFortyMillisecondRowsNowHaveTheirClipAndTheORDERIsWhyRuMattered() {
+        // This case read `assertNull` on both rows, and recorded why the ORDER mattered: the pad
+        // had to be right before either canary could run once, because a Fail on a 500 ms pad
+        // would be a verdict on a configuration the feature never runs. 4.5.0 T3 then MEASURED
+        // that on the shipped Russian clip against the real payload — `… в этом сезоне` at a
+        // 500 ms pad, `… в этом сезоне было` at 700 and at the derived 820 — so the concern was
+        // not theoretical and the derivation is now a decode rather than arithmetic. The pad
+        // itself stays pinned by PreviewCanaryTest; see the RU row's comment for the sweep.
+        val ru = StreamingPackCatalog.RU.canary!!
+        val id = StreamingPackCatalog.ID.canary!!
+        assertEquals("canary_ru_fleurs.wav", ru.asset)
+        assertEquals("canary_id_fleurs.wav", id.asset)
+        assertEquals(820L, StreamingPackCatalog.RU.padMs)
+        assertEquals(820L, StreamingPackCatalog.ID.padMs)
+        // Russian's two single-CHARACTER words (`о`, `в`) are deliberately not positions: a
+        // one-character rendering is one a corruption could hit by accident, so the six positions
+        // are the multi-character words the decode produced, and minMatches is 5 of 6.
+        assertEquals(
+            listOf("первых", "случаях", "заболевания", "этом", "сезоне", "было"),
+            ru.rule.expected.map { it.single() },
+        )
+        assertTrue(ru.rule.expected.all { set -> set.all { it.length >= 2 } })
+        assertEquals(5, ru.rule.minMatches)
     }
 
     // ---------------------------------------------------------------------------- Korean
