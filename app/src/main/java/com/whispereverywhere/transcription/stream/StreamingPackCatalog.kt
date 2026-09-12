@@ -174,10 +174,14 @@ sealed interface CaseFold {
  *   matching none of the five positions, which is indistinguishable from the SME
  *   silent-miscompute signature the canary exists to catch — so the clip is the pack's. Recorded
  *   cost: one WAV per language, **81,998 B** (the English one's size). `null` means the clip has
- *   not been SOURCED yet and the verdict is [CanaryVerdict.NoClip] — **no verdict, never a
- *   failure**; [PackCanary]'s docblock says why that is a third answer rather than a missing
- *   value. See also [PreviewCanaryRule] for what positional matching cannot express (zh and ko
- *   collapse the clip to one token and need a different RULE, not a different alias list).
+ *   not been SOURCED yet: the verdict is [CanaryVerdict.Unscored] — **no verdict, never a
+ *   failure** — and the language **arms UNSCORED**, which is a priced trade and not a free one
+ *   (the FEAT_SME guard goes unpaid for that language until its clip lands; [PackCanary]'s
+ *   docblock prices it, and [CanaryVerdict] tabulates the three consequences). `null` is NOT
+ *   [CanaryVerdict.NoClip]: that verdict is a clip this row NAMED that would not load, a build
+ *   defect, and it still takes the language off. See also [PreviewCanaryRule] for what positional
+ *   matching cannot express (zh and ko collapse the clip to one token and need a different RULE,
+ *   not a different alias list).
  */
 data class StreamingPack(
     val language: String,
@@ -406,6 +410,8 @@ object StreamingPackCatalog {
         // `▁DEUX 156`, `▁TROIS 304`, `▁QUATRE 353`, `▁CINQ 386` are all WHOLE pieces in this
         // vocabulary, so "un deux trois quatre cinq" is checkable per position by a non-speaker.
         // Kokoro's `ff_siwis` voice can synthesise it in-repo (TtsVoices.kt covers fr).
+        // Until it lands this row ARMS UNSCORED: French live words run, and the FEAT_SME guard is
+        // unpaid for French for as long as this stays null. Priced in [PackCanary]'s docblock.
         canary = null,
     )
 
@@ -488,7 +494,8 @@ object StreamingPackCatalog {
         emitsDigits = false,
         // T3 owns the clip, and German has no Kokoro voice (TtsVoices.kt covers es fr hi it ja pt
         // zh), so it comes from FLEURS with its published reference transcript and its licence
-        // recorded beside it. Nothing here is guessed in the meantime: null is NO VERDICT.
+        // recorded beside it. Nothing here is guessed in the meantime: null is NO VERDICT, this
+        // row ARMS UNSCORED, and the FEAT_SME guard is unpaid for German until the clip lands.
         canary = null,
     )
 
@@ -558,7 +565,8 @@ object StreamingPackCatalog {
         // T3 owns the clip; Kokoro has no Russian voice, so it comes from FLEURS. This row is the
         // one where the ORDER matters: the pad above must be right BEFORE a canary is run once,
         // because a Fail on a 500 ms pad would be a verdict on a configuration the feature would
-        // never have run. The pad landed with the route; the clip lands with T3.
+        // never have run. The pad landed with the route; the clip lands with T3. Until then this
+        // row ARMS UNSCORED and the FEAT_SME guard is unpaid for Russian.
         canary = null,
     )
 
@@ -619,6 +627,8 @@ object StreamingPackCatalog {
         // RULE is the easiest in the catalogue and is verified here: `▁SATU 134`, `▁DUA 164`,
         // `▁TIGA 231`, `▁EMPAT 324`, `▁LIMA 320` are all WHOLE pieces, the vocabulary has no
         // numeral so no digit aliases are needed, and a non-speaker can check all five positions.
+        // Until the WAV lands this row ARMS UNSCORED and the FEAT_SME guard is unpaid for
+        // Indonesian — the cheapest of the six to close, and the first that should be.
         canary = null,
     )
 
@@ -697,6 +707,9 @@ object StreamingPackCatalog {
         // one token has no positions. Character-set overlap plus a length band (일이삼사오) is the
         // shape, which is a second implementation of the seam and not a different alias list.
         // **And the clip must NOT come from the k2-fsa mirror's `test_wavs`: that is AI-Hub audio.**
+        // This row ARMS UNSCORED until both the clip AND that rule exist, so the FEAT_SME guard is
+        // unpaid for Korean — the longest-carried of the six, because it needs a rule and not just
+        // a WAV.
         canary = null,
     )
 
@@ -803,6 +816,8 @@ object StreamingPackCatalog {
         // position-two alias set already contains `"2"` so this row's one numeral SCORES rather
         // than fails. Two residual risks, named: the decode itself is UNRUN (rung 1), and an
         // English-only clip exercises only the English half of a bilingual model.
+        // It is null only because T3 owns the wiring, not because anything is missing: this row
+        // ARMS UNSCORED meanwhile, and it is the one row whose guard costs nothing to pay.
         canary = null,
     )
 

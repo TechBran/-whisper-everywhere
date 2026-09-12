@@ -10,8 +10,15 @@ import java.util.Locale
  */
 object StreamDiag {
 
-    fun openLine(sherpa: String, ort: String, threads: Int, loadMs: Long, canary: String, canaryMs: Long, outLen: Int, load: String): String =
-        "stream-open: sherpa=$sherpa ort=$ort threads=$threads provider=cpu loadMs=$loadMs canary=$canary canaryMs=$canaryMs outLen=$outLen load=$load"
+    /**
+     * `warm` is the OUTCOME, and it is here because the line without it could not report one
+     * (4.5.0 languages T1 review r1, B1): `canary=none … load=ok` was printed by a language that
+     * had just switched itself off for the process, which is how that class of defect survives a
+     * device session. `load=` still answers only "did the model load"; `warm=` answers "is this
+     * language's previewer up", so the disable is always named where it happens.
+     */
+    fun openLine(sherpa: String, ort: String, threads: Int, loadMs: Long, canary: String, canaryMs: Long, outLen: Int, load: String, warm: Boolean): String =
+        "stream-open: sherpa=$sherpa ort=$ort threads=$threads provider=cpu loadMs=$loadMs canary=$canary canaryMs=$canaryMs outLen=$outLen load=$load warm=${bit(warm)}"
 
     fun timingLine(
         seq: Long, audioMs: Long, decodes: Int, decodeMs: Long, p50Us: Long, p99Us: Long, rtf: Double,

@@ -1,11 +1,35 @@
 package com.whispereverywhere.transcription.stream
 
-/** The canary's answer; `code` is what the `stream-open:` line prints. */
+/**
+ * The canary's answer; `code` is what the `stream-open:` line prints.
+ *
+ * **Four answers, THREE consequences, and the split between the last two is the point.** Only
+ * [StreamingPreviewEngine.warm] consumes these, and it must not treat them as two buckets:
+ *
+ * | verdict | means | consequence |
+ * |---|---|---|
+ * | [Pass] | the clip transcribed | arm, SCORED |
+ * | [Fail] | the clip did not transcribe | **disable** the language for the process |
+ * | [NoClip] | the row NAMES a clip and that named asset would not load — a build defect | **disable** |
+ * | [Unscored] | the row names no clip yet ([StreamingPack.canary] is null) — nothing to score | arm, UNSCORED |
+ *
+ * [NoClip] and [Unscored] were one state until 4.5.0 languages T1 review r1 (B1), and collapsing
+ * them is why six healthy languages switched themselves off on first warm: a row whose clip is
+ * merely *unsourced* took the branch built for a row whose clip is *broken*. They are now
+ * distinguishable at the source — `pack.canary == null` versus `pack.canary != null && clip
+ * null/empty` — so they are two verdicts. Arming [Unscored] leaves the FEAT_SME silent-miscompute
+ * guard **unpaid for that language until its clip lands**; that is the priced trade, argued in
+ * [PackCanary]'s docblock, and it is affordable only because the previewer is additive and never
+ * types.
+ */
 sealed class CanaryVerdict {
     abstract val code: String
     data class Pass(val outLen: Int, val decodes: Int) : CanaryVerdict() { override val code: String get() = "pass" }
     data class Fail(val outLen: Int, val decodes: Int) : CanaryVerdict() { override val code: String get() = "fail" }
+    /** A clip this row NAMED would not load. A build defect, and it keeps disabling the language. */
     object NoClip : CanaryVerdict() { override val code: String get() = "none" }
+    /** This row names no clip yet. No verdict, no defect, and the language arms unscored. */
+    object Unscored : CanaryVerdict() { override val code: String get() = "unscored" }
 }
 
 /**
@@ -66,9 +90,23 @@ data class PreviewCanaryRule(
  *    0) or fails every text (`minMatches` 1). Both are verdicts about a model nobody has listened
  *    to, and a Fail switches live words off for that language for the process.
  *
- * `null` is the third answer and the true one: **no verdict**, which is exactly what
- * [CanaryVerdict.NoClip] already means for a clip that will not load. One field rather than two
- * because an asset without a rule (or a rule without an asset) is a state nothing could act on.
+ * `null` is the third answer and the true one: **no verdict** — [CanaryVerdict.Unscored], which is
+ * NOT [CanaryVerdict.NoClip]. One field rather than two because an asset without a rule (or a rule
+ * without an asset) is a state nothing could act on.
+ *
+ * ### What `null` costs, priced rather than implied
+ *
+ * A row with no clip **arms UNSCORED**: the model loads, the strip runs, and the FEAT_SME
+ * silent-miscompute guard is **unpaid for that language until its clip lands**. On an SME device
+ * (none we own — `8elite5_galaxy`, NpuFleetCensus.kt:142-145) that language could paint empty or
+ * wrong words with no guard to catch it.
+ *
+ * That is affordable, and it is the same trade the feature itself is built on: the previewer is
+ * **additive and never types**, whisper's final replaces the preview, so a wrong preview costs
+ * throwaway words on a replace-only strip. The alternative is what B1 was — six healthy languages
+ * that disable themselves on first warm, so the owner cannot hear ANY of them work on his own
+ * devices, which is the one thing this build exists to let him do. An unscored strip is a smaller
+ * loss than a dead language, and the row's own comment says which languages are carrying it.
  *
  * @property asset the WAV in main assets — PCM16 mono 16 kHz, read by `CanaryAudio.samples`.
  * @property rule what a PASS means for that clip.
@@ -85,17 +123,21 @@ data class PackCanary(
  * has SME (rung 3 §1.1), so on the devices we own this always passes — the rule exists for the
  * `8elite5_galaxy` census family (NpuFleetCensus.kt:142-145) we cannot test.
  *
- * Feeds the PACK's own clip ([StreamingPack.canaryAsset] — `canary_digits.wav` for English, read
- * by `CanaryAudio`: 2.560 s of "one two three four five") in the app's 512-sample chunks, pads the
+ * Feeds the PACK's own clip ([PackCanary.asset] — `canary_digits.wav` for English, read by
+ * `CanaryAudio`: 2.560 s of "one two three four five") in the app's 512-sample chunks, pads the
  * pack's own [StreamingPack.padMs] — the same derived pad the commit hook uses, because a canary
  * padded shorter than the stream is a verdict on a configuration the feature never runs —
- * finishes, drains, and scores against the pack's own [StreamingPack.canaryRule].
+ * finishes, drains, and scores against the pack's own [PackCanary.rule].
  *
  * **The clip is per-pack because the English one cannot pass for a non-English model**: a French
  * or Russian recognizer fed "one two three four five" answers something that matches none of the
  * five positions, which is indistinguishable here from the SME signature it exists to catch. The
  * recorded cost is one WAV in main assets per language — **81,998 B**, the size of the English one.
- * A null clip is NO VERDICT, not a failure.
+ *
+ * **A clip that will not load is [CanaryVerdict.NoClip] and still disables; a row that names no
+ * clip yet is [CanaryVerdict.Unscored] and arms.** Neither is a Fail, but only one of them is a
+ * defect: the first says a named asset is missing from the build, the second says T3 has not
+ * finished. [CanaryVerdict]'s table is where the three consequences are stated.
  *
  * The verdict is never persisted (no preference, no per-(versionCode, pack) latch) and — since
  * 4.5.0 T2, defect 4 — it is scoped to the PACK rather than to the process: the tee is additive,
@@ -104,9 +146,13 @@ data class PackCanary(
 object PreviewCanary {
 
     fun run(recognizer: PreviewRecognizer, clip: FloatArray?, pack: StreamingPack): CanaryVerdict {
-        // Two ways to have nothing to score, and both are NO VERDICT rather than a failure: the
-        // clip would not load, or the row has no canary sourced yet ([PackCanary]'s docblock).
-        val rule = pack.canary?.rule ?: return CanaryVerdict.NoClip
+        // Two ways to have nothing to score, and they are DIFFERENT answers because they have
+        // different causes and so different consequences (B1): a row with no canary sourced yet is
+        // Unscored and arms, a NAMED clip that would not load is NoClip and disables. Order
+        // matters — the `canary == null` rows are asked first, because for them the clip argument
+        // is null by construction (FloatingBubbleService.kt:3209 maps a null canary to a null
+        // clip) and the second check would otherwise answer for the first.
+        val rule = pack.canary?.rule ?: return CanaryVerdict.Unscored
         if (clip == null || clip.isEmpty()) return CanaryVerdict.NoClip
         val stream = recognizer.createStream()
         var decodes = 0

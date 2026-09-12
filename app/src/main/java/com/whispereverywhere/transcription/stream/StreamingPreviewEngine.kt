@@ -47,9 +47,11 @@ interface LocalPreview {
  * already reported, and counting it makes `audio=`, `rtf=` and `firstPartialMs=` fiction on
  * every cap-cut segment — which is what a long read is almost entirely made of.
  *
- * **The canary** (spec §7.2) runs inside [warm], once per load, on the PACK's own clip; a failure
- * or a missing clip disables the previewer for THAT LANGUAGE for the life of the process —
- * nothing is persisted, and no other language is affected.
+ * **The canary** (spec §7.2) runs inside [warm], once per load, on the PACK's own clip, and its
+ * answer has **three** consequences, not two ([CanaryVerdict]): a Fail, or a clip this row NAMED
+ * that would not load, disables the previewer for THAT LANGUAGE for the life of the process; a row
+ * that names **no clip yet** arms UNSCORED, because a language cannot be found guilty of a clip
+ * nobody has recorded. Nothing is persisted, and no other language is affected either way.
  *
  * **Never inside `NativeComputeGate`**: that is a whole-call whisper lock; wrapping this loop in
  * it would stop it being streaming.
@@ -98,7 +100,11 @@ class StreamingPreviewEngine(
 
     /**
      * The languages whose previewer is OFF for the life of this process — a load that threw, a
-     * canary that failed, a missing clip, or three consecutive decode throws in one session.
+     * canary that failed, a clip the row NAMED that would not load, or three consecutive decode
+     * throws in one session. **Not** a row that has no canary sourced yet: that language arms
+     * unscored ([CanaryVerdict.Unscored]), because "T3 has not recorded the clip" is not a verdict
+     * about the model and six languages that disable themselves on first warm are six languages
+     * the owner cannot hear work.
      *
      * **Per-pack, not per-process, and that was a real defect rather than a tidiness.** A single
      * flag meant a failed ENGLISH canary refused a later FRENCH load in the same process: the
@@ -135,7 +141,8 @@ class StreamingPreviewEngine(
      * applies is read off it — the commit pad ([StreamingPack.padMs], derived from the pack's own
      * `T`) and the strip's text rules (its fold, its locale).
      *
-     * It is assigned only under the canary's Pass, beside [recognizer], and cleared only by
+     * It is assigned only where the canary ARMS the language — a Pass, or a row with no clip
+     * sourced yet ([CanaryVerdict.Unscored]) — beside [recognizer], and cleared only by
      * [releaseResident], beside it. A pad or a fold read from a process-wide constant is the
      * silent defect; one read from "the pack Main happens to be holding right now" is the same
      * defect wearing the fix's clothes, which is why the engine keeps its own answer.
@@ -243,7 +250,7 @@ class StreamingPreviewEngine(
                 factory.load(packDir, pack, StreamingPreviewTuning.NUM_THREADS)
             } catch (t: Throwable) {
                 disable(pack)
-                log(StreamDiag.openLine(factory.sherpaVersion(), factory.ortVersion(), StreamingPreviewTuning.NUM_THREADS, msSince(t0), "skipped", 0L, 0, "fail"))
+                log(StreamDiag.openLine(factory.sherpaVersion(), factory.ortVersion(), StreamingPreviewTuning.NUM_THREADS, msSince(t0), "skipped", 0L, 0, "fail", warm = false))
                 onLoadFailure(pack)
                 return@execute
             }
@@ -258,16 +265,34 @@ class StreamingPreviewEngine(
                 is CanaryVerdict.Pass -> verdict.outLen
                 is CanaryVerdict.Fail -> verdict.outLen
                 CanaryVerdict.NoClip -> 0
+                CanaryVerdict.Unscored -> 0
             }
-            log(StreamDiag.openLine(factory.sherpaVersion(), factory.ortVersion(), StreamingPreviewTuning.NUM_THREADS, loadMs, verdict.code, msSince(t1), outLen, "ok"))
-            if (verdict is CanaryVerdict.Pass) {
+            // THREE consequences for four answers, and the `when` is exhaustive on purpose so a
+            // fifth verdict cannot inherit a branch by default (B1 is what happens when one does):
+            //   Pass      ⇒ arm, scored.
+            //   Unscored  ⇒ arm, UNSCORED — the row names no clip yet, so there is nothing to be
+            //               guilty of. The SME guard is unpaid for this language until T3's clip
+            //               lands; that trade is priced in [PackCanary]'s docblock and is the one
+            //               the brief already made: the previewer is additive and never types.
+            //   Fail      ⇒ off. A verdict was rendered and the model failed it.
+            //   NoClip    ⇒ off. This row NAMED a clip and the named asset would not load — a
+            //               build defect, and the one thing main's
+            //               `aMissingClipIsNoVerdictAndTheProcessStaysOff` has always asserted.
+            val armed = when (verdict) {
+                is CanaryVerdict.Pass -> true
+                CanaryVerdict.Unscored -> true
+                is CanaryVerdict.Fail -> false
+                CanaryVerdict.NoClip -> false
+            }
+            log(StreamDiag.openLine(factory.sherpaVersion(), factory.ortVersion(), StreamingPreviewTuning.NUM_THREADS, loadMs, verdict.code, msSince(t1), outLen, "ok", warm = armed))
+            if (armed) {
                 recognizer = rec
                 loadedPack = pack
                 warm = true
             } else {
                 runCatching { rec.release() }
-                // A Fail or a missing clip takes THIS language off, and no other: the clip is the
-                // pack's, so a verdict rendered on it says nothing about a different model.
+                // Takes THIS language off, and no other: the clip is the pack's, so a verdict
+                // rendered on it says nothing about a different model.
                 disable(pack)
             }
         }

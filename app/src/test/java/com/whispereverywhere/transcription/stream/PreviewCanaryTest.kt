@@ -3,6 +3,7 @@ package com.whispereverywhere.transcription.stream
 import com.whispereverywhere.transcription.GpuCanaryPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -83,6 +84,9 @@ class PreviewCanaryTest {
     }
 
     @Test fun aMissingClipIsNoVerdict() {
+        // The pack HAS a canary; the named asset would not load. That is a build defect, and
+        // `StreamingPreviewEngineTest.aMissingClipIsNoVerdictAndTheProcessStaysOff` holds the
+        // consequence: the language goes off.
         val rec = ScriptedRecognizer(listOf("ONE TWO THREE FOUR FIVE"))
         assertEquals(CanaryVerdict.NoClip, PreviewCanary.run(rec, null, pack))
         assertEquals(CanaryVerdict.NoClip, PreviewCanary.run(rec, FloatArray(0), pack))
@@ -92,15 +96,30 @@ class PreviewCanaryTest {
 
     @Test fun aPackWithNoCanarySOURCEDYetIsNoVerdictAndNeverAFailure() {
         // (4.5.0 T1) A row whose clip has not been sourced is `canary = null`, and the ONLY safe
-        // answer for it is NoClip — never Fail. A Fail is a verdict, it switches live words off
+        // answer for it is no verdict — never Fail. A Fail is a verdict, it switches live words off
         // for that language for the process, and a language cannot be found guilty of a clip
         // nobody has made yet. The alternative the type refuses is worse: a sentinel rule
         // (`expected = emptyList()`) either passes everything (minMatches 0) or fails everything
         // (minMatches 1), and both are lies dressed as verdicts.
+        //
+        // Review r1 (B1): that answer is `Unscored`, and its being a DIFFERENT object from NoClip
+        // is the whole fix — routing it into NoClip gave it NoClip's consequence, which is the same
+        // as Fail's, so all six new languages switched themselves off on first warm. The
+        // consequence is asserted where consequences live:
+        // `StreamingPreviewEngineTest.aRowWithNoCLIPSOURCEDYetARMSUnscoredRatherThanGoingOff`.
         val rec = ScriptedRecognizer(listOf("ONE TWO THREE FOUR FIVE"))
         val unsourced = pack.copy(language = "xx", canary = null)
-        assertEquals(CanaryVerdict.NoClip, PreviewCanary.run(rec, clip, unsourced))
+        assertEquals(CanaryVerdict.Unscored, PreviewCanary.run(rec, clip, unsourced))
+        assertNotEquals(
+            "Unscored and NoClip must not be the same object: they have different consequences",
+            CanaryVerdict.NoClip as CanaryVerdict, CanaryVerdict.Unscored as CanaryVerdict,
+        )
+        assertEquals("unscored", CanaryVerdict.Unscored.code)
         assertTrue("and no stream is opened for a pack with nothing to score", rec.streams.isEmpty())
+        // A null clip does not change the answer either: the row is asked first, so an unsourced
+        // row reports Unscored and not the defect verdict — which is exactly the shape the service
+        // produces, because `canaryClip` maps a null canary to a null clip.
+        assertEquals(CanaryVerdict.Unscored, PreviewCanary.run(rec, null, unsourced))
     }
 
     @Test fun theEnglishRowStillCarriesItsClipAndItsRuleTogether() {

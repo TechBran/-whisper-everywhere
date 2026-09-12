@@ -79,7 +79,7 @@ class StreamingPreviewEngineTest {
         assertTrue(e.isWarm())
         assertFalse(e.isDisabled(pack))
         assertEquals(
-            "stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=0 canary=pass canaryMs=0 outLen=23 load=ok",
+            "stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=0 canary=pass canaryMs=0 outLen=23 load=ok warm=1",
             logs.single(),
         )
         assertTrue("the canary's throwaway stream is released", rec.streams.single().released)
@@ -97,17 +97,80 @@ class StreamingPreviewEngineTest {
         assertEquals(setOf("en"), e.disabledLanguages)
         assertFalse(e.isWarm())
         assertTrue(rec.released)
-        assertTrue(logs.single().contains(" canary=fail canaryMs=0 outLen=0 load=ok"))
+        assertTrue(logs.single().contains(" canary=fail canaryMs=0 outLen=0 load=ok warm=0"))
         e.warm(dir, pack)
         assertEquals("a disabled previewer never reloads in this process", 1, factory.loads)
     }
 
     @Test fun aMissingClipIsNoVerdictAndTheProcessStaysOff() {
+        // The pack NAMES a clip (`EN.canary` is non-null) and the named asset would not load. That
+        // is a build defect, not a sourcing gap, and it keeps switching the language off — the
+        // distinction B1 turns on. `warm=0` is now on the line, so the disable is named.
         val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
-        val e = engine(rec, clip = null)
+        val disabled = mutableListOf<StreamingPack>()
+        val e = engine(rec, clip = null, onDisabled = { disabled += it })
         e.warm(dir, pack)
         assertTrue(e.isDisabled(pack))
-        assertTrue(logs.single().contains(" canary=none canaryMs=0 outLen=0 load=ok"))
+        assertTrue("the recognizer is freed, not left resident", rec.released)
+        assertEquals(listOf(pack), disabled)
+        assertTrue(logs.single().contains(" canary=none canaryMs=0 outLen=0 load=ok warm=0"))
+    }
+
+    @Test fun aRowWithNoCLIPSOURCEDYetARMSUnscoredRatherThanGoingOff() {
+        // (4.5.0 languages T1 review r1, B1) THE CONSEQUENCE, which is what the scorer-level test
+        // could not see. `canary = null` means T3 has not recorded this language's clip — it is not
+        // a verdict about the model and not a defect in the build, so it must not take the branch
+        // built for a Fail. It used to: `canary = null` scored NoClip, NoClip's only consumer was
+        // `if (verdict is Pass) … else disable(pack)`, and so every one of the six new languages
+        // loaded 169 MB, scored, released the recognizer and switched itself off for the process —
+        // behind a line reading `canary=none … load=ok`, which says the load was fine.
+        //
+        // The trade is real and priced ([PackCanary]'s docblock): arming unscored leaves the
+        // FEAT_SME silent-miscompute guard unpaid for this language until its clip lands. It is
+        // affordable because the previewer is additive and never types, and the alternative is six
+        // languages the owner cannot hear work on his own devices before paying for a lawyer.
+        val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
+        val factory = ScriptedFactory(rec)
+        val unsourced = pack.copy(language = "xx", dirName = "xx-test", packName = "preview_xx", canary = null)
+        val disabled = mutableListOf<StreamingPack>()
+        // The service's own shape: no canary ⇒ no clip (FloatingBubbleService.kt:3209).
+        val e = engine(rec, clip = null, factory = factory, onDisabled = { disabled += it })
+        e.warm(dir, unsourced)
+        assertFalse("the language is NOT disabled", e.isDisabled(unsourced))
+        assertEquals("and nothing is published to the selection surfaces", emptySet<String>(), e.disabledLanguages)
+        assertEquals("onDisabled is never called", emptyList<StreamingPack>(), disabled)
+        assertTrue("the strip can arm for THIS pack", e.isWarmFor(unsourced))
+        assertFalse("the recognizer is NOT released — it is the resident one", rec.released)
+        assertTrue("no canary stream was opened at all", rec.streams.isEmpty())
+        assertTrue(logs.single().contains(" canary=unscored canaryMs=0 outLen=0 load=ok warm=1"))
+        // And it stays armed: a second warm is the idempotent no-op, not a reload.
+        e.warm(dir, unsourced)
+        assertEquals("warm is still idempotent on the pack", 1, factory.loads)
+        assertTrue(e.isWarmFor(unsourced))
+    }
+
+    @Test fun EVERYCatalogueRowWithNoClipSourcedYetArmsRatherThanDisablingItself() {
+        // The brief's one HARD REQUIREMENT read back off the catalogue rather than off one fixture:
+        // all six new languages must be "fully usable on the internal track" while their clearance
+        // is outstanding, and all six carry `canary = null` today. A seventh row added with an
+        // unset canary — which the brief explicitly permits Task 3 to leave — is covered by the
+        // same loop without editing it.
+        val unsourced = StreamingPackCatalog.packs.filter { it.canary == null }
+        // Non-vacuity, not a census: the per-row `assertNull` pins live in StreamingPackLanguagesTest
+        // and Task 3 will retire them one clip at a time. This one line is what to relax on the day
+        // every row has a clip — and until then it guarantees the loop below actually ran.
+        assertTrue("the loop must have rows to run over", unsourced.isNotEmpty())
+        assertFalse("English's clip is bundled; a null there would be a regression", StreamingPackCatalog.EN in unsourced)
+        for (p in unsourced) {
+            logs.clear()
+            val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
+            val e = engine(rec, clip = null)
+            e.warm(dir, p)
+            assertFalse("${p.language} must not disable itself on first warm", e.isDisabled(p))
+            assertTrue("${p.language} must arm", e.isWarmFor(p))
+            assertFalse("${p.language}'s recognizer must stay resident", rec.released)
+            assertTrue("${p.language}'s open line says it came up", logs.single().endsWith(" canary=unscored canaryMs=0 outLen=0 load=ok warm=1"))
+        }
     }
 
     @Test fun aLoadFailureDisablesAndReportsTheCorruptionAgainstThePackThatFAILED() {
@@ -123,7 +186,7 @@ class StreamingPreviewEngineTest {
         // A's load marked B corrupt for A's failure, deleting a healthy marker and leaving the
         // broken pack installed.
         assertEquals(listOf(other), corrupt)
-        assertTrue(logs.single().endsWith(" canary=skipped canaryMs=0 outLen=0 load=fail"))
+        assertTrue(logs.single().endsWith(" canary=skipped canaryMs=0 outLen=0 load=fail warm=0"))
     }
 
     // ------------------------------------------------------------- pack identity (T2, defect 1)

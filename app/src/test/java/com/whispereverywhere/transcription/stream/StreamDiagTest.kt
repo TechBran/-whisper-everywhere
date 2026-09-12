@@ -8,8 +8,25 @@ class StreamDiagTest {
 
     @Test fun openLineMatchesTheGreppableFormatExactly() {
         assertEquals(
-            "stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=811 canary=pass canaryMs=212 outLen=23 load=ok",
-            StreamDiag.openLine("1.13.7", "1.27.1", 2, 811L, "pass", 212L, 23, "ok"),
+            "stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=811 canary=pass canaryMs=212 outLen=23 load=ok warm=1",
+            StreamDiag.openLine("1.13.7", "1.27.1", 2, 811L, "pass", 212L, 23, "ok", warm = true),
+        )
+    }
+
+    @Test fun theLineSAYSWhenALanguageWentOffRatherThanLeavingItToBeInferred() {
+        // (4.5.0 languages T1 review r1, B1) `load=ok` answers only "did the model load", and the
+        // disable used to be invisible on it: a language that had just switched itself off for the
+        // process printed a line ending `load=ok`, which is how the defect survived a device
+        // session. `warm=` is the outcome, so a reader greps one field to tell a language that came
+        // up from one that went off, whatever the canary code says.
+        assertEquals(
+            "stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=811 canary=none canaryMs=4 outLen=0 load=ok warm=0",
+            StreamDiag.openLine("1.13.7", "1.27.1", 2, 811L, "none", 4L, 0, "ok", warm = false),
+        )
+        // And the row that B1 created: no verdict, no defect, the language IS up.
+        assertEquals(
+            "stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=811 canary=unscored canaryMs=0 outLen=0 load=ok warm=1",
+            StreamDiag.openLine("1.13.7", "1.27.1", 2, 811L, "unscored", 0L, 0, "ok", warm = true),
         )
     }
 
