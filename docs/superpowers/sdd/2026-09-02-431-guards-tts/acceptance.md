@@ -887,16 +887,17 @@ all seven packs.** So this row has changed state, and the two halves of it chang
   not a reply from NIA (nothing was sent — Korean rests on AI-Hub's own published FAQ), not a legal
   certification (no counsel opinion was sought for `id`, `ko` or `zh`), not a Google Play approval,
   and not a number. Four rows carry an **ACCEPTED** residual and name it; accepted is not resolved.
-- **AND IT CARRIES A CONDITION, WHICH IS A DEVICE ROW BELOW, NOT A FOOTNOTE.** Apache-2.0 §4 and MIT
+- **AND IT CARRIES A CONDITION, WHICH IS NOT A FOOTNOTE.** Apache-2.0 §4 and MIT
   are trades, and the AI-Hub FAQ grants commercial distribution of a derived model **only with
   attribution**. The notices ship in the base app's own assets. **Korean ships only if its
   acknowledgement ships with it** — so a promotion also requires the licences screen to still carry
   what these grants ask for. The suite fails the build if a pack's evidence URL, its licence's full
   name, or the KsponSpeech / AI-Hub (aihub.or.kr) / NIA credit leaves `oss_licenses.html`.
-- **The checklist is `docs/LANGUAGE-CLEARANCE.md`** — one section per outstanding language, with the
-  exact question, where the evidence lives, and the three edits that record an answer. German is one
-  email; Russian **and now Chinese** are your own risk call on an undisclosed corpus; **Korean** is
-  your own risk call on one scope residual; Indonesian is the only counsel row left.
+- **The checklist is `docs/LANGUAGE-CLEARANCE.md`** — one section per language, carrying what that
+  row was cleared ON, the pinned commit its evidence was read at, and the edits a **withdrawal**, a
+  **refusal** or an **eighth language** takes. Nothing there is outstanding today; what it still
+  answers is "who would this row go back to if it were reopened" — the uploader for German, your own
+  risk call for Russian, Chinese and Korean, counsel for Indonesian.
   **Chinese corrected 2026-09-13:** its corpus is **not** established as WenetSpeech-L — the shipped
   card reads `training_subset: 'mix'`, sherpa's docs say an internal corpus, and the `12k_hour`
   string is the **fork parent's**. The "named non-commercial restriction" that made it the heaviest
@@ -910,8 +911,8 @@ all seven packs.** So this row has changed state, and the two halves of it chang
   if that credit ships with it.** The residual the FAQ does not address — parties outside Korea — is
   an owner risk call, and a clarification request to AI-Hub is optional extra evidence, not a gate.
 
-`[ ] the record names every shipped language — promotion may proceed`
-`[ ] it does not — INTERNAL TRACK ONLY`
+`[ ] the record names every shipped language AND the licences screen still carries the notices — promotion may proceed`
+`[ ] either is missing — INTERNAL TRACK ONLY`
 
 ### The six rows
 
