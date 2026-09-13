@@ -92,12 +92,29 @@ class PreferencesBubbleColoursTest {
         assertEquals(BubbleColours.LIVE_DEFAULT, readLive())
         assertEquals(BubbleColours.OPACITY_FLOOR_PERCENT, readOpacity())
 
-        // Whatever is stored, the value the bubble is handed is always legible.
+        // Whatever is stored, EVERY colour the panel then paints is legible — the two values the
+        // bubble is handed AND anything the panel derives from them. Sweeping only the two would
+        // leave exactly the hole a derived hint fell into: a colour outside the palette's
+        // authority, outside every assertion, and on screen in every session.
         for (poison in listOf(0, 1, -1, Int.MAX_VALUE, Int.MIN_VALUE, 0xFF000000.toInt(), 0x00FF5252)) {
             store["bubble_live_colour"] = poison
             store["bubble_committed_colour"] = poison
-            assertTrue(BubbleColours.legibleEverywhere(readLive()))
-            assertTrue(BubbleColours.legibleEverywhere(readCommitted()))
+            for (argb in BubbleColours.panelTextArgbs(readLive(), readCommitted())) {
+                assertTrue(Integer.toHexString(argb), BubbleColours.legibleEverywhere(argb))
+            }
+        }
+        // ...and for every legitimate pair too, not only the poisoned ones.
+        for (live in BubbleColours.PALETTE) {
+            for (committed in BubbleColours.PALETTE) {
+                store["bubble_live_colour"] = live.argb
+                store["bubble_committed_colour"] = committed.argb
+                for (argb in BubbleColours.panelTextArgbs(readLive(), readCommitted())) {
+                    assertTrue(
+                        "${live.name}/${committed.name}: ${Integer.toHexString(argb)}",
+                        BubbleColours.legibleEverywhere(argb),
+                    )
+                }
+            }
         }
         for (poison in listOf(0, -100, 7, 84, 101, 1000, Int.MIN_VALUE, Int.MAX_VALUE)) {
             store["bubble_opacity_percent"] = poison

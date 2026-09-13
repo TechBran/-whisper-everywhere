@@ -22,10 +22,11 @@ package com.whispereverywhere.service
  * Asked directly about the palette the owner ruled: *"Definitely no black text on black
  * background. Definitely won't work. Just about every other colour works, though."* So the rule
  * is **not** a short list. What actually fails is not a colour, it is **low contrast** — and
- * contrast is computable. [CONTRAST_FLOOR] is asserted by `BubbleColoursTest` against every
- * entry of [PALETTE] at every step of [OPACITY_STEPS] over both extreme backdrops. Black-on-black
- * is unreachable because it fails that arithmetic; so do pure red and the app's own brand red,
- * which is the whole reason [LIVE_DEFAULT] is not `#FF0000`.
+ * contrast is computable. [CONTRAST_FLOOR] is asserted by `BubbleColoursTest` over
+ * [panelTextArgbs] — EVERY colour that lands on the panel, not merely every palette entry — for
+ * every pair of choices in [PALETTE] at every step of [OPACITY_STEPS] over both extreme
+ * backdrops. Black-on-black is unreachable because it fails that arithmetic; so do pure red and
+ * the app's own brand red, which is the whole reason [LIVE_DEFAULT] is not `#FF0000`.
  *
  * ### Why the maths lives here and not in `android.graphics.Color`
  *
@@ -156,8 +157,34 @@ object BubbleColours {
     /** The panel's colour. Only its alpha is user-owned — the fill stays black by ruling. */
     private const val PANEL_RGB: Int = 0x000000
 
-    /** The hint's alpha, the `#99FFFFFF` the shipped layout used for *"Listening…"*. */
-    private const val HINT_ALPHA: Int = 0x99
+    /**
+     * The *"Listening…"* hint on `transcription_edit_text` — `#99FFFFFF`, FIXED, and the ONE
+     * colour on this panel that is **not** a term of the user's choice.
+     *
+     * ### Why it is fixed, and why that is the interesting half
+     *
+     * It has an alpha of its own (`0x99`), so what the eye receives is the hint composited over
+     * the panel composited over an app we do not own — and **the palette's guarantee does not
+     * extend to a colour given a second alpha**. [PALETTE]'s proof is that every entry is
+     * *opaque* and clears [CONTRAST_FLOOR]; derive a translucent colour from an entry and 60% of
+     * that entry is all that reaches the eye, which is a different colour and a different
+     * number. An earlier draft of this build derived the hint from [COMMITTED_DEFAULT]'s setting
+     * so the hint would follow an amber committed text rather than staying white. The arithmetic
+     * refused it: at `0x99`, **16 of the 25 palette entries put *"Listening…"* on screen under
+     * the floor** — the owner's own red worst at **2.50:1** — while this fixed `#99FFFFFF` never
+     * drops below **6.36:1**. The lowest alpha at which the whole palette's derived hint clears
+     * 4.5:1 is `0xF7` (97%), by which point a hint is indistinguishable from committed text and
+     * has stopped being a hint. So consistency with the user's hue and legibility of the first
+     * word on the panel cannot both be had, and legibility wins: *"Listening…"* is the signal
+     * that the app is listening at all and it is on screen in every session.
+     *
+     * If the owner ever wants the hint to follow the committed colour, that is a RULING and not
+     * an edit: it cuts the palette to the nine entries whose derived hint clears the floor, and
+     * takes his red out of it.
+     *
+     * This is also the whole class of defect [panelTextArgbs] exists to close — see its KDoc.
+     */
+    val HINT_ARGB: Int = 0x99FFFFFF.toInt()
 
     /**
      * The words the Settings sample renders as already-committed transcript.
@@ -198,22 +225,37 @@ object BubbleColours {
      * The stored text colour if it is a [PALETTE] entry, else [fallback].
      *
      * The guard is palette MEMBERSHIP and not a legibility test, deliberately. It makes the
-     * palette the single authority, so *"every palette entry clears the floor at every step"* is
-     * the whole proof that no reachable combination fails. A second legibility check here would
-     * be a second authority, and the two would disagree the first time the palette is edited.
+     * palette the single authority over the two colours the USER picks, so what a caller has to
+     * check is membership and nothing else. A second legibility check here would be a second
+     * authority, and the two would disagree the first time the palette is edited.
+     *
+     * What membership does NOT prove is that every colour on the panel is legible — only that
+     * the two picked ones are. [panelTextArgbs] is where that stronger claim lives, and the
+     * difference between the two is a defect this build shipped once.
      */
     fun textColour(stored: Int, fallback: Int): Int =
         if (PALETTE.any { it.argb == stored }) stored else fallback
 
     /**
-     * The hint colour for the committed view — [committed] at the shipped hint's 60% alpha.
+     * EVERY COLOUR THAT LANDS ON THE PANEL, for the user's chosen [live] and [committed] — the
+     * list the invariant is asserted over, and the answer to the class of defect that
+     * *"every palette entry clears the floor"* does not cover.
      *
-     * Derived rather than a fourth setting: `transcription_edit_text`'s *"Listening…"* hint was
-     * `#99FFFFFF`, and left alone it would stay white under a user who made the committed text
-     * amber, which reads as a bug in the panel rather than as their choice. The hint is a fixed
-     * word and is never transcript content.
+     * The guard's authority is palette MEMBERSHIP ([textColour]), and the proof membership
+     * carries is about colours taken **straight** from [PALETTE]. Any colour **derived** from a
+     * setting — above all any given an alpha of its own — leaves that authority and lands
+     * outside every assertion *silently*: the arithmetic still answers, it just answers about a
+     * colour the screen never shows. A derived hint is how that happened once already
+     * ([HINT_ARGB]).
+     *
+     * So the invariant is stated over this list rather than over the palette: three terms, the
+     * two the user owns plus the one fixed hint, and the delta strip's STATUS role is the
+     * committed term because that is literally the colour it takes. **A colour added to this
+     * panel is added here**, and `BubbleColoursTest` walks the whole list across
+     * [PALETTE] x [PALETTE] x [OPACITY_STEPS] x both extreme backdrops — so a new derivation is
+     * either inside the cross product or it is a red suite.
      */
-    fun hintArgb(committed: Int): Int = (HINT_ALPHA shl 24) or (committed and 0x00FFFFFF)
+    fun panelTextArgbs(live: Int, committed: Int): List<Int> = listOf(live, committed, HINT_ARGB)
 
     /** WCAG relative luminance of an opaque ARGB colour. */
     fun relativeLuminance(argb: Int): Double {
@@ -236,15 +278,28 @@ object BubbleColours {
     }
 
     /**
-     * The panel at [percent] composited over [backdropArgb] — straight alpha, per channel, in
-     * 8-bit gamma space, which is what a `PixelFormat.TRANSLUCENT` overlay window does.
+     * The panel at [percent] composited over [backdropArgb] — i.e. [composite] with the panel's
+     * own fill in front, which is the one blend this file performs.
      */
-    fun compositeOver(percent: Int, backdropArgb: Int): Int {
-        val a = alphaByte(percent) / 255.0
+    fun compositeOver(percent: Int, backdropArgb: Int): Int =
+        composite(panelArgb(percent), backdropArgb)
+
+    /**
+     * [foregroundArgb] over an OPAQUE [opaqueBackgroundArgb] — straight alpha, per channel, in
+     * 8-bit gamma space, which is what a `PixelFormat.TRANSLUCENT` overlay window does. The
+     * result is opaque, so it can be handed straight to [contrastRatio].
+     *
+     * It takes the foreground's alpha FROM the foreground, which is the whole point: a text
+     * colour with an alpha of its own is measured as the eye receives it and not as though it
+     * were opaque. The panel's own blend is the same operation ([compositeOver] is this function
+     * with [panelArgb] in front), so there is one blend in this file and not two that can drift.
+     */
+    fun composite(foregroundArgb: Int, opaqueBackgroundArgb: Int): Int {
+        val a = ((foregroundArgb ushr 24) and 0xFF) / 255.0
         fun mix(shift: Int): Int {
-            val backdrop = (backdropArgb ushr shift) and 0xFF
-            val panel = (PANEL_RGB ushr shift) and 0xFF
-            return Math.round(a * panel + (1 - a) * backdrop).toInt().coerceIn(0, 255)
+            val foreground = (foregroundArgb ushr shift) and 0xFF
+            val background = (opaqueBackgroundArgb ushr shift) and 0xFF
+            return Math.round(a * foreground + (1 - a) * background).toInt().coerceIn(0, 255)
         }
         return (0xFF shl 24) or (mix(16) shl 16) or (mix(8) shl 8) or mix(0)
     }
@@ -253,14 +308,30 @@ object BubbleColours {
      * The WORST contrast [textArgb] can reach anywhere the bubble is allowed to be — the minimum
      * over every [OPACITY_STEPS] step and both [EXTREME_BACKDROPS].
      *
-     * The two extremes bound every screen: composite luminance is monotone in the backdrop's, so
-     * no real app can land outside them. Requiring both is what excludes dark text at *any*
-     * opacity (over a black backdrop the composite is black at every alpha, so a dark colour
-     * fails there regardless) and what makes the lowest opacity the binding case for light text.
+     * The two extremes bound every screen, but NOT by monotonicity of the ratio — composite
+     * *luminance* is monotone in the backdrop's, the contrast *ratio* is not: it falls and then
+     * rises, with an interior minimum where the backdrop's luminance meets the text's. The
+     * bounding argument is arithmetic instead, and worth writing down so a future palette edit is
+     * not licensed by a theorem that does not hold: the LIGHTEST composite reachable here is grey
+     * `38` (L = 0.019) because [OPACITY_FLOOR_PERCENT] stops the panel going thinner, and the
+     * DARKEST entry on [PALETTE] is L = 0.279 — so no intermediate backdrop can get near a text
+     * colour's luminance, and any colour dark enough for that to be possible already fails over
+     * the black extreme.
+     *
+     * Requiring both extremes is what excludes dark text at *any* opacity (over a black backdrop
+     * the composite is black at every alpha, so a dark colour fails there regardless) and what
+     * makes the lowest opacity the binding case for light text.
+     *
+     * [textArgb]'s OWN alpha is honoured, through [composite]: what is measured is the pixel the
+     * eye receives against the panel behind it. A translucent text colour therefore gets its real
+     * number rather than the opaque colour's — the silent hole a derived hint fell into once.
      */
     fun worstContrast(textArgb: Int): Double =
         OPACITY_STEPS.minOf { percent ->
-            EXTREME_BACKDROPS.minOf { contrastRatio(textArgb, compositeOver(percent, it)) }
+            EXTREME_BACKDROPS.minOf { backdrop ->
+                val background = compositeOver(percent, backdrop)
+                contrastRatio(composite(textArgb, background), background)
+            }
         }
 
     /** Whether [textArgb] clears [CONTRAST_FLOOR] everywhere the bubble can be. */

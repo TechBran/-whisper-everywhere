@@ -2239,9 +2239,10 @@ class FloatingBubbleService : Service(),
      */
     private fun applyBubbleColours() {
         transcriptionEditText.setTextColor(app.preferencesManager.bubbleCommittedColour)
-        // Derived, not a fourth setting: the "Listening…" hint would otherwise stay white under
-        // a user who made the committed text amber, which reads as a bug and not as their choice.
-        transcriptionEditText.setHintTextColor(BubbleColours.hintArgb(app.preferencesManager.bubbleCommittedColour))
+        // FIXED, and not derived from the committed colour: the hint has an alpha of its own, so
+        // the palette's guarantee does not cover it — 16 of the 25 entries would put "Listening…"
+        // under the contrast floor. See BubbleColours.HINT_ARGB.
+        transcriptionEditText.setHintTextColor(BubbleColours.HINT_ARGB)
         applyStripRole(words = false)
         // The fill is set on the SHAPE so the drawable's 16dp corners survive, and `mutate()`
         // first because an un-mutated drawable is shared by every view that inflated it.

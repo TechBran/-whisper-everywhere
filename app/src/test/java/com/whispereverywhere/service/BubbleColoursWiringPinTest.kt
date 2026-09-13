@@ -79,10 +79,20 @@ class BubbleColoursWiringPinTest {
         assertTrue(
             applyColours.contains("transcriptionEditText.setTextColor(app.preferencesManager.bubbleCommittedColour)"),
         )
-        // The hint is DERIVED from the committed colour, not a fourth setting and not left white.
+        // The hint is the one colour here that is NOT the user's: it carries an alpha of its own,
+        // which puts it outside the palette's guarantee, so it is the fixed `#99FFFFFF` the layout
+        // already declares. Deriving it from the committed colour took 16 of the 25 entries under
+        // the contrast floor. See BubbleColours.HINT_ARGB.
         assertTrue(
-            applyColours.contains("transcriptionEditText.setHintTextColor(BubbleColours.hintArgb(app.preferencesManager.bubbleCommittedColour))"),
+            applyColours.contains("transcriptionEditText.setHintTextColor(BubbleColours.HINT_ARGB)"),
         )
+        // And the service derives NO colour of its own. This is the class the hint defect belongs
+        // to rather than the instance: any colour assembled here — a channel mask, an alpha
+        // shifted in — would be a colour BubbleColoursTest's cross product never sees, because
+        // the cross product walks `panelTextArgbs` and a colour built in the service is not on it.
+        assertFalse("no colour assembled in the service", applyColours.contains("shl 24"))
+        assertFalse("no channel mask in the service", applyColours.contains("0x00FFFFFF"))
+        assertFalse("no colour assembled in the role either", stripRole.contains("shl 24"))
         // The panel behind both of them: black at the user's alpha, through the one function that
         // knows the ladder.
         assertTrue(
@@ -194,6 +204,12 @@ class BubbleColoursWiringPinTest {
         assertTrue(layout.contains("android:textColor=\"#FFFFFF\""))
         assertTrue(layout.contains("android:textColor=\"#E6FFFFFF\""))
         assertTrue(layout.contains("RUNTIME-OWNED"))
+        // The hint is the one colour the code re-asserts IDENTICALLY rather than replacing — it
+        // is not a term of the user's choice — so the layout's declaration and the constant must
+        // be the same value, or the panel would show one before the first apply and the other
+        // after it.
+        assertTrue(layout.contains("android:textColorHint=\"#99FFFFFF\""))
+        assertEquals(0x99FFFFFF.toInt(), BubbleColours.HINT_ARGB)
         // And the fallback is silent rather than a crash: a background that is not a
         // GradientDrawable leaves the drawable's own #E6000000 in place.
         assertTrue(applyColours.contains("as? android.graphics.drawable.GradientDrawable"))

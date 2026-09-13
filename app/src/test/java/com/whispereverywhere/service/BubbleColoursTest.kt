@@ -13,10 +13,16 @@ import org.junit.Test
  * The owner's ruling on the palette was *"Definitely no black text on black background.
  * Definitely won't work. Just about every other colour works, though."* — so this class does not
  * hold a short approved list. It holds a **contrast floor**, computed, and asserts that every
- * reachable combination of {palette entry} x {opacity step} x {the two extreme backdrops} clears
- * it. Black-on-black is excluded because it fails the arithmetic, not because it is off a list;
- * so are pure red and the app's own brand red, and that is the whole of why the default live
- * colour is not `#FF0000`.
+ * reachable combination of {every colour the panel paints} x {live choice} x {committed choice} x
+ * {opacity step} x {the two extreme backdrops} clears it. Black-on-black is excluded because it
+ * fails the arithmetic, not because it is off a list; so are pure red and the app's own brand
+ * red, and that is the whole of why the default live colour is not `#FF0000`.
+ *
+ * The guarded set is *every colour the panel paints* and not *every palette entry* for a reason
+ * this build learned the hard way: palette membership says nothing about a colour DERIVED from a
+ * choice, and a derived translucent hint sat outside the whole cross product while the suite was
+ * green. See `everyCOLOURThePANELPaintsClearsTheFloor_notOnlyTheTwoTheUserPICKED` and
+ * `theHINTIsFIXEDBecauseITSOWNAlphaPutsItOUTSIDEThePalettesGuarantee`.
  */
 class BubbleColoursTest {
 
@@ -117,6 +123,85 @@ class BubbleColoursTest {
                 BubbleColours.worstContrast(swatch.argb) >= BubbleColours.CONTRAST_FLOOR,
             )
         }
+    }
+
+    @Test
+    fun everyCOLOURThePANELPaintsClearsTheFloor_notOnlyTheTwoTheUserPICKED() {
+        // THE INVARIANT IN ITS FULL FORM, and the test above is only half of it. Palette
+        // membership proves the two PICKED colours are legible; it proves nothing about a colour
+        // DERIVED from one of them, and a derived colour — above all one given an alpha of its
+        // own — leaves the palette's authority and lands outside every assertion SILENTLY. That
+        // is not hypothetical: this build shipped a hint derived from the committed colour and it
+        // put "Listening..." on screen at 2.50:1 for the owner's own red.
+        //
+        // So the guarded set is `panelTextArgbs` — every colour that lands on the panel — walked
+        // over the real reachable product: every LIVE choice x every COMMITTED choice x every
+        // opacity step x both extreme backdrops, with each colour's own alpha honoured. A colour
+        // added to the panel is added to that list, or this test is red.
+        assertTrue(
+            "the hint is a colour the panel paints and must be inside the guard",
+            BubbleColours.HINT_ARGB in BubbleColours.panelTextArgbs(black, white),
+        )
+        var worst = Double.MAX_VALUE
+        var worstWhere = ""
+        for (live in BubbleColours.PALETTE) {
+            for (committed in BubbleColours.PALETTE) {
+                for (argb in BubbleColours.panelTextArgbs(live.argb, committed.argb)) {
+                    for (percent in BubbleColours.OPACITY_STEPS) {
+                        for (backdrop in listOf(black, white)) {
+                            val bg = BubbleColours.compositeOver(percent, backdrop)
+                            val ratio = BubbleColours.contrastRatio(BubbleColours.composite(argb, bg), bg)
+                            if (ratio < worst) {
+                                worst = ratio
+                                worstWhere = "${Integer.toHexString(argb)} on live=${live.name}/" +
+                                    "committed=${committed.name} at $percent% over " +
+                                    (if (backdrop == black) "black" else "white")
+                            }
+                            assertTrue(
+                                "$argb on live=${live.name}/committed=${committed.name} at $percent%% " +
+                                    "over ${if (backdrop == black) "black" else "white"} is $ratio:1, " +
+                                    "under the ${BubbleColours.CONTRAST_FLOOR}:1 floor",
+                                ratio >= BubbleColours.CONTRAST_FLOOR,
+                            )
+                            // The helper the app calls has to agree with the product above, or a
+                            // caller trusting it is trusting a different guarantee.
+                            assertTrue(
+                                Integer.toHexString(argb),
+                                BubbleColours.legibleEverywhere(argb),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        // The binding case is the owner's own red at the floor step over a white app — the same
+        // 4.74:1 that DERIVED the opacity floor. If the worst case ever moves off it, the floor
+        // and the palette are no longer one decision.
+        assertEquals("the worst case on the whole panel is $worstWhere", 4.7424, worst, 0.001)
+    }
+
+    @Test
+    fun theARITHMETICHonoursATextColoursOWNAlphaRatherThanIgnoringIt() {
+        // The mechanism that closes the class above: a translucent colour is measured as the eye
+        // RECEIVES it. Ignore the alpha and `legibleEverywhere` answers about a colour the screen
+        // never shows — which is exactly how a 2.50:1 hint passed a 4.5:1 guard.
+        //
+        // An opaque foreground is itself, whatever is behind it, so nothing the user can pick
+        // changes meaning.
+        assertEquals(white, BubbleColours.composite(white, black))
+        assertEquals(black, BubbleColours.composite(black, white))
+        assertEquals(BubbleColours.LIVE_DEFAULT, BubbleColours.composite(BubbleColours.LIVE_DEFAULT, white))
+        // 60% white over the 85% panel over a white app is grey 168 — not white.
+        assertEquals(
+            0xFFA8A8A8.toInt(),
+            BubbleColours.composite(0x99FFFFFF.toInt(), BubbleColours.compositeOver(85, white)),
+        )
+        // ...and the same red, opaque and at 60%, get different answers. Both are true; only one
+        // of them is about a pixel.
+        assertTrue(BubbleColours.legibleEverywhere(0xFFFF5252.toInt()))
+        assertFalse(BubbleColours.legibleEverywhere(0x99FF5252.toInt()))
+        // A fully transparent colour is the background: ratio 1:1, never legible.
+        assertEquals(1.0, BubbleColours.worstContrast(0x00FFFFFF), 1e-9)
     }
 
     @Test
@@ -263,13 +348,44 @@ class BubbleColoursTest {
     }
 
     @Test
-    fun theHINTFollowsTheCOMMITTEDColour_becauseListeningSitsInThatView() {
-        // `transcription_edit_text`'s hint ("Listening...") is shipped `#99FFFFFF` — white at
-        // 60%. Left alone it would stay white under a user who made the committed text amber,
-        // which reads as a bug in the panel rather than a choice. Derived, so there is no
-        // fourth setting and no second authority.
-        assertEquals(0x99FFFFFF.toInt(), BubbleColours.hintArgb(0xFFFFFFFF.toInt()))
-        assertEquals(0x99FF5252.toInt(), BubbleColours.hintArgb(0xFFFF5252.toInt()))
+    fun theHINTIsFIXEDBecauseITSOWNAlphaPutsItOUTSIDEThePalettesGuarantee() {
+        // The panel's THIRD text colour: "Listening...", the hint on `transcription_edit_text`,
+        // which is on screen in EVERY session before the first word lands and is the signal that
+        // the app is listening at all. It is `#99FFFFFF`, fixed, and it does NOT follow the
+        // committed colour — and the reason is arithmetic, not taste.
+        assertEquals(0x99FFFFFF.toInt(), BubbleColours.HINT_ARGB)
+        assertEquals(0x99, (BubbleColours.HINT_ARGB ushr 24) and 0xFF)
+        assertTrue("the fixed hint is legible everywhere", BubbleColours.legibleEverywhere(BubbleColours.HINT_ARGB))
+        assertEquals("and never drops below 6.36:1", 6.36, BubbleColours.worstContrast(BubbleColours.HINT_ARGB), 0.01)
+
+        // DERIVING it from the committed colour at the same alpha — the shape an earlier round of
+        // this build shipped — takes 16 of the 25 palette entries UNDER the floor, the owner's
+        // own red worst at 2.50:1. Both halves are asserted, the count and the number, so the
+        // class cannot reopen quietly.
+        fun derived(committed: Int) = (0x99 shl 24) or (committed and 0x00FFFFFF)
+        assertFalse("a hint derived from the red", BubbleColours.legibleEverywhere(derived(BubbleColours.LIVE_DEFAULT)))
+        assertEquals(2.50, BubbleColours.worstContrast(derived(BubbleColours.LIVE_DEFAULT)), 0.01)
+        assertEquals(
+            "a derived hint fails for two thirds of the palette",
+            16,
+            BubbleColours.PALETTE.count { !BubbleColours.legibleEverywhere(derived(it.argb)) },
+        )
+
+        // And it is NOT fixable by moving the alpha constant: the lowest alpha at which the whole
+        // palette's derived hint clears the floor is 0xF7 (97%), by which point a hint is
+        // indistinguishable from committed text and has stopped being a hint. So the hint's hue
+        // following the user's choice and "Listening..." being readable cannot both be had, and
+        // the first word on the panel wins. Making the hint follow the committed colour is
+        // therefore a RULING — it cuts the palette to nine entries — and not an edit.
+        val lowestSafeAlpha = (0x99..0xFF).first { alpha ->
+            BubbleColours.PALETTE.all { BubbleColours.legibleEverywhere((alpha shl 24) or (it.argb and 0x00FFFFFF)) }
+        }
+        assertEquals(0xF7, lowestSafeAlpha)
+        assertEquals(
+            "nine entries survive a derived hint at the shipped alpha",
+            9,
+            BubbleColours.PALETTE.count { BubbleColours.legibleEverywhere(derived(it.argb)) },
+        )
     }
 
     // ---------------------------------------------------------------- the palette and the sample
