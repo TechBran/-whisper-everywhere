@@ -428,6 +428,44 @@ class ModelTierCopyTest {
     }
 
     /**
+     * **THE SPEED CLAIM THAT IS NOT IN THIS FILE.** `OnboardingModelScreen.kt:783` renders, on
+     * any card where `model.minRamBytes > 0` and the device cannot recommend it: *"High-end
+     * devices only — this tier needs more RAM than this device reports. You can still pick it,
+     * but performance may suffer."*
+     *
+     * "Performance may suffer" is a speed claim, it is emitted by the SCREEN rather than by
+     * [ModelTierCopy], and the census above therefore cannot see it. It is also exactly the
+     * mechanism 4.6 rejected: the research proposed expressing "not recommended" as a
+     * `minRamBytes` above any shipping phone (§6.3), and [WhisperModel.instrument] exists instead
+     * because these rungs are unrecommended for a reason that is **not a fact about the device in
+     * the user's hand** — nobody has measured their throughput. Wire them to the RAM gate and the
+     * app would tell a 16 GB phone that its RAM is short of a 264 MB model, and predict the
+     * outcome, in one sentence, on the rung the research says may be the FASTER of its pair.
+     *
+     * So: no offered CPU rung may be RAM-gated at all. `WhisperCatalogHelpersTest` already forbids
+     * it for instruments; this is the copy-side statement of the same rule over the whole offered
+     * lineup, with the string it would print named so the next reader can see what is at stake.
+     * `extreme` is the one row that still carries a threshold and it is retired — the `>=`
+     * boundary rule keeps its test subject there.
+     */
+    @Test fun no_offered_cpu_rung_is_ram_gated_because_that_surface_predicts_performance() {
+        offeredTiers.filter { !it.gated }.forEach { model ->
+            assertEquals(
+                "offered rung '${model.id}' is RAM-gated, so OnboardingModelScreen.kt:783 will " +
+                    "print 'you can still pick it, but performance may suffer' on its card — a " +
+                    "speed claim about an unmeasured rung, attributed to the device's RAM, which " +
+                    "is not why it is unrecommended",
+                0L,
+                model.minRamBytes,
+            )
+        }
+        // The rule has a live test subject, and it is the retired row — so the `>=` boundary
+        // behaviour of `isRecommendedForDevice` is still exercised by something.
+        assertTrue(WhisperCatalog.byId("extreme")!!.minRamBytes > 0L)
+        assertTrue(WhisperCatalog.byId("extreme")!!.retired)
+    }
+
+    /**
      * 4.6 — was `english_locales_are_steered_to_pro`. The English branch is GONE because the tier
      * it pointed at is retired (owner ruling 2026-09-13: multilingual rungs only), and a steer at
      * a retired tier is not a steer — the chooser does not render that card, so nothing would be
