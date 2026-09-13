@@ -2242,11 +2242,46 @@ class FloatingBubbleService : Service(),
         // Derived, not a fourth setting: the "Listening…" hint would otherwise stay white under
         // a user who made the committed text amber, which reads as a bug and not as their choice.
         transcriptionEditText.setHintTextColor(BubbleColours.hintArgb(app.preferencesManager.bubbleCommittedColour))
-        transcriptionDeltaText.setTextColor(app.preferencesManager.bubbleLiveColour)
+        applyStripRole(words = false)
         // The fill is set on the SHAPE so the drawable's 16dp corners survive, and `mutate()`
         // first because an un-mutated drawable is shared by every view that inflated it.
         (transcriptionPreviewContainer.background?.mutate() as? android.graphics.drawable.GradientDrawable)
             ?.setColor(BubbleColours.panelArgb(app.preferencesManager.bubbleOpacityPercent))
+    }
+
+    /**
+     * WHICH of the delta strip's two roles is on screen, and therefore which colour it is in.
+     *
+     * The strip carries FOUR kinds of content, and only ONE of them is what the owner's ruling
+     * is about. `words = true` is the word-for-word preview — the on-device previewer's partials
+     * and the live cloud providers' `onDelta`, the *"preview words"* that are red by default.
+     * `words = false` is the same view doing its OTHER job: *"Connecting…"*, *"Finishing
+     * transcript…"* / *"Finishing… (waiting on provider)"*, and the in-flight queue-depth label.
+     *
+     * Those three are STATUS LINES, not transcript, and they must not inherit the live colour.
+     * The shipped strip was `#E6FFFFFF` — near-white — so painting them red would be a change a
+     * user who never opened the setting did not ask for, and red on a status line reads as an
+     * error where none has happened. They take the COMMITTED colour instead: white by default,
+     * so they look exactly as they do today, and they follow the user's own choice if they move
+     * it.
+     *
+     * This is why the role is a TERM and not a second colour setting. There is no third thing
+     * for the user to choose and nothing new to keep in step — the split is entirely about which
+     * of the two colours they already picked applies to what is being shown.
+     *
+     * The resting role is STATUS, set by [applyBubbleColours] at every panel show, and only the
+     * words path raises it. So a writer added to this strip in future is a status line by
+     * default, which is the safe direction: the worst a forgotten call costs is white words where
+     * red was wanted, never a red warning where nothing is wrong.
+     */
+    private fun applyStripRole(words: Boolean) {
+        transcriptionDeltaText.setTextColor(
+            if (words) {
+                app.preferencesManager.bubbleLiveColour
+            } else {
+                app.preferencesManager.bubbleCommittedColour
+            }
+        )
     }
 
     /**
@@ -4198,6 +4233,10 @@ class FloatingBubbleService : Service(),
                             // the strip just grew the window downward — keep it on-screen
                             bubbleView.post { reclampNow() }
                         }
+                        // (4.5.1 Task 2) THE ONE SITE THAT RAISES THE WORDS ROLE. Everything else
+                        // this strip shows is a status line and keeps the committed colour — see
+                        // applyStripRole.
+                        applyStripRole(words = true)
                         transcriptionDeltaText.text = text
                         // Keep the newest words in view. The panel grows to maxLines then
                         // scrolls; without this it would hold the TOP of a long utterance and
@@ -4343,6 +4382,12 @@ class FloatingBubbleService : Service(),
         // Cloud/live sessions name the actual wait (the tail segment's provider round-trip) so an
         // honest two-second drain never reads as a hang; cloudWrapper is non-null exactly for
         // CLOUD_WITH_FALLBACK / CLOUD_LIVE sessions and is not retired until the next session.
+        // (4.5.1 Task 2) BACK TO THE STATUS ROLE, and this is the one site that needs saying so:
+        // a LIVE session has just been putting words on this strip in the live colour, and this
+        // line is not words. Every other status writer is reached only in sessions where the
+        // words role was never raised (`renderInFlightStrip` returns early whenever
+        // `deltaOwnsPreviewStrip`), or after a panel show has already reset it.
+        applyStripRole(words = false)
         transcriptionDeltaText.text = if (cloudWrapper != null) {
             "Finishing… (waiting on provider)"
         } else {

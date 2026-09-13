@@ -63,14 +63,19 @@ class BubbleColoursWiringPinTest {
         body("    private fun applyBubbleColours() {", "\n    }\n")
     }
 
+    private val stripRole: String by lazy {
+        body("    private fun applyStripRole(words: Boolean) {", "\n    }\n")
+    }
+
     @Test
     fun allTHREEViewsAreHandedTheUsersOwnValueAndNONEOfThemIsALiteral() {
-        // The live strip and the committed transcript, each from its own preference. One colour
-        // on one view covers the on-device previewer AND all four live cloud providers, because
+        // The live strip's colour is the ROLE's, because that one view has two jobs — see
+        // `theStripsSTATUSLinesDoNotInheritTheLiveColour`. One colour on the words role covers
+        // the on-device previewer AND all four live cloud providers, because
         // `deltaOwnsPreviewStrip` already hands this single view to whichever is running.
-        assertTrue(
-            applyColours.contains("transcriptionDeltaText.setTextColor(app.preferencesManager.bubbleLiveColour)"),
-            )
+        assertTrue(applyColours.contains("applyStripRole(words = false)"))
+        assertTrue(stripRole.contains("app.preferencesManager.bubbleLiveColour"))
+        assertTrue(stripRole.contains("app.preferencesManager.bubbleCommittedColour"))
         assertTrue(
             applyColours.contains("transcriptionEditText.setTextColor(app.preferencesManager.bubbleCommittedColour)"),
         )
@@ -96,7 +101,8 @@ class BubbleColoursWiringPinTest {
         // owns, and the one that ran last would win — which is exactly how the two `fillColor`
         // black literals came to exist.
         assertEquals("ONE body", 1, count(raw, "    private fun applyBubbleColours() {"))
-        assertEquals("ONE live-colour write", 1, count(text, "transcriptionDeltaText.setTextColor("))
+        assertEquals("ONE role body", 1, count(raw, "    private fun applyStripRole(words: Boolean) {"))
+        assertEquals("ONE strip-colour write", 1, count(text, "transcriptionDeltaText.setTextColor("))
         assertEquals("ONE committed-colour write", 1, count(text, "transcriptionEditText.setTextColor("))
         assertEquals("ONE hint write", 1, count(text, "transcriptionEditText.setHintTextColor("))
         assertEquals("ONE panel-fill write", 1, count(text, "BubbleColours.panelArgb("))
@@ -132,6 +138,35 @@ class BubbleColoursWiringPinTest {
         // The CONNECTING label's own show path is the third: it makes the panel visible before
         // any session preview exists, and it writes to the live strip.
         assertTrue(text.contains("applyPreviewSize() applyBubbleColours() transcriptionEditText.visibility = View.GONE"))
+    }
+
+    @Test
+    fun theStripsSTATUSLinesDoNotInheritTheLiveColour() {
+        // The strip carries FOUR kinds of content and only one is what the ruling is about: the
+        // preview words. "Connecting…", "Finishing transcript…" / "Finishing… (waiting on
+        // provider)" and the in-flight queue-depth label are STATUS, they were near-white
+        // (`#E6FFFFFF`), and painting them red would be a change a user who never opened the
+        // setting did not ask for — with red on a status line reading as an error where nothing
+        // has happened.
+        //
+        // The resting role is STATUS and only the words path raises it, so a writer added to
+        // this strip later is a status line by default: the worst a forgotten call costs is
+        // white words where red was wanted, never a red warning where nothing is wrong.
+        assertEquals("the resting role is status", 1, count(applyColours, "applyStripRole(words = false)"))
+        assertEquals("ONE site raises the words role", 1, count(text, "applyStripRole(words = true)"))
+        // And it is the onDelta words write that raises it, immediately before the text lands.
+        assertTrue(text.contains("applyStripRole(words = true) transcriptionDeltaText.text = text"))
+        // The closing status line is the one place the role has to be put BACK: a live session
+        // has just been writing words here in the live colour, and "Finishing…" is not words.
+        assertTrue(
+            text.contains(
+                "applyStripRole(words = false) transcriptionDeltaText.text = if (cloudWrapper != null) {"
+            )
+        )
+        // Four call sites total: three panel shows (through applyBubbleColours) plus the words
+        // raise plus the closing reset — i.e. two direct `words = false` and two more via the
+        // three applyBubbleColours() calls, which this counts as its own single site.
+        assertEquals("two direct status resets", 2, count(text, "applyStripRole(words = false)"))
     }
 
     @Test
