@@ -10,31 +10,41 @@ import java.io.File
  * THE CLEARANCE GATE, executed (4.5.0 Task 5). The owner's legal work becomes a red suite instead
  * of a memory.
  *
- * The decision this file serves, verbatim (owner, 2026-09-12): *"Let's set up all 6 languages and
- * before we publish to customers I will do the research and the email."* And the constraint that
+ * The decision this file was built for, verbatim (owner, 2026-09-12): *"Let's set up all 6 languages
+ * and before we publish to customers I will do the research and the email."* And the constraint that
  * shapes it, restated the same day: *"I still will need to be able to test on internal testing
  * track before the legal stuff."*
  *
- * So the suite has to hold two things at once, and they pull in opposite directions:
+ * **He then did that research, and on 2026-09-13 issued the decision accepting the reviewed
+ * licensing basis for all seven packs.** So the gate this suite guards is now OPEN, and what the
+ * suite has to hold changed shape with it — but not in strength:
  *
- *  1. **Every one of the six languages ships, fetches and arms on the internal track TODAY**, with
- *     five of six clearances still outstanding. That half is not tested here — it is tested by
- *     every other suite in this package NOT mentioning clearance at all, and by
+ *  1. **Every one of the seven languages ships, fetches and arms on the internal track**, and did
+ *     so through the whole period the clearances were outstanding. That half is not tested here —
+ *     it is tested by every other suite in this package NOT mentioning clearance at all, and by
  *     [theClearanceStateReachesNothingTheAppRuns], which is the only test that can prove a negative
  *     about it.
- *  2. **A promotion to PRODUCTION with that work unfinished must fail the build.** That is
- *     [theCommittedPromotionStateWithholdsProductionAndNeverOverreaches] and
- *     [authorisingALanguageWhoseRecordIsNotClearedIsARedSuite].
- *
- * Four tests carry the four brief requirements, and the fifth is the one that keeps them honest:
+ *  2. **A promotion to PRODUCTION that outruns its evidence must still fail the build**, and an
+ *     EIGHTH language added tomorrow must fail it on arrival. That is
+ *     [theCommittedPromotionStateIsWhatTheSwitchAuthorisesAndNeverOverreaches] and
+ *     [authorisingALanguageWhoseRecordIsNotClearedIsARedSuite], and neither was weakened to let
+ *     the seven through: what satisfies them is that an owner decision IS a real verdict.
+ *  3. **A verdict may not claim an approval nobody gave.** That is
+ *     [noClearanceClaimsAnApprovalNobodyGave] and
+ *     [everyOwnerDecisionNamesTheOwnerTheDateAndARealBasis] — new on 2026-09-13, because the
+ *     failure mode changed the day the switch opened. Before it, the risk was a subagent inventing
+ *     a clearance; after it, the risk is a real decision being written up as a permission from a
+ *     model author, a reply from NIA, a legal certification or a Play approval — none of which
+ *     exists.
  *
  * | requirement | test |
  * |---|---|
  * | no catalogue row may have a blank verdict | [everyShippedLanguageHasARecordedVerdictAndNoBlankEvidence] |
- * | the record may not claim production-readiness while a row is uncleared | [authorisingALanguageWhoseRecordIsNotClearedIsARedSuite] |
- * | the promotion gate blocks production and NOT the internal track | [theCommittedPromotionStateWithholdsProductionAndNeverOverreaches] |
+ * | the switch may never outrun the evidence, and an eighth language fails | [authorisingALanguageWhoseRecordIsNotClearedIsARedSuite] |
+ * | the promotion gate reports exactly what the switch authorises | [theCommittedPromotionStateIsWhatTheSwitchAuthorisesAndNeverOverreaches] |
  * | a clearance is granted over BYTES, not over a repo name | [everyClearanceIsPinnedToTheCommitTheCatalogueDownloads] |
  * | the state must never reach the bundle or the app | [theClearanceStateReachesNothingTheAppRuns] |
+ * | a decision is recorded as the owner's acceptance, never as someone else's permission | [noClearanceClaimsAnApprovalNobodyGave] |
  *
  * **The two documents this class reads are in the test task's `sourcePinnedInputs`**
  * (`app/build.gradle.kts`), and that entry is not a formality: measured before adding it, mutating
@@ -44,23 +54,27 @@ import java.io.File
  * from under it.
  *
  * **What this suite deliberately cannot do.** It cannot tell a true clearance from an invented one
- * — no test can read a lawyer's letter. What it can do is make an invention COST three separate
- * edits and show up as a diff in a test that says why it exists
- * ([onlyEnglishAndFrenchAreClearedOnThisBranch]). That is the whole of the protection against the
- * one unrecoverable error in this build, and it is stated rather than implied.
+ * — no test can read a lawyer's letter, and it cannot read the owner's handoff either. What it can
+ * do is make an invention COST three separate edits and show up as a diff in a test that says why
+ * it exists ([allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913]), and make a MISLABELLED
+ * decision fail outright ([noClearanceClaimsAnApprovalNobodyGave]). That is the whole of the
+ * protection, and it is stated rather than implied.
  *
  * **WHERE THE LITERALS LIVE, and why it is exactly one test** (fix round 1, blocker B1).
- * [onlyEnglishAndFrenchAreClearedOnThisBranch] is the only test here that retypes the state of the
- * record: its three literals — the cleared list, the switch, and the outstanding rows with their
- * answerers — ARE the friction, and `docs/LANGUAGE-CLEARANCE.md` prices all three. Every other
- * test in this class derives what it expects FROM the record, because a literal that is merely
- * incidental costs the owner an unpriced edit months from now with no session open: measured, the
- * checklist's three documented edits for a German yes left this suite **red in three tests**, one
+ * [allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913] is the only test here that retypes
+ * the state of the record: its four literals — the cleared list, the switch, the outstanding rows
+ * with their answerers, and which rows are the owner's 2026-09-13 decision — ARE the friction, and
+ * `docs/LANGUAGE-CLEARANCE.md` prices all four.
+ * Every other test in this class derives what it expects FROM the record, because a literal that is
+ * merely incidental costs the owner an unpriced edit months from now with no session open: measured,
+ * the checklist's three documented edits for a German yes left this suite **red in three tests**, one
  * of them the positive control for [PromotionState.Overreached] — the single assertion that keeps
  * the switch from outrunning the evidence, and the last thing that should be edited by a reader
  * who was told the suite would be green. The rule for anything added here: **if an assertion would
  * have to change when a clearance legitimately arrives, either it is in
- * [onlyEnglishAndFrenchAreClearedOnThisBranch] and the checklist names it, or it is derived.**
+ * [allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913] and the checklist names it, or it
+ * is derived.** The third literal is now the EMPTY census, and it is still friction: an eighth
+ * language arriving outstanding has to be typed into it.
  */
 class StreamingPackClearanceTest {
 
@@ -205,6 +219,13 @@ class StreamingPackClearanceTest {
      * A shipped language with NO record at all is the worst case and outranks the other three: the
      * switch cannot be checked against evidence that does not exist, so the gate reports the
      * missing record rather than a reassuring "withheld".
+     *
+     * **This is the cell that keeps the 2026-09-13 decision from becoming a rubber stamp.** The
+     * switch now names every shipped language, so the cheap failure is an EIGHTH language added to
+     * the catalogue and to the switch in one motion, inheriting a set that already says "all of
+     * them". The last block asserts it does not: an eighth shipped language with no record is
+     * `Unrecorded` even with the switch flipped, which is the build failing before anybody can
+     * publish it.
      */
     @Test fun aShippedLanguageWithNoRecordIsNeitherClearedNorMerelyWithheld() {
         // Which row is dropped is derived, not named: a refused language is DELETED from both the
@@ -221,20 +242,39 @@ class StreamingPackClearanceTest {
             PromotionState.Unrecorded(listOf(dropped)),
             PackClearanceRecord.state(emptySet(), shipped, incomplete),
         )
+        // AN EIGHTH LANGUAGE, ADDED TOMORROW, FAILS ON ARRIVAL. Not a hypothetical: the switch
+        // names all seven after the owner's decision of 2026-09-13, so a new pack whose author
+        // also adds its code to that set gets a set that already means "everything" — and this is
+        // the assertion that stops it. No record, no promotion, whatever the switch says.
+        assertTrue("this case needs a code the catalogue does not ship", "tr" !in shipped)
+        assertEquals(
+            "an eighth shipped language with no clearance record must fail the build even with " +
+                "the switch naming it — the owner's decision of 2026-09-13 covers SEVEN packs and " +
+                "cannot be inherited by an eighth",
+            PromotionState.Unrecorded(listOf("tr")),
+            PackClearanceRecord.state(
+                PackClearanceRecord.PRODUCTION_CLEARED + "tr",
+                shipped + "tr",
+                PackClearanceRecord.RECORD,
+            ),
+        )
     }
 
     // ------------------------------------------------------ 3. what the committed state actually is
 
     /**
-     * **The committed state, checked in every state it can reach.** Today the gate is WITHHELD and
-     * the languages holding it are named in the failure message. The two things this asserts are
-     * the two halves of the owner's order:
+     * **The committed state, checked in every state it can reach.** Since the owner's decision of
+     * 2026-09-13 the gate reports `Promotable`; before it, `Withheld` naming the languages holding
+     * it. **This test never had to change for that transition and did not**, which is the property
+     * it was built for (fix round 1, B1) — what it asserts is DERIVED from the switch:
      *
-     *  - `Withheld` is **not** a failure and **not** a build-time exclusion. Every one of the six
-     *    languages is in `StreamingPackCatalog.packs`, in `assetPacks`, in the bundle and fetchable
-     *    on the internal track while this says Withheld. That is the whole point.
-     *  - It is **not** `Promotable`, and it cannot become `Promotable` until every shipped row has
-     *    a Cleared verdict AND appears in the switch.
+     *  - `Withheld` was **not** a failure and **not** a build-time exclusion. Every one of the
+     *    seven languages was in `StreamingPackCatalog.packs`, in `assetPacks`, in the bundle and
+     *    fetchable on the internal track throughout. That was the whole point.
+     *  - `Promotable` is reachable only when every shipped row has a Cleared verdict AND appears in
+     *    the switch. It became reachable because five verdicts became real, not because the gate
+     *    was loosened: the second block still fails if the gate ever answers `Promotable` while any
+     *    row is outstanding.
      *
      * If this test ever reports `Overreached`, someone has authorised a language whose research is
      * unfinished; that is the one unrecoverable error in this build and the message says so.
@@ -246,9 +286,11 @@ class StreamingPackClearanceTest {
      * green through every clearance and through the last one — where the correct answer becomes
      * `Promotable` — and red on either defect in every one of those states. Measured both ways: the
      * checklist's three edits for a German yes leave it green, and authorising German without
-     * clearing it leaves it red naming `Overreached(de)`.
+     * clearing it leaves it red naming `Overreached(de)`. Observed again on 2026-09-13, when all
+     * five remaining rows were cleared at once: green, with the derived expectation crossing from
+     * `Withheld` to `Promotable` and no edit to this method's body.
      */
-    @Test fun theCommittedPromotionStateWithholdsProductionAndNeverOverreaches() {
+    @Test fun theCommittedPromotionStateIsWhatTheSwitchAuthorisesAndNeverOverreaches() {
         val outstanding = PackClearanceRecord.RECORD
             .filter { it.verdict is ClearanceVerdict.Outstanding }
             .map { it.language }
@@ -285,61 +327,197 @@ class StreamingPackClearanceTest {
     }
 
     /**
-     * **No pack is marked cleared on this branch except `en` and `fr`** — the controller brief's
-     * global constraint, as a test.
+     * **All seven packs are cleared, five of them by the owner's decision of 2026-09-13, and
+     * nothing is outstanding** — the state of the record, as a test.
      *
-     * This is the pin that makes an invented clearance expensive. Granting one takes three edits:
-     * the verdict in `StreamingPackClearance.kt`, the switch beside it, and this test — and the
-     * third shows up in a diff under a docblock explaining why a subagent must not write it. The
-     * suite cannot read a lawyer's letter; it can make the forgery visible.
+     * This is still the pin that makes an invented clearance expensive, and the arithmetic did not
+     * change when the switch opened: granting an EIGHTH language takes three edits — the verdict in
+     * `StreamingPackClearance.kt`, the switch beside it, and this test — and the third shows up in
+     * a diff under a docblock explaining why a subagent must not write it. The suite cannot read a
+     * lawyer's letter and it cannot read the owner's handoff; it can make a forgery visible, and
+     * [noClearanceClaimsAnApprovalNobodyGave] can make a mislabelled one fail.
      *
-     * **THIS TEST IS THE ONLY ONE IN THE CLASS THAT RETYPES THE RECORD, and it holds THREE
-     * literals** — deliberately, and all three are priced in `docs/LANGUAGE-CLEARANCE.md`:
+     * **THIS TEST IS THE ONLY ONE IN THE CLASS THAT RETYPES THE RECORD, and it holds FOUR
+     * literals** — deliberately, and all four are priced in `docs/LANGUAGE-CLEARANCE.md`:
      *
      *  1. the cleared languages, **in the record's own order** (not sorted),
      *  2. the switch,
-     *  3. the outstanding rows with their answerers — a row that stops being outstanding leaves
-     *     this list, which is the edit that makes "one fewer question" visible in a diff.
+     *  3. the outstanding rows with their answerers — **empty since 2026-09-13**, and still
+     *     friction: an eighth language arriving outstanding has to be typed back into it,
+     *  4. **which rows are the owner's 2026-09-13 decision** (the fourth literal, added that day
+     *     under the rule the class docblock states). This is the census of what that decision
+     *     covered: five rows, not four and not eight. `en` and `fr` are NOT in it — they were
+     *     cleared on 2026-09-12 on the controller's reading of the qualification table, and
+     *     collapsing the two grants into one list is how a decision quietly grows to cover
+     *     something it never named.
      *
-     * Everything else here derives from the record. If you add a fourth literal to this class, put
-     * it in this test and price it in the checklist, or derive it (fix round 1, B1).
+     * Everything else here derives from the record.
      */
-    @Test fun onlyEnglishAndFrenchAreClearedOnThisBranch() {
+    @Test fun allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913() {
         assertEquals(
-            "a clearance on this branch is the OWNER's to grant — if this list grew, the diff " +
-                "that grew it must carry the grantor, the date and where the evidence was read " +
+            "a clearance is the OWNER's to grant — if this list grew, the diff that grew it must " +
+                "carry the grantor, the date and where the evidence was read " +
                 "(docs/LANGUAGE-CLEARANCE.md)",
-            listOf("en", "fr"),
+            listOf("en", "fr", "de", "ru", "id", "ko", "zh"),
             PackClearanceRecord.RECORD.filter { it.verdict is ClearanceVerdict.Cleared }.map { it.language },
         )
         assertEquals(
             "the switch authorises only what the record clears",
-            setOf("en", "fr"),
+            setOf("en", "fr", "de", "ru", "id", "ko", "zh"),
             PackClearanceRecord.PRODUCTION_CLEARED,
         )
-        // The five outstanding rows each name a question and who can answer it. A row that said
-        // "not cleared" without saying what is missing would leave the owner nothing to do.
+        // Nothing is outstanding. An outstanding row names a question and who can answer it, and
+        // this census is where "one fewer question" was made visible in a diff five times over —
+        // including the two rows whose ANSWERER changed on the way out (`ko` and `zh`, both
+        // COUNSEL until the corrections of 2026-09-13 removed the questions counsel was for).
         val outstanding = PackClearanceRecord.RECORD
             .mapNotNull { r -> (r.verdict as? ClearanceVerdict.Outstanding)?.let { r.language to it.answerer } }
         assertEquals(
-            listOf(
-                "de" to ClearanceAnswerer.UPSTREAM_AUTHOR,
-                "ru" to ClearanceAnswerer.OWNER,
-                "id" to ClearanceAnswerer.COUNSEL,
-                // Corrected 2026-09-13: `ko` was COUNSEL on two questions built out of the AI-Hub
-                // 데이터 이용정책, whose clauses govern ACCESS to the data — which was never
-                // sought. What is left is AI-Hub's published FAQ grant, its attribution condition
-                // (paid on the licences screen, not outstanding), and one scope residual the
-                // publisher does not address: an owner risk call.
-                "ko" to ClearanceAnswerer.OWNER,
-                // Corrected 2026-09-13: `zh` was COUNSEL on the strength of a WenetSpeech-L
-                // corpus term that is not established for these bytes. With the corpus recorded
-                // as undisclosed, the row has the same shape as Russian's and the same answerer —
-                // no written opinion can size a corpus nobody has named.
-                "zh" to ClearanceAnswerer.OWNER,
-            ),
+            "an outstanding row must be typed into this census — it is the line that makes a " +
+                "reopened or newly added question visible in a diff",
+            emptyList<Pair<String, ClearanceAnswerer>>(),
             outstanding,
         )
+        // THE FOURTH LITERAL: the five rows the owner's decision of 2026-09-13 covers, in the
+        // record's own order. Derived from the grant DATE rather than retyped as verdicts, so the
+        // assertion is about WHOSE decision each row is.
+        assertEquals(
+            "the owner's decision of 2026-09-13 covers de, ru, id, ko and zh. en and fr were " +
+                "cleared the day before on the controller's reading of the qualification table, " +
+                "and a row moving between those two grants must be a deliberate diff",
+            listOf("de", "ru", "id", "ko", "zh"),
+            PackClearanceRecord.RECORD
+                .filter { (it.verdict as? ClearanceVerdict.Cleared)?.grantedOn == OWNER_DECISION_DATE }
+                .map { it.language },
+        )
+    }
+
+    /**
+     * **Every row the owner decided names HIM, the date, and a basis that is actually on that
+     * row.** The decision of 2026-09-13 is the authority for five packs, and the one way to spend
+     * it wrongly is to write it up as a blanket "cleared" with the evidence left implicit — at
+     * which point the record no longer says what was accepted, and the next reader cannot tell an
+     * accepted residual from a closed question.
+     *
+     * So each decision row is held to four things:
+     *
+     *  - the grantor names **Brandon Slacum**, because a clearance with no grantor is a clearance
+     *    nobody gave, and "the owner" is not a name;
+     *  - the grantor names **the date**, and [ClearanceVerdict.Cleared.grantedOn] agrees with it —
+     *    two spellings of one fact, which is what catches a row copied from another;
+     *  - the words say **accepted**, not resolved: the decision accepted a reviewed basis, and on
+     *    four of the five rows it accepted a stated residual with it;
+     *  - the basis is **substantive** — long enough to be a reason rather than a label, and it
+     *    names this row's own declared licence.
+     *
+     * **Derived from the grant DATE, not from the grantor's name** — deliberately, because
+     * deriving from the name would make the first assertion tautological: a set selected by
+     * "grantedBy contains Brandon Slacum" cannot then be asked whether it names him. Selected by
+     * date, a row dated 2026-09-13 that forgets to say whose decision it was is a red suite, which
+     * is the failure this test exists for.
+     */
+    @Test fun everyOwnerDecisionNamesTheOwnerTheDateAndARealBasis() {
+        val decisions = ownerDecisions()
+        assertTrue(
+            "no row cites the owner's decision — if the decision was withdrawn, this test and " +
+                "the census in allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913 both say so",
+            decisions.isNotEmpty(),
+        )
+        for ((record, verdict) in decisions) {
+            val where = "the owner's decision on '${record.language}'"
+            assertTrue(
+                "$where must name the decision owner — '$OWNER_DECISION_MAKER' — in grantedBy, " +
+                    "because \"the owner\" is not a name and a grant with no grantor is a grant " +
+                    "nobody gave",
+                verdict.grantedBy.contains(OWNER_DECISION_MAKER),
+            )
+            assertTrue(
+                "$where must carry the date in grantedBy as well as in grantedOn " +
+                    "($OWNER_DECISION_DATE) — a row whose two dates disagree is a row copied from " +
+                    "another",
+                verdict.grantedBy.contains(verdict.grantedOn),
+            )
+            assertTrue(
+                "$where must record an ACCEPTANCE of a reviewed basis. Where an uncertainty " +
+                    "remains it is ACCEPTED, not resolved, and the word has to be in the record " +
+                    "for a promotion-time reader to see it",
+                (verdict.grantedBy + verdict.because).contains("accept", ignoreCase = true),
+            )
+            assertTrue(
+                "$where has a reason too short to be one (${verdict.because.length} chars). The " +
+                    "basis is the whole value of the record at promotion time — state it",
+                verdict.because.length >= 120,
+            )
+            assertTrue(
+                "$where must name the licence the row actually declares ('${record.licence}') — " +
+                    "the basis is per-row, and a reason that could be pasted onto any row is not " +
+                    "this row's basis",
+                verdict.because.contains(record.licence, ignoreCase = true),
+            )
+        }
+    }
+
+    /**
+     * **THE ONE UNRECOVERABLE ERROR, IN ITS NEW COSTUME.** Before 2026-09-13 the risk was a
+     * subagent inventing a clearance out of nothing. After it, the risk is the opposite shape: a
+     * REAL decision written up as something it is not — a permission from a model author, a reply
+     * from NIA, a legal certification, a Google Play approval, or a number.
+     *
+     * None of those exists. The German uploader was never asked and never answered; NIA never
+     * replied because nothing was sent; no counsel opinion was bought; Play reviews an app and does
+     * not clear a corpus. What exists is the owner's acceptance of a reviewed basis, and the record
+     * has to be readable as exactly that in a year, by a reader who was not in the session.
+     *
+     * **Scoped to the rows the owner decided** (derived from the grant date), for a reason: on
+     * those rows no third-party approval exists *by construction*, so banning the vocabulary of one
+     * is permanently safe. A future row cleared on genuinely new evidence — the German uploader
+     * writing back, say — is not scanned here and must not be, because then "the uploader
+     * confirmed it" would be the truth and this test would be forbidding a fact.
+     *
+     * The percentage ban is wider, covering **every** cleared verdict: the owner's informal
+     * confidence in his own research is not a number this record may carry, and a cleared row is
+     * the one place a stray figure would read as one.
+     */
+    @Test fun noClearanceClaimsAnApprovalNobodyGave() {
+        val forbidden = mapOf(
+            "approv" to "an owner decision ACCEPTS a reviewed basis; it is not an approval, and " +
+                "no model author, dataset owner, agency, lawyer or store approved anything here",
+            "permission from" to "no permission was granted by anybody for this record to cite",
+            "legal opinion" to "no written legal opinion was obtained for any of these rows",
+            "legally cleared" to "no lawyer cleared anything — the owner accepted a basis",
+            "certif" to "there is no certification of any kind behind these rows",
+            "confirmed by" to "nobody confirmed anything: the German uploader was never asked, " +
+                "and NIA never replied because nothing was ever sent",
+            "google play" to "Play reviews an app; it does not clear a corpus or a licence",
+            "no longer a risk" to "an ACCEPTED risk is still a risk, and the record says so",
+            "fully resolved" to "an accepted residual is not resolved, and the difference is the " +
+                "whole reason this record has a because field",
+        )
+        for ((record, verdict) in ownerDecisions()) {
+            val text = "${verdict.grantedBy} ${verdict.because}"
+            for ((needle, why) in forbidden) {
+                assertTrue(
+                    "the owner's decision on '${record.language}' says '$needle'. $why. Record it " +
+                        "as HIS acceptance of a reviewed basis, dated, with the residual named",
+                    !text.contains(needle, ignoreCase = true),
+                )
+            }
+        }
+        // And no numeric confidence, on ANY cleared row. The owner's informal "99%" is not a
+        // figure this record may carry: a percentage beside a grant reads as a measured
+        // probability, and nothing here measured one.
+        val percentage = Regex("""\d+(?:\.\d+)?\s*%""")
+        for (record in PackClearanceRecord.RECORD) {
+            val verdict = record.verdict as? ClearanceVerdict.Cleared ?: continue
+            val found = percentage.find("${verdict.grantedBy} ${verdict.because}")
+            assertTrue(
+                "the clearance for '${record.language}' carries a percentage " +
+                    "('${found?.value}') — a numeric confidence in a verdict reads as a measured " +
+                    "probability, and no such measurement exists. Corpus statistics belong in " +
+                    "corpora, not in the grant",
+                found == null,
+            )
+        }
     }
 
     // ------------------------------------------------------------ 4. a clearance is over BYTES
@@ -948,6 +1126,31 @@ class StreamingPackClearanceTest {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /**
+     * **The owner's licensing decision, as the two facts the record is held to.** He did the
+     * research himself and issued the handoff on this date; the name is in the record because "the
+     * owner" is not a grantor a later reader can identify.
+     *
+     * These are NOT a fifth literal in the sense the class docblock prices: they do not say which
+     * rows the decision covers (that census is the fourth literal, in
+     * [allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913]). They say what a row claiming that
+     * decision has to spell, and they are here rather than inline because three tests read them.
+     */
+    private val OWNER_DECISION_DATE = "2026-09-13"
+    private val OWNER_DECISION_MAKER = "Brandon Slacum"
+
+    /**
+     * The rows whose clearance IS the owner's decision of [OWNER_DECISION_DATE], paired with their
+     * verdicts. Selected by date — see
+     * [everyOwnerDecisionNamesTheOwnerTheDateAndARealBasis]'s docblock for why not by name.
+     */
+    private fun ownerDecisions(): List<Pair<PackClearance, ClearanceVerdict.Cleared>> =
+        PackClearanceRecord.RECORD.mapNotNull { record ->
+            (record.verdict as? ClearanceVerdict.Cleared)
+                ?.takeIf { it.grantedOn == OWNER_DECISION_DATE }
+                ?.let { record to it }
+        }
 
     /**
      * **The one mapping from an answerer to the words `docs/LANGUAGE-CLEARANCE.md` says it in**,

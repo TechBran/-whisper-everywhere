@@ -1,9 +1,43 @@
 # Language clearance — the checklist before a production release
 
+> ## ✅ ALL SEVEN ARE CLEARED — the owner's decision of 2026-09-13
+>
+> Brandon Slacum did the licensing research himself and issued a formal handoff dated **2026-09-13
+> accepting the reviewed licensing basis for all seven preview packs**. `PRODUCTION_CLEARED` names
+> all seven and `PackClearanceRecord.stateOfRecord(...)` reports **`Promotable`**.
+>
+> **What that decision is:** *his* acceptance of a reviewed basis, per row, dated. **What it is
+> not**, and what nothing in this repository may be read as saying:
+>
+> - a permission from a model author — **the German uploader was never written to and never
+>   replied**, and that hold is retired rather than satisfied;
+> - a reply from NIA or AI-Hub — **nothing was ever sent to them**; Korean rests on AI-Hub's own
+>   **published FAQ**, which anybody can read;
+> - a legal certification — **no counsel opinion was sought or obtained** for Indonesian, Korean or
+>   Chinese, and his decision records that one is not a prerequisite for these unchanged packs;
+> - Google Play approval — Play reviews an app, not a corpus;
+> - a number. His informal confidence in his own research is **not a figure this record carries**,
+>   and the suite fails the build on a percentage inside a cleared verdict.
+>
+> **Where an uncertainty remains, it is recorded as ACCEPTED — never as resolved.** Four rows carry
+> one and name it: German's declaration is unwitnessed by its author; Russian's and Chinese's
+> corpora are undisclosed; Indonesian's YODAS2 attribution chain is unanswered; Korean's FAQ does
+> not address a party outside Korea either way. An accepted risk is still a risk.
+>
+> **And the decision came with a CONDITION, not a caveat.** Apache-2.0 §4 and MIT are trades, and
+> the AI-Hub FAQ grants commercial distribution of a derived model *only with attribution*. The
+> notices ship in the base app's own assets (`app/src/main/assets/oss_licenses.html`). **Korean
+> ships only if its acknowledgement ships with it.**
+>
+> The rest of this document is unchanged and still live: it is what a **withdrawal**, a **refusal**
+> or an **eighth language** is worked from, and the per-language evidence sections below are the
+> record of what each row was cleared *on*.
+
 **Who fills this in: the owner.** Nobody else may mark a language cleared. A subagent inventing a
 clearance is the one unrecoverable error in the 4.5.0 languages build, which is why the record is
-pinned by a test that names exactly two cleared languages and why granting a third costs three
-deliberate edits — the third of them in a test whose docblock says why a subagent must not write it.
+pinned by a test that names exactly which languages are cleared, which of them the owner decided,
+and on what date — and why granting an **eighth** still costs three deliberate edits, the third of
+them in a test whose docblock says why a subagent must not write it.
 
 **The edit lists below were walked against the suite rather than reasoned about — and this is
 exactly which walks were run**, because "every list was measured" is the kind of claim that goes
@@ -47,7 +81,7 @@ Everything below lives in
   provenance (how the grant covers the bytes the app downloads), the corpora with their terms, and
   the 40-hex commit the evidence was read at.
 - **`PackClearanceRecord.PRODUCTION_CLEARED`** — the switch. The languages authorised for
-  publication to the public. Today: `{"en", "fr"}`.
+  publication to the public. Today: `{"en", "fr", "de", "ru", "id", "ko", "zh"}` — all seven.
 
 **The rule:** `PRODUCTION_CLEARED` may never name a language whose verdict is not `Cleared`, and a
 production promotion requires it to cover **every** language in `StreamingPackCatalog.packs`. Break
@@ -56,17 +90,28 @@ anything — the authorisation is a separate, deliberate act, because "the Germa
 licence" and "German goes in front of paying customers" are two different decisions and only one of
 them is his to make on a technical basis.
 
+**Neither half was loosened to let the seven through.** What satisfies the rule is that an owner
+decision IS a real verdict. And the set being full does not make it permissive: a shipped language
+with **no record** is reported ahead of everything else, so an **eighth** language added to the
+catalogue and to this set in one motion fails the build rather than inheriting a set that already
+means "everything". That cell is asserted.
+
 ### Where the record stands today
 
-| language | verdict | who can close it | what is outstanding |
+| language | verdict | granted by | what was ACCEPTED with it |
 |---|---|---|---|
-| `en` English | **CLEARED** | — | nothing. Apache-2.0 over LibriSpeech; in the built product since 4.4.0 |
-| `fr` French | **CLEARED** | — | nothing. Apache-2.0 read twice; CommonVoice 12.0 on a LibriSpeech pretrain; GigaSpeech is not in the exported lineage |
-| `de` German | outstanding | the upstream author | one email confirming the licence he already declared |
-| `ru` Russian | outstanding | **you** | an undisclosed corpus: accept the risk, or refuse the row |
-| `id` Indonesian | outstanding | counsel | YODAS2, four questions |
-| `ko` Korean | outstanding | **you** | AI-Hub's FAQ grants it **with attribution** (paid, on the licences screen) — **corrected 2026-09-13**; what is left is one scope residual the publisher does not address |
-| `zh` Chinese | outstanding | **you** | an undisclosed corpus — **corrected 2026-09-13**, see its section: accept the risk, or refuse the row |
+| `en` English | **CLEARED** | you, by shipping it since 4.4.0; restated 2026-09-12 | nothing outstanding. Apache-2.0 over LibriSpeech (CC BY 4.0), no agreement in the lineage |
+| `fr` French | **CLEARED** | the controller's read of the qualification table, 2026-09-12 | nothing outstanding. Apache-2.0 read twice; CommonVoice 12.0 (CC0) on a LibriSpeech pretrain; GigaSpeech is not in the exported lineage. **Yours to withdraw** |
+| `de` German | **CLEARED** | **Brandon Slacum, 2026-09-13** | that the `apache-2.0` declaration is **unwitnessed by its author** — 180 bytes of front matter the platform cannot parse, re-fetched at a matching sha256. The email was never sent |
+| `ru` Russian | **CLEARED** | **Brandon Slacum, 2026-09-13** | an **undisclosed corpus** — an unsized risk, taken. The licence chain is the strongest of the five and the mirror is discharged cryptographically |
+| `id` Indonesian | **CLEARED** | **Brandon Slacum, 2026-09-13** | the **YODAS2 attribution chain two hops downstream**, unanswered. No counsel opinion was sought; the collection-level credit is on the licences screen |
+| `ko` Korean | **CLEARED** | **Brandon Slacum, 2026-09-13** | the **overseas scope** the AI-Hub FAQ does not address either way. The FAQ's attribution is **not** a residual — it is the **condition**, and it is paid |
+| `zh` Chinese | **CLEARED** | **Brandon Slacum, 2026-09-13** | an **undisclosed corpus** — corpus claim **corrected 2026-09-13**; Russian's shape exactly |
+
+**A `CLEARED` row with an accepted residual is not the same thing as a closed question**, and the
+column above is the whole reason this table has four columns instead of three. If you ever need to
+know what was *actually* decided on a row, its section below is the evidence and its `because`
+string in `StreamingPackClearance.kt` is the reason of record.
 
 `zh` is the row the build brief calls `zh-en`: it is **selected** as Chinese and its language code is
 `zh`, and the pack behind it is the bilingual Chinese-English export — the only pack in the catalogue
@@ -76,23 +121,45 @@ that puts anything on the strip when an English speaker talks mid-Chinese.
 
 ## When an answer arrives: the three edits, and one line nothing enforces
 
-Say the German author replies and confirms his Apache-2.0. Recording that takes **three** edits that
-the suite enforces — the third is friction on purpose, it is what makes an invented clearance show up
-as a diff — **plus one sentence on the acceptance sheet that no test can see** (step 4). The list is
-exhaustive, and measured that way: applied as written to German — and to each of the other four
-outstanding rows in turn, because a list that is only ever walked for one language is a list that
-works for one language — the suite ends green every time.
+**This list was walked five times on 2026-09-13 and it is what recorded the owner's decision** — and
+it is still live, because the next thing it records is an **eighth** language, or a row cleared again
+after a withdrawal. Say a new pack's licence question is answered. Recording that takes **three**
+edits that the suite enforces — the third is friction on purpose, it is what makes an invented
+clearance show up as a diff — **plus one sentence on the acceptance sheet that no test can see**
+(step 4). The list is exhaustive, and measured that way: applied as written to German — and to each
+of the other four rows in turn, because a list that is only ever walked for one language is a list
+that works for one language — the suite ends green every time.
+
+**One thing the decision of 2026-09-13 added to step 3: a fourth literal.** The pin test now also
+holds **which rows are that decision**, keyed to the grant date, so a row cannot drift between the
+owner's grant and the controller's 2026-09-12 read without a deliberate diff. It is priced below.
 
 **1. The verdict**, in `StreamingPackClearance.kt`. Replace that row's
 `ClearanceVerdict.Outstanding(...)` with:
 
 ```kotlin
 verdict = ClearanceVerdict.Cleared(
-    grantedBy = "<who said so — a person, or the document, never 'the build'>",
-    because = "<the reason, short enough to read at promotion time>",
+    grantedBy = "<who said so, BY NAME — a person, or the document, never 'the build' and never
+                 'the owner'. If it is your own decision, name yourself and the date>",
+    because = "<the reason, short enough to read at promotion time, naming this row's own
+                declared licence and — where an uncertainty remains — recording it as ACCEPTED>",
     grantedOn = "<YYYY-MM-DD>",
 ),
 ```
+
+**Four things the suite will refuse in those two strings**, and all four exist because a real
+decision is as easy to mis-record as a fake one is to invent:
+
+- **the word "approved", or any other borrowed permission.** Your decision *accepts* a reviewed
+  basis. Writing it as an approval, a permission from an author, a confirmation from anybody, a
+  certification or a Google Play decision claims something that does not exist. `approv`,
+  `permission from`, `confirmed by`, `certif`, `legal opinion`, `legally cleared` and `google play`
+  are all refused in a row dated as your decision;
+- **a percentage.** A number beside a grant reads as a measured probability and nothing here
+  measured one;
+- **"resolved" where the truth is "accepted".** An accepted risk is still a risk; say which it is;
+- **a reason under 120 characters**, or one that does not name the row's own `licence`. A basis that
+  could be pasted onto any row is not this row's basis.
 
 Keep `licence`, `readAt`, `readOn`, `provenance`, `corpora` and `pinnedCommit` as they are unless the
 answer changed one of them. If the author re-uploads the repository in the course of answering, the
@@ -100,23 +167,28 @@ answer changed one of them. If the author re-uploads the repository in the cours
 sha256 digests and this evidence were all read at the old commit. Re-run
 `tools/build_asset_packs.py` for that pack and re-read the licence before clearing it.
 
-**2. The switch**, a few lines above:
+**2. The switch**, a few lines above — add the language to the set:
 
 ```kotlin
-val PRODUCTION_CLEARED: Set<String> = setOf("en", "fr", "de")
+val PRODUCTION_CLEARED: Set<String> = setOf("en", "fr", "de", "ru", "id", "ko", "zh")
 ```
 
 **3. The pin**, in
 `app/src/test/java/com/whispereverywhere/transcription/stream/StreamingPackClearanceTest.kt` —
-`onlyEnglishAndFrenchAreClearedOnThisBranch`. That is **the only test in the file that retypes the
-state of the record**, and it holds **three** literals. A clearance moves all three:
+`allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913`. That is **the only test in the file that
+retypes the state of the record**, and it holds **four** literals. A clearance moves them all:
 
 - the **cleared list** — add the language, in the order `PackClearanceRecord.RECORD` uses
   (`en, fr, de, ru, id, ko, zh`), **not** alphabetically;
 - the **switch** — the same set as edit 2 above;
-- the **outstanding census** at the end of the test, the `"de" to ClearanceAnswerer.…` pairs —
-  **delete the row you have just cleared from it.** This is the line that makes "one fewer question"
-  visible in a diff.
+- the **outstanding census**, the `"de" to ClearanceAnswerer.…` pairs — **delete the row you have
+  just cleared from it.** This is the line that makes "one fewer question" visible in a diff. It is
+  **empty** since 2026-09-13, and it is still the line an eighth language's open question is typed
+  into;
+- the **owner-decision census** — `listOf("de", "ru", "id", "ko", "zh")`, the rows granted on
+  `2026-09-13`. Add the language here **only if you are recording it as your own decision on that
+  same date**; a row cleared on a later date, or by somebody else, belongs in the cleared list and
+  the switch and not in this one.
 
 Then rename the test to say what it now pins, and keep the docblock: it explains why the edit exists,
 and the explanation is the part that makes a forged clearance visible.
@@ -135,7 +207,8 @@ Then run the suite. It must be green:
 ```
 
 and `PackClearanceRecord.stateOfRecord(StreamingPackCatalog.packs.map { it.language })` will report
-one fewer name in its `Withheld` list. **Nothing else in that file moves** — every other test in it
+one fewer name in its `Withheld` list — or `Promotable`, which is what it reported when the fifth of
+those names went on 2026-09-13. **Nothing else in that file moves** — every other test in it
 derives what it expects from the record, on purpose. (It was not always so. The first draft of this
 document priced a yes at "both literals" in one test; applied to a German yes, the suite came back
 red in **three** tests, one of them the positive control that stops the switch outrunning the
@@ -143,11 +216,12 @@ evidence — which is the last assertion anyone should be editing on the strengt
 said the suite would be green. The derivations were the fix; this list is the measurement.)
 
 **4. One line nothing enforces**, worth thirty seconds because it is the line a promotion is actually
-read from: §AL0 of `docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md` says *"Today it
-names `en` and `fr`, and the gate reports `Withheld([de, ru, id, ko, zh])`"*. No test pins that
-sentence — pinning it would add an edit to every clearance and protect nothing, since the record is
-the authority and the sheet only quotes it — so it goes stale silently. Update it, or read it against
-`PackClearanceRecord` on the day.
+read from: §AL0 of `docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md` quotes what the
+switch names and what the gate reports. No test pins that sentence — pinning it would add an edit to
+every clearance and protect nothing, since the record is the authority and the sheet only quotes it —
+so it goes stale silently. Update it, or read it against `PackClearanceRecord` on the day. It was
+updated on 2026-09-13 to say all seven and `Promotable`, which is exactly the drift this step exists
+to catch.
 
 ## When the answer is NO: the refusal path
 
@@ -175,9 +249,12 @@ A refusal is **not** a switch — it is the removal of a row, and it is a code c
    | `StreamingPackCatalogTest` | 1 | `forLanguage("zh")` resolving to the row, asserted by symbol (`:145`) |
    | `StreamingPackCopyTest` | 1 | the picker's seven language words, in the catalogue's order (`:644`) |
 
-   — plus, in `StreamingPackClearanceTest`, the **outstanding census** in
-   `onlyEnglishAndFrenchAreClearedOnThisBranch`, which was part of the applied edit: that one only
-   if the refused row was still outstanding, which after a refusal it always is.
+   — plus, in `StreamingPackClearanceTest`, the literals in
+   `allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913`. With every row now cleared, a refusal
+   removes the row from the **cleared list** and from the **switch**, and from the
+   **owner-decision census** if that is where its grant came from; the **outstanding census** takes
+   the refused row only if it was still open, which since 2026-09-13 it is not until somebody
+   reopens it. Three of the row's four literal appearances, where before the decision it was one.
 
    **And one consequence that is not a test failure at all.** Those test files name the row by
    SYMBOL (`StreamingPackCatalog.ZH`, in `StreamingPackCopyTest`, `StreamingPackLanguagesTest` and
@@ -189,6 +266,14 @@ A refusal is **not** a switch — it is the removal of a row, and it is a code c
    the census line removed, all 11 of `StreamingPackClearanceTest`'s tests stayed green. The
    record-to-catalogue one-to-one, the promotion state, the pack-module scan and the licence-page
    check all derive from the catalogue, so deleting a row is silent in all four.
+
+   **Two exceptions added on 2026-09-13, and they name a language on purpose**, because they are
+   about a corrected FACT rather than about a verdict:
+   `theChineseRowsCorpusIsUndisclosedAndTheForkParentIsRecordedAsLineage` and
+   `theKoreanRowRestsOnTheFaqGrantAndItsAttributionCondition`. A refusal of `zh` or `ko` reddens its
+   own one with an `assertNotNull` naming the missing row, which is the right failure — the
+   correction has to be deleted deliberately, not silently inherited by a row that no longer exists.
+   Delete the test with the row.
 
    **Two steps were INSPECTED rather than measured, and for stated reasons:** the `preview_<lang>`
    directory and its gitignored payload were left on disk (the payload is yours, not the suite's,
@@ -209,22 +294,40 @@ Before promoting a release from the internal track to production:
 2. Read `PackClearanceRecord.PRODUCTION_CLEARED`. **It must name every language in
    `StreamingPackCatalog.packs`.** If it does not, the promotion does not happen — the acceptance
    sheet's §AL promotion gate says the same thing in the place the decision is actually made
-   (`docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md`).
-3. Run the §AL acceptance rows on device for every language being published.
+   (`docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md`). Since 2026-09-13 it does, and
+   the gate reports `Promotable`.
+3. **Check the notices are still there.** The grants these packs ship under are trades: Apache-2.0
+   §4 and MIT ask for their notices to travel with what they cover, and AI-Hub's FAQ grants
+   commercial distribution of a derived model *only with attribution*. `oss_licenses.html` is where
+   that is paid, and the suite fails the build if a pack's evidence URL, its licence's full name, or
+   the KsponSpeech / AI-Hub / NIA credit goes missing from it. **A pack whose notice is not there is
+   not cleared to ship, whatever this document says.**
+4. Run the §AL acceptance rows on device for every language being published.
 
 ---
 
-# The outstanding questions, one section per language
+# The evidence, one section per language
+
+**These sections are the record of what each row was cleared ON**, and they stay whether a row is
+outstanding or cleared: a clearance can be withdrawn, a withdrawn row is an outstanding row, and an
+outstanding row whose section nobody wrote is a red suite on the day it is needed rather than before.
 
 Every corpus term quoted below was read from its own publisher by the qualification table,
 `docs/superpowers/research/2026-09-11-language-qualification-table.md` — that document is the
-authority for them and carries the full reads. Every **licence** was additionally re-read live on
-2026-09-12 and is recorded in the row's own `provenance` field.
+authority for them and carries the full reads, **except where its §10 errata or a section below
+records a correction**, in which case `StreamingPackClearance.kt` is. Every **licence** was
+additionally re-read live on 2026-09-12 and is recorded in the row's own `provenance` field.
 
 ## German — `de`
 
 **The pack:** `daniel-dona/icefall-asr-commonvoice-zipformer-streaming-de` at commit
 `322557b0f88fc5a9823bc71027d4160f0c7612cc`, 70,938,534 B.
+
+**CLEARED — Brandon Slacum, 2026-09-13.** He accepted reliance on the pinned Apache-2.0 declaration.
+**The email below was never sent and the uploader never replied**; that hold is *retired*, not
+satisfied. What was ACCEPTED with the clearance: that the declaration is unwitnessed by its author,
+and that a corpus named in one line of front matter is a thin training disclosure. The question is
+kept verbatim because it is what a re-opening of this row would send.
 
 **The exact question, to the uploader:**
 
@@ -252,6 +355,10 @@ same terms as Russian below: the declared grant is real, it is simply unwitnesse
 **The pack:** `csukuangfj/sherpa-onnx-streaming-zipformer-small-ru-vosk-int8-2025-08-16` at
 `31fa603e4f31279c6e1f7600fed13dc4312663ab`, 28,572,945 B — the cheapest pack in the catalogue.
 
+**CLEARED — Brandon Slacum, 2026-09-13.** The risk was ACCEPTED, not sized: the corpus is still
+undisclosed and the optional email to `alphacep` was never sent. This row was outstanding because
+nobody had decided it; it is cleared because somebody did.
+
 **This one is your own risk call, and no document will settle it.** The card says only that the model
 was *"trained with k2-fsa/icefall on Russian data"*. **No corpus is named anywhere**, so the risk
 cannot be sized — only accepted or refused.
@@ -275,6 +382,13 @@ you are comfortable, record yourself as the grantor with that reasoning in `beca
 **The pack:** `spacewave/sherpa-onnx-streaming-zipformer2-id` at
 `4e5a13cbe3e9cd4e3775447d86178ef51759096f`, 70,908,694 B. Weights are **MIT**, re-read
 platform-surfaced on 2026-09-12.
+
+**CLEARED — Brandon Slacum, 2026-09-13, WITHOUT the counsel read below.** His decision records that a
+legal opinion is not a prerequisite for these unchanged weights, and none was sought. What was
+ACCEPTED: the YODAS2 attribution chain two hops downstream — **unanswered, not answered**. The four
+questions are kept verbatim because they are what a re-opening of this row would ask, and because
+question 2's answer is the one thing already acted on: the collection-level credit is on the licences
+screen, which is the most attribution the dataset makes possible.
 
 **Four questions for counsel** (qualification table C3), all about the corpus and none about the
 licence class — CC BY 3.0 is commercially permissive, with no non-commercial term and no share-alike:
@@ -303,6 +417,12 @@ FLEURS attribution the canary clips already carry.
 `db24b58d22736349eaeb34cc181ad0f3debf9903`, 72,969,700 B. The **cleanest licence cell in the survey**
 — Apache-2.0 in a plain (parseable) README front matter, in the README's own License section, and
 platform-surfaced in `cardData` and the tags. All three re-read on 2026-09-12.
+
+**CLEARED — Brandon Slacum, 2026-09-13**, on AI-Hub's published FAQ below. **Not a reply from NIA**,
+who were never written to. What was ACCEPTED: the **overseas scope** the FAQ does not address either
+way. What was **not** a residual and is **not** optional: the attribution — it is the condition the
+grant is traded for, and **Korean ships only if the KsponSpeech / AI-Hub (aihub.or.kr) / NIA credit
+ships with it.**
 
 **CORRECTED 2026-09-13, and this section is the correction.** What it said before: **two questions
 for counsel** (qualification table C2) — whether the uploader could grant Apache-2.0 over weights
@@ -360,6 +480,11 @@ the k2-fsa mirror's `test_wavs`, which are AI-Hub audio.
 platform-surfaced on every link of the chain (re-read 2026-09-12). This is the **50 MB V1 export**,
 not its 198 MB sibling.
 
+**CLEARED — Brandon Slacum, 2026-09-13**, on the corrected basis below: an Apache-2.0 grant over an
+**undisclosed** corpus, which is Russian's shape exactly. What was ACCEPTED is that unsized risk. No
+counsel opinion was sought, and the question this row was sent to counsel *for* went with the
+correction.
+
 **CORRECTED 2026-09-13, and this section is the correction.** What it said before: that the weights
 were trained on **WenetSpeech-L** (12,000 h), whose publisher states the corpus is *"available to
 download for non-commercial purposes"*, and that this **named** restriction made `zh` the weakest row
@@ -405,7 +530,12 @@ delisted so its licence cannot even be read. Refusing this row does not open a c
 
 ---
 
-# The two cleared languages
+# The two cleared on 2026-09-12, before the owner's decision
+
+All seven rows are cleared; these two were cleared a day earlier and by a different grantor, which is
+why they are written up apart from the five above and why the pin test holds the owner-decision
+census as its own literal. Collapsing the two grants into one list is how a decision quietly grows to
+cover something it never named.
 
 Neither needs anything, and both are recorded with their evidence in `PackClearanceRecord` so the
 record is a complete census rather than a list of problems. **They get their own sections for the
@@ -463,14 +593,15 @@ verdict = ClearanceVerdict.Outstanding(
 ),
 ```
 
-**2. The switch** — `PRODUCTION_CLEARED` back to `setOf("en")`.
+**2. The switch** — `"fr"` out of `PRODUCTION_CLEARED`.
 
-**3. The pin** — `onlyEnglishAndFrenchAreClearedOnThisBranch`, all three literals, the reverse of a
+**3. The pin** — `allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913`, the reverse of a
 clearance: `"fr"` out of the cleared list, out of the switch, and **into** the outstanding census as
 `"fr" to ClearanceAnswerer.OWNER` (in the record's order — `fr` is the second row, so the pair goes
-**first**, ahead of `"de"`). Rename the test. If you record `COUNSEL` instead of `OWNER` in edit 1,
-the census pair takes `COUNSEL` too — the suite reads the answerer from the record rather than from
-this list.
+**first**). Rename the test. If you record `COUNSEL` instead of `OWNER` in edit 1, the census pair
+takes `COUNSEL` too — the suite reads the answerer from the record rather than from this list. The
+**owner-decision census** is untouched by a French withdrawal, because `fr` was never in it; a
+withdrawal of one of the five the owner decided takes that literal as well.
 
 **And one conditional fourth edit, which applies to any withdrawal, not just French's.** The suite
 asks an OUTSTANDING row's section for the words of *its own* answerer, in this document's own

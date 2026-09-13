@@ -14,6 +14,38 @@ package com.whispereverywhere.transcription.stream
  *
  * > *"I still will need to be able to test on internal testing track before the legal stuff."*
  *
+ * ### HE DID THE RESEARCH. The decision of 2026-09-13, and what it is
+ *
+ * He did it himself, in a separate session, and issued a formal handoff dated **2026-09-13
+ * accepting the reviewed licensing basis for all seven preview packs**. [PRODUCTION_CLEARED] now
+ * names all seven, and the five verdicts that were outstanding are [ClearanceVerdict.Cleared] with
+ * **Brandon Slacum** as their grantor.
+ *
+ * **What that decision IS: the owner's acceptance of a reviewed basis, per row, dated.** What it is
+ * **NOT**, and the record must never be readable as any of these:
+ *
+ *  - a permission from a model author — the German uploader was never written to and never replied;
+ *  - a reply from NIA or AI-Hub — nothing was ever sent to them; the Korean row rests on AI-Hub's
+ *    own **published FAQ**, which anyone can read;
+ *  - a legal certification — no counsel opinion was sought for `id`, `ko` or `zh`, and his decision
+ *    records that one is not a prerequisite for these unchanged packs;
+ *  - Google Play approval — Play reviews an app, not a corpus;
+ *  - a numeric confidence. His informal figure for his own research is not a number this record
+ *    carries, and `StreamingPackClearanceTest.noClearanceClaimsAnApprovalNobodyGave` fails the
+ *    build on a percentage in a cleared verdict.
+ *
+ * **And where an uncertainty remains it is recorded as ACCEPTED, never as resolved.** Four of the
+ * five rows carry one and name it: German's declaration is unwitnessed by its author, Russian's and
+ * Chinese's corpora are undisclosed, Indonesian's YODAS2 attribution chain is unanswered, and
+ * Korean's FAQ does not address a party outside Korea either way. An accepted risk is still a risk;
+ * the value of this record at promotion time is that it says which is which.
+ *
+ * **The decision came with a condition, and it is not a caveat.** Apache-2.0 §4 and MIT are trades,
+ * and the AI-Hub FAQ grants commercial distribution of derived models *only with attribution*. The
+ * notices those licences ask for ship in the base app's own assets
+ * (`app/src/main/assets/oss_licenses.html`), and **Korean ships only if its acknowledgement ships
+ * with it**.
+ *
  * ### WHAT THIS IS NOT: a switch that removes a language from the build
  *
  * The obvious implementation — exclude an uncleared pack from `assetPacks` — is FORBIDDEN, and the
@@ -35,8 +67,10 @@ package com.whispereverywhere.transcription.stream
  *  - anything the app reads at runtime to decide what it may fetch, install or arm.
  *
  * **The app never asks whether a language is cleared. Only a human promoting a release does.** All
- * six languages are in the bundle, fetchable and armable on the internal track today, with five
- * clearances outstanding.
+ * seven languages were in the bundle, fetchable and armable on the internal track, throughout the
+ * period five clearances were outstanding — which is what made the owner's research possible on
+ * packs he had heard working. Nothing about that changed when the switch opened, and nothing about
+ * it may change if a clearance is ever withdrawn.
  *
  * ### THE TWO KEYS, and why one would not do
  *
@@ -54,8 +88,9 @@ package com.whispereverywhere.transcription.stream
  * ### Where this is read
  *
  * Three places, all of them human: `StreamingPackClearanceTest` (which fails the build on a blank
- * verdict and on a switch that outran its evidence), `docs/LANGUAGE-CLEARANCE.md` (the checklist
- * the owner fills in, one section per outstanding language), and the acceptance sheet's promotion
+ * verdict, on a switch that outran its evidence, on an eighth language inheriting the switch, and
+ * on a decision written up as somebody else's approval), `docs/LANGUAGE-CLEARANCE.md` (the
+ * checklist the owner fills in, one section per language), and the acceptance sheet's promotion
  * gate (`docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md`, §AL). Nothing else, ever.
  */
 data class PackClearance(
@@ -98,7 +133,15 @@ data class PackClearance(
     val pinnedCommit: String,
 )
 
-/** Who is able to answer an outstanding clearance question — nobody else can close that row. */
+/**
+ * Who is able to answer an outstanding clearance question — nobody else can close that row.
+ *
+ * **No row is outstanding since 2026-09-13**, so nothing in [PackClearanceRecord] carries one of
+ * these today. The enum stays because a clearance can be WITHDRAWN and an eighth language can
+ * arrive, and because the checklist's refusal and withdrawal paths are written in its terms: a
+ * withdrawn row is an outstanding row, and an outstanding row that does not say who can close it
+ * leaves the owner nothing to do.
+ */
 enum class ClearanceAnswerer {
     /**
      * The owner's own risk call. Used where no third party is obliged to answer and no document
@@ -118,14 +161,23 @@ enum class ClearanceAnswerer {
 /** Whether one language may be published to the public, and the evidence or the gap behind it. */
 sealed interface ClearanceVerdict {
     /**
-     * **Cleared for publication.** Two rows only on this branch, and the controller brief's global
-     * constraint says so: *"No pack may be marked cleared on this branch except `en` and `fr` — the
-     * rest is the owner's to grant, and a subagent inventing a clearance is the one unrecoverable
-     * error in this build."* `StreamingPackClearanceTest.onlyEnglishAndFrenchAreClearedOnThisBranch`
-     * is that sentence with teeth.
+     * **Cleared for publication.** All seven rows since 2026-09-13 — `en` and `fr` on the
+     * controller's reading of the qualification table the day before, and the other five by the
+     * owner's own decision.
      *
-     * @property grantedBy who granted it. A clearance with no grantor is a clearance nobody gave.
-     * @property because the reason, short enough to read at promotion time.
+     * The rule that made this expensive to forge has not moved: a clearance costs three deliberate
+     * edits, the third of them in
+     * `StreamingPackClearanceTest.allSevenAreClearedAndFiveAreTheOwnersDecisionOf20260913`, under a
+     * docblock explaining why a subagent must not write it. **An eighth language does not arrive
+     * cleared because this list is full.**
+     *
+     * @property grantedBy who granted it, by name, and for an owner decision the date as well. A
+     *   clearance with no grantor is a clearance nobody gave, and "the owner" is not a name. It may
+     *   not describe itself as an approval, a permission, a certification or a store decision —
+     *   `noClearanceClaimsAnApprovalNobodyGave` fails the build on the vocabulary of one.
+     * @property because the reason, short enough to read at promotion time, per row, and naming
+     *   the licence that row actually declares. Where an uncertainty remains, this is where it is
+     *   recorded as **accepted** rather than resolved.
      * @property grantedOn the ISO date of the grant.
      */
     data class Cleared(val grantedBy: String, val because: String, val grantedOn: String) : ClearanceVerdict
@@ -151,8 +203,10 @@ sealed interface ClearanceVerdict {
  */
 sealed interface PromotionState {
     /**
-     * Every shipped language is cleared AND authorised. **Unreachable on this branch**, and that is
-     * the point: it becomes reachable one language at a time, as the owner's research lands.
+     * Every shipped language is cleared AND authorised. **Reached on 2026-09-13**, when the
+     * owner's research landed for the last five at once. It was unreachable for the whole life of
+     * the branch before that, and it becomes unreachable again the moment an eighth language ships
+     * without a record — which is the property that makes it worth reporting at all.
      */
     data object Promotable : PromotionState
 
@@ -210,6 +264,12 @@ sealed interface PromotionState {
  * checkable rather than decorative: on 2026-09-12 the HF API's `sha` — the current `main` — still
  * equalled the pinned commit for **all seven** repositories, so nothing has been re-uploaded under
  * any of these grants since the table read them.
+ *
+ * **2026-09-13 changed the VERDICTS and, on two rows, the FACTS. It changed no artefact.** The
+ * owner's decision cleared `de`, `ru`, `id`, `ko` and `zh`; the same day the Chinese corpus claim
+ * and the Korean licensing position were corrected (see [ZH] and [KO]). Every `licence`, `readAt`,
+ * `readOn`, `provenance` and `pinnedCommit` in this record is the read of 2026-09-12, unchanged —
+ * **a decision is granted over the bytes the evidence was read at, and those bytes did not move.**
  */
 object PackClearanceRecord {
 
@@ -223,8 +283,14 @@ object PackClearanceRecord {
      *
      * **This set does not reach the build, the catalogue or the app.** It has exactly two readers:
      * the test suite and the two committed documents. Nothing about the internal track consults it.
+     *
+     * **It names all seven since 2026-09-13** — `en` and `fr` from the day before, and `de`, `ru`,
+     * `id`, `ko` and `zh` by the owner's decision of that date. An EIGHTH language does not inherit
+     * it: `StreamingPackClearanceTest` fails the build on a shipped language with no record even
+     * when this set names it, which is the one thing an "everything" set has to keep being able to
+     * say no to.
      */
-    val PRODUCTION_CLEARED: Set<String> = setOf("en", "fr")
+    val PRODUCTION_CLEARED: Set<String> = setOf("en", "fr", "de", "ru", "id", "ko", "zh")
 
     /** English — Apache-2.0, in the built product since 4.4.0. */
     val EN = PackClearance(
@@ -284,19 +350,27 @@ object PackClearanceRecord {
         pinnedCommit = "3db9565d9633758d6b87b9a7b3dc09ebfb6b2c73",
     )
 
-    /** German — the grant is real text in the repo that the platform cannot read. ONE EMAIL. */
+    /**
+     * German — the grant is real text in the repo that the platform cannot read, and the owner
+     * accepted reliance on it rather than waiting for the one email nobody was obliged to answer.
+     */
     val DE = PackClearance(
         language = "de",
-        verdict = ClearanceVerdict.Outstanding(
-            question = "Does the uploader confirm the apache-2.0 he declared? The grant is real " +
-                "text in the repository and the platform cannot read it — the API returns " +
-                "license: null AND cardData: null, because that README is an Xet/LFS blob — so " +
-                "there is nothing platform-surfaced for a licensee to rely on.",
-            action = "ONE EMAIL to the uploader (daniel-dona) asking him to confirm the " +
-                "apache-2.0 in his README, and ideally to add a plain README or a LICENSE file so " +
-                "the platform surfaces it. The outstanding item is a CONFIRMATION of a grant that " +
-                "is already declared, not a request to create one.",
-            answerer = ClearanceAnswerer.UPSTREAM_AUTHOR,
+        verdict = ClearanceVerdict.Cleared(
+            grantedBy = "Brandon Slacum, decision owner, 2026-09-13 — his own licensing research, " +
+                "issued as a formal handoff and recorded here as HIS acceptance of a reviewed " +
+                "basis. Not a grant from the uploader: daniel-dona was never written to and never " +
+                "wrote back, and the earlier one-email hold is retired rather than satisfied",
+            because = "the README at the pinned commit declares license: apache-2.0 and datasets: " +
+                "mozilla-foundation/common_voice_17_0, and that declaration is the entire file — " +
+                "180 bytes, re-fetched independently at sha256 " +
+                "39b7a8b94cf14be24b5a62271fa033d6493f1c1e423a09f8fa18ec26c60dc15d. A grant the " +
+                "platform cannot parse is still a grant, and a null cardData is a broken renderer " +
+                "rather than absent permission. What the owner ACCEPTED with it: that the " +
+                "declaration is unwitnessed by its author, and that a corpus named in one line of " +
+                "front matter is a thin training disclosure. Both remain recorded, accepted, not " +
+                "closed",
+            grantedOn = "2026-09-13",
         ),
         licence = "apache-2.0",
         readAt = "https://huggingface.co/daniel-dona/icefall-asr-commonvoice-zipformer-streaming-de",
@@ -314,20 +388,25 @@ object PackClearanceRecord {
         pinnedCommit = "322557b0f88fc5a9823bc71027d4160f0c7612cc",
     )
 
-    /** Russian — the strongest licence chain of the five, and no corpus named at all. */
+    /**
+     * Russian — the strongest licence chain of the five the owner decided, and no corpus named at
+     * all. The row that was outstanding because nobody had decided it; now decided.
+     */
     val RU = PackClearance(
         language = "ru",
-        verdict = ClearanceVerdict.Outstanding(
-            question = "What was it trained on? No corpus is named anywhere — the card says only " +
-                "\"trained with k2-fsa/icefall on Russian data\" — so the risk cannot be SIZED, " +
-                "only accepted or refused.",
-            action = "The OWNER's own risk call. The apache-2.0 grant on the artefact is what a " +
-                "licensee relies on, and the qualification table files this as nice-to-have " +
-                "rather than gating (its ruling O4). One optional email to alphacep could name " +
-                "the corpus; nobody is obliged to answer it, and no document will arrive on its " +
-                "own. This row is outstanding because nobody has decided it, not because anybody " +
-                "is working on it.",
-            answerer = ClearanceAnswerer.OWNER,
+        verdict = ClearanceVerdict.Cleared(
+            grantedBy = "Brandon Slacum, decision owner, 2026-09-13 — the row this record always " +
+                "said was his alone to settle, since no third party is obliged to answer it and " +
+                "no document would arrive on its own",
+            because = "the apache-2.0 grant on the tagged upstream is what a licensee relies on, " +
+                "and this row's four files are byte-identical to that upstream — three LFS oids " +
+                "plus a sha256 computed on tokens.txt — so the untagged mirror the bytes come " +
+                "from is discharged cryptographically rather than by trust. The corpus is still " +
+                "UNDISCLOSED: the card says only \"trained with k2-fsa/icefall on Russian data\", " +
+                "so there is nothing whose terms could be read. The owner ACCEPTED that unsized " +
+                "risk, which is the only thing that can be done with a risk nobody can size; the " +
+                "optional email to alphacep was not sent and is not a condition",
+            grantedOn = "2026-09-13",
         ),
         licence = "apache-2.0",
         readAt = "https://huggingface.co/alphacep/vosk-model-small-streaming-ru",
@@ -348,21 +427,26 @@ object PackClearanceRecord {
         pinnedCommit = "31fa603e4f31279c6e1f7600fed13dc4312663ab",
     )
 
-    /** Indonesian — MIT weights over a YouTube-derived corpus. COUNSEL, four questions. */
+    /**
+     * Indonesian — MIT weights over a YouTube-derived corpus, accepted by the owner without the
+     * four-question counsel read the qualification table costed at ~0.5 d.
+     */
     val ID = PackClearance(
         language = "id",
-        verdict = ClearanceVerdict.Outstanding(
-            question = "Four, all about YODAS2 (qualification table C3): does training on a CC " +
-                "BY 3.0 corpus create an attribution obligation on the WEIGHTS; can a " +
-                "collection-level credit discharge it when the dataset removed the per-author " +
-                "handle; does the uploader's grant reach the 85.6% of label hours that are " +
-                "auto-captions; and which CC licence is librivox-indonesia, which is tagged only " +
-                "\"cc\" with no version?",
-            action = "COUNSEL — four questions, costed at ~0.5 d plus one credits line. The " +
-                "licence CLASS is commercially fine (CC BY 3.0: no non-commercial term, no " +
-                "share-alike); what needs an opinion is the attribution chain two hops " +
-                "downstream.",
-            answerer = ClearanceAnswerer.COUNSEL,
+        verdict = ClearanceVerdict.Cleared(
+            grantedBy = "Brandon Slacum, decision owner, 2026-09-13 — taken WITHOUT a counsel " +
+                "read, which his decision records as not a prerequisite for these unchanged " +
+                "weights. No opinion was sought and none exists",
+            because = "MIT on the repository the four files are downloaded from, read in its own " +
+                "902-byte front matter and platform-surfaced, with the uploader also being the " +
+                "exporter; and the declared corpora are commercially permissive as a CLASS — " +
+                "YODAS2 is CC BY 3.0, CommonVoice 17.0 is CC0, FLEURS is CC BY 4.0, and none of " +
+                "them carries a non-commercial term or a share-alike. What the owner ACCEPTED is " +
+                "the attribution chain two hops downstream, unanswered rather than answered: " +
+                "YODAS2 deliberately removed the per-author handle, so a collection-level credit " +
+                "is the most attribution the dataset makes possible, and that credit is on the " +
+                "licences screen. librivox-indonesia's CC version is still unstated upstream",
+            grantedOn = "2026-09-13",
         ),
         licence = "mit",
         readAt = "https://huggingface.co/spacewave/sherpa-onnx-streaming-zipformer2-id",
@@ -404,24 +488,26 @@ object PackClearanceRecord {
      */
     val KO = PackClearance(
         language = "ko",
-        verdict = ClearanceVerdict.Outstanding(
-            question = "One, and it is a residual rather than a question anybody is obliged to " +
-                "answer: AI-Hub's published FAQ grants commercial use, sale and distribution of " +
-                "secondary works such as AI models trained on AI-Hub data, with attribution, and " +
-                "prohibits redistributing the ORIGINAL DATA — which this app never possesses. " +
-                "What the page does not address, either way, is whether that grant reaches a " +
-                "party OUTSIDE Korea. There is nothing further to read; the residual can only be " +
-                "accepted or refused.",
-            action = "The OWNER's own risk call on that scope residual. CORRECTED 2026-09-13: the " +
-                "earlier framing — two counsel questions built on the 데이터 이용정책's " +
-                "nationals-only, overseas-agreement and export-agreement clauses — is WITHDRAWN, " +
-                "because those clauses govern access to the DATA and we never applied for it. " +
-                "The FAQ's attribution condition is NOT outstanding and is not optional: the " +
-                "KsponSpeech / AI-Hub (aihub.or.kr) / NIA credit is on the licences screen " +
-                "(app/src/main/assets/oss_licenses.html) and is what the grant is traded for. " +
-                "Also recorded there, and not to be undone: the canary clip for this language is " +
-                "FLEURS and NOT the k2-fsa mirror's test_wavs, which are AI-Hub audio.",
-            answerer = ClearanceAnswerer.OWNER,
+        verdict = ClearanceVerdict.Cleared(
+            grantedBy = "Brandon Slacum, decision owner, 2026-09-13 — on AI-Hub's own published " +
+                "FAQ, read by him and re-read independently by the controller. Not a reply from " +
+                "NIA, who were never written to; not a licence negotiated with anybody; and not " +
+                "the two counsel questions this row used to carry, which were built on clauses " +
+                "that govern access to the data",
+            because = "apache-2.0 on the weights — the cleanest licence cell in the survey, read " +
+                "three ways — and AI-Hub's published FAQ states that secondary works such as AI " +
+                "models developed by using AI-Hub data FOR TRAINING may be freely used, or sold " +
+                "and distributed, for commercial and non-commercial purposes, provided the " +
+                "dataset's official name and AI Hub (aihub.or.kr) are cited as the source; what " +
+                "it prohibits is providing or distributing the ORIGINAL DATA to a third party, " +
+                "which this app never possesses or ships. So the attribution is a CONDITION of " +
+                "the grant rather than a courtesy, and it is paid on the licences screen — " +
+                "Korean ships only if that credit ships. The FAQ does not address a party outside " +
+                "Korea either way, and the owner ACCEPTED that scope residual rather than closing " +
+                "it; a Korean-language clarification request is optional extra evidence, not a " +
+                "condition. Unchanged and not to be undone: this language's canary clip is FLEURS " +
+                "and NOT the k2-fsa mirror's test_wavs, which are AI-Hub audio",
+            grantedOn = "2026-09-13",
         ),
         licence = "apache-2.0",
         readAt = "https://huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m",
@@ -479,19 +565,19 @@ object PackClearanceRecord {
      */
     val ZH = PackClearance(
         language = "zh",
-        verdict = ClearanceVerdict.Outstanding(
-            question = "What was it trained on? Nothing in this repository names a corpus: the " +
-                "card's own environment dump reads training_subset: 'mix' and the official " +
-                "sherpa-onnx documentation describes an internal corpus. So this is an " +
-                "apache-2.0 grant over an undisclosed corpus — the same shape as Russian's, and " +
-                "the risk can only be accepted or refused rather than sized.",
-            action = "The OWNER's own risk call, on the same terms as Russian. CORRECTED " +
-                "2026-09-13: the earlier framing — a WenetSpeech-L corpus with a non-commercial " +
-                "term on the card, which made this the weakest row in the survey and sent it to " +
-                "counsel as qualification-table C1 — is WITHDRAWN as unestablished, because the " +
-                "12k_hour string belongs to the fork parent. What is left is an undisclosed " +
-                "corpus, which no written opinion can size either.",
-            answerer = ClearanceAnswerer.OWNER,
+        verdict = ClearanceVerdict.Cleared(
+            grantedBy = "Brandon Slacum, decision owner, 2026-09-13 — and the row he accepted is " +
+                "not the row this record used to describe: its corpus claim was corrected the " +
+                "same day, and the counsel question it was sent to counsel for went with it",
+            because = "apache-2.0 read in the front matter and platform-surfaced on every link of " +
+                "the chain, over a checkpoint whose training corpus is UNDISCLOSED — the card's " +
+                "own environment dump reads training_subset: 'mix', the official sherpa-onnx " +
+                "documentation describes an internal corpus, and the 12k_hour string belongs to " +
+                "the FORK PARENT, which makes it lineage rather than this row's corpus. There is " +
+                "therefore no corpus term on these bytes to weigh at all. The owner ACCEPTED an " +
+                "undisclosed corpus under a declared grant, on exactly the terms he accepted " +
+                "Russian's — an unsized risk, taken rather than left open",
+            grantedOn = "2026-09-13",
         ),
         licence = "apache-2.0",
         readAt = "https://huggingface.co/csukuangfj/k2fsa-zipformer-bilingual-zh-en-t",
@@ -565,8 +651,9 @@ object PackClearanceRecord {
 
     /**
      * [state] over the committed switch and the committed record — the one call a release decision
-     * makes, and the one the acceptance sheet's promotion gate quotes. Today, over the seven
-     * shipped languages, it answers `Withheld([de, ru, id, ko, zh])`.
+     * makes, and the one the acceptance sheet's promotion gate quotes. Over the seven shipped
+     * languages it answered `Withheld([de, ru, id, ko, zh])` until 2026-09-13 and answers
+     * [PromotionState.Promotable] since.
      */
     fun stateOfRecord(languages: List<String>): PromotionState =
         state(PRODUCTION_CLEARED, languages, RECORD)

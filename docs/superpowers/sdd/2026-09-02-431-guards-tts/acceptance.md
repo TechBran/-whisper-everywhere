@@ -869,17 +869,30 @@ Your decision of 2026-09-12: *"Let's set up all 6 languages and before we publis
 do the research and the email."* And: *"I still will need to be able to test on internal testing track
 before the legal stuff."*
 
-So:
+**You then did that research, and your handoff of 2026-09-13 accepts the reviewed licensing basis for
+all seven packs.** So this row has changed state, and the two halves of it changed differently:
 
-- **All six languages are in the bundle and fully usable on the internal track today**, with five
-  clearances still outstanding. There is no build-time exclusion and there must never be one; the
-  clearance state reaches nothing the build or the app reads, and a test proves that by reading the
-  sources (`StreamingPackClearanceTest.theClearanceStateReachesNothingTheAppRuns`).
+- **All seven languages are in the bundle and fully usable on the internal track**, and were
+  throughout the period five clearances were outstanding — which is what let you hear them before
+  deciding. There is no build-time exclusion and there must never be one; the clearance state reaches
+  nothing the build or the app reads, and a test proves that by reading the sources
+  (`StreamingPackClearanceTest.theClearanceStateReachesNothingTheAppRuns`).
 - **Production promotion is gated on the record.** Before promoting to production, read
   `PackClearanceRecord.PRODUCTION_CLEARED` in
   `app/src/main/java/com/whispereverywhere/transcription/stream/StreamingPackClearance.kt`. **It must
-  name every language in `StreamingPackCatalog.packs`.** Today it names `en` and `fr`, and the gate
-  reports `Withheld([de, ru, id, ko, zh])`.
+  name every language in `StreamingPackCatalog.packs`.** Since 2026-09-13 it names all seven —
+  `en, fr, de, ru, id, ko, zh` — and the gate reports **`Promotable`**.
+- **What that decision is, and is not.** It is **your** acceptance of a reviewed basis, per row,
+  dated. It is **not** a permission from a model author (the German uploader was never written to),
+  not a reply from NIA (nothing was sent — Korean rests on AI-Hub's own published FAQ), not a legal
+  certification (no counsel opinion was sought for `id`, `ko` or `zh`), not a Google Play approval,
+  and not a number. Four rows carry an **ACCEPTED** residual and name it; accepted is not resolved.
+- **AND IT CARRIES A CONDITION, WHICH IS A DEVICE ROW BELOW, NOT A FOOTNOTE.** Apache-2.0 §4 and MIT
+  are trades, and the AI-Hub FAQ grants commercial distribution of a derived model **only with
+  attribution**. The notices ship in the base app's own assets. **Korean ships only if its
+  acknowledgement ships with it** — so a promotion also requires the licences screen to still carry
+  what these grants ask for. The suite fails the build if a pack's evidence URL, its licence's full
+  name, or the KsponSpeech / AI-Hub (aihub.or.kr) / NIA credit leaves `oss_licenses.html`.
 - **The checklist is `docs/LANGUAGE-CLEARANCE.md`** — one section per outstanding language, with the
   exact question, where the evidence lives, and the three edits that record an answer. German is one
   email; Russian **and now Chinese** are your own risk call on an undisclosed corpus; **Korean** is
@@ -1048,6 +1061,13 @@ the build is; AL7 is the whole of the disclosure now that the tap gate is gone; 
 that Auto users were not changed. AL8 and AL9 are informative — a Play prompt is Play's, and a single
 failing canary is a per-language report rather than a gate.
 
-**Promote 4.5.0 to PRODUCTION only when AL0 also passes** — that is,
-`PackClearanceRecord.PRODUCTION_CLEARED` names every shipped language. Five of the six are outstanding
-today, so the honest state of this sheet is: **internal track yes, production no.**
+**Promote to PRODUCTION only when AL0 also passes** — that is,
+`PackClearanceRecord.PRODUCTION_CLEARED` names every shipped language. **Since your decision of
+2026-09-13 it does, and the gate reports `Promotable`**, so the honest state of this sheet is:
+internal track yes, and production gated on the device rows above plus the notices AL0's last bullet
+names — not on the clearance record any more.
+
+**What that sentence used to say, kept because it is the state every device session before 2026-09-13
+was run under:** *"Five of the six are outstanding today, so the honest state of this sheet is:
+internal track yes, production no."* A row that once gated a release is rewritten in place here, never
+deleted — the same rule as AF2.
