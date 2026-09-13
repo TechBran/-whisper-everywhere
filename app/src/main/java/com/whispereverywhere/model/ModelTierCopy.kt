@@ -44,10 +44,25 @@ object ModelTierCopy {
      * "May not keep up with continuous speech" is the honest shape of the risk: this app's
      * `audio_ctx` floor makes the cost per commit constant, so what a heavy rung runs out of is
      * COMMITS PER SECOND, and only sustained speech exposes it. A ten-second trial will not.
+     *
+     * **T2 — THE REMEDY NAMES ITS AXIS, because "a smaller rung" was a speed prediction in
+     * reverse.** The note read *"a smaller rung is the fix"*, which is right across whisper sizes
+     * and WRONG across a quantisation twin — and this ladder is three twins. A user on `medium-q8`
+     * (823 MB) told to go smaller lands on `medium-q5` (539 MB): the same 24 layers at 1024 dims,
+     * at the quantisation the research this build serves says is the SLOW one, because `Q5_0` and
+     * `Q5_1` are the only two quantisations absent from ggml's ARM i8mm repack path and the app
+     * already compiles `+i8mm`. Sending someone down that step to fix a throughput problem is a
+     * comparative speed claim about the one axis the owner's six-device session exists to measure,
+     * made by the app, in the voice of advice.
+     *
+     * So the remedy names the direction that is architecturally safe — a smaller Whisper, fewer
+     * and narrower layers, strictly less work per commit — and rules out the one that is not. The
+     * second clause is the load-bearing half; dropping it for brevity restores the mis-steer.
      */
     const val KEEP_UP_NOTE: String =
         "This model may not keep up with continuous speech on this device. If the typed text " +
-            "falls behind your voice, a smaller rung is the fix."
+            "falls behind your voice, a smaller model is the fix — a smaller Whisper, not the " +
+            "same Whisper at a finer quantisation."
 
     private val copyById: Map<String, TierCopy> = mapOf(
         // 4.6 — `pro`'s card is GONE, because `pro` is retired (owner ruling 2026-09-13: no

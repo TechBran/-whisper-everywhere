@@ -153,6 +153,70 @@ class ModelTierCopyTest {
         }
     }
 
+    // =================================================== 4.6 T2 — THE COPY TELLS THE TRUTH
+    //
+    // The ladder makes three copy rules load-bearing that were previously slack, and each gets a
+    // census below rather than a comment:
+    //
+    //   1. No non-NPU rung claims speed, in either direction — nothing on this ladder has been
+    //      measured and the owner is about to measure it on six devices. The two NPU cards KEEP
+    //      their measured, owner-ruled "fastest": that is a true claim and removing it would be
+    //      the regression, so the census asserts BOTH halves.
+    //   2. The heavy rungs warn, plainly, that they may not keep up with continuous speech, and
+    //      name the remedy.
+    //   3. A q8_0 rung reads as the SAME MODEL as its q5_0 twin at a different quantisation, or
+    //      the owner's session cannot interpret its own results.
+
+    /**
+     * **[ModelTierCopy.KEEP_UP_NOTE] has to say three things, and the third is the one 4.6 could
+     * get wrong.** The failure mode ("may not keep up with continuous speech"), the symptom the
+     * user can actually see ("the typed text falls behind your voice" — the only symptom there is,
+     * because since 4.4.0 the previewer keeps putting words on the strip at 0.4 s whatever the
+     * finalizer is doing), and the AXIS of the remedy.
+     *
+     * The axis is the third assertion and it is not pedantry. This build exists because the
+     * research predicts that **quantisation, not size, is the throughput lever** — `Q5_0`/`Q5_1`
+     * are the only two quantisations absent from ggml's ARM i8mm repack path and the only two this
+     * app shipped. On a ladder where three rungs are the same model at two quantisations, "a
+     * smaller rung is the fix" points a user on `medium-q8` (823 MB) at `medium-q5` (539 MB) —
+     * the same 24 layers at the quantisation the research says is the SLOW one. That is a speed
+     * prediction, in reverse, on the exact axis the session is measuring.
+     *
+     * So the note names the direction that is architecturally safe (fewer layers) and rules out
+     * the one that is not (the same model, finer or coarser). Both halves are asserted, because a
+     * future edit that drops the second clause for brevity restores the mis-steer.
+     */
+    @Test fun the_keep_up_note_states_the_failure_the_symptom_and_the_axis_of_the_remedy() {
+        val note = ModelTierCopy.KEEP_UP_NOTE
+        assertEquals(
+            "This model may not keep up with continuous speech on this device. If the typed " +
+                "text falls behind your voice, a smaller model is the fix — a smaller Whisper, " +
+                "not the same Whisper at a finer quantisation.",
+            note,
+        )
+        // 1. the failure mode, hedged — "may not", because nobody has measured it.
+        assertTrue(note.contains("may not keep up with continuous speech"))
+        // 2. the symptom the user can see, and the remedy.
+        assertTrue(note.contains("falls behind your voice"))
+        assertTrue(note.contains("is the fix"))
+        // 3. the axis: a smaller MODEL, and explicitly not the same model re-quantised.
+        assertTrue(
+            "the remedy must name the axis — 'a smaller rung' sends a medium-q8 user to " +
+                "medium-q5, which is the same 24 layers at the quantisation the research calls " +
+                "the slow one",
+            note.contains("a smaller Whisper") && note.contains("not the same Whisper"),
+        )
+        assertTrue(note.contains("quantisation"))
+        // The note is one string on five cards, so a speed claim smuggled into it is a speed
+        // claim on five cards. The census below iterates the cards; this is the string itself.
+        SPEED_CLAIM_WORDS.forEach {
+            assertFalse(
+                "KEEP_UP_NOTE claims speed with '$it' — it may state a failure MODE, never a rank",
+                Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(note.lowercase()),
+            )
+        }
+    }
+
     /**
      * 4.6 — was `english_locales_are_steered_to_pro`. The English branch is GONE because the tier
      * it pointed at is retired (owner ruling 2026-09-13: multilingual rungs only), and a steer at
@@ -873,6 +937,35 @@ class ModelTierCopyTest {
     private companion object {
         /** The 3.7 census's position vocabulary, shared so the npu pin cannot drift from the loop. */
         val POSITION_WORDS = listOf("fastest", "fast", "slower", "accuracy")
+
+        /**
+         * **4.6 T2 — the vocabulary a CPU rung may not use, in EITHER direction.** A slow claim
+         * is as unearned as a fast one: nothing on this ladder is measured, and the research the
+         * build serves predicts the intuitive ordering is wrong (the LARGER `q8_0` file is the one
+         * on ggml's ARM i8mm repack path). A card that predicts the winner — or the loser — is a
+         * claim the owner has to catch instead of a finding he makes.
+         *
+         * Every entry is matched WORD-ANCHORED, which is what lets the list keep "fast" without
+         * failing "breakfast" and "slow" without failing "smallest".
+         *
+         * Three things are deliberately absent, and each absence is a decision:
+         *
+         *  * **"throughput" and "latency"** — neutral nouns. `small-q8`'s card says *"its
+         *    throughput on this device is unknown"*, which is the honest shape for an unmeasured
+         *    rung and the opposite of a claim. Banning the noun would force the card into silence.
+         *  * **"keep up"** — [ModelTierCopy.KEEP_UP_NOTE]'s own words. "May not keep up" is a
+         *    hedged failure MODE, which is what the brief asks the heavy rungs to state; it is not
+         *    a rank against another rung.
+         *  * **"turbo"** — the upstream model's NAME (`ggml-large-v3-turbo-q5_0.bin`), carried by
+         *    `ultra`'s displayName and body. Renaming someone else's checkpoint to dodge a word
+         *    census would make the cards harder to match to the files they fetch.
+         */
+        val SPEED_CLAIM_WORDS = listOf(
+            "fast", "faster", "fastest", "quick", "quicker", "quickest", "quickly",
+            "speedy", "snappy", "swift", "swifter", "rapid", "rapidly",
+            "instant", "instantly", "real-time", "realtime", "sooner", "responsive",
+            "slow", "slower", "slowest", "slowly", "sluggish", "laggy",
+        )
 
         /**
          * A card's claims, one per sentence — the headline plus the body split at sentence ends,
