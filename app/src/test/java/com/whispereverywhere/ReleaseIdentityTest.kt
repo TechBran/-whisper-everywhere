@@ -88,6 +88,14 @@ import org.junit.Test
  * process-wide latch this KDoc described at 90 is gone. Every bump still re-arms GpuPolicy's own
  * latches (below), unchanged.
  *
+ * **versionCode 93 = 4.5.1 — a PATCH, and both halves came from one device session.** 92 went to
+ * the internal track as 4.5.0 and is spent there. 93 changes no model, no pack and no payload: it
+ * makes a freshly installed language arm on the FIRST tap instead of the second, by enumerating
+ * the six moments that can change which pack should be resident instead of trusting the two that
+ * happened to exist; and it hands the bubble's two text colours and its background opacity to the
+ * user, with the live strip defaulting to red. Every bump still re-arms GpuPolicy's canary latches
+ * (below), unchanged.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -108,15 +116,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_5_0_at_version_code_92() {
+    fun release_identity_is_4_5_1_at_version_code_93() {
         assertEquals(
-            "versionName must be 4.5.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.5.0",
+            "versionName must be 4.5.1 for this release (app/build.gradle.kts defaultConfig)",
+            "4.5.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 92 for this release (app/build.gradle.kts defaultConfig)",
-            92,
+            "versionCode must be 93 for this release (app/build.gradle.kts defaultConfig)",
+            93,
             BuildConfig.VERSION_CODE,
         )
     }
