@@ -62,6 +62,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -1142,6 +1143,71 @@ class FloatingBubbleService : Service(),
                 )
                 streamingPreview?.release()
             }
+        }
+
+        // (4.5.1 TASK 1) THE THIRD WARM TRIGGER — and the only one that is an EVENT rather than a
+        // boot or a session start. A freshly installed pack arms the VERY NEXT session.
+        //
+        // > *"What can we do about having to transcribe a second time to get the live to work? Once
+        // > we get the preview model downloaded, why can't we just refresh things to where the very
+        // > next transcribe is already on? People are going to think that it doesn't work."*
+        //
+        // He is right. The two triggers above are a boot and a session START, and the wrap site's
+        // own KDoc says it "arms NEXT session, not this one, because warm() is asynchronous and the
+        // gate reads isWarmFor() now" — so an install that completed mid-process warmed nothing
+        // until a session had already been and gone. 4.5.0's acceptance sheet recorded that miss as
+        // expected behaviour (AF6); this collector and that row's rewrite retire it together.
+        //
+        // NOT a service restart, which the owner offered as the other option: it would tear down
+        // the overlay he is looking at, and warming is sufficient — the load is 802-860 ms and the
+        // gate reads it at the next tap.
+        //
+        // ONE MORE COLLECTOR OF THE SAME SHAPE as the release-on-selection-change collector above,
+        // and it decides nothing of its own: `warmOnPackInstalled` answers whether to warm, and
+        // `previewPackToWarm` inside it stays the ONE OWNER of "which pack should be resident" —
+        // the same function the boot warm, the wrap site and that release all take their answer
+        // from. So this trigger and that release cannot disagree: a null is the release's condition
+        // and this one's refusal, which is why they can never thrash the load between them. A
+        // language change still releases first, and the ENGINE is what does it — `warm` is
+        // idempotent on the PACK and frees a resident recognizer of another language inside its own
+        // single-thread task before the new one allocates (warmStreamingPreview's KDoc).
+        //
+        // The FLOW is narrowed to phase changes before the body runs, and that narrowing carries no
+        // rule: the board ticks on every progress callback of a 73-128 MB transfer, and the census
+        // below is a marker read plus four exact byte counts per catalogue row. De-duplication, not
+        // policy — every TERM of the decision is in the pure function.
+        serviceScope.launch(Dispatchers.Main) {
+            com.whispereverywhere.transcription.stream.PreviewWorkboard.work
+                .map { board -> board.values.associate { it.language to it.phase } }
+                .distinctUntilChanged()
+                .collect {
+                    val selection = app.preferencesManager.getLanguageForApi()
+                    val record = com.whispereverywhere.transcription.stream.PreviewWorkboard.of(selection)
+                        ?: return@collect
+                    val installed = withContext(Dispatchers.IO) { app.streamingPackManager.installedLanguages() }
+                    // THE TERMS THAT MOVE ARE READ BELOW THE SUSPENSION — the release collector's
+                    // own H-B1 lesson, for the identical shape. Across the census hop a session can
+                    // have started, and a load posted under it would allocate 169 MB beside the
+                    // recognizer `PreviewTeeEngine` has BORROWED. Nothing between this call and the
+                    // warm suspends: `Log.i` and `warmStreamingPreview` are ordinary calls, and the
+                    // warm itself only posts to the engine's executor.
+                    val pack = warmOnPackInstalled(
+                        installedLanguage = record.language,
+                        phase = record.phase,
+                        previewLanguage = selection,
+                        installedPackLanguages = installed,
+                        userEnabled = app.preferencesManager.localPreviewEnabled,
+                        sessionActive = currentState != BubbleState.IDLE && currentState != BubbleState.ERROR,
+                        batchJobActive = BatchJobController.active != null,
+                        residentWarmPack = streamingPreviewPack?.takeIf { streamingPreview?.isWarmFor(it) == true },
+                    ) ?: return@collect
+                    android.util.Log.i(
+                        "WE-DIAG",
+                        "stream-warm: the selected language's pack finished installing — warming now, " +
+                            "so the next session arms",
+                    )
+                    warmStreamingPreview(pack)
+                }
         }
 
         // Re-prewarm on model switch OR first install (3.6.0, Workstream E1). TWO triggers, ONE

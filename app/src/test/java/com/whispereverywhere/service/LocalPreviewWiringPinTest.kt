@@ -153,9 +153,12 @@ class LocalPreviewWiringPinTest {
             count(startRecording, "        val selection = app.preferencesManager.getLanguageForApi()\n"),
         )
         assertEquals(
-            "read in exactly three places in the service: here, the boot warm's own lookup " +
-                "(CHANGE 5), and the release-on-selection-change collector's (pass 3, ITEM 2)",
-            3,
+            "read in exactly four places in the service: here, the boot warm's own lookup " +
+                "(CHANGE 5), the release-on-selection-change collector's (pass 3, ITEM 2), and " +
+                "the warm-on-install collector's (4.5.1 Task 1) — every one of them the same " +
+                "seam, because a previewer decision taken on any other reading of the pick is the " +
+                "defect owner ruling 1 retired",
+            4,
             count(text, "app.preferencesManager.getLanguageForApi()"),
         )
         assertEquals(
@@ -288,10 +291,86 @@ class LocalPreviewWiringPinTest {
             1, count(text, "streamingPreviewPack = "),
         )
         assertEquals(
-            "the pick is read through the one seam, now in three places: the wrap site, the boot " +
-                "warm's lookup, and this collector's",
-            3,
+            "the pick is read through the one seam, now in four places: the wrap site, the boot " +
+                "warm's lookup, this collector's, and the warm-on-install collector's (4.5.1 T1)",
+            4,
             count(text, "app.preferencesManager.getLanguageForApi()"),
+        )
+    }
+
+    @Test
+    fun aFreshlyInstalledPackIsWarmedTheMOMENTTHEINSTALLCOMPLETES() {
+        // (4.5.1 Task 1.) THE THIRD WARM TRIGGER, and the only one that is an EVENT. Without it
+        // `warmStreamingPreview` is reached only from a boot and from a session START — and the
+        // wrap site's own KDoc says it "arms NEXT session, not this one" — so an install completing
+        // mid-process armed nothing until a session had been and gone. The owner met that as
+        // "having to transcribe a second time to get the live to work".
+        val collector = indexOfOrFail(
+            text,
+            "            com.whispereverywhere.transcription.stream.PreviewWorkboard.work\n",
+        )
+        assertEquals(
+            "ONE collector on the board in the service: a second would be a second warm policy",
+            1, count(text, "PreviewWorkboard.work\n"),
+        )
+        // The FLOW is narrowed before the body runs, and that narrowing carries no rule: the board
+        // ticks on every progress callback of a 73-128 MB transfer, and the census in the body is a
+        // marker read plus four exact byte counts per catalogue row. Every TERM of the decision is
+        // in the pure function.
+        val narrow = indexOfOrFail(text, "                .map { board -> board.values.associate { it.language to it.phase } }\n")
+        val dedupe = indexOfOrFail(text, "                .distinctUntilChanged()\n")
+        assertTrue("phases first", collector < narrow && narrow < dedupe)
+        // THE SERVICE DECIDES NOTHING: one call to the pure gate, and the warm is its answer.
+        val decision = indexOfOrFail(text, "                    val pack = warmOnPackInstalled(\n")
+        assertEquals("the decision is declared once, beside its two twins", 1, count(text, "internal fun warmOnPackInstalled(\n"))
+        assertEquals("and asked once", 1, count(text, "val pack = warmOnPackInstalled(\n"))
+        assertEquals(
+            "the record is the SELECTED language's, looked up in the one observable",
+            1,
+            count(text, "                    val record = com.whispereverywhere.transcription.stream.PreviewWorkboard.of(selection)\n"),
+        )
+        // THE TERMS THAT MOVE ARE READ BELOW THE SUSPENSION — the release collector's own H-B1
+        // lesson, for the identical shape: across the census hop a session can have started, and a
+        // load posted under it would run beside the recognizer `PreviewTeeEngine` has borrowed.
+        val census = indexOfOrFail(
+            text,
+            "                    val installed = withContext(Dispatchers.IO) { app.streamingPackManager.installedLanguages() }\n",
+        )
+        assertTrue("the census is off Main, and above the decision", dedupe < census && census < decision)
+        val session = indexOfOrFail(
+            text,
+            "                        sessionActive = currentState != BubbleState.IDLE && currentState != BubbleState.ERROR,\n",
+        )
+        assertTrue("the session term is read after the suspension, inside the decision", session > census)
+        // The resident term is the ENGINE's answer, never the field alone: after an onTrimMemory
+        // that field still names the pack while the recognizer is freed, and refusing on it would
+        // leave the previewer cold behind a receipt promising words.
+        assertEquals(
+            1,
+            count(
+                text,
+                "                        residentWarmPack = streamingPreviewPack?.takeIf { streamingPreview?.isWarmFor(it) == true },\n",
+            ),
+        )
+        // ...and the answer goes straight to the EXISTING warm path. No restart of the service:
+        // that was the owner's other option and it would tear down the overlay he is looking at.
+        val warm = indexOfOrFail(text, "                    warmStreamingPreview(pack)\n")
+        assertTrue("the warm is the last thing the collector does", warm > decision)
+        assertEquals(
+            "three warm calls in the service now, every one of them handed a pack",
+            3,
+            count(text, "warmStreamingPreview(it)") +
+                count(text, "warmStreamingPreview(packToWarm)") +
+                count(text, "warmStreamingPreview(pack)"),
+        )
+        assertEquals(
+            "and the pack is armed by WARMING and never by restarting the service — the owner " +
+                "offered that as one option and it is the heavier hammer: it would tear down the " +
+                "overlay he is looking at. The three stopSelf() calls in this file are the " +
+                "permission and shutdown paths that were always there, none of them inside this " +
+                "collector",
+            0,
+            count(text.substring(collector, warm), "stopSelf()"),
         )
     }
 
@@ -333,7 +412,14 @@ class LocalPreviewWiringPinTest {
         )
         assertEquals("read once", 1, count(startRecording, "        val installedPreviewLanguages = app.streamingPackManager.installedLanguages()\n"))
         assertEquals("no English literal is left anywhere in the service", 0, count(text, "StreamingPackCatalog.EN"))
-        assertEquals("two warm calls, both handed a pack", 2, count(text, "warmStreamingPreview(it)") + count(text, "warmStreamingPreview(packToWarm)"))
+        assertEquals(
+            "three warm calls, all handed a pack — the third is the install's own " +
+                "(aFreshlyInstalledPackIsWarmedTheMOMENTTHEINSTALLCOMPLETES)",
+            3,
+            count(text, "warmStreamingPreview(it)") +
+                count(text, "warmStreamingPreview(packToWarm)") +
+                count(text, "warmStreamingPreview(pack)"),
+        )
     }
 
     @Test
