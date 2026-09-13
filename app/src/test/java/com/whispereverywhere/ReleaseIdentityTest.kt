@@ -96,6 +96,14 @@ import org.junit.Test
  * user, with the live strip defaulting to red. Every bump still re-arms GpuPolicy's canary latches
  * (below), unchanged.
  *
+ * **versionCode 94 = 4.5.2 — a PATCH that changes no code path a user can feel, and is the first
+ * build any of the seven languages may be PROMOTED from.** 93 went to the internal track as 4.5.1
+ * and is spent there. 94 carries the owner's licensing decision of 2026-09-13 into the clearance
+ * record, corrects two claims that record asserted as fact, and ships the notices the Apache-2.0
+ * and MIT grants and the AI-Hub FAQ ask for in exchange. **Korean's clearance is CONDITIONAL on
+ * its attribution shipping**, which a test now holds: drop `KsponSpeech` or `aihub.or.kr` from the
+ * notices and the suite goes red. Every bump still re-arms GpuPolicy's canary latches (below).
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -116,15 +124,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_5_1_at_version_code_93() {
+    fun release_identity_is_4_5_2_at_version_code_94() {
         assertEquals(
-            "versionName must be 4.5.1 for this release (app/build.gradle.kts defaultConfig)",
-            "4.5.1",
+            "versionName must be 4.5.2 for this release (app/build.gradle.kts defaultConfig)",
+            "4.5.2",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 93 for this release (app/build.gradle.kts defaultConfig)",
-            93,
+            "versionCode must be 94 for this release (app/build.gradle.kts defaultConfig)",
+            94,
             BuildConfig.VERSION_CODE,
         )
     }
