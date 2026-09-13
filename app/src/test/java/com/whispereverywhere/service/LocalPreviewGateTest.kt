@@ -455,8 +455,8 @@ class LocalPreviewGateTest {
         // which does not compile.)
         assertEquals(
             listOf(
-                "SERVICE_START", "SELECTION_CHANGED", "PACK_INSTALLED", "SESSION_START",
-                "SESSION_END", "MEMORY_TRIM",
+                "SERVICE_START", "SELECTION_CHANGED", "SWITCH_CHANGED", "PACK_INSTALLED",
+                "SESSION_START", "SESSION_END", "MEMORY_TRIM",
             ),
             PreviewResidencyEvent.entries.map { it.name },
         )
@@ -563,15 +563,22 @@ class LocalPreviewGateTest {
         // what the member warms, and no member can name a pack of its own. This is what makes the
         // release arm safe — a null is one member's release and every other member's no-op, so
         // two members can never thrash the 802-860 ms load between them.
+        //
+        // **THE SWITCH IS ONE OF THE THREE AXES** (fix round 1, review r1's B1). This table used
+        // to hard-code `userEnabled = true`, which made the one input with no member of its own
+        // also the one input the truth table never varied — the shape that let B1 survive a green
+        // suite. It is a loop now, like the other two.
         for (event in PreviewResidencyEvent.entries) {
-            for (lang in listOf(null, "auto", "en", "es", "zh")) for (packs in someSets) {
-                val owner = previewPackToWarm(lang, packs, userEnabled = true)
-                val answer = residency(event, pack = owner)
-                assertEquals(
-                    "$event lang=$lang installed=$packs",
-                    owner,
-                    (answer as? PreviewResidency.Warm)?.pack,
-                )
+            for (enabled in listOf(true, false)) {
+                for (lang in listOf(null, "auto", "en", "es", "zh")) for (packs in someSets) {
+                    val owner = previewPackToWarm(lang, packs, userEnabled = enabled)
+                    val answer = residency(event, pack = owner)
+                    assertEquals(
+                        "$event lang=$lang installed=$packs switch=$enabled",
+                        owner,
+                        (answer as? PreviewResidency.Warm)?.pack,
+                    )
+                }
             }
         }
     }
@@ -593,16 +600,18 @@ class LocalPreviewGateTest {
         }
     }
 
-    @Test fun aNullAnswerIsARELEASEForTheSELECTIONAndForTheSESSIONENDThatCouldNotTakeIt() {
-        // 4.4.1 pass 3 ITEM 2's release, and WHY exactly two members own it: the selection moving
-        // to Auto is the event that leaves 169 MB loaded for a language that will not arm, and a
-        // session end is the first moment such a change can be acted on if it was refused while
-        // the session held the recognizer. A trim has just freed the recognizer itself, an install
-        // did not move the selection, and the two establishing moments have nothing resident to
-        // hand back — a release from any of those would be a second opinion about residency rather
-        // than a repair.
+    @Test fun aNullAnswerIsARELEASEForEveryMemberThatCanFindARecognizerNobodyWants() {
+        // 4.4.1 pass 3 ITEM 2's release, and WHY these members own it and not the others: the
+        // selection moving to Auto is the event that leaves 169 MB loaded for a language that will
+        // not arm, the SWITCH beneath it reaches that same allocation in one tap (fix round 1,
+        // review r1's B1), and a session end is the first moment such a change can be acted on if
+        // it was refused while the session held the recognizer. A trim has just freed the
+        // recognizer itself, an install did not move the selection, and the two establishing
+        // moments have nothing resident to hand back — a release from any of those would be a
+        // second opinion about residency rather than a repair.
         for (event in PreviewResidencyEvent.entries) {
             val releases = event == PreviewResidencyEvent.SELECTION_CHANGED ||
+                event == PreviewResidencyEvent.SWITCH_CHANGED ||
                 event == PreviewResidencyEvent.SESSION_END
             val expected = if (releases) PreviewResidency.Release else PreviewResidency.Leave
             assertEquals("$event", expected, residency(event, pack = null))
@@ -665,6 +674,50 @@ class LocalPreviewGateTest {
                 "session to arm",
             PreviewResidency.Warm(StreamingPackCatalog.EN),
             residency(PreviewResidencyEvent.SELECTION_CHANGED, pack = pickEnglish),
+        )
+    }
+
+    @Test fun flippingTheLIVEWORDSSwitchIsAMomentToo_bothWays_theOwnersOneTapGesture() {
+        // **B1, as the sequence.** The switch is the THIRD input of `previewPackToWarm` and it was
+        // the one with no member at all: the pick had a collector, the installed set had one, and
+        // this had nothing on either side of its flip. Its row is three lines below the language
+        // rows on the same Settings screen the owner changes language on.
+        //
+        // OFF -> ON is his complaint reached in ONE TAP — nothing warmed, so the next tap posted
+        // the 802-860 ms load and read `isWarmFor` in the same breath: session one showed no live
+        // words and session two worked. ON -> OFF held +169 MB for a feature just switched off
+        // until a trim or onDestroy, which is exactly the allocation 4.4.1 pass 3 ITEM 2 exists to
+        // hand back.
+        val installed = setOf("en")
+        val switchOn = previewPackToWarm("en", installed, userEnabled = true)
+        val switchOff = previewPackToWarm("en", installed, userEnabled = false)
+        assertEquals("the switch is `previewPackToWarm`'s own first line", null, switchOff)
+        assertEquals(
+            "1. OFF -> ON with the pack already on disk — the pack warms on the TAP, so the very " +
+                "next session arms. This is what answered with nothing at all before fix round 1",
+            PreviewResidency.Warm(StreamingPackCatalog.EN),
+            residency(PreviewResidencyEvent.SWITCH_CHANGED, pack = switchOn),
+        )
+        assertEquals(
+            "2. ON -> OFF — the 169 MB comes back, for the same reason switching to Auto hands it " +
+                "back: nothing should stay resident for a feature that will not arm",
+            PreviewResidency.Release,
+            residency(
+                PreviewResidencyEvent.SWITCH_CHANGED,
+                pack = switchOff,
+                resident = StreamingPackCatalog.EN,
+            ),
+        )
+        assertEquals(
+            "3. ...and ON again reloads it, because step 2 left the engine cold",
+            PreviewResidency.Warm(StreamingPackCatalog.EN),
+            residency(PreviewResidencyEvent.SWITCH_CHANGED, pack = switchOn),
+        )
+        assertEquals(
+            "and a flip mid-session is refused like every other change — a second load must not " +
+                "land under a borrowed recognizer; SESSION_END re-asks it",
+            PreviewResidency.Leave,
+            residency(PreviewResidencyEvent.SWITCH_CHANGED, pack = switchOn, session = true),
         )
     }
 

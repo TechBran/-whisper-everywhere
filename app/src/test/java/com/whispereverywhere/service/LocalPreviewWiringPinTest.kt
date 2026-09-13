@@ -349,10 +349,11 @@ class LocalPreviewWiringPinTest {
         val replay = indexOfOrFail(text, "                .drop(1)\n")
         assertTrue("and the value already in place is dropped, after the de-duplication", replay > dedupe)
         assertEquals(
-            "THREE drops in the service now — the selection release, the model switch, and this " +
-                "one: every collector whose trigger is a CHANGE rather than a state, because the " +
-                "state that was already there is the boot prewarm's",
-            3, count(text, ".drop(1)"),
+            "FOUR drops in the service now — the selection, the live-words SWITCH (fix round 1, " +
+                "review r1's B1), the model switch, and this one: every collector whose trigger " +
+                "is a CHANGE rather than a state, because the state that was already there is the " +
+                "boot prewarm's",
+            4, count(text, ".drop(1)"),
         )
         // THE SERVICE DECIDES NOTHING: one call to the pure gate, and the warm is its answer.
         val decision = indexOfOrFail(text, "                    val pack = warmOnPackInstalled(\n")
@@ -605,8 +606,8 @@ class LocalPreviewWiringPinTest {
     @Test
     fun theSetOfMomentsThatChangeWhichPackIsResidentIsWrittenDownAndEveryMemberIsWired() {
         val events = listOf(
-            "SERVICE_START", "SELECTION_CHANGED", "PACK_INSTALLED", "SESSION_START", "SESSION_END",
-            "MEMORY_TRIM",
+            "SERVICE_START", "SELECTION_CHANGED", "SWITCH_CHANGED", "PACK_INSTALLED",
+            "SESSION_START", "SESSION_END", "MEMORY_TRIM",
         )
         assertEquals(
             "the set is declared exactly once",
@@ -704,6 +705,58 @@ class LocalPreviewWiringPinTest {
             "and the engine-exists guard with it — it was right for the release and wrong for the " +
                 "warm, and a release of a null field is a no-op anyway",
             0, count(text, "if (streamingPreview == null) return@collect"),
+        )
+    }
+
+    /**
+     * **B1 — THE "SHOW LIVE WORDS" SWITCH IS A MEMBER OF THE SET, NOT AN UNWATCHED TERM** (fix
+     * round 1, review r1's B1).
+     *
+     * `previewPackToWarm` takes three inputs. Two of them had members — the pick (the collector
+     * pinned above) and the installed set (the board collector) — and the switch had none, in
+     * either direction, while being a `StateFlow` with a single writer three lines below the
+     * language rows on the same Settings screen.
+     *
+     *  - OFF → ON was the owner's complaint reached in ONE TAP: nothing warmed, the next tap
+     *    posted the 802-860 ms load and read `isWarmFor` in the same breath, so session one showed
+     *    no live words and session two worked;
+     *  - ON → OFF left +169 MB resident for a feature just switched off, which is precisely the
+     *    allocation 4.4.1 pass 3 ITEM 2 exists to hand back.
+     *
+     * Pinned as SOURCE because a collector that does not exist is invisible to every other test —
+     * the defect was an absence, and an absence can only be pinned where the code is read.
+     */
+    @Test
+    fun theLIVEWORDSSwitchIsAMemberOfTheSetAndNotAnUnwatchedTerm() {
+        assertEquals(
+            "ONE collector on the switch in the service, and it is this one",
+            1, count(text, "app.preferencesManager.localPreviewEnabledFlow"),
+        )
+        val collector = indexOfOrFail(
+            text,
+            "            app.preferencesManager.localPreviewEnabledFlow.drop(1).collect {\n",
+        )
+        assertEquals(
+            "drop(1), for the selection collector's own reason: the value already in place is " +
+                "SERVICE_START's, which has just asked the same question of it",
+            1, count(text, "localPreviewEnabledFlow.drop(1)"),
+        )
+        val ask = indexOfOrFail(
+            text,
+            "                askPreviewResidency(event = PreviewResidencyEvent.SWITCH_CHANGED)\n",
+        )
+        assertTrue(
+            "the collector's whole body is the re-ask — the SAME shared body and the SAME arm as " +
+                "the selection collector, so the two neighbours cannot disagree",
+            ask > collector && ask - collector < 200,
+        )
+        // ...and the term itself is still read where `previewPackToWarm` is asked, so the member
+        // and the term cannot drift: the switch is an argument of the one owner, not a guard of
+        // the collector's own.
+        assertEquals(
+            "the switch is read as an ARGUMENT of the one owner, never as a guard at the member's " +
+                "site",
+            0, count(text, "if (!app.preferencesManager.localPreviewEnabled)"),
         )
     }
 

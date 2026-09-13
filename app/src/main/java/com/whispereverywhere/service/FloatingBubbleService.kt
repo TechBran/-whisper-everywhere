@@ -343,6 +343,26 @@ internal enum class PreviewResidencyEvent {
     SELECTION_CHANGED,
 
     /**
+     * The user flipped the **"Show live words" switch**, in either direction (4.5.1 pass 2 fix
+     * round 1, review r1's B1) — the third and last input of [previewPackToWarm], and until this
+     * round the only one of the three with no member at all.
+     *
+     * Its row sits three lines below the language rows on the same Settings screen, so it is the
+     * neighbour of [SELECTION_CHANGED] as a gesture as well as as a term, and it shares that
+     * member's arm exactly:
+     *
+     *  - **OFF → ON** was the owner's complaint reached in ONE TAP: nothing warmed, so the next
+     *    tap posted the 802-860 ms load and read `isWarmFor` in the same breath — session one
+     *    showed no live words and session two worked, which is *"having to transcribe a second
+     *    time to get the live to work"* verbatim;
+     *  - **ON → OFF** left +169 MB resident for a feature the user had just turned off until a
+     *    trim or `onDestroy`. [previewPackToWarm] answers null on `!userEnabled` at its very first
+     *    line, and every argument for releasing on [SELECTION_CHANGED]'s null answer transfers
+     *    here word for word — it is the same 4.4.1 pass 3 ITEM 2 allocation.
+     */
+    SWITCH_CHANGED,
+
+    /**
      * An install completed. [warmOnPackInstalled] is this member's adapter — it adds the two terms
      * only a board record has, the phase and the record's language, and then asks exactly this
      * question of exactly this owner.
@@ -422,11 +442,12 @@ internal sealed interface PreviewResidency {
  *    because it warms *for the next session*, and [PreviewResidencyEvent.SERVICE_START] because a
  *    prewarm 1.5 s into the process has nothing to land under.
  *  - **A null answer is a RELEASE** — but only for the members that can find a recognizer nobody
- *    wants. [PreviewResidencyEvent.SELECTION_CHANGED] is the one that can: moving to Auto leaves
- *    169 MB loaded for a language that will not arm (4.4.1 pass 3, ITEM 2). For
- *    [PreviewResidencyEvent.MEMORY_TRIM] the recognizer has just been freed by the trim itself, and
- *    for [PreviewResidencyEvent.PACK_INSTALLED] the selection has not moved, so a second release
- *    there would be a second opinion rather than a repair.
+ *    wants. [PreviewResidencyEvent.SELECTION_CHANGED] is the first that can: moving to Auto leaves
+ *    169 MB loaded for a language that will not arm (4.4.1 pass 3, ITEM 2), and
+ *    [PreviewResidencyEvent.SWITCH_CHANGED] is that same allocation reached by the switch beneath
+ *    it. For [PreviewResidencyEvent.MEMORY_TRIM] the recognizer has just been freed by the trim
+ *    itself, and for [PreviewResidencyEvent.PACK_INSTALLED] the selection has not moved, so a
+ *    second release there would be a second opinion rather than a repair.
  *  - **The pack the engine is already warm for is not reloaded.** A skip, not a mechanism —
  *    `warm()` is idempotent on the pack and would no-op anyway; this spares Main a posted task and
  *    the log a line that reads like a second load. The two establishing moments do not take the
@@ -459,6 +480,7 @@ internal fun previewResidency(
         // refusal: a selection change skipped mid-session leaves a recognizer nobody wants, and
         // this is the first moment it can be handed back.
         PreviewResidencyEvent.SELECTION_CHANGED,
+        PreviewResidencyEvent.SWITCH_CHANGED,
         PreviewResidencyEvent.SESSION_END,
         ->
             if (busy) PreviewResidency.Leave
@@ -1363,6 +1385,27 @@ class FloatingBubbleService : Service(),
         serviceScope.launch(Dispatchers.Main) {
             app.preferencesManager.selectedLanguage.drop(1).collect {
                 askPreviewResidency(event = PreviewResidencyEvent.SELECTION_CHANGED)
+            }
+        }
+
+        // SWITCH_CHANGED — the "Show live words" switch, in either direction (fix round 1, review
+        // r1's B1). `previewPackToWarm` has exactly THREE inputs and this was the one with no
+        // member at all: the pick had the collector above, the installed set had the board
+        // collector below, and the switch had nothing, on either side of its flip.
+        //
+        //  - OFF -> ON was the owner's complaint reached in ONE TAP, on the same Settings screen
+        //    he changes language on: nothing warmed, so the next tap posted the 802-860 ms load
+        //    and read `isWarmFor` in the same breath — session one showed no live words, session
+        //    two worked. Identical arithmetic to the wrap site's own KDoc.
+        //  - ON -> OFF left +169 MB resident for a feature just switched off until a trim or
+        //    `onDestroy`. `previewPackToWarm` answers null on `!userEnabled` at its first line, so
+        //    the release arm's argument is the selection collector's, unchanged.
+        //
+        // Hence the SAME body and the SAME arm as the collector above, and `drop(1)` for the same
+        // reason: the value already in place is SERVICE_START's, which has just asked of it.
+        serviceScope.launch(Dispatchers.Main) {
+            app.preferencesManager.localPreviewEnabledFlow.drop(1).collect {
+                askPreviewResidency(event = PreviewResidencyEvent.SWITCH_CHANGED)
             }
         }
 
