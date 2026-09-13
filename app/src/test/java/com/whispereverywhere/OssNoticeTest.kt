@@ -575,6 +575,52 @@ class OssNoticeTest {
         }
     }
 
+    // ------------------------------------- 6. the checklist a promotion is actually read from
+
+    /**
+     * **THE NOTICES ARE A STEP IN THE PROMOTION CHECKLIST, SO THE CHECKLIST HAS TO KNOW WHAT THEY
+     * ARE.** `docs/LANGUAGE-CLEARANCE.md` is the document the owner fills in before a release goes
+     * to production, and its step 3 already said *"check the notices are still there"*. What it did
+     * not say is what "there" now means — five tests, each holding a different half of Apache-2.0
+     * §4 and the AI-Hub condition — so a promotion could tick step 3 on the strength of a sentence
+     * written before any of them existed.
+     *
+     * Two things are asserted, and the second matters more than the first:
+     *
+     *  1. the checklist names all five tests **by their method names**, so a rename here forces the
+     *     document to move with it rather than rotting into a pointer at something that no longer
+     *     exists — the failure this project has hit before and now refuses by test;
+     *  2. the checklist states **what a green suite does not establish**: that it reads the file in
+     *     the source tree and is not evidence the asset was packaged into a bundle's `base/`. A
+     *     promotion checklist that overstates its own evidence is worse than one that says nothing,
+     *     because it is the document somebody ticks instead of looking.
+     */
+    @Test fun theOwnersChecklistNamesTheNoticeTestsAndWhatTheyCannotProve() {
+        val checklist = repoFile("docs/LANGUAGE-CLEARANCE.md").readText().replace("\r\n", "\n")
+        for (test in listOf(
+            "theTwoLicenceTextsAreIncludedInFullRatherThanLinked",
+            "everyPackTheAppCanFetchHasAnAttributionRowWithItsPinnedRevision",
+            "theCorporaThatAskForCreditAreCreditedByTheNameEachAsksFor",
+            "theModificationsStatedAreTheOnesWeActuallyMake",
+            "theLicencesScreenIsReachableFromSettingsAndOpensThisAsset",
+        )) {
+            assertTrue(
+                "the promotion checklist must name $test, the test that holds one half of the " +
+                    "notices condition. A checklist step that says \"check the notices\" without " +
+                    "naming what checks them is a step somebody ticks instead of looking — and a " +
+                    "rename that leaves this document behind is how the pointer rots",
+                checklist.contains(test),
+            )
+        }
+        assertTrue(
+            "…and the checklist must say what the suite CANNOT establish: it reads the asset in " +
+                "the source tree, so it is neither legal clearance nor evidence that the file was " +
+                "packaged into a bundle's base/. Only an inspection of a built AAB can say that",
+            checklist.contains("base/") &&
+                checklist.contains("condition written down rather than a condition observed"),
+        )
+    }
+
     // ------------------------------------------------------------------ the house source walker
 
     /**

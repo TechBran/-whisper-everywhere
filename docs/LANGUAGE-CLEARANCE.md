@@ -302,6 +302,25 @@ Before promoting a release from the internal track to production:
    that is paid, and the suite fails the build if a pack's evidence URL, its licence's full name, or
    the KsponSpeech / AI-Hub / NIA credit goes missing from it. **A pack whose notice is not there is
    not cleared to ship, whatever this document says.**
+
+   **What that page carries since 4.5.2, and the test that holds each piece.** Every row is a
+   *presence* check on the committed file, not a check on a built artefact — see the caveat under
+   the table.
+
+   | on the page | held by |
+   |---|---|
+   | the **full text** of Apache-2.0 (byte-identical to the ASF's own `LICENSE-2.0.txt`, 11,358 B, `sha256 cfc7749b…`) and of MIT (byte-identical to the `LICENSE` of the vendored whisper.cpp source, so it carries a real copyright line) | `OssNoticeTest.theTwoLicenceTextsAreIncludedInFullRatherThanLinked` — whole-document digests, because a licence asserted phrase by phrase passes with a clause missing from the middle |
+   | one attribution row per pack at `id="pack-<lang>"`, carrying the **40-character revision the bytes are downloaded at**, the repository they come from (the untagged mirror, for `ru`) and the declaration the upstream makes (`license: apache-2.0` / `license: mit`) | `OssNoticeTest.everyPackTheAppCanFetchHasAnAttributionRowWithItsPinnedRevision` — the loop is `StreamingPackCatalog.packs`, so **an eighth language cannot arrive uncredited** |
+   | the **NOTICE finding**: none of the seven repositories carries a `NOTICE`, `LICENSE` or `COPYING` file, and each declares a bare front-matter identifier with no copyright line — so §4(d) has nothing to carry, and **no holder and no year has been invented** | the same test |
+   | the corpora that ask for credit, each named as its licence asks: LibriSpeech (CC BY 4.0) to its four authors by name, YODAS2 (CC BY 3.0), FLEURS (CC BY 4.0), Common Voice (CC0, credited anyway and *marked* as voluntary), **KsponSpeech + AI Hub (aihub.or.kr)** as the condition it is; and the two rows that disclose **no** corpus, labelled undisclosed | `OssNoticeTest.theCorporaThatAskForCreditAreCreditedByTheNameEachAsksFor` — the undisclosed set is derived from this record, so a row becoming disclosed forces the page's sentence to be rewritten on purpose |
+   | §4(b): what we actually change — **selection, naming, packaging**, and nothing else. All 28 files are downloaded byte-for-byte at the pinned revision and refused on a digest mismatch; the `int8` export is the upstream publisher's, and the Russian decoder is not quantised at all | `OssNoticeTest.theModificationsStatedAreTheOnesWeActuallyMake` — the naming half is derived from `PackFile.path` vs `name`, and a **forbidden-phrase scan** fails the build if the page starts claiming a modification we do not make |
+   | it is **reachable**: a Settings row → `onNavigateToLicenses` → the `open_source_licenses` route → *this* asset | `OssNoticeTest.theLicencesScreenIsReachableFromSettingsAndOpensThisAsset` — four one-line links, each of which breaks silently |
+
+   **And what none of that establishes.** Every row above reads
+   `app/src/main/assets/oss_licenses.html` **in the source tree**. A green suite is not legal
+   clearance, and it is **not evidence that the asset was packaged into a bundle's `base/`** — only
+   an inspection of a built AAB can say that, and until one has been done the condition is a
+   condition written down rather than a condition observed.
 4. Run the §AL acceptance rows on device for every language being published.
 
 ---
@@ -407,9 +426,14 @@ dataset tags on 2026-09-12: `espnet/yodas2`, `mozilla-foundation/common_voice_17
 `google/fleurs` (CC BY 4.0) and `indonesian-nlp/librivox-indonesia`. The YODAS2 hours table and its
 verbatim licence sentences are in the qualification table.
 
-**What changes on a yes:** the three edits above, **plus one credits line** — counsel's answer to
-question 2 decides its wording, and it goes in `app/src/main/assets/oss_licenses.html` beside the
-FLEURS attribution the canary clips already carry.
+**What changed on the yes:** the three edits above, **plus the credits line, which shipped in
+4.5.2** — its wording was never counsel's to decide, since the four questions went with the
+owner's decision of 2026-09-13. `app/src/main/assets/oss_licenses.html` now credits YODAS2 under
+CC BY 3.0 to the ESPnet authors and to the channel (which is as far as that dataset makes
+attribution possible), FLEURS under CC BY 4.0, Common Voice 17.0 as CC0-and-credited-anyway, and
+`librivox-indonesia` as *Creative Commons, version unstated upstream* — left unstated here rather
+than assumed. This is also the one pack whose MIT upstream supplies **no copyright holder and no
+year**, and the page says so instead of inventing one.
 
 ## Korean — `ko`
 
@@ -516,11 +540,20 @@ comfortable, record yourself as the grantor with that reasoning in `because`.
    trained on it, and a row with no corpus is exactly where that conversion gets made. The suite pins
    it across every row.
 
-**What changes on a yes:** the three edits above — **and, if the clearance comes with an attribution
-or a notice condition, one credits line** in `app/src/main/assets/oss_licenses.html`. Today that
-page's Chinese entry names **no corpus at all**, and after this correction that is simply accurate:
-there is no corpus to name. The consequence is that nothing on that page points at this row, so if a
-condition is ever attached the edit has to be made on purpose — nothing will prompt it.
+**What changed on the yes:** the three edits above — **and the notices, which shipped in 4.5.2.**
+The page's Chinese entry still names **no corpus**, and after this correction that is simply
+accurate: there is no corpus to name. What changed is that the silence is now *stated* — the page
+says in terms that this pack and the Russian one disclose no training corpus, quotes the card's own
+`training_subset: 'mix'`, and says that no corpus has been attributed on a resemblance and no
+*evaluation* set is listed as if it were a training one.
+
+**The consequence, corrected.** It used to be that nothing on that page pointed at this row, so a
+condition attached later would have to be noticed by a human. That is no longer so:
+`OssNoticeTest.everyPackTheAppCanFetchHasAnAttributionRowWithItsPinnedRevision` pins a
+`id="pack-zh"` row carrying this pack's own 40-character revision, so a **re-pin** to different
+bytes reddens the build until the page is updated. A new *corpus term* still would not prompt
+itself — no test can know about a document nobody has read — but the row it would have to be
+written into now exists and cannot quietly disappear.
 
 **One thing the correction does NOT dissolve.** A Chinese-**only** alternative is still worse, and for
 reasons that have nothing to do with this row: every one of them carries WenetSpeech **plus**
