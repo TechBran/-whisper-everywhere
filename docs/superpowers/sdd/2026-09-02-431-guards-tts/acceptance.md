@@ -886,7 +886,8 @@ all seven packs.** So this row has changed state, and the two halves of it chang
   dated. It is **not** a permission from a model author (the German uploader was never written to),
   not a reply from NIA (nothing was sent — Korean rests on AI-Hub's own published FAQ), not a legal
   certification (no counsel opinion was sought for `id`, `ko` or `zh`), not a Google Play approval,
-  and not a number. Four rows carry an **ACCEPTED** residual and name it; accepted is not resolved.
+  and not a number. All five rows carry an **ACCEPTED** residual and name it; accepted is not
+  resolved.
 - **AND IT CARRIES A CONDITION, WHICH IS NOT A FOOTNOTE.** Apache-2.0 §4 and MIT
   are trades, and the AI-Hub FAQ grants commercial distribution of a derived model **only with
   attribution**. The notices ship in the base app's own assets. **Korean ships only if its

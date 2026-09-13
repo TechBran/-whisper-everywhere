@@ -34,8 +34,8 @@ package com.whispereverywhere.transcription.stream
  *    carries, and `StreamingPackClearanceTest.noClearanceClaimsAnApprovalNobodyGave` fails the
  *    build on a percentage in a cleared verdict.
  *
- * **And where an uncertainty remains it is recorded as ACCEPTED, never as resolved.** Four of the
- * five rows carry one and name it: German's declaration is unwitnessed by its author, Russian's and
+ * **And where an uncertainty remains it is recorded as ACCEPTED, never as resolved.** ALL FIVE
+ * rows carry one and name it: German's declaration is unwitnessed by its author, Russian's and
  * Chinese's corpora are undisclosed, Indonesian's YODAS2 attribution chain is unanswered, and
  * Korean's FAQ does not address a party outside Korea either way. An accepted risk is still a risk;
  * the value of this record at promotion time is that it says which is which.
@@ -363,7 +363,7 @@ object PackClearanceRecord {
                 "wrote back, and the earlier one-email hold is retired rather than satisfied",
             because = "the README at the pinned commit declares license: apache-2.0 and datasets: " +
                 "mozilla-foundation/common_voice_17_0, and that declaration is the entire file — " +
-                "180 bytes, re-fetched independently at sha256 " +
+                "180 bytes, re-fetched independently by the controller at sha256 " +
                 "39b7a8b94cf14be24b5a62271fa033d6493f1c1e423a09f8fa18ec26c60dc15d. A grant the " +
                 "platform cannot parse is still a grant, and a null cardData is a broken renderer " +
                 "rather than absent permission. What the owner ACCEPTED with it: that the " +
@@ -421,8 +421,9 @@ object PackClearanceRecord {
             "grant the platform cannot read at all.",
         corpora = listOf(
             "UNDISCLOSED. No corpus is named on the mirror, on the upstream, or in the card. " +
-                "There is therefore nothing whose terms could be read — which is the whole of the " +
-                "outstanding question.",
+                "There is therefore nothing whose terms could be read — which was the whole of " +
+                "the question the owner then decided, by accepting the unsized risk rather than " +
+                "by closing it.",
         ),
         pinnedCommit = "31fa603e4f31279c6e1f7600fed13dc4312663ab",
     )
@@ -465,7 +466,8 @@ object PackClearanceRecord {
                 "unsatisfiable. Chain of title is a search flag that \"should (mostly)\" hold, " +
                 "extrapolated per channel, backed by a takedown mailbox.",
             "indonesian-nlp/librivox-indonesia — tagged only \"cc\", with no version. Which " +
-                "licence that is, is question four.",
+                "licence that is is still unstated upstream, and the verdict records it as " +
+                "accepted rather than answered.",
             "mozilla-foundation/common_voice_17_0 (CC0) and google/fleurs (CC BY 4.0) — both " +
                 "declared on the card, and neither is a problem.",
         ),

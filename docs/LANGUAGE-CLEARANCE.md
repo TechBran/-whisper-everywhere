@@ -19,8 +19,8 @@
 > - a number. His informal confidence in his own research is **not a figure this record carries**,
 >   and the suite fails the build on a percentage inside a cleared verdict.
 >
-> **Where an uncertainty remains, it is recorded as ACCEPTED — never as resolved.** Four rows carry
-> one and name it: German's declaration is unwitnessed by its author; Russian's and Chinese's
+> **Where an uncertainty remains, it is recorded as ACCEPTED — never as resolved.** All five rows
+> carry one and name it: German's declaration is unwitnessed by its author; Russian's and Chinese's
 > corpora are undisclosed; Indonesian's YODAS2 attribution chain is unanswered; Korean's FAQ does
 > not address a party outside Korea either way. An accepted risk is still a risk.
 >

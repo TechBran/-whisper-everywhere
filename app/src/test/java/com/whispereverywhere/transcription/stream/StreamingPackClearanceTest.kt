@@ -406,7 +406,7 @@ class StreamingPackClearanceTest {
      *  - the grantor names **the date**, and [ClearanceVerdict.Cleared.grantedOn] agrees with it —
      *    two spellings of one fact, which is what catches a row copied from another;
      *  - the words say **accepted**, not resolved: the decision accepted a reviewed basis, and on
-     *    four of the five rows it accepted a stated residual with it;
+     *    all five rows it accepted a stated residual with it;
      *  - the basis is **substantive** — long enough to be a reason rather than a label, and it
      *    names this row's own declared licence.
      *
@@ -872,7 +872,7 @@ class StreamingPackClearanceTest {
      * courtesy but **the price of the grant**: the KsponSpeech / AI-Hub / NIA acknowledgement.
      * AI-Hub's published FAQ permits commercial distribution of a model trained on its data *on
      * condition* that the dataset's official name and AI-Hub (aihub.or.kr) are cited as the source.
-     * The record's own `action` string says the acknowledgement is on the licences screen — this is
+     * The record's own `because` string says the acknowledgement is on the licences screen — this is
      * what stops that from being a claim nobody checked, and
      * [theKoreanRowRestsOnTheFaqGrantAndItsAttributionCondition] holds all three names.
      */
@@ -990,7 +990,7 @@ class StreamingPackClearanceTest {
 
     /**
      * **The checklist, held to the record.** `docs/LANGUAGE-CLEARANCE.md` is the document the
-     * owner works from: one section per outstanding language, the exact question to answer, where
+     * owner works from: one section per language the app ships, the exact question to answer, where
      * the evidence lives, and the three edits that record an answer. A record with no checklist is
      * a record nobody can act on, and a checklist that has drifted from the record is worse than
      * none — so what is pinned is the JOIN between them:
@@ -1023,7 +1023,7 @@ class StreamingPackClearanceTest {
      * this test: an assertion about a row must not depend on which of the two loops the row is
      * in, because a clearance and a withdrawal are exactly the transitions this document is for.**
      */
-    @Test fun theOwnersChecklistNamesEveryOutstandingLanguageAndTheEditsThatCloseIt() {
+    @Test fun theOwnersChecklistNamesEveryShippedLanguageAndTheEditsThatCloseOrWithdrawIt() {
         val checklist = repoFile("docs/LANGUAGE-CLEARANCE.md").readText().replace("\r\n", "\n")
         for (symbol in listOf("PackClearanceRecord", "PRODUCTION_CLEARED", "ClearanceVerdict.Cleared")) {
             assertTrue("the checklist must name $symbol — a switch with no name cannot be flipped", checklist.contains(symbol))

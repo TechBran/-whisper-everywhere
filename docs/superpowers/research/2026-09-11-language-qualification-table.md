@@ -627,8 +627,11 @@ the reason given was not the real one.
 
 **Where the withdrawn claim is written:** §0 (*"zh-en's corpus is **not 'internal'** — it is
 **WenetSpeech-L 12k h**"*), the `zh-en` row of §1.1 (its corpus cell and *"A named restriction is a
-worse position than an unnamed unknown"*), §2.3/§2.4's Chinese commentary, **C1** in §5.2, and
-correction **6** in §7 — which is itself a correction, in the wrong direction.
+worse position than an unnamed unknown"*), the `zh`/`zh-en` row of §2.2 (*"Counsel — the heaviest
+question in the document"*, *"three agreements where the bilingual row carries one"* — the bilingual
+row discloses no corpus at all — and *"Do not spend the measurement day until counsel answers"*),
+§2.3/§2.4's Chinese commentary, **C1** in §5.2, and correction **6** in §7 — which is itself a
+correction, in the wrong direction.
 
 **What is actually read, at the exact checkpoint this project ships**
 (`csukuangfj/k2fsa-zipformer-bilingual-zh-en-t` at `e2382758`, the 50 MB V1 export):
