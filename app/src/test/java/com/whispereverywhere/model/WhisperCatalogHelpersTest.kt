@@ -88,6 +88,82 @@ class WhisperCatalogHelpersTest {
         assertTrue(WhisperCatalog.isRecommendedForDevice(eco, 2_000_000_000L))
     }
 
+    // ------------------------------------------------------------- 4.6: the INSTRUMENT mechanism
+    //
+    // The owner has six devices and has chosen to MEASURE the CPU ladder rather than accept a
+    // scaled prediction: *"I wanna see all the models there so I can just select between them and
+    // try each one."* So a rung can be OFFERED without being ADVOCATED — an instrument a user can
+    // pick up, never a path a user is led down. The precedent is `ModelTierCopy`'s own: 4.1
+    // refused turbo a promotion while its accuracy claim was unproved and granted it only after an
+    // on-device A/B. Same shape, one axis over — throughput instead of accuracy.
+    //
+    // These two tests pin the MECHANISM on constructed rows, before any catalogue row carries the
+    // flag. That is deliberate: `minRamBytes` set above any shipping phone would ALSO make
+    // `isRecommendedForDevice` answer false today, so a census over the real catalogue cannot tell
+    // the two designs apart — and the difference shows on the 32 GB device nobody is testing on.
+
+    /**
+     * **An instrument is refused a recommendation at every RAM there is**, and the FLAG is what
+     * refuses — not a threshold standing in for one.
+     *
+     * The rejected alternative is worth naming, because the research proposed it (§6.3: *"with
+     * `minRamBytes` set above any shipping phone so no device is ever told it is recommended"*).
+     * It fails twice. It is not even true — RAM keeps climbing and the literal would have to be
+     * chased — and it is a LIE ON THE CARD: `OnboardingModelScreen` renders a RAM-gated,
+     * unrecommended tier as *"High-end devices only — this tier needs more RAM than this device
+     * reports"*, which on a 16 GB phone offered a 264 MB rung is simply false. The reason these
+     * rungs are not recommended is that **nobody has measured them**, which is not a fact about
+     * the device in the user's hand. So the flag says what is true and `minRamBytes` stays 0.
+     */
+    @Test fun an_instrument_is_never_recommended_at_any_ram_and_the_flag_is_what_refuses() {
+        val everyRam = listOf(
+            0L, 1_000_000_000L, 5_500_000_000L, 7_000_000_000L, 8_000_000_000L,
+            12_000_000_000L, 16_000_000_000L, 24_000_000_000L, 64_000_000_000L, Long.MAX_VALUE,
+        )
+        val instrument = WhisperCatalog.byId("multi")!!.copy(id = "an-instrument", instrument = true)
+        assertEquals("an instrument states no RAM threshold — it has nothing to claim", 0L, instrument.minRamBytes)
+        everyRam.forEach { ram ->
+            assertFalse(
+                "an instrument was recommended at $ram bytes of RAM — no card may be badged " +
+                    "'Recommended for your device' for a rung whose throughput nobody has measured",
+                WhisperCatalog.isRecommendedForDevice(instrument, ram),
+            )
+        }
+        // THE MUTATION THIS PIN EXISTS FOR: with the flag dropped, that same row — minRamBytes 0 —
+        // is recommended on every device in the fleet. So the flag is load-bearing and the 0 is
+        // not a second lock; a reader who deletes the `!instrument` clause breaks this line, not a
+        // comment. (Belt-and-braces via a huge minRamBytes is what the KDoc above refuses.)
+        val notAnInstrument = instrument.copy(instrument = false)
+        everyRam.forEach { ram ->
+            assertTrue(
+                "the clause under test is `!instrument`: an ungated 0-RAM rung must still be " +
+                    "recommended everywhere, or this test is passing for the wrong reason",
+                WhisperCatalog.isRecommendedForDevice(notAnInstrument, ram),
+            )
+        }
+    }
+
+    /**
+     * An instrument is **offered like any other rung**: the flag withholds the badge and nothing
+     * else. It does not hide the card, does not gate the download, and does not survive into
+     * `retired` — *"they appear in the chooser on every device, with no RAM threshold hiding
+     * them. The owner must be able to run a heavy model on a modest phone: finding where it
+     * breaks is the point."*
+     */
+    @Test fun the_instrument_flag_withholds_the_badge_and_touches_nothing_else() {
+        val instrument = WhisperCatalog.byId("multi")!!.copy(id = "an-instrument", instrument = true)
+        assertFalse("an instrument is not retired — a retired tier is not in the chooser at all", instrument.retired)
+        assertFalse("nor unsupported: nobody is migrated off a rung they were invited to try", instrument.unsupported)
+        assertFalse("nor gated: no device is refused the experiment", instrument.gated)
+        assertTrue(
+            "an instrument installs by ordinary download, like every other ggml rung",
+            WhisperCatalog.isInstallableByDownload(instrument),
+        )
+        // A constructed row cannot be in `pickable` (that list is built from `entries`), so the
+        // claim is made on the predicate `pickable` itself applies.
+        assertTrue("an instrument clears the pickable filter", !instrument.retired && !instrument.gated)
+    }
+
     @Test
     fun sizeWithinTolerance_fivePercent() {
         val approx = 100_000_000L

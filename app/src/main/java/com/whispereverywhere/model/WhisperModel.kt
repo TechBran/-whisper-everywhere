@@ -72,6 +72,40 @@ data class WhisperModel(
     val melBins: Int = 80,
     val minRamBytes: Long,
     /**
+     * **A rung the app OFFERS without ADVOCATING: selectable everywhere, recommended nowhere.**
+     * 4.6, owner instruction 2026-09-13 — *"I wanna see all the models there so I can just select
+     * between them and try each one."*
+     *
+     * The owner has six devices and has chosen to measure the CPU ladder rather than accept a
+     * prediction scaled from one anchor. An instrument serves that: it appears in the chooser on
+     * every device with no RAM threshold hiding it (running a heavy model on a modest phone and
+     * finding where it breaks IS the experiment), it downloads like any other ggml rung, and
+     * [WhisperCatalog.isRecommendedForDevice] answers **false for it at every RAM** so no card is
+     * ever badged *"Recommended for your device"*. It is also never [WhisperCatalog.DEFAULT_MODEL_ID]
+     * and never a [ModelMigration] target.
+     *
+     * Orthogonal to all three flags beside it, and the distinction is the point: [retired] means
+     * "we stopped offering this to anyone", [gated] means "this device decides", [unsupported]
+     * means "we want you off it". An instrument means **"here it is; we are not telling you it is
+     * right."**
+     *
+     * **Why a flag and not a huge [minRamBytes].** The research proposed the threshold (§6.3,
+     * *"set above any shipping phone so no device is ever told it is recommended"*) and it is the
+     * wrong instrument twice over. It is not durable — RAM climbs and the literal gets chased —
+     * and it makes the card lie: `OnboardingModelScreen` renders an unrecommended RAM-gated tier
+     * as *"High-end devices only — this tier needs more RAM than this device reports"*, which on a
+     * 16 GB phone offered a 264 MB rung is false. **These rungs are unrecommended because nobody
+     * has measured their throughput, which is not a fact about the device in the user's hand.** So
+     * an instrument's [minRamBytes] stays 0 and states nothing, and the honest sentence lives in
+     * [ModelTierCopy] where the user reads it.
+     *
+     * The precedent is this repo's own: 4.1 refused `npu-turbo` a promotion while its accuracy
+     * claim was unproved and granted it only after the owner's on-device A/B (`ModelTierCopy`'s
+     * turbo card). Same shape, one axis over — throughput instead of accuracy. Clearing the flag
+     * is what a measured verdict earns.
+     */
+    val instrument: Boolean = false,
+    /**
      * A tier that is no longer OFFERED but must remain RESOLVABLE. Removing an entry outright
      * makes [WhisperCatalog.byId] return null for anyone who selected it, which makes
      * `installedModel()` return null, which trips the app-wide gate and force-marches that user
@@ -501,9 +535,17 @@ object WhisperCatalog {
 
     fun byId(id: String?): WhisperModel? = entries.firstOrNull { it.id == id }
 
-    /** A model is recommended when the device has at least its minimum RAM. */
+    /**
+     * A model is recommended when the device has at least its minimum RAM — **and is never
+     * recommended at all if it is a [WhisperModel.instrument]** (4.6).
+     *
+     * The instrument clause runs first and answers on the rung, not on the device: an instrument
+     * is offered so it can be MEASURED, and a card badged *"Recommended for your device"* is the
+     * app claiming a throughput verdict it does not have. The RAM comparison is untouched for
+     * every other row, boundary included (`>=`).
+     */
     fun isRecommendedForDevice(model: WhisperModel, totalRamBytes: Long): Boolean =
-        totalRamBytes >= model.minRamBytes
+        !model.instrument && totalRamBytes >= model.minRamBytes
 
     /**
      * Size gate: is [actualBytes] within +/-SIZE_TOLERANCE of [approxBytes]?
