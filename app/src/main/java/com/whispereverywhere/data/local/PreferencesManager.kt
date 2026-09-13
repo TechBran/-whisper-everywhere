@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.provider.ProviderId
+import com.whispereverywhere.service.BubbleColours
 import com.whispereverywhere.service.ResizeMath
 import com.whispereverywhere.tts.ttsCloudVoiceKey
 import java.io.File
@@ -475,6 +476,68 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
+     * 4.5.1 — THE BUBBLE'S THREE USER-OWNED PRESENTATION FACTS (owner ruling 2026-09-12:
+     * *"users can change the colour of their live words and of their transcribed committed words
+     * as well … and maybe even the clarity of the black bubble background"*).
+     *
+     * [com.whispereverywhere.service.BubbleColours] owns every rule about them — the palette, the
+     * opacity ladder, the contrast floor and the reasoning for each. These three properties are
+     * storage only, and they take the shape [localPreviewEnabled] takes because the Settings
+     * sample has to redraw on the tap that changed a colour: a `StateFlow` mirror written by the
+     * one setter that writes the file.
+     *
+     * **Every READ goes through the guard, and that is the load-bearing half.** The palette and
+     * the ladder can be edited in a later build *under* a value a user already stored, and `0` is
+     * what an Int preference reads as if the file is ever cleared — so a raw read could hand the
+     * bubble black-on-black, the one combination the owner ruled out. The re-clamp on read is the
+     * discipline `applyPreviewSize` already applies to the panel's geometry for the same reason.
+     * The write guard is hygiene on top: it keeps an out-of-range value from reaching the file.
+     */
+    private val _bubbleLiveColour = MutableStateFlow(
+        BubbleColours.textColour(
+            prefs.getInt(KEY_BUBBLE_LIVE_COLOUR, BubbleColours.LIVE_DEFAULT),
+            BubbleColours.LIVE_DEFAULT,
+        )
+    )
+    val bubbleLiveColourFlow: StateFlow<Int> = _bubbleLiveColour.asStateFlow()
+
+    var bubbleLiveColour: Int
+        get() = _bubbleLiveColour.value
+        set(value) {
+            prefs.edit().putInt(KEY_BUBBLE_LIVE_COLOUR, BubbleColours.textColour(value, BubbleColours.LIVE_DEFAULT)).apply()
+            _bubbleLiveColour.value = BubbleColours.textColour(value, BubbleColours.LIVE_DEFAULT)
+        }
+
+    private val _bubbleCommittedColour = MutableStateFlow(
+        BubbleColours.textColour(
+            prefs.getInt(KEY_BUBBLE_COMMITTED_COLOUR, BubbleColours.COMMITTED_DEFAULT),
+            BubbleColours.COMMITTED_DEFAULT,
+        )
+    )
+    val bubbleCommittedColourFlow: StateFlow<Int> = _bubbleCommittedColour.asStateFlow()
+
+    var bubbleCommittedColour: Int
+        get() = _bubbleCommittedColour.value
+        set(value) {
+            prefs.edit().putInt(KEY_BUBBLE_COMMITTED_COLOUR, BubbleColours.textColour(value, BubbleColours.COMMITTED_DEFAULT)).apply()
+            _bubbleCommittedColour.value = BubbleColours.textColour(value, BubbleColours.COMMITTED_DEFAULT)
+        }
+
+    private val _bubbleOpacityPercent = MutableStateFlow(
+        BubbleColours.opacityPercent(
+            prefs.getInt(KEY_BUBBLE_OPACITY_PERCENT, BubbleColours.OPACITY_DEFAULT_PERCENT),
+        )
+    )
+    val bubbleOpacityPercentFlow: StateFlow<Int> = _bubbleOpacityPercent.asStateFlow()
+
+    var bubbleOpacityPercent: Int
+        get() = _bubbleOpacityPercent.value
+        set(value) {
+            prefs.edit().putInt(KEY_BUBBLE_OPACITY_PERCENT, BubbleColours.opacityPercent(value)).apply()
+            _bubbleOpacityPercent.value = BubbleColours.opacityPercent(value)
+        }
+
+    /**
      * 4.4.1 — THE USER SAID NO, **for one language** (owner rulings 2026-09-11, consequence 5).
      * Set by Home's live-words card X and by the Settings row's DELETE, never unset in-app; read
      * by [com.whispereverywhere.transcription.stream.PreviewAutoFetch], which treats it as
@@ -659,6 +722,11 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_STT_LIVE_MODE_GEMINI = "stt_live_mode_gemini"
         /** The previewer's switch (4.4.0, R3: default on). Read in exactly one place. */
         private const val KEY_LOCAL_PREVIEW_ENABLED = "local_preview_enabled"
+        // (4.5.1 Task 2) The bubble's three user-owned presentation facts. Int keys: two ARGB
+        // colours and one percent. Every rule about the VALUES lives in BubbleColours.
+        private const val KEY_BUBBLE_LIVE_COLOUR = "bubble_live_colour"
+        private const val KEY_BUBBLE_COMMITTED_COLOUR = "bubble_committed_colour"
+        private const val KEY_BUBBLE_OPACITY_PERCENT = "bubble_opacity_percent"
         /**
          * The previewer's per-language "the user said no" store (4.4.1 acquisition amendment).
          * A PREFIX, not a key: the language code is the rest of it, so one language's decision
