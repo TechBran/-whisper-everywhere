@@ -29,6 +29,8 @@
         a { color: #1a73e8; }
         h3 { color: #202124; margin-top: 24px; font-size: 1.05em; }
         .pin { font-size: 0.94em; color: #5f6368; }
+        .license p, .license li { color: #444; }
+        .license p:first-of-type { margin-top: 10px; }
         pre.licence-text {
             background-color: #ffffff;
             border: 1px solid #e0e0e0;
@@ -128,9 +130,14 @@
     <div class="license" id="pack-ko"><b>Streaming Zipformer — Korean</b> (Ken / kangkyu) — Apache License 2.0.
         Trained on <b>KsponSpeech</b>, which is AI-Hub dataset 123, published by the
         <b>National Information Society Agency of Korea</b> (NIA, 한국지능정보사회진흥원). That
-        dataset's terms of use require attribution to NIA, and require it of derivative works, so it
-        is given here: 본 모델은 한국지능정보사회진흥원(NIA)이 AI 허브(aihub.or.kr)를 통해 공개한
+        dataset's publisher permits models trained on its data to be distributed commercially
+        <b>on condition</b> that the dataset's <b>official name</b> and <b>AI Hub (aihub.or.kr)</b>
+        are cited as the source — AI-Hub's own published FAQ, and the reason this credit is a
+        condition of shipping this language rather than a courtesy. So it is given here:
+        본 모델은 한국지능정보사회진흥원(NIA)이 AI 허브(aihub.or.kr)를 통해 공개한
         한국어 음성 데이터(KsponSpeech, 데이터셋 123)로 학습되었습니다.
+        This app has never held, and does not distribute, the KsponSpeech recordings themselves —
+        only weights somebody else trained on them, which is what that FAQ permits.
         <a href="https://huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m">huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m</a>
         <br><span class="pin"><b>Four files</b>, downloaded at pinned revision <code>db24b58d22736349eaeb34cc181ad0f3debf9903</code> from <code>kangkyu/icefall-asr-ko-streaming-zipformer-72m</code>. Declared <code>license: apache-2.0</code>.</span></div>
     <div class="license" id="pack-zh"><b>Streaming Zipformer — Chinese and English</b> (csukuangfj / k2-fsa) —
@@ -154,6 +161,82 @@
         corpora its publisher names. Two rows supply a little more, and it is theirs rather than
         ours — the Korean repository publishes a <code>SHA256SUMS</code> file beside its weights,
         and its model card's own License section reads, in full, &ldquo;Apache 2.0.&rdquo;
+    </div>
+
+    <h3>The corpora these models were trained on, and the credit each asks for</h3>
+    <p>A model's weights and the data it was trained on are licensed separately, and three of these
+        corpora ask for something in return. Each is named below the way its licence asks it to be
+        named. Two of the seven packs declare no corpus at all, and this page says so rather than
+        guessing.</p>
+    <div class="license"><b>LibriSpeech</b> — Creative Commons Attribution 4.0 International
+        (<b>CC BY 4.0</b>), under which attribution is a term rather than a nicety, so it is given
+        to its authors by name: <b>Vassil Panayotov, Guoguo Chen, Daniel Povey and Sanjeev
+        Khudanpur</b>. The English pack's corpus, and the pre-training beneath the French pack's
+        fine-tune.</div>
+    <div class="license"><b>Mozilla Common Voice</b> — released under <b>CC0</b>, a public-domain
+        dedication that asks for no credit at all. It is credited anyway, because the corpus exists
+        only through the people who donated their voices to it: <b>Common Voice 12.0</b> French
+        (the French pack), <b>Common Voice 17.0</b> German (the German pack) and Common Voice 17.0
+        Indonesian (one of the Indonesian pack's four).
+        <a href="https://commonvoice.mozilla.org/">commonvoice.mozilla.org</a></div>
+    <div class="license"><b>KsponSpeech</b>, by its official name, with <b>AI Hub (aihub.or.kr)</b>
+        as its source — the Korean pack's corpus, published by the National Information Society
+        Agency of Korea (NIA, 한국지능정보사회진흥원) as AI-Hub dataset 123. <b>This credit is a
+        condition and not a courtesy</b>: AI-Hub's published FAQ permits secondary works such as AI
+        models developed by training on AI-Hub data to be used freely, and to be sold and
+        distributed, for commercial and non-commercial purposes, provided the dataset's official
+        name and AI Hub (aihub.or.kr) are cited as the source. What it does not permit is providing
+        or distributing the original data to a third party, and this app has never held the
+        KsponSpeech recordings — only weights derived from them.
+        <a href="https://aihub.or.kr/">aihub.or.kr</a></div>
+    <div class="license"><b>YODAS2</b> (<code>espnet/yodas2</code>) — <b>CC BY 3.0</b>, which
+        requires attribution: to the <b>ESPnet YODAS authors</b>, and to the creators of the source
+        recordings at the level the dataset itself makes possible, which is the channel. YODAS2
+        publishes no per-speaker identity, so a per-author credit is not something this page is able
+        to give. The Indonesian pack's largest declared corpus.</div>
+    <div class="license"><b>Librivox-Indonesia</b>
+        (<code>indonesian-nlp/librivox-indonesia</code>) — declared by its publisher as Creative
+        Commons, without stating which version. That is recorded here as it stands; no version has
+        been assumed. A declared corpus of the Indonesian pack.</div>
+    <div class="license"><b>FLEURS</b> (Google) — <b>CC BY 4.0</b>, with attribution to its authors.
+        A declared corpus of the Indonesian pack. (The four FLEURS clips this app bundles are a
+        separate obligation and are credited under <b>Bundled audio</b> below.)</div>
+    <div class="license"><b>The Russian and the Chinese-English packs name no training corpus.</b>
+        Neither repository and neither model card discloses one: the Russian card says only that it
+        was trained on Russian data, and the Chinese-English card's own environment dump reads
+        <code>training_subset: 'mix'</code> while its upstream project's documentation describes an
+        internal corpus. <i>Undisclosed</i> is what this page says, because undisclosed is what was
+        found — no corpus has been attributed to either row on the strength of a resemblance, and
+        no dataset either publisher used for <i>evaluation</i> is listed here as if it had been
+        used for training.</div>
+
+    <h3>What we changed, and what we did not</h3>
+    <div class="license">The Apache License 2.0 asks that modified files carry prominent notice of
+        the modification (§4(b)), so here is everything that happens to these weights between the
+        repository and your device — including the parts where the answer is <i>nothing</i>.
+        <p><b>The weights themselves are not modified.</b> Each of the <b>28 files</b> — four per
+            language — is downloaded <b>byte-for-byte</b> from the pinned revision named on its row
+            above, and is refused unless its <code>sha256</code> matches a digest recorded in this
+            app's own source code. That check runs when the pack is assembled, again from disk
+            before a release is built, and again on your device before a byte is installed.
+            <b>We do not re-train, re-export, re-quantise or otherwise alter them.</b> Where a
+            filename says <code>int8</code>, that quantisation is the upstream publisher's own
+            export and not ours — and one of these files is not quantised at all, the Russian pack's
+            <code>decoder.onnx</code>.</p>
+        <p><b>What we do change is selection, naming and packaging.</b></p>
+        <ul>
+            <li><b>Selection</b> — four files out of each repository, not the repository. Several
+                hold a great deal more: the German one also publishes a 1.6&nbsp;GB decoding graph
+                and a 1.0&nbsp;GB training checkpoint, which this app never downloads.</li>
+            <li><b>Naming</b> — two of the seven keep their files in subdirectories, and we place
+                them under flat names. The German pack's four come from <code>exp/epoch-30/</code>
+                and <code>lang_bpe_500/</code>, and their ONNX filenames carry commas that an
+                Android asset entry cannot; the Chinese-English pack's come from
+                <code>exp/32/</code> and <code>data/lang_char_bpe/</code>. Only where the bytes sit
+                and what they are called changes — never the bytes.</li>
+            <li><b>Packaging</b> — the four files become one on-demand Android asset pack per
+                language, installed into this app's own private storage.</li>
+        </ul>
     </div>
 
     <h2>Read-aloud (text-to-speech)</h2>
@@ -208,9 +291,9 @@
 
     <p>Full license texts:
         <a href="https://www.gnu.org/licenses/gpl-3.0.html">GPLv3</a> ·
-        <a href="#apache-2-0">Apache 2.0</a>
+        <a href="#apache-2-0-heading">Apache 2.0</a>
         (<a href="https://www.apache.org/licenses/LICENSE-2.0">apache.org</a>) ·
-        <a href="#mit">MIT</a>
+        <a href="#mit-heading">MIT</a>
         (<a href="https://opensource.org/license/mit">opensource.org</a>).
         <b>Apache&nbsp;2.0 and MIT are reproduced in full at the foot of this page</b> — both ask a
         distributor to <i>include a copy</i> of the license, and a link is not a copy. GPLv3's full

@@ -367,6 +367,214 @@ class OssNoticeTest {
         )
     }
 
+    // ------------------------------------------- 4. the corpora that ask for credit, credited
+
+    /**
+     * **A MODEL'S WEIGHTS AND ITS TRAINING DATA ARE LICENSED SEPARATELY**, and three of these
+     * corpora ask for something in return for their use.
+     *
+     *  - **LibriSpeech** and **FLEURS** are CC BY 4.0 and **YODAS2** is CC BY 3.0 — attribution is
+     *    a term of all three. LibriSpeech's is asserted down to its four named authors, because
+     *    "attribution" to a corpus is not attribution to anybody.
+     *  - **KsponSpeech** is the row where attribution is the CONDITION OF THE GRANT rather than a
+     *    courtesy. AI-Hub's published FAQ permits secondary works — AI models trained on AI-Hub
+     *    data — to be used, sold and distributed commercially, *provided the dataset's official
+     *    name and AI Hub (aihub.or.kr) are cited as the source*. [PackClearanceRecord.KO]'s own
+     *    `because` says Korean ships only if that credit ships, so this is the test that makes the
+     *    sentence true rather than aspirational, alongside
+     *    `StreamingPackClearanceTest.theKoreanRowRestsOnTheFaqGrantAndItsAttributionCondition`.
+     *  - **Mozilla Common Voice** is CC0 and asks for nothing. It is credited anyway, and the page
+     *    says which of the two situations it is in — a page that credits a CC0 corpus in the same
+     *    breath as a CC BY one teaches a reader nothing about what is obligatory.
+     *
+     * ### And the two rows that name no corpus at all
+     *
+     * Russian's and Chinese-English's are UNDISCLOSED in [PackClearanceRecord], so the page says
+     * undisclosed. **The failure mode here is generosity**: an undisclosed corpus is exactly the
+     * row where a plausible-looking corpus gets attributed on the strength of a resemblance — which
+     * is the error this build's Task 2 corrected, in the other direction, for Chinese-English. The
+     * set is derived from the record and pinned, so a row that becomes disclosed, or a new row that
+     * is not, forces the page's sentence to be rewritten deliberately.
+     *
+     * **What this does NOT establish:** that the corpus lists are complete or correct. They are the
+     * publishers' own declarations, and two publishers declare nothing. It establishes that what
+     * this project believes it knows is on the page, credited as each licence asks, with the
+     * unknowns labelled as unknown.
+     */
+    @Test fun theCorporaThatAskForCreditAreCreditedByTheNameEachAsksFor() {
+        val page = noticeAsset().readText().replace("\r\n", "\n")
+
+        // CC BY 4.0 attribution is to PEOPLE, not to a corpus name.
+        for (author in listOf("Vassil Panayotov", "Guoguo Chen", "Daniel Povey", "Sanjeev Khudanpur")) {
+            assertTrue(
+                "LibriSpeech is CC BY 4.0 and its attribution names $author. \"Trained on " +
+                    "LibriSpeech\" credits a dataset, which is not what the licence asks for",
+                page.contains(author),
+            )
+        }
+        for (corpus in listOf("LibriSpeech", "FLEURS", "YODAS2", "Common Voice", "KsponSpeech")) {
+            assertTrue("the page does not credit $corpus", page.contains(corpus))
+        }
+        assertTrue(
+            "the page must say which corpus credits are OBLIGATORY and which are given anyway. " +
+                "Common Voice is CC0 and asks for nothing; LibriSpeech, FLEURS and YODAS2 " +
+                "require attribution. A page that presents the two identically teaches a reader " +
+                "nothing about what it owes",
+            page.contains("CC0") && page.contains("CC BY 4.0") && page.contains("CC BY 3.0"),
+        )
+        for (version in listOf("Common Voice 12.0", "Common Voice 17.0")) {
+            assertTrue(
+                "the page must name the Common Voice release each pack declares — $version is " +
+                    "missing. A corpus credited without its version is a credit to a moving target",
+                page.contains(version),
+            )
+        }
+
+        // Korean: the FAQ's grant, its condition, and the prohibition we are on the right side of.
+        assertTrue(
+            "the Korean credit must name the dataset by its OFFICIAL name and AI-Hub " +
+                "(aihub.or.kr) as the source — those two, together, are what AI-Hub's published " +
+                "FAQ makes the grant conditional on. A credit naming NIA but not AI-Hub pays half",
+            page.contains("KsponSpeech") && page.contains("aihub.or.kr") &&
+                page.contains("한국지능정보사회진흥원"),
+        )
+        assertTrue(
+            "the Korean row must rest on the FAQ's secondary-works grant and say the credit is " +
+                "its CONDITION. It used to rest on the dataset's terms of use, which govern " +
+                "access to the data — something this project never applied for and does not hold",
+            page.contains("official name") && page.contains("condition"),
+        )
+        assertTrue(
+            "…and it must state the thing the FAQ actually prohibits, which is redistributing the " +
+                "original recordings. This app has never held them. Without that sentence the " +
+                "credit reads as a claim to more than we rely on",
+            page.contains("KsponSpeech recordings"),
+        )
+
+        // The two undisclosed rows, derived from the record so generosity cannot creep in.
+        val undisclosed = PackClearanceRecord.RECORD
+            .filter { record -> record.corpora.any { it.startsWith("UNDISCLOSED") } }
+            .map { it.language }
+            .toSet()
+        assertEquals(
+            "the set of rows whose training corpus is UNDISCLOSED has changed. That is not a " +
+                "failure — it is the page's \"the Russian and the Chinese-English packs name no " +
+                "training corpus\" sentence going out of date, and it must be rewritten " +
+                "deliberately rather than left to drift. An undisclosed corpus is exactly the row " +
+                "where a plausible corpus gets attributed on a resemblance",
+            setOf("ru", "zh"),
+            undisclosed,
+        )
+        assertTrue(
+            "the page must say, of the rows that disclose no corpus, that none is disclosed — and " +
+                "must not fill the gap in",
+            page.contains("name no training corpus") && page.contains("training_subset"),
+        )
+    }
+
+    // ----------------------------------------------- 5. our own changes, and only our own changes
+
+    /**
+     * **§4(b) ASKS FOR PROMINENT NOTICE OF MODIFIED FILES — AND THE HONEST ANSWER HERE IS MOSTLY
+     * "NOTHING".** That is worth a test of its own, because the tempting sentence to write is the
+     * one that sounds diligent: *"the weights are re-exported and int8-quantised into a four-file
+     * pack layout"*. It is false. It is the same class of error as inventing an approval, pointed
+     * the other way: a statement on a legal surface that the project did something it did not do.
+     *
+     * What `tools/build_asset_packs.py` actually does is download each file from the pinned
+     * revision and refuse it unless its sha256 matches the digest in [StreamingPackCatalog] —
+     * checked when the pack is assembled, again from the placed directory, again by
+     * `verifyPreviewPack` before a bundle is built, and again on the device before installation.
+     * The `int8` in these filenames is the upstream publisher's own export; the Russian decoder is
+     * not quantised at all.
+     *
+     * So what this asserts is the true, narrower list — **selection, naming, packaging** — and it
+     * derives the naming half from [PackFile.path] vs [PackFile.name], which is where the fact
+     * lives:
+     *
+     *  - the total file count comes from the catalogue, so a fifth file per pack makes the page's
+     *    number stale rather than quietly wrong;
+     *  - every upstream directory a file is lifted out of must be named, so a future row that
+     *    relocates files silently fails;
+     *  - and the count of relocating rows is pinned, because the page says *two of the seven* and
+     *    a third would make that sentence false.
+     *
+     * The forbidden-phrase scan at the end is the guard the prose needs: it fails the build if the
+     * page starts claiming a modification this project does not make.
+     *
+     * **What this does NOT establish:** that §4(b) is satisfied, or that the bytes in a built
+     * bundle are the bytes this describes. The first is a legal conclusion. The second needs an
+     * inspection of a real AAB, which is a separate job and is reported as one.
+     */
+    @Test fun theModificationsStatedAreTheOnesWeActuallyMake() {
+        val page = noticeAsset().readText().replace("\r\n", "\n")
+
+        val files = StreamingPackCatalog.packs.sumOf { it.files.size }
+        assertEquals("the packs are no longer four files each", 28, files)
+        assertTrue(
+            "the page must state how many files it is talking about, and $files is the " +
+                "catalogue's own count. A notice about \"the weights\" in the abstract is a " +
+                "notice about nothing in particular",
+            page.contains("$files files"),
+        )
+        assertTrue(
+            "the page must state that the bytes are unmodified AND how that is known — the " +
+                "digest check is the whole basis of the claim",
+            page.contains("byte-for-byte") && page.contains("sha256"),
+        )
+        assertTrue(
+            "…and it must say plainly that we do not re-export or re-quantise, because the " +
+                "filenames say int8 and a reader would otherwise reasonably assume we did it",
+            page.contains("re-quantise") && page.contains("int8"),
+        )
+
+        // The naming change, derived from the row where the fact lives.
+        val relocated = StreamingPackCatalog.packs.filter { pack ->
+            pack.files.any { it.path != it.name }
+        }
+        assertEquals(
+            "the number of packs whose files are lifted out of an upstream subdirectory has " +
+                "changed, and the page's \"two of the seven\" sentence is now false. Rewrite it " +
+                "rather than relaxing this",
+            2,
+            relocated.size,
+        )
+        val directories = StreamingPackCatalog.packs
+            .flatMap { it.files }
+            .filter { it.path != it.name }
+            .map { it.path.substringBeforeLast('/') + "/" }
+            .toSortedSet()
+        for (directory in directories) {
+            assertTrue(
+                "the page must name $directory — a file placed under a name other than its " +
+                    "upstream one is the only change this project makes to these artefacts, and " +
+                    "an unnamed one is an unstated change",
+                page.contains(directory),
+            )
+        }
+        for (section in listOf("Selection", "Naming", "Packaging")) {
+            assertTrue("the modifications notice is missing its $section item", page.contains(section))
+        }
+
+        // And the guard: no claiming a modification we do not make.
+        val forbidden = mapOf(
+            "re-exported by" to "we do not re-export these weights; upstream published them",
+            "we re-export" to "we do not re-export these weights; upstream published them",
+            "we quantise" to "the int8 export is the upstream publisher's, not ours",
+            "we re-quantise" to "the int8 export is the upstream publisher's, not ours",
+            "quantised here" to "the int8 export is the upstream publisher's, not ours",
+            "re-trained" to "nothing in this app re-trains a published checkpoint",
+        )
+        for ((needle, why) in forbidden) {
+            assertTrue(
+                "the licences page claims a modification this project does not make: " +
+                    "\"$needle\". $why. Overstating what we did to somebody else's artefact is " +
+                    "the same class of error as inventing an approval, pointed the other way",
+                !page.lowercase().contains(needle),
+            )
+        }
+    }
+
     // ------------------------------------------------------------------ the house source walker
 
     /**
