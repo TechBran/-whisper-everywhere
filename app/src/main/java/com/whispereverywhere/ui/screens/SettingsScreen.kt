@@ -1525,7 +1525,8 @@ private fun BubbleColourRows(app: WhisperEverywhereApp) {
     BubblePaletteGrid(
         title = "Committed words colour",
         subtitle = "The transcript you read, and can edit, before it is typed. This is what " +
-            "replaces the live line when a sentence is confirmed.",
+            "replaces the live line when a sentence is confirmed — and the bubble's status " +
+            "lines, such as \"Connecting…\", follow it too.",
         selected = committedColour,
         onPick = { app.preferencesManager.bubbleCommittedColour = it },
     )

@@ -2263,7 +2263,9 @@ class FloatingBubbleService : Service(),
      * The shipped strip was `#E6FFFFFF` — near-white — so painting them red would be a change a
      * user who never opened the setting did not ask for, and red on a status line reads as an
      * error where none has happened. They take the COMMITTED colour instead: white by default,
-     * so they look exactly as they do today, and they follow the user's own choice if they move
+     * so they read as they do today — the shade moves from #E6FFFFFF to opaque white, 17.58:1 to
+     * 21:1 against the panel, which is not a difference an eye finds — and they follow the user's
+     * own choice if they move
      * it.
      *
      * This is why the role is a TERM and not a second colour setting. There is no third thing

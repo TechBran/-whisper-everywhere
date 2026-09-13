@@ -136,9 +136,12 @@ object BubbleColours {
      * The live words' default: **red**, per the ruling, and `#FF5252` rather than `#FF0000`.
      *
      * Pure red is not a caution-driven rejection — it fails the arithmetic. Over a white app at
-     * the default 90% it reaches 4.38:1 and at the 85% floor 3.77:1, both under
-     * [CONTRAST_FLOOR]; `#FF5252` reaches 5.48:1 and 4.74:1. (The app's own brand red `#EF4444`
-     * fails too, at 4.65:1 / 4.01:1, which is why the default is not reused from `colors.xml`.)
+     * the default 90% it reaches 4.40:1 and at the 85% floor 3.78:1, both under
+     * [CONTRAST_FLOOR]; `#FF5252` reaches 5.51:1 and 4.74:1. (The app's own brand red `#EF4444`
+     * fails too, at 4.67:1 / 4.02:1, which is why the default is not reused from `colors.xml`.)
+     * Every ratio quoted in this file is what the functions below return — recomputed against
+     * them, because a KDoc number that came from a third implementation is what the next reader
+     * trusts.
      * Pure red is perfectly legible over a *dark* app — the failure is entirely the backdrop we
      * cannot know, which is the same fact [OPACITY_FLOOR_PERCENT] exists for.
      *

@@ -236,12 +236,23 @@ class BubbleColoursTest {
         assertFalse(black in BubbleColours.PALETTE.map { it.argb })
 
         // THE SHADE RULING, DERIVED. Pure red clears the floor over a BLACK backdrop (5.25:1)
-        // and fails it over a white one at the default opacity (4.38:1) — so "red for our live
+        // and fails it over a white one at the default opacity (4.40:1) — so "red for our live
         // words" is right and `#FF0000` is the wrong red, by arithmetic. The app's own brand red
         // `#EF4444` (`gradient_red`/`secondary`/`error`) fails too, which is why the default is
         // not simply reused from colors.xml.
         assertFalse("pure red", BubbleColours.legibleEverywhere(0xFFFF0000.toInt()))
         assertFalse("brand red #EF4444", BubbleColours.legibleEverywhere(0xFFEF4444.toInt()))
+        // The three shades' numbers, PINNED — they are quoted in `LIVE_DEFAULT`'s KDoc, which is
+        // what the next reader trusts, and an unasserted number in a KDoc drifts from the
+        // arithmetic beside it. Over a white app at the default step and at the floor step.
+        val white90 = BubbleColours.compositeOver(90, white)
+        val white85 = BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, white)
+        assertEquals(4.40, BubbleColours.contrastRatio(0xFFFF0000.toInt(), white90), 0.01)
+        assertEquals(3.78, BubbleColours.contrastRatio(0xFFFF0000.toInt(), white85), 0.01)
+        assertEquals(5.51, BubbleColours.contrastRatio(BubbleColours.LIVE_DEFAULT, white90), 0.01)
+        assertEquals(4.74, BubbleColours.contrastRatio(BubbleColours.LIVE_DEFAULT, white85), 0.01)
+        assertEquals(4.67, BubbleColours.contrastRatio(0xFFEF4444.toInt(), white90), 0.01)
+        assertEquals(4.02, BubbleColours.contrastRatio(0xFFEF4444.toInt(), white85), 0.01)
         assertTrue(
             "pure red is fine over a DARK app — the failure is the unknowable backdrop",
             BubbleColours.contrastRatio(0xFFFF0000.toInt(), black) >= BubbleColours.CONTRAST_FLOOR,
