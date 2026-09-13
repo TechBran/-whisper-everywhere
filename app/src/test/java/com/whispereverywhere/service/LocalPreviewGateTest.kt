@@ -417,6 +417,63 @@ class LocalPreviewGateTest {
         }
     }
 
+    /**
+     * **AF6 IS RETIRED BY BEING INVERTED, AND ITS OLD TEXT STAYS READABLE** (4.5.1 Task 1).
+     *
+     * That row told the owner to expect the first session after an install to show no words. It was
+     * the sheet documenting a defect as a design, and it is the reason he raised this as *"people
+     * are going to think that it doesn't work"* rather than as a bug: the sheet had already agreed
+     * with the behaviour. So the row is rewritten to assert the opposite — and kept, struck
+     * through, because a row that once PASSED on device and now says the opposite is how a
+     * regression gets mistaken for a fix. That rule is AF2's, earned in 4.5.0's own review round 1,
+     * and this is its second application.
+     *
+     * Pinned here rather than in `StreamingPackClearanceTest` because this is the class that owns
+     * the behaviour the row is about; the sheet is already in `sourcePinnedInputs`
+     * (`app/build.gradle.kts`), so an edit to it re-runs this.
+     */
+    @Test fun theAcceptanceSheetsAF6NowAssertsTheOppositeAndStillShowsWhatItSaid() {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null && !File(dir, "settings.gradle.kts").isFile) dir = dir.parentFile
+        val sheet = File(dir, "docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md")
+            .readText().replace("\r\n", "\n")
+        val row = sheet.substringAfter("AF6. ").substringBefore("AF7. ")
+        assertTrue("AF6 must still exist — a deleted row is not a retired one", row.isNotEmpty())
+        assertTrue(
+            "and must be marked REWRITTEN, AF2's rule: the row passed on device and now says the " +
+                "opposite",
+            row.contains("REWRITTEN"),
+        )
+        assertTrue(
+            "the 4.5.0 expectation stays readable, struck through — it is the only record of what " +
+                "a device session actually confirmed, and of what the sheet once told the owner " +
+                "to accept",
+            row.contains("~~What it said in 91 and 4.5.0:") &&
+                row.contains("NOT to show live words, and the second to.**"),
+        )
+        assertTrue(
+            "the new expectation is the OPPOSITE and says so in the FIRST-session terms the old " +
+                "row used",
+            row.contains("**and the FIRST session after the download finishes shows live words.**"),
+        )
+        assertTrue(
+            "and it names the mechanism that makes it true, so a device session can tell this " +
+                "row from a wish",
+            row.contains("warmOnPackInstalled"),
+        )
+        assertTrue(
+            "...and the owner's own words, because this row is the one the ruling was about",
+            row.contains("That's a friction point for users."),
+        )
+        assertTrue(
+            "the two deliberate misses are noted on the row, so neither is reported as this row " +
+                "failing: an install that lands during a session or a batch job, and a re-pick of " +
+                "a pack that was already installed",
+            row.contains("while a dictation or a batch file job is running") &&
+                row.contains("ALREADY installed"),
+        )
+    }
+
     // ------------------------------------------------------------------ R3, the switch's default
 
     /**

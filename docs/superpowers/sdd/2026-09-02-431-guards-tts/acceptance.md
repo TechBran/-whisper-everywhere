@@ -743,10 +743,38 @@ AF5. **Picking a language at onboarding.** On a fresh onboarding, pick English. 
     step itself — fetching 73 MB beside onboarding's mandatory 190 MB speech model is contention we
     refused. Not a failure.
     `[ ] PASS  [ ] FAIL`
-AF6. **Changing language in the app.** Switch the language to English with the pack missing. EXPECTED:
-    the fetch starts in place, no trip to Settings. **Then expect the FIRST session after the switch NOT
-    to show live words, and the second to.** The model loads asynchronously and nothing was resident —
-    this is the price of not pre-loading for Auto users and is EXPECTED, not a failure.
+AF6. **Changing language in the app — REWRITTEN in 4.5.1, and it now expects the OPPOSITE.** This row
+    is kept rather than deleted because it PASSED on device in 91, and a row that once passed and now
+    describes the opposite is how a regression gets mistaken for a fix (AF2's rule).
+    ~~What it said in 91 and 4.5.0: "the fetch starts in place, no trip to Settings. **Then expect the
+    FIRST session after the switch NOT to show live words, and the second to.** The model loads
+    asynchronously and nothing was resident — this is the price of not pre-loading for Auto users and is
+    EXPECTED, not a failure."~~
+    **That expectation was wrong, and this row was the sheet telling the owner to accept a defect.** He
+    met it as the feature not working (2026-09-12: *"What can we do about having to transcribe a second
+    time to get the live to work? Once we get the preview model downloaded, why can't we just refresh
+    things to where the very next transcribe is already on? That's a friction point for users. People
+    are going to think that it doesn't work."*) and he is right: a user who picks a language, watches
+    73-128 MB arrive, taps to dictate and sees nothing does not conclude *"the model loads
+    asynchronously"*. Nothing in the design required it. `warmStreamingPreview` simply had two callers —
+    the boot prewarm and the session wrap site — and the wrap site arms the NEXT session, so an install
+    completing mid-process warmed nothing until a session had been and gone.
+    EXPECTED now: switch the language to one whose pack is missing. The fetch starts in place, no trip
+    to Settings — **and the FIRST session after the download finishes shows live words.** The
+    install's completion warms the pack itself (`warmOnPackInstalled`, the third warm trigger), which
+    takes 802-860 ms behind a multi-megabyte transfer.
+    The visible receipt of it: the progress strip above the language selector now says *"<language> is
+    ready: words appear on the bubble whenever you pick it"* only once the engine is **warm**, not when
+    the files land. So the loop closes where the user is looking — the download finishes, the strip says
+    ready, the next tap shows words.
+    FAIL: the first session after the install shows no words and the second does. That is 4.5.0's
+    behaviour surviving.
+    NOTE two shapes that are **not** this row failing, both deliberate: an install that completes
+    **while a dictation or a batch file job is running** is skipped rather than deferred (a second
+    802-860 ms / 169 MB load must not land under the recognizer the live session has borrowed), so that
+    one session still misses and the strip stays silent until the warm lands; and re-picking a language
+    whose pack was ALREADY installed earlier in the same app run is not an install at all, so it warms
+    at the next session start as before. Both are noted for the controller in `col-t1-impl.md`.
     `[ ] PASS  [ ] FAIL`
 AF7. **Auto is honest.** On Auto: nothing downloads, no card nags you, and the Settings rows say live
     words need a picked language. Your transcript still arrives per utterance exactly as before.
@@ -778,6 +806,9 @@ breakage. If you hit either, note it and move on — they are already scheduled.
 **Promote 91 when AF1, AF2, AF3, AF7, AF8 and AF9 pass.** AF1/AF2 are the delivery promise and the data
 promise; AF3 is the respect-a-decision promise; AF7/AF8/AF9 are the three sentences this build made
 literal. AF5/AF6/AF10/AF11 are informative — a failure there is a bug report, not a gate.
+**One amendment, 4.5.1:** AF6 is no longer informative. It was informative while it recorded a miss as
+expected; now that it asserts the fix, a failure there IS this build's defect, and the build that carries
+it must gate on it. 91 was promoted long ago on the six rows above, so this changes no past decision.
 
 ---
 
