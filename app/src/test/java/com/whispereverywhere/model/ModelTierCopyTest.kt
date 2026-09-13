@@ -355,6 +355,79 @@ class ModelTierCopyTest {
     }
 
     /**
+     * **A REQUANTISED RUNG READS AS ITS TWIN AT ANOTHER QUANTISATION, OR THE SESSION CANNOT
+     * INTERPRET ITS OWN RESULTS.**
+     *
+     * Three of the seven CPU rungs are the same weights as a neighbour at a different
+     * quantisation, and the two comparisons that carry the most information in the owner's
+     * six-device session are exactly those pairs: `multi` (small Q5_1) against `small-q8` — the
+     * cheapest decisive test of the whole quantisation hypothesis, same model, 40% more bytes,
+     * on ggml's ARM i8mm repack path — and `medium-q5` against `medium-q8`, which asks whether
+     * the repack path rescues a rung that otherwise fails.
+     *
+     * *"The 539 MB one was slower than the 823 MB one"* is only a FINDING if the reader can see
+     * that those two are the same 24 layers at 1024 dims. If the cards do not say so it is just a
+     * pair of downloads, and the session's most informative result reads as noise. So the census
+     * requires the sameness where the eye lands (the headline), the two quantisation tokens, and
+     * the twin named by the size badge the twin's own card carries — and it requires the twin to
+     * be a card the same user can actually SEE, which is the 3.7 rule that retired `pro`'s
+     * cross-reference.
+     *
+     * Then it requires the CATALOGUE to back the word "same": equal mel width, equal language
+     * scope, different digest, and the `Q8_0` row the larger file. A card claiming two rows are
+     * one model while the rows disagree about what they are is a worse defect than a card that
+     * says nothing.
+     */
+    @Test fun every_requantised_rung_reads_as_its_twin_at_another_quantisation() {
+        val pairs = WhisperCatalog.entries.mapNotNull { row -> twinOf(row)?.let { row to it } }
+        assertEquals("three quantisation twins, so six rows in pairs", 6, pairs.size)
+        val requantised = pairs.filter { quantOf(it.first) == "Q8_0" }
+        assertEquals(
+            "the Q8_0 side of each twin is what needs the copy — it is the row the reader has " +
+                "never seen before",
+            listOf("small-q8", "medium-q8", "ultra-q8"),
+            requantised.map { it.first.id },
+        )
+        requantised.forEach { (q8, twin) ->
+            val copy = ModelTierCopy.forId(q8.id)!!
+            val headline = copy.headline.lowercase()
+            assertTrue(
+                "'${q8.id}' does not say at a GLANCE that it is the same model as '${twin.id}' — " +
+                    "the headline is the glance, and the body is what gets skipped",
+                headline.contains("same") && headline.contains("quantisation"),
+            )
+            assertTrue("'${q8.id}' body does not claim sameness", copy.body.lowercase().contains("the same"))
+            assertTrue("'${q8.id}' body does not name its own quantisation", copy.body.contains("Q8_0"))
+            assertTrue(
+                "'${q8.id}' body does not name '${twin.id}'s quantisation (${quantOf(twin)}) — " +
+                    "without both tokens the two cards cannot be told apart from each other",
+                copy.body.contains(quantOf(twin)!!),
+            )
+            val twinMb = "${twin.approxBytes / 1_000_000L} MB"
+            assertTrue(
+                "'${q8.id}' body does not name its twin by the badge the twin's own card shows " +
+                    "($twinMb), so the reader has nothing to match it to",
+                copy.body.contains(twinMb),
+            )
+            assertEquals(twinMb, ModelTierCopy.forId(twin.id)!!.badges.first { it.endsWith(" MB") })
+            assertTrue(
+                "'${q8.id}' points at '${twin.id}', which is not in the pickable lineup — a card " +
+                    "may only position itself against one the same user can see",
+                WhisperCatalog.pickable.map { it.id }.contains(twin.id),
+            )
+            // And the catalogue has to agree with the word "same".
+            assertEquals("mel width disagrees for '${q8.id}' and '${twin.id}'", twin.melBins, q8.melBins)
+            assertEquals("scope disagrees for '${q8.id}' and '${twin.id}'", twin.scope, q8.scope)
+            assertFalse("'${q8.id}' and '${twin.id}' share a digest", q8.sha256 == twin.sha256)
+            assertTrue(
+                "'${q8.id}' is not the larger file of its pair — Q8_0 stores more bits per weight " +
+                    "than any Q5, so a pair where it does not is a wrong literal somewhere",
+                q8.approxBytes > twin.approxBytes,
+            )
+        }
+    }
+
+    /**
      * 4.6 — was `english_locales_are_steered_to_pro`. The English branch is GONE because the tier
      * it pointed at is retired (owner ruling 2026-09-13: multilingual rungs only), and a steer at
      * a retired tier is not a steer — the chooser does not render that card, so nothing would be
