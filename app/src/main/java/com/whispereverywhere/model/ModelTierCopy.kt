@@ -9,10 +9,21 @@ package com.whispereverywhere.model
  * Copy discipline, pinned by [ModelTierCopyTest] (the test that would have prevented the Bengali
  * review): every offered tier states a size, a speed-vs-accuracy position, and its language
  * coverage as a badge — "English only" on every ENGLISH-scope tier, "90+ languages" on every
- * MULTILINGUAL tier. Since 3.7 the lineup is two tiers, so the copy positions each one directly
- * instead of by comparison to a retired card
- * ([ModelTierCopyTest.no_offered_tier_names_a_retired_one]); the app-wide no-speed-claims rule
- * constrains CLOUD claims, which this copy never makes.
+ * MULTILINGUAL tier. A card positions itself DIRECTLY or against a tier the same user can still
+ * see, never against a retired one ([ModelTierCopyTest.no_offered_tier_names_a_retired_one]).
+ *
+ * **4.6 — the CPU lineup is a seven-rung ladder and the ENGLISH-scope badge rule is unreachable
+ * from here.** Every offered rung is multilingual (owner ruling 2026-09-13), so the "English only"
+ * arm of that census now applies to no offered tier; it stays because the rule is about a card the
+ * user reads, not about today's catalogue, and a re-offered English rung must inherit it. The
+ * `90+ languages` arm carries every card there is.
+ *
+ * **The no-speed-claims rule reaches this object now, where before it only constrained CLOUD
+ * copy.** Six of the seven CPU rungs are [WhisperModel.instrument]s — offered so the owner can
+ * measure them on six devices — and none of their cards ranks them by speed in either direction;
+ * the reasoning is at the ladder's own comment block below. The two NPU cards KEEP their measured,
+ * owner-ruled "fastest": that claim is true and scoped to silicon this app has benchmarked, and
+ * removing a true claim would be the regression.
  */
 object ModelTierCopy {
 
@@ -217,21 +228,27 @@ object ModelTierCopy {
      * winner — much more accurate, at only about half a second slower."* The condition the old
      * rule named is met, so the steer follows the verdict — for EVERY locale, because
      * large-v3-turbo is multilingual and the accuracy win was measured on the owner's own
-     * speech, English included. `pro`-for-English remains the rule only where turbo is not
-     * offered: the Bengali-review discipline was about never handing a user a WORSE model for
-     * their language, and turbo is not that.
+     * speech, English included. The Bengali-review discipline was about never handing a user a
+     * WORSE model for their language, and turbo is not that.
      *
-     * **`npu` substitutes for the MULTILINGUAL steer and nothing else, exactly as before, when
-     * turbo is absent.** It carries `multi`'s weights on faster silicon, so for the user `multi`
-     * was already the right answer for, it is a strictly better one. An English locale keeps
-     * `pro` in that state: "the device is fast" is still not a reason to hand someone the less
-     * accurate model for their language.
+     * **`npu` substitutes for the MULTILINGUAL steer, exactly as before, when turbo is absent.**
+     * It carries `multi`'s weights on faster silicon, so for the user `multi` was already the
+     * right answer for, it is a strictly better one.
+     *
+     * **4.6 — that substitution now reaches an ENGLISH locale too, and the old rule's own
+     * reasoning is what carries it there.** Until 4.6 an English locale kept `pro` in that state:
+     * "the device is fast" was not a reason to hand someone the less accurate model for their
+     * language. `pro` is retired now, so the English user's CPU rung IS `multi` — and `npu` is
+     * `multi`'s own weights on the Hexagon. There is no accuracy being traded away because it is
+     * the same model. The condition in the body (`cpuSteer == "multi"`) is UNCHANGED; it simply
+     * holds for every locale, which is the ruling's consequence rather than a new rule.
      *
      * **This is a STEER, not a selection — untouched by the pick.** Nothing here writes
      * `prefs.selectedModelId`; both chooser surfaces still require a tap,
-     * `WhisperCatalog.DEFAULT_MODEL_ID` stays `pro` and `ModelMigration`'s multilingual target
-     * stays `multi`. A gated tier that could become the default by locale alone would be
-     * selected on devices whose assets are absent.
+     * `WhisperCatalog.DEFAULT_MODEL_ID` is `multi` (4.6, moved off the retired `pro` where the
+     * default lives, not here) and `ModelMigration`'s multilingual target stays `multi`. A gated
+     * tier that could become the default by locale alone would be selected on devices whose
+     * assets are absent.
      *
      * @param offeredGatedIds the caller's gate answer — the ids of gated tiers this device's
      *        chooser may SHOW. Two producers since 4.2 F6: routing surfaces still pass
@@ -275,13 +292,20 @@ object ModelTierCopy {
      * ([steerIdForLanguageTagFor] — `npu-turbo` wherever it is offered, per the owner's measured
      * pick); then — ONLY when turbo heads — `npu`, the pick's runner-up, so the two npu-class
      * tiers the A/B compared sit together at the top; then the tier the locale would have been
-     * steered to WITHOUT the gate; then catalog order. The language key is still the point it
-     * was in 3.7: without it a Bengali user on a capable device would read the English-only
-     * tier promoted above the multilingual one it was demoted below, by a change that was
-     * supposed to be about silicon — and the npu key is CONDITIONAL on turbo heading for the
-     * same discipline, so a turbo-absent lineup is EXACTLY the pre-pick order (npu does not
-     * jump `multi`/`pro` on the strength of a verdict that was about turbo). The sort is
-     * stable, so every tier no key names keeps the order the catalog declares it in.
+     * steered to WITHOUT the gate; then catalog order. The npu key is CONDITIONAL on turbo
+     * heading, so a turbo-absent lineup is EXACTLY the pre-pick order (npu does not jump the CPU
+     * rungs on the strength of a verdict that was about turbo). The sort is stable, so every tier
+     * no key names keeps the order the catalog declares it in.
+     *
+     * **4.6 — THE LANGUAGE KEY IS NOW INERT, AND IT STAYS.** Its point in 3.7 was that without it
+     * a Bengali user on a capable device would read the English-only tier promoted above the
+     * multilingual one it had just been demoted below, by a change that was supposed to be about
+     * silicon. With `pro` retired there is no English-only tier in any lineup, and
+     * [steerIdForLanguageTag] answers `multi` for every tag — so `languageSteer == steer` whenever
+     * the gate is silent, and the key selects nothing the first key did not. **It is a rule about
+     * what may not happen, not an optimisation**: the next language-specific rung reaches it again
+     * and gets the 3.7 answer without anyone rediscovering the reasoning. Deleting it because
+     * today's catalogue cannot reach it is how the Bengali review happens twice.
      *
      * The result is a permutation of `pickableFor(offeredGatedIds, installedIds)` — of the
      * caller's OWN input list, not of [WhisperCatalog.pickable] — so a gate-passing device never
