@@ -6,9 +6,12 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -18,10 +21,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.whispereverywhere.BuildConfig
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.data.local.PreferencesManager
@@ -29,6 +38,7 @@ import com.whispereverywhere.model.ModelMigration
 import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.provider.ProviderId
+import com.whispereverywhere.service.BubbleColours
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
 import com.whispereverywhere.transcription.stream.PreviewDeleteCase
@@ -662,6 +672,17 @@ fun SettingsScreen(
                     context = context,
                     localTierInstalled = installedModel != null,
                 )
+            }
+
+            // (4.5.1 Task 2) THE BUBBLE'S THREE COLOURS, and the user owns them. Its own section
+            // and NOT a fourth row under "Live words" above, for the same reason "Live words" is
+            // not a row under "Read aloud": only ONE of these three settings is about live words.
+            // The committed colour and the background apply to every session the bubble shows —
+            // local or cloud, live or batch — and a heading about the previewer's pack would say
+            // otherwise. It is also UNGATED, unlike the rows above: this section is not about a
+            // pack, a language or a tier, so nothing about the device can make it inapplicable.
+            SettingsSection(title = "Bubble colours") {
+                BubbleColourRows(app = app)
             }
 
             // Cloud providers (Release C1): bring-your-own-key credential management. No audio
@@ -1462,6 +1483,211 @@ private fun LivePreviewRows(
                     previewRefreshKey++
                 }
             },
+        )
+    }
+}
+
+/**
+ * THE BUBBLE'S THREE USER-OWNED COLOURS (4.5.1 Task 2, owner ruling 2026-09-12).
+ *
+ * Storage and its guard are `PreferencesManager`'s; every rule about which values are allowed —
+ * the palette, the opacity ladder, the contrast floor, and why the default live colour is not
+ * `#FF0000` — is [BubbleColours], asserted there against a cross product of every reachable
+ * combination. These rows collect three numbers, draw a sample and write three setters. They
+ * make no judgement: a legibility test here would be a second authority beside the palette's,
+ * and the two would disagree the first time the palette is edited.
+ *
+ * The sample comes FIRST, above the controls, because a colour setting whose effect you can only
+ * see by starting a dictation is a setting people set wrong. A picker DIALOG per row was the
+ * alternative considered — it would guarantee the sample and the grid share a viewport — and was
+ * refused because the whole section fits one screen at these sizes and a dialog adds two states
+ * (open, and which row opened it) to a surface that needs none.
+ */
+@Composable
+private fun BubbleColourRows(app: WhisperEverywhereApp) {
+    val liveColour by app.preferencesManager.bubbleLiveColourFlow.collectAsState()
+    val committedColour by app.preferencesManager.bubbleCommittedColourFlow.collectAsState()
+    val opacityPercent by app.preferencesManager.bubbleOpacityPercentFlow.collectAsState()
+
+    BubbleColourSample(
+        liveColour = liveColour,
+        committedColour = committedColour,
+        opacityPercent = opacityPercent,
+    )
+    BubblePaletteGrid(
+        title = "Live words colour",
+        subtitle = "The word-for-word preview, on every live path — the on-device previewer and " +
+            "each cloud provider that streams. Red by default: it is easier on the eyes over a " +
+            "long dictation, and it marks the words that have not been confirmed yet.",
+        selected = liveColour,
+        onPick = { app.preferencesManager.bubbleLiveColour = it },
+    )
+    BubblePaletteGrid(
+        title = "Committed words colour",
+        subtitle = "The transcript you read, and can edit, before it is typed. This is what " +
+            "replaces the live line when a sentence is confirmed.",
+        selected = committedColour,
+        onPick = { app.preferencesManager.bubbleCommittedColour = it },
+    )
+    BubbleOpacityRow(
+        percent = opacityPercent,
+        onPick = { app.preferencesManager.bubbleOpacityPercent = it },
+    )
+}
+
+/**
+ * The bubble as configured — the two lines in their two colours, over the panel at its chosen
+ * opacity, on BOTH extreme backdrops.
+ *
+ * The two halves are the point and not decoration. The panel is translucent over an app we do
+ * not own, so a sample drawn on the Settings surface alone would show the opacity's effect
+ * against exactly one backdrop — and the one the guarantee is *not* computed against. Half white
+ * and half black is what [BubbleColours.worstContrast] actually checks, made visible.
+ *
+ * The words are [BubbleColours.SAMPLE_COMMITTED] and [BubbleColours.SAMPLE_LIVE] and they are
+ * FIXED. A colour sample is not transcript content — but a sample built from the last real
+ * transcript would be, and it would put a user's dictation on a Settings screen and into any
+ * screenshot of one.
+ */
+@Composable
+private fun BubbleColourSample(liveColour: Int, committedColour: Int, opacityPercent: Int) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+        ) {
+            Row(modifier = Modifier.matchParentSize()) {
+                Box(modifier = Modifier.weight(1f).fillMaxHeight().background(Color.White))
+                Box(modifier = Modifier.weight(1f).fillMaxHeight().background(Color.Black))
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(20.dp)
+                    .background(
+                        color = Color(BubbleColours.panelArgb(opacityPercent)),
+                        shape = RoundedCornerShape(16.dp),
+                    )
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = BubbleColours.SAMPLE_COMMITTED,
+                    color = Color(committedColour),
+                    fontSize = 14.sp,
+                )
+                // Italic, exactly as the bubble's own delta strip is
+                // (`floating_bubble.xml`: textStyle="italic"), so the sample still shows which
+                // line is which for a user who set both colours the same.
+                Text(
+                    text = BubbleColours.SAMPLE_LIVE,
+                    color = Color(liveColour),
+                    fontSize = 14.sp,
+                    fontStyle = FontStyle.Italic,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+        Text(
+            text = "Shown over the lightest and the darkest app the bubble can float over — the " +
+                "two backgrounds every colour here is checked against.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+/**
+ * One palette, as a grid of swatches.
+ *
+ * Derived from [BubbleColours.PALETTE] and chunked, so the grid covers the whole list whatever
+ * its length — a hardcoded row count would silently drop entries the day one is added, and a hex
+ * literal written here would be a colour no contrast assertion can reach on the surface that
+ * ships.
+ */
+@Composable
+private fun BubblePaletteGrid(
+    title: String,
+    subtitle: String,
+    selected: Int,
+    onPick: (Int) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(text = title, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        for (chunk in BubbleColours.PALETTE.chunked(5)) {
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                for (swatch in chunk) {
+                    val isSelected = swatch.argb == selected
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color(swatch.argb))
+                            .border(
+                                width = if (isSelected) 3.dp else 1.dp,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.outlineVariant
+                                },
+                                shape = CircleShape,
+                            )
+                            .clickable { onPick(swatch.argb) }
+                            // A colour with no word is unreachable for a screen reader, and the
+                            // selected state has to be sayable too — the ring is the only other
+                            // thing carrying it.
+                            .semantics {
+                                contentDescription =
+                                    if (isSelected) "${swatch.name}, selected" else swatch.name
+                            }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * How opaque the panel is, and the one control that can void the guarantee for every colour at
+ * once — so its range starts at [BubbleColours.OPACITY_FLOOR_PERCENT] and its resolution is
+ * [BubbleColours.OPACITY_STEPS], both read from the object that computed them.
+ *
+ * The floor's REASON is said to the user and not only to the next reader of a KDoc: a slider that
+ * stops at 85% with no explanation reads as an arbitrary limit, and the next person to be asked
+ * about it should be able to see the trade.
+ */
+@Composable
+private fun BubbleOpacityRow(percent: Int, onPick: (Int) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(
+            text = "Background clarity — $percent% opaque",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Text(
+            text = "Lower lets the app underneath show through. " +
+                "${BubbleColours.OPACITY_FLOOR_PERCENT}% is as far as it goes: below that the " +
+                "background behind your words is mostly someone else's screen, and no colour " +
+                "can be promised readable on it.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = percent.toFloat(),
+            onValueChange = { snapped -> onPick(snapped.toInt()) },
+            valueRange = BubbleColours.OPACITY_FLOOR_PERCENT.toFloat()..
+                BubbleColours.OPACITY_STEPS.max().toFloat(),
+            // One position per ladder entry: `steps` counts the stops BETWEEN the ends, so the
+            // reachable set is exactly OPACITY_STEPS and the setter's re-snap is a no-op rather
+            // than a correction the user can feel.
+            steps = BubbleColours.OPACITY_STEPS.size - 2,
         )
     }
 }

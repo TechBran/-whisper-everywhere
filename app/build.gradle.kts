@@ -496,6 +496,16 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt",
         "src/main/java/com/whispereverywhere/MainActivity.kt",
         "src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt",
+        // (4.5.1 Task 2) The bubble's LAYOUT, by the list's stated rule — membership follows what
+        // the tests READ. `BubbleColoursWiringPinTest` reads this XML to hold three facts that are
+        // invisible to every other test: the panel's two text colours and the panel's own fill
+        // are still declared there as the PRE-FIRST-APPLY defaults (delete them as dead and a
+        // device renders the panel with no colour at all for the frames before
+        // applyBubbleColours runs, and forever on any device where the background is not the
+        // shape drawable), and the "RUNTIME-OWNED" note that says so. A resource-only edit
+        // changes no .class file, so without this entry the one edit that pin exists to catch is
+        // the one that leaves `:app:testDebugUnitTest` UP-TO-DATE.
+        "src/main/res/layout/floating_bubble.xml",
         // (4.3.1 B) BubbleHideWiringPinTest reads the controller for speakFromTrigger's Boolean.
         "src/main/java/com/whispereverywhere/tts/TtsController.kt",
         // (4.4.0, Task 2b) The voice manager, by the list's stated rule and overdue: this file has
