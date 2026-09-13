@@ -605,6 +605,33 @@ object WhisperCatalog {
      *
      * `emptySet()` is the every-other-device answer and reproduces [pickable] exactly.
      *
+     * ### 4.6 — AND THEREFORE A DEVICE OFFERED THE ONE TIER IS OFFERED NO INSTRUMENT
+     *
+     * **A recorded consequence, not an oversight.** 4.6 adds six [WhisperModel.instrument] rungs to
+     * [pickable] so the owner can measure them, and the narrowing above takes every one of them
+     * back on any device whose gate set names [ONE_TIER_ID] — which is the whole 8 Gen 3-class
+     * fleet, the Fold6 included. So on a capable device whose turbo delivery works, the chooser
+     * renders `npu-turbo` plus whatever is already installed, and `small-q8`, `medium-q5`,
+     * `medium-q8`, `ultra`, `ultra-q8` and `large-v3` render no card at all: they are neither
+     * selectable nor downloadable there. `WhisperCatalogHelpersTest`'s
+     * `a_device_offered_the_one_tier_is_offered_no_instrument` executes that sentence, deliberately
+     * beside `every_instrument_is_pickable_ungated_and_installable_by_download` — the two halves of
+     * the same fact, so a later reader finds the case that does NOT work next to the case that does
+     * instead of inferring it from a silence.
+     *
+     * It costs the 4.6 session something specific, which is why it is written down rather than
+     * merely true: the Fold6 carries the ladder's only measured anchor (`multi`, F = 2.3 s), so
+     * `multi` vs `small-q8` — the cheapest decisive experiment in the research — cannot be run on
+     * the device its own baseline was measured on while this rule stands.
+     *
+     * **Reversing it is not ours to do.** The one-tier rule is the owner's ruling of 2026-08-30,
+     * quoted at [ONE_TIER_ID]; widening it so a measurement rung slips through would be the same
+     * defect as quietly promoting one, one axis over. And it needs no new rule if he rules the
+     * other way: [alsoOfferedIds] is exactly this door — it admits any non-retired id, and
+     * `OnboardingLogic.chooserAlsoOfferedIds` already pushes the whole [pickable] ladder through it
+     * on the delivery-failure path (pinned in `OnboardingLogicTest`). The change would be at the
+     * two producers of that argument, and nothing in this function would move.
+     *
      * @param alsoOfferedIds the ids that join the one-card lineup ANYWAY. Two producers, and both
      *        exist because the narrowing has two ways of being wrong:
      *

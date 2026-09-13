@@ -418,9 +418,17 @@ class WhisperCatalogHelpersTest {
     }
 
     /**
-     * 4.6 — **every instrument is selectable and downloadable on every device.** *"They appear in
-     * the chooser on every device, with no RAM threshold hiding them. The owner must be able to
-     * run a heavy model on a modest phone: finding where it breaks is the point."*
+     * 4.6 — **every instrument is selectable and downloadable, with nothing about the DEVICE
+     * hiding it.** *"They appear in the chooser on every device, with no RAM threshold hiding them.
+     * The owner must be able to run a heavy model on a modest phone: finding where it breaks is the
+     * point."*
+     *
+     * **"On every device" has one stated exception and it is not this test's: the 4.3 one-tier
+     * narrowing.** A device offered [WhisperCatalog.ONE_TIER_ID] is offered no instrument at all —
+     * see [a_device_offered_the_one_tier_is_offered_no_instrument] directly below, which is the
+     * other half of this fact rather than a contradiction of it. What this test forbids is a rung
+     * hidden by a predicate over the DEVICE ITSELF (RAM, or a per-rung capability gate); what that
+     * one records is the owner's existing rule about capable hardware removing the whole menu.
      */
     @Test fun every_instrument_is_pickable_ungated_and_installable_by_download() {
         val pickableIds = WhisperCatalog.pickable.map { it.id }
@@ -442,6 +450,95 @@ class WhisperCatalogHelpersTest {
         val everyDeviceSees = WhisperCatalog.pickableFor(emptySet()).map { it.id }
         WhisperCatalog.instruments.forEach {
             assertTrue("instrument '${it.id}' is hidden from a device that failed the NPU gate", everyDeviceSees.contains(it.id))
+        }
+    }
+
+    /**
+     * 4.6 — **A DEVICE OFFERED THE ONE TIER IS OFFERED NO INSTRUMENT. Recorded, not fixed.**
+     *
+     * The 4.3 narrowing in [WhisperCatalog.pickableFor] collapses a capable device's lineup to
+     * [WhisperCatalog.ONE_TIER_ID] plus `alsoOfferedIds`, and `alsoOfferedIds` is the INSTALLED set
+     * on both chooser surfaces (`OnboardingModelScreen`, and `OnboardingFlowScreen` via
+     * `OnboardingLogic.chooserAlsoOfferedIds` before any delivery failure). So the six instrument
+     * rungs 4.6 adds are unselectable and undownloadable on the whole 8 Gen 3-class fleet — the
+     * Fold6 included, which is the device carrying the ladder's only measured anchor and therefore
+     * the one on which `multi` vs `small-q8` would be the most interpretable experiment in the
+     * research.
+     *
+     * **This test exists so that is a decision with a name rather than a hole.** It does not assert
+     * that the collapse is right — it asserts what it does, in the terms the 4.6 session cares
+     * about, so the next reader cannot mistake the branch's silence for the branch's intent. The
+     * one-tier rule is the owner's ruling of 2026-08-30 and widening it to admit a measurement rung
+     * is his call, not this branch's; what this branch owes him is the question asked out loud
+     * before the APK is built, and the answer already having somewhere to land. The last block
+     * below is that landing: the door is [WhisperCatalog.pickableFor]'s existing `alsoOfferedIds`
+     * and it needs no new rule — which is also why nothing here would have to change if he opens
+     * it, only the two producers of that argument.
+     */
+    @Test fun a_device_offered_the_one_tier_is_offered_no_instrument() {
+        val instrumentIds = WhisperCatalog.instruments.map { it.id }.toSet()
+        assertTrue("4.6 has no instruments, so this test is pinning nothing", instrumentIds.isNotEmpty())
+
+        // Both spellings of "this device was offered the one tier": turbo alone (a capable device
+        // whose `npu` pack the census cannot deliver) and both gated tiers (the Fold6, where both
+        // are live). The collapse is keyed on ONE_TIER_ID's presence, so both narrow.
+        listOf(setOf(WhisperCatalog.ONE_TIER_ID), setOf("npu", WhisperCatalog.ONE_TIER_ID)).forEach { offered ->
+            // A fresh capable install: one card, and it is not an instrument.
+            assertEquals(
+                "$offered: the 4.3 one-card lineup moved",
+                listOf(WhisperCatalog.ONE_TIER_ID),
+                WhisperCatalog.pickableFor(offered).map { it.id },
+            )
+            // And with things on disk — the Settings surface's `alsoOfferedIds` IS `installedIds`,
+            // so an install of `multi` or `npu` does not bring the ladder with it.
+            listOf(emptySet(), setOf("multi"), setOf("npu"), setOf("npu", "multi")).forEach { installed ->
+                val lineup = WhisperCatalog.pickableFor(offered, installed).map { it.id }
+                instrumentIds.forEach { id ->
+                    assertFalse(
+                        "$offered/$installed: instrument '$id' is offered on a one-tier device — " +
+                            "if that is now intended, this test is the thing to change, deliberately",
+                        lineup.contains(id),
+                    )
+                }
+                // The rendered surface agrees with the lineup rule, at every locale the 3.7 order
+                // distinguishes — so this is a statement about what the owner SEES, not only about
+                // a list. (Both chooser surfaces render `orderedForLanguageTagFor` over exactly
+                // these two arguments.)
+                listOf("en-US", "bn-BD", "zh-Hans-CN", "").forEach { tag ->
+                    val rendered = ModelTierCopy.orderedForLanguageTagFor(tag, offered, installed)
+                    instrumentIds.forEach { id ->
+                        assertFalse(
+                            "'$tag'/$offered/$installed: instrument '$id' has a card on a one-tier device",
+                            rendered.contains(id),
+                        )
+                    }
+                }
+            }
+        }
+
+        // THE DOOR, proved to work before anyone needs it. If the owner rules that the instruments
+        // should join the one-card lineup for this measurement session, it is the existing
+        // `alsoOfferedIds` and nothing else: every instrument comes back, in catalog order, with
+        // turbo still leading and no retired tier following it in. (The producer that would carry
+        // the ids is `OnboardingLogic.chooserAlsoOfferedIds`, which already does exactly this with
+        // `WhisperCatalog.pickable` on the delivery-failure path — pinned in `OnboardingLogicTest`.)
+        val capable = setOf("npu", WhisperCatalog.ONE_TIER_ID)
+        val ifOpened = WhisperCatalog.pickableFor(capable, instrumentIds).map { it.id }
+        instrumentIds.forEach { id ->
+            assertTrue("the alsoOfferedIds door does not admit instrument '$id'", ifOpened.contains(id))
+        }
+        assertEquals(
+            "the door admits the ladder but not in catalog order, or lets something else in",
+            WhisperCatalog.entries
+                .filter { it.id == WhisperCatalog.ONE_TIER_ID || it.id in instrumentIds }
+                .map { it.id },
+            ifOpened,
+        )
+        WhisperCatalog.entries.filter { it.retired }.forEach {
+            assertFalse(
+                "retired '${it.id}' came back through the door — `!retired` must still run first",
+                ifOpened.contains(it.id),
+            )
         }
     }
 
