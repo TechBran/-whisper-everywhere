@@ -1,6 +1,7 @@
 package com.whispereverywhere.transcription.stream
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -378,14 +379,26 @@ class StreamingPackClearanceTest {
             emptyList<Pair<String, ClearanceAnswerer>>(),
             outstanding,
         )
-        // THE FOURTH LITERAL: the five rows the owner's decision of 2026-09-13 covers, in the
-        // record's own order. Derived from the grant DATE rather than retyped as verdicts, so the
-        // assertion is about WHOSE decision each row is.
+        // THE FOURTH LITERAL: the rows the owner's decision of 2026-09-13 covers, in the record's
+        // own order. Derived from the grant DATE rather than retyped as verdicts, so the assertion
+        // is about WHOSE decision each row is.
+        //
+        // SIX, not five, and the sixth is the point. French was cleared on 2026-09-12 with the
+        // CONTROLLER named as its grantor — the one row in this record where production clearance
+        // for a paid app traced to a coding agent rather than to a person. The owner's handoff
+        // accepts the reviewed basis for all SEVEN packs, so the decision is his to record and
+        // 2026-09-13 is its date. Reading the grant correctly was evidence; it was never
+        // permission, and the gap between those two words is what this literal now protects.
+        //
+        // ENGLISH is deliberately NOT on this list and is not an exception to it: its grantor is
+        // the owner too, by the strongest act available — it has been in the built product since
+        // 4.4.0, so shipping it WAS the decision, and its date is that release rather than any
+        // document. A row here is one the owner cleared by SAYING so; en he cleared by doing it.
         assertEquals(
-            "the owner's decision of 2026-09-13 covers de, ru, id, ko and zh. en and fr were " +
-                "cleared the day before on the controller's reading of the qualification table, " +
-                "and a row moving between those two grants must be a deliberate diff",
-            listOf("de", "ru", "id", "ko", "zh"),
+            "the owner's decision of 2026-09-13 covers fr, de, ru, id, ko and zh. en is the " +
+                "owner's too, by shipping it since 4.4.0, which is why it carries that date " +
+                "instead — and NO row may name anyone but him, on any date",
+            listOf("fr", "de", "ru", "id", "ko", "zh"),
             PackClearanceRecord.RECORD
                 .filter { (it.verdict as? ClearanceVerdict.Cleared)?.grantedOn == OWNER_DECISION_DATE }
                 .map { it.language },
@@ -478,6 +491,55 @@ class StreamingPackClearanceTest {
      * confidence in his own research is not a number this record may carry, and a cleared row is
      * the one place a stray figure would read as one.
      */
+    /**
+     * **NO ROW MAY NAME A CODING AGENT AS ITS GRANTOR — on any date, for any reason.**
+     *
+     * This test exists because one did. Until 2026-09-13 French was cleared for PRODUCTION with
+     * `grantedBy` reading *"the controller brief of 2026-09-12"*: a coding agent recorded as the
+     * authority that let a paid app publish someone else's weights. Nothing about the evidence was
+     * wrong — the grant had been read twice and read correctly — but reading a licence is evidence
+     * and deciding to rely on it is permission, and only the person who ships the app and carries
+     * the consequence can supply the second one. The whole clearance mechanism exists to stop an
+     * approval being invented; an approval the mechanism invented ON ITS OWN BEHALF is the one
+     * failure it was blindest to.
+     *
+     * So the invariant is positive as well as negative: every cleared row must name the OWNER, and
+     * none may name the machinery. Both halves are needed — a row naming neither would otherwise
+     * pass a ban-list on its own.
+     *
+     * **The ban is deliberately blunt, and the rule it enforces is narrow: `grantedBy` names WHO
+     * GRANTED and nothing else.** Corroborating reads belong in `provenance`, where they are
+     * evidence. Korean tripped this on its first run for saying the FAQ was *"re-read
+     * independently by the controller"* — true, useful, and still the wrong field, because a
+     * reader of this record scanning for "who decided this" should find exactly one kind of
+     * answer there. English tripped it too, for carrying *"restated as cleared in the controller
+     * brief"* beside the owner's own act of shipping it. Neither was a lie; both were a category
+     * of sentence that does not belong in a grantor field.
+     */
+    @Test fun noRowNamesTheMachineryAsItsLicensor() {
+        val cleared = PackClearanceRecord.RECORD
+            .mapNotNull { r -> (r.verdict as? ClearanceVerdict.Cleared)?.let { r.language to it } }
+        assertEquals("every pack in the record is cleared as of 2026-09-13", 7, cleared.size)
+        for ((language, verdict) in cleared) {
+            val by = verdict.grantedBy.lowercase()
+            assertTrue(
+                "$language: grantedBy must name the OWNER — either '$OWNER_DECISION_MAKER' or " +
+                    "'the owner' (en's grantor is the owner too, by shipping it) — because a " +
+                    "clearance is a person's decision to carry a risk, and was '${verdict.grantedBy}'",
+                by.contains(OWNER_DECISION_MAKER.lowercase()) || by.contains("the owner"),
+            )
+            for (machine in listOf("the controller", "controller brief", "coding agent", "the agent")) {
+                assertFalse(
+                    "$language: grantedBy names '$machine', which cannot grant anything. This is " +
+                        "the exact defect French carried until 2026-09-13 — see this test's KDoc. " +
+                        "Move the decision to the owner and keep the reading as EVIDENCE, in " +
+                        "`because` or `provenance`, where it belongs",
+                    by.contains(machine),
+                )
+            }
+        }
+    }
+
     @Test fun noClearanceClaimsAnApprovalNobodyGave() {
         val forbidden = mapOf(
             "approv" to "an owner decision ACCEPTS a reviewed basis; it is not an approval, and " +

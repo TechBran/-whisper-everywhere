@@ -297,11 +297,13 @@ object PackClearanceRecord {
         language = "en",
         verdict = ClearanceVerdict.Cleared(
             grantedBy = "the owner, by shipping it — preview_en has been in the built product " +
-                "since 4.4.0 — and restated as cleared in the controller brief of 2026-09-12",
+                "since 4.4.0, and a release to paying customers is the strongest form this " +
+                "decision takes. No document was needed and none is cited: he did it",
             because = "apache-2.0 on the export, read in cardData.license and the " +
-                "license:apache-2.0 tag; a LibriSpeech (CC BY 4.0) corpus with no third-party " +
-                "agreement anywhere in the lineage",
-            grantedOn = "2026-09-12",
+                "license:apache-2.0 tag (re-read 2026-09-12 — see provenance, which is where the " +
+                "reading lives, because a reading is evidence and not a grant); a LibriSpeech " +
+                "(CC BY 4.0) corpus with no third-party agreement anywhere in the lineage",
+            grantedOn = "2026-09-11",
         ),
         licence = "apache-2.0",
         readAt = "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26",
@@ -321,18 +323,29 @@ object PackClearanceRecord {
     val FR = PackClearance(
         language = "fr",
         verdict = ClearanceVerdict.Cleared(
-            grantedBy = "the controller brief of 2026-09-12, on the qualification table's two " +
-                "independent reads of the grant",
-            because = "apache-2.0 read in the repo's own non-LFS front matter AND " +
-                "platform-surfaced; CommonVoice 12.0 (CC0) on a LibriSpeech (CC BY 4.0) " +
-                "pretrain; and GigaSpeech — the one encumbered corpus in this lineage's " +
-                "neighbourhood — is NOT in the exported checkpoint",
-            grantedOn = "2026-09-12",
+            grantedBy = "Brandon Slacum, decision owner, 2026-09-13 — his handoff accepts the " +
+                "reviewed basis for all SEVEN packs. Not a grant from shaojieli (never written " +
+                "to), not a counsel opinion (none sought). See provenance for why this row's " +
+                "grantor changed on that date while its evidence did not",
+            because = "the apache-2.0 grant read TWICE on 2026-09-12 and accepted by the owner on " +
+                "2026-09-13: the repo's own non-LFS front matter AND the platform's cardData; " +
+                "CommonVoice 12.0 (CC0) on a LibriSpeech (CC BY 4.0) pretrain; and GigaSpeech — " +
+                "the one encumbered corpus in this lineage's neighbourhood — is NOT in the " +
+                "exported checkpoint, which is an INFERENCE from the checkpoint/results " +
+                "correspondence and is accepted as such, the author never having been asked",
+            grantedOn = "2026-09-13",
         ),
         licence = "apache-2.0",
         readAt = "https://huggingface.co/shaojieli/sherpa-onnx-streaming-zipformer-fr-2023-04-14",
         readOn = "2026-09-12",
-        provenance = "read both ways, because either alone is a trap: the repo's 204-byte " +
+        provenance = "WHY THIS ROW'S GRANTOR CHANGED ON 2026-09-13 WHILE ITS EVIDENCE DID NOT: " +
+            "from 2026-09-12 this was the only pack whose production clearance named a coding " +
+            "agent as the authority that let a paid app publish someone else's weights. The " +
+            "reading below was correct then and is unchanged now — but reading a licence is " +
+            "evidence, and deciding to rely on it is permission, and only the person who ships " +
+            "the app and carries the consequence can supply the second. The owner's handoff " +
+            "covers all seven packs, so the decision is recorded as his. THE READING: " +
+            "read both ways, because either alone is a trap: the repo's 204-byte " +
             "non-LFS README front matter says license: apache-2.0 (fetched at the pinned commit " +
             "on 2026-09-12), and the platform surfaces it through cardData.license and a " +
             "license:apache-2.0 tag — while the API's TOP-LEVEL license key is absent, so a sweep " +
@@ -492,10 +505,11 @@ object PackClearanceRecord {
         language = "ko",
         verdict = ClearanceVerdict.Cleared(
             grantedBy = "Brandon Slacum, decision owner, 2026-09-13 — on AI-Hub's own published " +
-                "FAQ, read by him and re-read independently by the controller. Not a reply from " +
-                "NIA, who were never written to; not a licence negotiated with anybody; and not " +
-                "the two counsel questions this row used to carry, which were built on clauses " +
-                "that govern access to the data",
+                "FAQ, which he found and which was then independently re-read and quoted before " +
+                "this row was written (see provenance). Not a reply from NIA, who were never " +
+                "written to; not a licence negotiated with anybody; and not the two counsel " +
+                "questions this row used to carry, which were built on clauses that govern " +
+                "access to the data rather than terms on these weights",
             because = "apache-2.0 on the weights — the cleanest licence cell in the survey, read " +
                 "three ways — and AI-Hub's published FAQ states that secondary works such as AI " +
                 "models developed by using AI-Hub data FOR TRAINING may be freely used, or sold " +
