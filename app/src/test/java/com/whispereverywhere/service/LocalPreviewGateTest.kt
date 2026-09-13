@@ -448,12 +448,26 @@ class LocalPreviewGateTest {
     )
 
     @Test fun theSetOfMomentsThatChangeWhichPackIsResidentIsEXACTLYTheseAndNothingElse() {
-        // THE LIST, asserted as a list. A sixth gesture added to the enum fails HERE as well as
+        // THE LIST, asserted as a list. A tenth gesture added to the enum fails HERE as well as
         // in LocalPreviewWiringPinTest — so the author has to come and say what the new moment is
         // and where it is wired, which is the whole point of writing the set down. (The loudest
         // failure is earlier still: a new member makes `previewResidency`'s `when` non-exhaustive,
         // which does not compile.)
+        //
+        // **AND A PASSING LIST IS NOT THE SAME AS A COMPLETE ONE** (fix round 1, review r1's B4).
+        // The first version of this test asserted SIX names and was short by three: the switch,
+        // the batch job's end and the delete had no member, so a green test told a reader those
+        // moments could not exist — which is worse than the original omission, because it removes
+        // the prompt to look. What makes the list checkable rather than merely asserted is the
+        // DERIVATION beside the enum: `previewPackToWarm`'s three inputs, each direction, plus
+        // "the answer was never taken up" and "a refusal stopped applying" — and, under it, the
+        // moments deliberately left OUT with the reason for each (a session or batch job
+        // STARTING, the engine's own per-language verdict, a load failure, the on-device tier, the
+        // process being replaced). A reader who meets a new moment checks it against those axes;
+        // if it moves one of them, this list is wrong and not the reader.
         assertEquals(
+            "nine members, derived from the axes named in PreviewResidencyEvent's KDoc — where " +
+                "the deliberate exclusions are named too, with their reasons",
             listOf(
                 "SERVICE_START", "SELECTION_CHANGED", "SWITCH_CHANGED", "PACK_INSTALLED",
                 "PACK_DELETED", "SESSION_START", "SESSION_END", "BATCH_END", "MEMORY_TRIM",
@@ -945,10 +959,31 @@ class LocalPreviewGateTest {
         )
         assertTrue(
             "...and the row now names the members that retired them and tells the tester to walk " +
-                "both sequences, as FAILURES of this row rather than as notes",
+                "the sequences, as FAILURES of this row rather than as notes",
             row.contains("THOSE TWO EXCUSES ARE RETIRED IN 4.5.1 PASS 2") &&
                 row.contains("SESSION_END") && row.contains("SELECTION_CHANGED") &&
-                row.contains("both are this row failing if they miss"),
+                row.contains("each is this row failing if it misses"),
+        )
+        assertTrue(
+            "(fix round 1, review r1's B4) THE SHEET SAYS THE SET WAS SHORT, and by how much. " +
+                "This paragraph told a device tester the set was enumerated while three members " +
+                "were missing — the sheet failing in the same direction as the code, which is the " +
+                "shape the write-down existed to prevent. It names the three now",
+            row.contains("SHORT BY THREE") && row.contains("SWITCH_CHANGED") &&
+                row.contains("BATCH_END") && row.contains("PACK_DELETED"),
+        )
+        assertTrue(
+            "...and the two of the three a tester can SEE are walkable sequences on this row, in " +
+                "the same numbered list as the ones it already carried — the switch is ONE TAP on " +
+                "the screen the language rows are on, and the batch job is the other conjunct of " +
+                "the refusal",
+            row.contains("\"Show live words\" OFF and then ON") &&
+                row.contains("start a **batch file job**"),
+        )
+        assertTrue(
+            "...and the delete is on the row as a MEMORY observation, pointed at AF10, because " +
+                "the words are honest either way there and only the 169 MB moves",
+            row.contains("read it with AF10") && row.contains("**delete** the model"),
         )
         assertTrue(
             "the refusal itself is NOT retired — a load must still never land under a borrowed " +

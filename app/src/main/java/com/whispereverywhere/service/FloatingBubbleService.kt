@@ -324,7 +324,49 @@ internal fun previewPackToWarm(
  * which is a compile error, and `LocalPreviewWiringPinTest` then demands a site that names it.
  *
  * Membership is *"could the resident recognizer now differ from [previewPackToWarm]'s answer?"* —
- * which is why two members are not user gestures at all.
+ * which is why three members are not user gestures at all.
+ *
+ * ### THE AXES THE SET IS DERIVED FROM, so a reader can check it rather than trust it
+ *
+ * The first enumeration here was six members and it was still SHORT BY THREE (fix round 1, review
+ * r1's B1-B3), which is the failure the write-down was supposed to prevent one level up: a green
+ * test and a device sheet both certified an incomplete set as closed, and a reader who met one of
+ * the three missing gestures would have been told by a passing test that the moment could not
+ * exist. So the derivation is written down too, not just the answer.
+ *
+ * [previewPackToWarm] has exactly THREE inputs, and everything that can change *which pack should
+ * be resident* either moves one of them or changes whether the answer has been TAKEN UP. That is
+ * the whole axis list:
+ *
+ *  - `previewLanguage` moves, either direction → [SELECTION_CHANGED];
+ *  - `userEnabled` moves, either direction → [SWITCH_CHANGED];
+ *  - `installedPackLanguages` GROWS → [PACK_INSTALLED]; it SHRINKS → [PACK_DELETED];
+ *  - the answer was never taken up: the process gained an engine → [SERVICE_START]; a session is
+ *    starting → [SESSION_START];
+ *  - a refusal stops applying: `sessionActive` goes false → [SESSION_END]; `batchJobActive` goes
+ *    false → [BATCH_END] (the two conjuncts of `busy`, which is why they arrive as a pair);
+ *  - residency was lost under us: `onTrimMemory` freed the recognizer → [MEMORY_TRIM].
+ *
+ * ### AND THE MOMENTS DELIBERATELY OUTSIDE IT, each with the reason
+ *
+ * These are the ones a reader will think of, so they are answered here rather than left to look
+ * like oversights — an omission with a reason beside it is a decision, and an omission with
+ * nothing beside it is what B1-B3 were:
+ *
+ *  - **a session or a batch job STARTING.** It makes `busy` TRUE, which every arm but the two
+ *    establishing ones already refuses on. Only a falling edge can take an answer.
+ *  - **the previewer's own per-language verdict** (a failed canary, the three-strike disable).
+ *    Permanent for the process and per language, and `StreamingPreviewEngine.warm` early-returns
+ *    on it — there is nothing to re-ask, and a member would re-post a load the engine refuses.
+ *  - **a load FAILURE.** `onLoadFailure` reaches `StreamingPackManager.markCorrupt`, which is one
+ *    of [PACK_DELETED]'s two doors, so this is covered BY a member rather than excluded from the
+ *    set. Nothing was resident when it fired (the load is what threw), so the answer is a no-op
+ *    release.
+ *  - **the on-device TIER changing** (a model switch, a tier delete). [previewPackToWarm] has no
+ *    tier term at all — `PreviewUnreachable`'s KDoc is explicit that the previewer needs no
+ *    whisper model — so no tier change can move its answer.
+ *  - **the process being replaced** (service stop/start, an OS kill). That is [SERVICE_START]
+ *    arriving again, in a process where nothing is resident yet.
  */
 internal enum class PreviewResidencyEvent {
     /**

@@ -792,10 +792,24 @@ AF6. **Changing language in the app — REWRITTEN in 4.5.1, and it now expects t
     it; and re-picking a language whose pack is already installed warms it on the pick itself
     (`SELECTION_CHANGED`, which now acts in both directions). A memory trim that freed the recognizer is
     re-asked as well (`MEMORY_TRIM`), which is the same miss with no user action at all.
-    So walk two more sequences here, and **both are this row failing if they miss**: (a) start a
+    **The set was six members when that paragraph was written and it was SHORT BY THREE** (pass 2 fix
+    round 1): the live-words SWITCH had no member, a BATCH FILE JOB ending had none, and DELETING the
+    pack had none. So it is nine now — `SWITCH_CHANGED`, `BATCH_END`, `PACK_DELETED` — and the
+    derivation the list comes from is written beside the enum, with the moments deliberately excluded
+    named underneath it. Sequences (c) and (e) below are the two of those three a tester can see.
+    So walk these sequences here, and **each is this row failing if it misses**: (a) start a
     dictation, let an install complete during it, stop — and the NEXT session shows live words; (b) pick
     a language whose pack is installed, switch to Auto, switch back — and the NEXT session shows live
-    words. Bubble RUNNING for both, for the reason above.
+    words; (c) with the pack installed and a language picked, turn **"Show live words" OFF and then ON
+    again** — and the NEXT session shows live words (this is ONE TAP, and before pass 2 fix round 1 it
+    cost a session exactly like the install did); (d) start a **batch file job**, let the pack install
+    finish (or re-pick the language) while it runs, wait for the job to finish — and the NEXT session
+    shows live words. Bubble RUNNING for all of them, for the reason above.
+    And one that is about MEMORY rather than words, so read it with AF10: (e) with English picked, the
+    pack installed and a session already dictated (so the recognizer is resident), **delete** the model
+    from Settings — the app's memory should drop by roughly 169 MB on top of the 73 MB of files, because
+    the recognizer opened from those files is handed back too. Before pass 2 fix round 1 only the files
+    went and the 169 MB stayed until the app was backgrounded.
     `[ ] PASS  [ ] FAIL`
 AF7. **Auto is honest.** On Auto: nothing downloads, no card nags you, and the Settings rows say live
     words need a picked language. Your transcript still arrives per utterance exactly as before.

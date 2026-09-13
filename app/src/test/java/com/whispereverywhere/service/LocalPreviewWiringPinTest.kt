@@ -626,6 +626,15 @@ class LocalPreviewWiringPinTest {
      *    error, the loudest failure available;
      *  - a member that is given an arm but no site fails the per-member count below;
      *  - a warm or a release that does not come from a member's answer fails the call-site counts.
+     *
+     * **What none of those three layers can catch is a set that is SHORT**, which is what the
+     * first enumeration was by three members (fix round 1, review r1's B1-B3): a green pin then
+     * certifies the incomplete set and tells the next reader the missing moment cannot exist. The
+     * only answer to that is a derivation a reader can check — `previewPackToWarm`'s three inputs
+     * in both directions, plus "the answer was never taken up" and "a refusal stopped applying" —
+     * which is written beside the enum, together with the moments deliberately excluded and the
+     * reason for each. This pin holds the wiring; that KDoc is what holds the COMPLETENESS, and
+     * the two are cited from each other on purpose.
      */
     @Test
     fun theSetOfMomentsThatChangeWhichPackIsResidentIsWrittenDownAndEveryMemberIsWired() {
@@ -684,6 +693,27 @@ class LocalPreviewWiringPinTest {
         assertEquals(
             "THREE release sites: the trim, the destroy, and the one event-shaped re-ask",
             3, count(text, "streamingPreview?.release()"),
+        )
+        // THE COMPLETENESS HALF (fix round 1, review r1's B4). The wiring above cannot tell a
+        // complete set from a short one, so the derivation is required to be present and to
+        // account for every member by name, and the deliberate exclusions to be named with it. A
+        // member added without a line in the axis list fails here — which is the prompt to check
+        // whether the new moment is an axis nobody had written down.
+        val derivation = text.substring(
+            indexOfOrFail(text, " * ### THE AXES THE SET IS DERIVED FROM"),
+            indexOfOrFail(text, "internal enum class PreviewResidencyEvent {"),
+        )
+        events.forEach { event ->
+            assertTrue(
+                "$event is accounted for in the derivation, not just declared in the list",
+                derivation.contains("[$event]"),
+            )
+        }
+        assertTrue(
+            "...and the moments deliberately left OUT are named there with their reasons: an " +
+                "omission with a reason beside it is a decision, and one with nothing beside it " +
+                "is what B1-B3 were",
+            derivation.contains("### AND THE MOMENTS DELIBERATELY OUTSIDE IT"),
         )
     }
 
