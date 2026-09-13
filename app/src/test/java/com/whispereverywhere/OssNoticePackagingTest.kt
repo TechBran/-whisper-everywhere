@@ -246,7 +246,7 @@ class OssNoticePackagingTest {
      */
     @Test fun theChecklistRecordsTheBundleObservationAndTheGapThatRemains() {
         val checklist = File(repoRoot(), CLEARANCE_DOC).readText().replace("\r\n", "\n")
-        val notice = File(repoRoot(), BASE_MODULE_NOTICE).readBytes()
+        val notice = noticeInItsPackagedForm()
         val length = String.format(java.util.Locale.ROOT, "%,d", notice.size)
         val digest = sha256(notice)
 
@@ -316,6 +316,24 @@ class OssNoticePackagingTest {
         val expression = build.substringAfter(marker).substringBefore("\n\n")
         return Regex("\":([A-Za-z0-9_]+)\"").findAll(expression).map { ":" + it.groupValues[1] }.toList()
     }
+
+    /**
+     * The notice page in the form a bundle from this repository's release machine PACKAGES — CRLF,
+     * because the file is committed with LF and checked out through `core.autocrlf=true`, and the
+     * asset merge copies whatever the working tree holds.
+     *
+     * Canonicalised rather than read raw, and that is the difference between a pin and a trap. A
+     * checkout without `autocrlf` (CI, a Linux clone) holds the same 559 lines with 559 fewer
+     * bytes and a different digest, so deriving straight off disk would redden this test on a
+     * machine where nothing is wrong — a portability failure, in the one test whose job is to keep
+     * a legal record honest. Normalising to LF and back makes the derivation say the same thing
+     * everywhere while still naming the bytes that actually ship.
+     */
+    private fun noticeInItsPackagedForm(): ByteArray =
+        File(repoRoot(), BASE_MODULE_NOTICE).readText()
+            .replace("\r\n", "\n")
+            .replace("\n", "\r\n")
+            .toByteArray(Charsets.UTF_8)
 
     private fun sha256(bytes: ByteArray): String =
         java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
