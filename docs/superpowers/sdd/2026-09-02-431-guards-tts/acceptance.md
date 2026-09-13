@@ -777,12 +777,25 @@ AF6. **Changing language in the app — REWRITTEN in 4.5.1, and it now expects t
     row failing.
     FAIL: the first session after the install shows no words and the second does. That is 4.5.0's
     behaviour surviving.
-    NOTE two shapes that are **not** this row failing, both deliberate: an install that completes
+    ~~NOTE two shapes that are **not** this row failing, both deliberate: an install that completes
     **while a dictation or a batch file job is running** is skipped rather than deferred (a second
     802-860 ms / 169 MB load must not land under the recognizer the live session has borrowed), so that
     one session still misses and the strip stays silent until the warm lands; and re-picking a language
     whose pack was ALREADY installed earlier in the same app run is not an install at all, so it warms
-    at the next session start as before. Both are noted for the controller in `col-t1-impl.md`.
+    at the next session start as before. Both are noted for the controller in `col-t1-impl.md`.~~
+    **THOSE TWO EXCUSES ARE RETIRED IN 4.5.1 PASS 2**, and the note is kept struck through for AF2's
+    reason one level down: a tester who read it would accept a miss this build no longer has. The set of
+    moments that change which pack should be resident is enumerated now (`PreviewResidencyEvent`), and
+    both shapes the note excused are members of it. The mid-session refusal itself STANDS — a second
+    802-860 ms / 169 MB load must not land under a borrowed recognizer — but the question is re-asked
+    the moment that session ends (`SESSION_END`), so the FOLLOWING session arms instead of the one after
+    it; and re-picking a language whose pack is already installed warms it on the pick itself
+    (`SELECTION_CHANGED`, which now acts in both directions). A memory trim that freed the recognizer is
+    re-asked as well (`MEMORY_TRIM`), which is the same miss with no user action at all.
+    So walk two more sequences here, and **both are this row failing if they miss**: (a) start a
+    dictation, let an install complete during it, stop — and the NEXT session shows live words; (b) pick
+    a language whose pack is installed, switch to Auto, switch back — and the NEXT session shows live
+    words. Bubble RUNNING for both, for the reason above.
     `[ ] PASS  [ ] FAIL`
 AF7. **Auto is honest.** On Auto: nothing downloads, no card nags you, and the Settings rows say live
     words need a picked language. Your transcript still arrives per utterance exactly as before.

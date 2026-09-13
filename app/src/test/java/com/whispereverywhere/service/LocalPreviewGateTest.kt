@@ -766,11 +766,25 @@ class LocalPreviewGateTest {
             row.contains("That's a friction point for users."),
         )
         assertTrue(
-            "the two deliberate misses are noted on the row, so neither is reported as this row " +
-                "failing: an install that lands during a session or a batch job, and a re-pick of " +
-                "a pack that was already installed",
-            row.contains("while a dictation or a batch file job is running") &&
+            "(4.5.1 pass 2) the two deliberate misses the row USED to excuse — an install landing " +
+                "during a session, and a re-pick of an already-installed pack — are struck " +
+                "through rather than deleted, for AF2's reason one level down: a tester who read " +
+                "them would accept a miss this build no longer has",
+            row.contains("~~NOTE two shapes that are **not** this row failing") &&
+                row.contains("while a dictation or a batch file job is running") &&
                 row.contains("ALREADY installed"),
+        )
+        assertTrue(
+            "...and the row now names the members that retired them and tells the tester to walk " +
+                "both sequences, as FAILURES of this row rather than as notes",
+            row.contains("THOSE TWO EXCUSES ARE RETIRED IN 4.5.1 PASS 2") &&
+                row.contains("SESSION_END") && row.contains("SELECTION_CHANGED") &&
+                row.contains("both are this row failing if they miss"),
+        )
+        assertTrue(
+            "the refusal itself is NOT retired — a load must still never land under a borrowed " +
+                "recognizer, and a row that said otherwise would be asking for the opposite bug",
+            row.contains("The mid-session refusal itself STANDS"),
         )
         assertTrue(
             "(fix round 1, review r1's B1) ...and the row states the CONDITION on the receipt it " +
