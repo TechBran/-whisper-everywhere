@@ -326,7 +326,12 @@ class StreamingPackClearanceTest {
                 "de" to ClearanceAnswerer.UPSTREAM_AUTHOR,
                 "ru" to ClearanceAnswerer.OWNER,
                 "id" to ClearanceAnswerer.COUNSEL,
-                "ko" to ClearanceAnswerer.COUNSEL,
+                // Corrected 2026-09-13: `ko` was COUNSEL on two questions built out of the AI-Hub
+                // 데이터 이용정책, whose clauses govern ACCESS to the data — which was never
+                // sought. What is left is AI-Hub's published FAQ grant, its attribution condition
+                // (paid on the licences screen, not outstanding), and one scope residual the
+                // publisher does not address: an owner risk call.
+                "ko" to ClearanceAnswerer.OWNER,
                 // Corrected 2026-09-13: `zh` was COUNSEL on the strength of a WenetSpeech-L
                 // corpus term that is not established for these bytes. With the corpus recorded
                 // as undisclosed, the row has the same shape as Russian's and the same answerer —
@@ -460,6 +465,85 @@ class StreamingPackClearanceTest {
                     record.corpora.none { it.contains(evaluationOnly, ignoreCase = true) },
                 )
             }
+        }
+    }
+
+    /**
+     * **CORRECTED 2026-09-13 — Korean's position is AI-Hub's published FAQ grant and its
+     * attribution condition, not the data-access policy.**
+     *
+     * What this record used to stand on: the AI-Hub **데이터 이용정책**, read clause by clause —
+     * *"※ 내국인만 데이터 신청이 가능합니다"* (only nationals may APPLY for data), a separate
+     * agreement for a party outside Korea, a separate agreement for EXPORT, use *"only for training
+     * AI learning models"*, no transfer and no sale. From those it concluded two counsel questions
+     * and *"we carry that risk"*.
+     *
+     * **Every one of those clauses governs ACCESS TO THE DATA.** We never applied for KsponSpeech,
+     * never received it, never held it and do not ship it. The clause that governs *us* is the one
+     * about what may be done with a model someone else trained, and AI-Hub publishes it in its FAQ:
+     * secondary works such as AI models developed by using AI-Hub data for training **may be freely
+     * used, sold or distributed** for commercial and non-commercial purposes — **with the dataset's
+     * official name and AI-Hub (aihub.or.kr) cited as the source** — while what is prohibited is
+     * **providing or distributing the ORIGINAL DATA** to third parties.
+     *
+     * So the grant is a TRADE, and the attribution is the price rather than a nice-to-have: the
+     * licences page is not a 0.1 d courtesy on this row, it is the condition. The last assertion
+     * holds the page to naming the dataset *and* the source the FAQ asks for, because a credit that
+     * names NIA but not AI-Hub pays half of it.
+     *
+     * **And the residual is recorded as a residual.** The FAQ does not address overseas parties
+     * either way — it neither extends the secondary-works grant to them nor withholds it. That is
+     * ACCEPTED, not resolved, and the record has to say which of the two it is; a reader who cannot
+     * tell an accepted uncertainty from a closed question has a record that is worse than none.
+     */
+    @Test fun theKoreanRowRestsOnTheFaqGrantAndItsAttributionCondition() {
+        val ko = PackClearanceRecord.forLanguage("ko")
+        assertNotNull("the Korean row is gone from the record", ko)
+        val corpora = ko!!.corpora.joinToString(" ")
+        for (cited in listOf("KsponSpeech", "aihub.or.kr", "aihubnews/faq")) {
+            assertTrue(
+                "the Korean corpus lines must cite '$cited' — the dataset by its official name, " +
+                    "AI-Hub as the source, and the FAQ at a URL a reader can re-read. A grant " +
+                    "quoted from nowhere is a grant nobody can check",
+                corpora.contains(cited),
+            )
+        }
+        assertTrue(
+            "the Korean record must state the FAQ's grant in the terms the FAQ states it: " +
+                "secondary works developed by TRAINING on AI-Hub data may be freely used, SOLD or " +
+                "distributed, commercially or not",
+            corpora.contains("sold", ignoreCase = true) && corpora.contains("commercial"),
+        )
+        assertTrue(
+            "the Korean record must state what the FAQ actually prohibits — redistributing the " +
+                "ORIGINAL DATA — and that this app never possesses or ships it. Without that " +
+                "sentence the grant reads as broader than it is",
+            corpora.contains("ORIGINAL DATA") && corpora.contains("never possess"),
+        )
+        assertTrue(
+            "the 이용정책 clauses must be labelled as what they are: rules about ACCESS TO THE " +
+                "DATA, which we never sought. Left standing as terms on these weights they are " +
+                "the reason this row was sent to counsel",
+            corpora.contains("ACCESS TO THE DATA"),
+        )
+        // The residual, and the word it is recorded under. ACCEPTED is not RESOLVED.
+        assertTrue(
+            "the overseas-scope residual must be recorded, and recorded as ACCEPTED rather than " +
+                "closed — the FAQ does not address parties outside Korea either way",
+            corpora.contains("overseas", ignoreCase = true) &&
+                corpora.contains("accept", ignoreCase = true),
+        )
+        // The attribution is the CONDITION, so the page that pays it is asserted here too — by the
+        // two names the FAQ asks for, not by one of them.
+        val page = repoFile("app/src/main/assets/oss_licenses.html").readText().replace("\r\n", "\n")
+        for (credit in listOf("KsponSpeech", "aihub.or.kr", "한국지능정보사회진흥원")) {
+            assertTrue(
+                "the licences page must name '$credit'. AI-Hub's FAQ grants commercial " +
+                    "distribution of a derived model ON CONDITION that the dataset's official " +
+                    "name and AI-Hub (aihub.or.kr) are cited as the source — so Korean ships " +
+                    "only if this credit ships with it",
+                page.contains(credit),
+            )
         }
     }
 
@@ -601,13 +685,13 @@ class StreamingPackClearanceTest {
      * grant was actually read — which is why Russian's entry names the tagged upstream rather than
      * the untagged mirror the bytes come from.
      *
-     * Korean's line carries one thing more, and it is the half of a counsel question that is
-     * answered by doing rather than by asking: the **NIA** acknowledgement. AI-Hub's terms of use
-     * require attribution to NIA *and* require it of derivative works; whether that obligation
-     * reaches this app through the weights is question (ii) of the Korean row, and the
-     * qualification table's instruction is to act on it regardless, at 0.1 d with no downside. The
-     * record's own `action` string says the acknowledgement is on the licences screen — this is
-     * what stops that from being a claim nobody checked.
+     * Korean's line carries one thing more, and since the correction of 2026-09-13 it is not a
+     * courtesy but **the price of the grant**: the KsponSpeech / AI-Hub / NIA acknowledgement.
+     * AI-Hub's published FAQ permits commercial distribution of a model trained on its data *on
+     * condition* that the dataset's official name and AI-Hub (aihub.or.kr) are cited as the source.
+     * The record's own `action` string says the acknowledgement is on the licences screen — this is
+     * what stops that from being a claim nobody checked, and
+     * [theKoreanRowRestsOnTheFaqGrantAndItsAttributionCondition] holds all three names.
      */
     @Test fun theLicencePageNamesTheWeightsOfEveryLanguageTheAppCanFetch() {
         val page = repoFile("app/src/main/assets/oss_licenses.html").readText().replace("\r\n", "\n")

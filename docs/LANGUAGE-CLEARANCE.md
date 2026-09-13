@@ -65,7 +65,7 @@ them is his to make on a technical basis.
 | `de` German | outstanding | the upstream author | one email confirming the licence he already declared |
 | `ru` Russian | outstanding | **you** | an undisclosed corpus: accept the risk, or refuse the row |
 | `id` Indonesian | outstanding | counsel | YODAS2, four questions |
-| `ko` Korean | outstanding | counsel | AI-Hub / NIA, two questions |
+| `ko` Korean | outstanding | **you** | AI-Hub's FAQ grants it **with attribution** (paid, on the licences screen) — **corrected 2026-09-13**; what is left is one scope residual the publisher does not address |
 | `zh` Chinese | outstanding | **you** | an undisclosed corpus — **corrected 2026-09-13**, see its section: accept the risk, or refuse the row |
 
 `zh` is the row the build brief calls `zh-en`: it is **selected** as Chinese and its language code is
@@ -304,26 +304,54 @@ FLEURS attribution the canary clips already carry.
 — Apache-2.0 in a plain (parseable) README front matter, in the README's own License section, and
 platform-surfaced in `cardData` and the tags. All three re-read on 2026-09-12.
 
-**Two questions for counsel** (qualification table C2):
+**CORRECTED 2026-09-13, and this section is the correction.** What it said before: **two questions
+for counsel** (qualification table C2) — whether the uploader could grant Apache-2.0 over weights
+whose corpus rights vest in **NIA** *"whose commercial exploitation is conditioned on a separate
+agreement"*, and whether the mandatory NIA attribution reaches this app through the weights. Both
+were built out of the AI-Hub **데이터 이용정책**: 「※ 내국인만 데이터 신청이 가능합니다」, a separate
+agreement for a party **outside Korea**, a separate agreement for **export**, use *"only for training
+AI learning models"*, no transfer and no sale.
 
-1. Could the uploader grant Apache-2.0 over weights whose corpus rights vest in **NIA**
-   (한국지능정보사회진흥원) and whose commercial exploitation is conditioned on a separate agreement?
-   Apache-2.0 §7 disclaims any warranty of title, **so we carry that risk.**
-2. Does the mandatory NIA attribution reach this app **through the weights**?
+**Every one of those clauses governs ACCESS TO THE DATA.** We never applied for KsponSpeech, never
+received it, never held it, and do not ship it — nothing in this app has ever been within a mile of
+that policy's subject matter. Reading terms written for a data applicant as terms on a third party's
+published weights is what made this a counsel row.
 
-**Where the evidence lives.** The README's own data table names *"KsponSpeech 1,000h (AIHub dataset
-123)"* and links `aihub.or.kr/aihubdata/data/view.do?dataSetSn=123` — both re-read at the pinned
-commit on 2026-09-12. The AI-Hub 데이터 이용정책 was read clause by clause by the qualification
-table: 「※ 내국인만 데이터 신청이 가능합니다」; a party **outside Korea** needs a separate agreement;
-**export** needs a separate agreement; use is *"only for training AI learning models"*; no transfer
-and no sale; and attribution to NIA is **mandatory and extends to derivative works**.
+**The clause that actually governs us is in AI-Hub's FAQ** (`aihub.or.kr/aihubnews/faq/list.do`), and
+it is a grant:
 
-**Already done, and not to be undone regardless of the answer:**
+> AI 허브 데이터를 학습에 활용하여 개발한 AI 모델, 서비스 및 연구 결과물 등 2차 저작물은
+> 영리·비영리 목적으로 자유롭게 활용하거나 판매·배포할 수 있습니다
 
-- the **NIA acknowledgement** is on the licences screen (`app/src/main/assets/oss_licenses.html`) —
-  the table costs it at 0.1 d with no downside, and question 2 is exactly what it pre-empts;
-- the Korean canary clip is **FLEURS** and deliberately **not** the k2-fsa mirror's `test_wavs`,
-  which are AI-Hub audio.
+— secondary works such as AI models developed by using AI-Hub data **for training** may be freely
+used, or **sold and distributed**, for commercial and non-commercial purposes. **With attribution:**
+
+> 이 경우 활용한 데이터셋의 정식 명칭과 AI 허브(aihub.or.kr)를 출처로 표기해 주시기 바랍니다
+
+— cite the dataset's **official name** and **AI 허브 (aihub.or.kr)** as the source. And what is
+prohibited is redistributing the data itself:
+
+> 원본 데이터 자체를 제3자에게 제공하거나 배포하는 행위는 허용되지 않습니다
+
+**So the attribution is the PRICE, not a nice-to-have.** The qualification table costed the credit at
+0.1 d *"with no downside"*, as insurance against a counsel answer. It is not insurance. It is the
+condition on which the grant is given, which means: **Korean ships only if its acknowledgement ships
+with it.** It is on the licences screen (`app/src/main/assets/oss_licenses.html`) naming KsponSpeech,
+AI-Hub (aihub.or.kr) and NIA (한국지능정보사회진흥원), and the suite fails the build if any of the
+three goes missing.
+
+**What is left is one residual, and it is your own risk call.** The FAQ does not address a party
+**outside Korea** either way — it neither extends the secondary-works grant to one nor withholds it.
+There is nothing further published to read, so this can only be accepted or refused, not researched.
+A Korean-language clarification request to AI-Hub is **optional extra evidence, not a condition**.
+
+**Where the rest of the evidence lives.** The README's own data table names *"KsponSpeech 1,000h
+(AIHub dataset 123)"* and links `aihub.or.kr/aihubdata/data/view.do?dataSetSn=123` — both re-read at
+the pinned commit on 2026-09-12. The licence cell itself is the **cleanest in the survey** and is not
+in question.
+
+**Already done, and not to be undone:** the Korean canary clip is **FLEURS** and deliberately **not**
+the k2-fsa mirror's `test_wavs`, which are AI-Hub audio.
 
 ## Chinese — `zh` (the bilingual Chinese-English pack)
 

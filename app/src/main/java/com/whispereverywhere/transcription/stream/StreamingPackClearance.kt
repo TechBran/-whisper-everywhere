@@ -103,15 +103,15 @@ enum class ClearanceAnswerer {
     /**
      * The owner's own risk call. Used where no third party is obliged to answer and no document
      * would settle it: `ru`, whose corpus is not named at all, so the risk can only be accepted or
-     * refused rather than sized — and, since the correction of 2026-09-13, `zh` for exactly the
-     * same reason.
+     * refused rather than sized — and, since the corrections of 2026-09-13, `zh` for exactly the
+     * same reason and `ko` for a scope residual its publisher does not address either way.
      */
     OWNER,
 
     /** The uploader of the weights. One email, asking them to confirm what they already declared. */
     UPSTREAM_AUTHOR,
 
-    /** A written legal opinion. Not a one-email row: `id` and `ko`. */
+    /** A written legal opinion. Not a one-email row: `id`. */
     COUNSEL,
 }
 
@@ -388,22 +388,40 @@ object PackClearanceRecord {
         pinnedCommit = "4e5a13cbe3e9cd4e3775447d86178ef51759096f",
     )
 
-    /** Korean — the cleanest licence cell and a corpus whose rights vest in a state agency. */
+    /**
+     * Korean — the cleanest licence cell in the survey, over a corpus whose rights vest in a state
+     * agency that has published what may be done with a model trained on it.
+     *
+     * **CORRECTED 2026-09-13.** This row used to stand on the AI-Hub 데이터 이용정책 — nationals
+     * only may apply, a separate agreement for a party outside Korea, a separate agreement for
+     * export — and concluded two counsel questions plus *"we carry that risk"*. **Every one of
+     * those clauses governs ACCESS TO THE DATA**, which this project never sought, never obtained
+     * and does not hold. The clause that governs a distributor of someone else's weights is in
+     * AI-Hub's published FAQ, and it is a grant with a price: commercial distribution of secondary
+     * works, on condition that the dataset's official name and AI-Hub are cited as the source. So
+     * the licences-page credit is not a 0.1 d courtesy on this row — **it is the condition, and
+     * Korean ships only if it ships.**
+     */
     val KO = PackClearance(
         language = "ko",
         verdict = ClearanceVerdict.Outstanding(
-            question = "Two (qualification table C2): (i) could the uploader grant Apache-2.0 " +
-                "over weights whose corpus rights vest in NIA and whose commercial exploitation " +
-                "is conditioned on a separate agreement — Apache-2.0 §7 disclaims any warranty " +
-                "of title, so WE carry that risk; and (ii) does the mandatory NIA attribution " +
-                "reach this app THROUGH the weights?",
-            action = "COUNSEL — two questions. (ii) is acted on regardless of the answer, and " +
-                "already is: the NIA / 한국지능정보사회진흥원 acknowledgement is on the licences " +
-                "screen (app/src/main/assets/oss_licenses.html), which the table costs at 0.1 d " +
-                "with no downside. Also recorded there, and not to be undone: the canary clip for " +
-                "this language is FLEURS and NOT the k2-fsa mirror's test_wavs, which are AI-Hub " +
-                "audio.",
-            answerer = ClearanceAnswerer.COUNSEL,
+            question = "One, and it is a residual rather than a question anybody is obliged to " +
+                "answer: AI-Hub's published FAQ grants commercial use, sale and distribution of " +
+                "secondary works such as AI models trained on AI-Hub data, with attribution, and " +
+                "prohibits redistributing the ORIGINAL DATA — which this app never possesses. " +
+                "What the page does not address, either way, is whether that grant reaches a " +
+                "party OUTSIDE Korea. There is nothing further to read; the residual can only be " +
+                "accepted or refused.",
+            action = "The OWNER's own risk call on that scope residual. CORRECTED 2026-09-13: the " +
+                "earlier framing — two counsel questions built on the 데이터 이용정책's " +
+                "nationals-only, overseas-agreement and export-agreement clauses — is WITHDRAWN, " +
+                "because those clauses govern access to the DATA and we never applied for it. " +
+                "The FAQ's attribution condition is NOT outstanding and is not optional: the " +
+                "KsponSpeech / AI-Hub (aihub.or.kr) / NIA credit is on the licences screen " +
+                "(app/src/main/assets/oss_licenses.html) and is what the grant is traded for. " +
+                "Also recorded there, and not to be undone: the canary clip for this language is " +
+                "FLEURS and NOT the k2-fsa mirror's test_wavs, which are AI-Hub audio.",
+            answerer = ClearanceAnswerer.OWNER,
         ),
         licence = "apache-2.0",
         readAt = "https://huggingface.co/kangkyu/icefall-asr-ko-streaming-zipformer-72m",
@@ -417,12 +435,29 @@ object PackClearanceRecord {
         corpora = listOf(
             "KsponSpeech ~1,000 h = AI-Hub dataset 123 (NIA / 한국지능정보사회진흥원). Named in " +
                 "the README's own data table and linked as aihub.or.kr dataSetSn=123 — both " +
-                "re-read at the pinned commit on 2026-09-12.",
-            "The AI-Hub 데이터 이용정책, read clause by clause by the qualification table: " +
-                "\"※ 내국인만 데이터 신청이 가능합니다\"; a party OUTSIDE Korea needs a separate " +
-                "agreement; EXPORT needs a separate agreement; use is \"only for training AI " +
-                "learning models\"; no transfer and no sale; and attribution to NIA is MANDATORY " +
-                "and extends to derivative works.",
+                "re-read at the pinned commit on 2026-09-12. That official name, and AI-Hub " +
+                "(aihub.or.kr) as its source, are the attribution the grant below is traded for, " +
+                "and they are on the licences screen.",
+            "THE GRANT WE ACTUALLY RELY ON — AI-Hub's published FAQ " +
+                "(https://aihub.or.kr/aihubnews/faq/list.do): secondary works such as AI models, " +
+                "services and research outputs developed by using AI-Hub data FOR TRAINING may be " +
+                "freely used, or sold and distributed, for commercial and non-commercial " +
+                "purposes — provided the dataset's official name and AI Hub (aihub.or.kr) are " +
+                "cited as the source. And what it prohibits is providing or distributing the " +
+                "ORIGINAL DATA itself to a third party: we never possess or ship KsponSpeech, " +
+                "only weights derived from it by somebody who did.",
+            "RESIDUAL — OVERSEAS SCOPE. The FAQ does not address a party outside Korea either " +
+                "way: it neither extends the secondary-works grant to one nor withholds it. " +
+                "Nothing further is published, so this can be accepted or refused but not " +
+                "researched, and whichever it is must be recorded as that rather than as closed. " +
+                "A Korean-language clarification request to AI-Hub is optional extra evidence, " +
+                "not a prerequisite.",
+            "Corrected 2026-09-13: this record previously stood on the AI-Hub 데이터 이용정책 — " +
+                "\"※ 내국인만 데이터 신청이 가능합니다\", a separate agreement for a party OUTSIDE " +
+                "Korea, a separate agreement for EXPORT, use \"only for training AI learning " +
+                "models\", no transfer and no sale. Those clauses govern ACCESS TO THE DATA, which " +
+                "this project never applied for, never received and does not hold. They are kept " +
+                "here as the access policy they are, and they are not terms on these weights.",
         ),
         pinnedCommit = "db24b58d22736349eaeb34cc181ad0f3debf9903",
     )

@@ -655,3 +655,44 @@ non-gating.
 TEST_MEETING numbers. Those are **evaluation** sets. A row with no disclosed training corpus is
 exactly where the temptation arises to list what a model was measured on as what it was trained on;
 `StreamingPackClearanceTest` now fails the build if any clearance row's `corpora` names one.
+
+### 10.2 Korean's position is AI-Hub's FAQ grant, not the data-access policy
+
+**Where the withdrawn framing is written:** the `ko` corpus cell of §1.1, the `ko` row of §2.2, and
+**C2** in §5.2 — all of which read the AI-Hub **데이터 이용정책** clause by clause and concluded two
+counsel questions, *"whose commercial exploitation is conditioned on a separate agreement"* and
+*"Apache-2.0 §7 disclaims warranty of title, so **we** carry that risk"*.
+
+**The reads themselves are correct. The inference is not.** 「※ 내국인만 데이터 신청이 가능합니다」,
+the overseas agreement and the export agreement all govern **who may apply for, receive and move the
+DATA**. This project never applied for KsponSpeech, never received it, does not hold it and does not
+ship it. Those clauses have no subject matter here. §9 already listed *"that the ko/id/ru corpus
+restrictions bind **the data** and not the weights"* under INFERRED, calling it *"the favourable
+reading, and the likely one — and exactly the counsel question"*. It is not a counsel question,
+because AI-Hub has published the answer.
+
+**The clause that governs a distributor of a model someone else trained** is in AI-Hub's FAQ
+(`aihub.or.kr/aihubnews/faq/list.do`), which this document never read:
+
+> AI 허브 데이터를 학습에 활용하여 개발한 AI 모델, 서비스 및 연구 결과물 등 2차 저작물은
+> 영리·비영리 목적으로 자유롭게 활용하거나 판매·배포할 수 있습니다
+>
+> 이 경우 활용한 데이터셋의 정식 명칭과 AI 허브(aihub.or.kr)를 출처로 표기해 주시기 바랍니다
+>
+> 원본 데이터 자체를 제3자에게 제공하거나 배포하는 행위는 허용되지 않습니다
+
+Secondary works such as AI models developed by **training** on AI-Hub data may be freely used, sold
+or distributed for commercial and non-commercial purposes; **with** the dataset's official name and
+AI 허브 (aihub.or.kr) cited as the source; and what is prohibited is redistributing the **original
+data** to a third party.
+
+**Effect on scope.** C2(i) dissolves — the exploitation of a *derived model* is granted, in writing,
+by the rights holder's own publication. C2(ii) is answered *yes and in our favour*: the attribution is
+real, it is a **condition**, and it is therefore **no longer a 0.1 d "no downside" insurance policy**.
+This document's own instruction to add the credit was right for the wrong reason. **Korean ships only
+if the KsponSpeech / AI-Hub (aihub.or.kr) / NIA credit ships with it**, and the suite fails the build
+if any of the three names goes missing from `oss_licenses.html`.
+
+**What remains, as a residual and not a question:** the FAQ does not address a party outside Korea
+either way. Nothing further is published, so it can be accepted or refused but not researched. A
+Korean-language clarification request to AI-Hub is **optional extra evidence, not a prerequisite**.
