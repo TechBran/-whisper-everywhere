@@ -356,6 +356,25 @@ internal enum class PreviewResidencyEvent {
     SESSION_START,
 
     /**
+     * A session ENDED (4.5.1 pass 2, ITEM 2) — so a load the refusals declined while it was in
+     * flight can be taken now.
+     *
+     * The refusals are right to decline: a second 802-860 ms / ~169 MB load must not land under
+     * the recognizer `PreviewTeeEngine` has borrowed. What was missing is that nothing re-asked
+     * when the session ended, and **the session wrap does not cover it**: that warm sits at session
+     * START and arms the session AFTER, because `warm()` is asynchronous and the gate reads
+     * `isWarmFor()` in the same breath. So an install landing mid-session cost that session *and*
+     * the next one, and session three was the first with live words — the owner's complaint again,
+     * one gesture over.
+     *
+     * The site is the single writer of `currentState`, and deliberately not `teardownRealtime()`:
+     * teardown runs BEFORE the state moves, so a re-ask there would be refused by its own
+     * `sessionActive` term. The moment the refusal stops applying IS this transition
+     * ([previewSessionEnded]).
+     */
+    SESSION_END,
+
+    /**
      * `onTrimMemory` freed the recognizer while the service was idle, and until 4.5.1 pass 2
      * nothing re-asked: the next tap found a cold previewer and that session showed no words —
      * ITEM 1's miss, reached without the user touching anything. `TRIM_MEMORY_UI_HIDDEN` is 20 and
@@ -434,9 +453,13 @@ internal fun previewResidency(
         ->
             if (packToWarm == null) PreviewResidency.Leave else PreviewResidency.Warm(packToWarm)
 
-        // The answer CHANGED under us, and a null means nothing should be resident for this
-        // selection any more.
+        // The answer CHANGED under us, or a change was REFUSED while a session held the
+        // recognizer — and either way a null means nothing should be resident for this selection
+        // any more. SESSION_END is in this group and not the one below precisely because of that
+        // refusal: a selection change skipped mid-session leaves a recognizer nobody wants, and
+        // this is the first moment it can be handed back.
         PreviewResidencyEvent.SELECTION_CHANGED,
+        PreviewResidencyEvent.SESSION_END,
         ->
             if (busy) PreviewResidency.Leave
             else if (packToWarm == null) PreviewResidency.Release
@@ -458,6 +481,33 @@ private fun warmUnlessAlreadyResident(
 ): PreviewResidency =
     if (packToWarm == null || packToWarm == residentWarmPack) PreviewResidency.Leave
     else PreviewResidency.Warm(packToWarm)
+
+/**
+ * **DID A SESSION JUST END?** (4.5.1 pass 2, ITEM 2.) [PreviewResidencyEvent.SESSION_END]'s
+ * trigger, pure and pinned over the whole BubbleState × BubbleState cross product.
+ *
+ * The first conjunct is **verbatim the `sessionActive` term every previewer refusal reads**, and
+ * that is the point: the moment a refusal stops applying is the transition out of the states it
+ * refuses in, so the re-ask cannot drift away from the rule it repairs. The second is IDLE or
+ * ERROR — both, because a session that dies at connect (no model installed, a fatal open) ends in
+ * ERROR and has left the recognizer just as free as a clean stop does.
+ *
+ * An entry added to BubbleState is answered here by construction — every state is either one of
+ * the two this asks about or a session state — and the test enumerates both halves so a state
+ * added later has to be named on one side or the other.
+ */
+internal fun previewSessionEnded(
+    from: FloatingBubbleService.BubbleState,
+    to: FloatingBubbleService.BubbleState,
+): Boolean =
+    (
+        from != FloatingBubbleService.BubbleState.IDLE &&
+            from != FloatingBubbleService.BubbleState.ERROR
+        ) &&
+        (
+            to == FloatingBubbleService.BubbleState.IDLE ||
+                to == FloatingBubbleService.BubbleState.ERROR
+            )
 
 /**
  * Should a pack that JUST FINISHED INSTALLING be warmed right now? (4.5.1 Task 1 — the
@@ -3609,9 +3659,15 @@ class FloatingBubbleService : Service(),
             PreviewResidency.Release -> {
                 android.util.Log.i(
                     "WE-DIAG",
-                    "stream-warm: $event — nothing to warm for this selection, " +
-                        "resident previewer released",
+                    "stream-warm: $event — nothing to warm for this selection, so nothing stays " +
+                        "resident for it",
                 )
+                // Unconditional, and deliberately NOT gated on what the engine says it is warm
+                // for: a recognizer can be held while `isWarmFor` answers no (a verdict, a
+                // half-freed state), and that is exactly the +169 MB 4.4.1 pass 3 ITEM 2 exists to
+                // hand back. A release of a null field, or of an already-released engine, is a
+                // no-op — which is why the line above says what is true in every case rather than
+                // claiming a release happened.
                 streamingPreview?.release()
             }
             PreviewResidency.Leave -> Unit
@@ -5271,7 +5327,22 @@ class FloatingBubbleService : Service(),
     }
 
     private fun updateBubbleState(newState: BubbleState) {
+        val previous = currentState
         currentState = newState
+
+        // (4.5.1 pass 2, ITEM 2) SESSION_END — THE ONE SITE A SESSION ENDS, because this is the
+        // one writer of the state the refusals read. An install (or a selection change) that
+        // landed while a session held the recognizer was declined and never re-asked, and the
+        // session wrap does not cover it: that warm sits at session START and arms the session
+        // AFTER, so the miss cost two sessions rather than one. Posted rather than run inline —
+        // this function is called from both threads, and every session-exit path runs
+        // `teardownRealtime()` in the same Main pass, so by the time this body reads the terms the
+        // tee has given the recognizer back.
+        if (previewSessionEnded(previous, newState)) {
+            serviceScope.launch(Dispatchers.Main) {
+                askPreviewResidency(event = PreviewResidencyEvent.SESSION_END)
+            }
+        }
 
         serviceScope.launch(Dispatchers.Main) {
             pulseAnimator?.cancel()

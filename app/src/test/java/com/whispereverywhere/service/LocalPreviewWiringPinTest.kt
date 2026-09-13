@@ -603,7 +603,10 @@ class LocalPreviewWiringPinTest {
      */
     @Test
     fun theSetOfMomentsThatChangeWhichPackIsResidentIsWrittenDownAndEveryMemberIsWired() {
-        val events = listOf("SERVICE_START", "SELECTION_CHANGED", "PACK_INSTALLED", "SESSION_START", "MEMORY_TRIM")
+        val events = listOf(
+            "SERVICE_START", "SELECTION_CHANGED", "PACK_INSTALLED", "SESSION_START", "SESSION_END",
+            "MEMORY_TRIM",
+        )
         assertEquals(
             "the set is declared exactly once",
             1, count(text, "internal enum class PreviewResidencyEvent {"),
@@ -701,6 +704,55 @@ class LocalPreviewWiringPinTest {
                 "warm, and a release of a null field is a no-op anyway",
             0, count(text, "if (streamingPreview == null) return@collect"),
         )
+    }
+
+    /**
+     * **ITEM 2 — an install that completes DURING a session must not cost the session AFTER it
+     * too.**
+     *
+     * The refusals correctly decline to warm while a session or a batch job is in flight, and
+     * nothing re-asked when it ended. The existing "session wrap" warm does NOT cover this: it
+     * sits at session START (`startRecording`, before `connect`) and its own KDoc says it *"arms
+     * NEXT session, not this one, because warm() is asynchronous and the gate reads isWarmFor()
+     * now"*. So an install landing mid-session costs that session AND the next one — session two
+     * posts the load and reads `isWarmFor` in the same breath — and session three is the first with
+     * live words.
+     *
+     * SESSION_END is the member that closes it, at the ONE site a session ends: the single writer
+     * of `currentState`. That is deliberately not `teardownRealtime()`, which runs BEFORE the state
+     * moves and would therefore be refused by its own `sessionActive` term — the moment the refusal
+     * stops applying IS this transition, which is why the two are paired here rather than argued.
+     */
+    @Test
+    fun anInstallThatLandedDuringASessionIsReAskedTheMomentThatSessionENDS() {
+        val write = indexOfOrFail(text, "    private fun updateBubbleState(newState: BubbleState) {\n")
+        val body = body("    private fun updateBubbleState(newState: BubbleState) {", "\n    }\n")
+        assertEquals(
+            "ONE writer of the state, so ONE site where a session can end",
+            1, count(text, "        currentState = newState\n"),
+        )
+        assertEquals(
+            "the PREVIOUS state is read before the write — an end is a transition, and the write " +
+                "destroys the half that says a session was running",
+            1, count(body, "        val previous = currentState\n"),
+        )
+        val previous = indexOfOrFail(body, "        val previous = currentState\n")
+        val assign = indexOfOrFail(body, "        currentState = newState\n")
+        val ask = indexOfOrFail(body, "event = PreviewResidencyEvent.SESSION_END")
+        assertTrue("the read comes first", previous < assign)
+        assertTrue("and the re-ask after the write, so the refusal no longer applies", assign < ask)
+        assertEquals(
+            "the transition itself is a pure predicate, asked once — never a conjunction inlined " +
+                "here, which is how the refusal and the re-ask would drift apart",
+            1, count(body, "if (previewSessionEnded(previous, newState))"),
+        )
+        assertEquals("declared once", 1, count(text, "internal fun previewSessionEnded(\n"))
+        assertTrue(
+            "and the re-ask is POSTED on Main: updateBubbleState is called from both threads, and " +
+                "the body it runs reads currentState",
+            body.indexOf("serviceScope.launch(Dispatchers.Main) {", ask - 200) in (assign + 1) until ask,
+        )
+        assertTrue("this is all inside updateBubbleState", write >= 0)
     }
 
     @Test

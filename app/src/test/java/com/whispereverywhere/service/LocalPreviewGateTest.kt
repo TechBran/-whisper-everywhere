@@ -454,8 +454,106 @@ class LocalPreviewGateTest {
         // failure is earlier still: a new member makes `previewResidency`'s `when` non-exhaustive,
         // which does not compile.)
         assertEquals(
-            listOf("SERVICE_START", "SELECTION_CHANGED", "PACK_INSTALLED", "SESSION_START", "MEMORY_TRIM"),
+            listOf(
+                "SERVICE_START", "SELECTION_CHANGED", "PACK_INSTALLED", "SESSION_START",
+                "SESSION_END", "MEMORY_TRIM",
+            ),
             PreviewResidencyEvent.entries.map { it.name },
+        )
+    }
+
+    @Test fun aSessionENDSOnEveryExitItHas_andOnNothingElse() {
+        // ITEM 2's trigger, over the whole cross product. The two lists are stated independently
+        // of the implementation and their union is asserted to be every state, so a BubbleState
+        // added later has to be named on one side or the other rather than inheriting an answer.
+        val sessionStates = listOf(
+            FloatingBubbleService.BubbleState.CONNECTING,
+            FloatingBubbleService.BubbleState.RECORDING,
+            FloatingBubbleService.BubbleState.FINALIZING,
+            FloatingBubbleService.BubbleState.PROCESSING,
+        )
+        val restStates = listOf(
+            FloatingBubbleService.BubbleState.IDLE,
+            FloatingBubbleService.BubbleState.ERROR,
+        )
+        assertEquals(
+            "every state is either one a session runs in or one it has ended in",
+            FloatingBubbleService.BubbleState.entries.toSet(),
+            (sessionStates + restStates).toSet(),
+        )
+        for (from in FloatingBubbleService.BubbleState.entries) {
+            for (to in FloatingBubbleService.BubbleState.entries) {
+                val expected = from in sessionStates && to in restStates
+                assertEquals("$from -> $to", expected, previewSessionEnded(from, to))
+            }
+        }
+        // The two shapes that matter, named: a clean stop, and a session that died at connect —
+        // both leave the recognizer free, which is why ERROR counts as an end and not as a state
+        // to keep refusing in.
+        assertTrue(
+            previewSessionEnded(
+                FloatingBubbleService.BubbleState.FINALIZING,
+                FloatingBubbleService.BubbleState.IDLE,
+            ),
+        )
+        assertTrue(
+            previewSessionEnded(
+                FloatingBubbleService.BubbleState.CONNECTING,
+                FloatingBubbleService.BubbleState.ERROR,
+            ),
+        )
+        assertFalse(
+            "and the error bubble being tapped away is not a session ending",
+            previewSessionEnded(
+                FloatingBubbleService.BubbleState.ERROR,
+                FloatingBubbleService.BubbleState.IDLE,
+            ),
+        )
+        assertFalse(
+            "nor is the state the service is created in",
+            previewSessionEnded(
+                FloatingBubbleService.BubbleState.IDLE,
+                FloatingBubbleService.BubbleState.IDLE,
+            ),
+        )
+    }
+
+    @Test fun anInstallThatLandsDuringASessionArmsTheFollowingSession_notTheOneAfterThat() {
+        // **ITEM 2, as the sequence.** The refusal is right — a 169 MB load must not land under
+        // the recognizer PreviewTeeEngine has BORROWED — and the repair is that the question is
+        // asked again the moment the session ends.
+        //
+        // Why the session wrap does NOT already cover it: that warm sits at session START and its
+        // own KDoc says it "arms NEXT session, not this one, because warm() is asynchronous and
+        // the gate reads isWarmFor() now". So without SESSION_END the sequence was: session one
+        // refuses, session two posts the load and reads isWarmFor in the same breath (no words),
+        // session three works. With it, the load is placed between the two sessions and session
+        // two arms.
+        val answer = previewPackToWarm("en", setOf("en"), userEnabled = true)
+        assertEquals(
+            "1. the install lands mid-session — refused, and rightly",
+            PreviewResidency.Leave,
+            residency(PreviewResidencyEvent.PACK_INSTALLED, pack = answer, session = true),
+        )
+        assertEquals(
+            "2. the session ends — and THIS is the re-ask that did not exist",
+            PreviewResidency.Warm(StreamingPackCatalog.EN),
+            residency(PreviewResidencyEvent.SESSION_END, pack = answer),
+        )
+        assertEquals(
+            "3. ...so by the time the next session asks, the pack is resident and the load is not " +
+                "posted a second time — which is what makes the NEXT session the one that arms",
+            PreviewResidency.Leave,
+            residency(
+                PreviewResidencyEvent.SESSION_END,
+                pack = answer,
+                resident = StreamingPackCatalog.EN,
+            ),
+        )
+        assertEquals(
+            "and a batch file job still running when the session ends is still a refusal",
+            PreviewResidency.Leave,
+            residency(PreviewResidencyEvent.SESSION_END, pack = answer, batch = true),
         )
     }
 
@@ -495,16 +593,18 @@ class LocalPreviewGateTest {
         }
     }
 
-    @Test fun aNullAnswerIsARELEASEForTheSELECTIONAndNothingToDoForEveryOtherMember() {
-        // 4.4.1 pass 3 ITEM 2's release, and WHY only one member owns it: the selection moving to
-        // Auto is the one event that leaves 169 MB loaded for a language that will not arm. A trim
-        // has just freed the recognizer itself, an install did not move the selection, and the two
-        // establishing moments have nothing resident to hand back — a release from any of them
-        // would be a second opinion about residency rather than a repair.
+    @Test fun aNullAnswerIsARELEASEForTheSELECTIONAndForTheSESSIONENDThatCouldNotTakeIt() {
+        // 4.4.1 pass 3 ITEM 2's release, and WHY exactly two members own it: the selection moving
+        // to Auto is the event that leaves 169 MB loaded for a language that will not arm, and a
+        // session end is the first moment such a change can be acted on if it was refused while
+        // the session held the recognizer. A trim has just freed the recognizer itself, an install
+        // did not move the selection, and the two establishing moments have nothing resident to
+        // hand back — a release from any of those would be a second opinion about residency rather
+        // than a repair.
         for (event in PreviewResidencyEvent.entries) {
-            val expected =
-                if (event == PreviewResidencyEvent.SELECTION_CHANGED) PreviewResidency.Release
-                else PreviewResidency.Leave
+            val releases = event == PreviewResidencyEvent.SELECTION_CHANGED ||
+                event == PreviewResidencyEvent.SESSION_END
+            val expected = if (releases) PreviewResidency.Release else PreviewResidency.Leave
             assertEquals("$event", expected, residency(event, pack = null))
             assertEquals(
                 "$event, with a recognizer resident",
