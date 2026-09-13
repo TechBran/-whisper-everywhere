@@ -1180,6 +1180,16 @@ class FloatingBubbleService : Service(),
             com.whispereverywhere.transcription.stream.PreviewWorkboard.work
                 .map { board -> board.values.associate { it.language to it.phase } }
                 .distinctUntilChanged()
+                // ...and `drop(1)` for the release collector's own reason, which is stronger here:
+                // the board is process-scoped and outlives this service, so a StateFlow replay at
+                // onCreate would warm from a record that landed before the service existed — work
+                // the boot prewarm above already does, for the same pack, through the same
+                // function. It does it after `delay(1500)`, deliberately, "to keep service
+                // startup/view inflation snappy"; warming from the replay here would pay the
+                // 802-860 ms load and its canary DURING that startup and call it an install event.
+                // The value already in place is the prewarm's; this collector is for what CHANGES
+                // while the service is up, which is the only case AF6 was ever about.
+                .drop(1)
                 .collect {
                     val selection = app.preferencesManager.getLanguageForApi()
                     val record = com.whispereverywhere.transcription.stream.PreviewWorkboard.of(selection)

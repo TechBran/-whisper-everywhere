@@ -320,6 +320,18 @@ class LocalPreviewWiringPinTest {
         val narrow = indexOfOrFail(text, "                .map { board -> board.values.associate { it.language to it.phase } }\n")
         val dedupe = indexOfOrFail(text, "                .distinctUntilChanged()\n")
         assertTrue("phases first", collector < narrow && narrow < dedupe)
+        // The REPLAY belongs to the boot prewarm, which does the same work for the same pack
+        // through the same function after a deliberate `delay(1500)`. The board is process-scoped
+        // and outlives this service, so without this a second service start would pay the
+        // 802-860 ms load during view inflation and call it an install event.
+        val replay = indexOfOrFail(text, "                .drop(1)\n")
+        assertTrue("and the value already in place is dropped, after the de-duplication", replay > dedupe)
+        assertEquals(
+            "THREE drops in the service now — the selection release, the model switch, and this " +
+                "one: every collector whose trigger is a CHANGE rather than a state, because the " +
+                "state that was already there is the boot prewarm's",
+            3, count(text, ".drop(1)"),
+        )
         // THE SERVICE DECIDES NOTHING: one call to the pure gate, and the warm is its answer.
         val decision = indexOfOrFail(text, "                    val pack = warmOnPackInstalled(\n")
         assertEquals("the decision is declared once, beside its two twins", 1, count(text, "internal fun warmOnPackInstalled(\n"))
