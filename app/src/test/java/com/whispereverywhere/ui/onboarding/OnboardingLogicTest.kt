@@ -2,6 +2,7 @@ package com.whispereverywhere.ui.onboarding
 
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.model.ModelTierCopy
+import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
@@ -354,8 +355,16 @@ class OnboardingLogicTest {
                     installedIds = emptySet(), oneTierDeliveryFailed = true,
                 )
                 val lineup = ModelTierCopy.orderedForLanguageTagFor(tag, gateSet, alsoOffered)
-                assertTrue("pro pickable ($gateSet, $tag)", "pro" in lineup)
+                // 4.6: the escape restores the whole LADDER, not "the CPU tiers" as a pair.
+                // `pro` is retired now, so naming it here would assert a card that no longer
+                // exists; the claim that matters is unchanged and stronger stated structurally —
+                // every rung `pickable` holds is back in the lineup, so the mandatory step is
+                // completable whatever the gate answered.
                 assertTrue("multi pickable ($gateSet, $tag)", "multi" in lineup)
+                WhisperCatalog.pickable.forEach {
+                    assertTrue("${it.id} pickable after the escape ($gateSet, $tag)", it.id in lineup)
+                }
+                assertFalse("a retired tier came back through the escape", "pro" in lineup)
                 // The escape does not cost the user the tier they came for: turbo is still there
                 // where it was offered, still at the head, so Retry-by-re-picking stays possible.
                 if ("npu-turbo" in gateSet) {
@@ -393,7 +402,8 @@ class OnboardingLogicTest {
             OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), oneTierDeliveryFailed = false),
         )
         assertTrue(
-            OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), true).containsAll(setOf("multi", "pro")),
+            OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), true)
+                .containsAll(setOf("multi") + WhisperCatalog.pickable.map { it.id }),
         )
     }
 
@@ -491,7 +501,10 @@ class OnboardingLogicTest {
             setOf("npu", "npu-turbo"),
             OnboardingLogic.chooserAlsoOfferedIds(emptySet(), realLatch),
         )
-        assertTrue("an undeliverable answer restores the CPU tiers", restored.containsAll(listOf("pro", "multi")))
+        assertTrue(
+            "an undeliverable answer restores the CPU ladder",
+            restored.containsAll(WhisperCatalog.pickable.map { it.id }),
+        )
         assertEquals("with turbo still at the head", "npu-turbo", restored.first())
     }
 
@@ -504,15 +517,27 @@ class OnboardingLogicTest {
         // true, and Download wrote prefs.selectedModelId = pro|multi ON A CAPABLE DEVICE with no
         // card on screen for it — the exact outcome the ruling forbids, reached by a user who
         // did nothing wrong.
+        // 4.6: the CPU subject is `medium-q5` where it used to be `pro` — `pro` is retired, so a
+        // pick could no longer be made on its card at all. The race is unchanged and the ladder
+        // makes its WINDOW WIDER: a capable device renders the whole seven-rung lineup for that
+        // async window before narrowing to [npu-turbo], so there are six more cards a tap inside
+        // the window can land on than there were.
         assertNull(
-            "THE RACE: a pro pick made before the gate answered must not survive the narrowing",
-            OnboardingLogic.revalidatePick("pro", listOf("npu-turbo")),
+            "THE RACE: a CPU pick made before the gate answered must not survive the narrowing",
+            OnboardingLogic.revalidatePick("medium-q5", listOf("npu-turbo")),
         )
         assertNull(OnboardingLogic.revalidatePick("multi", listOf("npu-turbo")))
+        // ...over every rung, because every one of them is on screen inside that window.
+        WhisperCatalog.pickable.forEach {
+            assertNull(
+                "a '${it.id}' pick must not survive the narrowing either",
+                OnboardingLogic.revalidatePick(it.id, listOf("npu-turbo")),
+            )
+        }
         // A pick whose card is still there is untouched — the guard must not eat live picks.
         assertEquals("npu-turbo", OnboardingLogic.revalidatePick("npu-turbo", listOf("npu-turbo")))
-        assertEquals("pro", OnboardingLogic.revalidatePick("pro", listOf("pro", "multi")))
-        assertEquals("multi", OnboardingLogic.revalidatePick("multi", listOf("multi", "pro")))
+        assertEquals("medium-q5", OnboardingLogic.revalidatePick("medium-q5", listOf("medium-q5", "multi")))
+        assertEquals("multi", OnboardingLogic.revalidatePick("multi", listOf("multi", "medium-q5")))
         // Nothing picked stays nothing; the initial empty lineup (before either producer answers)
         // drops nothing that was never there.
         assertNull(OnboardingLogic.revalidatePick(null, listOf("npu-turbo")))
@@ -521,14 +546,25 @@ class OnboardingLogicTest {
         // never done, and Download simply returns to disabled — a fresh capable install's state.
         assertNull(
             "the guard must not silently re-point the pick at the surviving card",
-            OnboardingLogic.revalidatePick("pro", listOf("npu-turbo")),
+            OnboardingLogic.revalidatePick("medium-q5", listOf("npu-turbo")),
         )
-        // The suspended lineup keeps a pro pick alive, because its card is back on screen.
+        // The suspended lineup keeps a CPU pick alive, because its card is back on screen — and
+        // that now holds for every rung of the ladder, instruments included.
         val restored = ModelTierCopy.orderedForLanguageTagFor(
             "en-US", setOf("npu", "npu-turbo"),
             OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true),
         )
-        assertEquals("pro", OnboardingLogic.revalidatePick("pro", restored))
+        WhisperCatalog.pickable.forEach {
+            assertEquals(
+                "a '${it.id}' pick survives the suspension, because its card is back",
+                it.id,
+                OnboardingLogic.revalidatePick(it.id, restored),
+            )
+        }
+        assertNull(
+            "but a RETIRED tier's pick does not come back through the suspension",
+            OnboardingLogic.revalidatePick("pro", restored),
+        )
     }
 
     // ------------------------------- 4.3 fix round: the recovery keeps the screen that explains

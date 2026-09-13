@@ -277,6 +277,26 @@ object WhisperCatalog {
             sha256 = SHA256_PRO,
             scope = ModelScope.ENGLISH,
             minRamBytes = 0L,
+            // 4.6 — RETIRED, and with it the last English-only rung the app offered. Owner ruling
+            // 2026-09-13: *"we should really only be showing only multi language models, period.
+            // We shouldn't show English only at all."* `eco` and `extreme` were already retired;
+            // this completes it, and `ModelScope.ENGLISH` now describes only rows nobody is
+            // offered.
+            //
+            // **`retired` and NOT `unsupported`, which is the whole care in this change.** A
+            // retired tier is hidden from the chooser and otherwise left completely alone:
+            // [ModelMigration.decide] gates on `unsupported`, so its installed users are *"not
+            // prompted, not migrated, and never asked to re-download"*. Someone dictating happily
+            // on small.en must not be told to fetch 190 MB they never asked for — and the
+            // replacement is the same 190 MB of whisper-small weights with a multilingual vocab
+            // head, so the migration card's implied promise ("this is better") would not even be
+            // true for an English-only user. They keep the tier, it keeps working, and
+            // `isCpuFallbackEligible` still admits it as an 80-bin donor.
+            //
+            // It is also why `sessionLanguageFor`'s ENGLISH-scope Auto pin STAYS
+            // (`FloatingBubbleService.kt`): retiring hides a tier, it does not uninstall it, so
+            // users on `pro` and `eco` persist and that pin is still correct for them.
+            retired = true,
         ),
         WhisperModel(
             id = "extreme",
@@ -697,15 +717,30 @@ object WhisperCatalog {
             "url is provenance, not a source)"
 
     /**
-     * Default tier on first run. **pro (small.en) since 2026-08-20 (3.7 Workstream H):** eco and
-     * base are retired for accuracy, leaving pro as the English flagship and multi as the
-     * international tier. The chooser offers [pickable], steers a fresh install toward one of them
-     * by locale ([ModelTierCopy.steerIdForLanguageTag]), and the user picks explicitly; this
-     * constant is the fallback for every path with no pick on record — the auto-setup re-entry in
+     * Default tier on first run. **`multi` (small q5_1) since 4.6**, was `pro` (small.en) from 3.7
+     * Workstream H.
+     *
+     * The chooser offers [pickable], steers a fresh install by locale
+     * ([ModelTierCopy.steerIdForLanguageTag]), and the user picks explicitly; this constant is the
+     * fallback for every path with no pick on record — the auto-setup re-entry in
      * OnboardingSetupViewModel, the download-phase re-resolve in OnboardingFlowScreen, and
-     * ModelMigration's ENGLISH target.
+     * [ModelMigration]'s ENGLISH target.
+     *
+     * **It moved because `pro` is retired** (owner ruling 2026-09-13 — multilingual rungs only),
+     * and a retired default is an unshippable state: it is unreachable from the picker, so a user
+     * who lands on it by fallback cannot see the card for the tier they are on.
+     *
+     * **It moved TO `multi` specifically, and `multi` is the only rung it could have moved to.**
+     * The ladder that 4.6 adds is six [WhisperModel.instrument]s — offered so they can be measured
+     * — and a default has to be a rung the app is prepared to stand behind. `multi` is the one
+     * that clears the app's own eligibility rule on evidence: F = 2.3 s, duty 0.42, measured on
+     * the Fold6 by this repo's audio-ctx bench of 2026-08-20, against the rule's demand of
+     * F <= 5.3 s. Every other rung on the ladder has a derived number or none at all. Defaulting
+     * to one of those would hand the fleet a finalizer nobody has timed — and the streaming
+     * previewer would hide it, because words appear on the strip 0.4 s behind the voice whatever
+     * the finalizer is doing.
      */
-    const val DEFAULT_MODEL_ID = "pro"
+    const val DEFAULT_MODEL_ID = "multi"
 
     fun byId(id: String?): WhisperModel? = entries.firstOrNull { it.id == id }
 

@@ -1,6 +1,8 @@
 package com.whispereverywhere.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -22,12 +24,32 @@ class ModelMigrationTest {
         // 3.7 Workstream H: eco and base are retired (hidden from the chooser) but still work.
         // Raising the migration card for them would ask a user with a working 60 MB model to
         // download 190 MB they never asked for — and the card's own copy ("much faster") would
-        // be false, since pro is slower than eco. This is the test that forces decide() to gate
-        // on `unsupported` rather than `retired`, in the same task that retires them.
+        // be false, since the 190 MB English tier is slower than the 60 MB one. This is the test
+        // that forces decide() to gate on `unsupported` rather than `retired`.
         assertEquals(ModelMigration.Action.None, decide("eco"))
         assertEquals(ModelMigration.Action.None, decide("base"))
         assertEquals(ModelMigration.Action.None, decide("eco", online = false))
         assertEquals(ModelMigration.Action.None, decide("base", targetInstalled = true))
+
+        // **4.6 — `pro` JOINS THEM, AND IT IS THE MEMBER THAT MATTERS.** The owner's ruling of
+        // 2026-09-13 retires the last English-only rung, and `pro` is the tier the largest number
+        // of English users are on. `retired` and NOT `unsupported` is the whole care in that
+        // change: every one of those users must fall through to None here, or a release that was
+        // about showing the owner more models would open by asking the installed base to
+        // re-download 190 MB nobody requested — for a model whose only difference from theirs is
+        // a multilingual vocab head, which makes the card's implied "this is better" false as
+        // well as unwanted.
+        listOf(true, false).forEach { online ->
+            listOf(true, false).forEach { targetInstalled ->
+                listOf(true, false).forEach { selectedInstalled ->
+                    assertEquals(
+                        "pro/online=$online/target=$targetInstalled/installed=$selectedInstalled",
+                        ModelMigration.Action.None,
+                        decide("pro", selectedInstalled, targetInstalled, online),
+                    )
+                }
+            }
+        }
     }
 
     @Test fun no_selection_needs_no_migration() {
@@ -92,9 +114,13 @@ class ModelMigrationTest {
     }
 
     @Test fun swap_happens_offline_too_once_the_target_is_installed() {
-        // No network needed to swap a file that is already downloaded.
+        // No network needed to swap a file that is already downloaded. (4.6: the target is `multi`,
+        // not `pro` — `pro` is retired, so the ENGLISH arm of targetIdFor resolves through
+        // DEFAULT_MODEL_ID to the multilingual rung. Safe in this direction and only this one:
+        // `multi` transcribes English perfectly, being the same whisper-small weights with a
+        // multilingual vocab head; the reverse is the MF3 bug.)
         assertEquals(
-            ModelMigration.Action.SwapAndDelete("extreme", "pro"),
+            ModelMigration.Action.SwapAndDelete("extreme", "multi"),
             decide("extreme", targetInstalled = true, online = false),
         )
     }
@@ -128,10 +154,99 @@ class ModelMigrationTest {
         )
     }
 
-    @Test fun an_english_unsupported_tier_migrates_to_pro() {
+    /**
+     * 4.6 — was `an_english_unsupported_tier_migrates_to_pro`. With `pro` retired the ENGLISH arm
+     * resolves through `DEFAULT_MODEL_ID` to `multi`, so **both arms of `targetIdFor` now answer
+     * `multi`** — and that is the right answer to both.
+     *
+     * The collapse is safe in exactly ONE direction and this is that direction: an ENGLISH-scope
+     * user landing on a MULTILINGUAL rung loses nothing, because `multi` is the same 190 MB of
+     * whisper-small weights with a multilingual vocab head and transcribes English perfectly.
+     * The reverse — a multilingual user routed to an English-only tier — is MF3, and the scope
+     * parameter is what still makes it unreachable.
+     */
+    @Test fun an_english_unsupported_tier_migrates_to_the_multilingual_default() {
         val a = decide("extreme", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
         assertEquals(WhisperCatalog.DEFAULT_MODEL_ID, a.toId)
-        assertEquals("pro", a.toId)
+        assertEquals("multi", a.toId)
+        assertEquals("extreme", a.fromId)
+        // The two arms agree TODAY, and the two constants behind them are still separate on
+        // purpose: folding the multilingual target into DEFAULT_MODEL_ID would mean the next
+        // English default silently becomes the multilingual target too, which is MF3
+        // reintroduced by a refactor rather than by a decision.
+        assertEquals(
+            ModelMigration.targetIdFor(ModelScope.ENGLISH),
+            ModelMigration.targetIdFor(ModelScope.MULTILINGUAL),
+        )
+    }
+
+    /**
+     * **THE ONE UNRECOVERABLE DEFECT IN THIS TASK, PROVED ABSENT OVER THE FULL CROSS PRODUCT:**
+     * a migration target that is retired or an instrument.
+     *
+     * A RETIRED target moves users from one dead end to another — they land on a tier with no card
+     * in the picker, so they cannot see or change what they are on. An INSTRUMENT target is worse:
+     * `decide` migrates people without being asked, so it would move an installed base onto a
+     * finalizer whose throughput nobody has measured, and the streaming previewer would hide the
+     * failure because words land on the strip 0.4 s behind the voice whatever the finalizer is
+     * doing. Neither is a state a user can get themselves out of.
+     *
+     * Exhaustive in both senses the brief asks for: every [ModelScope] through `targetIdFor`, and
+     * every catalogue id through `decide` across all eight boolean combinations of its other three
+     * inputs — so a target is checked on every path that can actually produce one.
+     */
+    @Test fun no_migration_target_is_ever_retired_or_an_instrument() {
+        fun assertGoodTarget(target: String, how: String) {
+            val model = WhisperCatalog.byId(target)
+            assertNotNull("$how: target '$target' does not resolve at all", model)
+            assertTrue(
+                "$how: target '$target' is not pickable — users would land on a tier with no card",
+                WhisperCatalog.pickable.any { it.id == target },
+            )
+            assertFalse("$how: target '$target' is RETIRED — one dead end to another", model!!.retired)
+            assertFalse("$how: target '$target' is unsupported — it would migrate them again", model.unsupported)
+            assertFalse(
+                "$how: TARGET '$target' IS AN INSTRUMENT. `decide` migrates users without being " +
+                    "asked, so this would move an installed base onto a rung whose throughput " +
+                    "nobody has measured — and the previewer would hide it",
+                model.instrument,
+            )
+            assertFalse("$how: target '$target' is gated — some devices have no such assets", model.gated)
+            assertEquals(
+                "$how: target '$target' is not multilingual, so it cannot serve every scope that " +
+                    "resolves to it",
+                ModelScope.MULTILINGUAL,
+                model.scope,
+            )
+        }
+        // Arm 1: every scope, through the function itself. This is the exhaustive half — the enum
+        // has two members and both are driven, so no future retirement can reach an unchecked arm.
+        ModelScope.values().forEach { scope ->
+            assertGoodTarget(ModelMigration.targetIdFor(scope), "targetIdFor($scope)")
+        }
+        // Arm 2: every catalogue id, through `decide`, over its whole input space. Whatever
+        // SwapAndDelete a real user state can produce, its target is checked.
+        val ids: List<String?> = WhisperCatalog.entries.map { it.id } + listOf(null, "some-future-tier")
+        ids.forEach { id ->
+            listOf(true, false).forEach { selectedInstalled ->
+                listOf(true, false).forEach { targetInstalled ->
+                    listOf(true, false).forEach { online ->
+                        val action = ModelMigration.decide(id, selectedInstalled, targetInstalled, online)
+                        if (action is ModelMigration.Action.SwapAndDelete) {
+                            assertGoodTarget(action.toId, "decide($id,$selectedInstalled,$targetInstalled,$online)")
+                            assertEquals("the swap must name the tier it is moving OFF", id, action.fromId)
+                        }
+                    }
+                }
+            }
+        }
+        // And the set of ids that can produce ANY action at all is exactly the unsupported set —
+        // one tier, `extreme`. Every instrument and every merely-retired tier answers None, which
+        // is the property the two arms above are checking the consequences of.
+        assertEquals(
+            listOf("extreme"),
+            WhisperCatalog.entries.filter { decide(it.id) != ModelMigration.Action.None }.map { it.id },
+        )
     }
 
     @Test fun every_migration_target_is_a_tier_the_user_can_actually_pick() {
@@ -142,7 +257,26 @@ class ModelMigrationTest {
                 "target '$target' for $scope is not pickable",
                 WhisperCatalog.pickable.any { it.id == target },
             )
-            assertEquals(scope, WhisperCatalog.byId(target)!!.scope)
+            // 4.6: was `assertEquals(scope, byId(target)!!.scope)` — the target's scope must EQUAL
+            // the source's. That is no longer the rule, because it cannot be: `pro` is retired, so
+            // the ENGLISH arm resolves to the multilingual default and no ENGLISH-scope target
+            // exists to resolve to. The rule that survives is the one the equality was a proxy for
+            // — **the target must be able to transcribe the scope it serves** — and it is strictly
+            // stronger stated that way: a MULTILINGUAL target serves an ENGLISH source (same
+            // whisper-small weights, multilingual vocab head), while an ENGLISH target could never
+            // serve a MULTILINGUAL source. That asymmetry IS the MF3 bug, so it is asserted rather
+            // than left to the equality that happened to imply it.
+            val model = WhisperCatalog.byId(target)!!
+            assertEquals(
+                "target '$target' for $scope must be multilingual: it is the only scope that can " +
+                    "serve BOTH arms, and the ENGLISH arm now resolves here too",
+                ModelScope.MULTILINGUAL,
+                model.scope,
+            )
+            assertTrue(
+                "target '$target' for $scope cannot transcribe that scope's language",
+                model.scope == ModelScope.MULTILINGUAL || model.scope == scope,
+            )
         }
     }
 }

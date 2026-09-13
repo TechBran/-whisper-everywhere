@@ -39,14 +39,12 @@ object ModelTierCopy {
             "falls behind your voice, a smaller rung is the fix."
 
     private val copyById: Map<String, TierCopy> = mapOf(
-        "pro" to TierCopy(
-            headline = "Best English accuracy",
-            badges = listOf("English only", "190 MB"),
-            // 3.7 Workstream H: the old body read "Noticeably slower than Eco, noticeably
-            // sharper" — a comparison to a tier the user can no longer see. pro is now the
-            // English flagship, so the copy positions it directly.
-            body = "The sharpest on-device English dictation this app ships.",
-        ),
+        // 4.6 — `pro`'s card is GONE, because `pro` is retired (owner ruling 2026-09-13: no
+        // English-only rungs at all) and a retired tier has no card. `forId` answering null for it
+        // is the contract `retired_and_unknown_tiers_have_no_copy` states, and the screens' own
+        // fallback row handles the null. Its copy was "Best English accuracy" / "The sharpest
+        // on-device English dictation this app ships." — both still true of the file, which is
+        // exactly why `pro` is retired rather than `unsupported`: nobody is being told to leave it.
         "multi" to TierCopy(
             // 4.6: was "Best multilingual accuracy" (3.7, owner-approved) — TRUE while `multi` was
             // one of two rungs and the only multilingual one, and FALSE the moment five larger
@@ -173,15 +171,41 @@ object ModelTierCopy {
 
     /**
      * The tier a fresh install is steered to, from the device's primary language tag (3.7,
-     * Workstream H). English-locale users get "pro" — the English flagship; everyone else gets
-     * "multi", the international tier. It is a STEER, never a lock: both cards stay tappable and
+     * Workstream H). It is a STEER, never a lock: every card stays tappable and
      * [com.whispereverywhere.ui.onboarding.OnboardingLogic.TIER_SWITCH_HINT] still promises the
-     * switch. Accepts either separator ("en-US", "en_GB") and any case, because callers pass
-     * whatever `Locale.toLanguageTag()` / `Locale.getLanguage()` handed them.
+     * switch.
+     *
+     * **4.6 — THE ENGLISH BRANCH IS GONE, because the tier it pointed at is retired.** It read
+     * `if (primary == "en") "pro" else "multi"`, and `pro` was the last English-only rung the app
+     * offered; the owner's ruling of 2026-09-13 retires it (*"we should really only be showing
+     * only multi language models, period"*). A steer at a retired tier is not a steer — it is a
+     * card the chooser does not render, so `orderedForLanguageTagFor` would lift nothing to the
+     * front and [STEER_BADGE] would appear on no card at all for every English user.
+     *
+     * **The 3.7 rule this replaces is SATISFIED, not abandoned.** Its point was the Bengali
+     * review: never land a user on a tier that is worse for the language they actually speak.
+     * With every offered rung multilingual there is no worse-for-your-language rung left to land
+     * on, so the rule holds structurally rather than by a branch — and the English user's
+     * replacement is the same 190 MB of whisper-small weights with a multilingual vocab head, not
+     * a downgrade.
+     *
+     * The parameter stays, and so does the tag parsing in the callers' contract: this is still
+     * "the steer FOR a language", the gated overload still reads the tag's answer, and the next
+     * language-specific rung — a previewer-style per-language pack, or a re-offered English tier —
+     * has one place to be added. Accepts either separator ("en-US", "en_GB") and any case, because
+     * callers pass whatever `Locale.toLanguageTag()` / `Locale.getLanguage()` handed them.
      */
-    fun steerIdForLanguageTag(languageTag: String): String =
-        if (languageTag.substringBefore('-').substringBefore('_').lowercase() == "en") "pro"
-        else "multi"
+    @Suppress("UNUSED_PARAMETER")
+    fun steerIdForLanguageTag(languageTag: String): String = MULTILINGUAL_STEER_ID
+
+    /**
+     * The rung every locale is steered to since 4.6 — `multi`, the only rung with a measured
+     * throughput verdict and therefore the only one the app is entitled to point at. Deliberately
+     * NOT spelled `WhisperCatalog.DEFAULT_MODEL_ID`, even though they agree today: the steer is
+     * what a fresh install is POINTED at and the default is what an absent pick FALLS BACK to, and
+     * collapsing them would mean the next time either moves, both move silently.
+     */
+    private const val MULTILINGUAL_STEER_ID = "multi"
 
     /**
      * [steerIdForLanguageTag] with the gated tiers folded in — and, since 4.1 L9, THE OWNER'S

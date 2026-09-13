@@ -497,12 +497,72 @@ class WhisperCatalogHelpersTest {
      */
     @Test fun pickable_is_exactly_the_ladder_in_order() {
         assertEquals(
-            listOf("pro", "multi", "small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
+            listOf("multi", "small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
             WhisperCatalog.pickable.map { it.id },
         )
-        // Six of the eight are instruments; `pro` and `multi` are the two rungs the app is
-        // prepared to stand behind. (4.6's later commit retires `pro` and this list loses it.)
+        // Six of the seven are instruments. `multi` is the ONE rung the app stands behind — the
+        // only one with a measured verdict — which is what makes it the default, the steer and the
+        // migration target, and what makes the other six offers rather than advice.
         assertEquals(6, WhisperCatalog.pickable.count { it.instrument })
+        assertEquals(listOf("multi"), WhisperCatalog.pickable.filterNot { it.instrument }.map { it.id })
+        // **THE OWNER'S RULING OF 2026-09-13, AT THE LIST THAT ENFORCES IT**: *"we should really
+        // only be showing only multi language models, period. We shouldn't show English only at
+        // all."* `pro` (small.en) was the last English-only rung offered; `eco` (base.en) and
+        // `extreme` (medium.en) were already retired.
+        WhisperCatalog.pickable.forEach {
+            assertEquals(
+                "'${it.id}' is ENGLISH-scope and offered — no English-only rung may be in the " +
+                    "chooser at all",
+                ModelScope.MULTILINGUAL,
+                it.scope,
+            )
+        }
+        // And the English-only rows are still CATALOGUED, all three of them, because retiring is
+        // not deleting: byId() must keep answering or every installed .en user's installedModel()
+        // goes null and the app-wide gate force-marches them into onboarding.
+        assertEquals(
+            listOf("eco", "pro", "extreme"),
+            WhisperCatalog.entries.filter { it.scope == ModelScope.ENGLISH }.map { it.id },
+        )
+        WhisperCatalog.entries.filter { it.scope == ModelScope.ENGLISH }.forEach {
+            assertTrue("English-only tier '${it.id}' must be retired", it.retired)
+            assertNotNull("...and must still resolve", WhisperCatalog.byId(it.id))
+        }
+    }
+
+    /**
+     * 4.6 — **`pro` is RETIRED, NOT UNSUPPORTED, and that distinction is the care in this
+     * change.** `pro` is the tier the largest number of English users are on. `unsupported` is the
+     * only bit that raises Settings' *"This model is no longer supported"* card, so setting it
+     * would have asked every one of them to re-download 190 MB they never requested — for a model
+     * whose only difference from theirs is a multilingual vocab head, which makes the card's
+     * implied promise false for an English-only user as well as unwanted.
+     *
+     * The 3.7 precedent is exact: `eco` and `base` were retired for accuracy and left completely
+     * alone for the same reason, in the same words.
+     */
+    @Test fun the_last_english_rung_is_retired_but_nobody_on_it_is_disturbed() {
+        val pro = WhisperCatalog.byId("pro")!!
+        assertTrue("hidden from the chooser", pro.retired)
+        assertFalse("but NOT a tier the app wants users off — no migration card", pro.unsupported)
+        assertFalse("it is not the chooser's problem either way", pro.gated)
+        assertFalse("and it is not an instrument: it was never an experiment", pro.instrument)
+        assertNotNull("it must resolve forever, or installedModel() goes null", WhisperCatalog.byId("pro"))
+        // Its file still works and is still a legal 80-bin mel donor / CPU fallback: retiring a
+        // tier says nothing about the model, only about whether it is OFFERED.
+        assertTrue(WhisperCatalog.isCpuFallbackEligible(pro))
+        assertTrue(WhisperCatalog.hasCpuFallback(setOf("pro")))
+        // The whole retired set, and the rule they all share.
+        assertEquals(
+            listOf("eco", "base", "pro", "extreme"),
+            WhisperCatalog.entries.filter { it.retired }.map { it.id },
+        )
+        assertEquals(
+            "`extreme` is the ONLY tier the app still migrates anyone off — and 4.6 removed the " +
+                "other one (`ultra`) rather than adding to it",
+            listOf("extreme"),
+            WhisperCatalog.entries.filter { it.unsupported }.map { it.id },
+        )
     }
 
     @Test fun the_sixty_megabyte_tiers_stay_resolvable_after_retirement() {
@@ -550,14 +610,50 @@ class WhisperCatalogHelpersTest {
         }
     }
 
-    @Test fun default_is_pro() {
-        assertEquals("pro", WhisperCatalog.DEFAULT_MODEL_ID)
+    /**
+     * 4.6 — was `default_is_pro`. It moved because `pro` is retired and a retired default is an
+     * unshippable state, and it moved TO `multi` because `multi` is the only rung it could have
+     * moved to: the ladder's other six are [WhisperModel.instrument]s, offered so they can be
+     * measured, and `multi` is the one that clears the app's own eligibility rule ON EVIDENCE
+     * (F = 2.3 s, duty 0.42, Fold6, this repo's audio-ctx bench of 2026-08-20, against the rule's
+     * demand of F <= 5.3 s).
+     */
+    @Test fun default_is_multi() {
+        assertEquals("multi", WhisperCatalog.DEFAULT_MODEL_ID)
         assertNotNull(WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID))
     }
 
-    @Test fun default_is_pickable() {
+    /**
+     * **THE DEFAULT CLEARS THE APP'S OWN ELIGIBILITY RULE**, asserted as the four things that
+     * makes it: pickable, not retired, MULTILINGUAL, and not an instrument.
+     *
+     * The last of those is the one 4.6 makes reachable, and it is the failure this whole task is
+     * shaped to avoid. `DEFAULT_MODEL_ID` is the fallback for every path with no pick on record —
+     * OnboardingSetupViewModel's auto-setup re-entry, OnboardingFlowScreen's download-phase
+     * re-resolve, `ModelMigration`'s ENGLISH arm — so an instrument here would hand a finalizer
+     * nobody has timed to the users who never made a choice at all. And the previewer would hide
+     * it: words land on the floating strip 0.4 s behind the voice whatever the finalizer is doing.
+     */
+    @Test fun default_is_pickable_multilingual_and_not_an_instrument() {
+        val default = WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!
         // A retired default would be unreachable from the picker — an unshippable state.
         assertTrue(WhisperCatalog.pickable.any { it.id == WhisperCatalog.DEFAULT_MODEL_ID })
+        assertFalse(default.retired)
+        assertFalse("a gated default would be selected on devices whose assets are absent", default.gated)
+        assertEquals(
+            "the owner's ruling — multilingual rungs only — applies to the default first",
+            ModelScope.MULTILINGUAL,
+            default.scope,
+        )
+        assertFalse(
+            "THE DEFAULT MAY NOT BE AN INSTRUMENT. It is what every path with no pick on record " +
+                "falls back to, so an unmeasured rung here reaches exactly the users who made no " +
+                "choice — and the previewer paints words 0.4 s behind the voice whatever the " +
+                "finalizer is doing, so it would not look broken until the typed text was a " +
+                "paragraph behind",
+            default.instrument,
+        )
+        assertFalse("...so it cannot be one of them", WhisperCatalog.instruments.contains(default))
     }
 
     @Test fun base_multilingual_tier_has_its_pinned_lfs_values() {
@@ -796,18 +892,23 @@ class WhisperCatalogHelpersTest {
             listOf("npu-turbo", "npu"),
             ModelTierCopy.orderedForLanguageTagFor("bn-BD", capable, setOf("npu")),
         )
-        // Both, plus pro — everything the user has, nothing they do not.
+        // Both, plus a live CPU rung — everything the user has, nothing they do not. (4.6: was
+        // `setOf("npu", "pro")`; `pro` is retired now, so it can no longer demonstrate a kept
+        // card — it demonstrates the rule directly below instead. `medium-q5` stands in as an
+        // installed instrument, which is the new state this branch creates.)
         assertEquals(
-            listOf("npu-turbo", "npu", "pro"),
-            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("npu", "pro")),
+            listOf("npu-turbo", "npu", "medium-q5"),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("npu", "medium-q5")),
         )
         // A RETIRED tier on disk does NOT re-enter through this door: `!it.retired` runs first,
         // which is why the screens may stat the whole catalog for the fallback question. (4.6:
         // `ultra` left this set when it was un-retired — it is a LIVE rung now, so an installed
-        // one DOES keep its card, which is the assertion directly below rather than a hole here.)
+        // one DOES keep its card, which is the assertion directly below rather than a hole here;
+        // `pro` JOINED it, and it is the important member — the largest installed base of any
+        // retired tier, and this is the line that says their card does not come back.)
         assertEquals(
             listOf("npu-turbo"),
-            WhisperCatalog.pickableFor(capable, setOf("eco", "base", "extreme"))
+            WhisperCatalog.pickableFor(capable, setOf("eco", "base", "pro", "extreme"))
                 .map { it.id },
         )
         assertEquals(
@@ -817,9 +918,11 @@ class WhisperCatalogHelpersTest {
             listOf("ultra", "npu-turbo"),
             WhisperCatalog.pickableFor(capable, setOf("ultra")).map { it.id },
         )
-        // Nothing here selects anything: the branch changes what is OFFERED, never what is
-        // chosen. The default fallback and the migration target are untouched.
-        assertEquals("pro", WhisperCatalog.DEFAULT_MODEL_ID)
+        // Nothing THE 4.3 GATE does selects anything: it changes what is OFFERED, never what is
+        // chosen. (4.6 moved the default from `pro` to `multi` — a separate decision, made where
+        // the default lives, because `pro` is retired and a retired default is unreachable from
+        // the picker. The gate still does not touch it.)
+        assertEquals("multi", WhisperCatalog.DEFAULT_MODEL_ID)
         assertEquals("multi", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
         // And every tier a user could already be ON still RESOLVES, so `installedModel()` never
         // returns null and nobody is force-marched into onboarding with a model on disk. Stated

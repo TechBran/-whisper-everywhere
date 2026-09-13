@@ -207,6 +207,18 @@ internal enum class TranscribingEngine { LOCAL, CLOUD }
  * (4.4.1) The PREVIEWER does not take this pin at all — [localPreviewArms] reads the user's
  * selection directly, because the owner's per-language ruling makes Auto show no live words
  * whatever whisper happens to type. This function stays whisper's, and only whisper's.
+ *
+ * **(4.6) THE ENGLISH-SCOPE ARM IS STILL LIVE, AND THE NEXT READER WILL THINK IT IS DEAD.** 4.6
+ * retires the last English-only tier the app OFFERS (`pro`, on the owner's ruling that only
+ * multilingual rungs are shown), so every rung a fresh install can choose is
+ * `ModelScope.MULTILINGUAL` and this branch looks like a vacant special case. **It is not.**
+ * Retiring a tier hides its card; it does not uninstall the model, and
+ * [com.whispereverywhere.model.ModelMigration] deliberately leaves retired-but-supported users
+ * alone — so the installed base on `pro` and `eco` persists indefinitely, `installedScope`
+ * keeps answering ENGLISH for them, and the pin is still exactly right: whisper's `.en` weights
+ * cannot transcribe another language and auto-detect is unreliable on them. **Do not delete this
+ * branch because the catalogue's offered rows no longer reach it.** It is reached by the users who
+ * were already there, which is the whole of who it was written for.
  */
 internal fun sessionLanguageFor(
     installedScope: com.whispereverywhere.model.ModelScope?,

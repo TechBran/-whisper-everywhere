@@ -24,11 +24,29 @@ object ModelMigration {
     }
 
     /**
-     * The pickable tier an unsupported model's users should land on. MUST match the retired
-     * model's [ModelScope] — moving a MULTILINGUAL user to the ENGLISH-only default silently
-     * breaks dictation in every other language with no warning (that was the MF3 bug). Since 3.7
-     * the lineup is two tiers: "pro" is the ENGLISH default and "multi" is its multilingual
-     * counterpart.
+     * The pickable tier an unsupported model's users should land on. It must never be WORSE for
+     * the language the user actually speaks — moving a MULTILINGUAL user to an ENGLISH-only
+     * default silently breaks dictation in every other language with no warning, which was the MF3
+     * bug and is the reason this function takes a scope at all.
+     *
+     * **4.6 — BOTH ARMS NOW ANSWER `multi`, and that is the correct answer to both.** The owner's
+     * ruling of 2026-09-13 retires the last English-only rung (`pro`), so
+     * [WhisperCatalog.DEFAULT_MODEL_ID] is `multi` and the ENGLISH arm resolves there too. The
+     * collapse is safe in exactly one direction and this is that direction: an ENGLISH-scope user
+     * landing on a MULTILINGUAL rung loses nothing — `multi` is the same 190 MB of whisper-small
+     * weights with a multilingual vocab head and transcribes English perfectly — whereas the
+     * reverse is MF3. The scope parameter therefore still earns its place: it is what makes the
+     * unsafe direction impossible to reach, and the next time an English-only rung is offered the
+     * two arms separate again without anyone rediscovering why.
+     *
+     * **The two constants stay SEPARATE even though they are equal today.** Folding
+     * [MULTILINGUAL_TARGET_ID] into `DEFAULT_MODEL_ID` would mean a future English default
+     * silently becomes the multilingual target as well — which is MF3 reintroduced by a
+     * refactor, not by a decision.
+     *
+     * Pinned exhaustively by `ModelMigrationTest`: over every [ModelScope], the target must be
+     * pickable, must not be retired, must not be a [WhisperModel.instrument], and must be able to
+     * transcribe the scope it is a target for.
      */
     fun targetIdFor(scope: ModelScope): String =
         if (scope == ModelScope.MULTILINGUAL) MULTILINGUAL_TARGET_ID else WhisperCatalog.DEFAULT_MODEL_ID
@@ -45,6 +63,11 @@ object ModelMigration {
         // `unsupported`, not `retired` (3.7 Workstream H): a merely retired tier is hidden from
         // the chooser and otherwise left completely alone — its installed users are not prompted,
         // not migrated, and never asked to re-download.
+        //
+        // 4.6 leans on this line harder than any release has: `pro` joins the retired set and it
+        // is the tier the LARGEST number of English users are on. Every one of them must fall
+        // through here to Action.None — nobody dictating happily on small.en gets told to fetch
+        // 190 MB they never asked for, for a model whose only difference is its vocab head.
         if (!selected.unsupported) return Action.None
         val target = targetIdFor(selected.scope)
         // Target on disk wins regardless of connectivity — nothing left to download.
